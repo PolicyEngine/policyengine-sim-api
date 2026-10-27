@@ -113,8 +113,8 @@ class StoredHouseholdInputs(StrictRouteModel):
     ``policyengine_version`` the PolicyEngine.py version it was published
     from, which picks the household function. ``household`` is the stored
     household in the situation shape, without axes (they are an option);
-    ``spm`` is its saved SPM choice, omitted when it has none, so the
-    bundle's certified defaults apply.
+    ``spm`` is its saved SPM choice, omitted or null when it has none, so
+    the bundle's certified defaults apply.
     """
 
     catalog_version_id: UUID
@@ -136,8 +136,12 @@ class StoredHouseholdInputs(StrictRouteModel):
 
     @property
     def spm_requested(self) -> bool:
-        """Whether the household has a saved SPM choice to calculate with."""
-        return "spm" in self.model_fields_set
+        """Whether the household has a saved SPM choice to calculate with.
+
+        A saved household's null selection is no choice, as the household
+        functions' contract reads it.
+        """
+        return "spm" in self.model_fields_set and self.spm is not None
 
 
 class HouseholdCalculationSubmission(StoredHouseholdInputs):

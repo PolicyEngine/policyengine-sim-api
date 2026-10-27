@@ -226,3 +226,13 @@ def test_a_calculation_left_dispatching_fails_and_runs_again() -> None:
     assert resubmitted.run.id != stopped_run_id
     assert resubmitted.run.attempt == 2
     assert resubmitted.run.status is RunStatus.RUNNING
+
+
+def test_a_saved_null_spm_choice_is_no_choice() -> None:
+    """A stored household's null selection inherits the defaults, as omission does."""
+    harness = Harness()
+
+    harness.submit(spm=None)
+
+    assert "spm" not in harness.dispatcher.requests[0].arguments[0]
+    assert not harness.sent_request().spm_requested
