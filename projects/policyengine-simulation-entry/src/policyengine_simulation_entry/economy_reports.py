@@ -196,9 +196,11 @@ class EconomyReports:
 
         ``trigger`` is ``manual`` for a user's re-run and ``system`` for a
         run sim's caller starts itself, such as the first opening of a
-        migrated report. Existing runs are reused unless ``force`` is set.
-        Raise ReportNotFoundError for an unknown report, and
-        EconomyRequestError for one that cannot run.
+        migrated report. A ``system`` run returns the report's newest run
+        when it has one, and simultaneous ``system`` runs of a report without
+        one record a single report run. Existing simulation runs are reused
+        unless ``force`` is set. Raise ReportNotFoundError for an unknown
+        report, and EconomyRequestError for one that cannot run.
         """
         if trigger not in RERUN_TRIGGERS:
             msg = "a report is run again with the manual or system trigger"
@@ -213,6 +215,10 @@ class EconomyReports:
         if report.options:
             msg = "economy reports take no options yet"
             raise EconomyRequestError(msg)
+        if trigger is RunTrigger.SYSTEM:
+            newest = await asyncio.to_thread(self.runs.latest_report_run, report_id)
+            if newest is not None:
+                return newest
         version = await self._version(report.country, policyengine_version)
         simulations = []
         for simulation_id in (
@@ -316,15 +322,22 @@ class EconomyReports:
                 )
             )
         baseline, reform = (started[run.simulation.id].run for run in planned)
-        report_run = await asyncio.to_thread(
-            self.runs.create_report_run,
+        report_run = await self._record_report_run(
             NewReportRun(
                 report_id=report.id,
                 baseline_simulation_run_id=baseline.id,
                 reform_simulation_run_id=reform.id,
                 trigger=trigger,
-            ),
+            )
         )
+        compared = {
+            run_id
+            for run_id in (
+                report_run.baseline_simulation_run_id,
+                report_run.reform_simulation_run_id,
+            )
+            if run_id is not None
+        }
         # Only the submission that created a run starts it. A reused run
         # still pending belongs to the submission that created it, which may
         # be a labour supply report asking for more columns; if that
@@ -336,14 +349,38 @@ class EconomyReports:
             if not started_run.created or started_run.run.id in dispatched:
                 continue
             dispatched.add(started_run.run.id)
+            if started_run.run.id not in compared:
+                await self._fail_simulation_run(
+                    started_run.run.id,
+                    RunError(
+                        RunErrorCode.DISPATCH_ABANDONED,
+                        "Another first run of the report was recorded first, "
+                        "so no report run compares the run.",
+                    ),
+                )
+                continue
             await self._start_simulation_run(
                 started_run.run,
                 run,
                 version,
                 labor_supply_response=labor_supply_response,
             )
-        await self.start_comparisons_after([baseline.id, reform.id])
+        await self.start_comparisons_after(compared)
         return report_run
+
+    async def _record_report_run(self, new_report_run: NewReportRun) -> ReportRunRecord:
+        """Record a report run; a ``system`` one only while the report has none.
+
+        Simultaneous first opens of a report without a run then share one
+        report run. A caller that loses still starts the runs it created
+        that the recorded run compares, and fails the others.
+        """
+        if new_report_run.trigger is not RunTrigger.SYSTEM:
+            return await asyncio.to_thread(self.runs.create_report_run, new_report_run)
+        first = await asyncio.to_thread(
+            self.runs.create_first_report_run, new_report_run
+        )
+        return first.run
 
     # --- Simulation runs ---------------------------------------------------
 

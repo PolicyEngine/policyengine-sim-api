@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Barrier
 from uuid import uuid4
 
 import pytest
@@ -518,6 +519,61 @@ def test_the_newest_report_run_is_the_reports_current_run(
 
     assert store.latest_report_run(report.id) == rerun
     assert store.latest_report_run(uuid4()) is None
+
+
+def test_a_first_report_run_is_added_only_while_the_report_has_none(
+    migrated_database, public_api_rows
+) -> None:
+    report, baseline_run, reform_run = _economy_report_with_runs(
+        migrated_database, public_api_rows
+    )
+    store = run_store(migrated_database)
+    first_open = NewReportRun(
+        report_id=report.id,
+        baseline_simulation_run_id=baseline_run.id,
+        reform_simulation_run_id=reform_run.id,
+        trigger=RunTrigger.SYSTEM,
+    )
+
+    first = store.create_first_report_run(first_open)
+    again = store.create_first_report_run(first_open)
+
+    assert first.created is True
+    assert first.run.trigger is RunTrigger.SYSTEM
+    assert again.created is False
+    assert again.run == first.run
+    assert store.report_runs(report.id) == [first.run]
+
+
+SIMULTANEOUS_FIRST_OPENS = 6
+
+
+def test_simultaneous_first_report_runs_of_a_report_add_one(
+    migrated_database, public_api_rows
+) -> None:
+    """Each caller reads that the report has no run before any inserts one."""
+    report, baseline_run, reform_run = _economy_report_with_runs(
+        migrated_database, public_api_rows
+    )
+    store = run_store(migrated_database)
+    first_open = NewReportRun(
+        report_id=report.id,
+        baseline_simulation_run_id=baseline_run.id,
+        reform_simulation_run_id=reform_run.id,
+        trigger=RunTrigger.SYSTEM,
+    )
+    all_ready = Barrier(SIMULTANEOUS_FIRST_OPENS)
+
+    def open_first_time(_: int):
+        all_ready.wait()
+        return store.create_first_report_run(first_open)
+
+    with ThreadPoolExecutor(max_workers=SIMULTANEOUS_FIRST_OPENS) as pool:
+        started = list(pool.map(open_first_time, range(SIMULTANEOUS_FIRST_OPENS)))
+
+    assert sum(start.created for start in started) == 1
+    assert {start.run.id for start in started} == {started[0].run.id}
+    assert len(store.report_runs(report.id)) == 1
 
 
 def test_a_report_run_of_an_unknown_report_is_refused(

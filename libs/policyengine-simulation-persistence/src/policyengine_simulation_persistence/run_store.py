@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 
 from policyengine_simulation_persistence.output_files import (
@@ -29,6 +29,7 @@ from policyengine_simulation_persistence.runs import (
     ReportRunRecord,
     RunStatus,
     SimulationRunRecord,
+    StartedReportRun,
     StartedSimulationRun,
     report_runs,
     simulation_runs,
@@ -49,6 +50,9 @@ SUCCEEDED_RUN_REUSE_WINDOW = timedelta(days=28)
 # Each lost insert means another caller committed an attempt; a forced start
 # gives up after this many, which only a runaway of concurrent starts reaches.
 FORCED_START_INSERT_LIMIT = 10
+# The first of the two keys of the transaction-level advisory locks that
+# serialise first report runs; the second is the hash of the report ID.
+FIRST_REPORT_RUN_LOCK_SPACE = 2_020_101
 
 
 def utc_now() -> datetime:
@@ -286,63 +290,87 @@ class RunStore:
         LookupError when the report does not exist, and ValueError when the
         runs are not runs of the report's simulations.
         """
-        now = self._clock()
         with self.engine.begin() as connection:
-            report = (
-                connection.execute(
-                    select(
-                        reports.c.kind,
-                        reports.c.baseline_simulation_id,
-                        reports.c.reform_simulation_id,
-                    ).where(reports.c.id == new_report_run.report_id)
-                )
-                .mappings()
-                .first()
-            )
-            if report is None:
-                msg = f"no report {new_report_run.report_id}"
-                raise LookupError(msg)
-            baseline = self._run_key(
-                connection, new_report_run.baseline_simulation_run_id
-            )
-            reform = (
-                None
-                if new_report_run.reform_simulation_run_id is None
-                else self._run_key(connection, new_report_run.reform_simulation_run_id)
-            )
-            baseline = _check_report_run_simulations(
-                report, baseline, reform, new_report_run
-            )
-            economy = report["kind"] == ReportKind.ECONOMY.value
-            row = (
-                connection.execute(
-                    postgres_insert(report_runs)
-                    .values(
-                        id=uuid4(),
-                        report_id=new_report_run.report_id,
-                        report_kind=report["kind"],
-                        tax_benefit_model_version_id=(
-                            baseline["tax_benefit_model_version_id"]
-                        ),
-                        year=baseline["year"],
-                        baseline_simulation_run_id=(
-                            new_report_run.baseline_simulation_run_id
-                        ),
-                        reform_simulation_run_id=(
-                            new_report_run.reform_simulation_run_id
-                        ),
-                        trigger=new_report_run.trigger.value,
-                        comparison_status=(
-                            RunStatus.PENDING.value if economy else None
-                        ),
-                        created_at=now,
-                        updated_at=now,
+            return self._insert_report_run(connection, new_report_run)
+
+    def create_first_report_run(self, new_report_run: NewReportRun) -> StartedReportRun:
+        """Add the report's first report run, or return its newest one.
+
+        Callers that start a report's first run at the same time, such as
+        two first opens of a report migrated without a run, wait for each
+        other on a transaction-level advisory lock on the report, so only
+        the first adds a run and the others return it. Raise as
+        ``create_report_run`` does.
+        """
+        with self.engine.begin() as connection:
+            connection.execute(
+                select(
+                    func.pg_advisory_xact_lock(
+                        FIRST_REPORT_RUN_LOCK_SPACE,
+                        func.hashtext(str(new_report_run.report_id)),
                     )
-                    .returning(*report_runs.c)
                 )
-                .mappings()
-                .one()
             )
+            newest = self._newest_report_run(connection, new_report_run.report_id)
+            if newest is not None:
+                return StartedReportRun(run=newest, created=False)
+            return StartedReportRun(
+                run=self._insert_report_run(connection, new_report_run), created=True
+            )
+
+    def _insert_report_run(
+        self, connection: Connection, new_report_run: NewReportRun
+    ) -> ReportRunRecord:
+        now = self._clock()
+        report = (
+            connection.execute(
+                select(
+                    reports.c.kind,
+                    reports.c.baseline_simulation_id,
+                    reports.c.reform_simulation_id,
+                ).where(reports.c.id == new_report_run.report_id)
+            )
+            .mappings()
+            .first()
+        )
+        if report is None:
+            msg = f"no report {new_report_run.report_id}"
+            raise LookupError(msg)
+        baseline = self._run_key(connection, new_report_run.baseline_simulation_run_id)
+        reform = (
+            None
+            if new_report_run.reform_simulation_run_id is None
+            else self._run_key(connection, new_report_run.reform_simulation_run_id)
+        )
+        baseline = _check_report_run_simulations(
+            report, baseline, reform, new_report_run
+        )
+        economy = report["kind"] == ReportKind.ECONOMY.value
+        row = (
+            connection.execute(
+                postgres_insert(report_runs)
+                .values(
+                    id=uuid4(),
+                    report_id=new_report_run.report_id,
+                    report_kind=report["kind"],
+                    tax_benefit_model_version_id=(
+                        baseline["tax_benefit_model_version_id"]
+                    ),
+                    year=baseline["year"],
+                    baseline_simulation_run_id=(
+                        new_report_run.baseline_simulation_run_id
+                    ),
+                    reform_simulation_run_id=new_report_run.reform_simulation_run_id,
+                    trigger=new_report_run.trigger.value,
+                    comparison_status=(RunStatus.PENDING.value if economy else None),
+                    created_at=now,
+                    updated_at=now,
+                )
+                .returning(*report_runs.c)
+            )
+            .mappings()
+            .one()
+        )
         return ReportRunRecord.from_row(row)
 
     @staticmethod
@@ -476,14 +504,28 @@ class RunStore:
 
     def _one_report_run(self, condition: ColumnElement[bool]) -> ReportRunRecord | None:
         with self.engine.connect() as connection:
-            row = (
-                connection.execute(
-                    select(report_runs)
-                    .where(condition)
-                    .order_by(report_runs.c.created_at.desc(), report_runs.c.id.desc())
-                    .limit(1)
-                )
-                .mappings()
-                .first()
+            return self._newest_report_run_where(connection, condition)
+
+    @classmethod
+    def _newest_report_run(
+        cls, connection: Connection, report_id: UUID
+    ) -> ReportRunRecord | None:
+        return cls._newest_report_run_where(
+            connection, report_runs.c.report_id == report_id
+        )
+
+    @staticmethod
+    def _newest_report_run_where(
+        connection: Connection, condition: ColumnElement[bool]
+    ) -> ReportRunRecord | None:
+        row = (
+            connection.execute(
+                select(report_runs)
+                .where(condition)
+                .order_by(report_runs.c.created_at.desc(), report_runs.c.id.desc())
+                .limit(1)
             )
+            .mappings()
+            .first()
+        )
         return None if row is None else ReportRunRecord.from_row(row)

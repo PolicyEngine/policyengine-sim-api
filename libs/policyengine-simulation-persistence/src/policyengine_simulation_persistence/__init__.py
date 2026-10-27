@@ -64,6 +64,7 @@ from policyengine_simulation_persistence.runs import (
     RunStatus,
     RunTrigger,
     SimulationRunRecord,
+    StartedReportRun,
     StartedSimulationRun,
 )
 from policyengine_simulation_persistence.schema import (
@@ -122,6 +123,7 @@ __all__ = [
     "SimulationRecord",
     "SimulationRunRecord",
     "SimulationStore",
+    "StartedReportRun",
     "StartedSimulationRun",
     "available_output_files",
     "check_storable",

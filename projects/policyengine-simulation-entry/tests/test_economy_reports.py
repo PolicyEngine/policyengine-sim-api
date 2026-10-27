@@ -32,6 +32,8 @@ from policyengine_simulation_entry.economy_report_types import (
 from policyengine_simulation_entry.economy_reports import EconomyReports
 from policyengine_simulation_entry.run_dispatch import RunDispatchService
 from policyengine_simulation_persistence import (
+    NewReport,
+    NewReportRun,
     NewSimulation,
     NewSimulationRun,
     PolicyParametersMissingError,
@@ -52,7 +54,7 @@ OTHER_POLICY = uuid4()
 class _Path:
     """The economy path over in-memory stores, with every spawned request kept."""
 
-    def __init__(self) -> None:
+    def __init__(self, runs: FakeRuns | None = None) -> None:
         self.catalog = FakeCatalog()
         self.catalog.changes.update(
             {
@@ -69,7 +71,7 @@ class _Path:
             {REFORM_POLICY, LABOR_SUPPLY_POLICY, MISSING_POLICY, OTHER_POLICY}
         )
         self.reports = FakeReports()
-        self.runs = FakeRuns()
+        self.runs = FakeRuns() if runs is None else runs
         self.dispatcher = FakeDispatcher()
         self.economy = EconomyReports(
             simulations=self.simulations,
@@ -282,20 +284,143 @@ def test_a_rerun_reuses_runs_unless_forced() -> None:
     assert path.runs.latest_report_run(report.id) == forced
 
 
-def test_a_report_without_a_run_is_calculated_on_the_systems_trigger() -> None:
-    path = _Path()
-    report, _ = path.submit()
+def _migrated_report(path: _Path, reform_policy=REFORM_POLICY):
+    """Return a report migrated from v1 without a run."""
+    baseline, reform = (
+        path.simulations.find_or_create(
+            NewSimulation(
+                kind=SimulationKind.ECONOMY,
+                country="us",
+                policy_id=policy_id,
+                dynamic_id=None,
+                region_code="state/ca",
+            )
+        )
+        for policy_id in (None, reform_policy)
+    )
+    return path.reports.create(
+        NewReport(
+            kind=ReportKind.ECONOMY,
+            country="us",
+            baseline_simulation_id=baseline.id,
+            reform_simulation_id=reform.id,
+            year=2026,
+        )
+    )
 
-    report_run = asyncio.run(
+
+def _system_run(path: _Path, report_id):
+    return asyncio.run(
         path.economy.run_report(
-            report.id,
+            report_id,
             policyengine_version="6.7.5",
             trigger=RunTrigger.SYSTEM,
             force=False,
         )
     )
 
+
+def test_a_report_without_a_run_is_calculated_on_the_systems_trigger() -> None:
+    path = _Path()
+    report = _migrated_report(path)
+
+    report_run = _system_run(path, report.id)
+
     assert report_run.trigger is RunTrigger.SYSTEM
+    assert len(path.simulation_calls()) == 2
+
+
+def test_a_system_run_of_a_report_that_has_a_run_returns_its_newest() -> None:
+    path = _Path()
+    report, first = path.submit()
+    path.dispatcher.requests.clear()
+
+    report_run = _system_run(path, report.id)
+
+    assert report_run == first
+    assert path.runs.report_runs(report.id) == [first]
+    assert path.dispatcher.requests == []
+
+
+class _RunsWhereAnotherFirstOpenWins(FakeRuns):
+    """Another first open of the report records its run just before this one.
+
+    The other caller's report run uses ``winner_runs``, or, when they are not
+    set, the same simulation runs as this caller's.
+    """
+
+    winner_runs: tuple | None = None
+
+    def create_first_report_run(self, new_report_run: NewReportRun):
+        if self.latest_report_run(new_report_run.report_id) is None:
+            baseline, reform = self.winner_runs or (
+                new_report_run.baseline_simulation_run_id,
+                new_report_run.reform_simulation_run_id,
+            )
+            self.create_report_run(
+                replace(
+                    new_report_run,
+                    baseline_simulation_run_id=baseline,
+                    reform_simulation_run_id=reform,
+                )
+            )
+        return super().create_first_report_run(new_report_run)
+
+
+def test_a_first_open_that_loses_still_starts_the_runs_it_created() -> None:
+    """The other caller reused this caller's new runs, so it will not start them."""
+    path = _Path(runs=_RunsWhereAnotherFirstOpenWins())
+    report = _migrated_report(path)
+
+    report_run = _system_run(path, report.id)
+
+    assert path.runs.report_runs(report.id) == [report_run]
+    calls = path.simulation_calls()
+    assert {call.simulation_run_id for call in calls} == {
+        report_run.baseline_simulation_run_id,
+        report_run.reform_simulation_run_id,
+    }
+
+
+def test_a_first_open_that_loses_fails_the_runs_no_report_run_compares() -> None:
+    """A labour supply report forces its own runs; the losing caller's are unused."""
+    runs = _RunsWhereAnotherFirstOpenWins()
+    path = _Path(runs=runs)
+    report = _migrated_report(path, reform_policy=LABOR_SUPPLY_POLICY)
+    report_record = path.reports.get(report.id)
+    runs.winner_runs = tuple(
+        runs.start_simulation_run(
+            NewSimulationRun(
+                simulation_id=simulation_id,
+                tax_benefit_model_version_id=US_VERSION.id,
+                year=2026,
+                trigger=RunTrigger.SYSTEM,
+                region_code="state/ca",
+                dataset_id=CALIFORNIA.dataset_id,
+            ),
+            force=True,
+        ).run.id
+        for simulation_id in (
+            report_record.baseline_simulation_id,
+            report_record.reform_simulation_id,
+        )
+    )
+
+    report_run = _system_run(path, report.id)
+
+    assert (
+        report_run.baseline_simulation_run_id,
+        report_run.reform_simulation_run_id,
+    ) == runs.winner_runs
+    assert path.simulation_calls() == []
+    unused = [
+        run for run in runs.simulation_runs.values() if run.id not in runs.winner_runs
+    ]
+    assert len(unused) == 2
+    assert all(run.status is RunStatus.FAILED for run in unused)
+    assert all(
+        run.error_code == RunErrorCode.DISPATCH_ABANDONED.value for run in unused
+    )
 
 
 @pytest.mark.parametrize(

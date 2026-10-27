@@ -21,6 +21,7 @@ from policyengine_simulation_persistence import (
     SimulationKind,
     SimulationRecord,
     SimulationRunRecord,
+    StartedReportRun,
     StartedSimulationRun,
 )
 
@@ -297,6 +298,14 @@ class FakeRuns:
     def latest_report_run(self, report_id: UUID):
         runs = self.report_runs(report_id)
         return runs[0] if runs else None
+
+    def create_first_report_run(self, new_report_run: NewReportRun):
+        newest = self.latest_report_run(new_report_run.report_id)
+        if newest is not None:
+            return StartedReportRun(run=newest, created=False)
+        return StartedReportRun(
+            run=self.create_report_run(new_report_run), created=True
+        )
 
     def comparisons_ready_to_start(self, *, simulation_run_ids=None, limit=100):
         ready = [

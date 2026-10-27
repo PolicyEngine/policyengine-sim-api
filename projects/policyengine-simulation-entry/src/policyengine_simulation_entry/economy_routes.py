@@ -6,7 +6,10 @@
   ``GET /v2/economy-reports/by-legacy-id/{legacy_report_id}``: the report,
   its newest run and, once that run's comparison succeeded, its result,
   rebuilt from its rows in today's format (``SingleYearMacroOutput``).
-- ``POST /v2/economy-reports/{report_id}/runs``: run it again; 201.
+- ``POST /v2/economy-reports/{report_id}/runs``: run it again; 201. A
+  ``system`` run (the first opening of a report migrated without a run)
+  returns the report's newest run when it has one, so simultaneous first
+  openings share one run.
 - ``GET /v2/economy-reports/{report_id}/runs``: its runs, newest first, each
   with its catalog version.
 - ``GET /v2/simulations/{simulation_id}``: a simulation, so a caller can

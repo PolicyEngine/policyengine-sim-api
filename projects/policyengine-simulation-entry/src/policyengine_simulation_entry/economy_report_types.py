@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         SimulationKind,
         SimulationRecord,
         SimulationRunRecord,
+        StartedReportRun,
         StartedSimulationRun,
     )
 
@@ -119,6 +120,14 @@ class EconomyRuns(Protocol):
 
     def create_report_run(self, new_report_run: NewReportRun) -> ReportRunRecord:
         """Insert a report run."""
+        ...
+
+    def create_first_report_run(self, new_report_run: NewReportRun) -> StartedReportRun:
+        """Insert the report's first report run, or return its newest one."""
+        ...
+
+    def latest_report_run(self, report_id: UUID) -> ReportRunRecord | None:
+        """Return the report's newest report run, or None."""
         ...
 
     def get_simulation_run(self, run_id: UUID) -> SimulationRunRecord | None:

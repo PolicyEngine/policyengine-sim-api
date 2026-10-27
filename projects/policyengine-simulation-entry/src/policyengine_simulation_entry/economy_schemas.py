@@ -50,8 +50,9 @@ class EconomyReportRunRequest(_Request):
     """Run a report again on a catalog version.
 
     ``manual`` is a user's re-run and ``system`` a run the caller starts
-    itself, such as the first opening of a migrated report. Existing
-    simulation runs are reused unless ``force`` is set.
+    itself, such as the first opening of a migrated report; a ``system`` run
+    returns the report's newest run when it has one. Existing simulation
+    runs are reused unless ``force`` is set.
     """
 
     policyengine_version: PolicyEngineVersion

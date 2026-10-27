@@ -498,3 +498,11 @@ class StartedSimulationRun:
 
     run: SimulationRunRecord
     created: bool
+
+
+@dataclass(frozen=True)
+class StartedReportRun:
+    """The report run a first start resolved to, and whether this call created it."""
+
+    run: ReportRunRecord
+    created: bool
