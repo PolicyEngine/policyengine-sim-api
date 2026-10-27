@@ -489,15 +489,28 @@ class EconomyReports:
         )
         dispatched: set[UUID] = set()
         for run in planned:
-            simulation_run = started[run.simulation.id].run
+            started_run = started[run.simulation.id]
+            simulation_run = started_run.run
             if simulation_run.id in dispatched:
                 continue
             dispatched.add(simulation_run.id)
+            # A reused run still pending may be one a labour supply report
+            # forced and is waiting for, so it keeps their columns.
             await self._start_simulation_run(
                 simulation_run,
                 run,
                 version,
-                labor_supply_response=labor_supply_response,
+                labor_supply_response=labor_supply_response
+                or (
+                    not started_run.created
+                    and simulation_run.status is RunStatus.PENDING
+                    and await self._labor_supply_needed(
+                        await asyncio.to_thread(
+                            self.runs.report_runs_using, simulation_run.id
+                        ),
+                        version,
+                    )
+                ),
             )
         await self.start_comparisons_after([baseline.id, reform.id])
         return report_run
@@ -573,21 +586,14 @@ class EconomyReports:
             started += await self._start_stranded_run(simulation_run)
         return ResumedWork(comparisons_started=len(ready), runs_started=started)
 
-    async def _start_stranded_run(self, simulation_run: SimulationRunRecord) -> int:
-        """Start a run left pending; return 1 if a report run compares it."""
-        version = await asyncio.to_thread(
-            self.catalog.catalog_version_by_id,
-            simulation_run.tax_benefit_model_version_id,
-        )
-        simulation = await asyncio.to_thread(
-            self.simulations.get, simulation_run.simulation_id
-        )
-        report_runs = await asyncio.to_thread(
-            self.runs.report_runs_using, simulation_run.id
-        )
-        if version is None or simulation is None or not report_runs:
-            return 0
-        labor_supply_response = False
+    async def _labor_supply_needed(
+        self, report_runs: list[ReportRunRecord], version: CatalogVersion
+    ) -> bool:
+        """Return whether any of these report runs compares an elasticity change.
+
+        A run every one of them compares must then calculate the labour
+        supply response columns.
+        """
         for report_run in report_runs:
             report = await asyncio.to_thread(self.reports.get, report_run.report_id)
             if report is None:  # pragma: no cover - a foreign key keeps it
@@ -604,10 +610,27 @@ class EconomyReports:
                 if compared is None:  # pragma: no cover - a foreign key keeps it
                     continue
                 planned = await self._plan(version, compared)
-                labor_supply_response = labor_supply_response or (
-                    planned.changes is not None
-                    and policy_affects_labor_supply(report.country, planned.changes)
-                )
+                if planned.changes is not None and policy_affects_labor_supply(
+                    report.country, planned.changes
+                ):
+                    return True
+        return False
+
+    async def _start_stranded_run(self, simulation_run: SimulationRunRecord) -> int:
+        """Start a run left pending; return 1 if a report run compares it."""
+        version = await asyncio.to_thread(
+            self.catalog.catalog_version_by_id,
+            simulation_run.tax_benefit_model_version_id,
+        )
+        simulation = await asyncio.to_thread(
+            self.simulations.get, simulation_run.simulation_id
+        )
+        report_runs = await asyncio.to_thread(
+            self.runs.report_runs_using, simulation_run.id
+        )
+        if version is None or simulation is None or not report_runs:
+            return 0
+        labor_supply_response = await self._labor_supply_needed(report_runs, version)
         await self._start_simulation_run(
             simulation_run,
             await self._plan(version, simulation),

@@ -399,3 +399,26 @@ def test_the_safety_check_leaves_a_run_its_submitter_is_still_starting() -> None
 
     assert resumed.runs_started == 0
     assert path.dispatcher.requests == []
+
+
+def test_a_run_a_labour_supply_report_waits_for_keeps_its_columns() -> None:
+    path = _Path()
+    _, labour_supply = path.submit(
+        reform=SimulationChoice(policy_id=LABOR_SUPPLY_POLICY)
+    )
+    baseline_id = labour_supply.baseline_simulation_run_id
+    # Its submitter stopped before starting the current-law run's call.
+    path.runs.simulation_runs[baseline_id] = replace(
+        path.runs.simulation_runs[baseline_id],
+        status=RunStatus.PENDING,
+        modal_call_id=None,
+        next_check_at=None,
+    )
+    path.dispatcher.requests.clear()
+
+    _, ordinary = path.submit(reform=SimulationChoice(policy_id=OTHER_POLICY))
+
+    assert ordinary.baseline_simulation_run_id == baseline_id
+    calls = {call.simulation_run_id: call for call in path.simulation_calls()}
+    assert calls[baseline_id].labor_supply_response is True
+    assert calls[ordinary.reform_simulation_run_id].labor_supply_response is False
