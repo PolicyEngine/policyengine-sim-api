@@ -505,7 +505,7 @@ class VersionsResponse(BaseModel):
             "wrapper version: read its identity at `bundles[latest]`."
         ),
     )
-    published_at: dict[str, str] = Field(
+    published_at: dict[str, AwareDatetime] = Field(
         default_factory=dict,
         description=(
             "When each exact PolicyEngine wrapper version's route was first "
@@ -514,7 +514,7 @@ class VersionsResponse(BaseModel):
             "have no entry."
         ),
     )
-    latest_since: str | None = Field(
+    latest_since: AwareDatetime | None = Field(
         default=None,
         description=(
             "When `policyengine.latest` last changed (a publish that advanced "

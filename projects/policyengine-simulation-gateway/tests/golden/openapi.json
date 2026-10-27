@@ -2854,7 +2854,8 @@
           },
           "published_at": {
             "additionalProperties": {
-              "type": "string"
+              "type": "string",
+              "format": "date-time"
             },
             "type": "object",
             "title": "Published At",
@@ -2863,7 +2864,8 @@
           "latest_since": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"

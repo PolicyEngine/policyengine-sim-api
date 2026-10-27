@@ -1,6 +1,7 @@
 """Resolve a request's Modal app from the active routing state."""
 
 from dataclasses import dataclass
+from datetime import datetime
 
 SUPPORTED_ROUTE_KINDS = ("policyengine", "us", "uk")
 
@@ -50,22 +51,36 @@ def routing_state_bundles(state: dict) -> dict:
     return bundles if isinstance(bundles, dict) else {}
 
 
-def routing_state_published_at(state: dict) -> dict[str, str]:
+def _aware_datetime(value: object) -> datetime | None:
+    """Return ``value`` as a timezone-aware datetime, or None unless it is one.
+
+    The routing state is read from a Modal Dict, so a stored date is only text
+    until it parses as an ISO 8601 time with a timezone.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def routing_state_published_at(state: dict) -> dict[str, datetime]:
     """Return when each policyengine version's route was first published."""
     published_at = state.get("published_at")
     if not isinstance(published_at, dict):
         return {}
     return {
         version: timestamp
-        for version, timestamp in published_at.items()
-        if isinstance(version, str) and isinstance(timestamp, str)
+        for version, raw in published_at.items()
+        if isinstance(version, str) and (timestamp := _aware_datetime(raw)) is not None
     }
 
 
-def routing_state_latest_since(state: dict) -> str | None:
+def routing_state_latest_since(state: dict) -> datetime | None:
     """Return when latest.policyengine last changed, or None."""
-    latest_since = state.get("latest_since")
-    return latest_since if isinstance(latest_since, str) and latest_since else None
+    return _aware_datetime(state.get("latest_since"))
 
 
 def _bundle_manifest(state: dict, policyengine_version: str | None) -> dict:

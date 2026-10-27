@@ -62,9 +62,29 @@ class RoutingState(TypedDict):
     latest_since: NotRequired[str]
 
 
+_UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+
 def utc_now() -> str:
     """Return the current UTC time as the routing state records it."""
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime(_UTC_FORMAT)
+
+
+def utc_timestamp(value: object) -> str | None:
+    """Return ``value`` as the state's UTC time, or None unless it is one.
+
+    Accepts an ISO 8601 time with a timezone and normalizes it to UTC;
+    anything else (including a time without a timezone) is not a date.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC).strftime(_UTC_FORMAT)
 
 
 def is_newer_version(candidate: str, current: str | None) -> bool:
@@ -138,11 +158,15 @@ def coerce_routing_state(value: object) -> RoutingState:
             if isinstance(key, str) and isinstance(value, dict)
         }
 
-    published_at = _routing_map(value.get("published_at"))
+    published_at = {
+        version: timestamp
+        for version, raw in _routing_map(value.get("published_at")).items()
+        if (timestamp := utc_timestamp(raw)) is not None
+    }
     if published_at:
         coerced["published_at"] = published_at
-    latest_since = value.get("latest_since")
-    if isinstance(latest_since, str) and latest_since:
+    latest_since = utc_timestamp(value.get("latest_since"))
+    if latest_since is not None:
         coerced["latest_since"] = latest_since
 
     return coerced

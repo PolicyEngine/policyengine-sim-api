@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from registry_test_support import (
     install_bundle_manifests,
+    install_routing_store,
+    publication_plan,
     versioned_app_name,
 )
+from src.modal.routing_publisher import legacy as routing_legacy
 from src.modal.routing_publisher import state as routing_state
 from src.modal.utils import update_version_registry as registry
 
@@ -117,13 +120,53 @@ def test_a_rollback_moves_latest_since(monkeypatch):
 def test_coerce_keeps_valid_dates_and_drops_malformed_ones():
     coerced = routing_state.coerce_routing_state(
         {
-            "published_at": {"6.10.0": FIRST, "6.9.0": 5, 7: SECOND},
+            "published_at": {
+                "6.10.0": FIRST,
+                "6.10.1": "2026-10-08T11:00:00+02:00",
+                "6.9.0": 5,
+                "6.8.0": "last week",
+                "6.7.0": "2026-10-01T09:00:00",
+                7: SECOND,
+            },
             "latest_since": "",
         }
     )
 
-    assert coerced["published_at"] == {"6.10.0": FIRST}
+    # Kept only as ISO 8601 times with a timezone, normalized to UTC; a time
+    # without a timezone is not a date.
+    assert coerced["published_at"] == {"6.10.0": FIRST, "6.10.1": SECOND}
     assert "latest_since" not in coerced
+
+
+def test_the_deploy_path_records_the_dates_it_plans(monkeypatch, patched_modal):
+    """The deploy workflow plans a publication, records it, then applies it."""
+    original = _publish(monkeypatch, None, "6.10.0", FIRST)
+    store = install_routing_store(patched_modal, original)
+    monkeypatch.setattr(routing_state, "utc_now", lambda: SECOND)
+
+    plan = publication_plan(monkeypatch, original, ("6.10.1", *MODELS["6.10.1"]))
+    registry.record_routing_plan(environment="staging", plan=plan)
+    registry.apply_routing_plan(environment="staging", plan=plan)
+
+    live = store.get("active")
+    assert live["published_at"] == {"6.10.0": FIRST, "6.10.1": SECOND}
+    assert live["latest_since"] == SECOND
+
+
+def test_merging_the_legacy_seed_keeps_the_current_dates(monkeypatch):
+    current = _publish(monkeypatch, None, "6.10.0", FIRST)
+    legacy_seed = routing_legacy.build_legacy_seed_routing_state(
+        policyengine_versions={"6.9.0": versioned_app_name("6.9.0")},
+        us_versions={"latest": "2.1.0", "2.1.0": versioned_app_name("6.9.0")},
+        uk_versions={"latest": "2.120.0", "2.120.0": versioned_app_name("6.9.0")},
+    )
+
+    merged = routing_legacy.merge_legacy_seed_into_current(
+        current_state=current, legacy_seed=legacy_seed
+    )
+
+    assert merged["published_at"] == {"6.10.0": FIRST}
+    assert merged["latest_since"] == FIRST
 
 
 def test_utc_now_is_an_iso_utc_time():

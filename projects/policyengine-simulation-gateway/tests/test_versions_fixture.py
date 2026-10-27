@@ -137,3 +137,17 @@ def test_versions_reports_the_manifest_wrapper_version(mock_modal, client):
     mock_modal["dicts"]["simulation-api-routing-state"]["active"] = state
     bundles = client.get("/versions").json()["bundles"]
     assert bundles["6.2.6"]["uk"]["policyengine_version"] == "6.2.6.post1"
+
+
+def test_versions_reports_only_dates_with_a_timezone(mock_modal, client):
+    """A stored date that is not an ISO 8601 time with a timezone is left out."""
+    state = routing_state()
+    state["published_at"] = {
+        "6.2.6": "2026-09-01T12:00:00+02:00",
+        "6.2.7": "2026-09-08T10:00:00",
+    }
+    state["latest_since"] = "yesterday"
+    mock_modal["dicts"]["simulation-api-routing-state"]["active"] = state
+    body = client.get("/versions").json()
+    assert body["published_at"] == {"6.2.6": "2026-09-01T12:00:00+02:00"}
+    assert body["latest_since"] is None
