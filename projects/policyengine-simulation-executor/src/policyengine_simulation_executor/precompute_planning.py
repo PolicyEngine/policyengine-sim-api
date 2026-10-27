@@ -53,12 +53,12 @@ def cohort_resolution(
     """
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _country_module,
-        _resolve_region,
+        resolve_region,
     )
 
     params = cohort_params(year, group)
     country_module = _country_module(PRECOMPUTE_COUNTRY)
-    resolution = _resolve_region(
+    resolution = resolve_region(
         country_module=country_module,
         country=PRECOMPUTE_COUNTRY,
         params=params,
@@ -123,14 +123,14 @@ class StateDatasetTarget:
 def state_dataset_targets() -> list[StateDatasetTarget]:
     """Return every US state region that loads a non-default dataset, by state code.
 
-    Each state is resolved exactly as a request for it is (``_resolve_region``
+    Each state is resolved exactly as a request for it is (``resolve_region``
     then ``_resolve_dataset_selection``), so a bundle that sends states back to
     the default dataset gets no state files.
     """
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _country_module,
         _resolve_dataset_selection,
-        _resolve_region,
+        resolve_region,
     )
 
     country_module = _country_module(PRECOMPUTE_COUNTRY)
@@ -141,7 +141,7 @@ def state_dataset_targets() -> list[StateDatasetTarget]:
             "region": region.code,
             "time_period": PRECOMPUTE_YEARS[0],
         }
-        resolution = _resolve_region(
+        resolution = resolve_region(
             country_module=country_module, country=PRECOMPUTE_COUNTRY, params=params
         )
         selection = _resolve_dataset_selection(params, region_resolution=resolution)

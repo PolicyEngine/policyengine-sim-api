@@ -24,7 +24,7 @@ from policyengine_simulation_contract.stage12_execution import (
 from policyengine_simulation_executor.simulation_runtime import (
     _country_module,
     _resolve_dataset_selection,
-    _resolve_region,
+    resolve_region,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 from policyengine_simulation_executor.stage12_runtime.output_planning import (
@@ -150,7 +150,7 @@ def _scope_key(year: int, group: tuple[str, ...]) -> str:
         "time_period": str(year),
         "region_group": list(group),
     }
-    resolution = _resolve_region(
+    resolution = resolve_region(
         country_module=_country_module("us"),
         country="us",
         params=params,
@@ -222,7 +222,7 @@ def state_dataset_targets() -> tuple[StateDatasetTarget, ...]:
     """Return every US state region that loads a non-default dataset, by state code.
 
     Each state is resolved as a Stage 12 worker resolves a request for it
-    (``_resolve_region`` then ``_resolve_dataset_selection``), so a bundle
+    (``resolve_region`` then ``_resolve_dataset_selection``), so a bundle
     that sends states back to the default dataset gets no state files.
     """
     country_module = _country_module("us")
@@ -233,7 +233,7 @@ def state_dataset_targets() -> tuple[StateDatasetTarget, ...]:
             "region": region.code,
             "time_period": PRECOMPUTE_YEARS[0],
         }
-        resolution = _resolve_region(
+        resolution = resolve_region(
             country_module=country_module, country="us", params=params
         )
         selection = _resolve_dataset_selection(params, region_resolution=resolution)

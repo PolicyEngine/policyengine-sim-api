@@ -21,7 +21,7 @@ existing store objects (uploads are write-once) — healing a bad artifact
 means deleting its object first, then re-running.
 
 Cohort baselines are built through the executor's own request path
-(``_resolve_region`` + ``_build_simulation`` on a synthetic child request),
+(``resolve_region`` + ``_build_simulation`` on a synthetic child request),
 so scoping, extra variables, and the deterministic simulation id match the
 production child's by construction, not by convention — and a regression
 test asserts the writer and reader derive identical identities. All

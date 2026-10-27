@@ -6,5 +6,3 @@
 # baseline count, in the pull request that splits the file.
 projects/policyengine-simulation-entry/src/policyengine_simulation_entry/app.py
 projects/policyengine-simulation-entry/tests/test_deployment_assets.py
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py
-projects/policyengine-simulation-executor/tests/test_simulation_output_builder.py

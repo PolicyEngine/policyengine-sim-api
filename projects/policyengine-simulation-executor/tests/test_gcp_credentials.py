@@ -7,10 +7,10 @@ import os
 from pathlib import Path
 
 import pytest
-from policyengine_simulation_executor.simulation_runtime import (
+from policyengine_simulation_executor.gcp_credentials import (
     _normalize_credentials_blob,
-    setup_gcp_credentials,
 )
+from policyengine_simulation_executor.simulation_runtime import setup_gcp_credentials
 
 
 def test_setup_gcp_credentials_deletes_temp_file_on_exit(

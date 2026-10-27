@@ -14,7 +14,7 @@ from policyengine_simulation_executor.release_bundle import (
     resolve_local_bundle_dataset_path,
 )
 from policyengine_simulation_executor.simulation_runtime import (
-    _normalise_policy,
+    normalise_policy,
     resolve_data_folder,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
@@ -96,7 +96,7 @@ def _run_non_serving_calculation(country: CountryId) -> None:
         ]
         extra_variables.append("ctc")
         options["spm"] = {"geography_kind": "national"}
-        options["reform"] = _normalise_policy(US_VALIDATION_REFORM)
+        options["reform"] = normalise_policy(US_VALIDATION_REFORM)
     result = country_module.calculate_household(
         people=people,
         year=2026,

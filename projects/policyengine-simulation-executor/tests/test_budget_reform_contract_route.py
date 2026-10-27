@@ -23,9 +23,9 @@ from policyengine.utils.parametric_reforms import (  # noqa: E402
     reform_dict_from_parameter_values,
 )
 from policyengine_simulation_executor.simulation_runtime import (  # noqa: E402
-    _compile_interval_policy,
     _country_module,
-    _normalise_policy,
+    compile_interval_policy,
+    normalise_policy,
 )
 
 CASES = [
@@ -44,14 +44,14 @@ def test_the_api_hands_the_wrapper_each_case_unchanged(case):
     wrapper_form = contract.represent(case, "wrapper.policy")
     if case.expect_error is not None:
         with pytest.raises(ValueError, match=case.expect_error):
-            _compile_interval_policy(
-                _normalise_policy(request), country_module=uk, year=year
+            compile_interval_policy(
+                normalise_policy(request), country_module=uk, year=year
             )
         with pytest.raises(ValueError, match=case.expect_error):
             compile_reform_to_policy(wrapper_form, year=year, model_version=uk.model)
         return
-    through_api = _compile_interval_policy(
-        _normalise_policy(request), country_module=uk, year=year
+    through_api = compile_interval_policy(
+        normalise_policy(request), country_module=uk, year=year
     )
     through_wrapper = compile_reform_to_policy(
         wrapper_form, year=year, model_version=uk.model

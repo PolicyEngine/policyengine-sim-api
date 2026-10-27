@@ -70,7 +70,7 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
     )
     monkeypatch.setattr(
         simulation_runtime,
-        "_resolve_region",
+        "resolve_region",
         lambda **_kwargs: region,
     )
 
@@ -183,7 +183,7 @@ def test_stage12_area_run_needs_every_column_its_outputs_read_before_simulating(
     )
     monkeypatch.setattr(
         simulation_runtime,
-        "_resolve_region",
+        "resolve_region",
         lambda **_: RegionResolution(
             code=region_code, dataset_reference=_UK_LOCAL_AREA_DATASET
         ),
@@ -270,7 +270,7 @@ def test_stage12_state_run_without_a_baked_file_loads_on_demand(monkeypatch) -> 
 
 def _runtime_region_type(country: str, region: str | None) -> str | None:
     """Return the region type the runtime's own region normalisation implies."""
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.region_resolution import (
         _normalise_region_code,
     )
 
