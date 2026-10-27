@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 from conftest import make_settings
-from policyengine_simulation_entry.config import ConfigurationError
+from policyengine_simulation_entry.config import ConfigurationError, Settings
 
 
 def test_production_refuses_disabled_auth():
@@ -335,3 +335,43 @@ def test_the_simulation_database_url_must_be_canonical(database_url):
         make_settings(simulation_database_url=database_url).validate()
 
     assert "secret" not in str(error.value)
+
+
+def test_call_reports_are_off_without_a_modal_workspace(monkeypatch):
+    monkeypatch.delenv("SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID", raising=False)
+    monkeypatch.delenv("SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.expected_modal_caller is None
+
+
+def test_call_reports_expect_the_configured_workspace_and_environment(monkeypatch):
+    monkeypatch.setenv("SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID", "ac-workspace0001")
+    monkeypatch.setenv("SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT", "staging")
+
+    expected = Settings.from_env().expected_modal_caller
+
+    assert expected is not None
+    assert expected.workspace_id == "ac-workspace0001"
+    assert expected.environment_name == "staging"
+
+
+@pytest.mark.parametrize(
+    ("workspace", "environment"),
+    [
+        ("ac-workspace0001", ""),
+        ("", "staging"),
+        ("workspace0001", "staging"),
+        ("ac-workspace0001", "Not An Environment"),
+    ],
+    ids=["no-environment", "no-workspace", "not-a-workspace-id", "bad-environment"],
+)
+def test_call_report_settings_must_name_one_modal_workspace_and_environment(
+    workspace, environment
+):
+    with pytest.raises(ConfigurationError, match="SIMULATION_CALL_REPORT"):
+        make_settings(
+            call_report_modal_workspace_id=workspace,
+            call_report_modal_environment=environment,
+        ).validate()
