@@ -35,6 +35,7 @@ from policyengine_simulation_persistence import (
     NewSimulation,
     NewSimulationRun,
     PolicyParametersMissingError,
+    ReportKind,
     RunErrorCode,
     RunStatus,
     RunTrigger,
@@ -545,3 +546,30 @@ def test_only_comparisons_whose_call_started_are_counted() -> None:
     assert path.runs.report_runs_by_id[report_run.id].comparison_status is (
         RunStatus.FAILED
     )
+
+
+def test_catalog_rows_a_call_cannot_carry_refuse_the_submission_first() -> None:
+    path = _Path()
+    path.catalog.populations["state/ca"] = replace(CALIFORNIA, state_code="california")
+
+    with pytest.raises(EconomyRequestError, match="state/ca"):
+        path.submit()
+
+    assert path.reports.rows == {}
+    assert path.runs.simulation_runs == {}
+
+
+def test_a_household_report_cannot_be_run_on_the_economy_path() -> None:
+    path = _Path()
+    report, _ = path.submit()
+    path.reports.rows[report.id] = replace(report, kind=ReportKind.HOUSEHOLD)
+
+    with pytest.raises(ReportNotFoundError):
+        asyncio.run(
+            path.economy.run_report(
+                report.id,
+                policyengine_version="6.7.5",
+                trigger=RunTrigger.MANUAL,
+                force=False,
+            )
+        )

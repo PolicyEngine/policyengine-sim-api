@@ -208,8 +208,8 @@ class EconomyReports:
             msg = f"no report {report_id}"
             raise ReportNotFoundError(msg)
         if report.kind is not ReportKind.ECONOMY or report.reform_simulation_id is None:
-            msg = "only an economy report runs on the economy path"
-            raise EconomyRequestError(msg)
+            msg = f"no economy report {report_id}"
+            raise ReportNotFoundError(msg)
         if report.options:
             msg = "economy reports take no options yet"
             raise EconomyRequestError(msg)
@@ -244,11 +244,22 @@ class EconomyReports:
             msg = "an economy simulation names its region"
             raise EconomyRequestError(msg)
         try:
-            return await asyncio.to_thread(
+            population = await asyncio.to_thread(
                 self.catalog.population, version, region_code, dataset_name
             )
         except CatalogError as error:
             raise EconomyRequestError(str(error)) from error
+        # Refuse catalog rows a call could not carry before anything is
+        # written or started.
+        try:
+            catalog_population(population)
+        except ValueError as error:
+            msg = (
+                f"the catalog's {region_code} cannot be sent to a calculation: "
+                f"{type(error).__name__}"
+            )
+            raise EconomyRequestError(msg) from error
+        return population
 
     async def _plan(
         self, version: CatalogVersion, simulation: SimulationRecord
