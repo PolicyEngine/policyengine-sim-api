@@ -10,19 +10,23 @@ catalog version and a stored household. The test reads the staging Public
 API's US catalog version for the deployed PolicyEngine.py version (or, when
 the Public API has not published that version yet, its current one) and
 stores a one-person household there, which returns the same household each
-time. It then submits the calculation, forced so each deploy starts a new
-Modal call, polls until it succeeds or fails within a bounded time, and
-reads the result back.
+time. It then submits that household, as stored, forced so each deploy
+starts a new Modal call, polls until it succeeds or fails within a bounded
+time, and reads the result back. An answer asking to retry (503 with
+``Retry-After``) is retried after its wait, within the same time bound.
 """
 
 from __future__ import annotations
 
 import os
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 STAGING_HOUSEHOLD_TEST_FLAG = "SIMULATION_STAGING_HOUSEHOLD_TEST"
 pytestmark = pytest.mark.skipif(
@@ -36,7 +40,8 @@ POLL_INTERVAL_SECONDS = 5
 # model, about a minute; the rest allows for a queued container and for the
 # call's report to be recorded.
 CALCULATION_DEADLINE_SECONDS = 600
-# One adult in California, as the Public API stores it.
+# One adult in California, as the Public API stores it, asking for the
+# household's net income.
 STORED_HOUSEHOLD = {
     "people": [
         {
@@ -55,15 +60,20 @@ STORED_HOUSEHOLD = {
         }
     ],
     "household": [
-        {"id": "your household", "values": {"state_name": {str(YEAR): "CA"}}}
+        {
+            "id": "your household",
+            "values": {
+                "state_name": {str(YEAR): "CA"},
+                "household_net_income": {str(YEAR): None},
+            },
+        }
     ],
     "family": [{"id": "your family", "values": {}}],
     "tax_unit": [{"id": "your tax unit", "values": {}}],
     "spm_unit": [{"id": "your spm unit", "values": {}}],
     "marital_unit": [{"id": "your marital unit", "values": {}}],
 }
-# The same household in the situation shape the household functions take,
-# asking for its net income.
+# The same household in the situation shape the household functions take.
 SITUATION = {
     "people": {
         "you": {"age": {str(YEAR): 40}, "employment_income": {str(YEAR): 30_000}}
@@ -156,16 +166,37 @@ def stored_household_id(public_api_url: str) -> str:
     return response.json()["result"]["item"]["id"]
 
 
+def answer_within(
+    send: Callable[[], httpx.Response], deadline: float
+) -> httpx.Response:
+    """Send until the service answers other than 503, or the deadline passes.
+
+    A 503 asks to retry after its ``Retry-After`` wait; the last answer is
+    returned when the deadline would pass first.
+    """
+    while True:
+        response = send()
+        if response.status_code != httpx.codes.SERVICE_UNAVAILABLE:
+            return response
+        wait = float(response.headers.get("retry-after", POLL_INTERVAL_SECONDS))
+        if time.monotonic() + wait >= deadline:
+            return response
+        time.sleep(wait)
+
+
 def poll_until_finished(
     base_url: str, calculation_id: str, authorization: dict[str, str]
 ) -> dict[str, Any]:
     """Poll the calculation until it succeeds or fails, within the deadline."""
     deadline = time.monotonic() + CALCULATION_DEADLINE_SECONDS
     while True:
-        response = httpx.get(
-            f"{base_url}/v2/household-calculations/{calculation_id}",
-            headers=authorization,
-            timeout=30,
+        response = answer_within(
+            lambda: httpx.get(
+                f"{base_url}/v2/household-calculations/{calculation_id}",
+                headers=authorization,
+                timeout=30,
+            ),
+            deadline,
         )
         assert response.status_code == httpx.codes.OK, response.text
         calculation = response.json()
@@ -184,18 +215,22 @@ def test_a_household_calculation_succeeds_and_reads_back(
     catalog = catalog_version(
         public_api_url, _required("SIMULATION_STAGING_TEST_POLICYENGINE_VERSION")
     )
-    submitted = httpx.post(
-        f"{base_url}/v2/household-calculations",
-        json={
-            "country": "us",
-            **catalog,
-            "year": YEAR,
-            "household_id": stored_household_id(public_api_url),
-            "household": SITUATION,
-            "force": True,
-        },
-        headers=authorization,
-        timeout=60,
+    household_id = stored_household_id(public_api_url)
+    submitted = answer_within(
+        lambda: httpx.post(
+            f"{base_url}/v2/household-calculations",
+            json={
+                "country": "us",
+                **catalog,
+                "year": YEAR,
+                "household_id": household_id,
+                "household": SITUATION,
+                "force": True,
+            },
+            headers=authorization,
+            timeout=60,
+        ),
+        time.monotonic() + CALCULATION_DEADLINE_SECONDS,
     )
     assert submitted.status_code == httpx.codes.ACCEPTED, submitted.text
     calculation_id = submitted.json()["calculation_id"]

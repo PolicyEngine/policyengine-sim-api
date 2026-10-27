@@ -7,6 +7,10 @@ only in staging, and only when the deploy also deployed the v2 application.
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+
+import httpx
 from test_deployment_assets_support import REUSABLE_DEPLOY_WORKFLOW, workflow_jobs
 
 JOB_NAME = "staging_household_test"
@@ -82,3 +86,67 @@ def test_other_runs_of_the_deployed_tests_skip_the_household_test() -> None:
     ]
 
     assert flagged == [JOB_NAME]
+
+
+def _staging_test_module():
+    """Load the staging household test module, which the deployed job runs."""
+    path = Path(__file__).resolve().parents[1] / TEST_FILE
+    specification = importlib.util.spec_from_file_location(
+        "staging_household_calculation", path
+    )
+    assert specification is not None
+    assert specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def test_the_stored_household_requests_the_same_values_it_calculates() -> None:
+    """The calculation sends the stored household as stored, in its other shape."""
+    module = _staging_test_module()
+    stored = module.STORED_HOUSEHOLD["household"][0]["values"]
+    calculated = module.SITUATION["households"]["your household"]
+
+    assert stored == {
+        name: values for name, values in calculated.items() if name != "members"
+    }
+
+
+class ScriptedAnswers:
+    """Answer each request with the next scripted status and body."""
+
+    def __init__(self, answers: list[tuple[int, dict]]) -> None:
+        """Keep the answers in order."""
+        self.answers = list(answers)
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Return the next answer."""
+        self.requests.append(request)
+        status, body = self.answers.pop(0)
+        headers = (
+            {"Retry-After": "1"} if status == httpx.codes.SERVICE_UNAVAILABLE else {}
+        )
+        return httpx.Response(status, json=body, headers=headers)
+
+
+def test_polling_waits_out_a_service_that_asks_to_retry(monkeypatch) -> None:
+    module = _staging_test_module()
+    answers = ScriptedAnswers(
+        [
+            (503, {"detail": "The simulation database could not be reached."}),
+            (200, {"status": "running"}),
+            (200, {"status": "succeeded", "result": {}}),
+        ]
+    )
+    waits: list[float] = []
+    monkeypatch.setattr(module.time, "sleep", waits.append)
+    monkeypatch.setattr(
+        module.httpx, "get", httpx.Client(transport=httpx.MockTransport(answers)).get
+    )
+
+    finished = module.poll_until_finished("https://stable.example", "id", {})
+
+    assert finished["status"] == "succeeded"
+    assert len(answers.requests) == 3
+    assert waits == [1.0, module.POLL_INTERVAL_SECONDS]
