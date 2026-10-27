@@ -91,6 +91,12 @@ these requests. `beta` does not promote its candidate yet, so in staging the
 main URL reaches an older revision until it does (plan item 1.39), and
 staging calls are recorded by the safety check only once it exists there.
 
+Household calculations (`POST /v2/household-calculations`, see the README)
+start the v2 household functions' calls in the same Modal environment,
+`SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT`, with the same token, and read the
+v2 version manifest there; they need no other setting. Their outcomes are
+recorded like any other call's: on the call's report, or by the safety check.
+
 ## Safety check
 
 A call whose report never arrives is recorded by the safety check, the Cloud

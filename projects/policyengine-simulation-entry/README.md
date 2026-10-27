@@ -25,6 +25,29 @@ They qualify tagged Cloud Run candidates before an environment's stable traffic
 changes and verify its stable endpoint immediately after promotion, in both
 staging and production.
 
+## Household calculations
+
+`POST /v2/household-calculations` records a household calculation, one
+household under one policy for a catalog version and year, and starts its
+Modal call; `GET /v2/household-calculations/{calculation_id}` returns its
+status and, once it succeeded, the calculated household with its warnings,
+the SPM selection it applied (`spm_config`), its SPM receipt
+(`spm_provenance`) and its bundle, or, once it failed, its error. The Public
+API sends the household in the situation shape with its saved SPM choice
+and the policy's parameter values, because this service cannot read the
+Public API's tables; the database checks that the household, policy and
+catalog version exist.
+
+Each calculation is a simulation run of a household simulation (household,
+policy and options such as axes), so the same calculation submitted again
+reuses its run while it is unfinished or once it succeeded, unless `force`
+is set. The household function comes from the v2 version manifest for the
+calculation's PolicyEngine.py version, in the v2 application's Modal
+environment (`SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT`). The function
+reports when its call ends, and the outcome is recorded then
+(`DEPLOYMENT.md`, "Recording run outcomes"). Without the simulation database
+or that environment, the routes answer 503.
+
 ## Caller authentication and permissions
 
 Protected routes accept Auth0 RS256 access tokens issued by
@@ -38,6 +61,8 @@ Auth0 permission:
 | `POST /simulate/economy/budget-window` | `simulation:submit` |
 | `GET /jobs/{job_id}` | `simulation:read` |
 | `GET /budget-window-jobs/{batch_job_id}` | `simulation:read` |
+| `POST /v2/household-calculations` | `simulation:submit` |
+| `GET /v2/household-calculations/{calculation_id}` | `simulation:read` |
 | `POST /internal/stage12/reports` | `stage12:operate` |
 | `GET /internal/stage12/reports/{evaluation_id}` | `stage12:operate` |
 

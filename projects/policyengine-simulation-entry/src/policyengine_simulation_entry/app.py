@@ -71,6 +71,10 @@ from policyengine_simulation_entry.entry_runtime import (
     route_template,
     set_observability_header,
 )
+from policyengine_simulation_entry.household_routes import (
+    HouseholdCalculations,
+    register_household_calculation_routes,
+)
 from policyengine_simulation_entry.modal_identity import ModalIdentityVerifier
 from policyengine_simulation_entry.schemas import (
     SimulationDatabaseReadiness,
@@ -107,16 +111,19 @@ SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS = 3.0
 
 @dataclass(frozen=True)
 class RunServices:
-    """The simulation database and the call-ended route's seams, for tests.
+    """The simulation database and the v2 routes' seams, for tests.
 
     ``create_app`` builds each one it is not given: the database from
-    ``SIMULATION_DATABASE_URL``, the call recorder from that database, and the
-    Modal identity verifier from the expected Modal caller.
+    ``SIMULATION_DATABASE_URL``, the call recorder from that database, the
+    Modal identity verifier from the expected Modal caller, and the household
+    calculations from the database and the v2 application's Modal
+    environment.
     """
 
     database: SimulationDatabaseConnection | None = None
     call_recorder: CallReportRecorder | None = None
     modal_identity_verifier: ModalCallerVerifier | None = None
+    household_calculations: HouseholdCalculations | None = None
 
 
 def _temporary_submission_payload(
@@ -597,6 +604,15 @@ def create_app(
     expected_modal_caller = runtime_settings.expected_modal_caller
     if modal_identity_verifier is None and expected_modal_caller is not None:
         modal_identity_verifier = ModalIdentityVerifier(expected_modal_caller)
+    household_calculations = services.household_calculations
+    if (
+        household_calculations is None
+        and isinstance(runtime_database, SimulationDatabase)
+        and runtime_settings.v2_modal_environment
+    ):
+        household_calculations = runtime_database.household_calculations(
+            runtime_settings.v2_modal_environment
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -659,6 +675,12 @@ def create_app(
         reader=simulation_reader,
     )
     _register_service_routes(app, entry)
+    register_household_calculation_routes(
+        app,
+        household_calculations,
+        submitter=simulation_submitter,
+        reader=simulation_reader,
+    )
     register_call_report_route(
         app, verifier=modal_identity_verifier, recorder=call_recorder
     )

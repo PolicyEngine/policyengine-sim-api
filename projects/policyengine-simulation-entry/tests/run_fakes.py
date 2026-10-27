@@ -431,6 +431,10 @@ class FakeRunTransitions:
                 and run.updated_at < claimed_before
             ):
                 run.status = RunStatus.FAILED
+                run.error = RunError(
+                    RunErrorCode.DISPATCH_ABANDONED,
+                    "No Modal call was recorded for the dispatch in time.",
+                )
                 failed_runs.append(run.id)
         failed_comparisons = []
         for comparison in self.comparisons.values():
