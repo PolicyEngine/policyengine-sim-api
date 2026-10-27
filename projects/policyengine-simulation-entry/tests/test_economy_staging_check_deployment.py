@@ -91,3 +91,17 @@ def test_the_check_is_skipped_wherever_it_is_not_asked_for() -> None:
 
     assert result.returncode == 0, result.stdout
     assert "1 skipped" in result.stdout
+
+
+def test_the_staging_deployment_promotes_so_the_check_runs() -> None:
+    """The check runs after the promotion, which every staging caller asks for."""
+    for workflow in ("simulation-deploy.yml", "stage12-deploy.yml"):
+        path = REPOSITORY_ROOT / ".github" / "workflows" / workflow
+        jobs = yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]
+        staging = [
+            job
+            for job in jobs.values()
+            if job.get("with", {}).get("deployment_environment") == "staging"
+        ]
+        assert staging, workflow
+        assert all(job["with"]["promote_entrypoint"] is True for job in staging)
