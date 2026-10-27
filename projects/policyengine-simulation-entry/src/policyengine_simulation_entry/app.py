@@ -329,6 +329,9 @@ def _register_simulation_routes(
                 "description": "Invalid request or SPM selection",
                 "model": SimulationErrorResponse,
             },
+            500: {
+                "description": "Server failure (redacted error with a correlation ID)"
+            },
         },
         dependencies=[Depends(submitter)],
     )
@@ -367,6 +370,9 @@ def _register_simulation_routes(
             400: {
                 "description": "Invalid request or SPM selection",
                 "model": SimulationErrorResponse,
+            },
+            500: {
+                "description": "Server failure (redacted error with a correlation ID)"
             },
         },
         dependencies=[Depends(submitter)],
