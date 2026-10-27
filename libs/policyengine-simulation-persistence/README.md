@@ -39,7 +39,10 @@ options (compared by value), or creates it. The Public API's households and
 policies never change once stored, so a calculation submitted again finds
 the same simulation, and `RunStore.start_simulation_run` reuses its run.
 Two racing submissions may each create the simulation; later ones find the
-older row.
+older row. `start_run` starts or reuses its run, as `RunStore` does, and
+`read_calculation` returns the run (status, timings, error and error
+detail), its simulation and, once it succeeded, the computed household; an
+economy run is not a household calculation and reads as none.
 
 ### Runs
 

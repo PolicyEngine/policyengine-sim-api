@@ -20,6 +20,7 @@ from policyengine_simulation_persistence.engine import (
     read_schema_revision,
 )
 from policyengine_simulation_persistence.household_calculations import (
+    HouseholdCalculation,
     HouseholdCalculationStore,
 )
 from policyengine_simulation_persistence.household_results import (
@@ -88,6 +89,7 @@ __all__ = [
     "EconomyComparisonRecorder",
     "EconomyResultLabels",
     "GeographyLabel",
+    "HouseholdCalculation",
     "HouseholdCalculationStore",
     "HouseholdOutput",
     "NewReport",
