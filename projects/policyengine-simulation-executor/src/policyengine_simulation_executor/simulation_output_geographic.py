@@ -227,10 +227,12 @@ def _should_build_us_congressional_district_impact(region_code: str | None) -> b
 
     Only state runs do, such as ``state/ca`` in any case. National runs (no
     region, or ``us``) and region-group runs compute none, so neither do
-    segmented national runs, their reduce or Stage 12 aggregation: a
-    nationwide report takes its districts from a separate run of each state
-    on that state's dataset, which gives each district the same figures as
-    its state's own report. District and place runs compute none either.
+    segmented national runs, their reduce or Stage 12 aggregation of a
+    national report: a nationwide report takes its districts from a separate
+    run of each state on that state's dataset, which gives each district the
+    same figures as its state's own report. Stage 12 aggregation of a state
+    report still computes that state's districts. District and place runs
+    compute none.
     """
     return region_code is not None and region_code.lower().startswith("state/")
 
