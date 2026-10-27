@@ -21,7 +21,7 @@ from policyengine_simulation_executor.stage12_runtime import (
 from policyengine_simulation_executor.stage12_runtime.partition import (
     US_REGION_GROUPS,
 )
-from test_stage12_runtime import _planned_simulation
+from stage12_runtime_support import planned_simulation
 
 if TYPE_CHECKING:
     from policyengine_observability import ObservabilityRuntime
@@ -107,7 +107,7 @@ def _results(simulation) -> list[dict]:
 
 
 def _runner(*, errors: dict[int, list[Exception]] | None = None):
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     function = FakeFunction(_results(simulation), errors or {})
 
     class FunctionLookup:

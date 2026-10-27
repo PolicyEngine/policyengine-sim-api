@@ -11,4 +11,3 @@ projects/policyengine-simulation-executor/src/policyengine_simulation_executor/s
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/stage12_cache/precompute.py
 projects/policyengine-simulation-executor/tests/test_precompute.py
 projects/policyengine-simulation-executor/tests/test_simulation_output_builder.py
-projects/policyengine-simulation-executor/tests/test_stage12_runtime.py
