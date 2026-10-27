@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from policyengine_simulation_entry.app import create_app
 
@@ -48,6 +48,9 @@ EXPECTED_ROUTES = {
 # none of them or their bodies.
 V2_SCHEMAS = (
     "ComparisonResponse",
+    "EconomyErrorResponse",
+    "EconomyRefusalResponse",
+    "EconomyRequestFieldError",
     "EconomyReportResponse",
     "EconomyReportRunRequest",
     "EconomyReportRunResponse",
@@ -224,3 +227,55 @@ def test_v2_economy_routes_are_public_for_the_generated_client():
         "run_economy_report"
     )
     assert set(V2_SCHEMAS) <= set(spec["components"]["schemas"])
+
+
+V2_ERROR_ANSWERS = {
+    ("POST", "/v2/economy-reports"): {
+        "422": "EconomyRefusalResponse",
+        "503": "EconomyErrorResponse",
+    },
+    **{
+        operation: {
+            "404": "EconomyErrorResponse",
+            "422": "EconomyRefusalResponse",
+            "503": "EconomyErrorResponse",
+        }
+        for operation in (
+            ("GET", "/v2/economy-reports/{report_id}"),
+            ("GET", "/v2/economy-reports/by-legacy-id/{legacy_report_id}"),
+            ("POST", "/v2/economy-reports/{report_id}/runs"),
+            ("GET", "/v2/economy-reports/{report_id}/runs"),
+            ("GET", "/v2/simulations/{simulation_id}"),
+        )
+    },
+}
+
+
+def test_v2_routes_declare_each_error_answer_with_its_body():
+    """The generated client parses sim's own refusals, not only FastAPI's."""
+    spec = cast("dict[str, Any]", create_app().openapi())
+
+    declared = {
+        (method, path): {
+            status: answer["content"]["application/json"]["schema"]["$ref"].rpartition(
+                "/"
+            )[2]
+            for status, answer in spec["paths"][path][method.lower()][
+                "responses"
+            ].items()
+            if not status.startswith("2")
+        }
+        for method, path in V2_ERROR_ANSWERS
+    }
+
+    assert declared == V2_ERROR_ANSWERS
+    refusal_detail = spec["components"]["schemas"]["EconomyRefusalResponse"][
+        "properties"
+    ]["detail"]
+    assert refusal_detail["anyOf"] == [
+        {"type": "string"},
+        {
+            "items": {"$ref": "#/components/schemas/EconomyRequestFieldError"},
+            "type": "array",
+        },
+    ]

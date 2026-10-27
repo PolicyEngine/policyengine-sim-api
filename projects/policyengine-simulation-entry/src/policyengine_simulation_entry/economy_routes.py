@@ -15,6 +15,11 @@
 Status reads only read. Submissions need ``simulation:submit`` and reads
 ``simulation:read``. Without the simulation database, or the Modal
 environment sim starts calls in, every route answers 503.
+
+Each route declares its error answers in the OpenAPI document, so the
+generated client parses them: 404 and 503 as ``EconomyErrorResponse``, and
+422 as ``EconomyRefusalResponse``, whose ``detail`` is sim's reason as text
+or FastAPI's list of refused fields.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID  # noqa: TC003  # FastAPI evaluates the handlers' path parameters
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -39,6 +44,8 @@ from policyengine_simulation_entry.economy_report_types import (
 )
 from policyengine_simulation_entry.economy_schemas import (
     ComparisonResponse,
+    EconomyErrorResponse,
+    EconomyRefusalResponse,
     EconomyReportResponse,
     EconomyReportRunRequest,
     EconomyReportRunResponse,
@@ -69,6 +76,31 @@ if TYPE_CHECKING:
     from policyengine_simulation_entry.economy_reports import EconomyReports
 
 logger = logging.getLogger(__name__)
+
+REFUSED: dict[int | str, dict[str, Any]] = {
+    status.HTTP_422_UNPROCESSABLE_ENTITY: {
+        "model": EconomyRefusalResponse,
+        "description": (
+            "Refused: sim cannot run the request (its reason as text), or a "
+            "request field is invalid (one entry per field)"
+        ),
+    },
+}
+NOT_FOUND: dict[int | str, dict[str, Any]] = {
+    status.HTTP_404_NOT_FOUND: {
+        "model": EconomyErrorResponse,
+        "description": "No such economy report or simulation",
+    },
+}
+UNAVAILABLE: dict[int | str, dict[str, Any]] = {
+    status.HTTP_503_SERVICE_UNAVAILABLE: {
+        "model": EconomyErrorResponse,
+        "description": (
+            "The simulation database cannot be reached, or economy reports "
+            "are not configured on this deployment"
+        ),
+    },
+}
 
 
 class ResultReader(Protocol):
@@ -338,6 +370,7 @@ def register_economy_routes(
         status_code=status.HTTP_201_CREATED,
         response_model=EconomyReportResponse,
         operation_id="submit_economy_report",
+        responses={**REFUSED, **UNAVAILABLE},
         dependencies=[Depends(submitter)],
     )
     async def submit_economy_report(
@@ -366,6 +399,7 @@ def register_economy_routes(
         "/v2/economy-reports/by-legacy-id/{legacy_report_id}",
         response_model=EconomyReportResponse,
         operation_id="get_economy_report_by_legacy_id",
+        responses={**NOT_FOUND, **REFUSED, **UNAVAILABLE},
         dependencies=[Depends(reader)],
     )
     async def get_economy_report_by_legacy_id(
@@ -382,6 +416,7 @@ def register_economy_routes(
         "/v2/economy-reports/{report_id}",
         response_model=EconomyReportResponse,
         operation_id="get_economy_report",
+        responses={**NOT_FOUND, **REFUSED, **UNAVAILABLE},
         dependencies=[Depends(reader)],
     )
     async def get_economy_report(report_id: UUID) -> EconomyReportResponse:
@@ -395,6 +430,7 @@ def register_economy_routes(
         status_code=status.HTTP_201_CREATED,
         response_model=EconomyReportRunResponse,
         operation_id="run_economy_report",
+        responses={**NOT_FOUND, **REFUSED, **UNAVAILABLE},
         dependencies=[Depends(submitter)],
     )
     async def run_economy_report(
@@ -417,6 +453,7 @@ def register_economy_routes(
         "/v2/economy-reports/{report_id}/runs",
         response_model=EconomyReportRunsResponse,
         operation_id="list_economy_report_runs",
+        responses={**NOT_FOUND, **REFUSED, **UNAVAILABLE},
         dependencies=[Depends(reader)],
     )
     async def list_economy_report_runs(report_id: UUID) -> EconomyReportRunsResponse:
@@ -429,6 +466,7 @@ def register_economy_routes(
         "/v2/simulations/{simulation_id}",
         response_model=SimulationResponse,
         operation_id="get_simulation",
+        responses={**NOT_FOUND, **REFUSED, **UNAVAILABLE},
         dependencies=[Depends(reader)],
     )
     async def get_simulation(simulation_id: UUID) -> SimulationResponse:

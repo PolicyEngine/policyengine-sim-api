@@ -19,6 +19,10 @@ from policyengine_simulation_entry.economy_routes import (
     EconomyReportReads,
     EconomyRouteServices,
 )
+from policyengine_simulation_entry.economy_schemas import (
+    EconomyErrorResponse,
+    EconomyRefusalResponse,
+)
 from policyengine_simulation_entry.run_dispatch import RunDispatchService
 from policyengine_simulation_persistence import RunErrorCode, RunStatus
 from run_fakes import FakeDispatcher
@@ -248,6 +252,34 @@ def test_a_request_sim_cannot_serve_is_refused(
     assert "detail" in response.json()
 
 
+@pytest.mark.parametrize(
+    ("route_request", "status", "detail_kind"),
+    [
+        (
+            ("post", "/v2/economy-reports", {**SUBMISSION, "options": {"spm": {}}}),
+            422,
+            str,
+        ),
+        (("post", "/v2/economy-reports", {**SUBMISSION, "country": "ca"}), 422, list),
+        (("get", "/v2/economy-reports/not-a-report-id", None), 422, list),
+        (("get", f"/v2/economy-reports/{uuid4()}", None), 404, str),
+        (("get", f"/v2/simulations/{uuid4()}", None), 404, str),
+    ],
+)
+def test_each_error_answer_has_the_body_the_routes_declare(
+    economy_path, route_request, status, detail_kind
+) -> None:
+    method, path, body = route_request
+    response = getattr(economy_path.client, method)(
+        path, **({} if body is None else {"json": body})
+    )
+
+    assert response.status_code == status
+    declared = EconomyRefusalResponse if status == 422 else EconomyErrorResponse
+    answer = declared.model_validate(response.json())
+    assert isinstance(answer.detail, detail_kind)
+
+
 def test_the_routes_answer_503_without_a_simulation_database() -> None:
     with TestClient(
         create_app(
@@ -259,6 +291,7 @@ def test_the_routes_answer_503_without_a_simulation_database() -> None:
         response = client.post("/v2/economy-reports", json=SUBMISSION)
 
     assert response.status_code == 503
+    assert isinstance(EconomyErrorResponse.model_validate(response.json()).detail, str)
 
 
 def _uuid(value: str):

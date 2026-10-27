@@ -156,3 +156,28 @@ class EconomyReportResponse(BaseModel):
     status: ReportStatus
     run: EconomyReportRunResponse | None
     result: SingleYearMacroOutput | None
+
+
+class EconomyErrorResponse(BaseModel):
+    """Why sim did not answer the request: no such record, or not available."""
+
+    detail: str
+
+
+class EconomyRequestFieldError(BaseModel):
+    """One request field FastAPI's validation refused."""
+
+    loc: list[str | int]
+    msg: str
+    type: str
+
+
+class EconomyRefusalResponse(BaseModel):
+    """A refused request (422).
+
+    ``detail`` is text when sim refuses a request it cannot run (an unknown
+    catalog version, region or dataset, or options), and one entry per field
+    when FastAPI's validation refuses the request's fields.
+    """
+
+    detail: str | list[EconomyRequestFieldError]
