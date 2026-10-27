@@ -6,8 +6,9 @@
 It connects with the URL in ``SIMULATION_DATABASE_URL``, which must log in as
 the runtime role, to a database at the revision this code expects. Before it
 connects it checks the definitions file and, for a run, that the output file
-does not exist yet. A run writes the output file at the end; a dry run writes
-nothing. Both print a JSON summary on standard output.
+does not exist yet and that its directory exists and can be written to. A run
+writes the output file at the end; a dry run writes nothing. Both print a JSON
+summary on standard output.
 
 Exit status: 0 when every report was provisioned (or, in a dry run, would be);
 1 when some reports failed (or would fail), which the summary and a run's

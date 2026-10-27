@@ -190,7 +190,7 @@ class _Provisioner:
             ]
             existing_report = self._existing_report(definition, known_ids)
             if existing_report is not None:
-                self._record(definition, existing_report.id, created=False)
+                self._map_report(definition, existing_report.id, created=False)
             elif self.dry_run:
                 self._count_creations(definition, known_ids)
             else:
@@ -243,7 +243,8 @@ class _Provisioner:
                 f"{subject} is already migrated, with simulations this run would create"
             )
             raise DefinitionRejectedError(msg)
-        _check_matches(record, _new_report(definition, simulation_ids), subject)
+        baseline_id, reform_id = _baseline_and_reform(simulation_ids)
+        _check_matches(record, definition.new_report(baseline_id, reform_id), subject)
         return record
 
     def _count_creations(
@@ -270,12 +271,11 @@ class _Provisioner:
             )
         ]
         subject = f"v1 report {definition.legacy_report_id}"
-        new_report = _new_report(definition, simulation_ids)
+        new_report = definition.new_report(*_baseline_and_reform(simulation_ids))
         record = _create(lambda: self.report_store.create_migrated(new_report), subject)
         # Another writer may have created the report since it was read.
         _check_matches(record, new_report, subject)
-        self.result.new_reports += 1
-        self._record(definition, record.id, created=True)
+        self._map_report(definition, record.id, created=True)
 
     def _created_simulation_id(
         self, definition: ReportDefinition, simulation: SimulationDefinition
@@ -294,10 +294,13 @@ class _Provisioner:
         self.result.new_simulations += 1
         return record.id
 
-    def _record(
+    def _map_report(
         self, definition: ReportDefinition, report_id: UUID, *, created: bool
     ) -> None:
-        if not created:
+        """Add the report to the mapping and count it as new or existing."""
+        if created:
+            self.result.new_reports += 1
+        else:
             self.result.existing_reports += 1
         self.result.reports.append(
             ProvisionedReport(
@@ -308,10 +311,13 @@ class _Provisioner:
         )
 
 
-def _new_report(definition: ReportDefinition, simulation_ids: list[UUID]) -> NewReport:
-    return definition.new_report(
-        simulation_ids[0], simulation_ids[1] if len(simulation_ids) > 1 else None
-    )
+def _baseline_and_reform(simulation_ids: list[UUID]) -> tuple[UUID, UUID | None]:
+    """Split v2 simulation IDs listed in the order of ``simulations()``.
+
+    That order is the baseline, then the reform if the report has one.
+    """
+    baseline_id, *reform_ids = simulation_ids
+    return baseline_id, reform_ids[0] if reform_ids else None
 
 
 def provision_reports(

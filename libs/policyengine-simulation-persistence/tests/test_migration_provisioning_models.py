@@ -1,8 +1,11 @@
 """Every Pydantic model of migration provisioning resolves its annotations.
 
-The repository's runtime-evaluated-models guard imports other packages, so
-this module checks the provisioning models the same way: each module imports
-cleanly, and each model it defines builds its validators.
+The repository's runtime-evaluated-models guard imports other packages. This
+module covers one half of what it checks for the provisioning models: each
+module imports without running anything, and each model it defines builds its
+validators. It does not check how Ruff resolves the models' base classes; every
+model here derives from ``pydantic.BaseModel`` within its own module, which
+Ruff follows.
 """
 
 from __future__ import annotations
