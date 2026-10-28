@@ -1196,6 +1196,17 @@
           "difference": {
             "type": "number",
             "title": "Difference"
+          },
+          "is_tax": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Tax"
           }
         },
         "additionalProperties": false,
@@ -1206,7 +1217,7 @@
           "difference"
         ],
         "title": "DetailedBudgetProgramOutput",
-        "description": "Baseline and reform totals for one program.\n\n``difference`` is reform minus baseline."
+        "description": "Baseline and reform totals for one program.\n\n``difference`` is reform minus baseline. ``is_tax`` says whether the\nprogram is a tax (its rise adds to the budget) or a benefit (its rise is\nspending); it is None in outputs built before the flag was recorded."
       },
       "GenderPovertyOutput": {
         "properties": {
