@@ -241,7 +241,8 @@ def test_with_axes_a_failed_value_is_one_null_per_point_with_a_warning() -> None
     assert situation["households"]["home"]["spm_resources"] == {
         "2026": [None, None, None]
     }
-    assert situation["axes"] == household["axes"]
+    # The axis named no period, so it varied the request's year.
+    assert situation["axes"] == [[{**household["axes"][0][0], "period": "2026"}]]
     assert result.warnings == (
         "Unable to calculate spm_resources for home in 2026; returned 3 null "
         "axis values: 'missing'",
@@ -813,6 +814,39 @@ def test_us_calculate_full_calculates_the_request_year_not_this_year() -> None:
     assert isinstance(tax_unit["income_tax"]["2025"], float)
     assert isinstance(household["household_net_income"]["2025"], float)
     assert isinstance(situation["people"]["person-1"]["is_blind"]["2025"], bool)
+
+
+def test_us_an_axis_without_a_period_varies_the_request_year() -> None:
+    # The US model's own default year is 2024; an axis that named no period
+    # used to vary 2024's income while the household was calculated for 2025.
+    household = {
+        **US_RECORD_HOUSEHOLD_2025,
+        "people": {
+            "person-1": {"age": {"2025": 35}, "employment_income": {"2025": 0}},
+            "person-2": {"age": {"2025": 5}},
+        },
+        "households": {
+            "household-1": {
+                **US_RECORD_HOUSEHOLD_2025["households"]["household-1"],
+                "household_net_income": {"2025": None},
+            }
+        },
+        "axes": [[{"name": "employment_income", "count": 3, "min": 0, "max": 60_000}]],
+    }
+
+    outcome = calculate_household(
+        _request("us", household, year="2025"),
+        worker=_worker("us"),
+        dependencies=HouseholdCalculationDependencies(),
+    )
+
+    assert isinstance(outcome, HouseholdExecutionResult), outcome
+    situation = outcome.output.results[0].household.to_situation()
+    incomes = situation["households"]["household-1"]["household_net_income"]["2025"]
+    assert incomes[0] < incomes[1] < incomes[2]
+    assert situation["people"]["person-1"]["employment_income"] == {
+        "2025": [0.0, 30_000.0, 60_000.0]
+    }
 
 
 UK_SINGLE = {

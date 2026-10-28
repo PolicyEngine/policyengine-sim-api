@@ -111,7 +111,7 @@ PeriodInputs = Annotated[
     dict[PeriodKey, InputScalar],
     Field(max_length=MAXIMUM_PERIODS_PER_VARIABLE),
 ]
-# A variable's values by period, or one value for the model's default period.
+# A variable's values by period, or one value, for the request's year.
 VariableInput = PeriodInputs | InputScalar
 EntityInputs = Annotated[
     dict[VariableName, VariableInput],
@@ -265,7 +265,7 @@ class HouseholdAxis(StrictHouseholdModel):
     """One input varied across points, as policyengine-core reads an axis.
 
     The variable ``name`` takes ``count`` evenly spaced values from ``min`` to
-    ``max`` in ``period`` (the model's default period when omitted), for the
+    ``max`` in ``period`` (the request's year when omitted), for the
     entity member at position ``index`` (the first when omitted).
     """
 

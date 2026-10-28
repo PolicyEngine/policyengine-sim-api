@@ -22,6 +22,11 @@ Every known difference from the Public API is listed here:
   adds them for the first period of the age of a person named ``you``, or
   else its host's current year (and fails with an internal error when that
   age is one value, not by period); v2 households name people by record ID.
+- A variable given as one value, not by period, is that value for ``year``,
+  and an axis without a period varies ``year``; the calculated household
+  shows both with that period. The Public API leaves them to the country
+  model's own default year (2024 for the US, 2025 for the UK), and does not
+  calculate a variable given as one null value.
 - An explicit null ``axes`` means no axes, because the contract drops it; the
   Public API treats the key's presence as a household with axes.
 - Every policy's parameters are checked before any policy is calculated, so
@@ -80,6 +85,7 @@ from policyengine_simulation_executor.household_inputs import (
     find_unrecognized_policy_inputs,
     requested_computations,
     unrecognized_inputs_message,
+    with_request_year,
 )
 from policyengine_simulation_executor.household_spm import (
     HOUSEHOLD_SPM_INPUT_ERROR_CODES,
@@ -573,6 +579,7 @@ def _prepared_household(
     reported with the policy that names them.
     """
     situation = request.household.to_situation()
+    with_request_year(situation, year=request.year)
     if request.add_missing_variables:
         add_missing_variables(situation, model.metadata, year=request.year)
     deprecated = drop_deprecated_inputs(situation)
