@@ -25,8 +25,11 @@ Every known difference from the Public API is listed here:
 - A variable given as one value, not by period, is that value for ``year``,
   and an axis without a period varies ``year``; the calculated household
   shows both with that period. The Public API leaves them to the country
-  model's own default year (2024 for the US, 2025 for the UK), and does not
-  calculate a variable given as one null value.
+  model's own default year (currently 2024 for the US model and 2025 for the
+  UK model), and does not calculate a variable given as one null value.
+- ``year`` sets only those periods. Every other value is calculated for the
+  period the household names, which the function does not compare with
+  ``year``, as the Public API does not.
 - An explicit null ``axes`` means no axes, because the contract drops it; the
   Public API treats the key's presence as a household with axes.
 - Every policy's parameters are checked before any policy is calculated, so
@@ -80,12 +83,12 @@ from policyengine_simulation_executor.household_inputs import (
     HouseholdModelMetadata,
     RequestedValue,
     add_missing_variables,
+    assign_request_year,
     drop_deprecated_inputs,
     find_unrecognized_household_inputs,
     find_unrecognized_policy_inputs,
     requested_computations,
     unrecognized_inputs_message,
-    with_request_year,
 )
 from policyengine_simulation_executor.household_spm import (
     HOUSEHOLD_SPM_INPUT_ERROR_CODES,
@@ -323,8 +326,10 @@ def _serialize_entity_value(
 class _PreparedHousehold:
     """A household ready to calculate under each policy.
 
-    ``situation`` has its missing variables added and deprecated inputs
-    removed; ``input_warnings`` say which inputs were removed.
+    ``situation`` has its values and axes without a period put in the
+    request's year, its missing variables added for that year and its
+    deprecated inputs removed; ``input_warnings`` say which inputs were
+    removed.
     ``spm_selection`` is the resolved SPM selection (None when no SPM
     applies) and ``spm_requested`` whether the caller chose it.
     """
@@ -579,7 +584,7 @@ def _prepared_household(
     reported with the policy that names them.
     """
     situation = request.household.to_situation()
-    with_request_year(situation, year=request.year)
+    assign_request_year(situation, year=request.year)
     if request.add_missing_variables:
         add_missing_variables(situation, model.metadata, year=request.year)
     deprecated = drop_deprecated_inputs(situation)

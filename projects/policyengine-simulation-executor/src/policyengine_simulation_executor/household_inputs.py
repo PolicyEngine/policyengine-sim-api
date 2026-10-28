@@ -5,8 +5,13 @@ prepares a household before calculating it: which missing variables are added,
 which deprecated inputs are dropped (and the warning that says so), which
 names are reported as unrecognized, and which values are requested. Keeping
 the wording and order identical lets a v2 result be compared with the Public
-API's result field by field. Missing variables are added for the request's
-year, where the Public API infers one.
+API's result field by field.
+
+Two steps differ, because a v2 request names its year: missing variables are
+added for that year, where the Public API infers one, and
+``assign_request_year`` puts values and axes the household gives without a
+period in that year, where the Public API leaves them to the country model's
+own default year.
 """
 
 from __future__ import annotations
@@ -131,32 +136,32 @@ def _metadata_default_value(variable: Variable) -> bool | int | float | str | No
     return None
 
 
-def with_request_year(situation: dict[str, Any], *, year: str) -> None:
-    """Give ``year`` to every axis and value the household gives without a period.
+def assign_request_year(situation: dict[str, Any], *, year: str) -> None:
+    """Put every value and axis the household gives without a period in ``year``.
 
-    A variable given as one value, not by period, becomes that value for
-    ``year``, and an axis without a ``period`` varies ``year``. The country
-    model would otherwise put both in its own default year (2024 for the US
-    model, 2025 for the UK model), as the Public API leaves it to, whatever
-    year the household is calculated for. Membership lists are left alone.
-    The situation is changed in place.
+    Changes ``situation`` in place: a variable given as one value, not by
+    period, becomes that value for ``year``, and an axis without a ``period``
+    varies ``year``. The country model would otherwise put both in its own
+    default year (currently 2024 for the US model and 2025 for the UK model),
+    whatever year the request names, which is where the Public API leaves
+    them. Membership lists are left alone.
     """
     for entity_plural, entity_group in situation.items():
         if entity_plural == _AXES_KEY:
-            _give_axes_the_year(entity_group, year)
+            _put_axes_in_year(entity_group, year)
         elif isinstance(entity_group, dict):
             for variables in entity_group.values():
                 if isinstance(variables, dict):
-                    _date_single_values(variables, year)
+                    _put_single_values_in_year(variables, year)
 
 
-def _date_single_values(variables: dict[str, Any], year: str) -> None:
+def _put_single_values_in_year(variables: dict[str, Any], year: str) -> None:
     for variable_name, value in variables.items():
         if value is None or isinstance(value, (bool, int, float, str)):
             variables[variable_name] = {year: value}
 
 
-def _give_axes_the_year(axes: object, year: str) -> None:
+def _put_axes_in_year(axes: object, year: str) -> None:
     if not isinstance(axes, list):
         return
     for group in axes:
