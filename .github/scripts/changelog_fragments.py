@@ -1,10 +1,11 @@
-"""Changelog fragments: what one is, and the check every pull request runs.
+"""Changelog fragments: what one is, the pull request check and the version bump.
 
 Rule sim.process.changelog-fragment. Every pull request adds at least one
-changelog fragment, and after a merge to main Towncrier builds the pending
-fragments into CHANGELOG.md. Everything here reads fragments through
-``FragmentDefinition``, so what the check accepts is exactly what the release
-reads.
+changelog fragment. After a merge to main, the versioning job in
+simulation-deploy.yml raises VERSION from the pending fragments and Towncrier
+builds them into CHANGELOG.md. The check and the bump both read fragments
+through ``FragmentDefinition``, so what the check accepts is exactly what the
+release reads.
 
 A fragment is a file directly in changelog.d/ (``directory`` in towncrier.toml)
 named ``<name>.<type>.md``, where:
@@ -21,12 +22,22 @@ fragment, so the release would lose anything else. policyengine-api #4084
 added changelog.d/added/4083.md: its check accepted the file, and its release
 found no fragment.
 
-Command, run from the repository root:
+A fragment's type sets the version bump (``BUMP_BY_TYPE``): breaking raises
+the major version, added and removed the minor version, and changed and fixed
+the patch version. A release raises the largest part any pending fragment
+calls for and resets the parts after it, so 0.1.3 with an added and a fixed
+fragment becomes 0.2.0.
+
+Commands, run from the repository root:
 
   check-pull-request  read the paths a pull request adds, NUL-separated on
                       stdin, as check-changelog-fragment.sh passes them, and
                       exit 1 unless one of them is a fragment and every file
                       in changelog.d/ is one
+  bump                write the next version to VERSION; exit 1 unless
+                      changelog.d/ holds at least one fragment and nothing
+                      else (build-changelog.sh runs it)
+  next-version        print the version bump would write, changing nothing
 """
 
 from __future__ import annotations
@@ -34,6 +45,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -48,10 +60,39 @@ FRAGMENT_FILE_NAME = re.compile(
 )
 FRAGMENT_NAME = re.compile(r"[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*")
 DOCUMENTATION = "docs/engineering/skills/github-prs.md#changelog-fragments"
+# The repository's release version: MAJOR.MINOR.PATCH on one line.
+VERSION_FILE = "VERSION"
+VERSION_PATTERN = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+# The part of VERSION each fragment type raises, in towncrier.toml's order.
+# FragmentDefinition.load refuses a towncrier.toml whose types differ.
+BUMP_BY_TYPE = {
+    "breaking": "major",
+    "added": "minor",
+    "changed": "patch",
+    "fixed": "patch",
+    "removed": "minor",
+}
+# Version parts from the smallest bump to the largest.
+BUMP_SIZES = ("patch", "minor", "major")
 
 
 class ConfigurationError(Exception):
-    """towncrier.toml does not say where fragments live or which types they have."""
+    """towncrier.toml does not say where fragments live or which types they have.
+
+    Also raised when its types are not the ones ``BUMP_BY_TYPE`` has a bump for.
+    """
+
+
+class ReleaseError(Exception):
+    """The pending fragments or VERSION can't make a release.
+
+    ``problems`` maps each file in changelog.d/ that is not a fragment to why.
+    """
+
+    def __init__(self, message: str, problems: dict[str, str] | None = None) -> None:
+        """Keep ``message`` as the error's text, and the files that stop the release."""
+        super().__init__(message)
+        self.problems = problems or {}
 
 
 @dataclass(frozen=True)
@@ -72,6 +113,11 @@ class Scan:
 
     fragments: tuple[Fragment, ...]
     problems: dict[str, str]
+
+
+def _quoted(names: tuple[str, ...]) -> str:
+    """Return ``names`` in double quotes, comma-separated, or "none"."""
+    return ", ".join(f'"{name}"' for name in names) or "none"
 
 
 def _listed(names: tuple[str, ...]) -> str:
@@ -111,6 +157,17 @@ class FragmentDefinition:
             raise ConfigurationError(msg)
         if not types or len(set(types)) != len(types):
             msg = f"{TOWNCRIER_CONFIG} must list each fragment type once: {types!r}"
+            raise ConfigurationError(msg)
+        without_bump = [name for name in types if name not in BUMP_BY_TYPE]
+        if without_bump or len(types) != len(BUMP_BY_TYPE):
+            unlisted = [name for name in BUMP_BY_TYPE if name not in types]
+            msg = (
+                f"{TOWNCRIER_CONFIG} lists the fragment types {_quoted(types)}, but "
+                f"BUMP_BY_TYPE in changelog_fragments.py has a version bump for "
+                f"{_quoted(tuple(BUMP_BY_TYPE))}. Types with no bump: "
+                f"{_quoted(tuple(without_bump))}; bumps with no type: "
+                f"{_quoted(tuple(unlisted))}. Change both together."
+            )
             raise ConfigurationError(msg)
         return cls(directory=directory, types=types)
 
@@ -287,6 +344,98 @@ def _paths_from_stdin() -> set[str]:
     }
 
 
+@dataclass(frozen=True)
+class Release:
+    """The next release: the version it raises and the fragments it builds."""
+
+    current_version: str
+    version: str
+    bump: str
+    fragments: tuple[Fragment, ...]
+
+    def summary(self) -> str:
+        """Return one line that says what the release raises, and why."""
+        counts = Counter(fragment.type for fragment in self.fragments)
+        listed = ", ".join(
+            f"{counts[fragment_type]} {fragment_type}"
+            for fragment_type in BUMP_BY_TYPE
+            if counts[fragment_type]
+        )
+        noun = "fragment" if len(self.fragments) == 1 else "fragments"
+        return (
+            f"VERSION: {self.current_version} -> {self.version}, a {self.bump} "
+            f"release for {listed} {noun}."
+        )
+
+
+def read_version(root: Path) -> str:
+    """Return the version in ``root``'s VERSION file."""
+    try:
+        text = (root / VERSION_FILE).read_text(encoding="utf-8")
+    except OSError:
+        text = None
+    if text is None or not VERSION_PATTERN.fullmatch(text.removesuffix("\n")):
+        msg = (
+            f"{VERSION_FILE} must hold one version, MAJOR.MINOR.PATCH such as "
+            f"0.1.0, on one line; it holds {text!r}."
+        )
+        raise ReleaseError(msg)
+    return text.removesuffix("\n")
+
+
+def raised_version(version: str, bump: str) -> str:
+    """Return ``version`` with its ``bump`` part raised and the parts after it reset."""
+    major, minor, patch = (int(part) for part in version.split("."))
+    if bump == "major":
+        return f"{major + 1}.0.0"
+    if bump == "minor":
+        return f"{major}.{minor + 1}.0"
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def plan_release(root: Path) -> Release:
+    """Return the release the pending fragments in ``root`` make.
+
+    Raise ``ReleaseError`` when changelog.d/ holds anything that is not a
+    fragment, holds no fragment, or VERSION holds no version.
+    """
+    definition = FragmentDefinition.load(root)
+    scan = definition.scan(root)
+    if scan.problems:
+        msg = (
+            f"The release reads every file in {definition.directory}/, and "
+            f"{len(scan.problems)} of them can't be read as fragments. Fix them "
+            f"in a pull request; this release can't be built until then."
+        )
+        raise ReleaseError(msg, scan.problems)
+    if not scan.fragments:
+        msg = (
+            f"{definition.directory}/ holds no fragments, so there is nothing to "
+            f"release. Every pull request adds one (rule {RULE_ID}); merge one "
+            f"that does to release this change too."
+        )
+        raise ReleaseError(msg)
+    current_version = read_version(root)
+    bump = max(
+        (BUMP_BY_TYPE[fragment.type] for fragment in scan.fragments),
+        key=BUMP_SIZES.index,
+    )
+    return Release(
+        current_version=current_version,
+        version=raised_version(current_version, bump),
+        bump=bump,
+        fragments=scan.fragments,
+    )
+
+
+def bump(root: Path) -> int:
+    """Write the next release's version to ``root``'s VERSION file."""
+    release = plan_release(root)
+    (root / VERSION_FILE).write_text(f"{release.version}\n", encoding="utf-8")
+    print(release.summary())
+    return 0
+
+
 def main(arguments: list[str] | None = None) -> int:
     """Run the command named in ``arguments``; return the exit status."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
@@ -295,16 +444,25 @@ def main(arguments: list[str] | None = None) -> int:
         "check-pull-request",
         help="check the merged result of a pull request; its added paths on stdin",
     )
+    commands.add_parser("bump", help="write the next version to VERSION")
+    commands.add_parser("next-version", help="print the next version")
     options = parser.parse_args(arguments)
     root = Path.cwd()
     try:
         if options.command == "check-pull-request":
             return check_pull_request(root, _paths_from_stdin())
+        if options.command == "bump":
+            return bump(root)
+        print(plan_release(root).version)
     except ConfigurationError as error:
         print(f"::error::{_annotation_text(str(error))}")
         return 1
-    parser.error(f"unknown command {options.command}")
-    return 2
+    except ReleaseError as error:
+        for path, problem in error.problems.items():
+            print(f"::error file={path}::{_annotation_text(problem)}")
+        print(f"::error::{_annotation_text(str(error))}")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
