@@ -86,7 +86,8 @@ class LocalAreaBreakdownBuilder:
         No national impact analysis runs. Both simulations are computed first,
         baseline then reform, so a status poll moves through those stages
         before the outputs stage, and both levels then come from one
-        disclosure release over the pair.
+        disclosure release over the pair. Each level also lists the codes of
+        the areas the release estimated but did not publish.
         """
         self.baseline.ensure()
         self.reform.ensure()
@@ -120,6 +121,9 @@ class LocalAreaBreakdownBuilder:
             if constituency_impact is None or local_authority_impact is None:
                 msg = "UK area outputs returned no constituency or local-authority list"
                 raise ValueError(msg)
+            if disclosure is None:
+                msg = "A UK local-area breakdown needs the disclosure-controlled output"
+                raise ValueError(msg)
             return LocalAreaBreakdownOutput(
                 kind="local_areas",
                 model_version=output_model_version(
@@ -137,6 +141,10 @@ class LocalAreaBreakdownBuilder:
                 ),
                 local_authority_impact=_area_records(
                     local_authority_impact, LocalAuthorityImpactRecord
+                ),
+                constituency_withheld_codes=disclosure.withheld_codes("constituency"),
+                local_authority_withheld_codes=disclosure.withheld_codes(
+                    "local_authority"
                 ),
             )
 
