@@ -272,6 +272,31 @@ good_fixture = "rules/fixtures/sim.persistence.migrate-before-entrypoint/good_wo
 project = "projects/policyengine-simulation-entry"
 test = "tests/test_simulation_database_deployment.py::test_rule_proof_migrate_before_entrypoint"
 
+[[rule]]
+id = "sim.persistence.public-api-copies-match"
+category = "persistence"
+statement = "The persistence tests' copies of the Public API's tables match the tables the Public API's v2 migration chain builds at its default branch: each copied column's type (an enum by name and values) and nullability, and each copied primary key and unique constraint by name and columns."
+rationale = "libs/policyengine-simulation-persistence/README.md#copies-of-the-public-apis-tables"
+scope = ["libs/policyengine-simulation-persistence/tests/public_api_support.py", ".github/scripts/public-api-schema-reference.sh"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "libs/policyengine-simulation-persistence"
+nodes = [
+  "tests/test_public_api_schema.py::test_the_copies_of_the_public_api_tables_match_its_schema",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "public-api-schema"
+invocation = "uv run --frozen pytest tests/ -v -m public_api_schema"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.persistence.public-api-copies-match/bad_copies.json"
+good_fixture = "rules/fixtures/sim.persistence.public-api-copies-match/good_copies.json"
+project = "libs/policyengine-simulation-persistence"
+test = "tests/test_public_api_schema.py::test_rule_proof_public_api_copies_match"
+
 # --- Stage 12 persistence --------------------------------------------------
 
 [[rule]]

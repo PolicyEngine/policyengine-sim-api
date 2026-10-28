@@ -252,3 +252,26 @@ Tests marked `postgres` need a disposable PostgreSQL server. Point
 drops its own database. Without the variable those tests skip. CI's
 `Simulation database` job runs them against `postgres:17` with
 `SIMULATION_REQUIRE_DATABASE_TESTS=1`, which turns a skip into a failure.
+
+### Copies of the Public API's tables
+
+The tests create copies of the Public API tables sim reads and refers to
+(`tests/public_api_support.py`), with only the columns sim uses. Rule
+`sim.persistence.public-api-copies-match` keeps them faithful: for every table
+the copies create, each column they define has the real column's type (an enum
+by name and values) and nullability, and each primary key and unique
+constraint they define exists under the same name with the same columns
+(`tests/public_api_schema.py`). A table or column added to the copies is
+checked with no other change.
+
+The real schema comes from the Public API itself. CI's `Public API schema`
+job checks out `PolicyEngine/policyengine-api` (public, so no secret) at its
+default branch, builds its tables with its own v2 migration chain
+(`.github/scripts/public-api-schema-reference.sh`), and runs the tests
+marked `public_api_schema` with `PUBLIC_API_SCHEMA_DATABASE_URL` naming that
+database. The job follows the default branch rather than a pinned commit, so
+a change there to a column sim reads fails sim's next CI run, instead of
+waiting for someone to move a pin; the job prints the commit it checked. To
+run it locally, migrate an empty local `policyengine_v2_alembic_test`
+database with the script, from a checkout of the Public API, and set
+`PUBLIC_API_SCHEMA_DATABASE_URL` and `SIMULATION_TEST_DATABASE_URL`.

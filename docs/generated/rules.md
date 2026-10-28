@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 58 | 2 | 0 | 14 | 74 |
+| mechanical | 59 | 2 | 0 | 14 | 75 |
 | metric | 1 | 0 | 0 | 0 | 1 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 61 of 75 rules.
+**Blocking:** 62 of 76 rules.
 
 ## Gaps
 
@@ -141,6 +141,7 @@ flowchart LR
 | `sim.persistence.migration-cycle` | On a fresh PostgreSQL, the simulation chain upgrades to its head, passes alembic check, downgrades to base and upgrades again, run by a non-superuser migrator, and the runtime role can read the revision but cannot change the schema. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_migration_cycle.py` | `pr.yml:simulation-database` | yes |
 | `sim.persistence.no-modal-database-credentials` | No Modal secret, Modal deployment or Modal application receives a database URL other than the comparison path's own STAGE12_DATABASE_URL, which Modal may hold until the comparison path is removed; in particular never SIMULATION_DATABASE_URL or SIMULATION_MIGRATION_DATABASE_URL. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py` | `pr.yml:test` | yes |
 | `sim.persistence.one-migration-chain` | The simulation schema changes only through the one Alembic chain at migrations/, configured by migrations/alembic.ini and versioned in simulation.alembic_version; no other Alembic configuration, environment or revision directory exists. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py` | `pr.yml:test` | yes |
+| `sim.persistence.public-api-copies-match` | The persistence tests' copies of the Public API's tables match the tables the Public API's v2 migration chain builds at its default branch: each copied column's type (an enum by name and values) and nullability, and each copied primary key and unique constraint by name and columns. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_public_api_schema.py` | `pr.yml:public-api-schema` | yes |
 
 ```mermaid
 flowchart LR
@@ -154,6 +155,9 @@ flowchart LR
   j_CI_pr_yml_simulation_database["CI pr.yml:simulation-database"]
   r_sim_persistence_no_modal_database_credentials("sim.persistence.no-modal-database-credentials (enforced)")
   r_sim_persistence_one_migration_chain("sim.persistence.one-migration-chain (enforced)")
+  r_sim_persistence_public_api_copies_match("sim.persistence.public-api-copies-match (enforced)")
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_public_api_schema_py["pytest libs/policyengine-simulation-persistence/tests/test_public_api_schema.py"]
+  j_CI_pr_yml_public_api_schema["CI pr.yml:public-api-schema"]
   r_sim_persistence_executor_independent --> e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py
   e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py --> j_CI_pr_yml_test
   r_sim_persistence_migrate_before_entrypoint --> e_pytest_projects_policyengine_simulation_entry_tests_test_simulation_database_deployment_py
@@ -162,6 +166,8 @@ flowchart LR
   e_pytest_libs_policyengine_simulation_persistence_tests_test_migration_cycle_py --> j_CI_pr_yml_simulation_database
   r_sim_persistence_no_modal_database_credentials --> e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py
   r_sim_persistence_one_migration_chain --> e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py
+  r_sim_persistence_public_api_copies_match --> e_pytest_libs_policyengine_simulation_persistence_tests_test_public_api_schema_py
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_public_api_schema_py --> j_CI_pr_yml_public_api_schema
 ```
 
 ## Deployment pipeline
