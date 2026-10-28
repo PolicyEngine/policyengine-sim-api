@@ -56,6 +56,14 @@ BREAKDOWN = {
     "data_version": "microcosm-uk-2024-25-dense-20261019T000432Z-ee5c2dbe",
     "constituency_impact": [CONSTITUENCY],
     "local_authority_impact": [LOCAL_AUTHORITY],
+    "constituency_withheld_codes": ["E14000530", "E14001172"],
+    "local_authority_withheld_codes": [],
+}
+# A result from an executor that does not report the withheld areas.
+BREAKDOWN_WITHOUT_WITHHELD_CODES = {
+    key: value
+    for key, value in BREAKDOWN.items()
+    if not key.endswith("_withheld_codes")
 }
 _ZERO = {"baseline": 0.0, "reform": 0.0}
 _AGE_POVERTY = {"child": _ZERO, "adult": _ZERO, "senior": _ZERO, "all": _ZERO}
@@ -113,6 +121,34 @@ def test_a_breakdown_result_carries_both_area_levels_and_their_provenance():
     assert output.kind == "local_areas"
     assert output.dataset == "microcosm_uk_2024_25_dense"
     assert output.model_dump(mode="json") == BREAKDOWN
+
+
+def test_a_breakdown_result_lists_the_withheld_areas_of_each_level():
+    output = LocalAreaBreakdownOutput.model_validate(BREAKDOWN)
+
+    assert output.constituency_withheld_codes == ["E14000530", "E14001172"]
+    # An empty list reports that disclosure control withheld no area.
+    assert output.local_authority_withheld_codes == []
+
+
+def test_a_breakdown_result_without_withheld_codes_still_validates():
+    output = LocalAreaBreakdownOutput.model_validate(BREAKDOWN_WITHOUT_WITHHELD_CODES)
+
+    # None means the result does not report which areas were withheld.
+    assert output.constituency_withheld_codes is None
+    assert output.local_authority_withheld_codes is None
+    response = JobStatusResponse(
+        status="complete", result=BREAKDOWN_WITHOUT_WITHHELD_CODES
+    )
+    assert isinstance(response.result, LocalAreaBreakdownOutput)
+
+
+@pytest.mark.parametrize(
+    "field", ["constituency_withheld_codes", "local_authority_withheld_codes"]
+)
+def test_withheld_codes_are_a_list_of_area_codes(field):
+    with pytest.raises(ValidationError):
+        LocalAreaBreakdownOutput.model_validate({**BREAKDOWN, field: "E14000530"})
 
 
 def test_a_job_status_reads_a_breakdown_result_as_a_breakdown():

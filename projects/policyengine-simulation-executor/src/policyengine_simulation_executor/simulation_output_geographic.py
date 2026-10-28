@@ -322,14 +322,22 @@ class UKAreaIncomeChange:
 class UKGeographyDisclosureOutput:
     """The published areas of each UK level, keyed by area code.
 
-    An area the disclosure check withholds is absent.
+    An area the disclosure check withholds is absent. ``estimated`` holds the
+    codes of each level's areas that the release estimated, those with
+    household weight as policyengine.py reads them; each one that is not
+    published was withheld.
     """
 
     areas: Mapping[str, Mapping[str, UKAreaIncomeChange]] = field(default_factory=dict)
+    estimated: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
     def level(self, level: str) -> Mapping[str, UKAreaIncomeChange]:
         """Return the published areas of one level."""
         return self.areas.get(level, {})
+
+    def withheld_codes(self, level: str) -> list[str]:
+        """Return the codes of one level's estimated areas not published, sorted."""
+        return sorted(self.estimated.get(level, frozenset()) - set(self.level(level)))
 
 
 def _require_uk_area_column(
@@ -636,13 +644,15 @@ def compute_uk_geography_disclosure_output(
     public = _resolved_public_table(
         impact, area_codes, year=year, inside=_uk_areas_inside(household)
     )
+    estimated = {level: frozenset(codes) for level, codes in area_codes.items()}
     if public is None:
-        return UKGeographyDisclosureOutput()
+        return UKGeographyDisclosureOutput(estimated=estimated)
     return UKGeographyDisclosureOutput(
         areas={
             level: _published_area_changes(public, level, area_codes[level])
             for level in UK_DISCLOSURE_AREA_COLUMNS
-        }
+        },
+        estimated=estimated,
     )
 
 

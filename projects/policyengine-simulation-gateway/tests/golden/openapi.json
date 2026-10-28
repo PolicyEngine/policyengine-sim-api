@@ -1790,6 +1790,34 @@
             },
             "type": "array",
             "title": "Local Authority Impact"
+          },
+          "constituency_withheld_codes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Constituency Withheld Codes"
+          },
+          "local_authority_withheld_codes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Authority Withheld Codes"
           }
         },
         "additionalProperties": false,
@@ -1804,7 +1832,7 @@
           "local_authority_impact"
         ],
         "title": "LocalAreaBreakdownOutput",
-        "description": "Completed result of a UK local-area breakdown run.\n\nA request with ``breakdown: \"local_areas\"`` returns this instead of a\n``SingleYearMacroOutput``. The run covers the requested UK-wide or nation\nregion on the local-area dataset alone, and computes only the\nconstituency and local-authority impacts; every other figure comes from\nthe national run. ``kind`` is always ``local_areas``. ``dataset`` names the\nlocal-area dataset, ``data_version`` its release revision, and\n``model_version`` and ``policyengine_version`` the country model and the\npolicyengine.py release that computed it. Each list holds only its own\nlevel's records. Areas whose income change disclosure control withholds\nare left out of each list, so a list may be empty."
+        "description": "Completed result of a UK local-area breakdown run.\n\nA request with ``breakdown: \"local_areas\"`` returns this instead of a\n``SingleYearMacroOutput``. The run covers the requested UK-wide or nation\nregion on the local-area dataset alone, and computes only the\nconstituency and local-authority impacts; every other figure comes from\nthe national run. ``kind`` is always ``local_areas``. ``dataset`` names the\nlocal-area dataset, ``data_version`` its release revision, and\n``model_version`` and ``policyengine_version`` the country model and the\npolicyengine.py release that computed it. Each list holds only its own\nlevel's records. Areas whose income change disclosure control withholds\nare left out of each list, so a list may be empty.\n\n``constituency_withheld_codes`` and ``local_authority_withheld_codes``\nhold, sorted, the ONS codes of that level's areas that the run estimated\nbut disclosure control did not publish, so a client can tell a withheld\narea from an absent one. An area the run never estimated, such as one with\nno households in the dataset, is in neither list. An empty list means\nthat no area of the level was withheld. Null means that the result does\nnot report them, as results from older executors do not."
       },
       "LocalAuthorityImpactRecord": {
         "properties": {
