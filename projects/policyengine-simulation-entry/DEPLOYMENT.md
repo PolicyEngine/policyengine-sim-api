@@ -87,9 +87,50 @@ executor). It posts to the entrypoint's main URL: the v2 deploy job reads the
 service's stable URL (`status.url`) with
 `.github/scripts/simulation-entry-main-url.sh` and passes it to `modal deploy`
 as `SIMULATION_ENTRY_URL`. Only the revision that serves traffic receives
-these requests. `beta` does not promote its candidate yet, so in staging the
-main URL reaches an older revision until it does (plan item 1.39), and
-staging calls are recorded by the safety check only once it exists there.
+these requests; staging and production deployments both promote the revision
+they tested, so the main URL reaches it once promotion succeeds.
+
+Household calculations (`POST /v2/household-calculations`, see the README)
+start the v2 household functions' calls in the same Modal environment,
+`SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT`, with the same token, and read the
+v2 version manifest there. They read the household, its policies and the
+catalog version from the Public API's tables through `SIMULATION_DATABASE_URL`,
+so before they are used the owner of those tables must grant the runtime role
+`simulation_runtime` `SELECT` on `tax_benefit_models`,
+`tax_benefit_model_versions`, `households`, `policies`, `parameters` and
+`parameter_values`; without it, submissions answer 503. Their outcomes are
+recorded like any other call's: on the call's report, or by the safety check.
+The household functions take the runs a call computes as their second
+argument. A v2 application deployed before they did (for an older
+PolicyEngine.py version) refuses that argument, so its calls fail as worker
+errors, recorded by the safety check; redeploying that version's v2
+application fixes it.
+
+### Staging household test
+
+After each staging deployment promotes its revision, with the v2 application
+deployed, the `staging_household_test` job runs
+`authenticated_tests/test_staging_household_calculation.py` against the
+staging stable URL: it submits a US household calculation, polls until it
+succeeds or fails, and reads the result back, all within ten minutes; an
+answer asking to retry (503) is retried after its wait within that limit. It runs
+after promotion because the household function reports the call's end to the
+stable URL. A failure fails the deployment run, so production does not
+deploy.
+
+The calculation reads rows the Public API owns in the same database, so
+the test first finds the staging Public API's US catalog version for the
+deployed PolicyEngine.py version (or its current one, when the Public API
+has not published that version yet) and stores a one-person household there
+(`POST /v2/households`, which returns the same household every time), then
+submits that household's ID and the catalog version's PolicyEngine.py
+version. The
+`beta` environment variable `PUBLIC_API_URL` names the staging Public API's
+URL. The test authenticates as the deployed-test client
+(`SIMULATION_ENTRYPOINT_TEST_AUTH_*`), which needs `simulation:submit` and
+`simulation:read` when permissions are enforced. The other runs of
+`authenticated_tests` skip it: only this job sets
+`SIMULATION_STAGING_HOUSEHOLD_TEST=1`.
 
 ## Safety check
 
@@ -121,8 +162,8 @@ A revision deployed before the safety check existed (without
 `SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID`) has no job code, so pointing the
 job at it pauses the schedule instead.
 
-`beta` does not promote its candidate yet, so staging has no safety check
-until it does (plan item 1.39).
+Staging deployments promote their tested revision too, so staging has the
+safety check as production does.
 
 One-time operator steps, in each environment: enable the Cloud Scheduler
 API; create the scheduler's service account, give it `roles/run.invoker`
@@ -144,23 +185,43 @@ qualification uses Cloud Run's generated tagged revision URL and does not
 require a custom domain.
 
 The `prod` environment follows the same sequence automatically, but cannot
-begin until every `beta` deployment, routing, integration, and authentication
-job has succeeded. Production tests also use the tagged candidate URL, so the
-currently serving revision remains unchanged during qualification.
+begin until every `beta` deployment, routing, integration, authentication,
+promotion, and revision clean-up job has succeeded, so a failed staging
+clean-up also stops the production deployment. Both environments' tests use
+the tagged candidate URL, so the currently serving revision remains unchanged
+during qualification.
 
 ## Promotion and rollback
 
-After the complete production suite passes, the workflow verifies that the
-exact tested revision belongs to the production service and is ready. It also
-checks that stable traffic still points to the revision recorded before
-deployment. If those guards pass, it assigns all stable service traffic to the
-tested production revision.
+Both `beta` and `prod` promote. After an environment's complete suite passes,
+the workflow verifies that the exact tested revision belongs to that
+environment's service and is ready. It also checks that stable traffic still
+points to the revision recorded before deployment. If those checks pass, it
+assigns all stable service traffic to the tested revision.
+
+In `beta`, promotion keeps the staging service's stable URL on the revision
+that passed the staging tests, so staging callers of that URL, such as the
+Public API's staging service, reach the build the deployment tested. The
+staging deployment of the **Deploy Stage 12 comparison path** workflow promotes
+in the same way. Rule `sim.deploy.staging-promotes-tested-revision` requires
+both.
+
+Both workflows can also be started manually, and the `beta` environment does
+not restrict which branch a run may come from. A manual run from a branch other
+than `main` therefore promotes that branch's build to the staging stable URL,
+and every staging caller of that URL reaches the unmerged build until the next
+deployment from `main` promotes again. Start a staging deployment from another
+branch only when that is intended.
 
 The workflow then checks the stable generated Cloud Run URL. It uses the
 runtime revision header to prove that the stable URL reaches the exact revision
 that passed candidate tests, and it repeats the deployed authentication checks.
 If an immediate post-promotion check fails, the workflow restores the exact
 previous revision recorded before deployment and fails visibly.
+
+After a successful promotion and deployment, the workflow deletes the
+service's older revisions. It keeps only the promoted revision and the one it
+replaced, which `simulation-rollback.yml` can route back to.
 
 Deployment concurrency prevents two releases from changing the entrypoint
 service simultaneously. Promotion never targets `LATEST`.
@@ -193,9 +254,9 @@ The deployment workflow passes each environment's
 unset or empty variable deploys `0`, which records callers that lack a route's
 permission but lets them through. `1` rejects those callers with 403. Any other
 value fails the deployment before Cloud Run changes. A new value takes effect
-at the next entrypoint deployment. In `prod` that deployment is promoted to
-stable traffic. `beta` never promotes its candidate revision, so a `beta` value
-applies only to the tagged candidate that the deployment tests call. The route
+at the next entrypoint deployment, which both `beta` and `prod` promote to
+stable traffic once their tests pass. A `beta` value therefore applies to every
+caller of the staging stable URL as well as to the deployment tests. The route
 permissions are listed in `README.md`.
 
 ### Auth0 prerequisites
@@ -228,11 +289,12 @@ variable to `1`:
 1. Deploy with the variable unset or `0`, and complete the Auth0 setup.
 2. Watch the `prod` service for `simulation_entry_permission_missing` events
    with `enforced=false`. Each one names the missing permission and the
-   caller's `client_id`. Only `prod` serves real callers such as API v1: a
-   `beta` candidate receives only the deployment tests' own requests, so `beta`
-   events cannot show a missing API v1 grant. Access tokens issued before a
-   grant do not carry it, so wait at least one access-token lifetime after the
-   last grant with no new events.
+   caller's `client_id`. Only `prod` is certain to receive requests from every
+   real caller: the staging stable URL receives requests only from the staging
+   callers configured to use it, and tagged candidates only from the
+   deployment tests, so `beta` events cannot show every missing grant. Access
+   tokens issued before a grant do not carry it, so wait at least one
+   access-token lifetime after the last grant with no new events.
 3. Set the `beta` variable to `1` and deploy. With enforcement on, the
    authenticated deployment tests also check that the test client's token is
    rejected on `GET /internal/stage12/reports/{evaluation_id}`, which requires

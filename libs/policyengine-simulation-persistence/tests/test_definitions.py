@@ -72,6 +72,16 @@ def test_report_options_must_be_a_json_object() -> None:
         )
 
 
+def test_simulation_options_must_be_a_json_object() -> None:
+    with pytest.raises(TypeError, match="options must be a JSON object"):
+        NewSimulation(
+            kind=SimulationKind.HOUSEHOLD,
+            country="us",
+            household_id=uuid4(),
+            options=["add_missing_variables"],  # type: ignore[arg-type]
+        )
+
+
 def test_a_kind_given_as_text_becomes_the_enum() -> None:
     simulation = NewSimulation(kind="economy", country="us", region_code="state/ca")  # type: ignore[arg-type]
     report = NewReport(

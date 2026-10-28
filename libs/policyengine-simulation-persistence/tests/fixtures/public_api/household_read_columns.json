@@ -1,0 +1,36 @@
+{
+  "source": "information_schema.columns of a database migrated by the Public API's v2 Alembic chain at revision aeb5f3e8f662",
+  "tables": {
+    "households": {
+      "id": {"type": "uuid", "nullable": false},
+      "country_id": {"type": "varchar", "length": 2, "nullable": false},
+      "default_year": {"type": "int4", "nullable": true},
+      "household_data": {"type": "jsonb", "nullable": false}
+    },
+    "policies": {
+      "id": {"type": "uuid", "nullable": false},
+      "country_id": {"type": "varchar", "length": 2, "nullable": false}
+    },
+    "parameters": {
+      "id": {"type": "uuid", "nullable": false},
+      "name": {"type": "varchar", "length": 512, "nullable": false},
+      "tax_benefit_model_version_id": {"type": "uuid", "nullable": false}
+    },
+    "parameter_values": {
+      "parameter_id": {"type": "uuid", "nullable": false},
+      "value_json": {"type": "jsonb", "nullable": false},
+      "start_date": {"type": "timestamptz", "nullable": false},
+      "end_date": {"type": "timestamptz", "nullable": true},
+      "policy_id": {"type": "uuid", "nullable": true}
+    },
+    "tax_benefit_models": {
+      "id": {"type": "uuid", "nullable": false},
+      "name": {"type": "varchar", "length": 32, "nullable": false}
+    },
+    "tax_benefit_model_versions": {
+      "id": {"type": "uuid", "nullable": false},
+      "model_id": {"type": "uuid", "nullable": false},
+      "version": {"type": "varchar", "length": 128, "nullable": false}
+    }
+  }
+}

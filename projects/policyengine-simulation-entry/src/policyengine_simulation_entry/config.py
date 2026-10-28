@@ -183,6 +183,16 @@ class Settings:
         )
 
     @property
+    def v2_modal_environment(self) -> str:
+        """The Modal environment of the v2 application, or empty when unset.
+
+        The v2 application's report_call_ended function reports calls from
+        it, so it is the call-report environment; the household routes start
+        calls and read the v2 version manifest there.
+        """
+        return self.call_report_modal_environment
+
+    @property
     def stage12_resources_configured(self) -> bool:
         """Whether the Stage 12 manifest environment, database and bucket are set."""
         return all(

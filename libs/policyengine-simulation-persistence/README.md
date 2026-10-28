@@ -12,7 +12,7 @@ writes them with DML only.
 
 | Table | Holds |
 | --- | --- |
-| `simulations` | What to run, independent of model versions: kind (`economy` or `household`), country, policy (null for current law), dynamic, and either a household or a region code (`state/ca`) with an optional dataset name (null means the region's default dataset in each catalog version) |
+| `simulations` | What to run, independent of model versions: kind (`economy` or `household`), country, policy (null for current law), dynamic, either a household or a region code (`state/ca`) with an optional dataset name (null means the region's default dataset in each catalog version), and `options`, whatever else changes what it calculates, such as a household's axes (empty unless set) |
 | `reports` | Which two simulations a report compares (an economy report needs a reform; a household report may have only a baseline), both of the report's own country and kind, with its year and options |
 | `simulation_runs` | One execution of a simulation for a catalog version and year: the region code and dataset row it resolved in that version (economy runs only), its status, Modal call ID, timings, error, trigger (`initial`, `manual` or `system`) and attempt number |
 | `report_runs` | One calculation of a report: a baseline and a reform simulation run of the same catalog version and year (no reform run for a single-simulation household report), the trigger, and, for an economy report, the comparison step's own status and Modal call |
@@ -27,8 +27,39 @@ Foreign keys into the Public API's tables in the same database (`policies` and
 `households`, each together with its country, `dynamics`,
 `tax_benefit_model_versions`, and `regions` and `datasets` each together with
 its catalog version) are `ON DELETE RESTRICT`. Creating them needs
-`REFERENCES` on those tables for the migrator role; the runtime role needs no
-privilege on them.
+`REFERENCES` on those tables for the migrator role.
+
+The household path reads the Public API's rows a household run is
+calculated from (`HouseholdInputReader`): the catalog version by country and
+PolicyEngine.py version; the household's document, saved SPM choice and
+`default_year`; and the policy's parameter values by parameter name, each
+period as the Public API's `YYYY-MM-DD.YYYY-MM-DD` read in UTC (an open end
+is `2100-12-31`), refused when the run's catalog version lacks a parameter.
+The runtime role needs `SELECT` on `HOUSEHOLD_READ_TABLES`
+(`tax_benefit_models`, `tax_benefit_model_versions`, `households`,
+`policies`, `parameters` and `parameter_values`). The tests' copies of those
+tables are checked against the Public API's columns, recorded in
+`tests/fixtures/public_api/household_read_columns.json`.
+
+### Household calculations
+
+A household calculation is one simulation run of a household simulation.
+`HouseholdCalculationStore.find_or_create_simulation` returns the oldest
+household simulation with the same country, household, policy, dynamic and
+options (compared by value), or creates it. The Public API's households and
+policies never change once stored, so a calculation submitted again finds
+the same simulation, and `RunStore.start_simulation_run` reuses its run.
+Two racing submissions may each create the simulation; later ones find the
+older row. `start_run` starts or reuses its run, as `RunStore` does, and
+`read_calculation` returns the run (status, timings, error and error
+detail), its simulation and, once it succeeded, the computed household; an
+economy run is not a household calculation and reads as none.
+
+A household report compares a baseline household simulation with an
+optional reform. Each report run joins one run of each, and one Modal call
+computes both households. `create_report` and `create_report_run` add them,
+and `read_report` returns the report with a report run (its newest, unless
+one is named) and both runs as calculations; an economy report reads as none.
 
 ### Runs
 
@@ -51,6 +82,11 @@ Concurrent starts settle on one row through the unique attempt number.
 and takes the catalog version and year from them; a report's status is its
 newest report run's. The runtime role may read, insert and update runs but
 not delete them.
+
+A failure records its error code, a message that carries no user data,
+and optionally a detail document (`error_detail`, or
+`comparison_error_detail` for a comparison step), such as the inputs a
+household calculation rejected; only a failed run or step has one.
 
 `RunTransitions` makes every status change one conditional update on the
 expected status, so a second writer changes nothing: only the caller that
@@ -101,8 +137,12 @@ A computed household is one JSON value (`household_outputs`, PostgreSQL
 simulation run, with its schema version. `write_household_output` stores it
 in the transaction that marks the run succeeded
 (`RunTransitions.complete_simulation_call`); a household report's two runs
-share one Modal call and each gets its own household. `read_household_output`
-returns it unchanged.
+share one Modal call and each gets its own household. Next to it are the
+calculation's warnings, in order, and three `jsonb` documents, each null when
+it does not apply: the complete SPM selection the calculation applied
+(`spm_config`), its SPM receipt (`spm_provenance`) and the PolicyEngine.py
+bundle it ran with (`bundle`). `read_household_output` returns it all
+unchanged.
 
 `output_files` links each stored file (its role, URI and SHA-256) to the one
 simulation run or report run that wrote it. `available_output_files` offers a
@@ -141,7 +181,7 @@ These rules are registered in `rules/registry.toml` and checked by
 | Role | Used by | Privileges |
 | --- | --- | --- |
 | `simulation_migrator` | The deploy workflow's migration job, through `SIMULATION_MIGRATION_DATABASE_URL` | Creates the `simulation` schema if it is missing, and owns every object in it; `REFERENCES` on the Public API tables its foreign keys point to |
-| `simulation_runtime` | The Simulation Entrypoint, through `SIMULATION_DATABASE_URL` | `USAGE` on the schema, `SELECT` on the version table, and `SELECT`, `INSERT` and `UPDATE` on the tables the migrations create, except `UPDATE` on the definition tables (`simulations`, `reports`) and the result tables; never `DELETE`, and nothing on the Public API tables |
+| `simulation_runtime` | The Simulation Entrypoint, through `SIMULATION_DATABASE_URL` | `USAGE` on the schema, `SELECT` on the version table, and `SELECT`, `INSERT` and `UPDATE` on the tables the migrations create, except `UPDATE` on the definition tables (`simulations`, `reports`) and the result tables; never `DELETE`; on the Public API's tables, only `SELECT` on `HOUSEHOLD_READ_TABLES` |
 
 The initial revision grants the runtime role its privileges, including default
 privileges on tables the migrator creates later; revision 0002 revokes

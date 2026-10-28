@@ -25,9 +25,10 @@ have succeeded.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import and_, exists, func, or_, select, update
 
@@ -70,16 +71,35 @@ class RunErrorCode(StrEnum):
     CALL_NOT_FOUND = "call_not_found"
     # The output failed validation against its result model.
     INVALID_RESULT = "invalid_result"
+    # The household function returned a typed failure, such as inputs the
+    # country model does not know; the run's error detail holds it.
+    HOUSEHOLD_CALCULATION_FAILED = "household_calculation_failed"
     # A comparison step whose baseline or reform simulation run failed.
     SIMULATION_RUN_FAILED = "simulation_run_failed"
 
 
 @dataclass(frozen=True)
 class RunError:
-    """A failure to record on a run; the message must carry no user data."""
+    """A failure to record on a run; the message must carry no user data.
+
+    ``detail`` is an optional JSON object stored with the failure for the
+    run's reader, such as the inputs a household calculation rejected. It may
+    hold the caller's own inputs, so it is never logged.
+    """
 
     code: RunErrorCode
     message: str
+    detail: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        """Reject a detail that is not a JSON object."""
+        if self.detail is not None and not isinstance(self.detail, Mapping):
+            msg = "detail must be a JSON object"
+            raise TypeError(msg)
+
+    def stored_detail(self) -> dict[str, Any] | None:
+        """Return the detail as the plain dictionary the run tables store."""
+        return None if self.detail is None else dict(self.detail)
 
 
 @dataclass(frozen=True)
@@ -184,6 +204,7 @@ class RunTransitions:
                 "status": RunStatus.FAILED.value,
                 "error_code": error.code.value,
                 "error_message": bounded_error_message(error.message),
+                "error_detail": error.stored_detail(),
                 "completed_at": self._clock(),
             },
         )
@@ -318,6 +339,7 @@ class RunTransitions:
                         "status": RunStatus.FAILED.value,
                         "error_code": error.code.value,
                         "error_message": bounded_error_message(error.message),
+                        "error_detail": error.stored_detail(),
                         "completed_at": self._clock(),
                         "next_check_at": None,
                     },
@@ -518,6 +540,7 @@ class RunTransitions:
             "comparison_status": RunStatus.FAILED.value,
             "comparison_error_code": error.code.value,
             "comparison_error_message": bounded_error_message(error.message),
+            "comparison_error_detail": error.stored_detail(),
             "comparison_completed_at": self._clock(),
             "comparison_next_check_at": None,
         }

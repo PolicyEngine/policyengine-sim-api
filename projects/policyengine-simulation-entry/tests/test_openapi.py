@@ -27,6 +27,34 @@ class OpenAPIDocument(TypedDict):
     components: OpenAPIComponents
 
 
+# The v2 household routes, which only the entrypoint serves.
+HOUSEHOLD_ROUTES = {
+    ("POST", "/v2/household-calculations"): "submit_household_calculation",
+    ("GET", "/v2/household-calculations/{calculation_id}"): (
+        "get_household_calculation"
+    ),
+    ("POST", "/v2/household-reports"): "submit_household_report",
+    ("POST", "/v2/household-reports/{report_id}/runs"): "run_household_report",
+    ("GET", "/v2/household-reports/{report_id}"): "get_household_report",
+}
+# The schemas only the household routes use.
+HOUSEHOLD_SCHEMAS = {
+    "HouseholdAxis",
+    "HouseholdCalculationFailure",
+    "HouseholdCalculationOptions",
+    "HouseholdCalculationResponse",
+    "HouseholdCalculationResult",
+    "HouseholdCalculationSubmission",
+    "HouseholdPolicyChoice",
+    "HouseholdRefusalResponse",
+    "HouseholdReportResponse",
+    "HouseholdRequestFieldError",
+    "HouseholdReportRunSubmission",
+    "HouseholdReportSubmission",
+    "HouseholdRouteError",
+    "RunStatus",
+    "RunTrigger",
+}
 EXPECTED_ROUTES = {
     ("GET", "/budget-window-jobs/{batch_job_id}"),
     ("GET", "/health"),
@@ -37,6 +65,7 @@ EXPECTED_ROUTES = {
     ("POST", "/ping"),
     ("POST", "/simulate/economy/budget-window"),
     ("POST", "/simulate/economy/comparison"),
+    *HOUSEHOLD_ROUTES,
 }
 
 
@@ -62,6 +91,8 @@ def normalized_compatibility_paths(spec: OpenAPIDocument) -> OpenAPIPathMap:
     """Remove intentional Cloud Run and additive SPM error documentation."""
     paths = deepcopy(spec["paths"])
     paths.pop("/ready", None)
+    for _method, household_path in HOUSEHOLD_ROUTES:
+        paths.pop(household_path, None)
     for operations in paths.values():
         for method, operation in operations.items():
             if method.lower() in {"get", "post", "put", "patch", "delete"}:
@@ -181,9 +212,42 @@ def test_normalized_contract_matches_old_gateway():
     cloud_run_schemas.pop("SimulationEntrypointReadinessResponse")
     cloud_run_schemas.pop("SimulationDatabaseReadiness")
     cloud_run_schemas.pop("SimulationErrorResponse")
+    for schema_name in HOUSEHOLD_SCHEMAS:
+        cloud_run_schemas.pop(schema_name)
     assert cloud_run_schemas == gateway_spec["components"]["schemas"]
     gateway_operation_ids = operation_ids(gateway_spec)
     cloud_run_operation_ids = operation_ids(cloud_run_spec)
     assert {
         key: cloud_run_operation_ids[key] for key in gateway_operation_ids
     } == gateway_operation_ids
+
+
+def test_household_routes_are_public_with_stable_operation_ids() -> None:
+    """The generated simulation client names its methods after these IDs."""
+    spec = cast("OpenAPIDocument", create_app().openapi())
+
+    household_operations = {
+        route: operation_id
+        for route, operation_id in operation_ids(spec).items()
+        if route in HOUSEHOLD_ROUTES
+    }
+
+    assert household_operations == HOUSEHOLD_ROUTES
+
+
+def test_household_submissions_declare_their_caller_data_refusals() -> None:
+    """The generated client parses sim's 422 refusals as text or field errors."""
+    spec = cast("OpenAPIDocument", create_app().openapi())
+
+    for method, path in (
+        ("post", "/v2/household-calculations"),
+        ("post", "/v2/household-reports"),
+        ("post", "/v2/household-reports/{report_id}/runs"),
+    ):
+        responses = spec["paths"][path][method]["responses"]
+        refusal = responses["422"]
+        assert refusal["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/HouseholdRefusalResponse"
+        }
+        assert "parameter the catalog version lacks" in refusal["description"]
+        assert {"400", "503"} <= set(responses)

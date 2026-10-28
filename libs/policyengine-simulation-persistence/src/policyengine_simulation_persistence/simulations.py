@@ -5,7 +5,9 @@ economy named by a region code (``state/ca``) and an optional dataset name. It
 is a definition, not an execution, and never changes once created. A null
 policy means current law, and a null dataset name means the region's default
 dataset in whichever catalog version a run uses, so the same simulation can
-run again on a newer catalog version.
+run again on a newer catalog version. Its ``options`` hold whatever else
+changes what it calculates, such as a household's axes; they are empty unless
+set.
 
 Foreign keys into the Public API's tables (``public_api``) tie the policy and
 the household to the simulation's country, and name an optional dynamic. The
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, fields
+from dataclasses import field as dataclass_field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -39,7 +42,9 @@ from sqlalchemy import (
     Uuid,
     func,
     select,
+    text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 
 from policyengine_simulation_persistence import public_api
@@ -77,6 +82,9 @@ simulations = Table(
     Column("household_id", Uuid(as_uuid=True), nullable=True),
     Column("region_code", String(CATALOG_KEY_LENGTH), nullable=True),
     Column("dataset_name", String(CATALOG_KEY_LENGTH), nullable=True),
+    # What else changes the calculation, such as a household's axes; part of
+    # what a simulation is, so runs are reused only for the same options.
+    Column("options", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     Column("legacy_simulation_id", BigInteger, nullable=True, unique=True),
     Column(
         "created_at",
@@ -103,6 +111,7 @@ simulations = Table(
         "legacy_simulation_id IS NULL OR legacy_simulation_id > 0",
         name="legacy_simulation_id",
     ),
+    CheckConstraint("jsonb_typeof(options) = 'object'", name="options"),
     # Reports refer to a simulation together with its country and kind, so a
     # report can only compare simulations of its own country and kind.
     UniqueConstraint("id", "country", "kind"),
@@ -160,6 +169,13 @@ def parse_kind[KindT: StrEnum](value: object, kind_type: type[KindT]) -> KindT:
         raise ValueError(msg) from None
 
 
+def check_options(options: object) -> None:
+    """Reject options that are not a JSON object."""
+    if not isinstance(options, dict):
+        msg = "options must be a JSON object"
+        raise TypeError(msg)
+
+
 def check_country(country: str) -> None:
     """Reject a country that is not a lowercase two-letter code."""
     if not COUNTRY_PATTERN.fullmatch(country):
@@ -212,6 +228,7 @@ class NewSimulation:
     region_code: str | None = None
     dataset_name: str | None = None
     legacy_simulation_id: int | None = None
+    options: dict[str, Any] = dataclass_field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Reject malformed fields without touching the database."""
@@ -221,6 +238,7 @@ class NewSimulation:
         _check_catalog_key("region_code", self.region_code)
         _check_catalog_key("dataset_name", self.dataset_name)
         check_legacy_id("legacy_simulation_id", self.legacy_simulation_id)
+        check_options(self.options)
 
 
 @dataclass(frozen=True)
@@ -236,6 +254,7 @@ class SimulationRecord:
     region_code: str | None
     dataset_name: str | None
     legacy_simulation_id: int | None
+    options: dict[str, Any]
     created_at: datetime
 
     @classmethod

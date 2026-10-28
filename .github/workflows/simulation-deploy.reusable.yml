@@ -1027,6 +1027,47 @@ jobs:
         if: ${{ failure() && steps.safety_check_restore.outcome == 'failure' }}
         run: .github/scripts/deploy-cloud-run-simulation-safety-check.sh pause
 
+  staging_household_test:
+    name: Calculate a household on the promoted staging revision
+    # The household function reports the call's end to the stable URL, which
+    # serves the promoted revision, so this runs after promotion, in staging
+    # only, and only when this deploy deployed the v2 application.
+    if: >-
+      ${{
+        !cancelled() &&
+        inputs.deployment_environment == 'staging' &&
+        inputs.deploy_stage12_v2 &&
+        needs.promote_entrypoint.result == 'success'
+      }}
+    needs: [prepare, deploy_entrypoint, promote_entrypoint]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    env:
+      SIMULATION_STAGING_HOUSEHOLD_TEST: "1"
+      SIMULATION_STAGING_TEST_BASE_URL: ${{ needs.deploy_entrypoint.outputs.stable_url }}
+      SIMULATION_STAGING_TEST_POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
+      SIMULATION_STAGING_TEST_PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install staging-test dependencies
+        working-directory: projects/policyengine-simulation-entry
+        run: uv sync --extra test --frozen
+
+      - name: Submit a household calculation and read its result back
+        working-directory: projects/policyengine-simulation-entry
+        run: uv run --frozen pytest authenticated_tests/test_staging_household_calculation.py -v
+
   finalize_routing:
     name: Finalize the Modal routing publication
     # Finish the durable journal after every gate, including failed uploads

@@ -1,5 +1,10 @@
 # pyright: reportAttributeAccessIssue=false
-"""Separately named Stage 12 Modal coordinator and country workers.
+"""Separately named v2 Modal application: report coordinator and country workers.
+
+Besides the Stage 12 report coordinator and simulation workers, it defines a
+household function for each country, ``calculate_household_us`` and
+``calculate_household_uk``, which calculates one household under one or more
+policies in an image without datasets or secrets.
 
 This module defines additional resources. It does not rename or modify the
 existing ``policyengine-simulation-py{version}`` applications.
@@ -8,10 +13,16 @@ existing ``policyengine-simulation-py{version}`` applications.
 from __future__ import annotations
 
 import json
+import logging
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import UUID
 
+from policyengine_simulation_contract.household_execution import (
+    household_callable_name,
+)
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_executor import stage12_runtime
 from policyengine_simulation_executor.hf_access_validation import (
@@ -39,6 +50,7 @@ from policyengine_simulation_observability.stages import (
     STAGE12_SEGMENT_STAGES,
     STAGE12_SHADOW_REPORT_STAGES,
     STAGE12_SIMULATION_STAGES,
+    V2_HOUSEHOLD_STAGES,
     Stage,
 )
 from policyengine_simulation_observability.telemetry import (
@@ -53,6 +65,7 @@ import modal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
 
     from policyengine_simulation_contract.stage12_bundle import (
         CountryId,
@@ -155,6 +168,35 @@ def _country_bundle(country: CountryId) -> Stage12CountryBundle:
     )
 
 
+def _v2_package_image() -> modal.Image:
+    """Return the base of every v2 image: the CA store and the locked packages."""
+    return (
+        modal.Image.debian_slim(python_version="3.13")
+        # Upgrade Debian's CA store before anything is downloaded, and make
+        # grpcio verify servers against it (src/modal/ca_certificates.py).
+        .apt_install(OPERATING_SYSTEM_CA_PACKAGE)
+        .env(GRPC_CA_BUNDLE_ENV)
+        .uv_sync(
+            uv_project_dir=_UV_PROJECT_DIR,
+            frozen=True,
+            extra_options="--only-group modal-simulation-image",
+        )
+    )
+
+
+def _add_v2_sources(image: modal.Image) -> modal.Image:
+    """Copy the source packages and static runtime files every v2 image runs."""
+    image = image.add_local_python_source(
+        "src.modal",
+        "policyengine_simulation_executor",
+        "policyengine_simulation_observability",
+        "policyengine_simulation_contract",
+        "policyengine_stage12_persistence",
+        copy=True,
+    )
+    return add_static_runtime_files(image, uv_project_dir=_UV_PROJECT_DIR)
+
+
 def build_v2_image(
     countries: tuple[CountryId, ...], *, include_us_cache: bool = False
 ) -> modal.Image:
@@ -169,16 +211,7 @@ def build_v2_image(
         for country in countries
     }
     image = (
-        modal.Image.debian_slim(python_version="3.13")
-        # Upgrade Debian's CA store before anything is downloaded, and make
-        # grpcio verify servers against it (src/modal/ca_certificates.py).
-        .apt_install(OPERATING_SYSTEM_CA_PACKAGE)
-        .env(GRPC_CA_BUNDLE_ENV)
-        .uv_sync(
-            uv_project_dir=_UV_PROJECT_DIR,
-            frozen=True,
-            extra_options="--only-group modal-simulation-image",
-        )
+        _v2_package_image()
         .run_commands(
             bundle_data_install_command(
                 RESOLVED_BUNDLE.bundle.policyengine_version,
@@ -216,20 +249,23 @@ def build_v2_image(
             # for each precomputed year), downloaded and hashed in turn.
             timeout=3600,
         )
-    image = image.add_local_python_source(
-        "src.modal",
-        "policyengine_simulation_executor",
-        "policyengine_simulation_observability",
-        "policyengine_simulation_contract",
-        "policyengine_stage12_persistence",
-        copy=True,
-    )
-    return add_static_runtime_files(image, uv_project_dir=_UV_PROJECT_DIR)
+    return _add_v2_sources(image)
+
+
+def build_household_image() -> modal.Image:
+    """Build the household functions' image: packages and source only.
+
+    A household calculation reads no dataset, cache, bucket or database, so
+    the image downloads none and its build needs no secret. The installed
+    PolicyEngine.py package names the bundle the functions calculate with.
+    """
+    return _add_v2_sources(_v2_package_image().env(modal_image_environment()))
 
 
 us_worker_image = build_v2_image(("us",), include_us_cache=True)
 uk_worker_image = build_v2_image(("uk",))
 coordinator_image = build_v2_image(("us", "uk"))
+household_image = build_household_image()
 
 
 def _validate(country: CountryId) -> dict:
@@ -498,6 +534,149 @@ def coordinate_report(
         return result
     finally:
         runtime.shutdown()
+
+
+# Household function sizing. A call holds one country model and, for each
+# policy, a simulation of the household at every axis point. Each container
+# reserves 4 GiB and may use up to 16 GiB before Modal stops it, so a large
+# household calculated with every variable at many axis points still fits.
+# The timeout is three times the Public API's 300-second request timeout.
+HOUSEHOLD_FUNCTION_CPU = 2.0
+HOUSEHOLD_FUNCTION_MEMORY_MIB = (4096, 16384)
+HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS = 900
+HOUSEHOLD_FUNCTION_MAX_CONTAINERS = 20
+
+
+def _reporting_household_call(
+    simulation_run_ids: list[str] | None,
+) -> AbstractContextManager[None]:
+    """Report the call's end to sim when it computes runs sim started.
+
+    sim passes the runs a call computes; release validation and the image
+    check pass none, and nothing is reported. The report is the last step:
+    it starts ``report_call_ended`` once the calculation and its telemetry
+    have finished, whether the calculation returned or raised, but not when
+    Modal pre-empts the call, which Modal runs again under the same ID.
+    """
+    if simulation_run_ids is None:
+        return nullcontext()
+    try:
+        run_ids = [UUID(run_id) for run_id in simulation_run_ids]
+    except (TypeError, ValueError):
+        logging.getLogger(__name__).warning(
+            "call_report_malformed",
+            extra={"modal_call_id": modal.current_function_call_id()},
+        )
+        return nullcontext()
+    from src.modal.call_reports import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        reporting_call_end,
+    )
+
+    return reporting_call_end(
+        modal_call_id=modal.current_function_call_id(),
+        simulation_run_ids=run_ids,
+        start_report=report_call_ended.spawn,
+    )
+
+
+def _run_household_calculation(
+    country: CountryId,
+    payload: dict,
+    observability_context: dict | None,
+) -> dict:
+    """Calculate one household request for ``country`` and return its outcome.
+
+    The outcome is a ``HouseholdExecutionResult`` or ``HouseholdExecutionFailure``
+    as JSON. Raises for a malformed request or a request for another country.
+    """
+    from policyengine_simulation_contract.household_execution import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        HouseholdExecutionRequest,
+        HouseholdWorkerIdentity,
+    )
+    from policyengine_simulation_executor import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        household_calculation,
+    )
+
+    runtime = init_process_observability(
+        service_name=f"policyengine-v2-household-{country}-worker",
+        service_role="v2_household_worker",
+        platform="modal",
+        environment=os.getenv("MODAL_ENVIRONMENT", "local"),
+    )
+    try:
+        propagated = normalize_observability_context(observability_context)
+        result = None
+        with runtime.operation(
+            V2_HOUSEHOLD_STAGES.name(Stage.V2_HOUSEHOLD_EXECUTION),
+            attributes={"country": country},
+            remote_context=propagated,
+        ):
+            outcome = household_calculation.calculate_household(
+                HouseholdExecutionRequest.model_validate(payload),
+                worker=HouseholdWorkerIdentity(
+                    application_name=APP_NAME,
+                    function_name=household_callable_name(country),
+                ),
+                required_country=country,
+                dependencies=household_calculation.HouseholdCalculationDependencies(
+                    runtime=runtime
+                ),
+            )
+            result = outcome.model_dump(mode="json")
+        if result is None:
+            msg = f"the {country} household calculation returned no result"
+            raise RuntimeError(msg)
+        return result
+    finally:
+        runtime.shutdown()
+
+
+@app.function(
+    image=household_image,
+    cpu=HOUSEHOLD_FUNCTION_CPU,
+    memory=HOUSEHOLD_FUNCTION_MEMORY_MIB,
+    timeout=HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS,
+    retries=0,
+    max_containers=HOUSEHOLD_FUNCTION_MAX_CONTAINERS,
+    secrets=[],
+)
+def calculate_household_us(
+    payload: dict,
+    simulation_run_ids: list[str] | None = None,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
+    """Calculate one US household under each requested policy.
+
+    ``simulation_run_ids`` names the runs sim started this call for; the
+    call's last step reports their end to sim.
+    """
+    with _reporting_household_call(simulation_run_ids):
+        return _run_household_calculation("us", payload, observability_context)
+
+
+@app.function(
+    image=household_image,
+    cpu=HOUSEHOLD_FUNCTION_CPU,
+    memory=HOUSEHOLD_FUNCTION_MEMORY_MIB,
+    timeout=HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS,
+    retries=0,
+    max_containers=HOUSEHOLD_FUNCTION_MAX_CONTAINERS,
+    secrets=[],
+)
+def calculate_household_uk(
+    payload: dict,
+    simulation_run_ids: list[str] | None = None,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
+    """Calculate one UK household under each requested policy.
+
+    ``simulation_run_ids`` names the runs sim started this call for; the
+    call's last step reports their end to sim.
+    """
+    with _reporting_household_call(simulation_run_ids):
+        return _run_household_calculation("uk", payload, observability_context)
 
 
 @app.function(

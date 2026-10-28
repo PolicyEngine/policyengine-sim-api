@@ -182,7 +182,15 @@ class TestModalImageSmoke:
             "run --frozen modal secret create pe-uk-private-hf-read-token "
             f"HUGGING_FACE_TOKEN={FAKE_HF_TOKEN} --env=staging --force"
         )
-        assert len(calls) == 4
+        assert calls[1:] == [
+            "run --frozen modal run --env=staging "
+            "src/policyengine_simulation_gateway/smoke_app.py",
+            "run --frozen modal run --env=staging src/modal/smoke_app.py",
+            "run --frozen modal run --env=staging "
+            "src/modal/v2_static_runtime_files_smoke.py",
+            # Builds every v2 image and imports its entry points.
+            "run --frozen modal run --env=staging src/modal/v2_image_smoke.py",
+        ]
 
     def test_workflow_supplies_hf_token(self):
         """CI must validate the GitHub value before synchronizing it to Modal."""
