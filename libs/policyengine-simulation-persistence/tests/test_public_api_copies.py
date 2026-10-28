@@ -14,10 +14,11 @@ import json
 from pathlib import Path
 
 import pytest
+from policyengine_simulation_persistence.household_reads import (
+    household_read_metadata,
+)
 from public_api_support import superuser_engine
 from sqlalchemy import text
-
-pytestmark = pytest.mark.postgres
 
 RECORDED_COLUMNS = (
     Path(__file__).parent / "fixtures" / "public_api" / "household_read_columns.json"
@@ -54,6 +55,7 @@ def _copied(superuser_url: str, tables: list[str]) -> dict[str, dict[str, dict]]
     return copied
 
 
+@pytest.mark.postgres
 def test_each_column_the_household_reads_select_matches_the_public_api(
     disposable_database,
 ) -> None:
@@ -69,3 +71,17 @@ def test_each_column_the_household_reads_select_matches_the_public_api(
         if copied.get(table, {}).get(column) != description
     ]
     assert mismatches == []
+
+
+def test_every_column_the_household_reads_select_is_recorded() -> None:
+    """A column added to a read must be recorded, so its copy is checked too."""
+    recorded = _recorded()
+
+    unrecorded = [
+        f"{table.name}.{column.name}"
+        for table in household_read_metadata.tables.values()
+        for column in table.columns
+        if column.name not in recorded.get(table.name, {})
+    ]
+
+    assert unrecorded == []
