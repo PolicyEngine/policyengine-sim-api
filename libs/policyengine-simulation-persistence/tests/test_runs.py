@@ -19,6 +19,7 @@ from policyengine_simulation_persistence import (
     SimulationRunRecord,
     create_simulation_engine,
 )
+from policyengine_simulation_persistence.run_store import FORCED_START_INSERT_LIMIT
 from public_api_support import delete_public_api_row, superuser_engine
 from report_support import (
     economy_pair,
@@ -171,6 +172,29 @@ def test_a_forced_start_that_loses_the_insert_adds_the_attempt_after(
     assert forced.created is True
     assert forced.run.attempt == first.run.attempt + 2
     assert forced.run.trigger is RunTrigger.MANUAL
+
+
+def test_a_forced_start_that_loses_every_insert_gives_up(
+    migrated_database, public_api_rows, monkeypatch
+) -> None:
+    """A forced start raises after its limit of lost inserts.
+
+    Each lost insert means another caller added an attempt, so the limit is
+    reached only by a runaway of simultaneous starts.
+    """
+    baseline, _ = economy_pair(migrated_database, public_api_rows)
+    store = run_store(migrated_database)
+    store.start_simulation_run(economy_run(baseline, public_api_rows))
+    attempted = []
+
+    def lose_every_insert(_connection, _new_run, _kind, attempt, _now):
+        attempted.append(attempt)
+
+    monkeypatch.setattr(store, "_insert_attempt", lose_every_insert)
+
+    with pytest.raises(RuntimeError, match="took every attempt"):
+        store.start_simulation_run(economy_run(baseline, public_api_rows), force=True)
+    assert len(attempted) == FORCED_START_INSERT_LIMIT
 
 
 def test_a_failed_run_is_not_reused(migrated_database, public_api_rows) -> None:

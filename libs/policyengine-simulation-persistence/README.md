@@ -46,11 +46,18 @@ version and year, so both of its runs share them.
 simulation, catalog version and year while it is unfinished, or when it
 succeeded within the last 28 days (output files are kept 30); a failed run is
 never reused. Otherwise, and always when forced, it adds the next attempt.
-Concurrent starts settle on one row through the unique attempt number.
+Concurrent starts meet at the unique attempt number: an unforced start that
+loses the insert returns the other caller's run, and a forced start adds the
+attempt after it, so a forced caller always starts a run of its own (it gives
+up after 10 lost inserts in a row).
 `RunStore.create_report_run` joins one run of each of the report's simulations
 and takes the catalog version and year from them; a report's status is its
-newest report run's. The runtime role may read, insert and update runs but
-not delete them.
+newest report run's. `RunStore.create_first_report_run` adds a report run only
+while the report has none, and otherwise returns its newest: simultaneous
+callers wait for each other on a transaction-level advisory lock on the report
+(`pg_advisory_xact_lock`), so a report migrated without a run gets one first
+run however many readers open it at once. The runtime role may read, insert
+and update runs but not delete them.
 
 `RunTransitions` makes every status change one conditional update on the
 expected status, so a second writer changes nothing: only the caller that
