@@ -1,11 +1,14 @@
-"""The Public API tables the simulation schema refers to, reduced to their keys.
+"""The Public API tables the simulation schema refers to or the household path reads.
 
 In production these tables belong to the Public API's own migration chain, in
 the same database as the simulation schema. The tests create only the columns
-and unique constraints the simulation schema's foreign keys use, with the
-Public API's constraint names, owned by the superuser, and grant the migrator
-``REFERENCES`` on them, as the operator does in production. The runtime role
-gets no privilege on them.
+and constraints the simulation schema's foreign keys and the household reads
+use, with the Public API's constraint names, owned by the superuser, and
+grant the migrator ``REFERENCES`` on them, as the operator does in
+production. Every column the household reads select has the type and
+nullability the Public API's migrations give it
+(``test_public_api_copies``): ``households.household_data`` and
+``parameter_values.value_json`` are ``jsonb``.
 """
 
 from __future__ import annotations
@@ -21,7 +24,16 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
 
 PUBLIC_API_TABLE_STATEMENTS = (
-    "CREATE TABLE public.tax_benefit_model_versions (id uuid PRIMARY KEY)",
+    "CREATE TABLE public.tax_benefit_models ("
+    " id uuid PRIMARY KEY,"
+    " name varchar(32) NOT NULL,"
+    " CONSTRAINT uq_tax_benefit_models_name UNIQUE (name))",
+    "CREATE TABLE public.tax_benefit_model_versions ("
+    " id uuid PRIMARY KEY,"
+    " model_id uuid NOT NULL REFERENCES public.tax_benefit_models (id),"
+    " version varchar(128) NOT NULL,"
+    " CONSTRAINT uq_tax_benefit_model_versions_model_version"
+    " UNIQUE (model_id, version))",
     "CREATE TABLE public.datasets ("
     " id uuid PRIMARY KEY,"
     " name varchar(255) NOT NULL,"
@@ -46,9 +58,37 @@ PUBLIC_API_TABLE_STATEMENTS = (
     "CREATE TABLE public.households ("
     " id uuid PRIMARY KEY,"
     " country_id varchar(2) NOT NULL,"
+    " default_year integer,"
+    " household_data jsonb NOT NULL,"
     " CONSTRAINT uq_households_id_country UNIQUE (id, country_id))",
     "CREATE TABLE public.dynamics (id uuid PRIMARY KEY)",
+    "CREATE TABLE public.parameters ("
+    " id uuid PRIMARY KEY,"
+    " name varchar(512) NOT NULL,"
+    " tax_benefit_model_version_id uuid NOT NULL"
+    " REFERENCES public.tax_benefit_model_versions (id),"
+    " CONSTRAINT uq_parameters_model_version_name"
+    " UNIQUE (tax_benefit_model_version_id, name))",
+    "CREATE TABLE public.parameter_values ("
+    " id uuid PRIMARY KEY,"
+    " parameter_id uuid NOT NULL REFERENCES public.parameters (id),"
+    " value_json jsonb NOT NULL,"
+    " start_date timestamptz NOT NULL,"
+    " end_date timestamptz,"
+    " policy_id uuid REFERENCES public.policies (id),"
+    " dynamic_id uuid REFERENCES public.dynamics (id),"
+    " CONSTRAINT ck_parameter_values_effective_period"
+    " CHECK (end_date IS NULL OR end_date >= start_date),"
+    " CONSTRAINT ck_parameter_values_single_owner"
+    " CHECK (policy_id IS NULL OR dynamic_id IS NULL),"
+    " CONSTRAINT uq_parameter_values_policy_parameter_start_date"
+    " UNIQUE (policy_id, parameter_id, start_date))",
 )
+# The catalog versions' PolicyEngine.py versions, oldest first.
+CATALOG_POLICYENGINE_VERSION = "6.9.0"
+NEWER_CATALOG_POLICYENGINE_VERSION = "6.10.0"
+# A stored household document; these rows are only referred to, never read.
+EMPTY_HOUSEHOLD_DOCUMENT = '{"people": []}'
 REFERENCED_TABLES = (
     "tax_benefit_model_versions",
     "datasets",
@@ -92,10 +132,14 @@ def create_public_api_tables(superuser_url: str, *, grant_references: bool) -> N
 class PublicApiRows:
     """Public API rows a simulation or run can refer to.
 
-    Two catalog versions each have California (``state/ca``) with its own
-    default dataset, as each publication creates new rows.
+    Two US catalog versions (PolicyEngine.py ``CATALOG_POLICYENGINE_VERSION``
+    and ``NEWER_CATALOG_POLICYENGINE_VERSION``) each have California
+    (``state/ca``) with its own default dataset, as each publication creates
+    new rows.
     """
 
+    us_model_id: UUID
+    uk_model_id: UUID
     us_policy_id: UUID
     uk_policy_id: UUID
     us_household_id: UUID
@@ -110,11 +154,20 @@ class PublicApiRows:
 def _catalog_statements(rows: PublicApiRows) -> tuple[tuple[str, dict], ...]:
     return (
         (
-            "INSERT INTO public.tax_benefit_model_versions (id) VALUES "
-            "(:version), (:newer_version)",
+            "INSERT INTO public.tax_benefit_models (id, name) VALUES "
+            "(:us_model, 'policyengine-us'), (:uk_model, 'policyengine-uk')",
+            {"us_model": rows.us_model_id, "uk_model": rows.uk_model_id},
+        ),
+        (
+            "INSERT INTO public.tax_benefit_model_versions (id, model_id, version) "
+            "VALUES (:version, :us_model, :policyengine_version), "
+            "(:newer_version, :us_model, :newer_policyengine_version)",
             {
                 "version": rows.catalog_version_id,
                 "newer_version": rows.newer_catalog_version_id,
+                "us_model": rows.us_model_id,
+                "policyengine_version": CATALOG_POLICYENGINE_VERSION,
+                "newer_policyengine_version": NEWER_CATALOG_POLICYENGINE_VERSION,
             },
         ),
         (
@@ -146,6 +199,8 @@ def _catalog_statements(rows: PublicApiRows) -> tuple[tuple[str, dict], ...]:
 def insert_public_api_rows(superuser_url: str) -> PublicApiRows:
     """Insert rows into the referenced Public API tables, as their owner."""
     rows = PublicApiRows(
+        us_model_id=uuid4(),
+        uk_model_id=uuid4(),
         us_policy_id=uuid4(),
         uk_policy_id=uuid4(),
         us_household_id=uuid4(),
@@ -164,11 +219,14 @@ def insert_public_api_rows(superuser_url: str) -> PublicApiRows:
             {"us_policy": rows.us_policy_id, "uk_policy": rows.uk_policy_id},
         ),
         (
-            "INSERT INTO public.households (id, country_id) VALUES "
-            "(:us_household, 'us'), (:uk_household, 'uk')",
+            "INSERT INTO public.households "
+            "(id, country_id, default_year, household_data) VALUES "
+            "(:us_household, 'us', 2026, :document), "
+            "(:uk_household, 'uk', 2026, :document)",
             {
                 "us_household": rows.us_household_id,
                 "uk_household": rows.uk_household_id,
+                "document": EMPTY_HOUSEHOLD_DOCUMENT,
             },
         ),
         (
