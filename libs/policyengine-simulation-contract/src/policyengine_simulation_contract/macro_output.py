@@ -364,6 +364,14 @@ class LocalAreaBreakdownOutput(MacroOutputModel):
     policyengine.py release that computed it. Each list holds only its own
     level's records. Areas whose income change disclosure control withholds
     are left out of each list, so a list may be empty.
+
+    ``constituency_withheld_codes`` and ``local_authority_withheld_codes``
+    hold, sorted, the ONS codes of that level's areas that the run estimated
+    but disclosure control did not publish, so a client can tell a withheld
+    area from an absent one. An area the run never estimated, such as one with
+    no households in the dataset, is in neither list. An empty list means
+    that no area of the level was withheld. Null means that the result does
+    not report them, as results from older executors do not.
     """
 
     kind: Literal["local_areas"]
@@ -373,3 +381,5 @@ class LocalAreaBreakdownOutput(MacroOutputModel):
     data_version: str
     constituency_impact: list[ConstituencyImpactRecord]
     local_authority_impact: list[LocalAuthorityImpactRecord]
+    constituency_withheld_codes: list[str] | None = None
+    local_authority_withheld_codes: list[str] | None = None

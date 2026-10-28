@@ -104,6 +104,7 @@ instead of a `SingleYearMacroOutput`:
 | `model_version`, `policyengine_version` | The country model and the policyengine.py release that computed it. |
 | `dataset`, `data_version` | The local-area dataset's name and release revision. |
 | `constituency_impact`, `local_authority_impact` | The published areas of each level. Disclosure control leaves withheld areas out, so a list may be empty; each record carries a `disclosure_tier` (`reported` or `approximate`) and 90% interval bounds. |
+| `constituency_withheld_codes`, `local_authority_withheld_codes` | The ONS codes, sorted, of each level's areas that the run estimated but disclosure control did not publish. An area the run never estimated, such as one with no households in the dataset, is in neither list, so an area absent from both the records and this list has no estimate. An empty list means that no area was withheld. Results from older executors don't report them: the fields are null, and the status body omits them. |
 
 Rules:
 
