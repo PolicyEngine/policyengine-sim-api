@@ -204,6 +204,11 @@ class HouseholdInputs(Protocol):
         ...
 
     @property
+    def year(self) -> int:
+        """The runs' year: the household's default year."""
+        ...
+
+    @property
     def household(self) -> HouseholdDocument:
         """The household in the situation shape, without axes."""
         ...
@@ -334,6 +339,9 @@ def household_modal_request(
     payload: dict[str, object] = {
         "calculation_id": calculation_id,
         "country": inputs.country,
+        # The household's default year, as a situation's period key: the
+        # period of added variables, and of values and axes without one.
+        "year": str(inputs.year),
         "household": situation,
         "policies": [
             {"policy_key": policy_key_for_run(run_id), "parameters": parameters}

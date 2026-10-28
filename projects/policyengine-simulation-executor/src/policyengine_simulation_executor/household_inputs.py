@@ -1,11 +1,17 @@
 """Household input preparation, matching the Public API's in-process calculation.
 
 These functions reproduce, for the v2 household functions, how the Public API
-prepares a household before calculating it: which period missing variables
-are added for, which deprecated inputs are dropped (and the warning that says
-so), which names are reported as unrecognized, and which values are
-requested. Keeping the wording and order identical lets a v2 result be
-compared with the Public API's result field by field.
+prepares a household before calculating it: which missing variables are added,
+which deprecated inputs are dropped (and the warning that says so), which
+names are reported as unrecognized, and which values are requested. Keeping
+the wording and order identical lets a v2 result be compared with the Public
+API's result field by field.
+
+Two steps differ, because a v2 request names its year: missing variables are
+added for that year, where the Public API infers one, and
+``assign_request_year`` puts values and axes the household gives without a
+period in that year, where the Public API leaves them to the country model's
+own default year.
 """
 
 from __future__ import annotations
@@ -18,7 +24,6 @@ from policyengine_simulation_contract.household_execution import HouseholdInputE
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
-    from datetime import date
 
     from policyengine_core.taxbenefitsystems import TaxBenefitSystem
     from policyengine_core.variables import Variable
@@ -131,34 +136,53 @@ def _metadata_default_value(variable: Variable) -> bool | int | float | str | No
     return None
 
 
-def household_year(situation: Mapping[str, Any], *, today: date) -> str:
-    """Return the period missing yearly variables are added for.
+def assign_request_year(situation: dict[str, Any], *, year: str) -> None:
+    """Put every value and axis the household gives without a period in ``year``.
 
-    As in the Public API, this is the first period of the age entered for the
-    person named ``you``, or else the current calendar year. An age entered
-    without periods counts as no age.
+    Changes ``situation`` in place: a variable given as one value, not by
+    period, becomes that value for ``year``, and an axis without a ``period``
+    varies ``year``. The country model would otherwise put both in its own
+    default year (currently 2024 for the US model and 2025 for the UK model),
+    whatever year the request names, which is where the Public API leaves
+    them. Membership lists are left alone.
     """
-    people = situation.get("people")
-    you = people.get("you") if isinstance(people, dict) else None
-    ages = you.get("age") if isinstance(you, dict) else None
-    if isinstance(ages, dict) and ages:
-        return str(next(iter(ages)))
-    return str(today.year)
+    for entity_plural, entity_group in situation.items():
+        if entity_plural == _AXES_KEY:
+            _put_axes_in_year(entity_group, year)
+        elif isinstance(entity_group, dict):
+            for variables in entity_group.values():
+                if isinstance(variables, dict):
+                    _put_single_values_in_year(variables, year)
+
+
+def _put_single_values_in_year(variables: dict[str, Any], year: str) -> None:
+    for variable_name, value in variables.items():
+        if value is None or isinstance(value, (bool, int, float, str)):
+            variables[variable_name] = {year: value}
+
+
+def _put_axes_in_year(axes: object, year: str) -> None:
+    if not isinstance(axes, list):
+        return
+    for group in axes:
+        for axis in group:
+            if isinstance(axis, dict) and axis.get("period") is None:
+                axis["period"] = year
 
 
 def add_missing_variables(
     situation: dict[str, Any],
     metadata: HouseholdModelMetadata,
     *,
-    today: date,
+    year: str,
 ) -> None:
     """Add every yearly, monthly and eternal variable each entity lacks, in place.
 
     Input variables get their default value and calculated variables get
-    None, which requests them, for the household's year. This is what the
-    Public API's ``/calculate-full`` route adds.
+    None, which requests them, for ``year``, the request's calculation year.
+    The Public API's ``/calculate-full`` route adds the same variables, for
+    the first age period of a person named ``you`` or else the current year.
     """
-    year = household_year(situation, today=today)
     for variable in metadata.variables.values():
         if variable.definition_period not in _ADDED_DEFINITION_PERIODS:
             continue

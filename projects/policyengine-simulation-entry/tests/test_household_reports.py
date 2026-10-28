@@ -83,6 +83,7 @@ def test_one_call_computes_a_reports_baseline_and_reform() -> None:
     report = submit_report(harness)
 
     baseline_run_id, reform_run_id = report_runs(report)
+    assert harness.sent_request().year == str(DEFAULT_YEAR)
     assert report.report.year == DEFAULT_YEAR
     assert report.baseline.run.year == report.reform.run.year == DEFAULT_YEAR
     assert report.report_run.reform_simulation_run_id == reform_run_id

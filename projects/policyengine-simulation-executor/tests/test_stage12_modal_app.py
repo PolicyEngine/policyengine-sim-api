@@ -449,6 +449,7 @@ def _household_payload(country: str) -> dict:
     return {
         "calculation_id": "00000000-0000-4000-8000-0000000000c1",
         "country": country,
+        "year": "2026",
         "household": {"people": {"you": {"age": {"2026": 40}}}},
         "policies": [{"policy_key": "baseline", "parameters": {}}],
         "bundle": {

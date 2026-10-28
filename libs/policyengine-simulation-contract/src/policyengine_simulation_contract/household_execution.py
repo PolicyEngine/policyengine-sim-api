@@ -84,6 +84,17 @@ PeriodKey = Annotated[str, Field(min_length=1, max_length=64)]
 ParameterPath = Annotated[str, Field(min_length=1, max_length=512)]
 ParameterPeriod = Annotated[str, Field(min_length=1, max_length=64)]
 ContractText = Annotated[str, Field(min_length=1, max_length=255)]
+CalculationYear = Annotated[
+    str,
+    Field(
+        pattern=r"^[0-9]{4}$",
+        description=(
+            "The run's year, written as a situation's period key, such as "
+            "'2025': the period of added variables and of values and axes "
+            "the household gives without one."
+        ),
+    ),
+]
 PolicyKey = Annotated[
     str,
     Field(
@@ -101,7 +112,7 @@ PeriodInputs = Annotated[
     dict[PeriodKey, InputScalar],
     Field(max_length=MAXIMUM_PERIODS_PER_VARIABLE),
 ]
-# A variable's values by period, or one value for the model's default period.
+# A variable's values by period, or one value, for the request's year.
 VariableInput = PeriodInputs | InputScalar
 EntityInputs = Annotated[
     dict[VariableName, VariableInput],
@@ -255,7 +266,7 @@ class HouseholdAxis(StrictHouseholdModel):
     """One input varied across points, as policyengine-core reads an axis.
 
     The variable ``name`` takes ``count`` evenly spaced values from ``min`` to
-    ``max`` in ``period`` (the model's default period when omitted), for the
+    ``max`` in ``period`` (the request's year when omitted), for the
     entity member at position ``index`` (the first when omitted).
     """
 
@@ -464,18 +475,25 @@ class HouseholdExecutionRequest(StrictHouseholdModel):
     """A caller to a Modal household function: calculate one household.
 
     ``calculation_id`` is the caller's durable identity for the calculation.
-    ``bundle`` is the bundle the caller resolved from the version manifest; the
-    household function refuses a request for any other bundle.
+    ``year`` is the run's year, such as a stored household's default year,
+    written as a situation's period key (four digits): the period of the
+    variables ``add_missing_variables`` adds and of any value or axis the
+    household gives without a period. Every other value is calculated for the
+    period the household names. ``bundle`` is the bundle the caller resolved
+    from the version manifest; the household function refuses a request for
+    any other bundle.
 
     ``add_missing_variables`` adds every yearly, monthly and eternal variable
-    the household's entities lack before calculating, as the Public API's
-    ``/calculate-full`` route does. ``spm`` carries the caller's SPM settings
-    exactly as sent, as any JSON value, and the household function checks
-    them with the Public API's SPM error codes: settings for a country other
-    than the US are unsupported, and for the US an explicit null or malformed
-    settings are invalid. Omit ``spm`` to inherit the bundle's certified
-    defaults; sending it, even as an empty object, is a choice, and then a
-    missing SPM input is an error rather than an uncalculated value.
+    the household's entities lack, for ``year``, before calculating, as the
+    Public API's ``/calculate-full`` route does (that route takes its year from
+    the first age period of a person named ``you``, or else the current year,
+    and v2 households name people by record ID). ``spm`` carries the caller's
+    SPM settings exactly as sent, as any JSON value, and the household
+    function checks them with the Public API's SPM error codes: settings for a
+    country other than the US are unsupported, and for the US an explicit null
+    or malformed settings are invalid. Omit ``spm`` to inherit the bundle's
+    certified defaults; sending it, even as an empty object, is a choice, and
+    then a missing SPM input is an error rather than an uncalculated value.
     ``spm_selection_source`` says whether the settings came from this request
     or from a saved household, which changes only how an SPM forecast the
     bundle no longer carries is reported.
@@ -483,11 +501,15 @@ class HouseholdExecutionRequest(StrictHouseholdModel):
     To calculate a saved household with the inputs the Public API's
     stored-household route (``GET /{country}/household/{id}/policy/{policy_id}``)
     uses, set ``add_missing_variables``, because that route always adds
-    missing variables; pass the household's saved SPM selection as ``spm``
-    only if it has one (a saved null is no choice); and set
-    ``spm_selection_source`` to ``"saved_household"``. The calculated
-    household, warnings, SPM receipt and SPM error codes then match that
-    route's. Its error messages do not: the route reports a household it
+    missing variables, and ``year`` to the year the run calculates, such as
+    the household's default year; pass the household's saved SPM selection as
+    ``spm`` only if it has one (a saved null is no choice); and set
+    ``spm_selection_source`` to ``"saved_household"``. When ``year`` is the
+    year that route would infer and the household gives every value and axis
+    a period, the calculated household, warnings, SPM receipt and SPM error
+    codes then match that route's (the executor's household calculation module
+    lists every difference). Its error messages do not: the route reports a
+    household it
     cannot read, and any other failure except an SPM error, as an error
     calculating that household ID under that policy ID, while a household
     function reports the request routes' wording (``invalid_household`` and
@@ -501,6 +523,7 @@ class HouseholdExecutionRequest(StrictHouseholdModel):
     schema_version: Literal[1] = HOUSEHOLD_CONTRACT_SCHEMA_VERSION
     calculation_id: UUID
     country: CountryId
+    year: CalculationYear
     household: HouseholdDocument
     policies: Policies
     add_missing_variables: bool = False

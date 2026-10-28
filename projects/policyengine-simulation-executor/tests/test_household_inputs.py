@@ -10,15 +10,13 @@ from policyengine_simulation_executor.household_inputs import (
     HouseholdModelMetadata,
     HouseholdVariable,
     add_missing_variables,
+    assign_request_year,
     drop_deprecated_inputs,
     find_unrecognized_household_inputs,
     find_unrecognized_policy_inputs,
-    household_year,
     requested_computations,
     unrecognized_inputs_message,
 )
-
-TODAY = date(2027, 3, 1)
 
 
 def _metadata() -> HouseholdModelMetadata:
@@ -60,45 +58,104 @@ def _metadata() -> HouseholdModelMetadata:
 
 
 def _situation() -> dict:
+    # People are named by record ID, as v2 households name them.
     return {
-        "people": {"you": {"age": {"2026": 30}}, "partner": {}},
-        "households": {"home": {"members": ["you", "partner"]}},
+        "people": {"person-1": {"age": {"2025": 30}}, "person-2": {}},
+        "households": {"household-1": {"members": ["person-1", "person-2"]}},
     }
 
 
-def test_household_year_is_the_first_age_period_of_you() -> None:
-    assert household_year(_situation(), today=TODAY) == "2026"
-    assert household_year({"people": {"partner": {}}}, today=TODAY) == "2027"
-    assert household_year({"people": {"you": {"age": 30}}}, today=TODAY) == "2027"
-
-
-def test_add_missing_variables_matches_the_public_api() -> None:
+def test_add_missing_variables_adds_them_for_the_request_year() -> None:
     situation = _situation()
 
-    add_missing_variables(situation, _metadata(), today=TODAY)
+    add_missing_variables(situation, _metadata(), year="2025")
 
     assert situation == {
         "people": {
-            "you": {
-                "age": {"2026": 30},
-                "employment_income": {"2026": 0},
-                "is_blind": {"2026": False},
+            "person-1": {
+                "age": {"2025": 30},
+                "employment_income": {"2025": 0},
+                "is_blind": {"2025": False},
             },
-            "partner": {
-                "age": {"2026": 40},
-                "employment_income": {"2026": 0},
-                "is_blind": {"2026": False},
+            "person-2": {
+                "age": {"2025": 40},
+                "employment_income": {"2025": 0},
+                "is_blind": {"2025": False},
             },
         },
         "households": {
-            "home": {
-                "members": ["you", "partner"],
-                "monthly_rent": {"2026": 0},
-                "state_name": {"2026": "CA"},
+            "household-1": {
+                "members": ["person-1", "person-2"],
+                "monthly_rent": {"2025": 0},
+                "state_name": {"2025": "CA"},
                 # Calculated variables are requested, never defaulted.
-                "household_net_income": {"2026": None},
+                "household_net_income": {"2025": None},
             }
         },
+    }
+
+
+def test_the_year_never_comes_from_a_person_named_you() -> None:
+    # The Public API takes the first period of the age of a person named
+    # "you"; a v2 request names its year instead.
+    situation = {
+        "people": {"you": {"age": {"2030": 30}}},
+        "households": {"home": {"members": ["you"]}},
+    }
+
+    add_missing_variables(situation, _metadata(), year="2025")
+
+    assert situation["people"]["you"]["employment_income"] == {"2025": 0}
+    assert situation["households"]["home"]["household_net_income"] == {"2025": None}
+
+
+def test_axes_and_values_without_a_period_are_for_the_request_year() -> None:
+    # The country model would put them in its own default year (2024 for the
+    # US, 2025 for the UK), not the year the request calculates.
+    situation = {
+        "people": {
+            "person-1": {"age": 30, "employment_income": {"2024": 1}},
+            "person-2": {"is_blind": None},
+        },
+        "households": {
+            "household-1": {"members": ["person-1", "person-2"], "state_name": "TX"}
+        },
+        "axes": [
+            [
+                {"name": "employment_income", "count": 2, "min": 0, "max": 1},
+                {"name": "age", "count": 2, "min": 0, "max": 1, "period": "2024"},
+            ],
+            [{"name": "rent", "count": 2, "min": 0, "max": 1, "period": None}],
+        ],
+    }
+
+    assign_request_year(situation, year="2025")
+
+    assert situation == {
+        "people": {
+            "person-1": {"age": {"2025": 30}, "employment_income": {"2024": 1}},
+            "person-2": {"is_blind": {"2025": None}},
+        },
+        # The membership list stays a list beside the group's own value.
+        "households": {
+            "household-1": {
+                "members": ["person-1", "person-2"],
+                "state_name": {"2025": "TX"},
+            }
+        },
+        "axes": [
+            [
+                {
+                    "name": "employment_income",
+                    "count": 2,
+                    "min": 0,
+                    "max": 1,
+                    "period": "2025",
+                },
+                {"name": "age", "count": 2, "min": 0, "max": 1, "period": "2024"},
+            ],
+            [{"name": "rent", "count": 2, "min": 0, "max": 1, "period": "2025"}],
+        ],
     }
 
 

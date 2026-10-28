@@ -350,3 +350,15 @@ def test_a_calculation_that_succeeded_too_long_ago_runs_again() -> None:
 
     assert again.run.id != submitted.run.id
     assert again.run.attempt == 2
+
+
+def test_a_household_is_calculated_for_its_default_year_not_the_current_one() -> None:
+    harness = Harness()
+    harness.reads.store_household(2023)
+
+    calculation = harness.submit(options={"add_missing_variables": True})
+
+    assert calculation.run.year == 2023
+    request = harness.sent_request()
+    assert request.year == "2023"
+    assert request.add_missing_variables

@@ -52,6 +52,7 @@ def test_the_validation_household_is_one_adult_under_current_law(
 
     situation = request.household.to_situation()
     assert request.country == country
+    assert request.year == "2026"
     assert request.bundle == installed_household_bundle(country)
     assert [policy.parameters for policy in request.policies] == [{}]
     assert list(situation["people"]) == ["you"]
