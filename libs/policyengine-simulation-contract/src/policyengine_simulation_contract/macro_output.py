@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from policyengine_simulation_contract.spm import SPMComparisonProvenance
 
@@ -354,6 +354,10 @@ class SingleYearMacroOutput(MacroOutputModel):
     cliff_impact: CliffImpactOutput | None = None
 
 
+def _is_none(value: object) -> bool:
+    return value is None
+
+
 class LocalAreaBreakdownOutput(MacroOutputModel):
     """Completed result of a UK local-area breakdown run.
 
@@ -367,6 +371,15 @@ class LocalAreaBreakdownOutput(MacroOutputModel):
     policyengine.py release that computed it. Each list holds only its own
     level's records. Areas whose income change disclosure control withholds
     are left out of each list, so a list may be empty.
+
+    ``constituency_withheld_codes`` and ``local_authority_withheld_codes``
+    hold, sorted, the ONS codes of that level's areas that the run estimated
+    but disclosure control did not publish, so a client can tell a withheld
+    area from an absent one. An area the run never estimated, such as one with
+    no households in the dataset, is in neither list. An empty list means
+    that no area of the level was withheld. Null means that the result does
+    not report them, as results from older executors do not; the JSON then
+    leaves both keys out rather than writing null.
     """
 
     kind: Literal["local_areas"]
@@ -376,3 +389,9 @@ class LocalAreaBreakdownOutput(MacroOutputModel):
     data_version: str
     constituency_impact: list[ConstituencyImpactRecord]
     local_authority_impact: list[LocalAuthorityImpactRecord]
+    constituency_withheld_codes: list[str] | None = Field(
+        default=None, exclude_if=_is_none
+    )
+    local_authority_withheld_codes: list[str] | None = Field(
+        default=None, exclude_if=_is_none
+    )
