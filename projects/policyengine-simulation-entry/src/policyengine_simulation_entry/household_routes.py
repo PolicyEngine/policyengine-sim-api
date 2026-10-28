@@ -21,8 +21,13 @@ when household calculations are not configured or a dependency, such as the
 database holding the Public API's rows, cannot be reached. A submission gets
 400, with the reason, when it names a version or country without a
 household function, a household, policy or catalog version the Public API
-does not have, or a policy changing a parameter the catalog version lacks,
-or when the stored household has no default year or cannot be calculated.
+does not have, or when the stored household has no default year. It gets
+422, with the reason, for the caller's data the household functions cannot
+take, checked before anything is written: a policy changing a parameter the
+catalog version lacks, or a stored policy value or household the household
+functions' contract refuses, such as an object as a value or a group no
+person belongs to. Without ``SELECT`` on the Public API's tables, the routes
+answer 503 saying sim cannot read them.
 
 This is v2 code: the v1 ``run_simulation`` code does not use it.
 """
@@ -41,18 +46,20 @@ from policyengine_simulation_persistence import (
     UnknownHouseholdError,
     UnknownPolicyError,
 )
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import ProgrammingError, SQLAlchemyError
 
 from policyengine_simulation_entry.household_api_models import (
     HouseholdCalculationResponse,
     HouseholdCalculationSubmission,
+    HouseholdRefusalResponse,
     HouseholdReportResponse,
     HouseholdReportRunSubmission,
     HouseholdReportSubmission,
     HouseholdRouteError,
 )
 from policyengine_simulation_entry.household_calculations import (
-    HouseholdNotCalculableError,
+    HouseholdDataRefusedError,
+    HouseholdWithoutYearError,
     UnknownHouseholdReferenceError,
 )
 from policyengine_simulation_entry.household_workers import (
@@ -79,22 +86,37 @@ RETRY_AFTER_SECONDS = 10
 NOT_CONFIGURED = "Household calculations are not configured."
 WORKERS_UNAVAILABLE = "The v2 version manifest could not be read."
 DATABASE_UNAVAILABLE = "The simulation database could not be reached."
+NO_READ_ACCESS = (
+    "The Simulation Entrypoint cannot read the Public API's tables: its database "
+    "role lacks SELECT on them."
+)
+# PostgreSQL's SQLSTATE for a missing privilege.
+INSUFFICIENT_PRIVILEGE = "42501"
 REFUSED_RESPONSE = {
     "description": (
         "Refused, with the reason in detail: no household function for this "
         "version and country; a household, policy or catalog version the "
-        "Public API does not have for the country; a policy changing a "
-        "parameter the catalog version lacks; or a stored household without "
-        "a default year, or that the household functions cannot take"
+        "Public API does not have for the country; or a stored household "
+        "without a default year"
     ),
     "model": HouseholdRouteError,
+}
+CALLER_DATA_REFUSED_RESPONSE = {
+    "description": (
+        "The caller's data cannot be calculated, with the reason in detail "
+        "as text: a policy changing a parameter the catalog version lacks, or "
+        "a stored policy value or household the household functions' "
+        "contract refuses; or a request field is invalid (one entry per field)"
+    ),
+    "model": HouseholdRefusalResponse,
 }
 UNAVAILABLE_RESPONSE = {
     "description": (
         "Household calculations are not configured, or a dependency could not "
         "be reached, such as the v2 version manifest or the database holding "
-        "the simulation records and the Public API's rows; retry after "
-        "Retry-After seconds"
+        "the simulation records and the Public API's rows, or sim's database "
+        "role cannot read the Public API's tables; retry after Retry-After "
+        "seconds"
     ),
     "model": HouseholdRouteError,
 }
@@ -156,13 +178,22 @@ async def guarded[T](operation: Awaitable[T]) -> T | JSONResponse:
         UnknownHouseholdError,
         UnknownPolicyError,
         UnknownCatalogVersionError,
-        PolicyParametersMissingError,
-        HouseholdNotCalculableError,
+        HouseholdWithoutYearError,
     ) as error:
         return refused(str(error), status.HTTP_400_BAD_REQUEST)
+    except (PolicyParametersMissingError, HouseholdDataRefusedError) as error:
+        return refused(str(error), status.HTTP_422_UNPROCESSABLE_ENTITY)
     except HouseholdWorkersUnavailableError:
         logger.warning("household_manifest_unavailable")
         return unavailable(WORKERS_UNAVAILABLE)
+    except ProgrammingError as error:
+        if getattr(error.orig, "sqlstate", None) != INSUFFICIENT_PRIVILEGE:
+            raise
+        logger.error(  # noqa: TRY400  # the log names the missing grant; a traceback adds nothing
+            "household_public_api_tables_unreadable",
+            extra={"error_type": type(error).__name__},
+        )
+        return unavailable(NO_READ_ACCESS)
     except SQLAlchemyError as error:
         logger.warning(
             "household_database_unavailable",
@@ -214,7 +245,11 @@ def register_household_calculation_routes(
         operation_id="submit_household_calculation",
         status_code=status.HTTP_202_ACCEPTED,
         response_model=HouseholdCalculationResponse,
-        responses={400: REFUSED_RESPONSE, 503: UNAVAILABLE_RESPONSE},
+        responses={
+            400: REFUSED_RESPONSE,
+            422: CALLER_DATA_REFUSED_RESPONSE,
+            503: UNAVAILABLE_RESPONSE,
+        },
         dependencies=[Depends(submitter)],
     )
     async def submit_household_calculation(
@@ -291,7 +326,11 @@ def _add_report_creation(
         operation_id="submit_household_report",
         status_code=status.HTTP_202_ACCEPTED,
         response_model=HouseholdReportResponse,
-        responses={400: REFUSED_RESPONSE, 503: UNAVAILABLE_RESPONSE},
+        responses={
+            400: REFUSED_RESPONSE,
+            422: CALLER_DATA_REFUSED_RESPONSE,
+            503: UNAVAILABLE_RESPONSE,
+        },
         dependencies=[Depends(submitter)],
     )
     async def submit_household_report(
@@ -328,6 +367,7 @@ def _add_report_run(
         responses={
             400: REFUSED_RESPONSE,
             404: NOT_FOUND_RESPONSE,
+            422: CALLER_DATA_REFUSED_RESPONSE,
             503: UNAVAILABLE_RESPONSE,
         },
         dependencies=[Depends(submitter)],

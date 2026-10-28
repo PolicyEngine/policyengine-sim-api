@@ -346,3 +346,23 @@ class HouseholdRouteError(BaseModel):
     """Why a household route refused or could not serve a request."""
 
     detail: str
+
+
+class HouseholdRequestFieldError(BaseModel):
+    """One request field FastAPI's validation refused, and why."""
+
+    loc: list[str | int]
+    msg: str
+    type: str
+
+
+class HouseholdRefusalResponse(BaseModel):
+    """A refusal of the caller's data (422).
+
+    ``detail`` is text when sim refuses the stored household or policy the
+    request names, such as a parameter the catalog version lacks, a policy
+    value or a household the household functions' contract refuses; and one
+    entry per field when FastAPI's validation refuses the request's fields.
+    """
+
+    detail: str | list[HouseholdRequestFieldError]

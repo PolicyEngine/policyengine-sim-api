@@ -25,7 +25,8 @@ from household_harness import EARNINGS_AXES, Harness, submission
 from household_support import calculated_household, succeeded_outcome
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_entry.household_calculations import (
-    HouseholdNotCalculableError,
+    HouseholdDataRefusedError,
+    HouseholdWithoutYearError,
     UnknownHouseholdReferenceError,
 )
 from policyengine_simulation_entry.household_recording import policy_key_for_run
@@ -207,7 +208,7 @@ def test_a_household_without_a_default_year_is_not_calculable() -> None:
     harness = Harness()
     harness.reads.store_household(None)
 
-    with pytest.raises(HouseholdNotCalculableError, match="default year"):
+    with pytest.raises(HouseholdWithoutYearError, match="default year"):
         harness.submit()
 
     assert harness.store.simulations == {}
@@ -220,10 +221,27 @@ def test_a_stored_household_the_contract_refuses_is_not_calculable() -> None:
         family=[{"id": "your family", "values": {}}, {"id": "empty", "values": {}}],
     )
 
-    with pytest.raises(HouseholdNotCalculableError, match="empty"):
+    with pytest.raises(HouseholdDataRefusedError, match="empty"):
         harness.submit()
 
     assert harness.store.simulations == {}
+
+
+@pytest.mark.parametrize(
+    "value", [{"nested": 1}, [[1, 2]]], ids=["object", "nested-list"]
+)
+def test_a_stored_policy_value_the_contract_refuses_writes_nothing(value) -> None:
+    harness = Harness()
+    harness.reads.policies[("us", POLICY_ID)] = {
+        "gov.irs.credits.ctc.amount.base[0].amount": {"2026-01-01.2100-12-31": value}
+    }
+
+    with pytest.raises(HouseholdDataRefusedError, match=str(POLICY_ID)):
+        harness.submit(policy_id=str(POLICY_ID))
+
+    assert harness.store.simulations == {}
+    assert harness.store.setups == {}
+    assert harness.dispatcher.requests == []
 
 
 def test_an_unreadable_public_api_row_is_reported_as_unavailable() -> None:

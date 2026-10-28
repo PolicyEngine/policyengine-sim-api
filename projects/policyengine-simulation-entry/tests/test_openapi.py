@@ -46,7 +46,9 @@ HOUSEHOLD_SCHEMAS = {
     "HouseholdCalculationResult",
     "HouseholdCalculationSubmission",
     "HouseholdPolicyChoice",
+    "HouseholdRefusalResponse",
     "HouseholdReportResponse",
+    "HouseholdRequestFieldError",
     "HouseholdReportRunSubmission",
     "HouseholdReportSubmission",
     "HouseholdRouteError",
@@ -231,3 +233,21 @@ def test_household_routes_are_public_with_stable_operation_ids() -> None:
     }
 
     assert household_operations == HOUSEHOLD_ROUTES
+
+
+def test_household_submissions_declare_their_caller_data_refusals() -> None:
+    """The generated client parses sim's 422 refusals as text or field errors."""
+    spec = cast("OpenAPIDocument", create_app().openapi())
+
+    for method, path in (
+        ("post", "/v2/household-calculations"),
+        ("post", "/v2/household-reports"),
+        ("post", "/v2/household-reports/{report_id}/runs"),
+    ):
+        responses = spec["paths"][path][method]["responses"]
+        refusal = responses["422"]
+        assert refusal["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/HouseholdRefusalResponse"
+        }
+        assert "parameter the catalog version lacks" in refusal["description"]
+        assert {"400", "503"} <= set(responses)

@@ -33,7 +33,7 @@ from policyengine_simulation_entry.household_workers import (
 )
 from policyengine_simulation_entry.modal_calls import CallSucceeded
 from policyengine_simulation_entry.simulation_database import SimulationDatabase
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 SUBMIT_PATH = "/v2/household-calculations"
 
@@ -199,11 +199,10 @@ def test_a_household_deleted_while_submitting_is_refused(
         ("unknown-household", "has no household"),
         ("unknown-policy", "has no policy"),
         ("no-catalog-version", "has no catalog version"),
-        ("missing-parameter", "gov.irs.retired"),
         ("no-default-year", "default year"),
     ],
 )
-def test_a_calculation_sim_cannot_run_is_refused_with_why(
+def test_a_reference_sim_cannot_resolve_is_refused_with_why(
     household_client, harness, change, reason
 ) -> None:
     body = submission_body(policy_id=str(POLICY_ID))
@@ -213,8 +212,6 @@ def test_a_calculation_sim_cannot_run_is_refused_with_why(
         body["policy_id"] = "00000000-0000-4000-8000-00000000dead"
     elif change == "no-catalog-version":
         del harness.reads.catalog_versions[("us", POLICYENGINE_VERSION)]
-    elif change == "missing-parameter":
-        harness.reads.missing_parameters[POLICY_ID] = ("gov.irs.retired",)
     else:
         harness.reads.store_household(None)
 
@@ -222,6 +219,50 @@ def test_a_calculation_sim_cannot_run_is_refused_with_why(
 
     assert response.status_code == 400
     assert reason in response.json()["detail"]
+    assert harness.store.simulations == {}
+    assert harness.dispatcher.requests == []
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ("missing-parameter", "gov.irs.retired"),
+        ("policy-object-value", "gov.irs.credits.ctc.amount.base[0].amount"),
+        ("policy-nested-list-value", "gov.irs.credits.ctc.amount.base[0].amount"),
+        ("group-without-members", "empty"),
+    ],
+)
+def test_caller_data_the_contract_refuses_gets_422_and_writes_nothing(
+    household_client, harness, change, reason
+) -> None:
+    ctc = "gov.irs.credits.ctc.amount.base[0].amount"
+    if change == "missing-parameter":
+        harness.reads.missing_parameters[POLICY_ID] = ("gov.irs.retired",)
+    elif change == "policy-object-value":
+        harness.reads.policies[("us", POLICY_ID)] = {
+            ctc: {"2026-01-01.2100-12-31": {"nested": 1}}
+        }
+    elif change == "policy-nested-list-value":
+        harness.reads.policies[("us", POLICY_ID)] = {
+            ctc: {"2026-01-01.2100-12-31": [[1, 2]]}
+        }
+    else:
+        harness.reads.store_household(
+            DEFAULT_YEAR,
+            family=[
+                {"id": "your family", "values": {}},
+                {"id": "empty", "values": {}},
+            ],
+        )
+
+    response = household_client.post(
+        SUBMIT_PATH, json=submission_body(policy_id=str(POLICY_ID))
+    )
+
+    assert response.status_code == 422
+    assert reason in response.json()["detail"]
+    assert harness.store.simulations == {}
+    assert harness.store.setups == {}
     assert harness.dispatcher.requests == []
 
 
@@ -289,3 +330,25 @@ def test_the_simulation_database_builds_the_household_service() -> None:
 
     assert isinstance(service, HouseholdCalculationService)
     assert isinstance(service.workers, ManifestHouseholdWorkers)
+
+
+class InsufficientPrivilegeError(Exception):
+    """A psycopg error for a missing privilege (SQLSTATE 42501)."""
+
+    sqlstate = "42501"
+
+
+def test_missing_read_access_to_the_public_api_tables_is_named(
+    household_client, harness
+) -> None:
+    harness.reads.error = ProgrammingError(
+        "SELECT",
+        {},
+        InsufficientPrivilegeError("permission denied for table households"),
+    )
+
+    response = household_client.post(SUBMIT_PATH, json=submission_body())
+
+    assert response.status_code == 503
+    assert "lacks SELECT" in response.json()["detail"]
+    assert response.headers["retry-after"]

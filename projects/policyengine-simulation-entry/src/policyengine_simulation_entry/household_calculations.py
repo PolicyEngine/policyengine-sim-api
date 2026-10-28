@@ -10,9 +10,11 @@ year. Submitting one:
    that PolicyEngine.py version, the stored household (its document, saved
    SPM choice and ``default_year``, the year calculated) and each policy's
    parameter values by name, refusing a household, policy or catalog
-   version the Public API does not have, a parameter the catalog version
-   lacks, and a household without a default year or that the household
-   functions cannot take, again before anything is written;
+   version the Public API does not have or a household without a default
+   year (400), and then checks every value against the household functions'
+   contract, refusing a parameter the catalog version lacks, a stored
+   policy value or household the contract refuses (422, caller data), again
+   before anything is written;
 3. finds or creates the simulation, then reuses its run for that catalog
    version and year (while unfinished, or for 28 days after it succeeded,
    ``SUCCEEDED_RUN_REUSE_WINDOW``) or starts the next attempt;
@@ -42,11 +44,16 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Annotated, Any, Protocol
+from uuid import uuid4
 
 from policyengine_simulation_contract.household_execution import (
+    MAXIMUM_POLICY_PARAMETERS,
     HouseholdDocument,
     HouseholdExecutionRequest,
+    ParameterPath,
+    ParameterPeriod,
+    ParameterValue,
 )
 from policyengine_simulation_persistence import (
     NewReport,
@@ -56,7 +63,7 @@ from policyengine_simulation_persistence import (
     RunStatus,
 )
 from policyengine_simulation_persistence.reports import FIRST_YEAR, LAST_YEAR
-from pydantic import ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from policyengine_simulation_entry.household_api_models import (
@@ -108,11 +115,33 @@ class UnknownHouseholdReferenceError(LookupError):
     """
 
 
-class HouseholdNotCalculableError(ValueError):
-    """The stored household has no default year, or the household functions refuse it.
+class HouseholdWithoutYearError(ValueError):
+    """The stored household has no default year in the runs' range to calculate."""
 
-    The message names the household and why.
+
+class HouseholdDataRefusedError(ValueError):
+    """A stored household or policy value the household functions' contract refuses.
+
+    These are problems with the caller's data: the message names the
+    household or policy and each refused field, and why.
     """
+
+
+# The values a policy may set, as the household functions' contract takes them.
+POLICY_PARAMETERS: TypeAdapter[dict[str, dict[str, Any]]] = TypeAdapter(
+    Annotated[
+        dict[ParameterPath, dict[ParameterPeriod, ParameterValue]],
+        Field(max_length=MAXIMUM_POLICY_PARAMETERS),
+    ]
+)
+
+
+def _reasons(error: ValidationError) -> str:
+    """Return each refused field and why, as ``path: message``."""
+    return "; ".join(
+        f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
+        for item in error.errors()
+    )
 
 
 class HouseholdCalculationRecords(Protocol):
@@ -195,40 +224,6 @@ class HouseholdWorkerSource(Protocol):
         ...
 
 
-class HouseholdInputs(Protocol):
-    """What a household's Modal call calculates, besides its policies."""
-
-    @property
-    def country(self) -> str:
-        """The household's country."""
-        ...
-
-    @property
-    def year(self) -> int:
-        """The runs' year: the household's default year."""
-        ...
-
-    @property
-    def household(self) -> HouseholdDocument:
-        """The household in the situation shape, without axes."""
-        ...
-
-    @property
-    def spm(self) -> JsonValue:
-        """The household's saved SPM choice, when ``spm_requested``."""
-        ...
-
-    @property
-    def spm_requested(self) -> bool:
-        """Whether the household has a saved SPM choice."""
-        ...
-
-    @property
-    def options(self) -> HouseholdCalculationOptions:
-        """The axes and whether missing variables are added."""
-        ...
-
-
 @dataclass(frozen=True)
 class HouseholdRunInputs:
     """What a household's runs calculate, read from the Public API's rows.
@@ -248,31 +243,44 @@ class HouseholdRunInputs:
     parameters: Mapping[UUID | None, Mapping[str, object]]
 
 
-def _calculable_household(country: str, stored: StoredHousehold) -> HouseholdDocument:
-    """Return the stored household as the household functions take it.
+def _calculable_household(
+    country: str, stored: StoredHousehold
+) -> tuple[HouseholdDocument, int]:
+    """Return the stored household as the household functions take it, and its year.
 
-    Raise HouseholdNotCalculableError when it has no default year in the
-    runs' range, or the household functions' contract refuses it, such as a
-    group no person belongs to.
+    Raise HouseholdWithoutYearError when it has no default year in the runs'
+    range, and HouseholdDataRefusedError when the household functions'
+    contract refuses it, such as a group no person belongs to.
     """
     year = stored.default_year
     if year is None or not FIRST_YEAR <= year <= LAST_YEAR:
         msg = f"the household {stored.id} has no default year to calculate"
-        raise HouseholdNotCalculableError(msg)
+        raise HouseholdWithoutYearError(msg)
     try:
-        return HouseholdDocument.model_validate(
+        document = HouseholdDocument.model_validate(
             household_situation(country, stored.document)
         )
     except ValidationError as error:
-        reasons = "; ".join(
-            f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
-            for item in error.errors()
-        )
-        msg = f"the household {stored.id} cannot be calculated: {reasons}"
-        raise HouseholdNotCalculableError(msg) from None
+        msg = f"the household {stored.id} cannot be calculated: {_reasons(error)}"
+        raise HouseholdDataRefusedError(msg) from None
     except (KeyError, TypeError) as error:
         msg = f"the household {stored.id} cannot be calculated: {error!r}"
-        raise HouseholdNotCalculableError(msg) from None
+        raise HouseholdDataRefusedError(msg) from None
+    return document, year
+
+
+def _checked_policy_parameters(
+    policy_id: UUID, parameters: Mapping[str, object]
+) -> dict[str, dict[str, Any]]:
+    """Return a policy's values; raise HouseholdDataRefusedError for one refused."""
+    try:
+        return POLICY_PARAMETERS.validate_python(parameters)
+    except ValidationError as error:
+        msg = (
+            f"the policy {policy_id} sets values the household functions "
+            f"cannot take: {_reasons(error)}"
+        )
+        raise HouseholdDataRefusedError(msg) from None
 
 
 def read_household_inputs(  # noqa: PLR0913  # one keyword per thing a run calculates
@@ -287,25 +295,24 @@ def read_household_inputs(  # noqa: PLR0913  # one keyword per thing a run calcu
     """Read and check everything the household's runs calculate.
 
     Raise the reads' errors for a catalog version, household or policy the
-    Public API does not have or a parameter the version lacks, and
-    HouseholdNotCalculableError for a household the runs cannot calculate.
+    Public API does not have or a parameter the version lacks,
+    HouseholdWithoutYearError for a household without a default year, and
+    HouseholdDataRefusedError for a household or policy value the household
+    functions' contract refuses.
     """
     version = reads.catalog_version(country, policyengine_version)
     stored = reads.household(country, household_id)
-    household = _calculable_household(country, stored)
+    household, year = _calculable_household(country, stored)
     spm = saved_spm_choice(stored.document)
     parameters: dict[UUID | None, Mapping[str, object]] = {}
     for policy_id in dict.fromkeys(policy_ids):
         parameters[policy_id] = (
             {}
             if policy_id is None
-            else reads.policy_parameters(country, policy_id, version.id)
+            else _checked_policy_parameters(
+                policy_id, reads.policy_parameters(country, policy_id, version.id)
+            )
         )
-    # Checked in _calculable_household.
-    year = stored.default_year
-    if year is None:  # pragma: no cover
-        msg = "a calculable household has a default year"
-        raise RuntimeError(msg)
     return HouseholdRunInputs(
         country=country,
         catalog_version_id=version.id,
@@ -319,11 +326,35 @@ def read_household_inputs(  # noqa: PLR0913  # one keyword per thing a run calcu
     )
 
 
+def check_household_request(
+    worker: HouseholdWorker, inputs: HouseholdRunInputs
+) -> None:
+    """Check the household function call these inputs make, before writing anything.
+
+    The call is built as it will be sent, with placeholder IDs for the runs
+    not created yet, so whatever the contract refuses in the household, its
+    options, SPM choice or policies is refused now. Raise
+    HouseholdDataRefusedError naming each refused field.
+    """
+    try:
+        household_modal_request(
+            worker,
+            calculation_id=uuid4(),
+            inputs=inputs,
+            run_policies=[
+                (uuid4(), parameters) for parameters in inputs.parameters.values()
+            ],
+        )
+    except ValidationError as error:
+        msg = f"the household and its policies cannot be calculated: {_reasons(error)}"
+        raise HouseholdDataRefusedError(msg) from None
+
+
 def household_modal_request(
     worker: HouseholdWorker,
     *,
     calculation_id: UUID,
-    inputs: HouseholdInputs,
+    inputs: HouseholdRunInputs,
     run_policies: Sequence[tuple[UUID, Mapping[str, object]]],
 ) -> ModalRequest:
     """Return the household function call that computes each run's policy.
@@ -378,8 +409,9 @@ class HouseholdCalculationService:
     ) -> HouseholdCalculation:
         """Record the calculation, start its call if needed, and return it.
 
-        Raise HouseholdFunctionUnavailableError or HouseholdWorkersUnavailableError
-        and the row reads' refusals before anything is written, and
+        Raise HouseholdFunctionUnavailableError or HouseholdWorkersUnavailableError,
+        the row reads' refusals and HouseholdDataRefusedError before anything
+        is written, and
         UnknownHouseholdReferenceError when the database refuses a reference.
         """
         worker = await asyncio.to_thread(
@@ -395,6 +427,7 @@ class HouseholdCalculationService:
                 options=submission.options,
             )
         )
+        check_household_request(worker, inputs)
 
         def start() -> StartedSimulationRun:
             simulation = self.store.find_or_create_simulation(
@@ -450,6 +483,7 @@ class HouseholdCalculationService:
                 options=submission.options,
             )
         )
+        check_household_request(worker, inputs)
 
         def create() -> tuple[ReportRecord, list[SimulationRunRecord]]:
             simulations = [
@@ -461,7 +495,6 @@ class HouseholdCalculationService:
             runs = self._start_side_runs(
                 simulations,
                 inputs=inputs,
-                year=inputs.year,
                 trigger=submission.trigger,
                 force=submission.force,
             )
@@ -542,11 +575,13 @@ class HouseholdCalculationService:
                 ),
             )
         )
+        check_household_request(worker, inputs)
+        # The report's year is its household's default year, which never
+        # changes, so the runs take the year the household was read with.
         runs = await self._write(
             lambda: self._start_side_runs(
                 simulations,
                 inputs=inputs,
-                year=report.year,
                 trigger=submission.trigger,
                 force=submission.force,
             )
@@ -566,12 +601,11 @@ class HouseholdCalculationService:
         """Return a household report with its newest run, or None."""
         return await asyncio.to_thread(self.store.read_report, report_id)
 
-    def _start_side_runs(  # one keyword per field of the runs
+    def _start_side_runs(
         self,
         simulations: Sequence[SimulationRecord],
         *,
         inputs: HouseholdRunInputs,
-        year: int,
         trigger: RunTrigger,
         force: bool,
     ) -> list[SimulationRunRecord]:
@@ -583,7 +617,7 @@ class HouseholdCalculationService:
                     NewSimulationRun(
                         simulation_id=simulation.id,
                         tax_benefit_model_version_id=inputs.catalog_version_id,
-                        year=year,
+                        year=inputs.year,
                         trigger=trigger,
                     ),
                     force=force,
@@ -595,7 +629,7 @@ class HouseholdCalculationService:
         worker: HouseholdWorker,
         report: ReportRecord,
         *,
-        inputs: HouseholdInputs,
+        inputs: HouseholdRunInputs,
         sides: Sequence[tuple[SimulationRunRecord, Mapping[str, object]]],
         trigger: RunTrigger,
     ) -> HouseholdReport:
@@ -632,7 +666,7 @@ class HouseholdCalculationService:
         worker: HouseholdWorker,
         *,
         calculation_id: UUID,
-        inputs: HouseholdInputs,
+        inputs: HouseholdRunInputs,
         runs: Sequence[tuple[SimulationRunRecord, Mapping[str, object]]],
     ) -> None:
         """Start one call for the runs that are pending, whoever created them.

@@ -165,3 +165,19 @@ def test_without_household_calculations_the_report_routes_are_unavailable() -> N
         read = test_client.get(f"{REPORTS_PATH}/{uuid4()}")
 
     assert {created.status_code, rerun.status_code, read.status_code} == {503}
+
+
+def test_a_report_whose_reform_value_the_contract_refuses_leaves_nothing(
+    report_client, harness
+) -> None:
+    harness.reads.policies[("us", POLICY_ID)] = {
+        "gov.irs.credits.ctc.amount.base[0].amount": {"2026-01-01.2100-12-31": [[1]]}
+    }
+
+    response = report_client.post(REPORTS_PATH, json=report_body())
+
+    assert response.status_code == 422
+    assert harness.store.reports == {}
+    assert harness.store.report_runs == []
+    assert harness.store.simulations == {}
+    assert harness.dispatcher.requests == []

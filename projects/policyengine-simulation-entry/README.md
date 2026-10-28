@@ -40,11 +40,15 @@ database, the country's catalog version for that PolicyEngine.py version,
 the household (its document, saved SPM choice and `default_year`, the year
 calculated) and the policy's parameter values, before writing anything.
 A household, policy or catalog version the Public API does not have for the
-country, a policy changing a parameter the catalog version lacks, and a
-household without a default year or that the household functions cannot
-take are refused with 400 and the reason. The runtime role needs `SELECT`
-on those tables (`libs/policyengine-simulation-persistence`, "Household
-calculations").
+country, and a household without a default year, are refused with 400 and
+the reason. Then every household and policy value is checked against the
+household functions' contract, still before anything is written: a policy
+changing a parameter the catalog version lacks, and a stored policy value or
+household the contract refuses (such as an object as a value, or a group no
+person belongs to), are the caller's data and are refused with 422 and the
+reason. The runtime role needs `SELECT` on those tables
+(`libs/policyengine-simulation-persistence`, "Household calculations");
+without it, the routes answer 503 saying sim cannot read them.
 
 Each calculation is a simulation run of a household simulation (household,
 policy and options such as axes), so the same calculation submitted again
