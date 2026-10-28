@@ -1,10 +1,10 @@
 """Request and response models of the household calculation routes.
 
-The Public API sends what the Simulation Entrypoint cannot read itself: the
-household in the situation shape the household functions take, with its
-saved SPM choice, and each policy's parameter values. The Simulation
-Entrypoint records the calculation against the Public API's IDs (household,
-policy, catalog version), whose rows the database checks exist.
+The Public API sends the IDs of its stored household and policies and the
+PolicyEngine.py version to calculate with; the Simulation Entrypoint reads
+the household, the policies' parameter values and the catalog version from
+the Public API's tables itself (``HouseholdInputReader``), and calculates
+the household's ``default_year``.
 
 This is v2 code: the v1 ``run_simulation`` code does not use it.
 """
@@ -15,14 +15,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Self
 from uuid import UUID
 
-from policyengine_simulation_contract.household_execution import (
-    MAXIMUM_POLICY_PARAMETERS,
-    Axes,
-    HouseholdDocument,
-    ParameterPath,
-    ParameterPeriod,
-    ParameterValue,
-)
+from policyengine_simulation_contract.household_execution import Axes
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_persistence import (
     NewSimulation,
@@ -30,26 +23,13 @@ from policyengine_simulation_persistence import (
     RunTrigger,
     SimulationKind,
 )
-from policyengine_simulation_persistence.reports import FIRST_YEAR, LAST_YEAR
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    JsonValue,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 if TYPE_CHECKING:
     from policyengine_simulation_persistence import (
         HouseholdCalculation,
         HouseholdReport,
     )
-
-PolicyParameters = Annotated[
-    dict[ParameterPath, dict[ParameterPeriod, ParameterValue]],
-    Field(max_length=MAXIMUM_POLICY_PARAMETERS),
-]
 
 
 class StrictRouteModel(BaseModel):
@@ -58,24 +38,10 @@ class StrictRouteModel(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
-class HouseholdPolicyInput(StrictRouteModel):
-    """A policy: its Public API ID, or none for current law, and its values.
-
-    ``parameters`` maps each changed parameter path to its values by period
-    range (``"YYYY-MM-DD.YYYY-MM-DD"``), as in the Public API's policy JSON.
-    Current law changes no parameters.
-    """
+class HouseholdPolicyChoice(StrictRouteModel):
+    """A policy stored in the Public API, by ID, or none for current law."""
 
     policy_id: UUID | None = None
-    parameters: PolicyParameters = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def require_a_policy_for_parameters(self) -> Self:
-        """Refuse parameter values without the policy they belong to."""
-        if self.policy_id is None and self.parameters:
-            msg = "current law (no policy_id) changes no parameters"
-            raise ValueError(msg)
-        return self
 
 
 class HouseholdCalculationOptions(StrictRouteModel):
@@ -102,63 +68,24 @@ class HouseholdCalculationOptions(StrictRouteModel):
         return stored
 
 
-PolicyEngineVersion = Annotated[str, Field(min_length=1, max_length=255)]
-Year = Annotated[int, Field(ge=FIRST_YEAR, le=LAST_YEAR)]
+PolicyEngineVersion = Annotated[str, Field(min_length=1, max_length=128)]
 
 
-class StoredHouseholdInputs(StrictRouteModel):
-    """A stored household and the catalog version to calculate it on.
+class HouseholdCalculationSubmission(StrictRouteModel):
+    """One stored household under one policy, to calculate.
 
-    ``catalog_version_id`` is the Public API's catalog version and
-    ``policyengine_version`` the PolicyEngine.py version it was published
-    from, which picks the household function. ``household`` is the stored
-    household in the situation shape, without axes (they are an option);
-    ``spm`` is its saved SPM choice, omitted or null when it has none, so
-    the bundle's certified defaults apply.
-    """
-
-    catalog_version_id: UUID
-    policyengine_version: PolicyEngineVersion
-    household_id: UUID
-    household: HouseholdDocument
-    spm: JsonValue = None
-
-    @field_validator("household")
-    @classmethod
-    def refuse_axes_in_the_household(
-        cls, household: HouseholdDocument
-    ) -> HouseholdDocument:
-        """Require axes in ``options``, where they are part of the calculation."""
-        if household.has_axes:
-            msg = "send axes in options, not in the household"
-            raise ValueError(msg)
-        return household
-
-    @property
-    def spm_requested(self) -> bool:
-        """Whether the household has a saved SPM choice to calculate with.
-
-        A saved household's null selection is no choice, as the household
-        functions' contract reads it.
-        """
-        return "spm" in self.model_fields_set and self.spm is not None
-
-
-class HouseholdCalculationSubmission(StoredHouseholdInputs):
-    """One household under one policy, to calculate for a catalog version and year.
-
-    ``year`` is the household's calculation year, part of what identifies
-    the run; the household's own periods decide what is calculated, so the
-    caller sends the year those periods name. ``policyengine_version`` must
-    be the catalog version's: the Simulation Entrypoint cannot read the
-    catalog to check it. A calculation submitted again reuses its run while
-    it is unfinished or for 28 days after it succeeded, unless ``force``;
-    after that, it runs again under a new calculation ID.
+    ``household_id`` and ``policy_id`` (none for current law) name the
+    Public API's rows of ``country``; ``policyengine_version`` selects the
+    country's catalog version and the household function. The calculation
+    is for the household's ``default_year``. A calculation submitted again
+    reuses its run while it is unfinished or for 28 days after it succeeded,
+    unless ``force``; after that, it runs again under a new calculation ID.
     """
 
     country: CountryId
-    year: Year
-    policy: HouseholdPolicyInput = Field(default_factory=HouseholdPolicyInput)
+    policyengine_version: PolicyEngineVersion
+    household_id: UUID
+    policy_id: UUID | None = None
     options: HouseholdCalculationOptions = Field(
         default_factory=HouseholdCalculationOptions
     )
@@ -168,60 +95,69 @@ class HouseholdCalculationSubmission(StoredHouseholdInputs):
     def simulation_definition(self) -> NewSimulation:
         """Return the household simulation this calculation runs."""
         return household_simulation_definition(
-            self, self.country, self.policy, self.options
+            self.country, self.household_id, self.policy_id, self.options
         )
 
 
-class HouseholdReportSubmission(StoredHouseholdInputs):
-    """A household report to create: the household under a baseline and a reform.
+class HouseholdReportSubmission(StrictRouteModel):
+    """A household report to create: a stored household under a baseline and a reform.
 
-    ``reform`` is omitted for a report of the baseline alone. Both policies
-    are calculated with the same ``options``, in one Modal call when neither
-    has a run to reuse. The report's first run starts at once.
+    ``reform`` is omitted for a report of the baseline alone; each policy is
+    a stored policy's ID, or none for current law. Both are calculated with
+    the same ``options``, for the household's ``default_year``, in one Modal
+    call when neither has a run to reuse. The report's first run starts at
+    once.
     """
 
     country: CountryId
-    year: Year
-    baseline: HouseholdPolicyInput = Field(default_factory=HouseholdPolicyInput)
-    reform: HouseholdPolicyInput | None = None
+    policyengine_version: PolicyEngineVersion
+    household_id: UUID
+    baseline: HouseholdPolicyChoice = Field(default_factory=HouseholdPolicyChoice)
+    reform: HouseholdPolicyChoice | None = None
     options: HouseholdCalculationOptions = Field(
         default_factory=HouseholdCalculationOptions
     )
     force: bool = False
     trigger: RunTrigger = RunTrigger.INITIAL
 
-    def simulation_definition(self, policy: HouseholdPolicyInput) -> NewSimulation:
+    def policy_ids(self) -> list[UUID | None]:
+        """Return the baseline's policy and, when there is a reform, its policy."""
+        return [self.baseline.policy_id] + (
+            [] if self.reform is None else [self.reform.policy_id]
+        )
+
+    def simulation_definition(self, policy_id: UUID | None) -> NewSimulation:
         """Return the household simulation of one of the report's policies."""
-        return household_simulation_definition(self, self.country, policy, self.options)
+        return household_simulation_definition(
+            self.country, self.household_id, policy_id, self.options
+        )
 
 
-class HouseholdReportRunSubmission(StoredHouseholdInputs):
+class HouseholdReportRunSubmission(StrictRouteModel):
     """Another run of a stored household report, on a catalog version.
 
-    The household and both policies must be the report's own: the Public API
-    sends their contents again, because the Simulation Entrypoint cannot
-    read them. The runs are reused while unfinished or for 28 days after
-    they succeeded, unless ``force``.
+    The report's household, policies, options and year are read from the
+    report; only the PolicyEngine.py version is chosen. The runs are reused
+    while unfinished or for 28 days after they succeeded, unless ``force``.
     """
 
-    baseline: HouseholdPolicyInput = Field(default_factory=HouseholdPolicyInput)
-    reform: HouseholdPolicyInput | None = None
+    policyengine_version: PolicyEngineVersion
     force: bool = False
     trigger: RunTrigger = RunTrigger.MANUAL
 
 
 def household_simulation_definition(
-    inputs: StoredHouseholdInputs,
     country: str,
-    policy: HouseholdPolicyInput,
+    household_id: UUID,
+    policy_id: UUID | None,
     options: HouseholdCalculationOptions,
 ) -> NewSimulation:
-    """Return the household simulation of ``inputs`` under ``policy``."""
+    """Return the household simulation of a household under a policy."""
     return NewSimulation(
         kind=SimulationKind.HOUSEHOLD,
         country=country,
-        household_id=inputs.household_id,
-        policy_id=policy.policy_id,
+        household_id=household_id,
+        policy_id=policy_id,
         options=options.stored(),
     )
 

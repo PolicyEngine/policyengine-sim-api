@@ -5,14 +5,15 @@ The deploy's staging household job runs this after promotion, with
 skips it. It runs against the stable URL because the household function
 reports the call's end there, so only the promoted revision records it.
 
-The calculation needs rows the Public API owns in the same database: a
-catalog version and a stored household. The test reads the staging Public
-API's US catalog version for the deployed PolicyEngine.py version (or, when
-the Public API has not published that version yet, its current one) and
-stores a one-person household there, which returns the same household each
-time. It then submits that household, as stored, forced so each deploy
-starts a new Modal call, polls until it succeeds or fails, and reads the
-result back, all within one ten-minute limit. An answer asking to retry (503
+The calculation needs rows the Public API owns in the same database, which
+sim reads itself: a catalog version and a stored household. The test finds
+the staging Public API's US catalog version for the deployed PolicyEngine.py
+version (or, when the Public API has not published that version yet, its
+current one) and stores a one-person household there, which returns the
+same household each time. It then submits that household's ID and the
+catalog version's PolicyEngine.py version, forced so each deploy starts a
+new Modal call, polls until it succeeds or fails, and reads the result
+back, all within one ten-minute limit. An answer asking to retry (503
 with ``Retry-After``) is retried after its wait, within that limit; a
 submission retried after it was partly written may leave a pending run
 behind, which nothing reuses, since each retry is forced too.
@@ -75,41 +76,6 @@ STORED_HOUSEHOLD = {
     "spm_unit": [{"id": "your spm unit", "values": {}}],
     "marital_unit": [{"id": "your marital unit", "values": {}}],
 }
-# The plural each stored group collection has in the situation shape.
-SITUATION_COLLECTIONS = {
-    "household": "households",
-    "family": "families",
-    "tax_unit": "tax_units",
-    "spm_unit": "spm_units",
-    "marital_unit": "marital_units",
-}
-
-
-def situation_from_stored(stored: dict[str, Any]) -> dict[str, Any]:
-    """Return a stored household in the situation shape the household functions take.
-
-    Each record's ``id`` names it, and each group lists the people whose
-    memberships name it, so both shapes hold the same household.
-    """
-    situation: dict[str, Any] = {
-        "people": {person["id"]: dict(person["values"]) for person in stored["people"]}
-    }
-    for collection, plural in SITUATION_COLLECTIONS.items():
-        situation[plural] = {
-            group["id"]: {
-                "members": [
-                    person["id"]
-                    for person in stored["people"]
-                    if person["memberships"][collection] == group["id"]
-                ],
-                **group["values"],
-            }
-            for group in stored[collection]
-        }
-    return situation
-
-
-SITUATION = situation_from_stored(STORED_HOUSEHOLD)
 
 
 def _required(name: str) -> str:
@@ -154,8 +120,8 @@ def authorization() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def catalog_version(public_api_url: str, policyengine_version: str) -> dict[str, str]:
-    """Return the US catalog version for the deployed version, or the current one."""
+def catalog_policyengine_version(public_api_url: str, policyengine_version: str) -> str:
+    """Return the deployed version if the Public API publishes it, else its current."""
     url = f"{public_api_url}/v2/tax-benefit-models/by-country/us"
     response = httpx.get(
         url, params={"policyengine_version": policyengine_version}, timeout=30
@@ -163,11 +129,7 @@ def catalog_version(public_api_url: str, policyengine_version: str) -> dict[str,
     if response.status_code == httpx.codes.NOT_FOUND:
         response = httpx.get(url, timeout=30)
     response.raise_for_status()
-    result = response.json()["result"]
-    return {
-        "catalog_version_id": result["model_version"]["id"],
-        "policyengine_version": result["policyengine_version"],
-    }
+    return response.json()["result"]["policyengine_version"]
 
 
 def stored_household_id(public_api_url: str) -> str:
@@ -184,6 +146,16 @@ def stored_household_id(public_api_url: str) -> str:
     )
     assert response.status_code in {httpx.codes.OK, httpx.codes.CREATED}, response.text
     return response.json()["result"]["item"]["id"]
+
+
+def submission_body(household_id: str, policyengine_version: str) -> dict[str, Any]:
+    """Return a forced calculation of the stored household, by ID only."""
+    return {
+        "country": "us",
+        "policyengine_version": policyengine_version,
+        "household_id": household_id,
+        "force": True,
+    }
 
 
 def answer_within(
@@ -236,21 +208,14 @@ def test_a_household_calculation_succeeds_and_reads_back(
     base_url: str, public_api_url: str, authorization: dict[str, str]
 ) -> None:
     deadline = time.monotonic() + CALCULATION_DEADLINE_SECONDS
-    catalog = catalog_version(
+    policyengine_version = catalog_policyengine_version(
         public_api_url, _required("SIMULATION_STAGING_TEST_POLICYENGINE_VERSION")
     )
     household_id = stored_household_id(public_api_url)
     submitted = answer_within(
         lambda: httpx.post(
             f"{base_url}/v2/household-calculations",
-            json={
-                "country": "us",
-                **catalog,
-                "year": YEAR,
-                "household_id": household_id,
-                "household": SITUATION,
-                "force": True,
-            },
+            json=submission_body(household_id, policyengine_version),
             headers=authorization,
             timeout=60,
         ),
@@ -264,12 +229,13 @@ def test_a_household_calculation_succeeds_and_reads_back(
     )
 
     assert finished["status"] == "succeeded", finished["error"]
+    assert finished["year"] == YEAR
     result = finished["result"]
     household = result["household"]["households"]["your household"]
     net_income = household["household_net_income"][str(YEAR)]
     assert isinstance(net_income, int | float)
     assert net_income > 0
-    assert result["bundle"]["policyengine_version"] == catalog["policyengine_version"]
+    assert result["bundle"]["policyengine_version"] == policyengine_version
     read_back = httpx.get(
         f"{base_url}/v2/household-calculations/{calculation_id}",
         headers=authorization,

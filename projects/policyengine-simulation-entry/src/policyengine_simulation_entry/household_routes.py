@@ -14,11 +14,15 @@
   ``GET /v2/household-reports/{report_id}`` (``simulation:read``) returns it
   with its newest run and that run's two calculations.
 
-Every route answers 503 with ``Retry-After`` when household calculations are
-not configured or a dependency cannot be reached. A submission that names a
-version or country without a household function, a household, policy or
-catalog version the Public API does not have, or, for a report's run,
-another household or other policies than the report's, gets 400.
+A submission names the Public API's stored household and policies by ID and
+the PolicyEngine.py version; sim reads the rows itself and calculates the
+household's ``default_year``. Every route answers 503 with ``Retry-After``
+when household calculations are not configured or a dependency, such as the
+database holding the Public API's rows, cannot be reached. A submission gets
+400, with the reason, when it names a version or country without a
+household function, a household, policy or catalog version the Public API
+does not have, or a policy changing a parameter the catalog version lacks,
+or when the stored household has no default year or cannot be calculated.
 
 This is v2 code: the v1 ``run_simulation`` code does not use it.
 """
@@ -31,6 +35,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
+from policyengine_simulation_persistence import (
+    PolicyParametersMissingError,
+    UnknownCatalogVersionError,
+    UnknownHouseholdError,
+    UnknownPolicyError,
+)
 from sqlalchemy.exc import SQLAlchemyError
 
 from policyengine_simulation_entry.household_api_models import (
@@ -42,7 +52,7 @@ from policyengine_simulation_entry.household_api_models import (
     HouseholdRouteError,
 )
 from policyengine_simulation_entry.household_calculations import (
-    ReportPoliciesMismatchError,
+    HouseholdNotCalculableError,
     UnknownHouseholdReferenceError,
 )
 from policyengine_simulation_entry.household_workers import (
@@ -71,16 +81,20 @@ WORKERS_UNAVAILABLE = "The v2 version manifest could not be read."
 DATABASE_UNAVAILABLE = "The simulation database could not be reached."
 REFUSED_RESPONSE = {
     "description": (
-        "No household function for this version and country; an unknown "
-        "household, policy or catalog version; or, for a report's run, another "
-        "household or other policies than the report's"
+        "Refused, with the reason in detail: no household function for this "
+        "version and country; a household, policy or catalog version the "
+        "Public API does not have for the country; a policy changing a "
+        "parameter the catalog version lacks; or a stored household without "
+        "a default year, or that the household functions cannot take"
     ),
     "model": HouseholdRouteError,
 }
 UNAVAILABLE_RESPONSE = {
     "description": (
         "Household calculations are not configured, or a dependency could not "
-        "be reached; retry after Retry-After seconds"
+        "be reached, such as the v2 version manifest or the database holding "
+        "the simulation records and the Public API's rows; retry after "
+        "Retry-After seconds"
     ),
     "model": HouseholdRouteError,
 }
@@ -139,7 +153,11 @@ async def guarded[T](operation: Awaitable[T]) -> T | JSONResponse:
     except (
         HouseholdFunctionUnavailableError,
         UnknownHouseholdReferenceError,
-        ReportPoliciesMismatchError,
+        UnknownHouseholdError,
+        UnknownPolicyError,
+        UnknownCatalogVersionError,
+        PolicyParametersMissingError,
+        HouseholdNotCalculableError,
     ) as error:
         return refused(str(error), status.HTTP_400_BAD_REQUEST)
     except HouseholdWorkersUnavailableError:
@@ -187,9 +205,11 @@ def register_household_calculation_routes(
         CALCULATIONS_PATH,
         summary="Submit a household calculation",
         description=(
-            "Record a household calculation (a household under one policy, for a "
-            "catalog version and year) and start it. Poll the returned "
-            "calculation_id until its status is succeeded or failed."
+            "Record a calculation of a stored household under one stored policy, "
+            "or current law, on the country's catalog version for a "
+            "PolicyEngine.py version, for the household's default year, and "
+            "start it. Poll the returned calculation_id until its status is "
+            "succeeded or failed."
         ),
         operation_id="submit_household_calculation",
         status_code=status.HTTP_202_ACCEPTED,
@@ -262,9 +282,11 @@ def _add_report_creation(
         REPORTS_PATH,
         summary="Create a household report",
         description=(
-            "Create a household report (the household under a baseline and an "
-            "optional reform, for a year) and start its first run on a catalog "
-            "version. Poll the report until its status is succeeded or failed."
+            "Create a household report (a stored household under a baseline and "
+            "an optional reform, each a stored policy or current law, for the "
+            "household's default year) and start its first run on the country's "
+            "catalog version for a PolicyEngine.py version. Poll the report until "
+            "its status is succeeded or failed."
         ),
         operation_id="submit_household_report",
         status_code=status.HTTP_202_ACCEPTED,
@@ -294,9 +316,11 @@ def _add_report_run(
         f"{REPORTS_PATH}/{{report_id}}/runs",
         summary="Run a household report again",
         description=(
-            "Start another run of a stored household report on a catalog "
-            "version, reusing runs that are unfinished or succeeded within the "
-            "last 28 days unless forced. The answer describes the new run."
+            "Start another run of a stored household report on the catalog "
+            "version for a PolicyEngine.py version, reusing runs that are "
+            "unfinished or succeeded within the last 28 days unless forced. sim "
+            "reads the report's household and policies again. The answer "
+            "describes the new run."
         ),
         operation_id="run_household_report",
         status_code=status.HTTP_202_ACCEPTED,

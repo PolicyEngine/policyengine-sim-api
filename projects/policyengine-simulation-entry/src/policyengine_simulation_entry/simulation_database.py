@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from policyengine_simulation_persistence import (
     HouseholdCalculationStore,
+    HouseholdInputReader,
     RunStore,
     RunTransitions,
     SimulationKind,
@@ -82,6 +83,7 @@ class SimulationDatabase:
         """
         return HouseholdCalculationService(
             store=HouseholdCalculationStore(self.engine),
+            reads=HouseholdInputReader(self.engine),
             dispatch=RunDispatchService(
                 transitions=RunTransitions(self.engine),
                 dispatcher=ModalCallDispatcher(modal_environment),

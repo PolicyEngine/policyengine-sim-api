@@ -6,12 +6,17 @@ year. Submitting one:
 
 1. finds the household function the calculation's PolicyEngine.py version
    deployed, in the v2 version manifest, before anything is written;
-2. finds or creates the simulation, then reuses its run for that catalog
+2. reads, from the Public API's tables, the country's catalog version for
+   that PolicyEngine.py version, the stored household (its document, saved
+   SPM choice and ``default_year``, the year calculated) and each policy's
+   parameter values by name, refusing a household, policy or catalog
+   version the Public API does not have, a parameter the catalog version
+   lacks, and a household without a default year or that the household
+   functions cannot take, again before anything is written;
+3. finds or creates the simulation, then reuses its run for that catalog
    version and year (while unfinished, or for 28 days after it succeeded,
-   ``SUCCEEDED_RUN_REUSE_WINDOW``) or starts the next attempt; the database
-   refuses a household, policy or catalog version the Public API does not
-   have;
-3. starts the run's Modal call if the run is pending, whoever created it, so
+   ``SUCCEEDED_RUN_REUSE_WINDOW``) or starts the next attempt;
+4. starts the run's Modal call if the run is pending, whoever created it, so
    a run another submitter left pending runs too. Only the submitter whose
    claim moves the run to ``dispatching`` starts the call
    (``RunDispatchService``). The household function reports when the call
@@ -26,7 +31,9 @@ Creating one, or running a stored one again, starts or reuses a run of each
 of its simulations, joins them in a report run, and starts one Modal call
 for those still pending, so a new report's two households are calculated
 together. When another submitter claimed one of them first, it starts that
-one's call, and this submitter starts a call for the rest.
+one's call, and this submitter starts a call for the rest. Running a stored
+report again reads its household and policies from the report's own
+simulations.
 
 This is v2 code: the v1 ``run_simulation`` code does not use it.
 """
@@ -35,9 +42,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from policyengine_simulation_contract.household_execution import (
+    HouseholdDocument,
     HouseholdExecutionRequest,
 )
 from policyengine_simulation_persistence import (
@@ -47,10 +55,16 @@ from policyengine_simulation_persistence import (
     ReportKind,
     RunStatus,
 )
+from policyengine_simulation_persistence.reports import FIRST_YEAR, LAST_YEAR
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from policyengine_simulation_entry.household_api_models import (
     HouseholdCalculationOptions,
+)
+from policyengine_simulation_entry.household_conversion import (
+    household_situation,
+    saved_spm_choice,
 )
 from policyengine_simulation_entry.household_recording import policy_key_for_run
 from policyengine_simulation_entry.modal_calls import ModalRequest
@@ -60,11 +74,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Mapping, Sequence
     from uuid import UUID
 
-    from policyengine_simulation_contract.household_execution import (
-        HouseholdDocument,
-    )
     from policyengine_simulation_persistence import (
         HouseholdCalculation,
+        HouseholdCatalogVersion,
         HouseholdReport,
         NewSimulation,
         ReportRecord,
@@ -73,12 +85,12 @@ if TYPE_CHECKING:
         SimulationRecord,
         SimulationRunRecord,
         StartedSimulationRun,
+        StoredHousehold,
     )
     from pydantic import JsonValue
 
     from policyengine_simulation_entry.household_api_models import (
         HouseholdCalculationSubmission,
-        HouseholdPolicyInput,
         HouseholdReportRunSubmission,
         HouseholdReportSubmission,
     )
@@ -89,17 +101,18 @@ UNKNOWN_REFERENCE_MESSAGE = (
 )
 
 
-MISMATCHED_REPORT_MESSAGE = (
-    "A report's run calculates the report's own household and policies."
-)
-
-
 class UnknownHouseholdReferenceError(LookupError):
-    """The household, policy or catalog version does not exist for the country."""
+    """The database refused a household, policy or catalog version reference.
+
+    The rows were read before writing, so the Public API deleted one since.
+    """
 
 
-class ReportPoliciesMismatchError(ValueError):
-    """A report's run names another household or other policies than the report."""
+class HouseholdNotCalculableError(ValueError):
+    """The stored household has no default year, or the household functions refuse it.
+
+    The message names the household and why.
+    """
 
 
 class HouseholdCalculationRecords(Protocol):
@@ -154,6 +167,26 @@ class SimulationRunStarter(Protocol):
         ...
 
 
+class HouseholdRowReader(Protocol):
+    """Read the Public API's rows a household run needs (``HouseholdInputReader``)."""
+
+    def catalog_version(
+        self, country: str, policyengine_version: str
+    ) -> HouseholdCatalogVersion:
+        """Return the country's catalog version for a PolicyEngine.py version."""
+        ...
+
+    def household(self, country: str, household_id: UUID) -> StoredHousehold:
+        """Return the country's stored household."""
+        ...
+
+    def policy_parameters(
+        self, country: str, policy_id: UUID, catalog_version_id: UUID
+    ) -> dict[str, dict[str, Any]]:
+        """Return the values the country's policy sets, by name and period."""
+        ...
+
+
 class HouseholdWorkerSource(Protocol):
     """Find a country's household function (``ManifestHouseholdWorkers``)."""
 
@@ -192,30 +225,93 @@ class HouseholdInputs(Protocol):
 
 
 @dataclass(frozen=True)
-class ReportRunInputs:
-    """What a stored report's Modal call calculates, besides its policies."""
+class HouseholdRunInputs:
+    """What a household's runs calculate, read from the Public API's rows.
+
+    ``year`` is the household's ``default_year``; ``parameters`` holds each
+    policy's values, by policy ID (None for current law, which changes
+    nothing).
+    """
 
     country: str
+    catalog_version_id: UUID
+    year: int
     household: HouseholdDocument
     spm: JsonValue
     spm_requested: bool
     options: HouseholdCalculationOptions
+    parameters: Mapping[UUID | None, Mapping[str, object]]
 
 
-def _check_report_policies(
-    simulations: Sequence[SimulationRecord],
-    policies: Sequence[HouseholdPolicyInput],
-    household_id: UUID,
-) -> None:
-    """Refuse a run whose household or policies are not the report's own.
+def _calculable_household(country: str, stored: StoredHousehold) -> HouseholdDocument:
+    """Return the stored household as the household functions take it.
 
-    ``simulations`` are the report's baseline and, if it has one, reform;
-    ``policies`` the submitted baseline and reform, in the same order.
+    Raise HouseholdNotCalculableError when it has no default year in the
+    runs' range, or the household functions' contract refuses it, such as a
+    group no person belongs to.
     """
-    if [simulation.policy_id for simulation in simulations] != [
-        policy.policy_id for policy in policies
-    ] or any(simulation.household_id != household_id for simulation in simulations):
-        raise ReportPoliciesMismatchError(MISMATCHED_REPORT_MESSAGE)
+    year = stored.default_year
+    if year is None or not FIRST_YEAR <= year <= LAST_YEAR:
+        msg = f"the household {stored.id} has no default year to calculate"
+        raise HouseholdNotCalculableError(msg)
+    try:
+        return HouseholdDocument.model_validate(
+            household_situation(country, stored.document)
+        )
+    except ValidationError as error:
+        reasons = "; ".join(
+            f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
+            for item in error.errors()
+        )
+        msg = f"the household {stored.id} cannot be calculated: {reasons}"
+        raise HouseholdNotCalculableError(msg) from None
+    except (KeyError, TypeError) as error:
+        msg = f"the household {stored.id} cannot be calculated: {error!r}"
+        raise HouseholdNotCalculableError(msg) from None
+
+
+def read_household_inputs(  # noqa: PLR0913  # one keyword per thing a run calculates
+    reads: HouseholdRowReader,
+    *,
+    country: str,
+    household_id: UUID,
+    policy_ids: Sequence[UUID | None],
+    policyengine_version: str,
+    options: HouseholdCalculationOptions,
+) -> HouseholdRunInputs:
+    """Read and check everything the household's runs calculate.
+
+    Raise the reads' errors for a catalog version, household or policy the
+    Public API does not have or a parameter the version lacks, and
+    HouseholdNotCalculableError for a household the runs cannot calculate.
+    """
+    version = reads.catalog_version(country, policyengine_version)
+    stored = reads.household(country, household_id)
+    household = _calculable_household(country, stored)
+    spm = saved_spm_choice(stored.document)
+    parameters: dict[UUID | None, Mapping[str, object]] = {}
+    for policy_id in dict.fromkeys(policy_ids):
+        parameters[policy_id] = (
+            {}
+            if policy_id is None
+            else reads.policy_parameters(country, policy_id, version.id)
+        )
+    # Checked in _calculable_household.
+    year = stored.default_year
+    if year is None:  # pragma: no cover
+        msg = "a calculable household has a default year"
+        raise RuntimeError(msg)
+    return HouseholdRunInputs(
+        country=country,
+        catalog_version_id=version.id,
+        year=year,
+        household=household,
+        spm=spm,
+        # A saved null selection is no choice, as the contract reads it.
+        spm_requested=spm is not None,
+        options=options,
+        parameters=parameters,
+    )
 
 
 def household_modal_request(
@@ -267,6 +363,7 @@ class HouseholdCalculationService:
     store: HouseholdCalculationRecords
     dispatch: SimulationRunStarter
     workers: HouseholdWorkerSource
+    reads: HouseholdRowReader
 
     async def submit(
         self, submission: HouseholdCalculationSubmission
@@ -274,11 +371,21 @@ class HouseholdCalculationService:
         """Record the calculation, start its call if needed, and return it.
 
         Raise HouseholdFunctionUnavailableError or HouseholdWorkersUnavailableError
-        before anything is written, and UnknownHouseholdReferenceError when
-        the database refuses its references.
+        and the row reads' refusals before anything is written, and
+        UnknownHouseholdReferenceError when the database refuses a reference.
         """
         worker = await asyncio.to_thread(
             self.workers.resolve, submission.country, submission.policyengine_version
+        )
+        inputs = await asyncio.to_thread(
+            lambda: read_household_inputs(
+                self.reads,
+                country=submission.country,
+                household_id=submission.household_id,
+                policy_ids=[submission.policy_id],
+                policyengine_version=submission.policyengine_version,
+                options=submission.options,
+            )
         )
 
         def start() -> StartedSimulationRun:
@@ -288,8 +395,8 @@ class HouseholdCalculationService:
             return self.store.start_run(
                 NewSimulationRun(
                     simulation_id=simulation.id,
-                    tax_benefit_model_version_id=submission.catalog_version_id,
-                    year=submission.year,
+                    tax_benefit_model_version_id=inputs.catalog_version_id,
+                    year=inputs.year,
                     trigger=submission.trigger,
                 ),
                 force=submission.force,
@@ -299,8 +406,8 @@ class HouseholdCalculationService:
         await self._start_pending_runs(
             worker,
             calculation_id=run.id,
-            inputs=submission,
-            runs=[(run, submission.policy.parameters)],
+            inputs=inputs,
+            runs=[(run, inputs.parameters[submission.policy_id])],
         )
         calculation = await self.read(run.id)
         if calculation is None:  # pragma: no cover - runs are never deleted
@@ -317,29 +424,38 @@ class HouseholdCalculationService:
     ) -> HouseholdReport:
         """Create a household report and start its first run.
 
-        The runs start before the report is created, so a household, policy
-        or catalog version the database refuses leaves no report behind.
-        Raise as ``submit`` does.
+        The rows are read and the runs start before the report is created, so
+        a submission sim cannot calculate leaves no report behind. Raise as
+        ``submit`` does.
         """
         worker = await asyncio.to_thread(
             self.workers.resolve, submission.country, submission.policyengine_version
         )
-        policies = [submission.baseline] + (
-            [] if submission.reform is None else [submission.reform]
+        policy_ids = submission.policy_ids()
+        inputs = await asyncio.to_thread(
+            lambda: read_household_inputs(
+                self.reads,
+                country=submission.country,
+                household_id=submission.household_id,
+                policy_ids=policy_ids,
+                policyengine_version=submission.policyengine_version,
+                options=submission.options,
+            )
         )
 
         def create() -> tuple[ReportRecord, list[SimulationRunRecord]]:
             simulations = [
                 self.store.find_or_create_simulation(
-                    submission.simulation_definition(policy)
+                    submission.simulation_definition(policy_id)
                 )
-                for policy in policies
+                for policy_id in policy_ids
             ]
             runs = self._start_side_runs(
                 simulations,
-                catalog_version_id=submission.catalog_version_id,
-                year=submission.year,
-                submission=submission,
+                inputs=inputs,
+                year=inputs.year,
+                trigger=submission.trigger,
+                force=submission.force,
             )
             report = self.store.create_report(
                 NewReport(
@@ -349,7 +465,7 @@ class HouseholdCalculationService:
                     reform_simulation_id=(
                         simulations[1].id if len(simulations) > 1 else None
                     ),
-                    year=submission.year,
+                    year=inputs.year,
                 )
             )
             return report, runs
@@ -358,8 +474,11 @@ class HouseholdCalculationService:
         return await self._join_and_start(
             worker,
             report,
-            inputs=submission,
-            sides=list(zip(runs, policies, strict=True)),
+            inputs=inputs,
+            sides=[
+                (run, inputs.parameters[policy_id])
+                for run, policy_id in zip(runs, policy_ids, strict=True)
+            ],
             trigger=submission.trigger,
         )
 
@@ -368,8 +487,9 @@ class HouseholdCalculationService:
     ) -> HouseholdReport | None:
         """Start another run of a stored household report; None if there is none.
 
-        Raise ReportPoliciesMismatchError when the submission names another
-        household or other policies, and otherwise as ``submit`` does.
+        The household, policies and options are the report's simulations';
+        the rows are read again for the chosen catalog version. Raise as
+        ``submit`` does.
         """
 
         def load() -> tuple[ReportRecord, list[SimulationRecord]] | None:
@@ -393,34 +513,44 @@ class HouseholdCalculationService:
         if loaded is None:
             return None
         report, simulations = loaded
-        policies = [submission.baseline] + (
-            [] if submission.reform is None else [submission.reform]
-        )
-        _check_report_policies(simulations, policies, submission.household_id)
+        household_id = simulations[0].household_id
+        # The database requires a household simulation to name its household.
+        if household_id is None:  # pragma: no cover
+            msg = f"household report {report.id} has no household"
+            raise RuntimeError(msg)
+        policy_ids = [simulation.policy_id for simulation in simulations]
         worker = await asyncio.to_thread(
             self.workers.resolve, report.country, submission.policyengine_version
+        )
+        inputs = await asyncio.to_thread(
+            lambda: read_household_inputs(
+                self.reads,
+                country=report.country,
+                household_id=household_id,
+                policy_ids=policy_ids,
+                policyengine_version=submission.policyengine_version,
+                options=HouseholdCalculationOptions.model_validate(
+                    simulations[0].options
+                ),
+            )
         )
         runs = await self._write(
             lambda: self._start_side_runs(
                 simulations,
-                catalog_version_id=submission.catalog_version_id,
+                inputs=inputs,
                 year=report.year,
-                submission=submission,
+                trigger=submission.trigger,
+                force=submission.force,
             )
         )
         return await self._join_and_start(
             worker,
             report,
-            inputs=ReportRunInputs(
-                country=report.country,
-                household=submission.household,
-                spm=submission.spm,
-                spm_requested=submission.spm_requested,
-                options=HouseholdCalculationOptions.model_validate(
-                    simulations[0].options
-                ),
-            ),
-            sides=list(zip(runs, policies, strict=True)),
+            inputs=inputs,
+            sides=[
+                (run, inputs.parameters[policy_id])
+                for run, policy_id in zip(runs, policy_ids, strict=True)
+            ],
             trigger=submission.trigger,
         )
 
@@ -428,13 +558,14 @@ class HouseholdCalculationService:
         """Return a household report with its newest run, or None."""
         return await asyncio.to_thread(self.store.read_report, report_id)
 
-    def _start_side_runs(
+    def _start_side_runs(  # one keyword per field of the runs
         self,
         simulations: Sequence[SimulationRecord],
         *,
-        catalog_version_id: UUID,
+        inputs: HouseholdRunInputs,
         year: int,
-        submission: HouseholdReportSubmission | HouseholdReportRunSubmission,
+        trigger: RunTrigger,
+        force: bool,
     ) -> list[SimulationRunRecord]:
         """Start or reuse a run of each side; a simulation on both sides runs once."""
         started: dict[UUID, SimulationRunRecord] = {}
@@ -443,11 +574,11 @@ class HouseholdCalculationService:
                 started[simulation.id] = self.store.start_run(
                     NewSimulationRun(
                         simulation_id=simulation.id,
-                        tax_benefit_model_version_id=catalog_version_id,
+                        tax_benefit_model_version_id=inputs.catalog_version_id,
                         year=year,
-                        trigger=submission.trigger,
+                        trigger=trigger,
                     ),
-                    force=submission.force,
+                    force=force,
                 ).run
         return [started[simulation.id] for simulation in simulations]
 
@@ -457,7 +588,7 @@ class HouseholdCalculationService:
         report: ReportRecord,
         *,
         inputs: HouseholdInputs,
-        sides: Sequence[tuple[SimulationRunRecord, HouseholdPolicyInput]],
+        sides: Sequence[tuple[SimulationRunRecord, Mapping[str, object]]],
         trigger: RunTrigger,
     ) -> HouseholdReport:
         """Join the sides' runs in a report run, and start those still pending."""
@@ -473,7 +604,7 @@ class HouseholdCalculationService:
                 )
             )
         )
-        unique_runs = {run.id: (run, policy.parameters) for run, policy in sides}
+        unique_runs = {run.id: (run, parameters) for run, parameters in sides}
         await self._start_pending_runs(
             worker,
             calculation_id=report_run.id,

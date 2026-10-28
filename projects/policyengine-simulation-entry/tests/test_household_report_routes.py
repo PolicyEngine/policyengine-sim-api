@@ -7,25 +7,28 @@ from uuid import UUID, uuid4
 import pytest
 from conftest import FakeBackend, make_settings
 from fastapi.testclient import TestClient
-from household_fakes import CATALOG_VERSION_ID, POLICYENGINE_VERSION
-from household_harness import CTC_REFORM, HOUSEHOLD_ID, POLICY_ID, US_HOUSEHOLD, Harness
+from household_fakes import (
+    CATALOG_VERSION_ID,
+    DEFAULT_YEAR,
+    HOUSEHOLD_ID,
+    POLICY_ID,
+    POLICYENGINE_VERSION,
+)
+from household_harness import Harness
 from household_support import calculated_household, succeeded_outcome
 from policyengine_simulation_entry.app import RunServices, create_app
 from policyengine_simulation_entry.modal_calls import CallSucceeded
 
 REPORTS_PATH = "/v2/household-reports"
-REFORM = {"policy_id": str(POLICY_ID), "parameters": CTC_REFORM}
+REFORM = {"policy_id": str(POLICY_ID)}
 
 
 def report_body(**overrides: object) -> dict:
-    """Return the JSON body of a 2026 US report of current law against a reform."""
+    """Return the JSON body of a report of current law against the stored reform."""
     body: dict[str, object] = {
         "country": "us",
-        "catalog_version_id": str(CATALOG_VERSION_ID),
         "policyengine_version": POLICYENGINE_VERSION,
-        "year": 2026,
         "household_id": str(HOUSEHOLD_ID),
-        "household": US_HOUSEHOLD,
         "reform": REFORM,
     }
     body.update(overrides)
@@ -33,14 +36,8 @@ def report_body(**overrides: object) -> dict:
 
 
 def rerun_body(**overrides: object) -> dict:
-    """Return the JSON body of another run of that report."""
-    body: dict[str, object] = {
-        "catalog_version_id": str(CATALOG_VERSION_ID),
-        "policyengine_version": POLICYENGINE_VERSION,
-        "household_id": str(HOUSEHOLD_ID),
-        "household": US_HOUSEHOLD,
-        "reform": REFORM,
-    }
+    """Return the JSON body of another run of a report."""
+    body: dict[str, object] = {"policyengine_version": POLICYENGINE_VERSION}
     body.update(overrides)
     return body
 
@@ -71,7 +68,7 @@ def test_a_created_report_is_accepted_with_its_first_run(report_client) -> None:
     body = response.json()
     assert body["status"] == "running"
     assert body["country"] == "us"
-    assert body["year"] == 2026
+    assert body["year"] == DEFAULT_YEAR
     assert body["household_id"] == str(HOUSEHOLD_ID)
     assert body["trigger"] == "initial"
     assert body["catalog_version_id"] == str(CATALOG_VERSION_ID)
@@ -116,15 +113,23 @@ def test_a_report_runs_again_on_request(report_client) -> None:
     assert body["baseline"]["attempt"] == 2
 
 
-def test_a_run_with_other_policies_is_refused(report_client) -> None:
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"household_id": str(HOUSEHOLD_ID)},
+        {"reform": REFORM},
+        {"catalog_version_id": str(CATALOG_VERSION_ID)},
+    ],
+    ids=["household", "policies", "catalog-version"],
+)
+def test_a_run_names_only_its_version(report_client, overrides) -> None:
     created = report_client.post(REPORTS_PATH, json=report_body()).json()
 
     response = report_client.post(
-        f"{REPORTS_PATH}/{created['report_id']}/runs", json=rerun_body(reform=None)
+        f"{REPORTS_PATH}/{created['report_id']}/runs", json=rerun_body(**overrides)
     )
 
-    assert response.status_code == 400
-    assert "policies" in response.json()["detail"]
+    assert response.status_code == 422
 
 
 def test_an_unknown_report_is_not_found(report_client) -> None:
@@ -140,11 +145,12 @@ def test_an_unknown_report_is_not_found(report_client) -> None:
 
 
 def test_an_unknown_household_is_refused(report_client, harness) -> None:
-    harness.store.unknown_households.add(HOUSEHOLD_ID)
+    del harness.reads.households[("us", HOUSEHOLD_ID)]
 
     response = report_client.post(REPORTS_PATH, json=report_body())
 
     assert response.status_code == 400
+    assert "has no household" in response.json()["detail"]
 
 
 def test_without_household_calculations_the_report_routes_are_unavailable() -> None:

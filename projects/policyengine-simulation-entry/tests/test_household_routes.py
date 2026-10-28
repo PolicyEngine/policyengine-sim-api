@@ -7,14 +7,14 @@ from uuid import UUID, uuid4
 import pytest
 from conftest import FakeBackend, make_settings
 from fastapi.testclient import TestClient
-from household_fakes import CATALOG_VERSION_ID, POLICYENGINE_VERSION
-from household_harness import (
-    EARNINGS_AXES,
+from household_fakes import (
+    CATALOG_VERSION_ID,
+    DEFAULT_YEAR,
     HOUSEHOLD_ID,
     POLICY_ID,
-    US_HOUSEHOLD,
-    Harness,
+    POLICYENGINE_VERSION,
 )
+from household_harness import EARNINGS_AXES, Harness
 from household_support import (
     BUNDLE,
     SPM_CONFIG,
@@ -33,19 +33,17 @@ from policyengine_simulation_entry.household_workers import (
 )
 from policyengine_simulation_entry.modal_calls import CallSucceeded
 from policyengine_simulation_entry.simulation_database import SimulationDatabase
+from sqlalchemy.exc import OperationalError
 
 SUBMIT_PATH = "/v2/household-calculations"
 
 
 def submission_body(**overrides: object) -> dict:
-    """Return the JSON body of a 2026 current-law US calculation."""
+    """Return the JSON body of a current-law calculation of the stored household."""
     body: dict[str, object] = {
         "country": "us",
-        "catalog_version_id": str(CATALOG_VERSION_ID),
         "policyengine_version": POLICYENGINE_VERSION,
-        "year": 2026,
         "household_id": str(HOUSEHOLD_ID),
-        "household": US_HOUSEHOLD,
     }
     body.update(overrides)
     return body
@@ -80,7 +78,7 @@ def test_a_submitted_calculation_is_accepted_and_running(household_client) -> No
     assert body["policy_id"] is None
     assert body["options"] == {}
     assert body["catalog_version_id"] == str(CATALOG_VERSION_ID)
-    assert body["year"] == 2026
+    assert body["year"] == DEFAULT_YEAR
     assert body["attempt"] == 1
     assert body["trigger"] == "initial"
     assert body["result"] is None
@@ -92,10 +90,7 @@ def test_a_succeeded_calculation_reads_back_its_household(
 ) -> None:
     submitted = household_client.post(
         SUBMIT_PATH,
-        json=submission_body(
-            policy={"policy_id": str(POLICY_ID), "parameters": {}},
-            options={"axes": EARNINGS_AXES},
-        ),
+        json=submission_body(policy_id=str(POLICY_ID), options={"axes": EARNINGS_AXES}),
     ).json()
     run_id = submitted["calculation_id"]
     stored_id = UUID(run_id)
@@ -151,12 +146,21 @@ def test_an_unknown_calculation_is_not_found(household_client) -> None:
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"household": {**US_HOUSEHOLD, "axes": EARNINGS_AXES}},
-        {"policy": {"parameters": {"gov.irs.credits.ctc.refundable": {}}}},
-        {"year": 1899},
+        {"household": {"people": {}}},
+        {"policy": {"policy_id": str(POLICY_ID), "parameters": {}}},
+        {"year": 2026},
+        {"catalog_version_id": str(CATALOG_VERSION_ID)},
         {"country": "ca"},
+        {"household_id": "not-an-id"},
     ],
-    ids=["axes-in-household", "parameters-without-policy", "year", "country"],
+    ids=[
+        "household-values",
+        "policy-values",
+        "year",
+        "catalog-version",
+        "country",
+        "household-id",
+    ],
 )
 def test_a_malformed_submission_is_refused_before_anything_runs(
     household_client, harness, overrides
@@ -176,7 +180,9 @@ def test_a_version_without_a_household_function_is_refused(household_client) -> 
     assert "9.9.9" in response.json()["detail"]
 
 
-def test_an_unknown_household_is_refused(household_client, harness) -> None:
+def test_a_household_deleted_while_submitting_is_refused(
+    household_client, harness
+) -> None:
     harness.store.unknown_households.add(HOUSEHOLD_ID)
 
     response = household_client.post(SUBMIT_PATH, json=submission_body())
@@ -185,6 +191,49 @@ def test_an_unknown_household_is_refused(household_client, harness) -> None:
     assert response.json()["detail"] == (
         "The household, policy or catalog version does not exist for this country."
     )
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ("unknown-household", "has no household"),
+        ("unknown-policy", "has no policy"),
+        ("no-catalog-version", "has no catalog version"),
+        ("missing-parameter", "gov.irs.retired"),
+        ("no-default-year", "default year"),
+    ],
+)
+def test_a_calculation_sim_cannot_run_is_refused_with_why(
+    household_client, harness, change, reason
+) -> None:
+    body = submission_body(policy_id=str(POLICY_ID))
+    if change == "unknown-household":
+        body["household_id"] = "00000000-0000-4000-8000-00000000dead"
+    elif change == "unknown-policy":
+        body["policy_id"] = "00000000-0000-4000-8000-00000000dead"
+    elif change == "no-catalog-version":
+        del harness.reads.catalog_versions[("us", POLICYENGINE_VERSION)]
+    elif change == "missing-parameter":
+        harness.reads.missing_parameters[POLICY_ID] = ("gov.irs.retired",)
+    else:
+        harness.reads.store_household(None)
+
+    response = household_client.post(SUBMIT_PATH, json=body)
+
+    assert response.status_code == 400
+    assert reason in response.json()["detail"]
+    assert harness.dispatcher.requests == []
+
+
+def test_an_unreadable_public_api_row_asks_the_caller_to_retry(
+    household_client, harness
+) -> None:
+    harness.reads.error = OperationalError("SELECT", {}, ConnectionError("down"))
+
+    response = household_client.post(SUBMIT_PATH, json=submission_body())
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"]
 
 
 class UnreachableWorkers:

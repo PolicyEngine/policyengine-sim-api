@@ -29,15 +29,22 @@ job after a staging promotion (`DEPLOYMENT.md`, "Staging household test").
 ## Household calculations
 
 `POST /v2/household-calculations` records a household calculation, one
-household under one policy for a catalog version and year, and starts its
+stored household under one stored policy or current law, and starts its
 Modal call; `GET /v2/household-calculations/{calculation_id}` returns its
 status and, once it succeeded, the calculated household with its warnings,
 the SPM selection it applied (`spm_config`), its SPM receipt
 (`spm_provenance`) and its bundle, or, once it failed, its error. The Public
-API sends the household in the situation shape with its saved SPM choice
-and the policy's parameter values, because this service cannot read the
-Public API's tables; the database checks that the household, policy and
-catalog version exist.
+API sends the IDs of its household and policy and the PolicyEngine.py
+version; this service reads, from the Public API's tables in the same
+database, the country's catalog version for that PolicyEngine.py version,
+the household (its document, saved SPM choice and `default_year`, the year
+calculated) and the policy's parameter values, before writing anything.
+A household, policy or catalog version the Public API does not have for the
+country, a policy changing a parameter the catalog version lacks, and a
+household without a default year or that the household functions cannot
+take are refused with 400 and the reason. The runtime role needs `SELECT`
+on those tables (`libs/policyengine-simulation-persistence`, "Household
+calculations").
 
 Each calculation is a simulation run of a household simulation (household,
 policy and options such as axes), so the same calculation submitted again
@@ -52,8 +59,9 @@ or that environment, the routes answer 503.
 
 A household report compares the household under a baseline and an optional
 reform. `POST /v2/household-reports` creates it and starts its first run;
-`POST /v2/household-reports/{report_id}/runs` starts another run of it, with
-the report's own household and policies; `GET /v2/household-reports/{report_id}`
+`POST /v2/household-reports/{report_id}/runs` starts another run of it on a
+PolicyEngine.py version, reading the report's own household and policies
+again; `GET /v2/household-reports/{report_id}`
 returns it with its newest run and that run's two calculations. Each report
 run joins a run of each simulation, reused like any calculation's, and one
 Modal call computes the runs that still need computing, so a new report's

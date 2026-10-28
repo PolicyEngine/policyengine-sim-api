@@ -7,14 +7,15 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
-from household_fakes import CATALOG_VERSION_ID, POLICYENGINE_VERSION
-from household_harness import (
+from household_fakes import (
+    CATALOG_VERSION_ID,
     CTC_REFORM,
+    DEFAULT_YEAR,
     HOUSEHOLD_ID,
     POLICY_ID,
-    US_HOUSEHOLD,
-    Harness,
+    POLICYENGINE_VERSION,
 )
+from household_harness import Harness
 from household_support import calculated_household, failed_outcome, succeeded_outcome
 from policyengine_simulation_entry.household_api_models import (
     HouseholdReportRunSubmission,
@@ -22,28 +23,30 @@ from policyengine_simulation_entry.household_api_models import (
     household_report_status,
 )
 from policyengine_simulation_entry.household_calculations import (
-    ReportPoliciesMismatchError,
     UnknownHouseholdReferenceError,
 )
 from policyengine_simulation_entry.household_recording import policy_key_for_run
 from policyengine_simulation_entry.modal_calls import CallSucceeded
-from policyengine_simulation_persistence import RunStatus, RunTrigger
+from policyengine_simulation_persistence import (
+    PolicyParametersMissingError,
+    RunStatus,
+    RunTrigger,
+    UnknownCatalogVersionError,
+    UnknownPolicyError,
+)
 
 if TYPE_CHECKING:
     from policyengine_simulation_entry.run_dispatch import DispatchOutcome
 
-REFORM = {"policy_id": str(POLICY_ID), "parameters": CTC_REFORM}
+REFORM = {"policy_id": str(POLICY_ID)}
 
 
 def report_submission(**overrides: object) -> HouseholdReportSubmission:
-    """Return a 2026 US household report of current law against the CTC reform."""
+    """Return a report of the stored US household: current law against the reform."""
     values: dict[str, object] = {
         "country": "us",
-        "catalog_version_id": CATALOG_VERSION_ID,
         "policyengine_version": POLICYENGINE_VERSION,
-        "year": 2026,
         "household_id": HOUSEHOLD_ID,
-        "household": US_HOUSEHOLD,
         "reform": REFORM,
     }
     values.update(overrides)
@@ -51,14 +54,8 @@ def report_submission(**overrides: object) -> HouseholdReportSubmission:
 
 
 def rerun_submission(**overrides: object) -> HouseholdReportRunSubmission:
-    """Return another run of the report on the same catalog version."""
-    values: dict[str, object] = {
-        "catalog_version_id": CATALOG_VERSION_ID,
-        "policyengine_version": POLICYENGINE_VERSION,
-        "household_id": HOUSEHOLD_ID,
-        "household": US_HOUSEHOLD,
-        "reform": REFORM,
-    }
+    """Return another run of a report on the same catalog version."""
+    values: dict[str, object] = {"policyengine_version": POLICYENGINE_VERSION}
     values.update(overrides)
     return HouseholdReportRunSubmission.model_validate(values)
 
@@ -86,6 +83,8 @@ def test_one_call_computes_a_reports_baseline_and_reform() -> None:
     report = submit_report(harness)
 
     baseline_run_id, reform_run_id = report_runs(report)
+    assert report.report.year == DEFAULT_YEAR
+    assert report.baseline.run.year == report.reform.run.year == DEFAULT_YEAR
     assert report.report_run.reform_simulation_run_id == reform_run_id
     assert report.baseline.simulation.policy_id is None
     assert report.reform.simulation.policy_id == POLICY_ID
@@ -205,24 +204,30 @@ def test_a_report_runs_again_reusing_its_runs_unless_forced() -> None:
     assert latest.report_run.id == forced.report_run.id
 
 
-@pytest.mark.parametrize(
-    "overrides",
-    [
-        {"reform": None},
-        {"reform": {"policy_id": str(uuid4()), "parameters": {}}},
-        {"baseline": {"policy_id": str(POLICY_ID), "parameters": {}}},
-        {"household_id": str(uuid4())},
-    ],
-    ids=["no-reform", "other-reform", "other-baseline", "other-household"],
-)
-def test_a_run_must_calculate_the_reports_own_policies(overrides) -> None:
+def test_a_reports_run_reads_its_own_household_and_policies_again() -> None:
     harness = Harness()
     report = submit_report(harness)
+    harness.reads.reads.clear()
 
-    with pytest.raises(ReportPoliciesMismatchError):
-        rerun_report(harness, report.report.id, **overrides)
+    rerun_report(harness, report.report.id, force=True)
 
-    assert len(harness.dispatcher.requests) == 1
+    assert harness.reads.reads == [
+        "catalog_version",
+        "household",
+        "policy_parameters",
+    ]
+    request = harness.sent_request()
+    assert [policy.parameters for policy in request.policies] == [{}, CTC_REFORM]
+
+
+def test_a_baseline_only_reports_run_calculates_only_its_baseline() -> None:
+    harness = Harness()
+    report = submit_report(harness, reform=None)
+
+    again = rerun_report(harness, report.report.id, force=True)
+
+    assert again.reform is None
+    assert len(harness.sent_request().policies) == 1
 
 
 def test_an_unknown_report_has_no_runs_to_start() -> None:
@@ -232,7 +237,7 @@ def test_an_unknown_report_has_no_runs_to_start() -> None:
     assert asyncio.run(harness.service.read_report(uuid4())) is None
 
 
-def test_an_unknown_catalog_version_leaves_no_report_behind() -> None:
+def test_a_catalog_version_deleted_while_submitting_leaves_no_report_behind() -> None:
     harness = Harness()
     harness.store.unknown_catalog_versions.add(CATALOG_VERSION_ID)
 
@@ -243,11 +248,26 @@ def test_an_unknown_catalog_version_leaves_no_report_behind() -> None:
     assert harness.dispatcher.requests == []
 
 
-def test_a_baseline_only_reports_run_takes_no_reform() -> None:
+@pytest.mark.parametrize(
+    ("change", "error"),
+    [
+        ("unknown-reform", UnknownPolicyError),
+        ("missing-parameter", PolicyParametersMissingError),
+        ("no-catalog-version", UnknownCatalogVersionError),
+    ],
+)
+def test_a_report_sim_cannot_calculate_leaves_nothing_behind(change, error) -> None:
     harness = Harness()
-    report = submit_report(harness, reform=None)
+    if change == "unknown-reform":
+        del harness.reads.policies[("us", POLICY_ID)]
+    elif change == "missing-parameter":
+        harness.reads.missing_parameters[POLICY_ID] = ("gov.irs.retired",)
+    else:
+        del harness.reads.catalog_versions[("us", POLICYENGINE_VERSION)]
 
-    with pytest.raises(ReportPoliciesMismatchError):
-        rerun_report(harness, report.report.id)
+    with pytest.raises(error):
+        submit_report(harness)
 
-    assert len(harness.dispatcher.requests) == 1
+    assert harness.store.reports == {}
+    assert harness.store.simulations == {}
+    assert harness.dispatcher.requests == []

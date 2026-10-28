@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from pydantic import JsonValue
+
 # Each country's stored group collections and their plural in the situation,
 # as the Public API's households service accepts them.
 GROUP_COLLECTIONS: dict[str, dict[str, str]] = {
@@ -58,6 +60,6 @@ def household_situation(country: str, document: Mapping[str, Any]) -> dict[str, 
     return situation
 
 
-def saved_spm_choice(document: Mapping[str, Any]) -> object:
+def saved_spm_choice(document: Mapping[str, Any]) -> JsonValue:
     """Return the household's saved SPM selection, or None when it has none."""
     return document.get("spm")

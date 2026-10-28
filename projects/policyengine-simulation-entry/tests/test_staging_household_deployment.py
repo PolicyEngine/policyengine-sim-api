@@ -102,23 +102,15 @@ def _staging_test_module():
     return module
 
 
-def test_the_calculated_household_is_the_stored_one_in_the_situation_shape() -> None:
-    """The calculation sends the stored household as stored, in its other shape."""
+def test_the_submission_names_the_stored_household_by_id_only() -> None:
+    """Sim reads the household, its policy and the catalog version itself."""
     module = _staging_test_module()
 
-    assert module.situation_from_stored(module.STORED_HOUSEHOLD) == {
-        "people": {"you": {"age": {"2026": 40}, "employment_income": {"2026": 30_000}}},
-        "households": {
-            "your household": {
-                "members": ["you"],
-                "state_name": {"2026": "CA"},
-                "household_net_income": {"2026": None},
-            }
-        },
-        "families": {"your family": {"members": ["you"]}},
-        "tax_units": {"your tax unit": {"members": ["you"]}},
-        "spm_units": {"your spm unit": {"members": ["you"]}},
-        "marital_units": {"your marital unit": {"members": ["you"]}},
+    assert module.submission_body("household-id", "6.10.0") == {
+        "country": "us",
+        "policyengine_version": "6.10.0",
+        "household_id": "household-id",
+        "force": True,
     }
 
 

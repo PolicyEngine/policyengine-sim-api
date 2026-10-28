@@ -93,7 +93,12 @@ they tested, so the main URL reaches it once promotion succeeds.
 Household calculations (`POST /v2/household-calculations`, see the README)
 start the v2 household functions' calls in the same Modal environment,
 `SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT`, with the same token, and read the
-v2 version manifest there; they need no other setting. Their outcomes are
+v2 version manifest there. They read the household, its policies and the
+catalog version from the Public API's tables through `SIMULATION_DATABASE_URL`,
+so before they are used the owner of those tables must grant the runtime role
+`simulation_runtime` `SELECT` on `tax_benefit_models`,
+`tax_benefit_model_versions`, `households`, `policies`, `parameters` and
+`parameter_values`; without it, submissions answer 503. Their outcomes are
 recorded like any other call's: on the call's report, or by the safety check.
 The household functions take the runs a call computes as their second
 argument. A v2 application deployed before they did (for an older
@@ -113,11 +118,13 @@ after promotion because the household function reports the call's end to the
 stable URL. A failure fails the deployment run, so production does not
 deploy.
 
-The calculation refers to rows the Public API owns in the same database, so
-the test first reads the staging Public API's US catalog version for the
+The calculation reads rows the Public API owns in the same database, so
+the test first finds the staging Public API's US catalog version for the
 deployed PolicyEngine.py version (or its current one, when the Public API
 has not published that version yet) and stores a one-person household there
-(`POST /v2/households`, which returns the same household every time). The
+(`POST /v2/households`, which returns the same household every time), then
+submits that household's ID and the catalog version's PolicyEngine.py
+version. The
 `beta` environment variable `PUBLIC_API_URL` names the staging Public API's
 URL. The test authenticates as the deployed-test client
 (`SIMULATION_ENTRYPOINT_TEST_AUTH_*`), which needs `simulation:submit` and

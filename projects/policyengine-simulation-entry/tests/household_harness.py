@@ -1,18 +1,20 @@
-"""A household calculation service over fake runs, Modal and manifest.
+"""A household calculation service over fake runs, Modal, manifest and Public API rows.
 
 ``Harness`` wires the real ``HouseholdCalculationService`` and
 ``RunRecorder`` to ``FakeHouseholdStore``, ``FakeRunTransitions``, a fake
-dispatcher and inspector, and the fixture manifest, all on one clock.
+dispatcher and inspector, the fixture manifest and ``FakeHouseholdReads``,
+all on one clock.
 """
 
 from __future__ import annotations
 
 import asyncio
-from uuid import UUID
+from typing import TYPE_CHECKING
 
 from household_fakes import (
-    CATALOG_VERSION_ID,
+    HOUSEHOLD_ID,
     POLICYENGINE_VERSION,
+    FakeHouseholdReads,
     FakeHouseholdStore,
     manifest_workers,
 )
@@ -34,36 +36,20 @@ from policyengine_simulation_entry.run_recording import ResultRecorders, RunReco
 from policyengine_simulation_persistence import SimulationKind
 from run_fakes import FakeDispatcher, FakeInspector, FakeRunTransitions, ManualClock
 
-HOUSEHOLD_ID = UUID("00000000-0000-4000-8000-0000000000a1")
-POLICY_ID = UUID("00000000-0000-4000-8000-0000000000b1")
-US_HOUSEHOLD = {
-    "people": {"you": {"age": {"2026": 40}, "employment_income": {"2026": 30_000}}},
-    "households": {
-        "your household": {
-            "members": ["you"],
-            "state_name": {"2026": "CA"},
-            "household_net_income": {"2026": None},
-        }
-    },
-}
+if TYPE_CHECKING:
+    from uuid import UUID
+
 EARNINGS_AXES = [
     [{"name": "employment_income", "count": 5, "min": 0, "max": 80_000}],
 ]
-CTC_REFORM = {
-    "gov.irs.credits.ctc.amount.base[0].amount": {"2026-01-01.2100-12-31": 3000}
-}
-SPM_CHOICE = {"scenario": "ce_trend", "geography_kind": "national"}
 
 
 def submission(**overrides: object) -> HouseholdCalculationSubmission:
-    """Return a 2026 current-law calculation of a one-person US household."""
+    """Return a current-law calculation of the stored one-person US household."""
     values: dict[str, object] = {
         "country": "us",
-        "catalog_version_id": CATALOG_VERSION_ID,
         "policyengine_version": POLICYENGINE_VERSION,
-        "year": 2026,
         "household_id": HOUSEHOLD_ID,
-        "household": US_HOUSEHOLD,
     }
     values.update(overrides)
     return HouseholdCalculationSubmission.model_validate(values)
@@ -79,8 +65,10 @@ class Harness:
         self.store = FakeHouseholdStore(self.transitions, self.clock)
         self.dispatcher = dispatcher or FakeDispatcher()
         self.inspector = FakeInspector()
+        self.reads = FakeHouseholdReads()
         self.service = HouseholdCalculationService(
             store=self.store,
+            reads=self.reads,
             dispatch=RunDispatchService(
                 transitions=self.transitions,
                 dispatcher=self.dispatcher,

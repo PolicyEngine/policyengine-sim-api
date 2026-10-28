@@ -1,4 +1,9 @@
-"""Submitting household calculations, and reading them as their calls end."""
+"""Submitting household calculations, and reading them as their calls end.
+
+A submission names the stored household, the policy and the PolicyEngine.py
+version; sim reads the household, the policy's values and the catalog
+version itself, and calculates the household's ``default_year``.
+"""
 
 from __future__ import annotations
 
@@ -6,20 +11,21 @@ import asyncio
 from datetime import timedelta
 
 import pytest
-from household_fakes import CATALOG_VERSION_ID, POLICYENGINE_VERSION
-from household_harness import (
+from household_fakes import (
+    CATALOG_VERSION_ID,
     CTC_REFORM,
-    EARNINGS_AXES,
+    DEFAULT_YEAR,
     HOUSEHOLD_ID,
     POLICY_ID,
+    POLICYENGINE_VERSION,
     SPM_CHOICE,
-    US_HOUSEHOLD,
-    Harness,
-    submission,
+    US_SITUATION,
 )
+from household_harness import EARNINGS_AXES, Harness, submission
 from household_support import calculated_household, succeeded_outcome
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_entry.household_calculations import (
+    HouseholdNotCalculableError,
     UnknownHouseholdReferenceError,
 )
 from policyengine_simulation_entry.household_recording import policy_key_for_run
@@ -34,24 +40,31 @@ from policyengine_simulation_entry.modal_calls import (
 from policyengine_simulation_persistence import (
     SUCCEEDED_RUN_REUSE_WINDOW,
     NewSimulationRun,
+    PolicyParametersMissingError,
     RunError,
     RunErrorCode,
     RunStatus,
     RunTrigger,
+    UnknownCatalogVersionError,
+    UnknownHouseholdError,
+    UnknownPolicyError,
 )
 from run_fakes import FakeDispatcher
+from sqlalchemy.exc import OperationalError
 
 
 def test_a_submitted_calculation_starts_one_household_call() -> None:
     harness = Harness()
+    harness.reads.store_household(DEFAULT_YEAR, spm=SPM_CHOICE)
 
     calculation = harness.submit(
-        spm=SPM_CHOICE,
-        policy={"policy_id": str(POLICY_ID), "parameters": CTC_REFORM},
+        policy_id=str(POLICY_ID),
         options={"axes": EARNINGS_AXES, "add_missing_variables": True},
     )
 
     assert calculation.run.status is RunStatus.RUNNING
+    assert calculation.run.tax_benefit_model_version_id == CATALOG_VERSION_ID
+    assert calculation.run.year == DEFAULT_YEAR
     assert calculation.simulation.policy_id == POLICY_ID
     assert calculation.simulation.options == {
         "axes": EARNINGS_AXES,
@@ -70,7 +83,9 @@ def test_a_submitted_calculation_starts_one_household_call() -> None:
     ]
     assert request.policies[0].parameters == CTC_REFORM
     situation = request.household.to_situation()
-    assert situation["people"] == US_HOUSEHOLD["people"]
+    assert {key: value for key, value in situation.items() if key != "axes"} == (
+        US_SITUATION
+    )
     assert situation["axes"] == EARNINGS_AXES
     assert request.add_missing_variables
     assert request.spm_requested
@@ -131,7 +146,7 @@ def test_an_unsupported_version_writes_nothing() -> None:
     assert harness.dispatcher.requests == []
 
 
-def test_an_unknown_household_is_refused_without_a_call() -> None:
+def test_a_household_deleted_while_submitting_is_refused_without_a_call() -> None:
     harness = Harness()
     harness.store.unknown_households.add(HOUSEHOLD_ID)
 
@@ -139,6 +154,86 @@ def test_an_unknown_household_is_refused_without_a_call() -> None:
         harness.submit()
 
     assert harness.dispatcher.requests == []
+
+
+@pytest.mark.parametrize(
+    ("overrides", "error"),
+    [
+        (
+            {"household_id": "00000000-0000-4000-8000-00000000dead"},
+            UnknownHouseholdError,
+        ),
+        ({"policy_id": "00000000-0000-4000-8000-00000000dead"}, UnknownPolicyError),
+        ({"country": "uk"}, UnknownHouseholdError),
+    ],
+    ids=["household", "policy", "another-country"],
+)
+def test_a_household_or_policy_the_public_api_lacks_writes_nothing(
+    overrides, error
+) -> None:
+    harness = Harness()
+
+    with pytest.raises(error):
+        harness.submit(**overrides)
+
+    assert harness.store.simulations == {}
+    assert harness.dispatcher.requests == []
+
+
+def test_a_version_without_a_catalog_version_writes_nothing() -> None:
+    harness = Harness()
+    del harness.reads.catalog_versions[("us", POLICYENGINE_VERSION)]
+
+    with pytest.raises(UnknownCatalogVersionError, match=POLICYENGINE_VERSION):
+        harness.submit()
+
+    assert harness.store.simulations == {}
+
+
+def test_a_parameter_the_catalog_version_lacks_writes_nothing() -> None:
+    harness = Harness()
+    harness.reads.missing_parameters[POLICY_ID] = (
+        "gov.irs.credits.retired_credit.amount",
+    )
+
+    with pytest.raises(PolicyParametersMissingError, match="retired_credit"):
+        harness.submit(policy_id=str(POLICY_ID))
+
+    assert harness.store.simulations == {}
+    assert harness.dispatcher.requests == []
+
+
+def test_a_household_without_a_default_year_is_not_calculable() -> None:
+    harness = Harness()
+    harness.reads.store_household(None)
+
+    with pytest.raises(HouseholdNotCalculableError, match="default year"):
+        harness.submit()
+
+    assert harness.store.simulations == {}
+
+
+def test_a_stored_household_the_contract_refuses_is_not_calculable() -> None:
+    harness = Harness()
+    harness.reads.store_household(
+        DEFAULT_YEAR,
+        family=[{"id": "your family", "values": {}}, {"id": "empty", "values": {}}],
+    )
+
+    with pytest.raises(HouseholdNotCalculableError, match="empty"):
+        harness.submit()
+
+    assert harness.store.simulations == {}
+
+
+def test_an_unreadable_public_api_row_is_reported_as_unavailable() -> None:
+    harness = Harness()
+    harness.reads.error = OperationalError("SELECT", {}, ConnectionError("down"))
+
+    with pytest.raises(OperationalError):
+        harness.submit()
+
+    assert harness.store.simulations == {}
 
 
 def test_a_refused_call_reads_back_failed() -> None:
@@ -232,8 +327,9 @@ def test_a_calculation_left_dispatching_fails_and_runs_again() -> None:
 def test_a_saved_null_spm_choice_is_no_choice() -> None:
     """A stored household's null selection inherits the defaults, as omission does."""
     harness = Harness()
+    harness.reads.store_household(DEFAULT_YEAR, spm=None)
 
-    harness.submit(spm=None)
+    harness.submit()
 
     assert "spm" not in harness.dispatcher.requests[0].arguments[0]
     assert not harness.sent_request().spm_requested

@@ -1,10 +1,13 @@
-"""In-memory household simulations and calculations, for the household tests.
+"""In-memory household simulations, calculations and Public API rows, for the tests.
 
 ``FakeHouseholdStore`` keeps household simulations and run setups and leaves
 each run's status to ``FakeRunTransitions``, so the dispatcher, the recorder
 and the reader all see one copy of every run. It reuses runs by the same
 rules as ``RunStore``: an unfinished run, or one that succeeded within the
 reuse window, is reused unless forced; a failed one never is.
+
+``FakeHouseholdReads`` holds the Public API's rows the household path reads
+(``HouseholdInputReader``): catalog versions, households and policies.
 """
 
 from __future__ import annotations
@@ -18,7 +21,9 @@ from policyengine_simulation_entry.household_workers import ManifestHouseholdWor
 from policyengine_simulation_persistence import (
     SUCCEEDED_RUN_REUSE_WINDOW,
     HouseholdCalculation,
+    HouseholdCatalogVersion,
     HouseholdReport,
+    PolicyParametersMissingError,
     ReportKind,
     ReportRecord,
     ReportRunRecord,
@@ -27,6 +32,10 @@ from policyengine_simulation_persistence import (
     SimulationRecord,
     SimulationRunRecord,
     StartedSimulationRun,
+    StoredHousehold,
+    UnknownCatalogVersionError,
+    UnknownHouseholdError,
+    UnknownPolicyError,
 )
 from sqlalchemy.exc import IntegrityError
 from stage12_fixtures import worker
@@ -47,6 +56,141 @@ if TYPE_CHECKING:
 # The PolicyEngine.py version the fixture manifest's worker runs.
 POLICYENGINE_VERSION = "5.2.0"
 CATALOG_VERSION_ID = UUID("00000000-0000-4000-8000-00000000ca7a")
+UK_CATALOG_VERSION_ID = UUID("00000000-0000-4000-8000-00000000ca7b")
+HOUSEHOLD_ID = UUID("00000000-0000-4000-8000-0000000000a1")
+POLICY_ID = UUID("00000000-0000-4000-8000-0000000000b1")
+DEFAULT_YEAR = 2026
+SPM_CHOICE = {"scenario": "ce_trend", "geography_kind": "national"}
+CTC_REFORM = {
+    "gov.irs.credits.ctc.amount.base[0].amount": {"2026-01-01.2100-12-31": 3000}
+}
+# A one-person US household as the Public API stores it.
+STORED_US_HOUSEHOLD = {
+    "people": [
+        {
+            "id": "you",
+            "values": {"age": {"2026": 40}, "employment_income": {"2026": 30_000}},
+            "memberships": {
+                "household": "your household",
+                "family": "your family",
+                "tax_unit": "your tax unit",
+                "spm_unit": "your spm unit",
+                "marital_unit": "your marital unit",
+            },
+        }
+    ],
+    "household": [
+        {
+            "id": "your household",
+            "values": {
+                "state_name": {"2026": "CA"},
+                "household_net_income": {"2026": None},
+            },
+        }
+    ],
+    "family": [{"id": "your family", "values": {}}],
+    "tax_unit": [{"id": "your tax unit", "values": {}}],
+    "spm_unit": [{"id": "your spm unit", "values": {}}],
+    "marital_unit": [{"id": "your marital unit", "values": {}}],
+}
+# The same household in the situation shape the household functions take.
+US_SITUATION = {
+    "people": {"you": {"age": {"2026": 40}, "employment_income": {"2026": 30_000}}},
+    "households": {
+        "your household": {
+            "members": ["you"],
+            "state_name": {"2026": "CA"},
+            "household_net_income": {"2026": None},
+        }
+    },
+    "families": {"your family": {"members": ["you"]}},
+    "tax_units": {"your tax unit": {"members": ["you"]}},
+    "spm_units": {"your spm unit": {"members": ["you"]}},
+    "marital_units": {"your marital unit": {"members": ["you"]}},
+}
+
+
+class FakeHouseholdReads:
+    """The Public API's catalog versions, households and policies, by country.
+
+    It holds the stored US household (``HOUSEHOLD_ID``, with ``DEFAULT_YEAR``)
+    and the US CTC reform (``POLICY_ID``) on ``CATALOG_VERSION_ID``, the
+    catalog version of ``POLICYENGINE_VERSION``. ``missing_parameters`` names
+    a policy's parameters the run's version lacks; ``error`` fails every read.
+    """
+
+    def __init__(self) -> None:
+        """Hold the stored US household and reform."""
+        self.catalog_versions = {
+            ("us", POLICYENGINE_VERSION): CATALOG_VERSION_ID,
+            ("uk", POLICYENGINE_VERSION): UK_CATALOG_VERSION_ID,
+        }
+        self.households = {
+            ("us", HOUSEHOLD_ID): StoredHousehold(
+                id=HOUSEHOLD_ID,
+                country="us",
+                default_year=DEFAULT_YEAR,
+                document=STORED_US_HOUSEHOLD,
+            )
+        }
+        self.policies: dict[tuple[str, UUID], dict] = {("us", POLICY_ID): CTC_REFORM}
+        self.missing_parameters: dict[UUID, tuple[str, ...]] = {}
+        self.error: Exception | None = None
+        self.reads: list[str] = []
+
+    def _read(self, name: str) -> None:
+        self.reads.append(name)
+        if self.error is not None:
+            raise self.error
+
+    def catalog_version(
+        self, country: str, policyengine_version: str
+    ) -> HouseholdCatalogVersion:
+        """Return the catalog version, or raise UnknownCatalogVersionError."""
+        self._read("catalog_version")
+        version_id = self.catalog_versions.get((country, policyengine_version))
+        if version_id is None:
+            msg = (
+                f"{country} has no catalog version for PolicyEngine.py "
+                f"{policyengine_version}"
+            )
+            raise UnknownCatalogVersionError(msg)
+        return HouseholdCatalogVersion(
+            id=version_id, country=country, policyengine_version=policyengine_version
+        )
+
+    def household(self, country: str, household_id: UUID) -> StoredHousehold:
+        """Return the household, or raise UnknownHouseholdError."""
+        self._read("household")
+        household = self.households.get((country, household_id))
+        if household is None:
+            msg = f"{country} has no household {household_id}"
+            raise UnknownHouseholdError(msg)
+        return household
+
+    def policy_parameters(
+        self, country: str, policy_id: UUID, catalog_version_id: UUID
+    ) -> dict:
+        """Return the policy's values, or raise why the run cannot apply them."""
+        del catalog_version_id
+        self._read("policy_parameters")
+        parameters = self.policies.get((country, policy_id))
+        if parameters is None:
+            msg = f"{country} has no policy {policy_id}"
+            raise UnknownPolicyError(msg)
+        missing = self.missing_parameters.get(policy_id)
+        if missing:
+            raise PolicyParametersMissingError(missing)
+        return parameters
+
+    def store_household(self, default_year: int | None, **document: object) -> None:
+        """Replace the stored US household's default year or document fields."""
+        self.households[("us", HOUSEHOLD_ID)] = StoredHousehold(
+            id=HOUSEHOLD_ID,
+            country="us",
+            default_year=default_year,
+            document={**STORED_US_HOUSEHOLD, **document},
+        )
 
 
 @dataclass(frozen=True)
