@@ -14,6 +14,7 @@ import importlib.util
 import os
 import shutil
 import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 from workflow_script_support import REPOSITORY_ROOT, SCRIPTS_DIR
@@ -84,10 +85,15 @@ def make_repository(tmp_path: Path, files: dict[str, str] | None = None) -> Path
 
 
 def load_fragments_module() -> ModuleType:
-    """Load ``.github/scripts/changelog_fragments.py`` as a module in this process."""
+    """Load ``.github/scripts/changelog_fragments.py`` as a module in this process.
+
+    The module is registered in ``sys.modules`` first, because its dataclasses
+    look their module up there while they are created.
+    """
     spec = importlib.util.spec_from_file_location(
         "changelog_fragments", FRAGMENTS_MODULE
     )
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module

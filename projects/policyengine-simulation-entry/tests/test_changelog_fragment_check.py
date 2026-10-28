@@ -49,9 +49,7 @@ def _open_pull_request(
 
 
 def _check(root: Path, base: str = "main") -> subprocess.CompletedProcess[str]:
-    return run_script(
-        CHECK_SCRIPT, env={**GIT_ENVIRONMENT, "BASE_SHA": base}, cwd=root
-    )
+    return run_script(CHECK_SCRIPT, env={**GIT_ENVIRONMENT, "BASE_SHA": base}, cwd=root)
 
 
 def _errors(result: subprocess.CompletedProcess[str]) -> list[str]:
@@ -203,7 +201,9 @@ def test_rejects_an_unknown_fragment_type(tmp_path, fragment_type):
     assert errors[1].startswith(NO_FRAGMENT_ADDED)
 
 
-@pytest.mark.parametrize("text", ["", "\n", "  \n\t\n"], ids=["empty", "newline", "blank"])
+@pytest.mark.parametrize(
+    "text", ["", "\n", "  \n\t\n"], ids=["empty", "newline", "blank"]
+)
 def test_rejects_an_empty_fragment(tmp_path, text):
     root = make_repository(tmp_path)
     _open_pull_request(root, {"changelog.d/982.added.md": text})
