@@ -36,8 +36,8 @@ def household_validation_request(
 ) -> HouseholdExecutionRequest:
     """Return a one-adult, current-law household request for ``country``.
 
-    The request names the installed bundle and asks for the household's net
-    income in ``year``.
+    The request names the installed bundle and ``year``, and asks for the
+    household's net income in that year.
     """
     period = str(year)
     household = {
@@ -54,6 +54,7 @@ def household_validation_request(
         {
             "calculation_id": uuid4(),
             "country": country,
+            "year": period,
             "household": household,
             "policies": [{"policy_key": "baseline", "parameters": {}}],
             "bundle": installed_household_bundle(country),

@@ -8,7 +8,7 @@ in-process calculation does; the US model takes about a minute to load once.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -38,7 +38,6 @@ from policyengine_simulation_executor.household_inputs import (
 )
 
 CALCULATION_ID = UUID("00000000-0000-4000-8000-0000000000c1")
-TODAY = date(2026, 6, 1)
 
 
 def _worker(country: str) -> HouseholdWorkerIdentity:
@@ -52,6 +51,7 @@ def _request(country: str, household: dict, **overrides) -> HouseholdExecutionRe
     values = {
         "calculation_id": CALCULATION_ID,
         "country": country,
+        "year": "2026",
         "household": household,
         "policies": [{"policy_key": "baseline", "parameters": {}}],
         "bundle": installed_household_bundle(country).model_dump(mode="json"),
@@ -191,7 +191,7 @@ def _calculate_with_stand_in(
         _request(country, household or STAND_IN_HOUSEHOLD, **overrides),
         worker=_worker(country),
         dependencies=HouseholdCalculationDependencies(
-            model_loader=lambda _country: model, today=TODAY
+            model_loader=lambda _country: model
         ),
     )
 
@@ -471,7 +471,7 @@ def test_spm_settings_are_resolved_while_preparing_the_household(
         _request("us", household, spm={}, spm_selection_source=source),
         worker=_worker("us"),
         dependencies=HouseholdCalculationDependencies(
-            model_loader=load_model, today=TODAY, runtime=runtime
+            model_loader=load_model, runtime=runtime
         ),
     )
 
@@ -611,7 +611,7 @@ def test_us_baseline_and_reform_are_calculated_in_one_request() -> None:
     outcome = calculate_household(
         request,
         worker=_worker("us"),
-        dependencies=HouseholdCalculationDependencies(today=TODAY, runtime=runtime),
+        dependencies=HouseholdCalculationDependencies(runtime=runtime),
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
@@ -663,7 +663,7 @@ def test_us_axes_calculate_one_value_per_point() -> None:
     outcome = calculate_household(
         _request("us", household),
         worker=_worker("us"),
-        dependencies=HouseholdCalculationDependencies(today=TODAY),
+        dependencies=HouseholdCalculationDependencies(),
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
@@ -688,7 +688,7 @@ def test_us_calculate_full_adds_and_calculates_every_missing_variable() -> None:
     outcome = calculate_household(
         _request("us", US_FAMILY, add_missing_variables=True),
         worker=_worker("us"),
-        dependencies=HouseholdCalculationDependencies(today=TODAY),
+        dependencies=HouseholdCalculationDependencies(),
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
@@ -733,7 +733,7 @@ def test_us_a_chosen_spm_selection_must_have_its_geography() -> None:
         return calculate_household(
             _request("us", US_SINGLE_WITHOUT_COUNTY, **spm_settings),
             worker=_worker("us"),
-            dependencies=HouseholdCalculationDependencies(today=TODAY),
+            dependencies=HouseholdCalculationDependencies(),
         )
 
     inherited = calculate()
@@ -755,6 +755,64 @@ def test_us_a_chosen_spm_selection_must_have_its_geography() -> None:
     receipt = national.output.results[0].spm_provenance
     assert receipt is not None
     assert receipt.geography_kind == "national"
+
+
+# A household named by record IDs, as v2 households are: no person is "you".
+US_RECORD_HOUSEHOLD_2025 = {
+    "people": {
+        "person-1": {"age": {"2025": 35}, "employment_income": {"2025": 30_000}},
+        "person-2": {"age": {"2025": 5}},
+    },
+    "tax_units": {"tax-unit-1": {"members": ["person-1", "person-2"]}},
+    "spm_units": {"spm-unit-1": {"members": ["person-1", "person-2"]}},
+    "families": {"family-1": {"members": ["person-1", "person-2"]}},
+    "marital_units": {
+        "marital-unit-1": {"members": ["person-1"]},
+        "marital-unit-2": {"members": ["person-2"]},
+    },
+    "households": {
+        "household-1": {
+            "members": ["person-1", "person-2"],
+            "state_name": {"2025": "TX"},
+            "county_fips": {"2025": "48201"},
+        }
+    },
+}
+
+
+def _periods(situation: dict) -> set[str]:
+    """Return every period key of every variable in a situation."""
+    return {
+        str(period)
+        for plural, entities in situation.items()
+        if plural != "axes"
+        for variables in entities.values()
+        for values in variables.values()
+        if isinstance(values, dict)
+        for period in values
+    }
+
+
+def test_us_calculate_full_calculates_the_request_year_not_this_year() -> None:
+    # The household is calculated in 2026 (or later), for its 2025 run.
+    assert datetime.now(UTC).year >= 2026
+
+    outcome = calculate_household(
+        _request(
+            "us", US_RECORD_HOUSEHOLD_2025, year="2025", add_missing_variables=True
+        ),
+        worker=_worker("us"),
+        dependencies=HouseholdCalculationDependencies(),
+    )
+
+    assert isinstance(outcome, HouseholdExecutionResult), outcome
+    situation = outcome.output.results[0].household.to_situation()
+    assert _periods(situation) == {"2025"}
+    tax_unit = situation["tax_units"]["tax-unit-1"]
+    household = situation["households"]["household-1"]
+    assert isinstance(tax_unit["income_tax"]["2025"], float)
+    assert isinstance(household["household_net_income"]["2025"], float)
+    assert isinstance(situation["people"]["person-1"]["is_blind"]["2025"], bool)
 
 
 UK_SINGLE = {
@@ -785,7 +843,7 @@ def test_uk_axes_calculate_one_value_per_point() -> None:
     outcome = calculate_household(
         _request("uk", household),
         worker=_worker("uk"),
-        dependencies=HouseholdCalculationDependencies(today=TODAY),
+        dependencies=HouseholdCalculationDependencies(),
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
@@ -804,7 +862,7 @@ def test_uk_calculate_full_adds_every_missing_yearly_variable() -> None:
     outcome = calculate_household(
         _request("uk", UK_SINGLE, add_missing_variables=True),
         worker=_worker("uk"),
-        dependencies=HouseholdCalculationDependencies(today=TODAY),
+        dependencies=HouseholdCalculationDependencies(),
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
@@ -829,7 +887,7 @@ def test_uk_unrecognized_inputs_fail_with_public_api_errors() -> None:
     outcome = calculate_household(
         request,
         worker=_worker("uk"),
-        dependencies=HouseholdCalculationDependencies(today=TODAY),
+        dependencies=HouseholdCalculationDependencies(),
     )
 
     # The first policy's request already fails on the household's own input,
@@ -859,7 +917,7 @@ def test_uk_unrecognized_policy_parameters_name_their_policy() -> None:
     outcome = calculate_household(
         request,
         worker=_worker("uk"),
-        dependencies=HouseholdCalculationDependencies(today=TODAY),
+        dependencies=HouseholdCalculationDependencies(),
     )
 
     assert isinstance(outcome, HouseholdExecutionFailure)
@@ -889,7 +947,7 @@ def test_uk_reform_values_given_as_text_are_converted_to_numbers() -> None:
     outcome = calculate_household(
         request,
         worker=_worker("uk"),
-        dependencies=HouseholdCalculationDependencies(today=TODAY),
+        dependencies=HouseholdCalculationDependencies(),
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
@@ -926,7 +984,7 @@ def test_uk_deprecated_inputs_warn_in_every_policy_result() -> None:
     outcome = calculate_household(
         request,
         worker=_worker("uk"),
-        dependencies=HouseholdCalculationDependencies(today=TODAY),
+        dependencies=HouseholdCalculationDependencies(),
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
@@ -941,7 +999,7 @@ def test_uk_spm_settings_are_refused() -> None:
     outcome = calculate_household(
         _request("uk", UK_SINGLE, spm={}),
         worker=_worker("uk"),
-        dependencies=HouseholdCalculationDependencies(today=TODAY),
+        dependencies=HouseholdCalculationDependencies(),
     )
 
     assert isinstance(outcome, HouseholdExecutionFailure)
@@ -959,7 +1017,7 @@ def test_uk_member_who_is_not_a_person_is_an_invalid_household() -> None:
     outcome = calculate_household(
         _request("uk", household),
         worker=_worker("uk"),
-        dependencies=HouseholdCalculationDependencies(today=TODAY),
+        dependencies=HouseholdCalculationDependencies(),
     )
 
     assert isinstance(outcome, HouseholdExecutionFailure)
