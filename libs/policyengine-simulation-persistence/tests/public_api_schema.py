@@ -204,34 +204,8 @@ def schema_differences(copies: SchemaShape, real: SchemaShape) -> list[str]:
     return found
 
 
-def schema_to_json(schema: SchemaShape) -> str:
-    """Return the description as indented JSON, for a fixture file."""
-    payload = {
-        "tables": {
-            name: {
-                "columns": {
-                    column_name: {
-                        "type": column.column_type,
-                        "nullable": column.nullable,
-                    }
-                    for column_name, column in table.columns.items()
-                },
-                "unique_constraints": {
-                    constraint_name: list(columns)
-                    for constraint_name, columns in sorted(
-                        table.unique_constraints.items()
-                    )
-                },
-            }
-            for name, table in schema.tables.items()
-        },
-        "enums": {name: list(values) for name, values in schema.enums.items()},
-    }
-    return json.dumps(payload, indent=2) + "\n"
-
-
 def schema_from_json(path: Path) -> SchemaShape:
-    """Read a description that ``schema_to_json`` wrote."""
+    """Read a description stored as JSON, as the rule's proof fixtures are."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     return SchemaShape(
         tables={

@@ -220,28 +220,3 @@ def test_period_keys_are_utc_dates_whatever_the_sessions_time_zone(
     assert changes == {
         CTC_AMOUNT: {"2025-01-01.2025-12-31": 2500, "2026-01-01": 3000},
     }
-
-
-def test_the_test_tables_use_the_public_api_column_types(migrated_database) -> None:
-    """The catalog reads run against the column types they meet in production."""
-    engine = superuser_engine(migrated_database.superuser_url)
-    try:
-        with engine.connect() as connection:
-            column_types = dict(
-                connection.execute(
-                    text(
-                        "SELECT table_name || '.' || column_name, udt_name "
-                        "FROM information_schema.columns "
-                        "WHERE table_schema = 'public' AND (table_name, column_name) "
-                        "IN (('regions', 'region_type'), "
-                        "('parameter_values', 'value_json'))"
-                    )
-                ).all()
-            )
-    finally:
-        engine.dispose()
-
-    assert column_types == {
-        "regions.region_type": "v2_region_type",
-        "parameter_values.value_json": "jsonb",
-    }

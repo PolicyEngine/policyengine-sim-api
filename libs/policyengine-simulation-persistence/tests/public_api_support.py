@@ -1,11 +1,12 @@
-"""The Public API tables the simulation schema refers to, reduced to their keys.
+"""Copies of the Public API tables sim refers to and reads, with only sim's columns.
 
 In production these tables belong to the Public API's own migration chain, in
-the same database as the simulation schema. The tests create only the columns
-and unique constraints the simulation schema's foreign keys use, with the
-Public API's constraint names, owned by the superuser, and grant the migrator
-``REFERENCES`` on them, as the operator does in production. The runtime role
-may only read the catalog and policy tables (``CATALOG_READ_TABLES``).
+the same database as the simulation schema. The tests create the columns and
+unique constraints the simulation schema's foreign keys use, and the columns
+the catalog reads select (``catalog_reads``), owned by the superuser, and
+grant the migrator ``REFERENCES`` on them, as the operator does in
+production. The runtime role may only read the catalog and policy tables
+(``CATALOG_READ_TABLES``).
 
 Every column, primary key and unique constraint the copies define has the
 type, nullability and name the Public API's migrations give it: for example,

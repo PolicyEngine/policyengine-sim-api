@@ -68,7 +68,9 @@ def test_the_job_needs_no_secret_and_fails_instead_of_skipping() -> None:
     )
 
 
-def _fake_commands(tmp_path: Path, *, failing_sync: bool) -> tuple[dict, Path]:
+def _fake_commands(
+    tmp_path: Path, *, failing_sync: bool, failing_git: bool = False
+) -> tuple[dict, Path]:
     bin_directory = tmp_path / "bin"
     bin_directory.mkdir()
     calls = tmp_path / "calls.txt"
@@ -82,7 +84,13 @@ def _fake_commands(tmp_path: Path, *, failing_sync: bool) -> tuple[dict, Path]:
         encoding="utf-8",
     )
     (bin_directory / "git").write_text(
-        "#!/usr/bin/env bash\necho 0123456789abcdef\n", encoding="utf-8"
+        "#!/usr/bin/env bash\n"
+        + (
+            "echo 'fatal: not a git repository' >&2\nexit 128\n"
+            if failing_git
+            else "echo 0123456789abcdef\n"
+        ),
+        encoding="utf-8",
     )
     for command in bin_directory.iterdir():
         command.chmod(0o755)
@@ -110,10 +118,16 @@ def test_the_script_migrates_the_database_with_the_public_apis_chain(
     checkout = tmp_path / "public-api"
     checkout.mkdir()
 
+    github_environment = tmp_path / "github_env"
+    environment["GITHUB_ENV"] = str(github_environment)
+
     result = _run_script(environment, checkout)
 
     assert result.returncode == 0, result.stderr
     assert "Public API commit: 0123456789abcdef" in result.stdout
+    assert github_environment.read_text(encoding="utf-8") == (
+        "PUBLIC_API_SCHEMA_COMMIT=0123456789abcdef\n"
+    )
     migration_url = REFERENCE_URL.replace("postgresql://", "postgresql+psycopg://")
     assert calls.read_text(encoding="utf-8").splitlines() == [
         "uv sync --frozen --extra dev | UV_PYTHON=3.12 "
@@ -145,4 +159,18 @@ def test_the_script_needs_the_database_to_migrate(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "PUBLIC_API_SCHEMA_DATABASE_URL" in result.stderr
+    assert not calls.exists()
+
+
+def test_the_script_stops_when_it_cannot_name_the_commit_it_checks(
+    tmp_path: Path,
+) -> None:
+    """A failed comparison must say which Public API commit it compared with."""
+    environment, calls = _fake_commands(tmp_path, failing_sync=False, failing_git=True)
+    checkout = tmp_path / "public-api"
+    checkout.mkdir()
+
+    result = _run_script(environment, checkout)
+
+    assert result.returncode != 0
     assert not calls.exists()

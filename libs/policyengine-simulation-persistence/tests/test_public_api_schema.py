@@ -30,6 +30,8 @@ pytestmark = pytest.mark.public_api_schema
 
 REFERENCE_DATABASE_VARIABLE = "PUBLIC_API_SCHEMA_DATABASE_URL"
 REQUIRE_REFERENCE_VARIABLE = "SIMULATION_REQUIRE_PUBLIC_API_SCHEMA"
+# The reference script sets it on GitHub Actions: the Public API commit migrated.
+COMMIT_VARIABLE = "PUBLIC_API_SCHEMA_COMMIT"
 PROOF_FIXTURES = (
     Path(__file__).resolve().parents[3]
     / "rules"
@@ -65,7 +67,10 @@ def test_the_copies_of_the_public_api_tables_match_its_schema(
         real_engine.dispose()
 
     assert copies.tables
-    assert schema_differences(copies, real) == []
+    compared_with = os.environ.get(COMMIT_VARIABLE) or "an unrecorded commit"
+    assert schema_differences(copies, real) == [], (
+        f"compared with the Public API at {compared_with}"
+    )
 
 
 def test_rule_proof_public_api_copies_match() -> None:
@@ -174,3 +179,32 @@ def _regions(**changes) -> SchemaShape:
 )
 def test_each_difference_is_reported(copies, real, difference) -> None:
     assert schema_differences(copies, real) == [difference]
+
+
+def test_a_json_copy_of_a_jsonb_column_is_refused() -> None:
+    """``parameter_values.value_json`` is jsonb in the Public API.
+
+    Its baseline revision created it as json, and a later revision made it
+    jsonb, which compares and orders object keys differently; a copy that
+    kept json would test reads against the wrong type.
+    """
+    real = schema_from_json(PROOF_FIXTURES / "public_api_schema.json")
+    good = schema_from_json(PROOF_FIXTURES / "good_copies.json")
+    parameter_values = good.tables["parameter_values"]
+    json_copy = SchemaShape(
+        tables={
+            **good.tables,
+            "parameter_values": TableShape(
+                columns={
+                    **parameter_values.columns,
+                    "value_json": ColumnShape("json", nullable=False),
+                },
+                unique_constraints=parameter_values.unique_constraints,
+            ),
+        },
+        enums=good.enums,
+    )
+
+    assert schema_differences(json_copy, real) == [
+        "parameter_values.value_json: the copy is json, the Public API's is jsonb",
+    ]

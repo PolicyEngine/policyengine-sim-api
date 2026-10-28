@@ -8,14 +8,20 @@
 # PUBLIC_API_SCHEMA_DATABASE_URL names the empty database to migrate, as
 # postgresql://user:password@host:port/database. The Public API's disposable
 # migration mode accepts only the local policyengine_v2_alembic_test
-# database, with explicit credentials.
+# database, with explicit credentials. The script prints the Public API
+# commit it migrated and, on GitHub Actions, passes it to the later steps as
+# PUBLIC_API_SCHEMA_COMMIT, so a failed comparison names it.
 set -euo pipefail
 
 checkout="${1:?usage: public-api-schema-reference.sh <Public API checkout>}"
 database_url="${PUBLIC_API_SCHEMA_DATABASE_URL:?PUBLIC_API_SCHEMA_DATABASE_URL must name the database to migrate}"
 
 cd "$checkout"
-echo "Public API commit: $(git rev-parse HEAD)"
+commit="$(git rev-parse HEAD)"
+echo "Public API commit: $commit"
+if [ -n "${GITHUB_ENV:-}" ]; then
+  echo "PUBLIC_API_SCHEMA_COMMIT=$commit" >> "$GITHUB_ENV"
+fi
 # The Public API installs its lock on Python 3.12, as its own CI does.
 export UV_PYTHON=3.12
 uv sync --frozen --extra dev

@@ -271,7 +271,17 @@ default branch, builds its tables with its own v2 migration chain
 marked `public_api_schema` with `PUBLIC_API_SCHEMA_DATABASE_URL` naming that
 database. The job follows the default branch rather than a pinned commit, so
 a change there to a column sim reads fails sim's next CI run, instead of
-waiting for someone to move a pin; the job prints the commit it checked. To
-run it locally, migrate an empty local `policyengine_v2_alembic_test`
-database with the script, from a checkout of the Public API, and set
-`PUBLIC_API_SCHEMA_DATABASE_URL` and `SIMULATION_TEST_DATABASE_URL`.
+waiting for someone to move a pin. The script prints the commit it migrated,
+and a failed comparison names it.
+
+To run it locally:
+
+1. Check out the Public API at the commit to compare with (the one a failed
+   CI run names, to reproduce it).
+2. Create an empty `policyengine_v2_alembic_test` database on a local
+   server; the Public API's disposable migration mode accepts no other.
+3. Set `PUBLIC_API_SCHEMA_DATABASE_URL` to it, for example
+   `postgresql://postgres:password@127.0.0.1:5432/policyengine_v2_alembic_test`,
+   and run `.github/scripts/public-api-schema-reference.sh <checkout>`.
+4. With `SIMULATION_TEST_DATABASE_URL` naming the same server's superuser,
+   run `uv run --frozen pytest tests/ -m public_api_schema` here.
