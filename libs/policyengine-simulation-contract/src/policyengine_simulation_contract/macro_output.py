@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from policyengine_simulation_contract.spm import SPMComparisonProvenance
 
@@ -351,6 +351,10 @@ class SingleYearMacroOutput(MacroOutputModel):
     cliff_impact: CliffImpactOutput | None = None
 
 
+def _is_none(value: object) -> bool:
+    return value is None
+
+
 class LocalAreaBreakdownOutput(MacroOutputModel):
     """Completed result of a UK local-area breakdown run.
 
@@ -371,7 +375,8 @@ class LocalAreaBreakdownOutput(MacroOutputModel):
     area from an absent one. An area the run never estimated, such as one with
     no households in the dataset, is in neither list. An empty list means
     that no area of the level was withheld. Null means that the result does
-    not report them, as results from older executors do not.
+    not report them, as results from older executors do not; the JSON then
+    leaves both keys out rather than writing null.
     """
 
     kind: Literal["local_areas"]
@@ -381,5 +386,9 @@ class LocalAreaBreakdownOutput(MacroOutputModel):
     data_version: str
     constituency_impact: list[ConstituencyImpactRecord]
     local_authority_impact: list[LocalAuthorityImpactRecord]
-    constituency_withheld_codes: list[str] | None = None
-    local_authority_withheld_codes: list[str] | None = None
+    constituency_withheld_codes: list[str] | None = Field(
+        default=None, exclude_if=_is_none
+    )
+    local_authority_withheld_codes: list[str] | None = Field(
+        default=None, exclude_if=_is_none
+    )

@@ -143,6 +143,32 @@ def test_a_breakdown_result_without_withheld_codes_still_validates():
     assert isinstance(response.result, LocalAreaBreakdownOutput)
 
 
+def test_a_breakdown_result_without_withheld_codes_dumps_without_them():
+    # A gateway deployed before the fields existed forbids unknown keys, so a
+    # result that does not report them must leave the keys out, not send null.
+    output = LocalAreaBreakdownOutput.model_validate(BREAKDOWN_WITHOUT_WITHHELD_CODES)
+
+    assert output.model_dump(mode="json") == BREAKDOWN_WITHOUT_WITHHELD_CODES
+    assert "withheld_codes" not in output.model_dump_json()
+    response = JobStatusResponse(
+        status="complete", result=BREAKDOWN_WITHOUT_WITHHELD_CODES
+    )
+    assert response.model_dump(mode="json")["result"] == (
+        BREAKDOWN_WITHOUT_WITHHELD_CODES
+    )
+
+
+def test_a_breakdown_result_keeps_an_empty_withheld_list_in_its_dump():
+    # [] reports that no area was withheld, unlike a missing list.
+    output = LocalAreaBreakdownOutput.model_validate(
+        {**BREAKDOWN_WITHOUT_WITHHELD_CODES, "constituency_withheld_codes": []}
+    )
+
+    dumped = output.model_dump(mode="json")
+    assert dumped["constituency_withheld_codes"] == []
+    assert "local_authority_withheld_codes" not in dumped
+
+
 @pytest.mark.parametrize(
     "field", ["constituency_withheld_codes", "local_authority_withheld_codes"]
 )
