@@ -382,10 +382,8 @@ def test_a_first_open_that_loses_still_starts_the_runs_it_created() -> None:
     }
 
 
-def test_a_first_open_that_loses_fails_the_runs_no_report_run_compares() -> None:
-    """A labour supply report forces its own runs; the losing caller's are unused."""
-    runs = _RunsWhereAnotherFirstOpenWins()
-    path = _Path(runs=runs)
+def _labour_supply_report_another_first_open_wins(path: _Path, runs):
+    """Return a migrated labour supply report whose winning first open forced runs."""
     report = _migrated_report(path, reform_policy=LABOR_SUPPLY_POLICY)
     report_record = path.reports.get(report.id)
     runs.winner_runs = tuple(
@@ -405,6 +403,18 @@ def test_a_first_open_that_loses_fails_the_runs_no_report_run_compares() -> None
             report_record.reform_simulation_id,
         )
     )
+    return report
+
+
+def test_a_first_open_that_loses_leaves_the_runs_it_cannot_use_pending() -> None:
+    """A labour supply report forces its own runs; the losing caller's are unused.
+
+    They stay pending for the safety check, which fails a run nothing compares
+    and starts one that another report has reused since.
+    """
+    runs = _RunsWhereAnotherFirstOpenWins()
+    path = _Path(runs=runs)
+    report = _labour_supply_report_another_first_open_wins(path, runs)
 
     report_run = _system_run(path, report.id)
 
@@ -417,10 +427,53 @@ def test_a_first_open_that_loses_fails_the_runs_no_report_run_compares() -> None
         run for run in runs.simulation_runs.values() if run.id not in runs.winner_runs
     ]
     assert len(unused) == 2
-    assert all(run.status is RunStatus.FAILED for run in unused)
-    assert all(
-        run.error_code == RunErrorCode.DISPATCH_ABANDONED.value for run in unused
-    )
+    assert all(run.status is RunStatus.PENDING for run in unused)
+
+
+class _RunsWhereAnotherReportReusesTheLosersRun(_RunsWhereAnotherFirstOpenWins):
+    """Before the losing first open records its run, another report reuses one.
+
+    Another report sharing the current-law baseline found the loser's new
+    attempt pending and recorded a report run comparing it, without starting
+    it, as a submission that reuses a pending run does.
+    """
+
+    other_report_id = None
+
+    def create_first_report_run(self, new_report_run: NewReportRun):
+        if self.other_report_id is not None:
+            self.create_report_run(
+                replace(
+                    new_report_run,
+                    report_id=self.other_report_id,
+                    reform_simulation_run_id=new_report_run.baseline_simulation_run_id,
+                    trigger=RunTrigger.INITIAL,
+                )
+            )
+            self.other_report_id = None
+        return super().create_first_report_run(new_report_run)
+
+
+def test_a_first_open_that_loses_never_fails_a_run_another_report_compares() -> None:
+    runs = _RunsWhereAnotherReportReusesTheLosersRun()
+    path = _Path(runs=runs)
+    report = _labour_supply_report_another_first_open_wins(path, runs)
+    runs.other_report_id = _migrated_report(path).id
+
+    _system_run(path, report.id)
+
+    reused = [
+        run
+        for run in runs.simulation_runs.values()
+        if run.id not in runs.winner_runs
+        and runs.report_runs_using(run.id)
+        and any(
+            report_run.report_id != report.id
+            for report_run in runs.report_runs_using(run.id)
+        )
+    ]
+    assert len(reused) == 1
+    assert reused[0].status is RunStatus.PENDING
 
 
 @pytest.mark.parametrize(

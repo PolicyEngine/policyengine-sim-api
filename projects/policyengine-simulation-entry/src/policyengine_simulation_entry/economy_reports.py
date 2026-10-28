@@ -350,14 +350,10 @@ class EconomyReports:
                 continue
             dispatched.add(started_run.run.id)
             if started_run.run.id not in compared:
-                await self._fail_simulation_run(
-                    started_run.run.id,
-                    RunError(
-                        RunErrorCode.DISPATCH_ABANDONED,
-                        "Another first run of the report was recorded first, "
-                        "so no report run compares the run.",
-                    ),
-                )
+                # Another first open of the report recorded its run with its
+                # own runs. This one stays pending: another report may have
+                # reused it meanwhile, and the safety check starts it for
+                # them, or fails it when nothing compares it.
                 continue
             await self._start_simulation_run(
                 started_run.run,
@@ -373,7 +369,8 @@ class EconomyReports:
 
         Simultaneous first opens of a report without a run then share one
         report run. A caller that loses still starts the runs it created
-        that the recorded run compares, and fails the others.
+        that the recorded run compares, and leaves the others pending for the
+        safety check.
         """
         if new_report_run.trigger is not RunTrigger.SYSTEM:
             return await asyncio.to_thread(self.runs.create_report_run, new_report_run)
