@@ -269,6 +269,8 @@ class TestVersionEndpoints:
         assert response.json() == {
             "spm_capabilities": {},
             "bundles": {},
+            "published_at": {},
+            "latest_since": None,
             "policyengine": {
                 "latest": "4.9.0",
                 "4.9.0": "old-py-app",
