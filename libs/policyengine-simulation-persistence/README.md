@@ -27,8 +27,19 @@ Foreign keys into the Public API's tables in the same database (`policies` and
 `households`, each together with its country, `dynamics`,
 `tax_benefit_model_versions`, and `regions` and `datasets` each together with
 its catalog version) are `ON DELETE RESTRICT`. Creating them needs
-`REFERENCES` on those tables for the migrator role; the runtime role needs no
-privilege on them.
+`REFERENCES` on those tables for the migrator role.
+
+The household path reads the Public API's rows a household run is
+calculated from (`HouseholdInputReader`): the catalog version by country and
+PolicyEngine.py version; the household's document, saved SPM choice and
+`default_year`; and the policy's parameter values by parameter name, each
+period as the Public API's `YYYY-MM-DD.YYYY-MM-DD` read in UTC (an open end
+is `2100-12-31`), refused when the run's catalog version lacks a parameter.
+The runtime role needs `SELECT` on `HOUSEHOLD_READ_TABLES`
+(`tax_benefit_models`, `tax_benefit_model_versions`, `households`,
+`policies`, `parameters` and `parameter_values`). The tests' copies of those
+tables are checked against the Public API's columns, recorded in
+`tests/fixtures/public_api/household_read_columns.json`.
 
 ### Household calculations
 
@@ -170,7 +181,7 @@ These rules are registered in `rules/registry.toml` and checked by
 | Role | Used by | Privileges |
 | --- | --- | --- |
 | `simulation_migrator` | The deploy workflow's migration job, through `SIMULATION_MIGRATION_DATABASE_URL` | Creates the `simulation` schema if it is missing, and owns every object in it; `REFERENCES` on the Public API tables its foreign keys point to |
-| `simulation_runtime` | The Simulation Entrypoint, through `SIMULATION_DATABASE_URL` | `USAGE` on the schema, `SELECT` on the version table, and `SELECT`, `INSERT` and `UPDATE` on the tables the migrations create, except `UPDATE` on the definition tables (`simulations`, `reports`) and the result tables; never `DELETE`, and nothing on the Public API tables |
+| `simulation_runtime` | The Simulation Entrypoint, through `SIMULATION_DATABASE_URL` | `USAGE` on the schema, `SELECT` on the version table, and `SELECT`, `INSERT` and `UPDATE` on the tables the migrations create, except `UPDATE` on the definition tables (`simulations`, `reports`) and the result tables; never `DELETE`; on the Public API's tables, only `SELECT` on `HOUSEHOLD_READ_TABLES` |
 
 The initial revision grants the runtime role its privileges, including default
 privileges on tables the migrator creates later; revision 0002 revokes

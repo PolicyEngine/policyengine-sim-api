@@ -24,6 +24,16 @@ from policyengine_simulation_persistence.household_calculations import (
     HouseholdCalculationStore,
     HouseholdReport,
 )
+from policyengine_simulation_persistence.household_reads import (
+    HOUSEHOLD_READ_TABLES,
+    HouseholdCatalogVersion,
+    HouseholdInputReader,
+    PolicyParametersMissingError,
+    StoredHousehold,
+    UnknownCatalogVersionError,
+    UnknownHouseholdError,
+    UnknownPolicyError,
+)
 from policyengine_simulation_persistence.household_results import (
     HouseholdOutput,
     read_household_output,
@@ -79,6 +89,7 @@ from policyengine_simulation_persistence.simulations import (
 __all__ = [
     "ALEMBIC_VERSION_TABLE",
     "HEAD_REVISION",
+    "HOUSEHOLD_READ_TABLES",
     "OPTIONAL_SECTIONS",
     "OUTPUT_FILE_RETENTION",
     "RESULT_FIELD_STORAGE",
@@ -92,6 +103,8 @@ __all__ = [
     "GeographyLabel",
     "HouseholdCalculation",
     "HouseholdCalculationStore",
+    "HouseholdCatalogVersion",
+    "HouseholdInputReader",
     "HouseholdOutput",
     "HouseholdReport",
     "NewReport",
@@ -100,6 +113,7 @@ __all__ = [
     "NewSimulationRun",
     "OutputFile",
     "OutputFileRecord",
+    "PolicyParametersMissingError",
     "ReportKind",
     "ReportRecord",
     "ReportRunRecord",
@@ -115,6 +129,10 @@ __all__ = [
     "SimulationRunRecord",
     "SimulationStore",
     "StartedSimulationRun",
+    "StoredHousehold",
+    "UnknownCatalogVersionError",
+    "UnknownHouseholdError",
+    "UnknownPolicyError",
     "available_output_files",
     "check_storable",
     "create_simulation_engine",

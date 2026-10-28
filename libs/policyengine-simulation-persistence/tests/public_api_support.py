@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from migration_support import MIGRATOR_ROLE
+from policyengine_simulation_persistence import HOUSEHOLD_READ_TABLES, RUNTIME_ROLE
 from sqlalchemy import create_engine, text
 
 if TYPE_CHECKING:
@@ -108,17 +109,26 @@ def superuser_engine(superuser_url: str, **options: object) -> Engine:
 
 
 def create_public_api_tables(superuser_url: str, *, grant_references: bool) -> None:
-    """Create the referenced Public API tables in a new test database."""
+    """Create the referenced Public API tables in a new test database.
+
+    The runtime role may read the tables a household run is calculated from
+    (``HOUSEHOLD_READ_TABLES``), as the operator grants in production.
+    """
     engine = superuser_engine(superuser_url, isolation_level="AUTOCOMMIT")
     grant = (
         "GRANT REFERENCES ON "
         + ", ".join(f"public.{table}" for table in REFERENCED_TABLES)
         + f" TO {MIGRATOR_ROLE}"
     )
+    read_grant = (
+        "GRANT SELECT ON "
+        + ", ".join(f"public.{table}" for table in HOUSEHOLD_READ_TABLES)
+        + f" TO {RUNTIME_ROLE}"
+    )
     statements = (
-        (*PUBLIC_API_TABLE_STATEMENTS, grant)
+        (*PUBLIC_API_TABLE_STATEMENTS, grant, read_grant)
         if grant_references
-        else PUBLIC_API_TABLE_STATEMENTS
+        else (*PUBLIC_API_TABLE_STATEMENTS, read_grant)
     )
     try:
         with engine.connect() as connection:
