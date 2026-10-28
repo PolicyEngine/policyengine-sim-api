@@ -1196,6 +1196,17 @@
           "difference": {
             "type": "number",
             "title": "Difference"
+          },
+          "is_tax": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Tax"
           }
         },
         "additionalProperties": false,
@@ -1206,7 +1217,7 @@
           "difference"
         ],
         "title": "DetailedBudgetProgramOutput",
-        "description": "Baseline and reform totals for one program.\n\n``difference`` is reform minus baseline."
+        "description": "Baseline and reform totals for one program.\n\n``difference`` is reform minus baseline. ``is_tax`` says whether the\nprogram is a tax (its rise adds to the budget) or a benefit (its rise is\nspending); it is None in outputs built before the flag was recorded."
       },
       "GenderPovertyOutput": {
         "properties": {
@@ -2879,6 +2890,28 @@
             "type": "object",
             "title": "Bundles",
             "description": "Deployed bundle identity keyed by exact PolicyEngine wrapper version, then country: model and data versions, the default dataset and the SHA-256 the bundle records for it (the certified artifact's, or the dataset entry's). `policyengine.latest` is a wrapper version: read its identity at `bundles[latest]`."
+          },
+          "published_at": {
+            "additionalProperties": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "type": "object",
+            "title": "Published At",
+            "description": "When each exact PolicyEngine wrapper version's route was first published, as an ISO 8601 UTC time. Republishing a version keeps its date; versions published before the gateway recorded dates have no entry."
+          },
+          "latest_since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Since",
+            "description": "When `policyengine.latest` last changed (a publish that advanced it, a forced latest or a rollback), as an ISO 8601 UTC time; null until a publish records it."
           }
         },
         "type": "object",

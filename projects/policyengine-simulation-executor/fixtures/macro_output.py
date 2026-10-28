@@ -52,6 +52,7 @@ CURRENT_SINGLE_YEAR_MACRO_RESULT = {
             "baseline": 100.0,
             "reform": 125.0,
             "difference": 25.0,
+            "is_tax": True,
         }
     },
     "decile": {

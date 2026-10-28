@@ -22,6 +22,8 @@ from policyengine_simulation_gateway.route_resolution import (
     SUPPORTED_ROUTE_KINDS,
     routing_state_bundles,
     routing_state_latest,
+    routing_state_latest_since,
+    routing_state_published_at,
     routing_state_routes,
 )
 from policyengine_simulation_gateway.routes_common import (
@@ -53,6 +55,8 @@ async def list_versions(request: Request) -> VersionsResponse:
             us=_version_map_from_state(state, "us"),
             uk=_version_map_from_state(state, "uk"),
             bundles=bundle_identities(state),
+            published_at=routing_state_published_at(state),
+            latest_since=routing_state_latest_since(state),
         )
 
     # ``Dict.from_name`` is a lazy handle; the RPCs fire during the
