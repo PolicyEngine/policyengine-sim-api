@@ -243,5 +243,5 @@ def test_the_test_tables_use_the_public_api_column_types(migrated_database) -> N
 
     assert column_types == {
         "regions.region_type": "v2_region_type",
-        "parameter_values.value_json": "json",
+        "parameter_values.value_json": "jsonb",
     }

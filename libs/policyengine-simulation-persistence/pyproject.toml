@@ -50,6 +50,7 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 markers = [
     "postgres: needs a disposable PostgreSQL server named by SIMULATION_TEST_DATABASE_URL",
+    "public_api_schema: compares the test copies of the Public API's tables with the database PUBLIC_API_SCHEMA_DATABASE_URL names",
 ]
 
 [tool.pyright]

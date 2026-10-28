@@ -7,10 +7,13 @@ Public API's constraint names, owned by the superuser, and grant the migrator
 ``REFERENCES`` on them, as the operator does in production. The runtime role
 may only read the catalog and policy tables (``CATALOG_READ_TABLES``).
 
-Every column the catalog reads use has the type and nullability the Public
-API's migrations give it: ``regions.region_type`` is the PostgreSQL enum
-``v2_region_type``, which has no comparison with text values, and
-``parameter_values.value_json`` is ``json``, not ``jsonb``.
+Every column, primary key and unique constraint the copies define has the
+type, nullability and name the Public API's migrations give it: for example,
+``regions.region_type`` is the PostgreSQL enum ``v2_region_type``, which has
+no comparison with text values, and ``parameter_values.value_json`` is
+``jsonb``. Rule sim.persistence.public-api-copies-match checks this against
+the Public API's own migrations (``test_public_api_schema``); a column or
+table added here is checked with no other change.
 """
 
 from __future__ import annotations
@@ -43,14 +46,17 @@ PUBLIC_API_TABLE_STATEMENTS = (
     + ", ".join(f"'{region_type}'" for region_type in REGION_TYPES)
     + ")",
     "CREATE TABLE public.tax_benefit_models ("
-    " id uuid PRIMARY KEY,"
-    " name varchar(32) NOT NULL UNIQUE)",
+    " id uuid CONSTRAINT pk_tax_benefit_models PRIMARY KEY,"
+    " name varchar(32) NOT NULL,"
+    " CONSTRAINT uq_tax_benefit_models_name UNIQUE (name))",
     "CREATE TABLE public.tax_benefit_model_versions ("
-    " id uuid PRIMARY KEY,"
-    " model_id uuid REFERENCES public.tax_benefit_models (id),"
-    " version varchar(128))",
+    " id uuid CONSTRAINT pk_tax_benefit_model_versions PRIMARY KEY,"
+    " model_id uuid NOT NULL REFERENCES public.tax_benefit_models (id),"
+    " version varchar(128) NOT NULL,"
+    " CONSTRAINT uq_tax_benefit_model_versions_model_version"
+    " UNIQUE (model_id, version))",
     "CREATE TABLE public.datasets ("
-    " id uuid PRIMARY KEY,"
+    " id uuid CONSTRAINT pk_datasets PRIMARY KEY,"
     " name varchar(255) NOT NULL,"
     " tax_benefit_model_version_id uuid NOT NULL"
     " REFERENCES public.tax_benefit_model_versions (id),"
@@ -59,7 +65,7 @@ PUBLIC_API_TABLE_STATEMENTS = (
     " CONSTRAINT uq_datasets_id_model_version"
     " UNIQUE (id, tax_benefit_model_version_id))",
     "CREATE TABLE public.regions ("
-    " id uuid PRIMARY KEY,"
+    " id uuid CONSTRAINT pk_regions PRIMARY KEY,"
     " code varchar(255) NOT NULL,"
     " tax_benefit_model_version_id uuid NOT NULL"
     " REFERENCES public.tax_benefit_model_versions (id),"
@@ -74,27 +80,27 @@ PUBLIC_API_TABLE_STATEMENTS = (
     " CONSTRAINT uq_regions_model_version_code"
     " UNIQUE (tax_benefit_model_version_id, code))",
     "CREATE TABLE public.policies ("
-    " id uuid PRIMARY KEY,"
+    " id uuid CONSTRAINT pk_policies PRIMARY KEY,"
     " country_id varchar(2) NOT NULL,"
-    " tax_benefit_model_version_id uuid"
+    " tax_benefit_model_version_id uuid NOT NULL"
     " REFERENCES public.tax_benefit_model_versions (id),"
     " CONSTRAINT uq_policies_id_country UNIQUE (id, country_id))",
     "CREATE TABLE public.households ("
-    " id uuid PRIMARY KEY,"
+    " id uuid CONSTRAINT pk_households PRIMARY KEY,"
     " country_id varchar(2) NOT NULL,"
     " CONSTRAINT uq_households_id_country UNIQUE (id, country_id))",
-    "CREATE TABLE public.dynamics (id uuid PRIMARY KEY)",
+    "CREATE TABLE public.dynamics (id uuid CONSTRAINT pk_dynamics PRIMARY KEY)",
     "CREATE TABLE public.parameters ("
-    " id uuid PRIMARY KEY,"
+    " id uuid CONSTRAINT pk_parameters PRIMARY KEY,"
     " name varchar(512) NOT NULL,"
     " tax_benefit_model_version_id uuid NOT NULL"
     " REFERENCES public.tax_benefit_model_versions (id),"
     " CONSTRAINT uq_parameters_model_version_name"
     " UNIQUE (tax_benefit_model_version_id, name))",
     "CREATE TABLE public.parameter_values ("
-    " id uuid PRIMARY KEY,"
+    " id uuid CONSTRAINT pk_parameter_values PRIMARY KEY,"
     " parameter_id uuid NOT NULL REFERENCES public.parameters (id),"
-    " value_json json NOT NULL,"
+    " value_json jsonb NOT NULL,"
     " start_date timestamptz NOT NULL,"
     " end_date timestamptz,"
     " policy_id uuid REFERENCES public.policies (id),"
@@ -166,14 +172,21 @@ class PublicApiRows:
     newer_catalog_version_id: UUID
     dataset_id: UUID
     newer_dataset_id: UUID
+    model_id: UUID
 
 
 def _catalog_statements(rows: PublicApiRows) -> tuple[tuple[str, dict], ...]:
     return (
         (
-            "INSERT INTO public.tax_benefit_model_versions (id) VALUES "
-            "(:version), (:newer_version)",
+            "INSERT INTO public.tax_benefit_models (id, name) "
+            "VALUES (:model, 'policyengine-us')",
+            {"model": rows.model_id},
+        ),
+        (
+            "INSERT INTO public.tax_benefit_model_versions (id, model_id, version) "
+            "VALUES (:version, :model, '6.5.0'), (:newer_version, :model, '6.7.5')",
             {
+                "model": rows.model_id,
                 "version": rows.catalog_version_id,
                 "newer_version": rows.newer_catalog_version_id,
             },
@@ -218,13 +231,19 @@ def insert_public_api_rows(superuser_url: str) -> PublicApiRows:
         newer_catalog_version_id=uuid4(),
         dataset_id=uuid4(),
         newer_dataset_id=uuid4(),
+        model_id=uuid4(),
     )
     statements = (
         *_catalog_statements(rows),
         (
-            "INSERT INTO public.policies (id, country_id) VALUES "
-            "(:us_policy, 'us'), (:uk_policy, 'uk')",
-            {"us_policy": rows.us_policy_id, "uk_policy": rows.uk_policy_id},
+            "INSERT INTO public.policies (id, country_id, "
+            "tax_benefit_model_version_id) VALUES "
+            "(:us_policy, 'us', :version), (:uk_policy, 'uk', :version)",
+            {
+                "us_policy": rows.us_policy_id,
+                "uk_policy": rows.uk_policy_id,
+                "version": rows.catalog_version_id,
+            },
         ),
         (
             "INSERT INTO public.households (id, country_id) VALUES "
