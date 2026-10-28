@@ -1,11 +1,20 @@
-"""The Public API tables the simulation schema refers to, reduced to their keys.
+"""Copies of the Public API tables sim refers to and reads, with only sim's columns.
 
 In production these tables belong to the Public API's own migration chain, in
-the same database as the simulation schema. The tests create only the columns
-and unique constraints the simulation schema's foreign keys use, with the
-Public API's constraint names, owned by the superuser, and grant the migrator
-``REFERENCES`` on them, as the operator does in production. The runtime role
-gets no privilege on them.
+the same database as the simulation schema. The tests create the columns and
+unique constraints the simulation schema's foreign keys use, and the columns
+the catalog reads select (``catalog_reads``), owned by the superuser, and
+grant the migrator ``REFERENCES`` on them, as the operator does in
+production. The runtime role may only read the catalog and policy tables
+(``CATALOG_READ_TABLES``).
+
+Every column, primary key and unique constraint the copies define has the
+type, nullability and name the Public API's migrations give it: for example,
+``regions.region_type`` is the PostgreSQL enum ``v2_region_type``, which has
+no comparison with text values, and ``parameter_values.value_json`` is
+``jsonb``. Rule sim.persistence.public-api-copies-match checks this against
+the Public API's own migrations (``test_public_api_schema``); a column or
+table added here is checked with no other change.
 """
 
 from __future__ import annotations
@@ -15,15 +24,40 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from migration_support import MIGRATOR_ROLE
+from policyengine_simulation_persistence.catalog_reads import CATALOG_READ_TABLES
+from policyengine_simulation_persistence.schema import RUNTIME_ROLE
 from sqlalchemy import create_engine, text
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
 
+# The values and order of the Public API's baseline migration.
+REGION_TYPES = (
+    "national",
+    "country",
+    "state",
+    "congressional_district",
+    "constituency",
+    "local_authority",
+    "city",
+    "place",
+)
 PUBLIC_API_TABLE_STATEMENTS = (
-    "CREATE TABLE public.tax_benefit_model_versions (id uuid PRIMARY KEY)",
+    "CREATE TYPE public.v2_region_type AS ENUM ("
+    + ", ".join(f"'{region_type}'" for region_type in REGION_TYPES)
+    + ")",
+    "CREATE TABLE public.tax_benefit_models ("
+    " id uuid CONSTRAINT pk_tax_benefit_models PRIMARY KEY,"
+    " name varchar(32) NOT NULL,"
+    " CONSTRAINT uq_tax_benefit_models_name UNIQUE (name))",
+    "CREATE TABLE public.tax_benefit_model_versions ("
+    " id uuid CONSTRAINT pk_tax_benefit_model_versions PRIMARY KEY,"
+    " model_id uuid NOT NULL REFERENCES public.tax_benefit_models (id),"
+    " version varchar(128) NOT NULL,"
+    " CONSTRAINT uq_tax_benefit_model_versions_model_version"
+    " UNIQUE (model_id, version))",
     "CREATE TABLE public.datasets ("
-    " id uuid PRIMARY KEY,"
+    " id uuid CONSTRAINT pk_datasets PRIMARY KEY,"
     " name varchar(255) NOT NULL,"
     " tax_benefit_model_version_id uuid NOT NULL"
     " REFERENCES public.tax_benefit_model_versions (id),"
@@ -32,22 +66,46 @@ PUBLIC_API_TABLE_STATEMENTS = (
     " CONSTRAINT uq_datasets_id_model_version"
     " UNIQUE (id, tax_benefit_model_version_id))",
     "CREATE TABLE public.regions ("
-    " id uuid PRIMARY KEY,"
+    " id uuid CONSTRAINT pk_regions PRIMARY KEY,"
     " code varchar(255) NOT NULL,"
     " tax_benefit_model_version_id uuid NOT NULL"
     " REFERENCES public.tax_benefit_model_versions (id),"
     " default_dataset_id uuid NOT NULL,"
+    " label varchar(255) NOT NULL,"
+    " region_type public.v2_region_type NOT NULL,"
+    " requires_filter boolean NOT NULL DEFAULT false,"
+    " filter_field varchar(128),"
+    " filter_value varchar(255),"
+    " filter_strategy varchar(64),"
+    " state_code varchar(16),"
     " CONSTRAINT uq_regions_model_version_code"
     " UNIQUE (tax_benefit_model_version_id, code))",
     "CREATE TABLE public.policies ("
-    " id uuid PRIMARY KEY,"
+    " id uuid CONSTRAINT pk_policies PRIMARY KEY,"
     " country_id varchar(2) NOT NULL,"
+    " tax_benefit_model_version_id uuid NOT NULL"
+    " REFERENCES public.tax_benefit_model_versions (id),"
     " CONSTRAINT uq_policies_id_country UNIQUE (id, country_id))",
     "CREATE TABLE public.households ("
-    " id uuid PRIMARY KEY,"
+    " id uuid CONSTRAINT pk_households PRIMARY KEY,"
     " country_id varchar(2) NOT NULL,"
     " CONSTRAINT uq_households_id_country UNIQUE (id, country_id))",
-    "CREATE TABLE public.dynamics (id uuid PRIMARY KEY)",
+    "CREATE TABLE public.dynamics (id uuid CONSTRAINT pk_dynamics PRIMARY KEY)",
+    "CREATE TABLE public.parameters ("
+    " id uuid CONSTRAINT pk_parameters PRIMARY KEY,"
+    " name varchar(512) NOT NULL,"
+    " tax_benefit_model_version_id uuid NOT NULL"
+    " REFERENCES public.tax_benefit_model_versions (id),"
+    " CONSTRAINT uq_parameters_model_version_name"
+    " UNIQUE (tax_benefit_model_version_id, name))",
+    "CREATE TABLE public.parameter_values ("
+    " id uuid CONSTRAINT pk_parameter_values PRIMARY KEY,"
+    " parameter_id uuid NOT NULL REFERENCES public.parameters (id),"
+    " value_json jsonb NOT NULL,"
+    " start_date timestamptz NOT NULL,"
+    " end_date timestamptz,"
+    " policy_id uuid REFERENCES public.policies (id),"
+    " dynamic_id uuid REFERENCES public.dynamics (id))",
 )
 REFERENCED_TABLES = (
     "tax_benefit_model_versions",
@@ -68,17 +126,27 @@ def superuser_engine(superuser_url: str, **options: object) -> Engine:
 
 
 def create_public_api_tables(superuser_url: str, *, grant_references: bool) -> None:
-    """Create the referenced Public API tables in a new test database."""
+    """Create the referenced Public API tables in a new test database.
+
+    The runtime role may read the catalog and policy tables a v2 economy run
+    resolves its region, dataset and policy from, as the operator grants in
+    production (``CATALOG_READ_TABLES``).
+    """
     engine = superuser_engine(superuser_url, isolation_level="AUTOCOMMIT")
     grant = (
         "GRANT REFERENCES ON "
         + ", ".join(f"public.{table}" for table in REFERENCED_TABLES)
         + f" TO {MIGRATOR_ROLE}"
     )
+    read_grant = (
+        "GRANT SELECT ON "
+        + ", ".join(f"public.{table}" for table in CATALOG_READ_TABLES)
+        + f" TO {RUNTIME_ROLE}"
+    )
     statements = (
-        (*PUBLIC_API_TABLE_STATEMENTS, grant)
+        (*PUBLIC_API_TABLE_STATEMENTS, grant, read_grant)
         if grant_references
-        else PUBLIC_API_TABLE_STATEMENTS
+        else (*PUBLIC_API_TABLE_STATEMENTS, read_grant)
     )
     try:
         with engine.connect() as connection:
@@ -105,14 +173,21 @@ class PublicApiRows:
     newer_catalog_version_id: UUID
     dataset_id: UUID
     newer_dataset_id: UUID
+    model_id: UUID
 
 
 def _catalog_statements(rows: PublicApiRows) -> tuple[tuple[str, dict], ...]:
     return (
         (
-            "INSERT INTO public.tax_benefit_model_versions (id) VALUES "
-            "(:version), (:newer_version)",
+            "INSERT INTO public.tax_benefit_models (id, name) "
+            "VALUES (:model, 'policyengine-us')",
+            {"model": rows.model_id},
+        ),
+        (
+            "INSERT INTO public.tax_benefit_model_versions (id, model_id, version) "
+            "VALUES (:version, :model, '6.5.0'), (:newer_version, :model, '6.7.5')",
             {
+                "model": rows.model_id,
                 "version": rows.catalog_version_id,
                 "newer_version": rows.newer_catalog_version_id,
             },
@@ -129,10 +204,12 @@ def _catalog_statements(rows: PublicApiRows) -> tuple[tuple[str, dict], ...]:
             },
         ),
         (
-            "INSERT INTO public.regions "
-            "(id, code, tax_benefit_model_version_id, default_dataset_id) VALUES "
-            "(gen_random_uuid(), 'state/ca', :version, :dataset), "
-            "(gen_random_uuid(), 'state/ca', :newer_version, :newer_dataset)",
+            "INSERT INTO public.regions (id, code, tax_benefit_model_version_id, "
+            "default_dataset_id, label, region_type) VALUES "
+            "(gen_random_uuid(), 'state/ca', :version, :dataset, 'California', "
+            "'state'), "
+            "(gen_random_uuid(), 'state/ca', :newer_version, :newer_dataset, "
+            "'California', 'state')",
             {
                 "version": rows.catalog_version_id,
                 "newer_version": rows.newer_catalog_version_id,
@@ -155,13 +232,19 @@ def insert_public_api_rows(superuser_url: str) -> PublicApiRows:
         newer_catalog_version_id=uuid4(),
         dataset_id=uuid4(),
         newer_dataset_id=uuid4(),
+        model_id=uuid4(),
     )
     statements = (
         *_catalog_statements(rows),
         (
-            "INSERT INTO public.policies (id, country_id) VALUES "
-            "(:us_policy, 'us'), (:uk_policy, 'uk')",
-            {"us_policy": rows.us_policy_id, "uk_policy": rows.uk_policy_id},
+            "INSERT INTO public.policies (id, country_id, "
+            "tax_benefit_model_version_id) VALUES "
+            "(:us_policy, 'us', :version), (:uk_policy, 'uk', :version)",
+            {
+                "us_policy": rows.us_policy_id,
+                "uk_policy": rows.uk_policy_id,
+                "version": rows.catalog_version_id,
+            },
         ),
         (
             "INSERT INTO public.households (id, country_id) VALUES "

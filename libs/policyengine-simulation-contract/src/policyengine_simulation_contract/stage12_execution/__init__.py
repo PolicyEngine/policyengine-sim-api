@@ -38,6 +38,7 @@ from policyengine_simulation_contract.stage12_execution.comparison_runs import (
     ComparisonSimulationRecord,
     ErrorCode,
     ErrorSummary,
+    ReportResultDelivery,
     ResultComparisonStatus,
     Stage12InvocationContext,
 )
@@ -95,6 +96,7 @@ __all__ = [
     "ReportAggregate",
     "ReportExecutionInput",
     "ReportOutputRequirements",
+    "ReportResultDelivery",
     "ResultComparisonArtifactPayload",
     "ResultComparisonStatus",
     "ResultDifference",

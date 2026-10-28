@@ -58,6 +58,11 @@ from policyengine_simulation_entry.call_report_route import (
     register_call_report_route,
 )
 from policyengine_simulation_entry.config import Settings
+from policyengine_simulation_entry.economy_recorders import ComparisonStartingRecorder
+from policyengine_simulation_entry.economy_routes import (
+    EconomyRouteServices,
+    register_economy_routes,
+)
 from policyengine_simulation_entry.entry_runtime import (
     BACKEND_RESPONSE_HEADER,
     STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
@@ -117,6 +122,7 @@ class RunServices:
     database: SimulationDatabaseConnection | None = None
     call_recorder: CallReportRecorder | None = None
     modal_identity_verifier: ModalCallerVerifier | None = None
+    economy: EconomyRouteServices | None = None
 
 
 def _temporary_submission_payload(
@@ -593,6 +599,18 @@ def create_app(
     call_recorder = services.call_recorder
     if call_recorder is None and isinstance(runtime_database, SimulationDatabase):
         call_recorder = runtime_database.call_recorder()
+    economy = services.economy
+    if (
+        economy is None
+        and isinstance(runtime_database, SimulationDatabase)
+        and runtime_settings.call_report_modal_environment
+    ):
+        economy = runtime_database.economy_routes(
+            artifact_environment=runtime_settings.environment,
+            modal_environment=runtime_settings.call_report_modal_environment,
+        )
+    if call_recorder is not None and economy is not None:
+        call_recorder = ComparisonStartingRecorder(call_recorder, economy.reports)
     modal_identity_verifier = services.modal_identity_verifier
     expected_modal_caller = runtime_settings.expected_modal_caller
     if modal_identity_verifier is None and expected_modal_caller is not None:
@@ -661,6 +679,12 @@ def create_app(
     _register_service_routes(app, entry)
     register_call_report_route(
         app, verifier=modal_identity_verifier, recorder=call_recorder
+    )
+    register_economy_routes(
+        app,
+        services=economy,
+        submitter=simulation_submitter,
+        reader=simulation_reader,
     )
     return app
 

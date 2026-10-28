@@ -1,8 +1,11 @@
-"""Coordination of a Stage 12 report's baseline and reform simulations.
+"""Coordination of a report's baseline and reform simulations.
 
-coordinate_report runs one report; report_coordination,
-coordinated_simulations and parent_claim hold its steps, and this module
-re-exports their public names.
+``ReportSimulationCoordination`` holds the steps every report coordinator
+runs. ``coordinate_report`` runs a Stage 12 report and records each step in
+the Stage 12 tables; ``returned_coordination`` runs the same steps for a
+report whose result returns to its caller and records nothing.
+report_coordination, coordinated_simulations and parent_claim hold the
+steps, and this module re-exports their public names.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from typing import Any
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportRecord,
     ReportExecutionInput,
+    ReportResultDelivery,
     Stage12InvocationContext,
 )
 from policyengine_simulation_observability.stages import (
@@ -39,6 +43,7 @@ from .report_coordination import (
     CoordinatorDependencies,
     CoordinatorInvocation,
     ReportCoordination,
+    ReportSimulationCoordination,
 )
 
 __all__ = [
@@ -49,8 +54,10 @@ __all__ = [
     "SIMULATION_WAIT_TIMEOUT_SECONDS",
     "CoordinatorDependencies",
     "CoordinatorInvocation",
+    "ReportSimulationCoordination",
     "coordinate_report",
     "logger",
+    "validate_dispatch_context",
 ]
 
 
@@ -68,16 +75,22 @@ def coordinate_report(
     ``deduplicated`` summary instead), starts or reattaches the baseline and
     reform child simulations within one shared wait window, and aggregates
     their digest-checked artifacts; shadow runs are then compared with the
-    production result. A dispatch context that disagrees with the report
-    raises ``ValueError`` before the claim; any later failure stops the
-    unfinished children, marks the report FAILED and raises a
-    ``RuntimeError`` that carries no calculation detail.
+    production result. A dispatch context that disagrees with the report, or
+    asks for the report to return to its caller, raises ``ValueError`` before
+    the claim; any later failure stops the unfinished children, marks the
+    report FAILED and raises a ``RuntimeError`` that carries no calculation
+    detail.
     """
     dependencies = dependencies or CoordinatorDependencies()
     # Open the shared child-wait window before any setup work.
     child_wait_deadline = dependencies.monotonic() + dependencies.wait_timeout_seconds
     report = ReportExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
+    if context.result_delivery is not ReportResultDelivery.STAGE12_DATABASE:
+        msg = (
+            "a report returned to its caller runs through coordinate_report_for_caller"
+        )
+        raise ValueError(msg)
     submitted_parent = ComparisonReportRecord.model_validate(parent_payload)
     validate_dispatch_context(report, context, invocation.application_name)
     validate_submitted_parent(

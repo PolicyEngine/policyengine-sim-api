@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 57 | 2 | 0 | 14 | 73 |
+| mechanical | 59 | 2 | 0 | 14 | 75 |
 | metric | 1 | 0 | 0 | 0 | 1 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 60 of 74 rules.
+**Blocking:** 62 of 76 rules.
 
 ## Gaps
 
@@ -141,6 +141,7 @@ flowchart LR
 | `sim.persistence.migration-cycle` | On a fresh PostgreSQL, the simulation chain upgrades to its head, passes alembic check, downgrades to base and upgrades again, run by a non-superuser migrator, and the runtime role can read the revision but cannot change the schema. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_migration_cycle.py` | `pr.yml:simulation-database` | yes |
 | `sim.persistence.no-modal-database-credentials` | No Modal secret, Modal deployment or Modal application receives a database URL other than the comparison path's own STAGE12_DATABASE_URL, which Modal may hold until the comparison path is removed; in particular never SIMULATION_DATABASE_URL or SIMULATION_MIGRATION_DATABASE_URL. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py` | `pr.yml:test` | yes |
 | `sim.persistence.one-migration-chain` | The simulation schema changes only through the one Alembic chain at migrations/, configured by migrations/alembic.ini and versioned in simulation.alembic_version; no other Alembic configuration, environment or revision directory exists. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py` | `pr.yml:test` | yes |
+| `sim.persistence.public-api-copies-match` | The persistence tests' copies of the Public API's tables match the tables the Public API's v2 migration chain builds at its default branch: each copied column's type (an enum by name and values) and nullability, and each copied primary key and unique constraint by name and columns. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_public_api_schema.py` | `pr.yml:public-api-schema` | yes |
 
 ```mermaid
 flowchart LR
@@ -154,6 +155,9 @@ flowchart LR
   j_CI_pr_yml_simulation_database["CI pr.yml:simulation-database"]
   r_sim_persistence_no_modal_database_credentials("sim.persistence.no-modal-database-credentials (enforced)")
   r_sim_persistence_one_migration_chain("sim.persistence.one-migration-chain (enforced)")
+  r_sim_persistence_public_api_copies_match("sim.persistence.public-api-copies-match (enforced)")
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_public_api_schema_py["pytest libs/policyengine-simulation-persistence/tests/test_public_api_schema.py"]
+  j_CI_pr_yml_public_api_schema["CI pr.yml:public-api-schema"]
   r_sim_persistence_executor_independent --> e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py
   e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py --> j_CI_pr_yml_test
   r_sim_persistence_migrate_before_entrypoint --> e_pytest_projects_policyengine_simulation_entry_tests_test_simulation_database_deployment_py
@@ -162,6 +166,8 @@ flowchart LR
   e_pytest_libs_policyengine_simulation_persistence_tests_test_migration_cycle_py --> j_CI_pr_yml_simulation_database
   r_sim_persistence_no_modal_database_credentials --> e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py
   r_sim_persistence_one_migration_chain --> e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py
+  r_sim_persistence_public_api_copies_match --> e_pytest_libs_policyengine_simulation_persistence_tests_test_public_api_schema_py
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_public_api_schema_py --> j_CI_pr_yml_public_api_schema
 ```
 
 ## Deployment pipeline
@@ -181,6 +187,7 @@ flowchart LR
 | `sim.deploy.routing-publication-journaled` | Each routing publication is named by its run, attempt and environment and journaled before it is applied; an always-running finalizer resolves it from the journal with the release-gate outcome, a release reports success only after that finalizer completes, and routing jobs never tolerate a failed command. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_release_gates.py`, `projects/policyengine-simulation-entry/tests/test_deployment_assets_routing.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.shell-scripts-valid` | Deployment shell scripts have valid shell syntax. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.smoke-tests-strict` | Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
+| `sim.deploy.staging-promotes-tested-revision` | Every staging deployment passes promote_entrypoint: true, as production deployments do, so the staging service's stable URL serves the entrypoint revision that passed the staging tests. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | yes |
 | `sim.deploy.traffic-changes-exact` | Traffic changes target an exact, validated revision, are reversible, and refuse to run over an intervening promotion. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_traffic.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.workflow-shell-safety` | Cloud Run deployment never interpolates GitHub expressions into shell, escapes environment values, pins secret versions, stops before deploying when any runtime secret cannot be resolved, and resolves the Stage 12 secrets with the Stage 12 block's own helper. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_cloud_run.py` | `pr.yml:test` | yes |
 
@@ -212,6 +219,7 @@ flowchart LR
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_release_gates_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_routing_py["pytest projects/policyengine-simulation-entry/tests/test_deployment_assets_release_gates.py, projects/policyengine-simulation-entry/tests/test_deployment_assets_routing.py"]
   r_sim_deploy_shell_scripts_valid("sim.deploy.shell-scripts-valid (enforced)")
   r_sim_deploy_smoke_tests_strict("sim.deploy.smoke-tests-strict (enforced)")
+  r_sim_deploy_staging_promotes_tested_revision("sim.deploy.staging-promotes-tested-revision (enforced)")
   r_sim_deploy_traffic_changes_exact("sim.deploy.traffic-changes-exact (enforced)")
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_traffic_py["pytest projects/policyengine-simulation-entry/tests/test_deployment_assets_traffic.py"]
   r_sim_deploy_workflow_shell_safety("sim.deploy.workflow-shell-safety (enforced)")
@@ -237,6 +245,7 @@ flowchart LR
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_release_gates_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_routing_py --> j_CI_pr_yml_test
   r_sim_deploy_shell_scripts_valid --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_smoke_tests_strict --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
+  r_sim_deploy_staging_promotes_tested_revision --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_traffic_changes_exact --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_traffic_py
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_traffic_py --> j_CI_pr_yml_test
   r_sim_deploy_workflow_shell_safety --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_cloud_run_py

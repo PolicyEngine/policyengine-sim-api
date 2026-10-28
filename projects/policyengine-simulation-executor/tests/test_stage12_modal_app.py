@@ -7,9 +7,14 @@ import sys
 import tomllib
 from contextlib import contextmanager
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from fixtures.fake_modal import install_fake_modal
+from policyengine_simulation_contract.report_execution import (
+    ReportExecutionError,
+    ReportExecutionFailure,
+)
 from policyengine_simulation_executor.release_bundle import (
     get_bundled_package_version,
 )
@@ -327,6 +332,9 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
         "run_single_simulation_uk",
         "coordinate_report",
         "report_call_ended",
+        "run_economy_simulation_us",
+        "run_economy_simulation_uk",
+        "compare_economy_simulations",
     }
     assert functions["run_single_simulation_us"]["image"] is module.us_worker_image
     assert functions["run_single_simulation_uk"]["image"] is module.uk_worker_image
@@ -397,6 +405,192 @@ def test_stage12_functions_close_runtime_after_application_error(
         _invoke(monkeypatch, module, function_name, fail)
 
     assert runtime.shutdown_calls == 1
+
+
+def _invoke_coordinator(
+    monkeypatch, module, context, *parent, returned_error=None, runtime=None
+):
+    """Call the Modal coordinator with both runtime coordinators replaced.
+
+    The returned-report coordinator raises ``returned_error`` when one is given.
+    """
+    from policyengine_simulation_executor import stage12_runtime
+
+    runtime = runtime or RecordingRuntime()
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+    monkeypatch.setattr(
+        module.modal,
+        "current_function_call_id",
+        lambda: "call-1",
+        raising=False,
+    )
+    coordinator_calls = []
+
+    def stage12_coordinator(
+        _payload, _context_payload, parent_payload, *, invocation, dependencies
+    ):
+        coordinator_calls.append(
+            {
+                "coordinator": "stage12",
+                "parent": parent_payload,
+                "invocation_id": invocation.invocation_id,
+                "runtime": dependencies.runtime,
+            }
+        )
+        return {"delivered_by": "stage12"}
+
+    def returning_coordinator(_payload, _context_payload, *, invocation, dependencies):
+        coordinator_calls.append(
+            {
+                "coordinator": "return_to_caller",
+                "invocation_id": invocation.invocation_id,
+                "runtime": dependencies.runtime,
+            }
+        )
+        if returned_error is not None:
+            raise returned_error
+        return {"delivered_by": "return_to_caller"}
+
+    monkeypatch.setattr(stage12_runtime, "coordinate_report", stage12_coordinator)
+    monkeypatch.setattr(
+        stage12_runtime, "coordinate_report_for_caller", returning_coordinator
+    )
+    result = module.coordinate_report(
+        {},
+        context,
+        *parent,
+        observability_context=_observability_context(),
+    )
+    return result, coordinator_calls, runtime
+
+
+def test_coordinator_runs_a_returned_report_without_a_parent(monkeypatch) -> None:
+    module = _load(monkeypatch)
+
+    result, coordinator_calls, runtime = _invoke_coordinator(
+        monkeypatch, module, {"result_delivery": "return_to_caller"}
+    )
+
+    assert result == {"delivered_by": "return_to_caller"}
+    assert coordinator_calls == [
+        {
+            "coordinator": "return_to_caller",
+            "invocation_id": "call-1",
+            "runtime": runtime,
+        }
+    ]
+    # Telemetry tells a returned report apart from a Stage 12 run.
+    assert runtime.operations[0]["attributes"] == {
+        "runner_name": "stage12",
+        "execution_mode": "authoritative",
+        "result_delivery": "return_to_caller",
+    }
+    assert runtime.shutdown_calls == 1
+
+
+def test_coordinator_raises_a_returned_reports_error_unchanged(monkeypatch) -> None:
+    module = _load(monkeypatch)
+    runtime = RecordingRuntime()
+    error = ReportExecutionError(
+        ReportExecutionFailure(
+            evaluation_id=UUID("00000000-0000-0000-0000-000000000001"),
+            error_code="simulation_execution_failed",
+            error_summary="ValueError in dataset_load (baseline): bad input",
+        )
+    )
+
+    with pytest.raises(ReportExecutionError) as raised:
+        _invoke_coordinator(
+            monkeypatch,
+            module,
+            {"result_delivery": "return_to_caller"},
+            returned_error=error,
+            runtime=runtime,
+        )
+
+    # Modal pickles exactly what the function raises for the caller.
+    assert raised.value is error
+    assert runtime.shutdown_calls == 1
+
+
+def test_coordinator_refuses_a_parent_record_for_a_returned_report(
+    monkeypatch,
+) -> None:
+    module = _load(monkeypatch)
+
+    with pytest.raises(ValueError, match="no Stage 12 parent record"):
+        _invoke_coordinator(
+            monkeypatch,
+            module,
+            {"result_delivery": "return_to_caller"},
+            {"evaluation_id": "parent"},
+        )
+
+
+def test_coordinator_runs_a_stage12_report_with_unchanged_attributes(
+    monkeypatch,
+) -> None:
+    module = _load(monkeypatch)
+
+    result, coordinator_calls, runtime = _invoke_coordinator(
+        monkeypatch, module, {}, {"evaluation_id": "parent"}
+    )
+
+    assert result == {"delivered_by": "stage12"}
+    assert coordinator_calls == [
+        {
+            "coordinator": "stage12",
+            "parent": {"evaluation_id": "parent"},
+            "invocation_id": "call-1",
+            "runtime": runtime,
+        }
+    ]
+    assert runtime.operations[0]["attributes"] == {
+        "runner_name": "stage12",
+        "execution_mode": "authoritative",
+    }
+
+
+@pytest.mark.parametrize(
+    "function_name", ["run_single_simulation_us", "run_single_simulation_uk"]
+)
+@pytest.mark.parametrize(
+    ("context", "expected_attributes"),
+    [
+        ({}, {"runner_name": "stage12", "simulation_role": "baseline"}),
+        (
+            {"result_delivery": "return_to_caller"},
+            {
+                "runner_name": "stage12",
+                "simulation_role": "baseline",
+                "result_delivery": "return_to_caller",
+            },
+        ),
+    ],
+)
+def test_worker_operation_says_when_its_report_returns_to_the_caller(
+    monkeypatch,
+    function_name,
+    context,
+    expected_attributes,
+) -> None:
+    from policyengine_simulation_executor import stage12_runtime
+
+    module = _load(monkeypatch)
+    runtime = RecordingRuntime()
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+    monkeypatch.setattr(
+        stage12_runtime, "run_single_simulation", lambda *_, **__: {"ok": True}
+    )
+
+    getattr(module, function_name)(
+        {"role": "baseline"},
+        context,
+        observability_context=_observability_context(),
+    )
+
+    # Telemetry tells a returned report's workers apart from Stage 12 runs.
+    assert runtime.operations[0]["attributes"] == expected_attributes
 
 
 def test_external_package_values_are_assertions_only(monkeypatch) -> None:

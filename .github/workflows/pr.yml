@@ -16,7 +16,7 @@ jobs:
     # every job passed. See docs/engineering/skills/github-prs.md.
     name: CI complete
     if: ${{ always() }}
-    needs: [test, simulation-database, lint, pyright, quality-guards, docker-build, test-integration]
+    needs: [test, simulation-database, public-api-schema, lint, pyright, quality-guards, docker-build, test-integration]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -123,6 +123,76 @@ jobs:
     - name: Run the migration chain and persistence tests on PostgreSQL
       working-directory: libs/policyengine-simulation-persistence
       run: uv run --frozen pytest tests/ -v -m postgres
+
+  public-api-schema:
+    name: Public API schema
+    # Compares the persistence tests' copies of the Public API's tables with
+    # the tables the Public API's own v2 migration chain builds, at the Public
+    # API's default branch, so a change there to a column sim reads fails
+    # here (rule sim.persistence.public-api-copies-match). The Public API's
+    # repository is public, so the checkout needs no secret. Full CI runs
+    # only on the lowest unmerged pull request in a stack.
+    if: ${{ !github.event.pull_request.stack || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: simulation_ci
+          # The Public API's disposable migration mode accepts only this
+          # database; the server's postgres database holds sim's copies.
+          POSTGRES_DB: policyengine_v2_alembic_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      SIMULATION_TEST_DATABASE_URL: postgresql://postgres:simulation_ci@127.0.0.1:5432/postgres
+      PUBLIC_API_SCHEMA_DATABASE_URL: postgresql://postgres:simulation_ci@127.0.0.1:5432/policyengine_v2_alembic_test
+      # A missing server or Public API database fails the comparison instead
+      # of skipping it.
+      SIMULATION_REQUIRE_DATABASE_TESTS: "1"
+      SIMULATION_REQUIRE_PUBLIC_API_SCHEMA: "1"
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Check out the Public API's default branch
+      uses: actions/checkout@v6
+      with:
+        repository: PolicyEngine/policyengine-api
+        path: public-api
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        # 3.12 for the Public API's lock, as its own CI uses; 3.13 for sim's.
+        python-version: |
+          3.12
+          3.13
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v8.1.0
+      with:
+        enable-cache: true
+
+    - name: Build the Public API's tables from its v2 migration chain
+      run: .github/scripts/public-api-schema-reference.sh public-api
+
+    - name: Install dependencies
+      working-directory: libs/policyengine-simulation-persistence
+      run: uv sync --extra test --frozen
+
+    - name: Compare the test copies with the Public API's tables
+      working-directory: libs/policyengine-simulation-persistence
+      run: uv run --frozen pytest tests/ -v -m public_api_schema
 
   lint:
     name: Lint

@@ -134,21 +134,34 @@ def cancel_pending_simulations(
             cancellation_recorded = True
         if cancellation_recorded and should_segment_simulation(simulation):
             # A segmented worker reads its record, cancels the region-group
-            # calls it started, and exits. Modal does not cancel spawned calls
-            # recursively, so cancelling the worker through Modal would leave
-            # those calls running. That is the fallback only when the record
-            # could not be written and the worker cannot learn of the
-            # cancellation.
+            # calls it started, and exits through its own failure handling.
+            # Cancelling it through Modal instead raises Modal's
+            # InputCancellation in it, which also makes it cancel those calls
+            # (Stage12SegmentRunner.run), but records nothing: that is the
+            # fallback only when the record could not be written and the
+            # worker cannot learn of the cancellation.
             continue
-        try:
-            calls[role].cancel()
-        except Exception as error:  # noqa: BLE001  # a failed Modal cancellation is logged and must not replace the failure that caused it
-            _log_child_operation_failure(
-                logging.WARNING,
-                "Stage 12 could not cancel %s simulation %s in report %s (%s)",
-                simulation=simulation,
-                error=error,
-            )
+        cancel_child_call(calls[role], simulation)
+
+
+def cancel_child_call(
+    call: ChildCall,
+    simulation: PlannedSimulationExecutionInput,
+) -> None:
+    """Ask Modal to stop one started child; log a failure rather than raise it.
+
+    A cancellation error must never replace the failure that caused the
+    cancellation.
+    """
+    try:
+        call.cancel()
+    except Exception as error:  # noqa: BLE001  # a failed Modal cancellation is logged and must not replace the failure that caused it
+        _log_child_operation_failure(
+            logging.WARNING,
+            "Stage 12 could not cancel %s simulation %s in report %s (%s)",
+            simulation=simulation,
+            error=error,
+        )
 
 
 def simulation_failure_attributes(
@@ -197,6 +210,26 @@ def record_child_failure(
         _log_child_state_failure(simulation=simulation, error=state_error)
 
 
+def report_child_wait_failure(
+    error: Exception,
+    *,
+    simulation: PlannedSimulationExecutionInput,
+    runtime: ObservabilityRuntime | None,
+    progress: StageProgress,
+) -> Stage12FailureDetail:
+    """Report a failed child call once and return its redacted detail."""
+    return report_failure(
+        error,
+        FailureSite(
+            scope="child_wait",
+            default_code="simulation_invocation_failed",
+            attributes=simulation_failure_attributes(simulation),
+        ),
+        runtime=runtime,
+        progress=progress,
+    )
+
+
 def child_failure_detail(
     *,
     error: Exception,
@@ -213,13 +246,9 @@ def child_failure_detail(
     the call's own failure is used and still recorded where possible, so a
     state error never replaces the child's failure.
     """
-    detail = report_failure(
+    detail = report_child_wait_failure(
         error,
-        FailureSite(
-            scope="child_wait",
-            default_code="simulation_invocation_failed",
-            attributes=simulation_failure_attributes(simulation),
-        ),
+        simulation=simulation,
         runtime=runtime,
         progress=progress,
     )

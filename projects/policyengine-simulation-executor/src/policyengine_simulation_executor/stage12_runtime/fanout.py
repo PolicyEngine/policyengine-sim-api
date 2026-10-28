@@ -15,6 +15,7 @@ from policyengine_simulation_observability.stages import (
 
 from policyengine_simulation_executor.simulation_runtime import _country_module
 
+from .catalog_population import catalog_population, catalog_region_groups
 from .failure_recording import FailureSite, report_failure
 from .failures import Stage12CancellationError, Stage12ExecutionError
 from .partition import stage12_region_groups_for_model
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
         PlannedSimulationExecutionInput,
     )
 
+    from .segment_contracts import Stage12SegmentInput
     from .simulation import SimulationCalculation
 
 logger = logging.getLogger(__name__)
@@ -107,6 +109,10 @@ class Stage12SegmentRunner:
     def _groups(self) -> list[list[str]]:
         if self.groups is not None:
             return self.groups
+        # A v2 economy run segments the states its catalog population filters.
+        population = catalog_population(self.simulation)
+        if population is not None:
+            return catalog_region_groups(population)
         country = self.simulation.geography.country
         return stage12_region_groups_for_model(
             country,
@@ -119,7 +125,9 @@ class Stage12SegmentRunner:
         A segment whose result cannot be read twice in a row raises
         ``Stage12ExecutionError``, and a requested cancellation raises
         ``Stage12CancellationError``. Either way, every started segment is
-        cancelled first.
+        cancelled first. Every started segment is also cancelled when the
+        run stops for any other reason before the results are collected,
+        such as a failed dispatch or Modal cancelling this worker's input.
         """
         groups = self._groups()
         segments = build_segment_inputs(self.simulation, groups=groups)
@@ -128,27 +136,24 @@ class Stage12SegmentRunner:
             stage12_segment_count=len(segments),
         )
         handles: list[tuple[int, Any]] = []
+        payloads: list[object] | None = None
         try:
-            for segment in segments:
-                call = None
-                with self.runtime.span(
-                    STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_DISPATCH),
-                    attributes={"segment_index": segment.segment_index},
-                ):
-                    call = self.child_function.spawn(
-                        segment.model_dump(mode="python"),
-                        observability_context=self.runtime.capture_context(),
-                    )
-                handles.append((segment.segment_index, _require_call(call)))
+            self._start_segments(segments, handles)
+            with self.runtime.span(
+                STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_WAIT)
+            ):
+                payloads = self._collect(handles)
+        # An Exception keeps its existing handling: a failed dispatch, a
+        # segment failure and a requested cancellation each cancel every
+        # started segment once before they are raised.
         except Exception:
+            raise
+        # Modal stops a cancelled input by raising InputCancellation, a
+        # BaseException, in it, and does not cancel the calls that input
+        # spawned, so this worker cancels them before it stops.
+        except BaseException:
             self._cancel_all(handles)
             raise
-
-        payloads: list[object] | None = None
-        with self.runtime.span(
-            STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_WAIT)
-        ):
-            payloads = self._collect(handles)
         if payloads is None:
             msg = "Stage 12 segment wait returned no payloads"
             raise RuntimeError(msg)
@@ -165,6 +170,35 @@ class Stage12SegmentRunner:
             msg = "Stage 12 segment merge returned no calculation"
             raise RuntimeError(msg)
         return merged
+
+    def _start_segments(
+        self,
+        segments: Sequence[Stage12SegmentInput],
+        handles: list[tuple[int, Any]],
+    ) -> None:
+        """Spawn every segment, adding each call to ``handles`` as soon as it starts.
+
+        A failed dispatch cancels every segment already started, then is raised.
+        """
+        try:
+            for segment in segments:
+                call = None
+                with self.runtime.span(
+                    STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_DISPATCH),
+                    attributes={"segment_index": segment.segment_index},
+                ):
+                    call = self.child_function.spawn(
+                        segment.model_dump(mode="python"),
+                        observability_context=self.runtime.capture_context(),
+                    )
+                    # Keep the call before its span closes, so a stop while
+                    # the span closes still cancels it.
+                    if call is not None:
+                        handles.append((segment.segment_index, call))
+                _require_call(call)
+        except Exception:
+            self._cancel_all(handles)
+            raise
 
     def _collect(self, handles: list[tuple[int, Any]]) -> list[object]:
         results: list[object | None] = [None] * len(handles)

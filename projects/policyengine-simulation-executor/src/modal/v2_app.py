@@ -11,9 +11,18 @@ import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import UUID
 
+from policyengine_simulation_contract.economy_runs import (
+    ECONOMY_SIMULATION_FUNCTIONS,
+)
+from policyengine_simulation_contract.stage12_execution import ReportResultDelivery
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_executor import stage12_runtime
+from policyengine_simulation_executor.economy_runs import (
+    comparison_call,
+    simulation_call,
+)
 from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
     HF_RUNTIME_ENV_NAME,
@@ -317,6 +326,23 @@ def run_single_simulation_segment_us(
         runtime.shutdown()
 
 
+def _returns_to_caller(context: dict) -> bool:
+    """Report whether a dispatch context asks for the report to return to its caller."""
+    return context.get("result_delivery") == ReportResultDelivery.RETURN_TO_CALLER.value
+
+
+def _simulation_operation_attributes(payload: dict, context: dict) -> dict[str, object]:
+    """Return a worker operation's attributes; a returned report's worker says so."""
+    attributes: dict[str, object] = {
+        "runner_name": "stage12",
+        "simulation_role": payload.get("role"),
+    }
+    if _returns_to_caller(context):
+        # Telemetry tells a returned report's workers apart from Stage 12 runs.
+        attributes["result_delivery"] = ReportResultDelivery.RETURN_TO_CALLER.value
+    return attributes
+
+
 @app.function(
     image=us_worker_image,
     cpu=8.0,
@@ -356,10 +382,7 @@ def run_single_simulation_us(
         result = None
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
-            attributes={
-                "runner_name": "stage12",
-                "simulation_role": payload.get("role"),
-            },
+            attributes=_simulation_operation_attributes(payload, context),
             remote_context=propagated,
         ):
             result = stage12_runtime.run_single_simulation(
@@ -406,10 +429,7 @@ def run_single_simulation_uk(
         result = None
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
-            attributes={
-                "runner_name": "stage12",
-                "simulation_role": payload.get("role"),
-            },
+            attributes=_simulation_operation_attributes(payload, context),
             remote_context=propagated,
         ):
             result = stage12_runtime.run_single_simulation(
@@ -428,6 +448,24 @@ def run_single_simulation_uk(
         runtime.shutdown()
 
 
+def _coordinator_operation_attributes(
+    context: dict,
+    *,
+    returns_to_caller: bool,
+) -> dict[str, str]:
+    """Return the coordinator operation's attributes; a returned report says so."""
+    attributes = {
+        "runner_name": "stage12",
+        "execution_mode": (
+            "shadow" if context.get("production_function_call_id") else "authoritative"
+        ),
+    }
+    if returns_to_caller:
+        # Telemetry tells returned reports apart from Stage 12 runs.
+        attributes["result_delivery"] = ReportResultDelivery.RETURN_TO_CALLER.value
+    return attributes
+
+
 @app.function(
     image=coordinator_image,
     cpu=2.0,
@@ -442,16 +480,24 @@ def run_single_simulation_uk(
 def coordinate_report(
     payload: dict,
     context: dict,
-    parent: dict,
+    parent: dict | None = None,
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    """Run one Stage 12 report: fan out both simulations, aggregate, and persist.
+    """Run one report: fan out both simulations, aggregate, and deliver the result.
 
     A ``production_function_call_id`` in ``context`` marks a shadow run whose
     result is compared with that production job's. A report another
     invocation already claimed returns a ``deduplicated`` marker instead.
+
+    A ``result_delivery`` of ``return_to_caller`` in ``context`` takes no
+    ``parent`` and reads and writes no Stage 12 rows: the report returns a
+    ``ReportExecutionResult`` payload or raises ``ReportExecutionError``.
     """
+    returns_to_caller = _returns_to_caller(context)
+    if returns_to_caller and parent is not None:
+        msg = "a report returned to its caller takes no Stage 12 parent record"
+        raise ValueError(msg)
     coordinator_invocation_id = modal.current_function_call_id()
     if coordinator_invocation_id is None:
         msg = "Modal coordinator invocation identifier is unavailable"
@@ -467,35 +513,219 @@ def coordinate_report(
         if context.get("production_function_call_id")
         else STAGE12_CANONICAL_REPORT_STAGES
     )
+    invocation = stage12_runtime.CoordinatorInvocation(
+        application_name=APP_NAME,
+        invocation_id=coordinator_invocation_id,
+    )
+    dependencies = stage12_runtime.CoordinatorDependencies(runtime=runtime)
     try:
         propagated = normalize_observability_context(observability_context)
         result = None
         with runtime.operation(
             stage_plan.name(Stage.STAGE12_COORDINATOR_EXECUTION),
-            attributes={
-                "runner_name": "stage12",
-                "execution_mode": (
-                    "shadow"
-                    if context.get("production_function_call_id")
-                    else "authoritative"
-                ),
-            },
+            attributes=_coordinator_operation_attributes(
+                context, returns_to_caller=returns_to_caller
+            ),
             remote_context=propagated,
         ):
-            result = stage12_runtime.coordinate_report(
-                payload,
-                context,
-                parent,
-                invocation=stage12_runtime.CoordinatorInvocation(
-                    application_name=APP_NAME,
-                    invocation_id=coordinator_invocation_id,
-                ),
-                dependencies=stage12_runtime.CoordinatorDependencies(runtime=runtime),
-            )
+            if returns_to_caller:
+                result = stage12_runtime.coordinate_report_for_caller(
+                    payload,
+                    context,
+                    invocation=invocation,
+                    dependencies=dependencies,
+                )
+            else:
+                result = stage12_runtime.coordinate_report(
+                    payload,
+                    context,
+                    parent,
+                    invocation=invocation,
+                    dependencies=dependencies,
+                )
         if result is None:
             msg = "Stage 12 report coordinator returned no result"
             raise RuntimeError(msg)
         return result
+    finally:
+        runtime.shutdown()
+
+
+# Reading two stored simulation outputs and aggregating them, with a margin.
+ECONOMY_COMPARISON_TIMEOUT_SECONDS = 1800
+
+
+def start_call_report(report: dict[str, object]) -> object:
+    """Start ``report_call_ended`` for a call that ended (``reporting_call_end``)."""
+    return report_call_ended.spawn(report)
+
+
+def _payload_run_id(payload: object, field: str) -> UUID | None:
+    """Return the run ID a call's payload names, or None when it names none.
+
+    A payload that fails validation still reports its run's end, so sim
+    records the failure without waiting for its safety check.
+    """
+    value = payload.get(field) if isinstance(payload, dict) else None
+    try:
+        return UUID(str(value))
+    except ValueError:
+        return None
+
+
+def _run_economy_simulation(
+    country: CountryId,
+    call: dict,
+    observability_context: dict | None,
+) -> dict:
+    """Calculate one economy simulation run, then report that the call ended.
+
+    Pre-emption (``KeyboardInterrupt``) and cancellation (Modal's
+    ``InputCancellation``) are not ``Exception``s: the call sends no report,
+    a segmented run cancels the segment calls it started, and Modal runs a
+    pre-empted input again under the same call ID.
+    """
+    from src.modal.call_reports import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        reporting_call_end,
+    )
+
+    modal_environment = os.getenv("MODAL_ENVIRONMENT", "local")
+    runtime = init_process_observability(
+        service_name=f"policyengine-economy-{country}-worker",
+        service_role="economy_simulation_worker",
+        platform="modal",
+        environment=modal_environment,
+    )
+
+    def segmented_calculator(
+        simulation: PlannedSimulationExecutionInput,
+        cancellation_requested: Callable[[], bool],
+    ) -> SimulationCalculation:
+        return stage12_runtime.run_segmented_simulation(
+            simulation,
+            app_name=APP_NAME,
+            runtime=runtime,
+            cancellation_requested=cancellation_requested,
+        )
+
+    run_id = _payload_run_id(call, "simulation_run_id")
+    try:
+        with (
+            reporting_call_end(
+                modal_call_id=modal.current_function_call_id(),
+                simulation_run_ids=None if run_id is None else [run_id],
+                start_report=start_call_report,
+            ),
+            runtime.operation(
+                STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
+                attributes={
+                    "runner_name": "stage12",
+                    "result_delivery": ReportResultDelivery.RETURN_TO_CALLER.value,
+                    "simulation_run_id": str(run_id),
+                },
+                remote_context=normalize_observability_context(observability_context),
+            ),
+        ):
+            return simulation_call.run_economy_simulation(
+                call,
+                required_country=country,
+                invocation=simulation_call.EconomyRunInvocation(
+                    application_name=APP_NAME,
+                    modal_environment=modal_environment,
+                    simulation_callable=ECONOMY_SIMULATION_FUNCTIONS[country],
+                ),
+                dependencies=simulation_call.EconomySimulationDependencies(
+                    worker=stage12_runtime.SimulationWorkerDependencies(
+                        segmented_calculator=(
+                            segmented_calculator if country == "us" else None
+                        ),
+                        runtime=runtime,
+                    )
+                ),
+            )
+    finally:
+        runtime.shutdown()
+
+
+@app.function(
+    image=us_worker_image,
+    cpu=8.0,
+    memory=32768,
+    timeout=US_SIMULATION_TIMEOUT_SECONDS,
+    retries=0,
+    max_containers=10,
+    secrets=worker_secrets,
+)
+def run_economy_simulation_us(
+    call: dict, *, observability_context: dict | None = None
+) -> dict:
+    """Calculate one US v2 economy simulation run and report that it ended."""
+    return _run_economy_simulation("us", call, observability_context)
+
+
+@app.function(
+    image=uk_worker_image,
+    cpu=8.0,
+    memory=32768,
+    timeout=UK_SIMULATION_TIMEOUT_SECONDS,
+    retries=0,
+    max_containers=10,
+    secrets=worker_secrets,
+)
+def run_economy_simulation_uk(
+    call: dict, *, observability_context: dict | None = None
+) -> dict:
+    """Calculate one UK v2 economy simulation run and report that it ended."""
+    return _run_economy_simulation("uk", call, observability_context)
+
+
+@app.function(
+    image=coordinator_image,
+    cpu=2.0,
+    memory=8192,
+    timeout=ECONOMY_COMPARISON_TIMEOUT_SECONDS,
+    retries=0,
+    max_containers=10,
+    secrets=worker_secrets,
+)
+def compare_economy_simulations(
+    call: dict, *, observability_context: dict | None = None
+) -> dict:
+    """Compare a v2 economy report run's two simulation outputs; report the end."""
+    from src.modal.call_reports import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        reporting_call_end,
+    )
+
+    runtime = init_process_observability(
+        service_name="policyengine-economy-comparison",
+        service_role="economy_comparison",
+        platform="modal",
+        environment=os.getenv("MODAL_ENVIRONMENT", "local"),
+    )
+    report_run_id = _payload_run_id(call, "report_run_id")
+    try:
+        with (
+            reporting_call_end(
+                modal_call_id=modal.current_function_call_id(),
+                report_run_id=report_run_id,
+                start_report=start_call_report,
+            ),
+            runtime.operation(
+                STAGE12_CANONICAL_REPORT_STAGES.name(Stage.STAGE12_AGGREGATION),
+                attributes={
+                    "runner_name": "stage12",
+                    "result_delivery": ReportResultDelivery.RETURN_TO_CALLER.value,
+                    "report_run_id": str(report_run_id),
+                },
+                remote_context=normalize_observability_context(observability_context),
+            ),
+        ):
+            return comparison_call.compare_economy_simulations(
+                call,
+                dependencies=comparison_call.EconomyComparisonDependencies(
+                    runtime=runtime
+                ),
+            )
     finally:
         runtime.shutdown()
 

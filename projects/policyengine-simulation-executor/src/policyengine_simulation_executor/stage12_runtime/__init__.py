@@ -28,6 +28,7 @@ from .partition import (
     stage12_region_groups,
     stage12_region_groups_for_model,
 )
+from .returned_coordination import coordinate_report_for_caller
 from .segment_contracts import Stage12SegmentInput, Stage12SegmentResult
 from .segmentation import (
     build_segment_inputs,
@@ -67,6 +68,7 @@ __all__ = [
     "calculate_segment",
     "calculate_simulation_frames",
     "coordinate_report",
+    "coordinate_report_for_caller",
     "merge_segment_results",
     "redacted_failure_detail",
     "run_segmented_simulation",

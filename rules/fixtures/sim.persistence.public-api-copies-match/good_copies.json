@@ -1,0 +1,268 @@
+{
+  "tables": {
+    "datasets": {
+      "columns": {
+        "id": {
+          "type": "uuid",
+          "nullable": false
+        },
+        "name": {
+          "type": "character varying(255)",
+          "nullable": false
+        },
+        "tax_benefit_model_version_id": {
+          "type": "uuid",
+          "nullable": false
+        }
+      },
+      "unique_constraints": {
+        "pk_datasets": [
+          "id"
+        ],
+        "uq_datasets_id_model_version": [
+          "id",
+          "tax_benefit_model_version_id"
+        ],
+        "uq_datasets_model_version_name": [
+          "tax_benefit_model_version_id",
+          "name"
+        ]
+      }
+    },
+    "dynamics": {
+      "columns": {
+        "id": {
+          "type": "uuid",
+          "nullable": false
+        }
+      },
+      "unique_constraints": {
+        "pk_dynamics": [
+          "id"
+        ]
+      }
+    },
+    "households": {
+      "columns": {
+        "id": {
+          "type": "uuid",
+          "nullable": false
+        },
+        "country_id": {
+          "type": "character varying(2)",
+          "nullable": false
+        }
+      },
+      "unique_constraints": {
+        "pk_households": [
+          "id"
+        ],
+        "uq_households_id_country": [
+          "id",
+          "country_id"
+        ]
+      }
+    },
+    "parameter_values": {
+      "columns": {
+        "id": {
+          "type": "uuid",
+          "nullable": false
+        },
+        "parameter_id": {
+          "type": "uuid",
+          "nullable": false
+        },
+        "value_json": {
+          "type": "jsonb",
+          "nullable": false
+        },
+        "start_date": {
+          "type": "timestamp with time zone",
+          "nullable": false
+        },
+        "end_date": {
+          "type": "timestamp with time zone",
+          "nullable": true
+        },
+        "policy_id": {
+          "type": "uuid",
+          "nullable": true
+        },
+        "dynamic_id": {
+          "type": "uuid",
+          "nullable": true
+        }
+      },
+      "unique_constraints": {
+        "pk_parameter_values": [
+          "id"
+        ]
+      }
+    },
+    "parameters": {
+      "columns": {
+        "id": {
+          "type": "uuid",
+          "nullable": false
+        },
+        "name": {
+          "type": "character varying(512)",
+          "nullable": false
+        },
+        "tax_benefit_model_version_id": {
+          "type": "uuid",
+          "nullable": false
+        }
+      },
+      "unique_constraints": {
+        "pk_parameters": [
+          "id"
+        ],
+        "uq_parameters_model_version_name": [
+          "tax_benefit_model_version_id",
+          "name"
+        ]
+      }
+    },
+    "policies": {
+      "columns": {
+        "id": {
+          "type": "uuid",
+          "nullable": false
+        },
+        "country_id": {
+          "type": "character varying(2)",
+          "nullable": false
+        },
+        "tax_benefit_model_version_id": {
+          "type": "uuid",
+          "nullable": false
+        }
+      },
+      "unique_constraints": {
+        "pk_policies": [
+          "id"
+        ],
+        "uq_policies_id_country": [
+          "id",
+          "country_id"
+        ]
+      }
+    },
+    "regions": {
+      "columns": {
+        "id": {
+          "type": "uuid",
+          "nullable": false
+        },
+        "code": {
+          "type": "character varying(255)",
+          "nullable": false
+        },
+        "tax_benefit_model_version_id": {
+          "type": "uuid",
+          "nullable": false
+        },
+        "default_dataset_id": {
+          "type": "uuid",
+          "nullable": false
+        },
+        "label": {
+          "type": "character varying(255)",
+          "nullable": false
+        },
+        "region_type": {
+          "type": "enum v2_region_type",
+          "nullable": false
+        },
+        "requires_filter": {
+          "type": "boolean",
+          "nullable": false
+        },
+        "filter_field": {
+          "type": "character varying(128)",
+          "nullable": true
+        },
+        "filter_value": {
+          "type": "character varying(255)",
+          "nullable": true
+        },
+        "filter_strategy": {
+          "type": "character varying(64)",
+          "nullable": true
+        },
+        "state_code": {
+          "type": "character varying(16)",
+          "nullable": true
+        }
+      },
+      "unique_constraints": {
+        "pk_regions": [
+          "id"
+        ],
+        "uq_regions_model_version_code": [
+          "tax_benefit_model_version_id",
+          "code"
+        ]
+      }
+    },
+    "tax_benefit_model_versions": {
+      "columns": {
+        "id": {
+          "type": "uuid",
+          "nullable": false
+        },
+        "model_id": {
+          "type": "uuid",
+          "nullable": false
+        },
+        "version": {
+          "type": "character varying(128)",
+          "nullable": false
+        }
+      },
+      "unique_constraints": {
+        "pk_tax_benefit_model_versions": [
+          "id"
+        ],
+        "uq_tax_benefit_model_versions_model_version": [
+          "model_id",
+          "version"
+        ]
+      }
+    },
+    "tax_benefit_models": {
+      "columns": {
+        "id": {
+          "type": "uuid",
+          "nullable": false
+        },
+        "name": {
+          "type": "character varying(32)",
+          "nullable": false
+        }
+      },
+      "unique_constraints": {
+        "pk_tax_benefit_models": [
+          "id"
+        ],
+        "uq_tax_benefit_models_name": [
+          "name"
+        ]
+      }
+    }
+  },
+  "enums": {
+    "v2_region_type": [
+      "national",
+      "country",
+      "state",
+      "congressional_district",
+      "constituency",
+      "local_authority",
+      "city",
+      "place"
+    ]
+  }
+}

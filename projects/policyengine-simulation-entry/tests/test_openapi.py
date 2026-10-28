@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from policyengine_simulation_entry.app import create_app
 
@@ -37,7 +37,31 @@ EXPECTED_ROUTES = {
     ("POST", "/ping"),
     ("POST", "/simulate/economy/budget-window"),
     ("POST", "/simulate/economy/comparison"),
+    ("GET", "/v2/economy-reports/by-legacy-id/{legacy_report_id}"),
+    ("GET", "/v2/economy-reports/{report_id}"),
+    ("GET", "/v2/economy-reports/{report_id}/runs"),
+    ("GET", "/v2/simulations/{simulation_id}"),
+    ("POST", "/v2/economy-reports"),
+    ("POST", "/v2/economy-reports/{report_id}/runs"),
 }
+# The v2 economy report routes are the entrypoint's own; the old gateway has
+# none of them or their bodies.
+V2_SCHEMAS = (
+    "ComparisonResponse",
+    "EconomyErrorResponse",
+    "EconomyRefusalResponse",
+    "EconomyRequestFieldError",
+    "EconomyReportResponse",
+    "EconomyReportRunRequest",
+    "EconomyReportRunResponse",
+    "EconomyReportRunsResponse",
+    "EconomyReportSubmissionRequest",
+    "ReportStatus",
+    "RunErrorResponse",
+    "SimulationChoiceRequest",
+    "SimulationResponse",
+    "SimulationRunResponse",
+)
 
 
 def methods(spec: OpenAPIDocument) -> set[tuple[str, str]]:
@@ -62,6 +86,8 @@ def normalized_compatibility_paths(spec: OpenAPIDocument) -> OpenAPIPathMap:
     """Remove intentional Cloud Run and additive SPM error documentation."""
     paths = deepcopy(spec["paths"])
     paths.pop("/ready", None)
+    for path in [path for path in paths if path.startswith("/v2/")]:
+        paths.pop(path)
     for operations in paths.values():
         for method, operation in operations.items():
             if method.lower() in {"get", "post", "put", "patch", "delete"}:
@@ -181,9 +207,84 @@ def test_normalized_contract_matches_old_gateway():
     cloud_run_schemas.pop("SimulationEntrypointReadinessResponse")
     cloud_run_schemas.pop("SimulationDatabaseReadiness")
     cloud_run_schemas.pop("SimulationErrorResponse")
+    for schema in V2_SCHEMAS:
+        cloud_run_schemas.pop(schema)
     assert cloud_run_schemas == gateway_spec["components"]["schemas"]
     gateway_operation_ids = operation_ids(gateway_spec)
     cloud_run_operation_ids = operation_ids(cloud_run_spec)
     assert {
         key: cloud_run_operation_ids[key] for key in gateway_operation_ids
     } == gateway_operation_ids
+
+
+def test_v2_economy_routes_are_public_for_the_generated_client():
+    spec = cast("OpenAPIDocument", create_app().openapi())
+    ids = operation_ids(spec)
+
+    assert ids[("POST", "/v2/economy-reports")] == "submit_economy_report"
+    assert ids[("GET", "/v2/economy-reports/{report_id}")] == "get_economy_report"
+    assert ids[("POST", "/v2/economy-reports/{report_id}/runs")] == (
+        "run_economy_report"
+    )
+    assert set(V2_SCHEMAS) <= set(spec["components"]["schemas"])
+
+
+V2_ERROR_ANSWERS = {
+    ("POST", "/v2/economy-reports"): {
+        "422": "EconomyRefusalResponse",
+        "503": "EconomyErrorResponse",
+    },
+    **{
+        operation: {
+            "404": "EconomyErrorResponse",
+            "422": "EconomyRefusalResponse",
+            "503": "EconomyErrorResponse",
+        }
+        for operation in (
+            ("GET", "/v2/economy-reports/{report_id}"),
+            ("GET", "/v2/economy-reports/by-legacy-id/{legacy_report_id}"),
+            ("POST", "/v2/economy-reports/{report_id}/runs"),
+            ("GET", "/v2/economy-reports/{report_id}/runs"),
+            ("GET", "/v2/simulations/{simulation_id}"),
+        )
+    },
+}
+# The reads that rebuild a stored result also answer 500 when it cannot be.
+for _result_read in (
+    ("GET", "/v2/economy-reports/{report_id}"),
+    ("GET", "/v2/economy-reports/by-legacy-id/{legacy_report_id}"),
+):
+    V2_ERROR_ANSWERS[_result_read] = {
+        **V2_ERROR_ANSWERS[_result_read],
+        "500": "EconomyErrorResponse",
+    }
+
+
+def test_v2_routes_declare_each_error_answer_with_its_body():
+    """The generated client parses sim's own refusals, not only FastAPI's."""
+    spec = cast("dict[str, Any]", create_app().openapi())
+
+    declared = {
+        (method, path): {
+            status: answer["content"]["application/json"]["schema"]["$ref"].rpartition(
+                "/"
+            )[2]
+            for status, answer in spec["paths"][path][method.lower()][
+                "responses"
+            ].items()
+            if not status.startswith("2")
+        }
+        for method, path in V2_ERROR_ANSWERS
+    }
+
+    assert declared == V2_ERROR_ANSWERS
+    refusal_detail = spec["components"]["schemas"]["EconomyRefusalResponse"][
+        "properties"
+    ]["detail"]
+    assert refusal_detail["anyOf"] == [
+        {"type": "string"},
+        {
+            "items": {"$ref": "#/components/schemas/EconomyRequestFieldError"},
+            "type": "array",
+        },
+    ]

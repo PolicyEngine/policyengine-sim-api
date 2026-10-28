@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import pytest
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
-    PlannedSimulationExecutionInput,
     SimulationRole,
 )
 from policyengine_simulation_executor.stage12_runtime import (
@@ -24,6 +23,7 @@ from policyengine_simulation_executor.stage12_runtime.partition import US_REGION
 from stage12_child_call_support import (
     ChildCallScript,
     ConcurrentInvoker,
+    ReformDispatchFailureInvoker,
     RefusingDispatchInvoker,
     ScriptedChildCall,
     ScriptedChildInvoker,
@@ -137,16 +137,6 @@ def test_failed_child_state_error_does_not_replace_the_child_failure(
         role="baseline",
         error_type="ChildStateError",
     )
-
-
-class ReformDispatchFailureInvoker(ScriptedChildInvoker):
-    def spawn(self, request):
-        role = PlannedSimulationExecutionInput.model_validate(request.simulation).role
-        if role is SimulationRole.REFORM:
-            self.events.append("spawn:reform")
-            msg = "dispatch contains sensitive details"
-            raise ConnectionError(msg)
-        return super().spawn(request)
 
 
 @pytest.mark.parametrize("failing_operation", ["read", "write"])

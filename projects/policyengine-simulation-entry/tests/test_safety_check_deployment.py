@@ -60,6 +60,10 @@ def _revision(*, service=SERVICE, environment=None):
                             "name": "SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID",
                             "value": "ac-workspace0001",
                         },
+                        {
+                            "name": "SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT",
+                            "value": "main",
+                        },
                         {"name": "OLD_GATEWAY_URL", "value": "https://legacy.example"},
                         {"name": "OBSERVABILITY_SERVICE_NAMESPACE", "value": "sim"},
                         {"name": "CLOUD_RUN_REGION", "value": "us-central1"},
@@ -164,8 +168,11 @@ def test_the_job_gets_only_the_secrets_it_reads_at_the_revisions_versions(
         "SIMULATION_DATABASE_URL=simulation-runtime-url:4",
     ]
     environment = json.loads(environment_capture.read_text(encoding="utf-8"))
+    # The Modal environment is where the job starts the economy calls and
+    # comparisons that are waiting.
     assert environment == {
         "APP_ENVIRONMENT": "production",
+        "SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT": "main",
         "OBSERVABILITY_SERVICE_NAMESPACE": "sim",
         "CLOUD_RUN_REGION": "us-central1",
     }

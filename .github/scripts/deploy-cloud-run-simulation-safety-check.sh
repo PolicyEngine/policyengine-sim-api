@@ -6,8 +6,9 @@
 # recording pass per execution. It is updated only from a revision that was
 # promoted (or restored by a rollback), so a rejected candidate never records
 # anything. It copies the revision's image digest, service account, Modal
-# token and database URL (at the secret versions the revision pins) and its
-# plain telemetry settings; nothing else. A revision deployed before the
+# token and database URL (at the secret versions the revision pins), its
+# plain telemetry settings, and the Modal environment it starts the economy
+# calls left waiting in; nothing else. A revision deployed before the
 # safety check existed has no job code, so its schedule is paused instead.
 #
 # With the argument `pause`, only pause the schedule: a workflow does this
@@ -33,7 +34,7 @@ pause_schedule() {
 # policyengine_simulation_entry.run_recording.
 SCHEDULE="*/5 * * * *"
 SECRETS=(SIMULATION_DATABASE_URL MODAL_TOKEN_ID MODAL_TOKEN_SECRET)
-PLAIN_VARIABLES_FILTER='^(APP_ENVIRONMENT|CLOUD_RUN_REGION|OBSERVABILITY_[A-Z_]+|OTEL_[A-Z_]+|POLICYENGINE_OTEL_GOOGLE_AUDIENCE)$'
+PLAIN_VARIABLES_FILTER='^(APP_ENVIRONMENT|CLOUD_RUN_REGION|SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT|OBSERVABILITY_[A-Z_]+|OTEL_[A-Z_]+|POLICYENGINE_OTEL_GOOGLE_AUDIENCE)$'
 
 for variable_name in PROJECT_ID REGION SERVICE; do
   [[ -n "${!variable_name:-}" ]] || fail "${variable_name} is required"

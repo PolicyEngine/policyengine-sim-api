@@ -10,14 +10,18 @@ each execution runs one ``RunRecorder`` pass, which
   be submitted again, and pending comparison steps whose run failed;
 - asks Modal about running calls first dispatched, or last checked, at least
   one interval ago, and records what it reports, with the same conditional
-  writes as a report.
+  writes as a report;
+- starts the economy work left waiting: comparison steps whose runs both
+  succeeded, and runs a submitter left pending (``SafetyCheckPass``).
 
 The job runs only the image of the revision that serves traffic: the deploy
 updates it when that revision is promoted, and a rollback moves it back, so
 a rejected candidate never records anything. Run it with
 ``python -m policyengine_simulation_entry.safety_check``; it reads
-``SIMULATION_DATABASE_URL`` and sim's Modal token (``MODAL_TOKEN_ID``,
-``MODAL_TOKEN_SECRET``).
+``SIMULATION_DATABASE_URL``, sim's Modal token (``MODAL_TOKEN_ID``,
+``MODAL_TOKEN_SECRET``), and the Modal environment and deployment it starts
+economy calls in (``SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT``,
+``APP_ENVIRONMENT``).
 """
 
 from __future__ import annotations
@@ -26,20 +30,26 @@ import asyncio
 import logging
 import os
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Protocol
 
 from policyengine_simulation_observability.observability import (
     init_process_observability,
 )
+from policyengine_simulation_persistence.run_store import utc_now
 
+from policyengine_simulation_entry.economy_report_types import ResumedWork
 from policyengine_simulation_entry.modal_calls import OWN_PROCESS_SIGNALS
 from policyengine_simulation_entry.simulation_database import SimulationDatabase
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
+    from datetime import datetime
 
     from policyengine_simulation_entry.run_recording import RecordingPass
+
+__all__ = ["ResumedWork", "SafetyCheckPass", "main"]
 
 logger = logging.getLogger(__name__)
 
@@ -73,26 +83,67 @@ class DueOutcomeRecorder(Protocol):
         ...
 
 
-def _database_recorder(database_url: str) -> DueOutcomeRecorder:
-    return SimulationDatabase.from_url(database_url).call_recorder()
+class WaitingWork(Protocol):
+    """Start the economy work left waiting (``EconomyReports``)."""
+
+    async def resume_waiting_work(self, *, now: datetime) -> ResumedWork:
+        """Start ready comparisons and runs left pending."""
+        ...
+
+
+@dataclass(frozen=True)
+class SafetyCheckPass:
+    """One pass: record the due calls, then start the work left waiting."""
+
+    recorder: DueOutcomeRecorder
+    waiting: WaitingWork | None
+    clock: Callable[[], datetime] = utc_now
+
+    async def record_due_outcomes(self) -> RecordingPass:
+        """Record due calls' outcomes, then start waiting comparisons and runs."""
+        recording = await self.recorder.record_due_outcomes()
+        if self.waiting is not None:
+            resumed = await self.waiting.resume_waiting_work(now=self.clock())
+            recording.comparisons_started = resumed.comparisons_started
+            recording.runs_started = resumed.runs_started
+        return recording
+
+
+def _database_recorder(
+    database_url: str, *, environment: Mapping[str, str]
+) -> DueOutcomeRecorder:
+    """Build the pass; it starts waiting work when the Modal environment is set."""
+    database = SimulationDatabase.from_url(database_url)
+    modal_environment = environment.get("SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT", "")
+    waiting = (
+        database.economy_routes(
+            artifact_environment=environment.get("APP_ENVIRONMENT", "local").lower(),
+            modal_environment=modal_environment,
+        ).reports
+        if modal_environment
+        else None
+    )
+    return SafetyCheckPass(database.call_recorder(), waiting)
 
 
 def main(
     *,
     environment: Mapping[str, str] | None = None,
-    build_recorder: Callable[[str], DueOutcomeRecorder] = _database_recorder,
+    build_recorder: Callable[[str], DueOutcomeRecorder] | None = None,
     start_observability: Callable[[str], Telemetry] = _start_observability,
 ) -> int:
     """Run one pass and return the process exit status.
 
     Logs go through the observability runtime, as the web service's do. Only
     a signal to this process propagates; any other error fails the
-    execution, and the next scheduled execution tries again.
+    execution, and the next scheduled execution tries again. Without
+    ``build_recorder``, the pass reads its settings from ``environment``.
     """
     values = os.environ if environment is None else environment
+    builder = build_recorder or partial(_database_recorder, environment=values)
     telemetry = start_observability(values.get("APP_ENVIRONMENT", "local"))
     try:
-        return _run_pass(values, build_recorder)
+        return _run_pass(values, builder)
     finally:
         telemetry.shutdown()
 

@@ -72,6 +72,9 @@ class RunErrorCode(StrEnum):
     INVALID_RESULT = "invalid_result"
     # A comparison step whose baseline or reform simulation run failed.
     SIMULATION_RUN_FAILED = "simulation_run_failed"
+    # The run cannot run on its catalog version, for example because its
+    # policy changes a parameter the version does not have.
+    INVALID_INPUT = "invalid_input"
 
 
 @dataclass(frozen=True)

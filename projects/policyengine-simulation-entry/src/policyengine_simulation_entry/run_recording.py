@@ -230,6 +230,10 @@ class RecordingPass:
     abandoned: int = 0
     comparisons_without_runs: int = 0
     without_recorder: int = 0
+    # Economy work the pass started after recording: comparisons whose runs
+    # had succeeded, and runs left pending by a submitter that stopped.
+    comparisons_started: int = 0
+    runs_started: int = 0
 
     @property
     def found_work(self) -> bool:

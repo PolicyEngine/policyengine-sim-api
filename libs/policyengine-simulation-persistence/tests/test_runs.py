@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Barrier
 from uuid import uuid4
 
 import pytest
@@ -16,7 +19,8 @@ from policyengine_simulation_persistence import (
     SimulationRunRecord,
     create_simulation_engine,
 )
-from public_api_support import delete_public_api_row
+from policyengine_simulation_persistence.run_store import FORCED_START_INSERT_LIMIT
+from public_api_support import delete_public_api_row, superuser_engine
 from report_support import (
     economy_pair,
     economy_report,
@@ -96,6 +100,101 @@ def test_a_forced_rerun_adds_the_next_attempt(
         baseline.id, public_api_rows.catalog_version_id, 2026
     )
     assert latest == forced.run
+
+
+LOCK_WAIT_TIMEOUT_SECONDS = 10
+
+
+def _wait_until_a_statement_waits_for_a_lock(database) -> None:
+    engine = superuser_engine(database.superuser_url)
+    deadline = time.monotonic() + LOCK_WAIT_TIMEOUT_SECONDS
+    try:
+        with engine.connect() as connection:
+            while time.monotonic() < deadline:
+                waiting = connection.execute(
+                    text(
+                        "SELECT count(*) FROM pg_stat_activity "
+                        "WHERE datname = current_database() "
+                        "AND wait_event_type = 'Lock'"
+                    )
+                ).scalar_one()
+                connection.rollback()
+                if waiting:
+                    return
+                time.sleep(0.05)
+    finally:
+        engine.dispose()
+    msg = "no statement waited for a lock"
+    raise AssertionError(msg)
+
+
+def test_a_forced_start_that_loses_the_insert_adds_the_attempt_after(
+    migrated_database, public_api_rows
+) -> None:
+    """A forced caller always starts a run of its own.
+
+    Another caller adds the attempt the forced caller read as next, between
+    that read and the forced caller's insert. A forced start (a labour supply
+    report's) must not receive the other caller's run, which may have been
+    started without what the forced caller needs.
+    """
+    baseline, _ = economy_pair(migrated_database, public_api_rows)
+    store = run_store(migrated_database)
+    first = store.start_simulation_run(economy_run(baseline, public_api_rows))
+    other_caller_engine = superuser_engine(migrated_database.superuser_url)
+    try:
+        with other_caller_engine.connect() as other_caller:
+            other_transaction = other_caller.begin()
+            other_caller.execute(
+                text(
+                    "INSERT INTO simulation.simulation_runs (id, simulation_id, "
+                    "simulation_kind, tax_benefit_model_version_id, year, attempt, "
+                    "region_code, dataset_id, trigger, status, created_at, "
+                    "updated_at) SELECT gen_random_uuid(), simulation_id, "
+                    "simulation_kind, tax_benefit_model_version_id, year, "
+                    "attempt + 1, region_code, dataset_id, 'initial', 'pending', "
+                    "now(), now() FROM simulation.simulation_runs WHERE id = :run_id"
+                ),
+                {"run_id": first.run.id},
+            )
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                forced_start = pool.submit(
+                    store.start_simulation_run,
+                    economy_run(baseline, public_api_rows, trigger=RunTrigger.MANUAL),
+                    force=True,
+                )
+                _wait_until_a_statement_waits_for_a_lock(migrated_database)
+                other_transaction.commit()
+                forced = forced_start.result(timeout=LOCK_WAIT_TIMEOUT_SECONDS)
+    finally:
+        other_caller_engine.dispose()
+
+    assert forced.created is True
+    assert forced.run.attempt == first.run.attempt + 2
+    assert forced.run.trigger is RunTrigger.MANUAL
+
+
+def test_a_forced_start_that_loses_every_insert_gives_up(
+    migrated_database, public_api_rows, monkeypatch
+) -> None:
+    """A forced start raises after its limit of lost inserts.
+
+    Each lost insert means another caller added an attempt, so the limit is
+    reached only by a runaway of simultaneous starts.
+    """
+    baseline, _ = economy_pair(migrated_database, public_api_rows)
+    store = run_store(migrated_database)
+    store.start_simulation_run(economy_run(baseline, public_api_rows))
+    attempted = []
+
+    def lose_every_insert(_connection, _new_run, _kind, attempt, _now):
+        attempted.append(attempt)
+
+    monkeypatch.setattr(store, "_insert_attempt", lose_every_insert)
+
+    with pytest.raises(RuntimeError, match="took every attempt"):
+        store.start_simulation_run(economy_run(baseline, public_api_rows), force=True)
+    assert len(attempted) == FORCED_START_INSERT_LIMIT
 
 
 def test_a_failed_run_is_not_reused(migrated_database, public_api_rows) -> None:
@@ -444,6 +543,61 @@ def test_the_newest_report_run_is_the_reports_current_run(
 
     assert store.latest_report_run(report.id) == rerun
     assert store.latest_report_run(uuid4()) is None
+
+
+def test_a_first_report_run_is_added_only_while_the_report_has_none(
+    migrated_database, public_api_rows
+) -> None:
+    report, baseline_run, reform_run = _economy_report_with_runs(
+        migrated_database, public_api_rows
+    )
+    store = run_store(migrated_database)
+    first_open = NewReportRun(
+        report_id=report.id,
+        baseline_simulation_run_id=baseline_run.id,
+        reform_simulation_run_id=reform_run.id,
+        trigger=RunTrigger.SYSTEM,
+    )
+
+    first = store.create_first_report_run(first_open)
+    again = store.create_first_report_run(first_open)
+
+    assert first.created is True
+    assert first.run.trigger is RunTrigger.SYSTEM
+    assert again.created is False
+    assert again.run == first.run
+    assert store.report_runs(report.id) == [first.run]
+
+
+SIMULTANEOUS_FIRST_OPENS = 6
+
+
+def test_simultaneous_first_report_runs_of_a_report_add_one(
+    migrated_database, public_api_rows
+) -> None:
+    """Each caller reads that the report has no run before any inserts one."""
+    report, baseline_run, reform_run = _economy_report_with_runs(
+        migrated_database, public_api_rows
+    )
+    store = run_store(migrated_database)
+    first_open = NewReportRun(
+        report_id=report.id,
+        baseline_simulation_run_id=baseline_run.id,
+        reform_simulation_run_id=reform_run.id,
+        trigger=RunTrigger.SYSTEM,
+    )
+    all_ready = Barrier(SIMULTANEOUS_FIRST_OPENS)
+
+    def open_first_time(_: int):
+        all_ready.wait()
+        return store.create_first_report_run(first_open)
+
+    with ThreadPoolExecutor(max_workers=SIMULTANEOUS_FIRST_OPENS) as pool:
+        started = list(pool.map(open_first_time, range(SIMULTANEOUS_FIRST_OPENS)))
+
+    assert sum(start.created for start in started) == 1
+    assert {start.run.id for start in started} == {started[0].run.id}
+    assert len(store.report_runs(report.id)) == 1
 
 
 def test_a_report_run_of_an_unknown_report_is_refused(
