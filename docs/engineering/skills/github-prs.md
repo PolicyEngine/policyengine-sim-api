@@ -17,15 +17,18 @@ Before creating or sharing a PR:
 3. Put `Fixes #ISSUE_NUMBER` as the first line of the PR description, using the
    issue number from the issue created or found in the previous step. The
    `PR description` check fails otherwise; see [The `Fixes` Line](#the-fixes-line).
-4. Run formatting and the most relevant tests for the changed surface. If an
+4. Add a changelog fragment, `changelog.d/<name>.<type>.md`. The
+   `Changelog fragment` check fails otherwise; see
+   [Changelog Fragments](#changelog-fragments).
+5. Run formatting and the most relevant tests for the changed surface. If an
    expected check cannot be run, say so in the PR body.
-5. Push the current branch to the canonical repository:
+6. Push the current branch to the canonical repository:
    `make push-pr-branch`.
-6. Create the PR as a draft from that same repository:
+7. Create the PR as a draft from that same repository:
    `gh pr create --draft --repo PolicyEngine/policyengine-sim-api --head "$(git branch --show-current)" --base main`.
-7. Verify the PR is draft and the head repository is canonical:
+8. Verify the PR is draft and the head repository is canonical:
    `gh pr view <PR> --repo PolicyEngine/policyengine-sim-api --json isDraft,headRepositoryOwner,headRepository`.
-8. Leave the PR as draft unless a maintainer explicitly asks for it to be
+9. Leave the PR as draft unless a maintainer explicitly asks for it to be
    marked ready for review.
 
 The PR is valid only if `isDraft` is `true` and the head repository is
@@ -101,6 +104,105 @@ dependency update (`dependency-update-create-pr.sh`) reuses the open "Update
 dependencies" issue or opens one. It also reuses an update pull request that is
 already open, and replaces its description, `Fixes` line first, because each run
 rebuilds the update branch from `main`.
+
+## Changelog Fragments
+
+Rule `sim.process.changelog-fragment`. Every pull request adds at least one
+changelog fragment: a file directly in `changelog.d/`, named
+`<name>.<type>.md`, that says in a sentence or two what changed for the people
+who use or run the simulation API. After the pull request merges, the release
+builds every pending fragment into `CHANGELOG.md` with Towncrier and removes
+it. Don't edit `CHANGELOG.md` to describe a change.
+
+- **`<name>`** is the tracking issue's number, or another label of letters and
+  digits joined by single dots, hyphens or underscores, such as `978` or
+  `update-policyengine-6.11.1`. It only keeps fragments apart; the published
+  entry doesn't show it.
+- **`<type>`** is one of the five types `towncrier.toml` lists. It sets the
+  section the entry appears under and the version bump:
+
+  | Type | Section | Raises |
+  | --- | --- | --- |
+  | `breaking` | Breaking changes | the major version |
+  | `added` | Added | the minor version |
+  | `removed` | Removed | the minor version |
+  | `changed` | Changed | the patch version |
+  | `fixed` | Fixed | the patch version |
+
+- **The text** is Markdown, not empty. Several sentences or paragraphs are
+  fine.
+
+A pull request that changes several things can add several fragments, of the
+same type or of different ones:
+
+```bash
+echo "Required a changelog fragment on every pull request." > changelog.d/978.added.md
+```
+
+### What the check rejects
+
+The `Changelog fragment` job in `pr.yml` runs
+`.github/scripts/check-changelog-fragment.sh` on the merged result. It fails
+unless the pull request itself adds a fragment, relative to its base, and
+every file in `changelog.d/` other than `.gitkeep` is one. These fail:
+
+- a pull request that adds no fragment, even while `main` has pending
+  fragments from other pull requests, and one that only edits a pending
+  fragment;
+- a file in a folder, such as `changelog.d/added/4083.md`: policyengine-api's
+  check accepted that file in #4084, and its release couldn't read it;
+- a type `towncrier.toml` doesn't list, such as `978.feature.md` or
+  `978.Added.md`;
+- another name, such as `978.added`, `978.added.txt`, `978.added.1.md` or
+  `README.md`;
+- an empty file, or one with only whitespace.
+
+Renaming a misplaced file into place counts as adding it. The definition lives
+in `.github/scripts/changelog_fragments.py`, which reads the directory and the
+types from `towncrier.toml`, and the release's version bump reads fragments
+through the same code. To run the check locally, commit your work and run:
+
+```bash
+BASE_SHA=origin/main .github/scripts/check-changelog-fragment.sh
+make changelog-draft   # the section the next release would add
+```
+
+Both need Python 3.11 or later as `python3`; `make changelog-draft` also needs
+uv, to run Towncrier from `.github/towncrier/uv.lock`.
+
+In a stack, the check runs with the rest of CI on the lowest unmerged pull
+request only. Each pull request in the stack still adds its own fragment.
+Automated pull requests add one too: the daily dependency update adds
+`changelog.d/update-dependencies.changed.md`, and the policyengine.py update
+adds `changelog.d/update-policyengine-<version>.changed.md`.
+
+### How a merge is released and deployed
+
+Rule `sim.deploy.release-commit-deploys-once`. A push to `main` starts
+`.github/workflows/simulation-deploy.yml`:
+
+1. **The merge's push runs only the `versioning` job.** It raises `VERSION`
+   (the repository's release version) by the largest bump the pending
+   fragments call for, builds their `CHANGELOG.md` section, and pushes one
+   commit, `Update PolicyEngine simulation API`, to `main`. It pushes with the
+   GitHub App token from `APP_ID` and `APP_PRIVATE_KEY`: the App may push to
+   `main` past the branch ruleset, and its push starts the workflow again,
+   which a push with the job's own token would not.
+2. **The release commit's push runs only the deploy jobs**, beta then prod.
+   The `versioning` job is skipped for it, so it releases nothing again and
+   nothing loops. API clients publish after this run, not the merge's.
+
+A manual dispatch of the workflow deploys without a release. The workflow's
+concurrency group holds each run until the one before it finishes. When two
+merges land close together, the later one's run releases both merges'
+fragments; if the earlier run's push finds `main` already moved on, it says so
+and succeeds without pushing.
+
+If the `versioning` job fails, nothing deploys until a later merge's release
+succeeds. It fails, saying which file, when `changelog.d/` holds a file that
+isn't a fragment or holds no fragment at all, which only a merge that skipped
+the check can cause. Fix it in a pull request, or deploy the current `main`
+by dispatching the workflow.
 
 ## PR Title
 

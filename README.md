@@ -82,9 +82,14 @@ make generate-clients # regenerate the OpenAPI Python client
 Simulation workers and the old gateway continue to deploy to Modal. The
 permanent Simulation Entrypoint deploys to Cloud Run as tagged no-traffic
 candidates. Beta qualification uses Cloud Run's generated candidate URLs and
-does not require a custom beta domain. On merge to `main`,
-`.github/workflows/simulation-deploy.yml` releases one complete stack at a
-time:
+does not require a custom beta domain.
+
+A merge to `main` doesn't deploy by itself. Its push runs only the `versioning`
+job of `.github/workflows/simulation-deploy.yml`, which raises `VERSION`, builds
+the merge's section of `CHANGELOG.md` from the fragments in `changelog.d/`, and
+pushes one release commit, `Update PolicyEngine simulation API`. That commit's
+push deploys one complete stack at a time (see
+`docs/engineering/skills/github-prs.md#how-a-merge-is-released-and-deployed`):
 
 1. prepare the environment's deployment inputs and runtime secrets;
 2. deploy and unit test the Entrypoint, Modal gateway, and Modal executor in
@@ -99,8 +104,9 @@ time:
 7. verify the stable endpoint, restoring its previous revision if immediate
    post-promotion checks fail.
 
-A successful push-triggered full-stack deployment publishes the API client from
-the exact deployed commit.
+A successful deployment of a release commit publishes the API client from the
+exact deployed commit. A manual dispatch of the workflow deploys without a
+release and publishes no client.
 
 The stable production service is exposed through a separately managed global
 external HTTPS load balancer and canonical hostname. Domain ownership, DNS,

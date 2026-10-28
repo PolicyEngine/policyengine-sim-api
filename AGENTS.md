@@ -71,11 +71,13 @@ Before creating or sharing any PR, all developers and agents must:
    already exists.
 3. Put `Fixes #ISSUE_NUMBER` as the first line of the PR description, using the
    issue number from the issue created or found in the previous step.
-4. Push the branch to the canonical repository, for example:
+4. Add a changelog fragment, `changelog.d/<name>.<type>.md`; see
+   `docs/engineering/skills/github-prs.md#changelog-fragments`.
+5. Push the branch to the canonical repository, for example:
    `make push-pr-branch`.
-5. Create the PR as a draft from that same repository, for example:
+6. Create the PR as a draft from that same repository, for example:
    `gh pr create --draft --repo PolicyEngine/policyengine-sim-api --head "$(git branch --show-current)" --base main`.
-6. Verify the PR is draft and the head repository is canonical before reporting
+7. Verify the PR is draft and the head repository is canonical before reporting
    it:
    `gh pr view <PR> --repo PolicyEngine/policyengine-sim-api --json isDraft,headRepositoryOwner,headRepository`.
 
@@ -90,11 +92,17 @@ same-repository draft PR.
 - The simulation service lives in `projects/policyengine-simulation-executor`.
 - API integration tests live in `projects/policyengine-apis-integ`.
 - PR CI runs simulation unit tests, Ruff format and lint checks, Pyright for
-  every package, quality guards (including the rules registry), Docker build,
-  and local integration tests. A separate `PR description` job checks that
-  every open PR's description starts with `Fixes #ISSUE_NUMBER` for an open
-  issue in this repository.
-- There is currently no repository-wide changelog fragment requirement.
+  every package, quality guards (including the rules registry), the changelog
+  fragment check, Docker build, and local integration tests. A separate
+  `PR description` job checks that every open PR's description starts with
+  `Fixes #ISSUE_NUMBER` for an open issue in this repository.
+- Every PR adds a changelog fragment, `changelog.d/<name>.<type>.md`, and never
+  edits `CHANGELOG.md` to describe a change (rule
+  `sim.process.changelog-fragment`). A merge to `main` doesn't deploy itself:
+  the `versioning` job in `simulation-deploy.yml` raises `VERSION`, builds
+  `CHANGELOG.md` and pushes a release commit, and that commit deploys (rule
+  `sim.deploy.release-commit-deploys-once`). See
+  `docs/engineering/skills/github-prs.md#changelog-fragments`.
 
 ## Safety Boundaries
 
