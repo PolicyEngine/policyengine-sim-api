@@ -189,7 +189,14 @@ def schema_differences(copies: SchemaShape, real: SchemaShape) -> list[str]:
         found.extend(_table_differences(name, copy, actual))
     for enum_name, copied_values in copies.enums.items():
         actual_values = real.enums.get(enum_name)
-        if actual_values is not None and actual_values != copied_values:
+        if actual_values is None:
+            # Enum columns are named without their schema, so an enum moved out
+            # of the public schema would otherwise pass unchecked.
+            found.append(
+                f"enum {enum_name}: the Public API has no such enum in its public "
+                "schema"
+            )
+        elif actual_values != copied_values:
             found.append(
                 f"enum {enum_name}: the copy has ({', '.join(copied_values)}), the "
                 f"Public API has ({', '.join(actual_values)})"

@@ -16,6 +16,9 @@ from pathlib import Path
 
 import pytest
 from public_api_schema import (
+    ColumnShape,
+    SchemaShape,
+    TableShape,
     describe_tables,
     public_tables,
     schema_differences,
@@ -83,3 +86,91 @@ def test_rule_proof_public_api_copies_match() -> None:
         "API's is enum v2_region_type",
     ]
     assert schema_differences(good, real) == []
+
+
+def _regions(**changes) -> SchemaShape:
+    """Return a regions table with an enum column, changed as given."""
+    columns = {
+        "id": ColumnShape("uuid", nullable=False),
+        "code": ColumnShape("character varying(255)", nullable=False),
+        "region_type": ColumnShape("enum v2_region_type", nullable=False),
+        "state_code": ColumnShape("character varying(16)", nullable=True),
+    }
+    columns.update(changes.pop("columns", {}))
+    constraints = {
+        "pk_regions": ("id",),
+        "uq_regions_model_version_code": ("tax_benefit_model_version_id", "code"),
+    }
+    constraints.update(changes.pop("constraints", {}))
+    enums = changes.pop("enums", {"v2_region_type": ("national", "state")})
+    return SchemaShape(
+        tables={"regions": TableShape(columns=columns, unique_constraints=constraints)},
+        enums=enums,
+    )
+
+
+@pytest.mark.parametrize(
+    ("copies", "real", "difference"),
+    [
+        (
+            _regions(
+                columns={
+                    "state_code": ColumnShape("character varying(16)", nullable=False)
+                }
+            ),
+            _regions(),
+            "regions.state_code: the copy refuses null, the Public API's allows it",
+        ),
+        (
+            _regions(columns={"parent_code": ColumnShape("text", nullable=True)}),
+            _regions(),
+            "regions.parent_code: the Public API's table has no such column",
+        ),
+        (
+            _regions(constraints={"uq_regions_code": ("code",)}),
+            _regions(),
+            "regions: the Public API's table has no constraint uq_regions_code (code)",
+        ),
+        (
+            _regions(
+                constraints={
+                    "uq_regions_model_version_code": (
+                        "code",
+                        "tax_benefit_model_version_id",
+                    )
+                }
+            ),
+            _regions(),
+            "regions: uq_regions_model_version_code is (code, "
+            "tax_benefit_model_version_id) in the copy, "
+            "(tax_benefit_model_version_id, code) in the Public API",
+        ),
+        (
+            _regions(),
+            _regions(enums={"v2_region_type": ("national", "state", "city")}),
+            "enum v2_region_type: the copy has (national, state), the Public API "
+            "has (national, state, city)",
+        ),
+        (
+            _regions(),
+            _regions(enums={}),
+            "enum v2_region_type: the Public API has no such enum in its public schema",
+        ),
+        (
+            _regions(),
+            SchemaShape(tables={}, enums=_regions().enums),
+            "regions: the Public API has no such table",
+        ),
+    ],
+    ids=[
+        "nullability",
+        "missing-column",
+        "missing-constraint",
+        "reordered-constraint",
+        "enum-values",
+        "missing-enum",
+        "missing-table",
+    ],
+)
+def test_each_difference_is_reported(copies, real, difference) -> None:
+    assert schema_differences(copies, real) == [difference]
