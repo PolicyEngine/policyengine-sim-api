@@ -181,3 +181,21 @@ def test_a_report_whose_reform_value_the_contract_refuses_leaves_nothing(
     assert harness.store.report_runs == []
     assert harness.store.simulations == {}
     assert harness.dispatcher.requests == []
+
+
+def test_a_rerun_on_a_version_lacking_a_parameter_gets_422_and_writes_nothing(
+    report_client, harness
+) -> None:
+    created = report_client.post(REPORTS_PATH, json=report_body()).json()
+    report_runs_before = list(harness.store.report_runs)
+    runs_before = dict(harness.store.setups)
+    harness.reads.missing_parameters[POLICY_ID] = ("gov.irs.retired",)
+
+    response = report_client.post(
+        f"{REPORTS_PATH}/{created['report_id']}/runs", json=rerun_body(force=True)
+    )
+
+    assert response.status_code == 422
+    assert "gov.irs.retired" in response.json()["detail"]
+    assert harness.store.report_runs == report_runs_before
+    assert harness.store.setups == runs_before

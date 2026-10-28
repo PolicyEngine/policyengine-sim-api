@@ -352,3 +352,62 @@ def test_missing_read_access_to_the_public_api_tables_is_named(
     assert response.status_code == 503
     assert "lacks SELECT" in response.json()["detail"]
     assert response.headers["retry-after"]
+
+
+def test_a_long_refusal_names_at_most_ten_fields(household_client, harness) -> None:
+    harness.reads.policies[("us", POLICY_ID)] = {
+        f"gov.parameter_{index:02d}": {"2026-01-01.2100-12-31": {"nested": index}}
+        for index in range(15)
+    }
+
+    response = household_client.post(
+        SUBMIT_PATH, json=submission_body(policy_id=str(POLICY_ID))
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "gov.parameter_09" in detail
+    assert "gov.parameter_10" not in detail
+    assert "and 5 more" in detail
+
+
+class UndefinedTableError(Exception):
+    """A psycopg error for a missing table (SQLSTATE 42P01)."""
+
+    sqlstate = "42P01"
+
+
+def test_another_database_programming_error_asks_the_caller_to_retry(
+    household_client, harness
+) -> None:
+    missing_table = "relation does not exist"
+    harness.reads.error = ProgrammingError(
+        "SELECT", {}, UndefinedTableError(missing_table)
+    )
+
+    response = household_client.post(SUBMIT_PATH, json=submission_body())
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "The simulation database could not be reached."
+
+
+class MissingPrivilegeStore:
+    """A store whose reads lack a privilege on sim's own tables."""
+
+    def read_calculation(self, run_id):
+        """Fail as a role without SELECT on the simulation schema does."""
+        del run_id
+        statement = "SELECT"
+        denied = "permission denied for table simulation_runs"
+        raise ProgrammingError(statement, {}, InsufficientPrivilegeError(denied))
+
+
+def test_a_missing_privilege_on_sims_own_tables_is_not_named_the_public_apis(
+    household_client, harness
+) -> None:
+    harness.service.store = MissingPrivilegeStore()
+
+    response = household_client.get(f"{SUBMIT_PATH}/{uuid4()}")
+
+    assert response.status_code == 503
+    assert "Public API" not in response.json()["detail"]

@@ -46,7 +46,7 @@ from policyengine_simulation_persistence import (
     UnknownHouseholdError,
     UnknownPolicyError,
 )
-from sqlalchemy.exc import ProgrammingError, SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError
 
 from policyengine_simulation_entry.household_api_models import (
     HouseholdCalculationResponse,
@@ -60,6 +60,7 @@ from policyengine_simulation_entry.household_api_models import (
 from policyengine_simulation_entry.household_calculations import (
     HouseholdDataRefusedError,
     HouseholdWithoutYearError,
+    PublicApiTablesUnreadableError,
     UnknownHouseholdReferenceError,
 )
 from policyengine_simulation_entry.household_workers import (
@@ -86,12 +87,7 @@ RETRY_AFTER_SECONDS = 10
 NOT_CONFIGURED = "Household calculations are not configured."
 WORKERS_UNAVAILABLE = "The v2 version manifest could not be read."
 DATABASE_UNAVAILABLE = "The simulation database could not be reached."
-NO_READ_ACCESS = (
-    "The Simulation Entrypoint cannot read the Public API's tables: its database "
-    "role lacks SELECT on them."
-)
-# PostgreSQL's SQLSTATE for a missing privilege.
-INSUFFICIENT_PRIVILEGE = "42501"
+
 REFUSED_RESPONSE = {
     "description": (
         "Refused, with the reason in detail: no household function for this "
@@ -186,14 +182,12 @@ async def guarded[T](operation: Awaitable[T]) -> T | JSONResponse:
     except HouseholdWorkersUnavailableError:
         logger.warning("household_manifest_unavailable")
         return unavailable(WORKERS_UNAVAILABLE)
-    except ProgrammingError as error:
-        if getattr(error.orig, "sqlstate", None) != INSUFFICIENT_PRIVILEGE:
-            raise
+    except PublicApiTablesUnreadableError as error:
         logger.error(  # noqa: TRY400  # the log names the missing grant; a traceback adds nothing
             "household_public_api_tables_unreadable",
-            extra={"error_type": type(error).__name__},
+            extra={"error_type": type(error.__cause__).__name__},
         )
-        return unavailable(NO_READ_ACCESS)
+        return unavailable(str(error))
     except SQLAlchemyError as error:
         logger.warning(
             "household_database_unavailable",

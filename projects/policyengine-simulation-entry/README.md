@@ -39,14 +39,16 @@ version; this service reads, from the Public API's tables in the same
 database, the country's catalog version for that PolicyEngine.py version,
 the household (its document, saved SPM choice and `default_year`, the year
 calculated) and the policy's parameter values, before writing anything.
-A household, policy or catalog version the Public API does not have for the
-country, and a household without a default year, are refused with 400 and
-the reason. Then every household and policy value is checked against the
-household functions' contract, still before anything is written: a policy
-changing a parameter the catalog version lacks, and a stored policy value or
-household the contract refuses (such as an object as a value, or a group no
-person belongs to), are the caller's data and are refused with 422 and the
-reason. The runtime role needs `SELECT` on those tables
+Every household and policy value is checked against the household
+functions' contract too, all before anything is written. A household, policy
+or catalog version the Public API does not have for the country, and a
+household without a default year, are refused with 400 and the reason; a
+policy changing a parameter the catalog version lacks, and a stored policy
+value or household the contract refuses (such as an object as a value, or a
+group no person belongs to), are the caller's data and are refused with 422
+and the reason, naming at most ten fields or parameters. The first problem
+found is the one answered, in the order the rows are read: the catalog
+version, the household, then each policy. The runtime role needs `SELECT` on those tables
 (`libs/policyengine-simulation-persistence`, "Household calculations");
 without it, the routes answer 503 saying sim cannot read them.
 

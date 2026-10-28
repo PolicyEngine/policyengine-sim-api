@@ -9,12 +9,13 @@ year. Submitting one:
 2. reads, from the Public API's tables, the country's catalog version for
    that PolicyEngine.py version, the stored household (its document, saved
    SPM choice and ``default_year``, the year calculated) and each policy's
-   parameter values by name, refusing a household, policy or catalog
-   version the Public API does not have or a household without a default
-   year (400), and then checks every value against the household functions'
-   contract, refusing a parameter the catalog version lacks, a stored
-   policy value or household the contract refuses (422, caller data), again
-   before anything is written;
+   parameter values by name, and checks every value against the household
+   functions' contract, all before anything is written. It refuses, in the
+   order it reads them: a catalog version or household the Public API does
+   not have, or a household without a default year (400); a stored
+   household the contract refuses (422, caller data); then, for each
+   policy, one the Public API does not have (400), or a parameter the
+   catalog version lacks or a value the contract refuses (422);
 3. finds or creates the simulation, then reuses its run for that catalog
    version and year (while unfinished, or for 28 days after it succeeded,
    ``SUCCEEDED_RUN_REUSE_WINDOW``) or starts the next attempt;
@@ -44,16 +45,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
 from policyengine_simulation_contract.household_execution import (
-    MAXIMUM_POLICY_PARAMETERS,
     HouseholdDocument,
     HouseholdExecutionRequest,
-    ParameterPath,
-    ParameterPeriod,
-    ParameterValue,
+    HouseholdPolicy,
 )
 from policyengine_simulation_persistence import (
     NewReport,
@@ -63,8 +61,8 @@ from policyengine_simulation_persistence import (
     RunStatus,
 )
 from policyengine_simulation_persistence.reports import FIRST_YEAR, LAST_YEAR
-from pydantic import Field, TypeAdapter, ValidationError
-from sqlalchemy.exc import IntegrityError
+from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 
 from policyengine_simulation_entry.household_api_models import (
     HouseholdCalculationOptions,
@@ -127,21 +125,25 @@ class HouseholdDataRefusedError(ValueError):
     """
 
 
-# The values a policy may set, as the household functions' contract takes them.
-POLICY_PARAMETERS: TypeAdapter[dict[str, dict[str, Any]]] = TypeAdapter(
-    Annotated[
-        dict[ParameterPath, dict[ParameterPeriod, ParameterValue]],
-        Field(max_length=MAXIMUM_POLICY_PARAMETERS),
-    ]
-)
+class PublicApiTablesUnreadableError(RuntimeError):
+    """The runtime role lacks ``SELECT`` on the Public API's tables sim reads."""
+
+
+# PostgreSQL's SQLSTATE for a missing privilege.
+INSUFFICIENT_PRIVILEGE = "42501"
+# A refusal names at most this many fields.
+MAX_LISTED_REASONS = 10
 
 
 def _reasons(error: ValidationError) -> str:
-    """Return each refused field and why, as ``path: message``."""
-    return "; ".join(
+    """Return each refused field and why, as ``path: message``, at most ten."""
+    items = error.errors()
+    shown = "; ".join(
         f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
-        for item in error.errors()
+        for item in items[:MAX_LISTED_REASONS]
     )
+    more = len(items) - MAX_LISTED_REASONS
+    return f"{shown}; and {more} more" if more > 0 else shown
 
 
 class HouseholdCalculationRecords(Protocol):
@@ -272,13 +274,33 @@ def _calculable_household(
 def _checked_policy_parameters(
     policy_id: UUID, parameters: Mapping[str, object]
 ) -> dict[str, dict[str, Any]]:
-    """Return a policy's values; raise HouseholdDataRefusedError for one refused."""
+    """Return a policy's values; raise HouseholdDataRefusedError for one refused.
+
+    The values are checked as the household functions' contract checks a
+    policy, under the key its run will have. The refusal names the refused
+    parameters, at most ten.
+    """
     try:
-        return POLICY_PARAMETERS.validate_python(parameters)
+        return HouseholdPolicy.model_validate(
+            {"policy_key": policy_key_for_run(policy_id), "parameters": parameters}
+        ).parameters
     except ValidationError as error:
+        refused = sorted(
+            {
+                str(item["loc"][1])
+                for item in error.errors()
+                if len(item["loc"]) > 1 and item["loc"][0] == "parameters"
+            }
+        )
+        if refused:
+            shown = ", ".join(refused[:MAX_LISTED_REASONS])
+            more = len(refused) - MAX_LISTED_REASONS
+            reasons = f"{shown} and {more} more" if more > 0 else shown
+        else:
+            reasons = _reasons(error)
         msg = (
             f"the policy {policy_id} sets values the household functions "
-            f"cannot take: {_reasons(error)}"
+            f"cannot take: {reasons}"
         )
         raise HouseholdDataRefusedError(msg) from None
 
@@ -296,10 +318,39 @@ def read_household_inputs(  # noqa: PLR0913  # one keyword per thing a run calcu
 
     Raise the reads' errors for a catalog version, household or policy the
     Public API does not have or a parameter the version lacks,
-    HouseholdWithoutYearError for a household without a default year, and
+    HouseholdWithoutYearError for a household without a default year,
     HouseholdDataRefusedError for a household or policy value the household
-    functions' contract refuses.
+    functions' contract refuses, and PublicApiTablesUnreadableError when the
+    runtime role cannot read the Public API's tables.
     """
+    try:
+        return _read_household_inputs(
+            reads,
+            country=country,
+            household_id=household_id,
+            policy_ids=policy_ids,
+            policyengine_version=policyengine_version,
+            options=options,
+        )
+    except ProgrammingError as error:
+        if getattr(error.orig, "sqlstate", None) != INSUFFICIENT_PRIVILEGE:
+            raise
+        msg = (
+            "The Simulation Entrypoint cannot read the Public API's tables: its "
+            "database role lacks SELECT on them."
+        )
+        raise PublicApiTablesUnreadableError(msg) from error
+
+
+def _read_household_inputs(  # noqa: PLR0913  # one keyword per thing a run calculates
+    reads: HouseholdRowReader,
+    *,
+    country: str,
+    household_id: UUID,
+    policy_ids: Sequence[UUID | None],
+    policyengine_version: str,
+    options: HouseholdCalculationOptions,
+) -> HouseholdRunInputs:
     version = reads.catalog_version(country, policyengine_version)
     stored = reads.household(country, household_id)
     household, year = _calculable_household(country, stored)
@@ -427,7 +478,7 @@ class HouseholdCalculationService:
                 options=submission.options,
             )
         )
-        check_household_request(worker, inputs)
+        await asyncio.to_thread(check_household_request, worker, inputs)
 
         def start() -> StartedSimulationRun:
             simulation = self.store.find_or_create_simulation(
@@ -483,7 +534,7 @@ class HouseholdCalculationService:
                 options=submission.options,
             )
         )
-        check_household_request(worker, inputs)
+        await asyncio.to_thread(check_household_request, worker, inputs)
 
         def create() -> tuple[ReportRecord, list[SimulationRunRecord]]:
             simulations = [
@@ -575,7 +626,7 @@ class HouseholdCalculationService:
                 ),
             )
         )
-        check_household_request(worker, inputs)
+        await asyncio.to_thread(check_household_request, worker, inputs)
         # The report's year is its household's default year, which never
         # changes, so the runs take the year the household was read with.
         runs = await self._write(
