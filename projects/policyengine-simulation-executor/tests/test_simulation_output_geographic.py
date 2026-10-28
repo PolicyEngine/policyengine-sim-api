@@ -140,7 +140,9 @@ def test_complete_uk_geography_output_rejects_fallback_metadata(
 # the check then withholds one more seat so that subtraction from the region
 # or from its local authority cannot recover it. NEGATIVE has a negative total
 # baseline income, the Cardiff West case: its relative change is undefined, so
-# the seat is left out although its average change passes.
+# the seat is left out although its average change passes. UNWEIGHTED, when
+# requested, has households of zero weight only, so the run estimates nothing
+# for it.
 NORTH_WEST = "E12000002"
 CUMBERLAND = "E06000063"
 WESTMORLAND = "E06000064"
@@ -153,10 +155,14 @@ SEATS = {
 }
 THIN = "E14000006"
 NEGATIVE = "E14000007"
+UNWEIGHTED = "E14000008"
+ESTIMATED_SEATS = {*SEATS, THIN, NEGATIVE}
 LAD23 = UKLocalAuthorityMetadata(boundary_version=UKLocalAuthorityBoundaryVersion.LAD23)
 
 
-def _uk_disclosure_columns(*, with_source_ids: bool = True) -> dict[str, list]:
+def _uk_disclosure_columns(
+    *, with_source_ids: bool = True, unweighted_seat: bool = False
+) -> dict[str, list]:
     """Return the households' columns, with baseline and reformed incomes."""
     rng = np.random.default_rng(7)
     rows: list[tuple[str, str, float, float]] = []
@@ -168,12 +174,16 @@ def _uk_disclosure_columns(*, with_source_ids: bool = True) -> dict[str, list]:
     for index in range(30):
         income = -40_000.0 if index < 20 else 30_000.0
         rows.append((NEGATIVE, WESTMORLAND, income, -float(rng.uniform(50, 150))))
+    if unweighted_seat:
+        rows.extend((UNWEIGHTED, WESTMORLAND, 30_000.0, -100.0) for _ in range(30))
     columns: dict[str, list[object]] = {
         "household_id": list(range(len(rows))),
         "constituency_code_oa": [row[0] for row in rows],
         "la_code_oa": [row[1] for row in rows],
         "region_code_oa": [NORTH_WEST] * len(rows),
-        "household_weight": [float(rng.uniform(50, 150)) for _ in rows],
+        "household_weight": [
+            0.0 if row[0] == UNWEIGHTED else float(rng.uniform(50, 150)) for row in rows
+        ],
     }
     if with_source_ids:
         columns["source_household_id"] = list(range(len(rows)))
@@ -183,9 +193,11 @@ def _uk_disclosure_columns(*, with_source_ids: bool = True) -> dict[str, list]:
 
 
 def _uk_disclosure_simulations(
-    *, with_source_ids: bool = True
+    *, with_source_ids: bool = True, unweighted_seat: bool = False
 ) -> tuple[SimpleNamespace, SimpleNamespace]:
-    columns = _uk_disclosure_columns(with_source_ids=with_source_ids)
+    columns = _uk_disclosure_columns(
+        with_source_ids=with_source_ids, unweighted_seat=unweighted_seat
+    )
     baseline_income = columns.pop("baseline_income")
     reformed_income = columns.pop("reformed_income")
     baseline = weighted_entity_frame(
@@ -268,6 +280,73 @@ def test_uk_disclosure_population_is_the_weighted_household_count(
 
     for code, change in uk_disclosure.level("constituency").items():
         assert change.population == pytest.approx(expected[code])
+
+
+@pytest.mark.parametrize(
+    ("level", "estimated"),
+    [
+        ("constituency", ESTIMATED_SEATS),
+        ("local_authority", {CUMBERLAND, WESTMORLAND}),
+    ],
+)
+def test_uk_disclosure_lists_each_estimated_area_it_does_not_publish(
+    uk_disclosure, level, estimated
+) -> None:
+    withheld = uk_disclosure.withheld_codes(level)
+    published = set(uk_disclosure.level(level))
+
+    assert withheld == sorted(withheld)
+    assert not published & set(withheld)
+    # Every area the run estimated is either published or withheld.
+    assert published | set(withheld) == estimated
+
+
+def test_uk_disclosure_lists_thin_undefined_and_complementary_seats(
+    uk_disclosure,
+) -> None:
+    withheld = uk_disclosure.withheld_codes("constituency")
+
+    assert {THIN, NEGATIVE} <= set(withheld)
+    # With THIN withheld, at least one more seat is withheld to protect it.
+    assert set(withheld) & set(SEATS)
+
+
+def test_uk_disclosure_lists_no_area_the_run_never_estimated() -> None:
+    # Every household of UNWEIGHTED has zero weight, so the release has no
+    # estimate for it: it is neither published nor withheld.
+    baseline, reform = _uk_disclosure_simulations(unweighted_seat=True)
+
+    output = simulation_output_geographic.compute_uk_geography_disclosure_output(
+        "uk", baseline, reform, year=2026
+    )
+
+    assert output is not None
+    assert UNWEIGHTED not in output.level("constituency")
+    assert UNWEIGHTED not in output.withheld_codes("constituency")
+    published = set(output.level("constituency"))
+    assert published | set(output.withheld_codes("constituency")) == ESTIMATED_SEATS
+
+
+def test_uk_disclosure_withholds_every_estimated_area_when_findings_remain(
+    monkeypatch,
+) -> None:
+    # When withholding cells cannot resolve the findings, no area is published.
+    monkeypatch.setattr(
+        simulation_output_geographic,
+        "_resolved_public_table",
+        lambda *_args, **_kwargs: None,
+    )
+    baseline, reform = _uk_disclosure_simulations()
+
+    output = simulation_output_geographic.compute_uk_geography_disclosure_output(
+        "uk", baseline, reform, year=2026
+    )
+
+    assert output is not None
+    assert output.level("constituency") == {}
+    assert output.level("local_authority") == {}
+    assert output.withheld_codes("constituency") == sorted(ESTIMATED_SEATS)
+    assert output.withheld_codes("local_authority") == [CUMBERLAND, WESTMORLAND]
 
 
 def test_uk_constituency_output_lists_only_published_seats(
