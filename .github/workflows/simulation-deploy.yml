@@ -1,5 +1,21 @@
 name: Deploy Simulation API
 
+# A merge to main is released, then deployed (rule
+# sim.deploy.release-commit-deploys-once):
+#
+# 1. The merge's push runs only the versioning job. It raises VERSION and
+#    builds CHANGELOG.md from the pending changelog fragments, and pushes one
+#    release commit, "Update PolicyEngine simulation API", with the GitHub App
+#    token. A push made with that token starts this workflow again; one made
+#    with the job's own token would not.
+# 2. The release commit's push runs only the deploy jobs. The versioning job
+#    is skipped for it, so nothing is released twice and nothing loops.
+#
+# A manual dispatch deploys the chosen branch without a release. Each `if`
+# below repeats the release commit's message, which the commit step sets;
+# projects/policyengine-simulation-entry/tests/test_release_workflow.py checks
+# that they agree. See docs/engineering/skills/github-prs.md#changelog-fragments.
+
 on:
   push:
     branches:
@@ -26,8 +42,51 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  versioning:
+    name: Release the merge
+    if: ${{ github.event_name == 'push' && github.event.head_commit.message != 'Update PolicyEngine simulation API' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The release commit is pushed with the GitHub App's token, not this one.
+    permissions:
+      contents: read
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      # git push in commit-release.sh uses the token the checkout stores.
+      - name: Check out the merge
+        uses: actions/checkout@v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.13.6"
+
+      - name: Raise VERSION and build CHANGELOG.md from the fragments
+        run: .github/scripts/build-changelog.sh
+
+      - name: Push the release commit to main
+        env:
+          RELEASE_COMMIT_MESSAGE: Update PolicyEngine simulation API
+        run: .github/scripts/commit-release.sh
+
   beta:
     name: Complete beta deployment
+    # Only the release commit, or a manual dispatch, deploys.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Update PolicyEngine simulation API' }}
     permissions:
       contents: read
       id-token: write
@@ -76,7 +135,8 @@ jobs:
   summary:
     name: Deployment summary
     needs: [beta, prod]
-    if: always()
+    # After every deployment, even a failed one; never for a merge's release.
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Update PolicyEngine simulation API') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

@@ -124,7 +124,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Deployment pipeline
 
-- Checked: `sim.deploy.container-context-minimal`, `sim.deploy.docker-images-build`, `sim.deploy.gcloud-without-terraform`, `sim.deploy.modal-image-smoke`, `sim.deploy.numerical-sentinel-gate`, `sim.deploy.permission-enforcement-wired`, `sim.deploy.promotion-order-explicit`, `sim.deploy.release-identity-smoke`, `sim.deploy.revision-tags-valid`, `sim.deploy.routing-publication-journaled`, `sim.deploy.shell-scripts-valid`, `sim.deploy.smoke-tests-strict`, `sim.deploy.traffic-changes-exact`, `sim.deploy.workflow-shell-safety`
+- Checked: `sim.deploy.container-context-minimal`, `sim.deploy.docker-images-build`, `sim.deploy.gcloud-without-terraform`, `sim.deploy.modal-image-smoke`, `sim.deploy.numerical-sentinel-gate`, `sim.deploy.permission-enforcement-wired`, `sim.deploy.promotion-order-explicit`, `sim.deploy.release-commit-deploys-once`, `sim.deploy.release-identity-smoke`, `sim.deploy.revision-tags-valid`, `sim.deploy.routing-publication-journaled`, `sim.deploy.shell-scripts-valid`, `sim.deploy.smoke-tests-strict`, `sim.deploy.traffic-changes-exact`, `sim.deploy.workflow-shell-safety`
 - `sim.deploy.image-smoke-covers-every-image-lib`: The image smoke path filter includes every library mounted into a Modal image, so a change to any of them runs the smoke. (doc-only, not checked: follow it yourself)
 
 ### API contracts and integration
@@ -160,7 +160,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Process and repository hygiene
 
-- Checked: `sim.agents.adapters-point-to-agents-md`, `sim.process.pr-tracking-issue`, `sim.process.rules-registry`, `sim.process.stacked-prs-full-ci-at-bottom`
+- Checked: `sim.agents.adapters-point-to-agents-md`, `sim.process.changelog-fragment`, `sim.process.pr-tracking-issue`, `sim.process.rules-registry`, `sim.process.stacked-prs-full-ci-at-bottom`
 - `sim.process.agents-never-bypass`: Agents never bypass branch rules, even with admin credentials: no gh pr merge --admin and no bypass option; a blocked merge is reported to a human. (doc-only, not checked: follow it yourself)
 - `sim.process.rule-machinery-code-owned`: Changes to the rule machinery (rules/, scripts/rules/, scripts/run_quality_guards.py and CODEOWNERS) need approval from a core developer other than the author. (doc-only, not checked: follow it yourself)
 - `sim.process.same-repo-draft-prs`: PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks. (doc-only, not checked: follow it yourself)
