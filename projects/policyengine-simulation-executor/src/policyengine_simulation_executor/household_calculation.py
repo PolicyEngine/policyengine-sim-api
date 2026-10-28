@@ -18,10 +18,10 @@ Every known difference from the Public API is listed here:
   numbers and JSON scalars, and the Public API writes a bare ``NaN``, which
   is not JSON. A date is the HTTP date text the Public API's Flask encoder
   writes.
-- The default household year, used when ``you`` has no age by period, is the
-  current UTC year; the Public API uses its host's local date.
-- With ``add_missing_variables``, an age given for ``you`` as one value, not
-  by period, counts as no age; the Public API fails with an internal error.
+- Missing variables are added for the request's ``year``. The Public API
+  adds them for the first period of the age of a person named ``you``, or
+  else its host's current year (and fails with an internal error when that
+  age is one value, not by period); v2 households name people by record ID.
 - An explicit null ``axes`` means no axes, because the contract drops it; the
   Public API treats the key's presence as a household with axes.
 - Every policy's parameters are checked before any policy is calculated, so
@@ -163,13 +163,11 @@ class HouseholdCalculationDependencies:
     """Seams a household calculation uses; unset seams use the defaults.
 
     The defaults are the installed bundle, the process's cached country
-    models, today's UTC date (which sets the default household year) and no
-    telemetry runtime.
+    models and no telemetry runtime.
     """
 
     installed_bundle: HouseholdBundleProvenance | None = None
     model_loader: Callable[[str], CountryHouseholdModel] = load_country_household_model
-    today: date | None = None
     runtime: ObservabilityRuntime | None = None
 
 
@@ -566,7 +564,6 @@ def _prepared_household(
     request: HouseholdExecutionRequest,
     model: CountryHouseholdModel,
     *,
-    today: date,
     spm_selection: dict[str, Any] | None,
 ) -> _PreparedHousehold:
     """Prepare the household as the Public API does; raise for unknown names.
@@ -577,7 +574,7 @@ def _prepared_household(
     """
     situation = request.household.to_situation()
     if request.add_missing_variables:
-        add_missing_variables(situation, model.metadata, today=today)
+        add_missing_variables(situation, model.metadata, year=request.year)
     deprecated = drop_deprecated_inputs(situation)
     household_errors = find_unrecognized_household_inputs(
         deprecated.household, model.metadata
@@ -625,12 +622,7 @@ def _calculate_output(
         model = dependencies.model_loader(request.country)
     with _stage_scope(runtime, Stage.V2_HOUSEHOLD_INPUT_NORMALIZATION, country):
         spm_selection = _resolved_spm_selection(request)
-        prepared = _prepared_household(
-            request,
-            model,
-            today=dependencies.today or datetime.now(UTC).date(),
-            spm_selection=spm_selection,
-        )
+        prepared = _prepared_household(request, model, spm_selection=spm_selection)
     results = []
     for policy in request.policies:
         attributes = {**country, "policy_key": policy.policy_key}

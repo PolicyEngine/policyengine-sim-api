@@ -122,6 +122,7 @@ def _request(**overrides: object) -> HouseholdExecutionRequest:
     values: dict[str, object] = {
         "calculation_id": str(CALCULATION_ID),
         "country": "us",
+        "year": "2026",
         "household": US_SITUATION,
         "policies": _policies(),
         "bundle": _bundle().model_dump(mode="json"),
@@ -283,6 +284,31 @@ def test_one_request_carries_the_baseline_and_its_reform() -> None:
     assert request.add_missing_variables is False
     assert request.spm_selection_source == "request"
     assert request.bundle == _bundle()
+
+
+def test_a_request_names_the_year_it_calculates() -> None:
+    request = _request(year="2025")
+
+    assert request.year == "2025"
+    assert request.model_dump(mode="json")["year"] == "2025"
+    assert (
+        HouseholdExecutionRequest.model_validate(request.model_dump(mode="json"))
+        == request
+    )
+
+
+def test_a_request_without_a_year_is_refused() -> None:
+    values = _request().model_dump(mode="json")
+    del values["year"]
+
+    with pytest.raises(ValidationError, match="year"):
+        HouseholdExecutionRequest.model_validate(values)
+
+
+@pytest.mark.parametrize("year", ["25", "20255", "2025-01", "year", "", " 2025", 2025])
+def test_a_request_with_a_malformed_year_is_refused(year: object) -> None:
+    with pytest.raises(ValidationError, match="year"):
+        _request(year=year)
 
 
 def test_add_missing_variables_asks_for_a_full_calculation() -> None:

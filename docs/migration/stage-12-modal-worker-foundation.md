@@ -480,7 +480,11 @@ calculates one household, in the Public API's situation shape and with
 optional axes, under one to ten policies, so a baseline and its reform are
 calculated in one call. It takes a `HouseholdExecutionRequest` and returns a
 `HouseholdExecutionResult` or a typed `HouseholdExecutionFailure` from
-`policyengine_simulation_contract.household_execution`, as JSON. The
+`policyengine_simulation_contract.household_execution`, as JSON. The request
+names the year it calculates, such as a stored household's default year, and
+a calculate-full request adds the household's missing variables for that year;
+the Public API instead takes the year from a person named `you`, or the
+current year, and v2 households name people by record ID. Otherwise the
 calculation follows the Public API's household calculation, including its
 input errors, warnings and SPM receipt. A function refuses a request for
 another country, and returns a `bundle_mismatch` failure for a request that
