@@ -10,12 +10,12 @@ from policyengine_simulation_executor.household_inputs import (
     HouseholdModelMetadata,
     HouseholdVariable,
     add_missing_variables,
+    assign_request_year,
     drop_deprecated_inputs,
     find_unrecognized_household_inputs,
     find_unrecognized_policy_inputs,
     requested_computations,
     unrecognized_inputs_message,
-    with_request_year,
 )
 
 
@@ -117,23 +117,32 @@ def test_axes_and_values_without_a_period_are_for_the_request_year() -> None:
             "person-1": {"age": 30, "employment_income": {"2024": 1}},
             "person-2": {"is_blind": None},
         },
-        "households": {"household-1": {"members": ["person-1", "person-2"]}},
+        "households": {
+            "household-1": {"members": ["person-1", "person-2"], "state_name": "TX"}
+        },
         "axes": [
             [
                 {"name": "employment_income", "count": 2, "min": 0, "max": 1},
                 {"name": "age", "count": 2, "min": 0, "max": 1, "period": "2024"},
-            ]
+            ],
+            [{"name": "rent", "count": 2, "min": 0, "max": 1, "period": None}],
         ],
     }
 
-    with_request_year(situation, year="2025")
+    assign_request_year(situation, year="2025")
 
     assert situation == {
         "people": {
             "person-1": {"age": {"2025": 30}, "employment_income": {"2024": 1}},
             "person-2": {"is_blind": {"2025": None}},
         },
-        "households": {"household-1": {"members": ["person-1", "person-2"]}},
+        # The membership list stays a list beside the group's own value.
+        "households": {
+            "household-1": {
+                "members": ["person-1", "person-2"],
+                "state_name": {"2025": "TX"},
+            }
+        },
         "axes": [
             [
                 {
@@ -144,7 +153,8 @@ def test_axes_and_values_without_a_period_are_for_the_request_year() -> None:
                     "period": "2025",
                 },
                 {"name": "age", "count": 2, "min": 0, "max": 1, "period": "2024"},
-            ]
+            ],
+            [{"name": "rent", "count": 2, "min": 0, "max": 1, "period": "2025"}],
         ],
     }
 

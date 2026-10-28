@@ -89,8 +89,9 @@ CalculationYear = Annotated[
     Field(
         pattern=r"^[0-9]{4}$",
         description=(
-            "The year the household is calculated for, written as a "
-            "situation's period key, such as '2025'."
+            "The run's year, written as a situation's period key, such as "
+            "'2025': the period of added variables and of values and axes "
+            "the household gives without one."
         ),
     ),
 ]
@@ -474,10 +475,13 @@ class HouseholdExecutionRequest(StrictHouseholdModel):
     """A caller to a Modal household function: calculate one household.
 
     ``calculation_id`` is the caller's durable identity for the calculation.
-    ``year`` is the year the household is calculated for, such as a stored
-    household's default year, written as a situation's period key (four
-    digits). ``bundle`` is the bundle the caller resolved from the version
-    manifest; the household function refuses a request for any other bundle.
+    ``year`` is the run's year, such as a stored household's default year,
+    written as a situation's period key (four digits): the period of the
+    variables ``add_missing_variables`` adds and of any value or axis the
+    household gives without a period. Every other value is calculated for the
+    period the household names. ``bundle`` is the bundle the caller resolved
+    from the version manifest; the household function refuses a request for
+    any other bundle.
 
     ``add_missing_variables`` adds every yearly, monthly and eternal variable
     the household's entities lack, for ``year``, before calculating, as the
@@ -501,9 +505,11 @@ class HouseholdExecutionRequest(StrictHouseholdModel):
     the household's default year; pass the household's saved SPM selection as
     ``spm`` only if it has one (a saved null is no choice); and set
     ``spm_selection_source`` to ``"saved_household"``. When ``year`` is the
-    year that route would infer, the calculated household, warnings, SPM
-    receipt and SPM error codes then match that route's. Its error messages
-    do not: the route reports a household it
+    year that route would infer and the household gives every value and axis
+    a period, the calculated household, warnings, SPM receipt and SPM error
+    codes then match that route's (the executor's household calculation module
+    lists every difference). Its error messages do not: the route reports a
+    household it
     cannot read, and any other failure except an SPM error, as an error
     calculating that household ID under that policy ID, while a household
     function reports the request routes' wording (``invalid_household`` and

@@ -468,9 +468,10 @@ optional axes, under one to ten policies, so a baseline and its reform are
 calculated in one call. It takes a `HouseholdExecutionRequest` and returns a
 `HouseholdExecutionResult` or a typed `HouseholdExecutionFailure` from
 `policyengine_simulation_contract.household_execution`, as JSON. The request
-names the year it calculates, such as a stored household's default year. A
+names the run's year, such as a stored household's default year. A
 calculate-full request adds the household's missing variables for that year,
-and an axis or a variable value given without a period is for that year too.
+and an axis or a variable value given without a period is for that year too;
+every other value is calculated for the period the household names.
 The Public API instead takes the year for added variables from a person named
 `you`, or the current year (v2 households name people by record ID), and
 leaves values and axes without a period to the country model's own default

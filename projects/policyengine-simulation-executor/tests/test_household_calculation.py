@@ -249,6 +249,31 @@ def test_with_axes_a_failed_value_is_one_null_per_point_with_a_warning() -> None
     )
 
 
+def test_single_values_are_calculated_for_the_request_year() -> None:
+    # A value given once, not by period, is for the request's year, and a
+    # single null asks for that year's value, which the Public API leaves
+    # uncalculated.
+    created: list[dict] = []
+
+    class RecordingSimulation(_stand_in_simulation({"net_income": np.array([2.5])})):
+        def __init__(self, **options: object) -> None:
+            super().__init__(**options)
+            created.append(self.situation)
+
+    household = {
+        "people": {"you": {"age": 30}},
+        "households": {"home": {"members": ["you"], "net_income": None}},
+    }
+
+    outcome = _calculate_with_stand_in(RecordingSimulation, household, year="2024")
+
+    assert isinstance(outcome, HouseholdExecutionResult), outcome
+    assert created[0]["people"]["you"]["age"] == {"2024": 30}
+    situation = outcome.output.results[0].household.to_situation()
+    assert situation["people"]["you"]["age"] == {"2024": 30}
+    assert situation["households"]["home"]["net_income"] == {"2024": 2.5}
+
+
 def test_dates_are_written_as_the_public_api_writes_them() -> None:
     # The Public API's Flask JSON encoder writes a date as an HTTP date.
     household = {
