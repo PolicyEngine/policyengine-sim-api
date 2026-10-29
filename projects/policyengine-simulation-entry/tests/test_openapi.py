@@ -43,10 +43,22 @@ EXPECTED_ROUTES = {
     ("GET", "/v2/simulations/{simulation_id}"),
     ("POST", "/v2/economy-reports"),
     ("POST", "/v2/economy-reports/{report_id}/runs"),
+    ("GET", "/v2/budget-window-reports/{report_id}"),
+    ("GET", "/v2/budget-window-reports/{report_id}/runs"),
+    ("POST", "/v2/budget-window-reports"),
+    ("POST", "/v2/budget-window-reports/{report_id}/runs"),
 }
-# The v2 economy report routes are the entrypoint's own; the old gateway has
-# none of them or their bodies.
+# The v2 economy and budget-window report routes are the entrypoint's own; the
+# old gateway has none of them or their bodies.
 V2_SCHEMAS = (
+    "BudgetWindowReportResponse",
+    "BudgetWindowReportResult",
+    "BudgetWindowReportSubmissionRequest",
+    "BudgetWindowRunResponse",
+    "BudgetWindowRunsResponse",
+    "BudgetWindowTotalImpact",
+    "BudgetWindowYearImpact",
+    "BudgetWindowYearResponse",
     "ComparisonResponse",
     "EconomyErrorResponse",
     "EconomyRefusalResponse",
@@ -229,10 +241,45 @@ def test_v2_economy_routes_are_public_for_the_generated_client():
     assert set(V2_SCHEMAS) <= set(spec["components"]["schemas"])
 
 
+def test_v2_budget_window_results_have_models_of_their_own():
+    """The old gateway's budget-window models stay the old gateway's."""
+    spec = cast("dict[str, Any]", create_app().openapi())
+    report = spec["components"]["schemas"]["BudgetWindowReportResponse"]
+
+    assert report["properties"]["result"]["anyOf"][0] == {
+        "$ref": "#/components/schemas/BudgetWindowReportResult"
+    }
+    year = spec["components"]["schemas"]["BudgetWindowYearImpact"]
+    assert "spm_provenance" not in year["properties"]
+
+
+def test_v2_budget_window_routes_are_public_for_the_generated_client():
+    spec = cast("OpenAPIDocument", create_app().openapi())
+    ids = operation_ids(spec)
+
+    assert {
+        ids[("POST", "/v2/budget-window-reports")],
+        ids[("GET", "/v2/budget-window-reports/{report_id}")],
+        ids[("POST", "/v2/budget-window-reports/{report_id}/runs")],
+        ids[("GET", "/v2/budget-window-reports/{report_id}/runs")],
+    } == {
+        "submit_budget_window_report",
+        "get_budget_window_report",
+        "run_budget_window_report",
+        "list_budget_window_report_runs",
+    }
+
+
 V2_ERROR_ANSWERS = {
-    ("POST", "/v2/economy-reports"): {
-        "422": "EconomyRefusalResponse",
-        "503": "EconomyErrorResponse",
+    **{
+        submission: {
+            "422": "EconomyRefusalResponse",
+            "503": "EconomyErrorResponse",
+        }
+        for submission in (
+            ("POST", "/v2/economy-reports"),
+            ("POST", "/v2/budget-window-reports"),
+        )
     },
     **{
         operation: {
@@ -246,6 +293,9 @@ V2_ERROR_ANSWERS = {
             ("POST", "/v2/economy-reports/{report_id}/runs"),
             ("GET", "/v2/economy-reports/{report_id}/runs"),
             ("GET", "/v2/simulations/{simulation_id}"),
+            ("GET", "/v2/budget-window-reports/{report_id}"),
+            ("POST", "/v2/budget-window-reports/{report_id}/runs"),
+            ("GET", "/v2/budget-window-reports/{report_id}/runs"),
         )
     },
 }
@@ -253,6 +303,7 @@ V2_ERROR_ANSWERS = {
 for _result_read in (
     ("GET", "/v2/economy-reports/{report_id}"),
     ("GET", "/v2/economy-reports/by-legacy-id/{legacy_report_id}"),
+    ("GET", "/v2/budget-window-reports/{report_id}"),
 ):
     V2_ERROR_ANSWERS[_result_read] = {
         **V2_ERROR_ANSWERS[_result_read],
@@ -288,3 +339,11 @@ def test_v2_routes_declare_each_error_answer_with_its_body():
             "type": "array",
         },
     ]
+
+
+def test_v2_budget_window_routes_describe_their_own_refusals():
+    spec = cast("dict[str, Any]", create_app().openapi())
+    submit = spec["paths"]["/v2/budget-window-reports"]["post"]["responses"]
+
+    assert "budget-window reports" in submit["503"]["description"]
+    assert "economy reports" not in submit["503"]["description"]

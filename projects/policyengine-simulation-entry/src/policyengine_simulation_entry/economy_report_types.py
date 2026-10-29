@@ -126,6 +126,10 @@ class EconomyRuns(Protocol):
         """Insert the report's first report run, or return its newest one."""
         ...
 
+    def create_window_year_run(self, new_report_run: NewReportRun) -> StartedReportRun:
+        """Insert a budget-window year's report run, or return the one added."""
+        ...
+
     def latest_report_run(self, report_id: UUID) -> ReportRunRecord | None:
         """Return the report's newest report run, or None."""
         ...

@@ -52,6 +52,11 @@ from policyengine_simulation_entry.auth import (
     CallerAuthorizer,
 )
 from policyengine_simulation_entry.backend import OldGatewayBackend, SimulationBackend
+from policyengine_simulation_entry.budget_window_reports import YearStartingRecorder
+from policyengine_simulation_entry.budget_window_routes import (
+    BudgetWindowRouteServices,
+    register_budget_window_routes,
+)
 from policyengine_simulation_entry.call_report_route import (
     CallReportRecorder,
     ModalCallerVerifier,
@@ -123,6 +128,7 @@ class RunServices:
     call_recorder: CallReportRecorder | None = None
     modal_identity_verifier: ModalCallerVerifier | None = None
     economy: EconomyRouteServices | None = None
+    budget_windows: BudgetWindowRouteServices | None = None
 
 
 def _temporary_submission_payload(
@@ -580,6 +586,48 @@ def _register_service_routes(app: FastAPI, entry: EntryRuntime) -> None:
         )
 
 
+def _report_paths(
+    services: RunServices,
+    runtime_settings: Settings,
+    runtime_database: SimulationDatabaseConnection | None,
+) -> tuple[
+    CallReportRecorder | None,
+    EconomyRouteServices | None,
+    BudgetWindowRouteServices | None,
+]:
+    """Return the call recorder and the report paths, building each one not given.
+
+    The economy and budget-window paths need the simulation database and the
+    Modal environment calls start in. A reported call's end starts the
+    comparisons and budget-window years it lets start.
+    """
+    call_recorder = services.call_recorder
+    if call_recorder is None and isinstance(runtime_database, SimulationDatabase):
+        call_recorder = runtime_database.call_recorder()
+    economy = services.economy
+    if (
+        economy is None
+        and isinstance(runtime_database, SimulationDatabase)
+        and runtime_settings.call_report_modal_environment
+    ):
+        economy = runtime_database.economy_routes(
+            artifact_environment=runtime_settings.environment,
+            modal_environment=runtime_settings.call_report_modal_environment,
+        )
+    budget_windows = services.budget_windows
+    if (
+        budget_windows is None
+        and isinstance(runtime_database, SimulationDatabase)
+        and economy is not None
+    ):
+        budget_windows = runtime_database.budget_window_routes(economy)
+    if call_recorder is not None and economy is not None:
+        call_recorder = ComparisonStartingRecorder(call_recorder, economy.reports)
+    if call_recorder is not None and budget_windows is not None:
+        call_recorder = YearStartingRecorder(call_recorder, budget_windows.reports)
+    return call_recorder, economy, budget_windows
+
+
 def create_app(
     *,
     settings: Settings | None = None,
@@ -596,21 +644,9 @@ def create_app(
         runtime_database = SimulationDatabase.from_url(
             runtime_settings.simulation_database_url
         )
-    call_recorder = services.call_recorder
-    if call_recorder is None and isinstance(runtime_database, SimulationDatabase):
-        call_recorder = runtime_database.call_recorder()
-    economy = services.economy
-    if (
-        economy is None
-        and isinstance(runtime_database, SimulationDatabase)
-        and runtime_settings.call_report_modal_environment
-    ):
-        economy = runtime_database.economy_routes(
-            artifact_environment=runtime_settings.environment,
-            modal_environment=runtime_settings.call_report_modal_environment,
-        )
-    if call_recorder is not None and economy is not None:
-        call_recorder = ComparisonStartingRecorder(call_recorder, economy.reports)
+    call_recorder, economy, budget_windows = _report_paths(
+        services, runtime_settings, runtime_database
+    )
     modal_identity_verifier = services.modal_identity_verifier
     expected_modal_caller = runtime_settings.expected_modal_caller
     if modal_identity_verifier is None and expected_modal_caller is not None:
@@ -683,6 +719,12 @@ def create_app(
     register_economy_routes(
         app,
         services=economy,
+        submitter=simulation_submitter,
+        reader=simulation_reader,
+    )
+    register_budget_window_routes(
+        app,
+        services=budget_windows,
         submitter=simulation_submitter,
         reader=simulation_reader,
     )

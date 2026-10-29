@@ -9,6 +9,11 @@ and kind, which composite foreign keys into ``simulation.simulations`` check.
 A report's calculations are its report runs (item 1.06); a report with none has
 not been calculated yet. A report migrated from the Public API's v1 database
 keeps its v1 report ID in ``legacy_report_id``.
+
+A budget-window report is an economy report with a ``budget_window_size``: it
+compares its two simulations in each of that many years, starting with its
+``year``. Each of its calculations is a budget-window run
+(``budget_window_runs``), which holds one report run per year.
 """
 
 from __future__ import annotations
@@ -54,6 +59,8 @@ if TYPE_CHECKING:
 
 FIRST_YEAR = 1900
 LAST_YEAR = 2200
+# The most years one budget-window report compares.
+MAX_BUDGET_WINDOW_YEARS = 75
 
 
 class ReportKind(StrEnum):
@@ -83,6 +90,7 @@ reports = Table(
         nullable=False,
         server_default=func.now(),
     ),
+    Column("budget_window_size", Integer, nullable=True),
     CheckConstraint(f"kind IN ({_KIND_VALUES})", name="kind"),
     CheckConstraint("country ~ '^[a-z]{2}$'", name="country"),
     CheckConstraint(f"year BETWEEN {FIRST_YEAR} AND {LAST_YEAR}", name="year"),
@@ -94,6 +102,14 @@ reports = Table(
     CheckConstraint(
         "legacy_report_id IS NULL OR legacy_report_id > 0",
         name="legacy_report_id",
+    ),
+    # Only an economy report has a budget window, and its last year is a year
+    # a run may have.
+    CheckConstraint(
+        "budget_window_size IS NULL OR (kind = 'economy' "
+        f"AND budget_window_size BETWEEN 1 AND {MAX_BUDGET_WINDOW_YEARS} "
+        f"AND year + budget_window_size - 1 <= {LAST_YEAR})",
+        name="budget_window_size",
     ),
     ForeignKeyConstraint(
         ["baseline_simulation_id", "country", "kind"],
@@ -131,6 +147,7 @@ class NewReport:
     reform_simulation_id: UUID | None = None
     options: dict[str, Any] = dataclass_field(default_factory=dict)
     legacy_report_id: int | None = None
+    budget_window_size: int | None = None
 
     def __post_init__(self) -> None:
         """Reject malformed fields without touching the database."""
@@ -144,6 +161,21 @@ class NewReport:
             msg = "options must be a JSON object"
             raise TypeError(msg)
         check_legacy_id("legacy_report_id", self.legacy_report_id)
+        self._check_budget_window()
+
+    def _check_budget_window(self) -> None:
+        size = self.budget_window_size
+        if size is None:
+            return
+        if self.kind is not ReportKind.ECONOMY:
+            msg = "only an economy report has a budget window"
+            raise ValueError(msg)
+        if not 1 <= size <= MAX_BUDGET_WINDOW_YEARS:
+            msg = f"budget_window_size must be between 1 and {MAX_BUDGET_WINDOW_YEARS}"
+            raise ValueError(msg)
+        if self.year + size - 1 > LAST_YEAR:
+            msg = f"a budget window must end in {LAST_YEAR} or earlier"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -159,6 +191,12 @@ class ReportRecord:
     options: dict[str, Any]
     legacy_report_id: int | None
     created_at: datetime
+    budget_window_size: int | None = None
+
+    @property
+    def window_years(self) -> range:
+        """Return the years the report compares: its year, or its budget window."""
+        return range(self.year, self.year + (self.budget_window_size or 1))
 
     @classmethod
     def from_row(cls, row: RowMapping) -> ReportRecord:

@@ -14,6 +14,11 @@ Running it on a catalog version and year:
    both runs have succeeded: at once when both were reused, or when a call's
    report says that its run succeeded (``start_comparisons_after``).
 
+A budget-window report (``budget_window_reports``) runs the same steps once
+per year of its window: ``run_year`` records each year's report run as one
+year of its budget-window run. The single-year path neither runs it nor
+counts its runs as the report's.
+
 A report whose policies change a labour supply elasticity needs both
 simulations' labour supply response columns, which a run calculates only
 when asked, so its runs are always calculated again (forced) and asked for
@@ -117,6 +122,15 @@ class _PlannedRun:
     refusal: str | None = None
 
 
+@dataclass(frozen=True)
+class ReportSetup:
+    """A report and its two simulations, to run on one catalog version."""
+
+    report: ReportRecord
+    version: CatalogVersion
+    simulations: tuple[SimulationRecord, SimulationRecord]
+
+
 @dataclass
 class EconomyReports:
     """The v2 economy path: report submission, runs, calls and comparisons."""
@@ -136,15 +150,34 @@ class EconomyReports:
     ) -> tuple[ReportRecord, ReportRunRecord]:
         """Create a report's simulations, the report and its first run, and start it.
 
-        Raise EconomyRequestError, before anything is written, when the
-        country has no catalog for the policyengine.py version, the version
-        has no such region or dataset, options are given, or a policy or
-        dynamic does not exist for the country.
+        Raise EconomyRequestError, before anything is written, as
+        ``prepare_report`` does.
+        """
+        setup = await self.prepare_report(submission)
+        report_run = await self._run(
+            setup, setup.report.year, RunTrigger.INITIAL, force=False
+        )
+        return setup.report, report_run
+
+    async def prepare_report(
+        self,
+        submission: EconomyReportSubmission,
+        *,
+        budget_window_size: int | None = None,
+    ) -> ReportSetup:
+        """Create a report and its simulations, without running it.
+
+        ``budget_window_size`` makes it a budget-window report of that many
+        years from the submission's year. Raise EconomyRequestError, before
+        anything is written, when the country has no catalog for the
+        policyengine.py version, the version has no such region or dataset,
+        options are given, or a policy or dynamic does not exist for the
+        country.
         """
         if submission.options:
             msg = "economy reports take no options yet"
             raise EconomyRequestError(msg)
-        version = await self._version(
+        version = await self.catalog_version(
             submission.country, submission.policyengine_version
         )
         await self._population(version, submission.region_code, submission.dataset_name)
@@ -177,12 +210,10 @@ class EconomyReports:
                 baseline_simulation_id=baseline.id,
                 reform_simulation_id=reform.id,
                 year=submission.year,
+                budget_window_size=budget_window_size,
             ),
         )
-        report_run = await self._run(
-            report, version, (baseline, reform), RunTrigger.INITIAL, force=False
-        )
-        return report, report_run
+        return ReportSetup(report, version, (baseline, reform))
 
     async def run_report(
         self,
@@ -209,7 +240,11 @@ class EconomyReports:
         if report is None:
             msg = f"no report {report_id}"
             raise ReportNotFoundError(msg)
-        if report.kind is not ReportKind.ECONOMY or report.reform_simulation_id is None:
+        if (
+            report.kind is not ReportKind.ECONOMY
+            or report.reform_simulation_id is None
+            or report.budget_window_size is not None
+        ):
             msg = f"no economy report {report_id}"
             raise ReportNotFoundError(msg)
         if report.options:
@@ -219,22 +254,70 @@ class EconomyReports:
             newest = await asyncio.to_thread(self.runs.latest_report_run, report_id)
             if newest is not None:
                 return newest
-        version = await self._version(report.country, policyengine_version)
+        version = await self.catalog_version(report.country, policyengine_version)
+        setup = await self.report_setup(report, version)
+        return await self._run(setup, report.year, trigger, force=force)
+
+    async def report_setup(
+        self, report: ReportRecord, version: CatalogVersion
+    ) -> ReportSetup:
+        """Return an economy report with its two simulations, to run on a version."""
         simulations = []
         for simulation_id in (
             report.baseline_simulation_id,
             report.reform_simulation_id,
         ):
-            simulation = await asyncio.to_thread(self.simulations.get, simulation_id)
+            simulation = (
+                None
+                if simulation_id is None
+                else await asyncio.to_thread(self.simulations.get, simulation_id)
+            )
             if simulation is None:  # pragma: no cover - a foreign key keeps it
                 msg = f"no simulation {simulation_id}"
                 raise ReportNotFoundError(msg)
             simulations.append(simulation)
+        return ReportSetup(report, version, (simulations[0], simulations[1]))
+
+    async def check_setup(self, setup: ReportSetup) -> None:
+        """Raise EconomyRequestError unless both simulations' rows resolve.
+
+        Each simulation's region and dataset must exist in the setup's
+        catalog version, in a form a call can carry, so a caller can refuse
+        a report before it writes anything.
+        """
+        for simulation in setup.simulations:
+            await self._population(
+                setup.version, simulation.region_code, simulation.dataset_name
+            )
+
+    async def run_year(
+        self,
+        setup: ReportSetup,
+        *,
+        year: int,
+        trigger: RunTrigger,
+        force: bool,
+        budget_window_run_id: UUID | None = None,
+    ) -> ReportRunRecord:
+        """Run a report's two simulations and their comparison for one year.
+
+        The report run is one year of ``budget_window_run_id``, a
+        budget-window run of the report, and is recorded as a run of its
+        own whatever the trigger. Runs are reused, forced and started as
+        for a single-year report.
+        """
         return await self._run(
-            report, version, (simulations[0], simulations[1]), trigger, force=force
+            setup,
+            year,
+            trigger,
+            force=force,
+            budget_window_run_id=budget_window_run_id,
         )
 
-    async def _version(self, country: str, policyengine_version: str) -> CatalogVersion:
+    async def catalog_version(
+        self, country: str, policyengine_version: str
+    ) -> CatalogVersion:
+        """Return the country's catalog version; raise EconomyRequestError if none."""
         version = await asyncio.to_thread(
             self.catalog.catalog_version, country, policyengine_version
         )
@@ -287,15 +370,18 @@ class EconomyReports:
 
     async def _run(
         self,
-        report: ReportRecord,
-        version: CatalogVersion,
-        simulations: tuple[SimulationRecord, SimulationRecord],
+        setup: ReportSetup,
+        year: int,
         trigger: RunTrigger,
         *,
         force: bool,
+        budget_window_run_id: UUID | None = None,
     ) -> ReportRunRecord:
         """Find or create both runs and the report run, then start what can start."""
-        planned = [await self._plan(version, simulation) for simulation in simulations]
+        report, version = setup.report, setup.version
+        planned = [
+            await self._plan(version, simulation) for simulation in setup.simulations
+        ]
         labor_supply_response = any(
             run.changes is not None
             and policy_affects_labor_supply(report.country, run.changes)
@@ -313,7 +399,7 @@ class EconomyReports:
                     NewSimulationRun(
                         simulation_id=run.simulation.id,
                         tax_benefit_model_version_id=version.id,
-                        year=report.year,
+                        year=year,
                         trigger=trigger,
                         region_code=run.population.region_code,
                         dataset_id=run.population.dataset_id,
@@ -328,6 +414,7 @@ class EconomyReports:
                 baseline_simulation_run_id=baseline.id,
                 reform_simulation_run_id=reform.id,
                 trigger=trigger,
+                budget_window_run_id=budget_window_run_id,
             )
         )
         compared = {
@@ -370,8 +457,15 @@ class EconomyReports:
         Simultaneous first opens of a report without a run then share one
         report run. A caller that loses still starts the runs it created
         that the recorded run compares, and leaves the others pending for the
-        safety check.
+        safety check. A year of a budget-window run is its own run, whatever
+        the trigger; a caller that starts a year another caller has just
+        started shares that caller's report run in the same way.
         """
+        if new_report_run.budget_window_run_id is not None:
+            year = await asyncio.to_thread(
+                self.runs.create_window_year_run, new_report_run
+            )
+            return year.run
         if new_report_run.trigger is not RunTrigger.SYSTEM:
             return await asyncio.to_thread(self.runs.create_report_run, new_report_run)
         first = await asyncio.to_thread(

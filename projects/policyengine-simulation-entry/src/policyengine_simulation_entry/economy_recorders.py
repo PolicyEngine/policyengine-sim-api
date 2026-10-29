@@ -110,7 +110,10 @@ class ReportedCallRecorder(Protocol):
         ...
 
 
-_RECORDED = frozenset({CallReportStatus.RECORDED, CallReportStatus.ALREADY_RECORDED})
+# The answers that mean the reported call's outcome is recorded.
+RECORDED_STATUSES = frozenset(
+    {CallReportStatus.RECORDED, CallReportStatus.ALREADY_RECORDED}
+)
 
 
 @dataclass(frozen=True)
@@ -129,7 +132,7 @@ class ComparisonStartingRecorder:
     async def record_reported_call(self, report: CallEndedReport) -> CallReportStatus:
         """Record the reported call; start the comparisons it lets start."""
         report_status = await self.recorder.record_reported_call(report)
-        if report.simulation_run_ids and report_status in _RECORDED:
+        if report.simulation_run_ids and report_status in RECORDED_STATUSES:
             try:
                 await self.comparisons.start_comparisons_after(
                     report.simulation_run_ids

@@ -16,7 +16,11 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.exc import IntegrityError
 
+from policyengine_simulation_persistence.budget_window_runs import (
+    ONE_REPORT_RUN_PER_YEAR,
+)
 from policyengine_simulation_persistence.output_files import (
     OutputFileRecord,
     available_output_files,
@@ -105,6 +109,32 @@ def _check_report_run_simulations(
         )
         raise ValueError(msg)
     return baseline
+
+
+def _check_budget_window_year(
+    report: RowMapping, year: int, new_report_run: NewReportRun
+) -> None:
+    """Require a budget-window report's run to be one year of its window.
+
+    A report run of any other report belongs to no budget-window run. The
+    database checks that the budget-window run is one of the report's, on
+    the report run's catalog version.
+    """
+    window_size = report["budget_window_size"]
+    if window_size is None:
+        if new_report_run.budget_window_run_id is not None:
+            msg = "only a budget-window report's report runs are years of a window"
+            raise ValueError(msg)
+        return
+    if new_report_run.budget_window_run_id is None:
+        msg = "a budget-window report's report run is a year of a budget-window run"
+        raise ValueError(msg)
+    if not report["year"] <= year < report["year"] + window_size:
+        msg = (
+            f"{year} is not a year of the report's window, which starts in "
+            f"{report['year']} and has {window_size} years"
+        )
+        raise ValueError(msg)
 
 
 class RunStore:
@@ -318,6 +348,44 @@ class RunStore:
                 run=self._insert_report_run(connection, new_report_run), created=True
             )
 
+    def create_window_year_run(self, new_report_run: NewReportRun) -> StartedReportRun:
+        """Add a budget-window year's report run, or return the one already added.
+
+        Callers that start the same year of a budget-window run at once meet
+        at the unique year (``ONE_REPORT_RUN_PER_YEAR``): the first adds the
+        report run, and the others return it, so a caller that loses can
+        still start the simulation runs it created that the year compares.
+        Raise ValueError when the report run names no budget-window run, and
+        otherwise as ``create_report_run`` does.
+        """
+        window_run_id = new_report_run.budget_window_run_id
+        if window_run_id is None:
+            msg = "a budget-window year's report run names its budget-window run"
+            raise ValueError(msg)
+        with self.engine.begin() as connection:
+            try:
+                with connection.begin_nested():
+                    created = self._insert_report_run(connection, new_report_run)
+            except IntegrityError as error:
+                if ONE_REPORT_RUN_PER_YEAR not in str(error):
+                    raise
+                baseline = self._run_key(
+                    connection, new_report_run.baseline_simulation_run_id
+                )
+                existing = (
+                    None
+                    if baseline is None
+                    else self._newest_report_run_where(
+                        connection,
+                        (report_runs.c.budget_window_run_id == window_run_id)
+                        & (report_runs.c.year == baseline["year"]),
+                    )
+                )
+                if existing is None:  # pragma: no cover - the conflict proves a row
+                    raise
+                return StartedReportRun(run=existing, created=False)
+        return StartedReportRun(run=created, created=True)
+
     def _insert_report_run(
         self, connection: Connection, new_report_run: NewReportRun
     ) -> ReportRunRecord:
@@ -328,6 +396,8 @@ class RunStore:
                     reports.c.kind,
                     reports.c.baseline_simulation_id,
                     reports.c.reform_simulation_id,
+                    reports.c.year,
+                    reports.c.budget_window_size,
                 ).where(reports.c.id == new_report_run.report_id)
             )
             .mappings()
@@ -345,6 +415,7 @@ class RunStore:
         baseline = _check_report_run_simulations(
             report, baseline, reform, new_report_run
         )
+        _check_budget_window_year(report, baseline["year"], new_report_run)
         economy = report["kind"] == ReportKind.ECONOMY.value
         row = (
             connection.execute(
@@ -361,6 +432,7 @@ class RunStore:
                         new_report_run.baseline_simulation_run_id
                     ),
                     reform_simulation_run_id=new_report_run.reform_simulation_run_id,
+                    budget_window_run_id=new_report_run.budget_window_run_id,
                     trigger=new_report_run.trigger.value,
                     comparison_status=(RunStatus.PENDING.value if economy else None),
                     created_at=now,

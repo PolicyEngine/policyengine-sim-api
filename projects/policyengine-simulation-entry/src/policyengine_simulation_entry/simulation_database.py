@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from policyengine_simulation_persistence import (
+    BudgetWindowRunStore,
     CatalogReader,
     EconomyResultLabels,
     ReportStore,
@@ -18,6 +19,11 @@ from policyengine_simulation_persistence import (
     read_schema_revision,
 )
 
+from policyengine_simulation_entry.budget_window_reads import BudgetWindowReportReads
+from policyengine_simulation_entry.budget_window_reports import BudgetWindowReports
+from policyengine_simulation_entry.budget_window_routes import (
+    BudgetWindowRouteServices,
+)
 from policyengine_simulation_entry.economy_recorders import economy_result_recorders
 from policyengine_simulation_entry.economy_reports import EconomyReports
 from policyengine_simulation_entry.economy_routes import (
@@ -127,6 +133,30 @@ class SimulationDatabase:
                 runs=runs,
                 catalog=catalog,
                 results=DatabaseResultReader(engine, catalog),
+            ),
+        )
+
+    def budget_window_routes(
+        self, economy: EconomyRouteServices
+    ) -> BudgetWindowRouteServices:
+        """Return the budget-window path, running its years on ``economy``'s path."""
+        engine = self.engine
+        reports = ReportStore(engine)
+        windows = BudgetWindowRunStore(engine)
+        catalog = CatalogReader(engine)
+        return BudgetWindowRouteServices(
+            reports=BudgetWindowReports(
+                economy=economy.reports,
+                reports=reports,
+                windows=windows,
+                runs=RunStore(engine),
+                catalog=catalog,
+            ),
+            reads=BudgetWindowReportReads(
+                simulations=SimulationStore(engine),
+                reports=reports,
+                windows=windows,
+                catalog=catalog,
             ),
         )
 

@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID  # noqa: TC003  # FastAPI evaluates the handlers' path parameters
 
 from fastapi import Depends, FastAPI, HTTPException, status
-from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_persistence import ReportKind, RunStatus, RunTrigger
 from sqlalchemy.exc import DBAPIError
 
@@ -57,9 +56,12 @@ from policyengine_simulation_entry.economy_schemas import (
     EconomyReportRunsResponse,
     EconomyReportSubmissionRequest,
     ReportStatus,
-    RunErrorResponse,
     SimulationResponse,
     SimulationRunResponse,
+)
+from policyengine_simulation_entry.report_progress import (
+    report_run_progress,
+    run_error_response,
 )
 
 if TYPE_CHECKING:
@@ -153,11 +155,8 @@ class RunReads(Protocol):
         ...
 
 
-def _error(code: str | None, message: str | None) -> RunErrorResponse | None:
-    return None if code is None else RunErrorResponse(code=code, message=message)
-
-
-def _simulation(record: SimulationRecord) -> SimulationResponse:
+def simulation_response(record: SimulationRecord) -> SimulationResponse:
+    """Describe a simulation."""
     return SimulationResponse(
         id=record.id,
         kind=record.kind.value,
@@ -178,45 +177,11 @@ def _simulation_run(record: SimulationRunRecord) -> SimulationRunResponse:
         status=record.status.value,
         attempt=record.attempt,
         trigger=record.trigger.value,
-        error=_error(record.error_code, record.error_message),
+        error=run_error_response(record.error_code, record.error_message),
         dispatched_at=record.dispatched_at,
         completed_at=record.completed_at,
         created_at=record.created_at,
     )
-
-
-def _progress(
-    report_run: ReportRunRecord,
-    runs: tuple[SimulationRunRecord, SimulationRunRecord],
-) -> tuple[ReportStatus, JobStage | None, RunErrorResponse | None]:
-    """Return a report run's status, its stage while it runs, and its error.
-
-    A failed simulation run fails the report run at once, before the safety
-    check fails its comparison step.
-    """
-    failed = next((run for run in runs if run.status is RunStatus.FAILED), None)
-    if failed is not None:
-        return (
-            ReportStatus.FAILED,
-            None,
-            _error(failed.error_code, failed.error_message),
-        )
-    comparison = report_run.comparison_status
-    if comparison is RunStatus.FAILED:
-        return (
-            ReportStatus.FAILED,
-            None,
-            _error(
-                report_run.comparison_error_code, report_run.comparison_error_message
-            ),
-        )
-    if comparison is RunStatus.SUCCEEDED:
-        return ReportStatus.SUCCEEDED, None, None
-    if all(run.status is RunStatus.SUCCEEDED for run in runs):
-        return ReportStatus.RUNNING, JobStage.OUTPUTS, None
-    if all(run.status is RunStatus.PENDING for run in runs):
-        return ReportStatus.PENDING, JobStage.QUEUED, None
-    return ReportStatus.RUNNING, JobStage.SIMULATING, None
 
 
 @dataclass
@@ -242,7 +207,9 @@ class EconomyReportReads:
         version = self.catalog.catalog_version_by_id(
             report_run.tax_benefit_model_version_id
         )
-        report_status, stage, error = _progress(report_run, (baseline, reform))
+        report_status, stage, error = report_run_progress(
+            report_run, (baseline, reform)
+        )
         return EconomyReportRunResponse(
             id=report_run.id,
             report_id=report_run.report_id,
@@ -259,7 +226,7 @@ class EconomyReportReads:
             reform_run=_simulation_run(reform),
             comparison=ComparisonResponse(
                 status=(report_run.comparison_status or RunStatus.PENDING).value,
-                error=_error(
+                error=run_error_response(
                     report_run.comparison_error_code,
                     report_run.comparison_error_message,
                 ),
@@ -299,8 +266,8 @@ class EconomyReportReads:
             options=report.options,
             legacy_report_id=report.legacy_report_id,
             created_at=report.created_at,
-            baseline_simulation=_simulation(baseline),
-            reform_simulation=_simulation(reform),
+            baseline_simulation=simulation_response(baseline),
+            reform_simulation=simulation_response(reform),
             status=ReportStatus.NOT_RUN if latest is None else latest.status,
             run=latest,
             result=result,
@@ -332,12 +299,16 @@ class EconomyReportReads:
         if record is None:
             msg = f"no simulation {simulation_id}"
             raise ReportNotFoundError(msg)
-        return _simulation(record)
+        return simulation_response(record)
 
     @staticmethod
     def _report(record: ReportRecord | None, identifier: object) -> ReportRecord:
-        """Return an economy report; a household report is not one."""
-        if record is None or record.kind is not ReportKind.ECONOMY:
+        """Return an economy report; a household or budget-window report is not one."""
+        if (
+            record is None
+            or record.kind is not ReportKind.ECONOMY
+            or record.budget_window_size is not None
+        ):
             msg = f"no economy report {identifier}"
             raise ReportNotFoundError(msg)
         return record
@@ -351,7 +322,7 @@ class EconomyRouteServices:
     reads: EconomyReportReads
 
 
-async def _answer[ResultT](call: Callable[[], Awaitable[ResultT]]) -> ResultT:
+async def answer_route[ResultT](call: Callable[[], Awaitable[ResultT]]) -> ResultT:
     """Run a route's work, turning sim's refusals into HTTP errors."""
     try:
         return await call()
@@ -428,7 +399,7 @@ def register_economy_routes(
             )
             return await asyncio.to_thread(economy.reads.report, report)
 
-        return await _answer(submit)
+        return await answer_route(submit)
 
     @app.get(
         "/v2/economy-reports/by-legacy-id/{legacy_report_id}",
@@ -441,7 +412,7 @@ def register_economy_routes(
         legacy_report_id: int,
     ) -> EconomyReportResponse:
         economy = _configured(services)
-        return await _answer(
+        return await answer_route(
             lambda: asyncio.to_thread(
                 economy.reads.report_by_legacy_id, legacy_report_id
             )
@@ -456,7 +427,7 @@ def register_economy_routes(
     )
     async def get_economy_report(report_id: UUID) -> EconomyReportResponse:
         economy = _configured(services)
-        return await _answer(
+        return await answer_route(
             lambda: asyncio.to_thread(economy.reads.report_by_id, report_id)
         )
 
@@ -482,7 +453,7 @@ def register_economy_routes(
             )
             return await asyncio.to_thread(economy.reads.report_run, report_run)
 
-        return await _answer(run)
+        return await answer_route(run)
 
     @app.get(
         "/v2/economy-reports/{report_id}/runs",
@@ -493,7 +464,7 @@ def register_economy_routes(
     )
     async def list_economy_report_runs(report_id: UUID) -> EconomyReportRunsResponse:
         economy = _configured(services)
-        return await _answer(
+        return await answer_route(
             lambda: asyncio.to_thread(economy.reads.report_runs, report_id)
         )
 
@@ -506,6 +477,6 @@ def register_economy_routes(
     )
     async def get_simulation(simulation_id: UUID) -> SimulationResponse:
         economy = _configured(services)
-        return await _answer(
+        return await answer_route(
             lambda: asyncio.to_thread(economy.reads.simulation, simulation_id)
         )
