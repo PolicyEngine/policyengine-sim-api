@@ -34,7 +34,6 @@ from policyengine_simulation_entry.budget_window_schemas import (
 )
 from policyengine_simulation_entry.economy_report_types import ReportNotFoundError
 from policyengine_simulation_entry.economy_routes import (
-    StoredResultError,
     report_run_progress,
     simulation_response,
 )
@@ -66,6 +65,15 @@ _BUDGET_FIELDS = (
     "benefitSpendingImpact",
     "budgetaryImpact",
 )
+
+
+class StoredWindowResultError(Exception):
+    """A succeeded budget-window run's stored figures cannot be read back."""
+
+    def __init__(self, budget_window_run_id: UUID, cause: LookupError) -> None:
+        """Name the run and keep the reader's error as the cause."""
+        super().__init__(f"budget-window run {budget_window_run_id}: {cause}")
+        self.budget_window_run_id = budget_window_run_id
 
 
 class BudgetWindowRunReads(Protocol):
@@ -236,7 +244,8 @@ class BudgetWindowReportReads:
     def report(self, report: ReportRecord) -> BudgetWindowReportResponse:
         """Describe a report with its newest run and, once it succeeded, its result.
 
-        Raise StoredResultError when a succeeded run's figures cannot be read.
+        Raise StoredWindowResultError when a succeeded run's figures cannot
+        be read.
         """
         baseline, reform = (
             self.simulations.get(simulation_id)
@@ -261,7 +270,7 @@ class BudgetWindowReportReads:
                     report, self.windows.year_budgets(newest.id)
                 )
             except LookupError as error:
-                raise StoredResultError(newest.id, error) from error
+                raise StoredWindowResultError(newest.id, error) from error
         return BudgetWindowReportResponse(
             id=report.id,
             country=report.country,
@@ -278,16 +287,17 @@ class BudgetWindowReportReads:
 
     def report_by_id(self, report_id: UUID) -> BudgetWindowReportResponse:
         """Describe a report; raise ReportNotFoundError for one that is not a window."""
-        return self.report(self._report(report_id))
+        return self.report(self.report_record(report_id))
 
     def report_runs(self, report_id: UUID) -> BudgetWindowRunsResponse:
         """List a budget-window report's runs, newest first."""
-        report = self._report(report_id)
+        report = self.report_record(report_id)
         return BudgetWindowRunsResponse(
             runs=[self.run(run, report) for run in self.windows.runs(report_id)]
         )
 
-    def _report(self, report_id: UUID) -> ReportRecord:
+    def report_record(self, report_id: UUID) -> ReportRecord:
+        """Return a budget-window report; raise ReportNotFoundError for any other."""
         record = self.reports.get(report_id)
         if (
             record is None

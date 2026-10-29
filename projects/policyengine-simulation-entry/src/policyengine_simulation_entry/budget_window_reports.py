@@ -17,7 +17,9 @@ pass (``resume_waiting_work``). Whoever starts years first claims the run, a
 lease of ``SCHEDULING_LEASE``, so two callers do not start the same year;
 the database allows one report run per year of a run in any case.
 
-The first year that fails fails the run, with that year's error, and no more
+``YearStartingRecorder`` wraps the recording of a reported call, so its end
+starts the years it frees. The first year that fails fails the run, with that
+year's error, and no more
 years start; years already running finish and keep their results. Once every
 year has succeeded, the run has succeeded. The run stores no totals: they are
 the sums of its years' budget rows, added up when it is read.
@@ -31,6 +33,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
+from policyengine_simulation_contract.call_reports import CallReportStatus
 from policyengine_simulation_persistence import (
     BudgetWindowStatus,
     NewBudgetWindowRun,
@@ -55,6 +58,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
+    from policyengine_simulation_contract.call_reports import CallEndedReport
     from policyengine_simulation_persistence import (
         BudgetWindowRunRecord,
         BudgetWindowYear,
@@ -536,3 +540,45 @@ class BudgetWindowReports:
                 },
             )
             return 0
+
+
+class ReportedCallRecorder(Protocol):
+    """Record a reported call's outcome (``RunRecorder``, possibly wrapped)."""
+
+    async def record_reported_call(self, report: CallEndedReport) -> CallReportStatus:
+        """Record the call's outcome if Modal has one."""
+        ...
+
+
+_RECORDED = frozenset({CallReportStatus.RECORDED, CallReportStatus.ALREADY_RECORDED})
+
+
+@dataclass(frozen=True)
+class YearStartingRecorder:
+    """Record a reported call, then start the budget-window years its end frees.
+
+    A failure to start them is logged and changes nothing in the answer: the
+    safety check starts a run's due years.
+    """
+
+    recorder: ReportedCallRecorder
+    windows: BudgetWindowReports
+
+    async def record_reported_call(self, report: CallEndedReport) -> CallReportStatus:
+        """Record the reported call; start the years it lets start."""
+        report_status = await self.recorder.record_reported_call(report)
+        if report_status in _RECORDED:
+            try:
+                await self.windows.start_years_after_call(
+                    simulation_run_ids=report.simulation_run_ids,
+                    report_run_id=report.report_run_id,
+                )
+            except Exception as error:  # noqa: BLE001  # logged; the safety check starts them later
+                logger.warning(
+                    "budget_window_years_not_started",
+                    extra={
+                        "modal_call_id": report.modal_call_id,
+                        "error_type": type(error).__name__,
+                    },
+                )
+        return report_status

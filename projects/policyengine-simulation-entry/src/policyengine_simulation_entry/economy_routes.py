@@ -358,7 +358,7 @@ class EconomyRouteServices:
     reads: EconomyReportReads
 
 
-async def _answer[ResultT](call: Callable[[], Awaitable[ResultT]]) -> ResultT:
+async def answer_route[ResultT](call: Callable[[], Awaitable[ResultT]]) -> ResultT:
     """Run a route's work, turning sim's refusals into HTTP errors."""
     try:
         return await call()
@@ -435,7 +435,7 @@ def register_economy_routes(
             )
             return await asyncio.to_thread(economy.reads.report, report)
 
-        return await _answer(submit)
+        return await answer_route(submit)
 
     @app.get(
         "/v2/economy-reports/by-legacy-id/{legacy_report_id}",
@@ -448,7 +448,7 @@ def register_economy_routes(
         legacy_report_id: int,
     ) -> EconomyReportResponse:
         economy = _configured(services)
-        return await _answer(
+        return await answer_route(
             lambda: asyncio.to_thread(
                 economy.reads.report_by_legacy_id, legacy_report_id
             )
@@ -463,7 +463,7 @@ def register_economy_routes(
     )
     async def get_economy_report(report_id: UUID) -> EconomyReportResponse:
         economy = _configured(services)
-        return await _answer(
+        return await answer_route(
             lambda: asyncio.to_thread(economy.reads.report_by_id, report_id)
         )
 
@@ -489,7 +489,7 @@ def register_economy_routes(
             )
             return await asyncio.to_thread(economy.reads.report_run, report_run)
 
-        return await _answer(run)
+        return await answer_route(run)
 
     @app.get(
         "/v2/economy-reports/{report_id}/runs",
@@ -500,7 +500,7 @@ def register_economy_routes(
     )
     async def list_economy_report_runs(report_id: UUID) -> EconomyReportRunsResponse:
         economy = _configured(services)
-        return await _answer(
+        return await answer_route(
             lambda: asyncio.to_thread(economy.reads.report_runs, report_id)
         )
 
@@ -513,6 +513,6 @@ def register_economy_routes(
     )
     async def get_simulation(simulation_id: UUID) -> SimulationResponse:
         economy = _configured(services)
-        return await _answer(
+        return await answer_route(
             lambda: asyncio.to_thread(economy.reads.simulation, simulation_id)
         )

@@ -9,12 +9,14 @@ from uuid import uuid4
 import pytest
 from budget_window_fakes import WindowPath, finish_year
 from economy_fakes import NOW, US_VERSION
-from policyengine_simulation_entry.budget_window_reads import BudgetWindowReportReads
+from policyengine_simulation_entry.budget_window_reads import (
+    BudgetWindowReportReads,
+    StoredWindowResultError,
+)
 from policyengine_simulation_entry.budget_window_schemas import (
     BudgetWindowReportSubmissionRequest,
 )
 from policyengine_simulation_entry.economy_report_types import ReportNotFoundError
-from policyengine_simulation_entry.economy_routes import StoredResultError
 from policyengine_simulation_entry.economy_schemas import ReportStatus
 from policyengine_simulation_persistence import (
     BudgetWindowStatus,
@@ -232,10 +234,10 @@ def test_a_succeeded_window_missing_a_years_budget_is_a_stored_result_error() ->
     _finish_window(path, run.id, {2026: 1.0, 2027: 2.0})
     del path.windows.budgets[path.year_runs(run.id)[2027].id]
 
-    with pytest.raises(StoredResultError) as error:
+    with pytest.raises(StoredWindowResultError) as error:
         _reads(path).report_by_id(report.id)
 
-    assert error.value.report_run_id == run.id
+    assert error.value.budget_window_run_id == run.id
 
 
 def test_a_reports_runs_are_listed_newest_first() -> None:
