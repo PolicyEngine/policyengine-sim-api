@@ -45,6 +45,16 @@ pytestmark = pytest.mark.postgres
 FIRST_CHECK = timedelta(minutes=5)
 
 
+def test_the_revision_is_not_downgraded_while_budget_windows_exist(
+    migrated_database, public_api_rows
+) -> None:
+    """Their years would otherwise read as runs of single-year reports."""
+    budget_window_report(migrated_database, public_api_rows)
+
+    with pytest.raises(ProgrammingError, match="budget-window reports exist"):
+        command.downgrade(alembic_config(), "0004")
+
+
 def test_the_budget_window_revision_matches_its_tables_and_downgrades(
     disposable_database,
 ) -> None:

@@ -10,7 +10,10 @@ lease of the caller starting its next years. A report run gains
 ``budget_window_run_id``: the budget-window run it is a year of, of the same
 report and catalog version (a composite foreign key), with at most one report
 run per year. The default privileges let the runtime role read, insert and
-update the new table, and not delete from it.
+update the new table, and not delete from it. The downgrade refuses to run
+while any budget-window report exists: without its window size and its
+years' link, each year's report run would read as a run of a single-year
+report.
 
 Revision ID: 0005
 Revises: 0004
@@ -164,8 +167,20 @@ def upgrade() -> None:
     _add_budget_window_run_id()
 
 
+def _refuse_while_budget_windows_exist() -> None:
+    op.execute(
+        "DO $$ BEGIN "
+        "IF EXISTS (SELECT 1 FROM simulation.reports "
+        "WHERE budget_window_size IS NOT NULL) "
+        "THEN RAISE EXCEPTION 'budget-window reports exist; revision 0005 is not "
+        "downgraded while they do'; "
+        "END IF; END $$"
+    )
+
+
 def downgrade() -> None:
-    """Drop what ``upgrade`` added, with its indexes and keys."""
+    """Drop what ``upgrade`` added, unless a budget-window report exists."""
+    _refuse_while_budget_windows_exist()
     op.drop_constraint(
         "uq_report_runs_budget_window_run_id_year",
         "report_runs",
