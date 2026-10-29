@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.2.2] - 2026-10-29
+
+### Changed
+
+- The beta deployment now runs its complete integration suite on seven pytest-xdist workers, so the six calculation tests run at the same time instead of one after another. The step should take about as long as its slowest test, about 5 minutes, instead of about 17.
+
+
 ## [0.2.1] - 2026-10-29
 
 ### Changed
