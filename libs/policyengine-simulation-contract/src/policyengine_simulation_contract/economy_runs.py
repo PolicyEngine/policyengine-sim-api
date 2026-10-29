@@ -51,6 +51,9 @@ ECONOMY_SIMULATION_FUNCTIONS: Mapping[str, str] = {
     "uk": "run_economy_simulation_uk",
 }
 ECONOMY_COMPARISON_FUNCTION = "compare_economy_simulations"
+# How many years of one budget window the Simulation Entrypoint calculates at
+# once. The functions above leave room for several windows at this cap.
+BUDGET_WINDOW_MAX_CONCURRENT_YEARS = 5
 
 # The parameters whose change makes policyengine.py calculate a labour supply
 # response, by country: a parameter at or below one of these paths. They are

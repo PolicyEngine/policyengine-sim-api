@@ -34,6 +34,9 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from policyengine_simulation_contract.call_reports import CallReportStatus
+from policyengine_simulation_contract.economy_runs import (
+    BUDGET_WINDOW_MAX_CONCURRENT_YEARS,
+)
 from policyengine_simulation_persistence import (
     BudgetWindowStatus,
     NewBudgetWindowRun,
@@ -80,8 +83,9 @@ logger = logging.getLogger(__name__)
 
 # How many of a run's years are calculated at once. A US national year is up
 # to two simulation calls of 20 segment calls each, so five years use at most
-# 200 of the US segment function's containers.
-DEFAULT_MAX_CONCURRENT_YEARS = 5
+# 200 of the US segment function's containers; the v2 Modal app's functions
+# have room for several windows at this cap.
+DEFAULT_MAX_CONCURRENT_YEARS = BUDGET_WINDOW_MAX_CONCURRENT_YEARS
 # A caller starting a run's years holds the run this long; one that stopped
 # loses the claim afterwards, and the safety check carries on.
 SCHEDULING_LEASE = timedelta(minutes=2)

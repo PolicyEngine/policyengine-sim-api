@@ -14,8 +14,12 @@ from budget_window_fakes import (
     finish_year,
 )
 from economy_fakes import NOW, US_VERSION
+from policyengine_simulation_contract.economy_runs import (
+    BUDGET_WINDOW_MAX_CONCURRENT_YEARS,
+)
 from policyengine_simulation_entry.budget_window_reports import (
     BUDGET_WINDOW_CHECK_INTERVAL,
+    DEFAULT_MAX_CONCURRENT_YEARS,
     SCHEDULING_LEASE,
 )
 from policyengine_simulation_entry.economy_report_types import (
@@ -193,6 +197,10 @@ def test_a_claim_is_released_with_the_next_check_even_when_starting_fails() -> N
 
 def test_a_claim_lasts_its_lease() -> None:
     assert timedelta(0) < SCHEDULING_LEASE <= BUDGET_WINDOW_CHECK_INTERVAL
+
+
+def test_the_cap_is_the_one_the_modal_functions_have_room_for() -> None:
+    assert DEFAULT_MAX_CONCURRENT_YEARS == BUDGET_WINDOW_MAX_CONCURRENT_YEARS == 5
 
 
 def test_a_rerun_reuses_each_years_runs_unless_forced() -> None:

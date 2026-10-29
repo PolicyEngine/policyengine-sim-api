@@ -287,7 +287,9 @@ def validate_worker_uk() -> dict:
     memory=32768,
     timeout=3600,
     retries=0,
-    max_containers=300,
+    # Three US national budget windows at the Simulation Entrypoint's cap of
+    # five years each: two simulations a year, 20 segments each.
+    max_containers=600,
     secrets=worker_secrets,
 )
 def run_single_simulation_segment_us(
@@ -653,7 +655,9 @@ def _run_economy_simulation(
     memory=32768,
     timeout=US_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
-    max_containers=10,
+    # Four budget windows at the Simulation Entrypoint's cap of five years,
+    # two simulations a year.
+    max_containers=40,
     secrets=worker_secrets,
 )
 def run_economy_simulation_us(
@@ -669,7 +673,9 @@ def run_economy_simulation_us(
     memory=32768,
     timeout=UK_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
-    max_containers=10,
+    # Four budget windows at the Simulation Entrypoint's cap of five years,
+    # two simulations a year.
+    max_containers=40,
     secrets=worker_secrets,
 )
 def run_economy_simulation_uk(
@@ -685,7 +691,9 @@ def run_economy_simulation_uk(
     memory=8192,
     timeout=ECONOMY_COMPARISON_TIMEOUT_SECONDS,
     retries=0,
-    max_containers=10,
+    # Four budget windows at the Simulation Entrypoint's cap of five years,
+    # one comparison a year, with as much room again for other reports.
+    max_containers=40,
     secrets=worker_secrets,
 )
 def compare_economy_simulations(
