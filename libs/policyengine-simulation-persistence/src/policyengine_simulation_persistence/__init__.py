@@ -4,6 +4,17 @@ Importing the package registers every table in ``simulation_metadata``, which
 the migration environment compares with the database.
 """
 
+from policyengine_simulation_persistence.budget_window_runs import (
+    BudgetWindowRunRecord,
+    BudgetWindowStatus,
+    BudgetWindowYear,
+    NewBudgetWindowRun,
+    StartedBudgetWindowRun,
+    YearBudget,
+)
+from policyengine_simulation_persistence.budget_window_store import (
+    BudgetWindowRunStore,
+)
 from policyengine_simulation_persistence.catalog_reads import (
     CATALOG_READ_TABLES,
     CatalogError,
@@ -41,6 +52,7 @@ from policyengine_simulation_persistence.output_files import (
     record_output_files,
 )
 from policyengine_simulation_persistence.reports import (
+    MAX_BUDGET_WINDOW_YEARS,
     NewReport,
     ReportKind,
     ReportRecord,
@@ -85,6 +97,7 @@ __all__ = [
     "ALEMBIC_VERSION_TABLE",
     "CATALOG_READ_TABLES",
     "HEAD_REVISION",
+    "MAX_BUDGET_WINDOW_YEARS",
     "OPTIONAL_SECTIONS",
     "OUTPUT_FILE_RETENTION",
     "RESULT_FIELD_STORAGE",
@@ -92,6 +105,10 @@ __all__ = [
     "SIMULATION_SCHEMA",
     "SUCCEEDED_RUN_REUSE_WINDOW",
     "AbandonedDispatches",
+    "BudgetWindowRunRecord",
+    "BudgetWindowRunStore",
+    "BudgetWindowStatus",
+    "BudgetWindowYear",
     "CatalogError",
     "CatalogReader",
     "CatalogVersion",
@@ -100,6 +117,7 @@ __all__ = [
     "EconomyResultLabels",
     "GeographyLabel",
     "HouseholdOutput",
+    "NewBudgetWindowRun",
     "NewReport",
     "NewReportRun",
     "NewSimulation",
@@ -123,8 +141,10 @@ __all__ = [
     "SimulationRecord",
     "SimulationRunRecord",
     "SimulationStore",
+    "StartedBudgetWindowRun",
     "StartedReportRun",
     "StartedSimulationRun",
+    "YearBudget",
     "available_output_files",
     "check_storable",
     "create_simulation_engine",

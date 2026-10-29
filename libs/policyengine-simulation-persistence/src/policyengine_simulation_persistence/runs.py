@@ -12,7 +12,9 @@ simulation run of the same catalog version and year (the reform is null for a
 single-simulation household report), plus, for an economy report, the
 comparison step's own status and Modal call. A household report has no
 comparison step: one Modal call computes both households, so its simulation
-runs share that call.
+runs share that call. Each report run of a budget-window report is one year of
+a budget-window run (``budget_window_run_id``), which has at most one report
+run per year.
 
 Each status moves ``pending`` -> ``dispatching`` -> ``running`` -> ``succeeded``
 or ``failed``. The region and dataset keys include the catalog version, through
@@ -289,6 +291,7 @@ report_runs = Table(
     Column("spm_provenance", JSONB(none_as_null=True), nullable=True),
     Column("result_model_version", Text, nullable=True),
     Column("result_data_version", Text, nullable=True),
+    Column("budget_window_run_id", Uuid(as_uuid=True), nullable=True),
     CheckConstraint(f"year BETWEEN {FIRST_YEAR} AND {LAST_YEAR}", name="year"),
     CheckConstraint(f"trigger IN ({_values(RunTrigger)})", name="trigger"),
     CheckConstraint(
@@ -332,6 +335,19 @@ report_runs = Table(
         name="fk_report_runs_reform_simulation_run",
         ondelete="RESTRICT",
     ),
+    # A year of a budget-window run is a report run of the same report and
+    # catalog version (``budget_window_runs``), and each year has one.
+    ForeignKeyConstraint(
+        ["budget_window_run_id", "report_id", "tax_benefit_model_version_id"],
+        [
+            "simulation.budget_window_runs.id",
+            "simulation.budget_window_runs.report_id",
+            "simulation.budget_window_runs.tax_benefit_model_version_id",
+        ],
+        name="fk_report_runs_budget_window_run",
+        ondelete="RESTRICT",
+    ),
+    UniqueConstraint("budget_window_run_id", "year"),
 )
 # A report's status is its newest report run's.
 Index(
@@ -409,6 +425,9 @@ class NewReportRun:
     baseline_simulation_run_id: UUID
     trigger: RunTrigger
     reform_simulation_run_id: UUID | None = None
+    # The budget-window run this report run is a year of; a budget-window
+    # report's report runs each have one, and other reports' none.
+    budget_window_run_id: UUID | None = None
 
 
 def _record_values(cls: type, row: RowMapping) -> dict[str, Any]:
@@ -480,6 +499,7 @@ class ReportRunRecord:
     comparison_completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    budget_window_run_id: UUID | None = None
 
     @classmethod
     def from_row(cls, row: RowMapping) -> Self:

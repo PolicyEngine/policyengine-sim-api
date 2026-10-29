@@ -107,6 +107,32 @@ def _check_report_run_simulations(
     return baseline
 
 
+def _check_budget_window_year(
+    report: RowMapping, year: int, new_report_run: NewReportRun
+) -> None:
+    """Require a budget-window report's run to be one year of its window.
+
+    A report run of any other report belongs to no budget-window run. The
+    database checks that the budget-window run is one of the report's, on
+    the report run's catalog version.
+    """
+    window_size = report["budget_window_size"]
+    if window_size is None:
+        if new_report_run.budget_window_run_id is not None:
+            msg = "only a budget-window report's report runs are years of a window"
+            raise ValueError(msg)
+        return
+    if new_report_run.budget_window_run_id is None:
+        msg = "a budget-window report's report run is a year of a budget-window run"
+        raise ValueError(msg)
+    if not report["year"] <= year < report["year"] + window_size:
+        msg = (
+            f"{year} is not a year of the report's window, which starts in "
+            f"{report['year']} and has {window_size} years"
+        )
+        raise ValueError(msg)
+
+
 class RunStore:
     """Typed SQLAlchemy Core reads and inserts for runs."""
 
@@ -328,6 +354,8 @@ class RunStore:
                     reports.c.kind,
                     reports.c.baseline_simulation_id,
                     reports.c.reform_simulation_id,
+                    reports.c.year,
+                    reports.c.budget_window_size,
                 ).where(reports.c.id == new_report_run.report_id)
             )
             .mappings()
@@ -345,6 +373,7 @@ class RunStore:
         baseline = _check_report_run_simulations(
             report, baseline, reform, new_report_run
         )
+        _check_budget_window_year(report, baseline["year"], new_report_run)
         economy = report["kind"] == ReportKind.ECONOMY.value
         row = (
             connection.execute(
@@ -361,6 +390,7 @@ class RunStore:
                         new_report_run.baseline_simulation_run_id
                     ),
                     reform_simulation_run_id=new_report_run.reform_simulation_run_id,
+                    budget_window_run_id=new_report_run.budget_window_run_id,
                     trigger=new_report_run.trigger.value,
                     comparison_status=(RunStatus.PENDING.value if economy else None),
                     created_at=now,
