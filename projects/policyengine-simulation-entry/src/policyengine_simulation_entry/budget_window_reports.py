@@ -20,8 +20,14 @@ whose lease ended while it worked, and that loses a year's insert, shares
 the other caller's report run and starts the simulation runs it created.
 
 ``YearStartingRecorder`` wraps the recording of a reported call, so its end
-starts the years it frees. The first year that fails fails the run, with that
-year's error, and no more
+starts the years it frees.
+
+Recovery covers a caller that stops between years. A caller that stops after
+claiming a simulation run's dispatch, before recording its Modal call, leaves
+the run dispatching; the safety check fails it after ten minutes, which fails
+its year and so the run, as it fails a single-year report.
+
+The first year that fails fails the run, with that year's error, and no more
 years start; years already running finish and keep their results. Once every
 year has succeeded, the run has succeeded. The run stores no totals: they are
 the sums of its years' budget rows, added up when it is read.
@@ -35,7 +41,6 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
-from policyengine_simulation_contract.call_reports import CallReportStatus
 from policyengine_simulation_contract.economy_runs import (
     BUDGET_WINDOW_MAX_CONCURRENT_YEARS,
 )
@@ -49,9 +54,14 @@ from policyengine_simulation_persistence import (
 )
 from policyengine_simulation_persistence.run_store import utc_now
 
+from policyengine_simulation_entry.economy_recorders import RECORDED_STATUSES
 from policyengine_simulation_entry.economy_report_types import (
     EconomyRequestError,
     ReportNotFoundError,
+)
+from policyengine_simulation_entry.economy_reports import (
+    RERUN_TRIGGERS,
+    WAITING_WORK_BATCH_SIZE,
 )
 from policyengine_simulation_entry.economy_schemas import ReportStatus
 from policyengine_simulation_entry.report_progress import report_run_progress
@@ -62,7 +72,10 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
-    from policyengine_simulation_contract.call_reports import CallEndedReport
+    from policyengine_simulation_contract.call_reports import (
+        CallEndedReport,
+        CallReportStatus,
+    )
     from policyengine_simulation_persistence import (
         BudgetWindowRunRecord,
         BudgetWindowYear,
@@ -73,6 +86,9 @@ if TYPE_CHECKING:
         YearBudget,
     )
 
+    from policyengine_simulation_entry.economy_recorders import (
+        ReportedCallRecorder,
+    )
     from policyengine_simulation_entry.economy_report_types import (
         EconomyCatalog,
         EconomyReportSubmission,
@@ -94,8 +110,6 @@ SCHEDULING_LEASE = timedelta(minutes=2)
 # scheduled: its years' calls report their ends, so this only catches a run
 # whose next years a stopped caller never started.
 BUDGET_WINDOW_CHECK_INTERVAL = SAFETY_CHECK_INTERVAL
-RERUN_TRIGGERS = frozenset({RunTrigger.MANUAL, RunTrigger.SYSTEM})
-WAITING_WORK_BATCH_SIZE = 50
 # A caller tries again after releasing its claim, in case a year finished
 # while it held the claim (its own read was then too early); at most this
 # many times.
@@ -555,17 +569,6 @@ class BudgetWindowReports:
             return 0
 
 
-class ReportedCallRecorder(Protocol):
-    """Record a reported call's outcome (``RunRecorder``, possibly wrapped)."""
-
-    async def record_reported_call(self, report: CallEndedReport) -> CallReportStatus:
-        """Record the call's outcome if Modal has one."""
-        ...
-
-
-_RECORDED = frozenset({CallReportStatus.RECORDED, CallReportStatus.ALREADY_RECORDED})
-
-
 @dataclass(frozen=True)
 class YearStartingRecorder:
     """Record a reported call, then start the budget-window years its end frees.
@@ -580,7 +583,7 @@ class YearStartingRecorder:
     async def record_reported_call(self, report: CallEndedReport) -> CallReportStatus:
         """Record the reported call; start the years it lets start."""
         report_status = await self.recorder.record_reported_call(report)
-        if report_status in _RECORDED:
+        if report_status in RECORDED_STATUSES:
             try:
                 await self.windows.start_years_after_call(
                     simulation_run_ids=report.simulation_run_ids,
