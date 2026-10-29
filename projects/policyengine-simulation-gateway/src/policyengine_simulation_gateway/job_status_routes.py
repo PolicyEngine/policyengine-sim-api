@@ -46,7 +46,6 @@ from policyengine_simulation_gateway.routes_common import (
     logger,
     observability_headers,
     observability_runtime,
-    record_not_found,
     router,
 )
 
@@ -122,7 +121,6 @@ async def get_job_status(
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_METADATA_READ)):
         job_metadata = job_metadata_store().get(job_id)
     if job_metadata is None:
-        record_not_found(runtime, f"Job not found: {job_id}")
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     observability_id = bind_observability_id(
         request,
@@ -226,7 +224,6 @@ async def get_budget_window_job_status(
     with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_LOAD)):
         seed_state = get_batch_job_seed(batch_job_id)
     if seed_state is None:
-        record_not_found(runtime, f"Budget-window job not found: {batch_job_id}")
         raise HTTPException(
             status_code=404, detail=f"Budget-window job not found: {batch_job_id}"
         )

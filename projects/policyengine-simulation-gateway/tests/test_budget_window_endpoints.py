@@ -135,7 +135,7 @@ class TestBudgetWindowBatchEndpoints:
         }
 
     @pytest.mark.usefixtures("mock_modal")
-    def test__given_unknown_budget_window_job__then_records_handled_404(
+    def test__given_unknown_budget_window_job__then_404_without_exception(
         self, client: TestClient, monkeypatch
     ):
         recorded_errors = []
@@ -151,13 +151,7 @@ class TestBudgetWindowBatchEndpoints:
         assert response.json()["detail"] == (
             "Budget-window job not found: missing-batch"
         )
-        assert str(recorded_errors[0][0]) == (
-            "Budget-window job not found: missing-batch"
-        )
-        assert recorded_errors[0][1] == {
-            "handled": True,
-            "status_code": 404,
-        }
+        assert recorded_errors == []
 
     def test__given_parent_lookup_failure__then_degraded_poll_is_not_an_error(
         self, mock_modal, client: TestClient, monkeypatch

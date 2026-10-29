@@ -35,6 +35,7 @@ from policyengine_simulation_contract.spm import (
     resolve_spm_selection,
     spm_error_detail,
 )
+from policyengine_simulation_observability.errors import log_and_redact_exception
 from policyengine_simulation_observability.identifiers import (
     OBSERVABILITY_ID_HEADER,
     resolve_observability_id,
@@ -226,7 +227,6 @@ async def submit_simulation(
             )
         _require_route_serves_breakdown(request, route)
     except ValueError as e:
-        runtime.record_exception(e, handled=True, status_code=400)
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     runtime.set_context(
@@ -259,8 +259,20 @@ async def submit_simulation(
                 errors=[detail.model_dump()],
                 headers=observability_headers(observability_id),
             )
-        runtime.record_exception(exc, handled=True, status_code=400)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # No request input reaches this point: the country and version are
+        # already checked, and every request-driven SPM error has a code. The
+        # error comes from the deployed bundle manifest, so it is a server
+        # failure, and the caller gets a redacted message.
+        redacted_error = log_and_redact_exception(
+            exc,
+            runtime=runtime,
+            scope="simulation_submission",
+            context={"resolved_app_name": route.app_name},
+        )
+        return failed_job_response(
+            error=redacted_error,
+            headers=observability_headers(observability_id),
+        )
 
     if request.spm is not None:
         payload["spm"] = request.spm.model_dump(mode="json")
@@ -336,7 +348,6 @@ async def submit_budget_window_batch(
                 request.policyengine_version,
             )
     except ValueError as e:
-        runtime.record_exception(e, handled=True, status_code=400)
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     runtime.set_context(
@@ -360,8 +371,20 @@ async def submit_budget_window_batch(
                 errors=[detail.model_dump()],
                 headers=observability_headers(observability_id),
             )
-        runtime.record_exception(exc, handled=True, status_code=400)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # No request input reaches this point: the country and version are
+        # already checked, and every request-driven SPM error has a code. The
+        # error comes from the deployed bundle manifest, so it is a server
+        # failure, and the caller gets a redacted message.
+        redacted_error = log_and_redact_exception(
+            exc,
+            runtime=runtime,
+            scope="budget_window_submission",
+            context={"resolved_app_name": route.app_name},
+        )
+        return failed_job_response(
+            error=redacted_error,
+            headers=observability_headers(observability_id),
+        )
     with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.REQUEST_PARSE)):
         payload = _build_budget_window_parent_payload(
             request,
