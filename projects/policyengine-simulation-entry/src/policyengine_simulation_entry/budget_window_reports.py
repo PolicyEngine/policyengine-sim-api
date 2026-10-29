@@ -38,6 +38,7 @@ from policyengine_simulation_contract.economy_runs import (
     BUDGET_WINDOW_MAX_CONCURRENT_YEARS,
 )
 from policyengine_simulation_persistence import (
+    ONE_REPORT_RUN_PER_YEAR,
     BudgetWindowStatus,
     NewBudgetWindowRun,
     ReportKind,
@@ -463,7 +464,9 @@ class BudgetWindowReports:
                 )
                 return started
             # Another caller started this year after its claim's lease ended.
-            except IntegrityError:
+            except IntegrityError as error:
+                if ONE_REPORT_RUN_PER_YEAR not in str(error):
+                    raise
                 logger.warning(
                     "budget_window_year_already_started",
                     extra={"budget_window_run_id": str(run.id), "year": year},

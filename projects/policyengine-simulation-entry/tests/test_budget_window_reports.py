@@ -28,11 +28,13 @@ from policyengine_simulation_entry.economy_report_types import (
     SimulationChoice,
 )
 from policyengine_simulation_persistence import (
+    ONE_REPORT_RUN_PER_YEAR,
     BudgetWindowStatus,
     NewBudgetWindowRun,
     RunStatus,
     RunTrigger,
 )
+from sqlalchemy.exc import IntegrityError
 
 
 def _rerun(path: WindowPath, report_id, **changes: object):
@@ -362,3 +364,77 @@ def test_one_run_that_cannot_resume_does_not_stop_the_others() -> None:
     assert started == 1
     assert path.year_runs(new_runs[0].id) == {}
     assert sorted(path.year_runs(new_runs[1].id)) == [2026]
+
+
+def _integrity_error(constraint: str) -> IntegrityError:
+    statement = "INSERT INTO simulation.report_runs"
+    return IntegrityError(
+        statement, {}, Exception(f'violates unique constraint "{constraint}"')
+    )
+
+
+def test_a_year_another_caller_started_ends_the_pass_without_failing() -> None:
+    path = WindowPath(max_concurrent_years=2)
+    _, run = path.submit_window(window_size=4)
+    finish_year(path.runs, path.year_runs(run.id)[2026])
+    real_create = path.runs.create_report_run
+    conflicts = [_integrity_error(ONE_REPORT_RUN_PER_YEAR)]
+
+    def lose_the_year(new_report_run):
+        # Another caller, whose claim's lease had ended, records the year first.
+        winner = real_create(new_report_run)
+        if conflicts:
+            raise conflicts.pop()
+        return winner
+
+    path.runs.create_report_run = lose_the_year  # type: ignore[method-assign]
+
+    started = _start_years_after(path, report_run_id=path.year_runs(run.id)[2026].id)
+
+    still_running = path.windows.get_run(run.id)
+    assert still_running is not None
+    assert still_running.status is BudgetWindowStatus.RUNNING
+    assert started == 0
+    assert sorted(path.year_runs(run.id)) == [2026, 2027, 2028]
+
+
+def test_any_other_integrity_error_is_raised_and_the_claim_released() -> None:
+    path = WindowPath(max_concurrent_years=2)
+    _, run = path.submit_window(window_size=4)
+    finish_year(path.runs, path.year_runs(run.id)[2026])
+
+    other_constraint = "fk_report_runs_budget_window_run"
+
+    def refuse(_new_report_run):
+        raise _integrity_error(other_constraint)
+
+    path.runs.create_report_run = refuse  # type: ignore[method-assign]
+
+    with pytest.raises(IntegrityError):
+        _start_years_after(path, report_run_id=path.year_runs(run.id)[2026].id)
+
+    released = path.windows.get_run(run.id)
+    assert released is not None
+    assert released.scheduling_claimed_until is None
+
+
+def test_a_year_that_finished_while_the_claim_was_held_frees_its_place() -> None:
+    """The caller read its years just before a year's comparison was recorded."""
+    path = WindowPath(max_concurrent_years=2)
+    _, run = path.submit_window(window_size=4)
+    real_years = path.windows.years
+    reads: list[int] = []
+
+    def read_then_finish_a_year(run_id):
+        years = real_years(run_id)
+        reads.append(len(years))
+        if len(reads) == 1:
+            finish_year(path.runs, path.year_runs(run.id)[2026])
+        return years
+
+    path.windows.years = read_then_finish_a_year  # type: ignore[method-assign]
+
+    started = asyncio.run(path.budget_windows.start_years(run.id))
+
+    assert started == 1
+    assert sorted(path.year_runs(run.id)) == [2026, 2027, 2028]

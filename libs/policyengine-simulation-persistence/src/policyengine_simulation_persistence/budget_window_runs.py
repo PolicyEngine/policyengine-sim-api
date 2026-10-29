@@ -60,6 +60,10 @@ class BudgetWindowStatus(StrEnum):
     FAILED = "failed"
 
 
+# The unique constraint that allows one report run per year of a
+# budget-window run; a caller that loses a year's insert reads its name.
+ONE_REPORT_RUN_PER_YEAR = "uq_report_runs_budget_window_run_id_year"
+
 FINISHED_BUDGET_WINDOW_STATUSES = (
     BudgetWindowStatus.SUCCEEDED,
     BudgetWindowStatus.FAILED,

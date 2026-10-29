@@ -20,6 +20,7 @@ from budget_window_support import (
 )
 from migration_support import alembic_config, migration_cycle_failures
 from policyengine_simulation_persistence import (
+    ONE_REPORT_RUN_PER_YEAR,
     BudgetWindowStatus,
     NewBudgetWindowRun,
     NewReport,
@@ -208,7 +209,7 @@ def test_each_year_is_one_report_run_of_the_budget_window_run(
         WINDOW_START,
         WINDOW_START + 1,
     }
-    with pytest.raises(IntegrityError, match="uq_report_runs_budget_window_run_id"):
+    with pytest.raises(IntegrityError, match=ONE_REPORT_RUN_PER_YEAR):
         year_report_run(
             migrated_database,
             public_api_rows,

@@ -5,6 +5,7 @@ the migration environment compares with the database.
 """
 
 from policyengine_simulation_persistence.budget_window_runs import (
+    ONE_REPORT_RUN_PER_YEAR,
     BudgetWindowRunRecord,
     BudgetWindowStatus,
     BudgetWindowYear,
@@ -98,6 +99,7 @@ __all__ = [
     "CATALOG_READ_TABLES",
     "HEAD_REVISION",
     "MAX_BUDGET_WINDOW_YEARS",
+    "ONE_REPORT_RUN_PER_YEAR",
     "OPTIONAL_SECTIONS",
     "OUTPUT_FILE_RETENTION",
     "RESULT_FIELD_STORAGE",
