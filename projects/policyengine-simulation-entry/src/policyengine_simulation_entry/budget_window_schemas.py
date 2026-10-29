@@ -1,17 +1,19 @@
 """Request and response bodies of the v2 budget-window report routes.
 
-A budget-window report's result is today's budget-window format
-(``BudgetWindowResult``): each year's budget figures and their totals, which
-are summed when the report is read.
+A budget-window report's result is today's budget-window format, the JSON
+the old gateway's budget windows answer with: each year's budget figures and
+their totals, which are summed when the report is read. Its models are the v2
+path's own (``BudgetWindowReportResult``), so a change to the old gateway's
+models never changes this contract; they leave out the old gateway's SPM
+provenance, which v2 budget windows never have.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from policyengine_simulation_contract.gateway_models import BudgetWindowResult
 from policyengine_simulation_contract.job_progress import JobStage
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
@@ -60,6 +62,45 @@ class BudgetWindowReportSubmissionRequest(BaseModel):
             msg = f"a budget window must end in {LAST_WINDOW_YEAR} or earlier"
             raise ValueError(msg)
         return self
+
+
+class BudgetWindowYearImpact(BaseModel):
+    """One year's budget figures; the federal figure is the total less the state's."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    year: str
+    taxRevenueImpact: float  # noqa: N815  # today's budget-window JSON field
+    federalTaxRevenueImpact: float  # noqa: N815  # today's budget-window JSON field
+    stateTaxRevenueImpact: float  # noqa: N815  # today's budget-window JSON field
+    benefitSpendingImpact: float  # noqa: N815  # today's budget-window JSON field
+    budgetaryImpact: float  # noqa: N815  # today's budget-window JSON field
+
+
+class BudgetWindowTotalImpact(BaseModel):
+    """The sums of every year's budget figures."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    year: Literal["Total"] = "Total"
+    taxRevenueImpact: float  # noqa: N815  # today's budget-window JSON field
+    federalTaxRevenueImpact: float  # noqa: N815  # today's budget-window JSON field
+    stateTaxRevenueImpact: float  # noqa: N815  # today's budget-window JSON field
+    benefitSpendingImpact: float  # noqa: N815  # today's budget-window JSON field
+    budgetaryImpact: float  # noqa: N815  # today's budget-window JSON field
+
+
+class BudgetWindowReportResult(BaseModel):
+    """A budget window's result: each year's figures, in year order, and totals."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["budgetWindow"] = "budgetWindow"
+    startYear: str  # noqa: N815  # today's budget-window JSON field
+    endYear: str  # noqa: N815  # today's budget-window JSON field
+    windowSize: int  # noqa: N815  # today's budget-window JSON field
+    annualImpacts: list[BudgetWindowYearImpact]  # noqa: N815  # today's budget-window JSON field
+    totals: BudgetWindowTotalImpact
 
 
 class BudgetWindowYearResponse(BaseModel):
@@ -122,4 +163,4 @@ class BudgetWindowReportResponse(BaseModel):
     reform_simulation: SimulationResponse
     status: ReportStatus
     run: BudgetWindowRunResponse | None
-    result: BudgetWindowResult | None
+    result: BudgetWindowReportResult | None

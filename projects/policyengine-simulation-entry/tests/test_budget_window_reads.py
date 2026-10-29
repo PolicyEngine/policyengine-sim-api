@@ -14,6 +14,7 @@ from policyengine_simulation_entry.budget_window_reads import (
     StoredWindowResultError,
 )
 from policyengine_simulation_entry.budget_window_schemas import (
+    BudgetWindowReportResult,
     BudgetWindowReportSubmissionRequest,
 )
 from policyengine_simulation_entry.economy_report_types import ReportNotFoundError
@@ -169,6 +170,8 @@ def test_a_finished_window_sums_its_years_exactly_when_read() -> None:
     # Binary floats would make 0.6000000000000001.
     assert result.totals.budgetaryImpact == 0.6
     assert result.totals.year == "Total"
+    assert isinstance(result, BudgetWindowReportResult)
+    assert "spm_provenance" not in result.model_dump()["annualImpacts"][0]
     first = result.annualImpacts[0]
     assert first.taxRevenueImpact == 2.0
     assert first.stateTaxRevenueImpact == 0.5

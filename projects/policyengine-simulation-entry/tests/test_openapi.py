@@ -52,9 +52,12 @@ EXPECTED_ROUTES = {
 # old gateway has none of them or their bodies.
 V2_SCHEMAS = (
     "BudgetWindowReportResponse",
+    "BudgetWindowReportResult",
     "BudgetWindowReportSubmissionRequest",
     "BudgetWindowRunResponse",
     "BudgetWindowRunsResponse",
+    "BudgetWindowTotalImpact",
+    "BudgetWindowYearImpact",
     "BudgetWindowYearResponse",
     "ComparisonResponse",
     "EconomyErrorResponse",
@@ -236,6 +239,18 @@ def test_v2_economy_routes_are_public_for_the_generated_client():
         "run_economy_report"
     )
     assert set(V2_SCHEMAS) <= set(spec["components"]["schemas"])
+
+
+def test_v2_budget_window_results_have_models_of_their_own():
+    """The old gateway's budget-window models stay the old gateway's."""
+    spec = cast("dict[str, Any]", create_app().openapi())
+    report = spec["components"]["schemas"]["BudgetWindowReportResponse"]
+
+    assert report["properties"]["result"]["anyOf"][0] == {
+        "$ref": "#/components/schemas/BudgetWindowReportResult"
+    }
+    year = spec["components"]["schemas"]["BudgetWindowYearImpact"]
+    assert "spm_provenance" not in year["properties"]
 
 
 def test_v2_budget_window_routes_are_public_for_the_generated_client():

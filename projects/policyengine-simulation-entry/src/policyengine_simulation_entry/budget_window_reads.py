@@ -5,7 +5,7 @@ of its window: the years it started have their report runs' status, stage and
 error; the others are queued, or never run once the run has finished. A run
 has failed as soon as one year has, before the scheduler records it, and has
 succeeded once every year has. Once it has succeeded, its result is today's
-budget-window format (``BudgetWindowResult``), built from each year's stored
+budget-window format (``BudgetWindowReportResult``), built from each year's stored
 budget row. The totals are summed in decimal arithmetic, so a ten-year sum
 of large figures carries no binary rounding error, then returned as floats,
 as the old gateway's budget windows are.
@@ -17,19 +17,17 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Protocol
 
-from policyengine_simulation_contract.gateway_models import (
-    BudgetWindowAnnualImpact,
-    BudgetWindowResult,
-    BudgetWindowTotals,
-)
 from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_persistence import BudgetWindowStatus, ReportKind
 
 from policyengine_simulation_entry.budget_window_reports import window_state
 from policyengine_simulation_entry.budget_window_schemas import (
     BudgetWindowReportResponse,
+    BudgetWindowReportResult,
     BudgetWindowRunResponse,
     BudgetWindowRunsResponse,
+    BudgetWindowTotalImpact,
+    BudgetWindowYearImpact,
     BudgetWindowYearResponse,
 )
 from policyengine_simulation_entry.economy_report_types import ReportNotFoundError
@@ -96,8 +94,8 @@ class BudgetWindowRunReads(Protocol):
         ...
 
 
-def _annual_impact(budget: YearBudget) -> BudgetWindowAnnualImpact:
-    return BudgetWindowAnnualImpact(
+def _annual_impact(budget: YearBudget) -> BudgetWindowYearImpact:
+    return BudgetWindowYearImpact(
         year=str(budget.year),
         taxRevenueImpact=budget.tax_revenue_impact,
         federalTaxRevenueImpact=(
@@ -109,7 +107,7 @@ def _annual_impact(budget: YearBudget) -> BudgetWindowAnnualImpact:
     )
 
 
-def _totals(annual_impacts: list[BudgetWindowAnnualImpact]) -> BudgetWindowTotals:
+def _totals(annual_impacts: list[BudgetWindowYearImpact]) -> BudgetWindowTotalImpact:
     """Sum the years' figures in decimal arithmetic, from each float's shortest form."""
     sums = {
         name: sum(
@@ -118,7 +116,7 @@ def _totals(annual_impacts: list[BudgetWindowAnnualImpact]) -> BudgetWindowTotal
         )
         for name in _BUDGET_FIELDS
     }
-    return BudgetWindowTotals(
+    return BudgetWindowTotalImpact(
         taxRevenueImpact=float(sums["taxRevenueImpact"]),
         federalTaxRevenueImpact=float(sums["federalTaxRevenueImpact"]),
         stateTaxRevenueImpact=float(sums["stateTaxRevenueImpact"]),
@@ -129,7 +127,7 @@ def _totals(annual_impacts: list[BudgetWindowAnnualImpact]) -> BudgetWindowTotal
 
 def budget_window_result(
     report: ReportRecord, budgets: list[YearBudget]
-) -> BudgetWindowResult:
+) -> BudgetWindowReportResult:
     """Return the window's result from each year's budget figures.
 
     Raise LookupError when a year of the window has no stored figures.
@@ -141,7 +139,7 @@ def budget_window_result(
         msg = f"years {missing} of the window have no stored budget figures"
         raise LookupError(msg)
     annual_impacts = [_annual_impact(budget) for budget in budgets]
-    return BudgetWindowResult(
+    return BudgetWindowReportResult(
         startYear=str(years[0]),
         endYear=str(years[-1]),
         windowSize=len(years),
