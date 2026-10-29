@@ -278,6 +278,18 @@ class EconomyReports:
             simulations.append(simulation)
         return ReportSetup(report, version, (simulations[0], simulations[1]))
 
+    async def check_setup(self, setup: ReportSetup) -> None:
+        """Raise EconomyRequestError unless both simulations' rows resolve.
+
+        Each simulation's region and dataset must exist in the setup's
+        catalog version, in a form a call can carry, so a caller can refuse
+        a report before it writes anything.
+        """
+        for simulation in setup.simulations:
+            await self._population(
+                setup.version, simulation.region_code, simulation.dataset_name
+            )
+
     async def run_year(
         self,
         setup: ReportSetup,

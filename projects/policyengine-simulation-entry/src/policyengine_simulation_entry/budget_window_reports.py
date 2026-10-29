@@ -295,9 +295,15 @@ class BudgetWindowReports:
         if report.options:
             msg = "economy reports take no options yet"
             raise EconomyRequestError(msg)
+        if trigger is RunTrigger.SYSTEM:
+            newest = await asyncio.to_thread(self.windows.latest_run, report_id)
+            if newest is not None:
+                return newest
         version = await self.economy.catalog_version(
             report.country, policyengine_version
         )
+        # Refuse a run its catalog version cannot resolve before it is written.
+        await self.economy.check_setup(await self.economy.report_setup(report, version))
         new_run = self._new_run(report, version, trigger, force=force)
         if trigger is RunTrigger.SYSTEM:
             first = await asyncio.to_thread(

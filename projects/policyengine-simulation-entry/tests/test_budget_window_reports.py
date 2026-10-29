@@ -241,6 +241,30 @@ def test_a_system_run_of_a_report_that_has_a_run_returns_its_newest() -> None:
     assert path.dispatcher.requests == []
 
 
+def test_a_rerun_its_version_cannot_run_is_refused_before_anything_is_written() -> None:
+    path = WindowPath()
+    report, first = path.submit_window(window_size=2)
+    del path.catalog.populations["state/ca"]
+    path.dispatcher.requests.clear()
+
+    with pytest.raises(EconomyRequestError, match="state/ca"):
+        _rerun(path, report.id)
+
+    assert path.windows.runs(report.id) == [path.windows.get_run(first.id)]
+    assert path.dispatcher.requests == []
+
+
+def test_a_system_run_returns_the_newest_run_before_reading_the_catalog() -> None:
+    path = WindowPath()
+    report, first = path.submit_window(window_size=2)
+
+    again = _rerun(
+        path, report.id, trigger=RunTrigger.SYSTEM, policyengine_version="9.9.9"
+    )
+
+    assert again.id == first.id
+
+
 def test_a_system_run_of_a_report_without_one_calculates_it() -> None:
     path = WindowPath()
     setup = path.prepare(window_size=2)
