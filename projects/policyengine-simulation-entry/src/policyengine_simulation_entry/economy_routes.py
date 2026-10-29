@@ -157,7 +157,8 @@ def _error(code: str | None, message: str | None) -> RunErrorResponse | None:
     return None if code is None else RunErrorResponse(code=code, message=message)
 
 
-def _simulation(record: SimulationRecord) -> SimulationResponse:
+def simulation_response(record: SimulationRecord) -> SimulationResponse:
+    """Describe a simulation."""
     return SimulationResponse(
         id=record.id,
         kind=record.kind.value,
@@ -301,8 +302,8 @@ class EconomyReportReads:
             options=report.options,
             legacy_report_id=report.legacy_report_id,
             created_at=report.created_at,
-            baseline_simulation=_simulation(baseline),
-            reform_simulation=_simulation(reform),
+            baseline_simulation=simulation_response(baseline),
+            reform_simulation=simulation_response(reform),
             status=ReportStatus.NOT_RUN if latest is None else latest.status,
             run=latest,
             result=result,
@@ -334,7 +335,7 @@ class EconomyReportReads:
         if record is None:
             msg = f"no simulation {simulation_id}"
             raise ReportNotFoundError(msg)
-        return _simulation(record)
+        return simulation_response(record)
 
     @staticmethod
     def _report(record: ReportRecord | None, identifier: object) -> ReportRecord:
