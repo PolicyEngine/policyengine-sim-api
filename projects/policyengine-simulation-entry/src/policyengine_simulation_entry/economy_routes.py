@@ -185,7 +185,7 @@ def _simulation_run(record: SimulationRunRecord) -> SimulationRunResponse:
     )
 
 
-def _progress(
+def report_run_progress(
     report_run: ReportRunRecord,
     runs: tuple[SimulationRunRecord, SimulationRunRecord],
 ) -> tuple[ReportStatus, JobStage | None, RunErrorResponse | None]:
@@ -242,7 +242,9 @@ class EconomyReportReads:
         version = self.catalog.catalog_version_by_id(
             report_run.tax_benefit_model_version_id
         )
-        report_status, stage, error = _progress(report_run, (baseline, reform))
+        report_status, stage, error = report_run_progress(
+            report_run, (baseline, reform)
+        )
         return EconomyReportRunResponse(
             id=report_run.id,
             report_id=report_run.report_id,
