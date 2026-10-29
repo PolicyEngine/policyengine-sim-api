@@ -457,12 +457,16 @@ class EconomyReports:
         Simultaneous first opens of a report without a run then share one
         report run. A caller that loses still starts the runs it created
         that the recorded run compares, and leaves the others pending for the
-        safety check. A year of a budget-window run is always its own run.
+        safety check. A year of a budget-window run is its own run, whatever
+        the trigger; a caller that starts a year another caller has just
+        started shares that caller's report run in the same way.
         """
-        if (
-            new_report_run.trigger is not RunTrigger.SYSTEM
-            or new_report_run.budget_window_run_id is not None
-        ):
+        if new_report_run.budget_window_run_id is not None:
+            year = await asyncio.to_thread(
+                self.runs.create_window_year_run, new_report_run
+            )
+            return year.run
+        if new_report_run.trigger is not RunTrigger.SYSTEM:
             return await asyncio.to_thread(self.runs.create_report_run, new_report_run)
         first = await asyncio.to_thread(
             self.runs.create_first_report_run, new_report_run

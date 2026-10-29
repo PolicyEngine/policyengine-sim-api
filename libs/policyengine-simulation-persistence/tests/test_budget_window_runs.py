@@ -24,6 +24,7 @@ from policyengine_simulation_persistence import (
     BudgetWindowStatus,
     NewBudgetWindowRun,
     NewReport,
+    NewReportRun,
     ReportKind,
     RunError,
     RunErrorCode,
@@ -34,7 +35,7 @@ from policyengine_simulation_persistence import (
 )
 from public_api_support import superuser_engine
 from report_support import economy_pair, economy_report, report_store
-from run_support import set_simulation_run_status
+from run_support import economy_run, run_store, set_simulation_run_status
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 from transition_support import ManualClock
@@ -582,3 +583,93 @@ def test_the_runtime_role_updates_budget_window_runs_but_cannot_delete_them(
             connection.execute(text("DELETE FROM simulation.budget_window_runs"))
     finally:
         engine.dispose()
+
+
+def _year_report_run_input(database, rows, window, *, year, budget_window_run_id):
+    report, simulations = window
+    store = run_store(database)
+    baseline_run, reform_run = (
+        store.start_simulation_run(economy_run(simulation, rows, year=year)).run
+        for simulation in simulations
+    )
+    return NewReportRun(
+        report_id=report.id,
+        baseline_simulation_run_id=baseline_run.id,
+        reform_simulation_run_id=reform_run.id,
+        trigger=RunTrigger.INITIAL,
+        budget_window_run_id=budget_window_run_id,
+    )
+
+
+def test_a_year_recorded_twice_returns_the_first_report_run(
+    migrated_database, public_api_rows
+) -> None:
+    report, simulations = budget_window_report(migrated_database, public_api_rows)
+    run = budget_window_store(migrated_database).create_run(
+        new_budget_window_run(report, public_api_rows),
+        first_check_at=ManualClock()(),
+    )
+    year_input = _year_report_run_input(
+        migrated_database,
+        public_api_rows,
+        (report, simulations),
+        year=WINDOW_START,
+        budget_window_run_id=run.id,
+    )
+    store = run_store(migrated_database)
+
+    first = store.create_window_year_run(year_input)
+    again = store.create_window_year_run(year_input)
+
+    assert first.created is True
+    assert first.run.budget_window_run_id == run.id
+    assert again.created is False
+    assert again.run == first.run
+
+
+SIMULTANEOUS_YEAR_STARTS = 6
+
+
+def test_simultaneous_starts_of_a_year_add_one_report_run(
+    migrated_database, public_api_rows
+) -> None:
+    report, simulations = budget_window_report(migrated_database, public_api_rows)
+    run = budget_window_store(migrated_database).create_run(
+        new_budget_window_run(report, public_api_rows),
+        first_check_at=ManualClock()(),
+    )
+    year_input = _year_report_run_input(
+        migrated_database,
+        public_api_rows,
+        (report, simulations),
+        year=WINDOW_START,
+        budget_window_run_id=run.id,
+    )
+    store = run_store(migrated_database)
+    all_ready = Barrier(SIMULTANEOUS_YEAR_STARTS)
+
+    def start_the_year(_: int):
+        all_ready.wait()
+        return store.create_window_year_run(year_input)
+
+    with ThreadPoolExecutor(max_workers=SIMULTANEOUS_YEAR_STARTS) as pool:
+        started = list(pool.map(start_the_year, range(SIMULTANEOUS_YEAR_STARTS)))
+
+    assert sum(start.created for start in started) == 1
+    assert {start.run.id for start in started} == {started[0].run.id}
+
+
+def test_only_a_year_of_a_budget_window_run_is_recorded_as_one(
+    migrated_database, public_api_rows
+) -> None:
+    report, simulations = budget_window_report(migrated_database, public_api_rows)
+    year_input = _year_report_run_input(
+        migrated_database,
+        public_api_rows,
+        (report, simulations),
+        year=WINDOW_START,
+        budget_window_run_id=None,
+    )
+
+    with pytest.raises(ValueError, match="budget-window run"):
+        run_store(migrated_database).create_window_year_run(year_input)

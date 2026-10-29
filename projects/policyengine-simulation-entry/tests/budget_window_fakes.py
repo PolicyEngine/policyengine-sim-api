@@ -31,14 +31,17 @@ from policyengine_simulation_entry.economy_report_types import (
 from policyengine_simulation_entry.economy_reports import EconomyReports
 from policyengine_simulation_entry.run_dispatch import RunDispatchService
 from policyengine_simulation_persistence import (
+    ONE_REPORT_RUN_PER_YEAR,
     BudgetWindowRunRecord,
     BudgetWindowStatus,
     BudgetWindowYear,
     RunStatus,
     StartedBudgetWindowRun,
+    StartedReportRun,
     YearBudget,
 )
 from run_fakes import FakeDispatcher
+from sqlalchemy.exc import IntegrityError
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -64,6 +67,24 @@ class WindowRuns(FakeRuns):
         )
         self.report_runs_by_id[row.id] = row
         return row
+
+    def create_window_year_run(self, new_report_run: NewReportRun) -> StartedReportRun:
+        """Add a year's report run, or return the one another caller added."""
+        try:
+            return StartedReportRun(
+                run=self.create_report_run(new_report_run), created=True
+            )
+        except IntegrityError as error:
+            if ONE_REPORT_RUN_PER_YEAR not in str(error):
+                raise
+        year = self.simulation_runs[new_report_run.baseline_simulation_run_id].year
+        existing = next(
+            report_run
+            for report_run in self.report_runs_by_id.values()
+            if report_run.budget_window_run_id == new_report_run.budget_window_run_id
+            and report_run.year == year
+        )
+        return StartedReportRun(run=existing, created=False)
 
 
 @dataclass

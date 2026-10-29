@@ -373,7 +373,12 @@ def _integrity_error(constraint: str) -> IntegrityError:
     )
 
 
-def test_a_year_another_caller_started_ends_the_pass_without_failing() -> None:
+def test_a_caller_that_loses_a_year_still_starts_the_runs_it_created() -> None:
+    """Another caller records the year first, comparing the runs this one created.
+
+    That caller reused the runs, so only this one starts them, as a first
+    open that loses does for a single-year report.
+    """
     path = WindowPath(max_concurrent_years=2)
     _, run = path.submit_window(window_size=4)
     finish_year(path.runs, path.year_runs(run.id)[2026])
@@ -388,14 +393,19 @@ def test_a_year_another_caller_started_ends_the_pass_without_failing() -> None:
         return winner
 
     path.runs.create_report_run = lose_the_year  # type: ignore[method-assign]
+    path.dispatcher.requests.clear()
 
-    started = _start_years_after(path, report_run_id=path.year_runs(run.id)[2026].id)
+    _start_years_after(path, report_run_id=path.year_runs(run.id)[2026].id)
 
     still_running = path.windows.get_run(run.id)
     assert still_running is not None
     assert still_running.status is BudgetWindowStatus.RUNNING
-    assert started == 0
     assert sorted(path.year_runs(run.id)) == [2026, 2027, 2028]
+    year_2028 = path.year_runs(run.id)[2028]
+    assert {call.simulation_run_id for call in path.simulation_calls()} == {
+        year_2028.baseline_simulation_run_id,
+        year_2028.reform_simulation_run_id,
+    }
 
 
 def test_any_other_integrity_error_is_raised_and_the_claim_released() -> None:

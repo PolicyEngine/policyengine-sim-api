@@ -14,8 +14,10 @@ one window cannot take every Modal container (a US national year is two
 simulations of 20 segment calls each). The next years start when a year's
 call reports its end (``start_years_after_call``) and on each safety-check
 pass (``resume_waiting_work``). Whoever starts years first claims the run, a
-lease of ``SCHEDULING_LEASE``, so two callers do not start the same year;
-the database allows one report run per year of a run in any case.
+lease of ``SCHEDULING_LEASE``, so two callers do not start the same year.
+The database allows one report run per year of a run in any case: a caller
+whose lease ended while it worked, and that loses a year's insert, shares
+the other caller's report run and starts the simulation runs it created.
 
 ``YearStartingRecorder`` wraps the recording of a reported call, so its end
 starts the years it frees. The first year that fails fails the run, with that
@@ -38,7 +40,6 @@ from policyengine_simulation_contract.economy_runs import (
     BUDGET_WINDOW_MAX_CONCURRENT_YEARS,
 )
 from policyengine_simulation_persistence import (
-    ONE_REPORT_RUN_PER_YEAR,
     BudgetWindowStatus,
     NewBudgetWindowRun,
     ReportKind,
@@ -47,7 +48,6 @@ from policyengine_simulation_persistence import (
     RunTrigger,
 )
 from policyengine_simulation_persistence.run_store import utc_now
-from sqlalchemy.exc import IntegrityError
 
 from policyengine_simulation_entry.economy_report_types import (
     EconomyRequestError,
@@ -433,8 +433,9 @@ class BudgetWindowReports:
     ) -> int:
         """Start these years of the run in order; return how many started.
 
-        A year that cannot start fails the run, and one another caller
-        started ends this pass.
+        A year that cannot start fails the run. A year another caller
+        started at the same time is that caller's report run; this caller
+        starts the simulation runs it created for it.
         """
         version = await asyncio.to_thread(
             self.catalog.catalog_version_by_id, run.tax_benefit_model_version_id
@@ -461,15 +462,6 @@ class BudgetWindowReports:
                         RunErrorCode.INVALID_INPUT,
                         f"The {year} calculation cannot start: {error}",
                     ),
-                )
-                return started
-            # Another caller started this year after its claim's lease ended.
-            except IntegrityError as error:
-                if ONE_REPORT_RUN_PER_YEAR not in str(error):
-                    raise
-                logger.warning(
-                    "budget_window_year_already_started",
-                    extra={"budget_window_run_id": str(run.id), "year": year},
                 )
                 return started
             started += 1
