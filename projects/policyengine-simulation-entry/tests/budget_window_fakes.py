@@ -165,7 +165,7 @@ class FakeBudgetWindows:
             if year.report_run.id in self.budgets
         ]
 
-    def claim_scheduling(self, run_id: UUID, *, lease: timedelta) -> bool:
+    def claim_scheduling(self, run_id: UUID, *, lease: timedelta) -> datetime | None:
         row = self.rows[run_id]
         now = self.economy_runs.clock()
         if (
@@ -176,13 +176,18 @@ class FakeBudgetWindows:
                 and row.scheduling_claimed_until > now
             )
         ):
-            return False
+            return None
         self.rows[run_id] = replace(row, scheduling_claimed_until=now + lease)
-        return True
+        return now + lease
 
-    def release_scheduling(self, run_id: UUID, *, next_check_at: datetime) -> None:
+    def release_scheduling(
+        self, run_id: UUID, *, claimed_until: datetime, next_check_at: datetime
+    ) -> None:
         row = self.rows[run_id]
-        if row.status is BudgetWindowStatus.RUNNING:
+        if (
+            row.status is BudgetWindowStatus.RUNNING
+            and row.scheduling_claimed_until == claimed_until
+        ):
             self.rows[run_id] = replace(
                 row, scheduling_claimed_until=None, next_check_at=next_check_at
             )

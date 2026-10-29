@@ -337,17 +337,45 @@ def test_one_scheduler_claims_a_run_at_a_time(
     )
     lease = timedelta(minutes=2)
 
-    assert store.claim_scheduling(run.id, lease=lease) is True
-    assert store.claim_scheduling(run.id, lease=lease) is False
-    store.release_scheduling(run.id, next_check_at=clock() + FIRST_CHECK)
-    assert store.claim_scheduling(run.id, lease=lease) is True
+    first = store.claim_scheduling(run.id, lease=lease)
+    assert first == clock() + lease
+    assert store.claim_scheduling(run.id, lease=lease) is None
+    store.release_scheduling(
+        run.id, claimed_until=first, next_check_at=clock() + FIRST_CHECK
+    )
+    assert store.claim_scheduling(run.id, lease=lease) is not None
     clock.advance(lease)
     # A scheduler that stopped without releasing its claim loses it.
-    assert store.claim_scheduling(run.id, lease=lease) is True
-    released = store.get_run(run.id)
-    assert released is not None
+    assert store.claim_scheduling(run.id, lease=lease) == clock() + lease
     store.finish_run(run.id, BudgetWindowStatus.SUCCEEDED)
-    assert store.claim_scheduling(run.id, lease=lease) is False
+    assert store.claim_scheduling(run.id, lease=lease) is None
+
+
+def test_a_late_release_leaves_a_newer_claim_in_place(
+    migrated_database, public_api_rows
+) -> None:
+    report, _ = budget_window_report(migrated_database, public_api_rows)
+    clock = ManualClock()
+    store = budget_window_store(migrated_database, clock)
+    run = store.create_run(
+        new_budget_window_run(report, public_api_rows), first_check_at=clock()
+    )
+    lease = timedelta(minutes=2)
+    expired = store.claim_scheduling(run.id, lease=lease)
+    clock.advance(lease)
+    current = store.claim_scheduling(run.id, lease=lease)
+    assert expired is not None
+    assert current is not None
+
+    # The first scheduler finishes after its lease ended.
+    store.release_scheduling(
+        run.id, claimed_until=expired, next_check_at=clock() + FIRST_CHECK
+    )
+
+    held = store.get_run(run.id)
+    assert held is not None
+    assert held.scheduling_claimed_until == current
+    assert store.claim_scheduling(run.id, lease=lease) is None
 
 
 SIMULTANEOUS_SCHEDULERS = 6
@@ -366,7 +394,7 @@ def test_simultaneous_schedulers_claim_a_run_once(
 
     def claim(_: int) -> bool:
         all_ready.wait()
-        return store.claim_scheduling(run.id, lease=timedelta(minutes=2))
+        return store.claim_scheduling(run.id, lease=timedelta(minutes=2)) is not None
 
     with ThreadPoolExecutor(max_workers=SIMULTANEOUS_SCHEDULERS) as pool:
         claims = list(pool.map(claim, range(SIMULTANEOUS_SCHEDULERS)))
@@ -383,13 +411,17 @@ def test_releasing_a_claim_sets_the_next_check(
     run = store.create_run(
         new_budget_window_run(report, public_api_rows), first_check_at=clock()
     )
-    store.claim_scheduling(run.id, lease=timedelta(minutes=2))
+    claimed_until = store.claim_scheduling(run.id, lease=timedelta(minutes=2))
+    assert claimed_until is not None
 
-    store.release_scheduling(run.id, next_check_at=clock() + FIRST_CHECK)
+    store.release_scheduling(
+        run.id, claimed_until=claimed_until, next_check_at=clock() + FIRST_CHECK
+    )
 
     released = store.get_run(run.id)
     assert released is not None
     assert released.next_check_at == clock() + FIRST_CHECK
+    assert released.scheduling_claimed_until is None
 
 
 def test_due_runs_are_the_running_runs_whose_check_is_due(

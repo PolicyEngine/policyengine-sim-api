@@ -2,8 +2,10 @@
 
 A budget-window run starts ``running``. Whoever starts its next years first
 claims it (``claim_scheduling``): a claim is a lease, so a caller that stopped
-loses it once the lease ends, and another caller can carry on. Releasing the
-claim sets when the safety check next looks at the run. The run is finished
+loses it once the lease ends, and another caller can carry on. A caller
+releases only its own claim, named by the time it lasts until, so a caller
+that finishes after its lease ended leaves the newer claim alone; releasing
+sets when the safety check next looks at the run. The run is finished
 once, with a conditional write, as ``succeeded`` or ``failed``.
 
 A run's years are its report runs, read with both simulation runs of each.
@@ -275,12 +277,15 @@ class BudgetWindowRunStore:
 
     # --- Scheduling and finishing ------------------------------------------
 
-    def claim_scheduling(self, run_id: UUID, *, lease: timedelta) -> bool:
-        """Claim a running run to start its next years; return whether this did.
+    def claim_scheduling(self, run_id: UUID, *, lease: timedelta) -> datetime | None:
+        """Claim a running run to start its next years.
 
-        A claim held by another caller is refused until its lease ends.
+        Return when the claim ends, which names it for ``release_scheduling``,
+        or None when another caller holds a claim whose lease has not ended,
+        or the run has finished.
         """
         now = self._clock()
+        claimed_until = now + lease
         with self.engine.begin() as connection:
             claimed = connection.execute(
                 update(budget_window_runs)
@@ -292,12 +297,18 @@ class BudgetWindowRunStore:
                         budget_window_runs.c.scheduling_claimed_until <= now,
                     ),
                 )
-                .values(scheduling_claimed_until=now + lease, updated_at=now)
+                .values(scheduling_claimed_until=claimed_until, updated_at=now)
             )
-        return claimed.rowcount == 1
+        return claimed_until if claimed.rowcount == 1 else None
 
-    def release_scheduling(self, run_id: UUID, *, next_check_at: datetime) -> None:
-        """Release a running run's claim and set when it is next checked."""
+    def release_scheduling(
+        self, run_id: UUID, *, claimed_until: datetime, next_check_at: datetime
+    ) -> None:
+        """Release this caller's claim on a running run and set its next check.
+
+        ``claimed_until`` is what ``claim_scheduling`` returned. A claim
+        another caller took after this one's lease ended is left in place.
+        """
         now = self._clock()
         with self.engine.begin() as connection:
             connection.execute(
@@ -305,6 +316,7 @@ class BudgetWindowRunStore:
                 .where(
                     budget_window_runs.c.id == run_id,
                     budget_window_runs.c.status == BudgetWindowStatus.RUNNING.value,
+                    budget_window_runs.c.scheduling_claimed_until == claimed_until,
                 )
                 .values(
                     scheduling_claimed_until=None,

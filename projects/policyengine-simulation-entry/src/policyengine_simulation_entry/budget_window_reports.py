@@ -140,12 +140,14 @@ class BudgetWindowRuns(Protocol):
         """Return each stored year's budget figures, in year order."""
         ...
 
-    def claim_scheduling(self, run_id: UUID, *, lease: timedelta) -> bool:
-        """Claim a running run to start its years."""
+    def claim_scheduling(self, run_id: UUID, *, lease: timedelta) -> datetime | None:
+        """Claim a running run to start its years; return when the claim ends."""
         ...
 
-    def release_scheduling(self, run_id: UUID, *, next_check_at: datetime) -> None:
-        """Release the claim and set the next check."""
+    def release_scheduling(
+        self, run_id: UUID, *, claimed_until: datetime, next_check_at: datetime
+    ) -> None:
+        """Release this caller's claim and set the next check."""
         ...
 
     def finish_run(
@@ -356,19 +358,21 @@ class BudgetWindowReports:
         """
         started = 0
         for _ in range(SCHEDULING_ATTEMPTS):
-            claimed = await asyncio.to_thread(
+            claimed_until = await asyncio.to_thread(
                 lambda: self.windows.claim_scheduling(
                     budget_window_run_id, lease=SCHEDULING_LEASE
                 )
             )
-            if not claimed:
+            if claimed_until is None:
                 break
             try:
                 started += await self._schedule(budget_window_run_id)
             finally:
                 await asyncio.to_thread(
-                    lambda: self.windows.release_scheduling(
-                        budget_window_run_id, next_check_at=self._next_check()
+                    lambda claim=claimed_until: self.windows.release_scheduling(
+                        budget_window_run_id,
+                        claimed_until=claim,
+                        next_check_at=self._next_check(),
                     )
                 )
             if not await self._has_room(budget_window_run_id):
