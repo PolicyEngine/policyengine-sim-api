@@ -234,6 +234,8 @@ class RecordingPass:
     # had succeeded, and runs left pending by a submitter that stopped.
     comparisons_started: int = 0
     runs_started: int = 0
+    # Budget-window years the pass started for runs a stopped caller left.
+    budget_window_years_started: int = 0
 
     @property
     def found_work(self) -> bool:

@@ -12,7 +12,9 @@ each execution runs one ``RunRecorder`` pass, which
   one interval ago, and records what it reports, with the same conditional
   writes as a report;
 - starts the economy work left waiting: comparison steps whose runs both
-  succeeded, and runs a submitter left pending (``SafetyCheckPass``).
+  succeeded, and runs a submitter left pending (``SafetyCheckPass``);
+- starts the next years of budget-window runs whose check is due, so a run
+  whose caller stopped between years carries on.
 
 The job runs only the image of the revision that serves traffic: the deploy
 updates it when that revision is promoted, and a rollback moves it back, so
@@ -91,21 +93,34 @@ class WaitingWork(Protocol):
         ...
 
 
+class WaitingBudgetWindows(Protocol):
+    """Start budget-window years left waiting (``BudgetWindowReports``)."""
+
+    async def resume_waiting_work(self, *, now: datetime) -> int:
+        """Start the years of runs whose check is due; return how many."""
+        ...
+
+
 @dataclass(frozen=True)
 class SafetyCheckPass:
     """One pass: record the due calls, then start the work left waiting."""
 
     recorder: DueOutcomeRecorder
     waiting: WaitingWork | None
+    budget_windows: WaitingBudgetWindows | None = None
     clock: Callable[[], datetime] = utc_now
 
     async def record_due_outcomes(self) -> RecordingPass:
-        """Record due calls' outcomes, then start waiting comparisons and runs."""
+        """Record due calls, then start waiting comparisons, runs and years."""
         recording = await self.recorder.record_due_outcomes()
         if self.waiting is not None:
             resumed = await self.waiting.resume_waiting_work(now=self.clock())
             recording.comparisons_started = resumed.comparisons_started
             recording.runs_started = resumed.runs_started
+        if self.budget_windows is not None:
+            recording.budget_window_years_started = (
+                await self.budget_windows.resume_waiting_work(now=self.clock())
+            )
         return recording
 
 
@@ -115,15 +130,17 @@ def _database_recorder(
     """Build the pass; it starts waiting work when the Modal environment is set."""
     database = SimulationDatabase.from_url(database_url)
     modal_environment = environment.get("SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT", "")
-    waiting = (
-        database.economy_routes(
-            artifact_environment=environment.get("APP_ENVIRONMENT", "local").lower(),
-            modal_environment=modal_environment,
-        ).reports
-        if modal_environment
-        else None
+    if not modal_environment:
+        return SafetyCheckPass(database.call_recorder(), None)
+    economy = database.economy_routes(
+        artifact_environment=environment.get("APP_ENVIRONMENT", "local").lower(),
+        modal_environment=modal_environment,
     )
-    return SafetyCheckPass(database.call_recorder(), waiting)
+    return SafetyCheckPass(
+        database.call_recorder(),
+        economy.reports,
+        budget_windows=database.budget_window_routes(economy).reports,
+    )
 
 
 def main(
