@@ -6,6 +6,7 @@ Tests use subprocess to invoke the scripts and verify their behavior.
 
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,17 @@ from fixtures.test_modal_scripts import REPO_ROOT, SCRIPTS_DIR
 pytest_plugins = ("fixtures.test_modal_scripts",)
 
 FAKE_HF_TOKEN = "hf_test"
+
+INTEGRATION_TEST_AUTH_VARIABLES = (
+    "SIMULATION_TEST_AUTH_REQUIRED",
+    "SIMULATION_TEST_AUTH_ISSUER",
+    "SIMULATION_TEST_AUTH_AUDIENCE",
+    "SIMULATION_TEST_AUTH_CLIENT_ID",
+    "SIMULATION_TEST_AUTH_CLIENT_SECRET",
+)
+# The prefix of the variables the integration tests' Settings read.
+INTEGRATION_SETTINGS_PREFIX = "simulation_integ_test_"
+MINTED_ACCESS_TOKEN = "minted-test-access-token"
 
 
 def _run_bash(
@@ -30,6 +42,79 @@ def _run_bash(
         cwd=cwd,
         check=False,
     )
+
+
+@dataclass(frozen=True)
+class IntegrationScriptRun:
+    """One run of simulation-run-integ-tests.sh against fake uv and curl."""
+
+    result: subprocess.CompletedProcess[str]
+    # The arguments of each uv call, in order.
+    uv_calls: list[str]
+    # The integration-test settings the pytest process received.
+    pytest_environment: dict[str, str]
+
+
+def _run_integration_tests_script(
+    tmp_path: Path,
+    environment: str,
+    *,
+    extra_environment: dict[str, str] | None = None,
+) -> IntegrationScriptRun:
+    """Run the script with fake uv and curl first on PATH, from the repository root.
+
+    The fake uv records its arguments and, for ``uv run``, the
+    ``simulation_integ_test_*`` variables it received. pytest-xdist workers
+    are child processes of that pytest process and inherit its environment.
+    The fake curl answers the token request with ``MINTED_ACCESS_TOKEN``.
+    """
+    uv_calls_log = tmp_path / "uv_calls.log"
+    pytest_environment_log = tmp_path / "pytest_environment.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        "#!/bin/bash\n"
+        'printf "%s\\n" "$*" >> "$UV_CALLS_LOG"\n'
+        'if [ "$1" = "run" ]; then\n'
+        f"  env | grep '^{INTEGRATION_SETTINGS_PREFIX}' | sort"
+        ' > "$PYTEST_ENVIRONMENT_LOG"\n'
+        "fi\n"
+    )
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        f"#!/bin/bash\nprintf '%s' '{{\"access_token\": \"{MINTED_ACCESS_TOKEN}\"}}'\n"
+    )
+    for fake_tool in (fake_uv, fake_curl):
+        fake_tool.chmod(0o755)
+
+    script_environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in INTEGRATION_TEST_AUTH_VARIABLES
+        and not name.startswith(INTEGRATION_SETTINGS_PREFIX)
+    }
+    script_environment["PATH"] = f"{fake_bin}:{script_environment['PATH']}"
+    script_environment["UV_CALLS_LOG"] = str(uv_calls_log)
+    script_environment["PYTEST_ENVIRONMENT_LOG"] = str(pytest_environment_log)
+    script_environment.update(extra_environment or {})
+
+    result = _run_bash(
+        str(SCRIPTS_DIR / "simulation-run-integ-tests.sh"),
+        environment,
+        "https://candidate.example.test",
+        "1.690.7",
+        "2.88.20",
+        env=script_environment,
+        cwd=REPO_ROOT,
+    )
+    uv_calls = uv_calls_log.read_text().splitlines() if uv_calls_log.exists() else []
+    pytest_environment: dict[str, str] = {}
+    if pytest_environment_log.exists():
+        for setting in pytest_environment_log.read_text().splitlines():
+            name, _, value = setting.partition("=")
+            pytest_environment[name] = value
+    return IntegrationScriptRun(result, uv_calls, pytest_environment)
 
 
 class TestModalExtractVersions:
@@ -1018,6 +1103,63 @@ class TestSimulationRunIntegTests:
         assert "base=https://example.com" in log
         assert "us=1.690.7" in log
         assert "uk=2.88.20" in log
+
+    @pytest.mark.parametrize(
+        ("environment", "pytest_invocation"),
+        [
+            # Seven pytest-xdist workers: one for each of the six beta_only
+            # calculation tests, and one for the xdist_group that holds every
+            # other test (tests/simulation/conftest.py). --dist loadgroup keeps
+            # a group on one worker; --durations lists every test phase that
+            # took a second or more.
+            (
+                "beta",
+                "run --frozen pytest tests/simulation/ -v -n 7 --dist loadgroup "
+                "--durations=0 --durations-min=1.0",
+            ),
+            # No workflow runs the prod branch (rule
+            # sim.contracts.full-integration-beta-only), and it runs no
+            # calculation tests, so it stays in one process.
+            ("prod", "run --frozen pytest tests/simulation/ -v -m not beta_only"),
+        ],
+    )
+    def test_runs_the_environment_s_pytest_invocation(
+        self, tmp_path, environment, pytest_invocation
+    ):
+        """Each environment runs exactly its pytest invocation after the sync."""
+        run = _run_integration_tests_script(tmp_path, environment)
+
+        assert run.result.returncode == 0, f"Script failed: {run.result.stderr}"
+        assert run.uv_calls == ["sync --extra test --frozen", pytest_invocation]
+
+    def test_beta_pytest_receives_the_minted_token_and_deployment_settings(
+        self, tmp_path
+    ):
+        """Every setting the tests read reaches pytest as an exported variable.
+
+        pytest-xdist starts each worker as a child process of this pytest
+        process, so the workers see the same variables.
+        """
+        run = _run_integration_tests_script(
+            tmp_path,
+            "beta",
+            extra_environment={
+                "SIMULATION_TEST_AUTH_REQUIRED": "1",
+                "SIMULATION_TEST_AUTH_ISSUER": "https://tenant.example.test/",
+                "SIMULATION_TEST_AUTH_AUDIENCE": "https://simulation.example.test",
+                "SIMULATION_TEST_AUTH_CLIENT_ID": "test-client-id",
+                "SIMULATION_TEST_AUTH_CLIENT_SECRET": "test-client-secret",
+            },
+        )
+
+        assert run.result.returncode == 0, f"Script failed: {run.result.stderr}"
+        assert run.pytest_environment == {
+            "simulation_integ_test_access_token": MINTED_ACCESS_TOKEN,
+            "simulation_integ_test_base_url": "https://candidate.example.test",
+            "simulation_integ_test_gateway_auth_required": "1",
+            "simulation_integ_test_uk_model_version": "2.88.20",
+            "simulation_integ_test_us_model_version": "1.690.7",
+        }
 
 
 class TestAllScriptsHaveShebang:

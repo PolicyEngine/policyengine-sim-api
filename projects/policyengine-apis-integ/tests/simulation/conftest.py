@@ -2,6 +2,7 @@ import json
 import time
 from dataclasses import dataclass
 from http import HTTPStatus
+from pathlib import Path
 
 import httpx
 import pytest
@@ -21,6 +22,29 @@ BUDGET_WINDOW_REFORM = {
 }
 BUDGET_WINDOW_REGION = "state/ut"
 BUDGET_WINDOW_MAX_PARALLEL = 2
+# simulation-run-integ-tests.sh runs the beta suite with pytest-xdist and
+# --dist loadgroup, which runs all tests of one xdist_group on one worker.
+SHORT_TESTS_XDIST_GROUP = "short_tests"
+_SIMULATION_TESTS_DIRECTORY = Path(__file__).parent
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Put every test here without ``beta_only`` in one xdist group.
+
+    Each ``beta_only`` test submits a calculation and waits minutes for it, and
+    stays a work unit of its own; the other tests take seconds. With one worker
+    per unit, every calculation starts at once on its own worker. This runs
+    first because pytest-xdist reads the groups in its own
+    ``pytest_collection_modifyitems``. Without ``--dist loadgroup`` the group
+    changes nothing.
+    """
+    for item in items:
+        if (
+            item.path.is_relative_to(_SIMULATION_TESTS_DIRECTORY)
+            and item.get_closest_marker("beta_only") is None
+        ):
+            item.add_marker(pytest.mark.xdist_group(SHORT_TESTS_XDIST_GROUP))
 
 
 class Settings(BaseSettings):

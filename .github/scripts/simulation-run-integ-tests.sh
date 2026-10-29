@@ -120,9 +120,22 @@ if [ -n "$UK_VERSION" ]; then
   export simulation_integ_test_uk_model_version="$UK_VERSION"
 fi
 
+# Beta runs the suite on pytest-xdist workers (in the project's test extra).
+# Each beta_only test submits a calculation to beta and waits minutes for it;
+# every other test takes seconds. tests/simulation/conftest.py puts the other
+# tests in one xdist_group, and --dist loadgroup runs a group on one worker, so
+# the suite is one work unit per calculation test plus one for the rest. With
+# one worker per unit (six calculation tests, plus one), every calculation
+# starts at once and none waits behind another on the same worker. The workers
+# inherit the simulation_integ_test_* variables exported above. --durations
+# lists every test phase that took a second or more.
+BETA_PYTEST_WORKERS=7
+
 if [ "$ENVIRONMENT" = "beta" ]; then
-  echo "Running all simulation integration tests (including beta_only)"
-  uv run --frozen pytest tests/simulation/ -v
+  echo "Running all simulation integration tests (including beta_only) on $BETA_PYTEST_WORKERS pytest-xdist workers"
+  uv run --frozen pytest tests/simulation/ -v \
+    -n "$BETA_PYTEST_WORKERS" --dist loadgroup \
+    --durations=0 --durations-min=1.0
 else
   echo "Running simulation integration tests (excluding beta_only)"
   uv run --frozen pytest tests/simulation/ -v -m "not beta_only"
