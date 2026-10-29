@@ -336,8 +336,12 @@ class EconomyReportReads:
 
     @staticmethod
     def _report(record: ReportRecord | None, identifier: object) -> ReportRecord:
-        """Return an economy report; a household report is not one."""
-        if record is None or record.kind is not ReportKind.ECONOMY:
+        """Return an economy report; a household or budget-window report is not one."""
+        if (
+            record is None
+            or record.kind is not ReportKind.ECONOMY
+            or record.budget_window_size is not None
+        ):
             msg = f"no economy report {identifier}"
             raise ReportNotFoundError(msg)
         return record
