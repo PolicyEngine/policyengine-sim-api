@@ -13,9 +13,10 @@ writes them with DML only.
 | Table | Holds |
 | --- | --- |
 | `simulations` | What to run, independent of model versions: kind (`economy` or `household`), country, policy (null for current law), dynamic, and either a household or a region code (`state/ca`) with an optional dataset name (null means the region's default dataset in each catalog version) |
-| `reports` | Which two simulations a report compares (an economy report needs a reform; a household report may have only a baseline), both of the report's own country and kind, with its year and options |
+| `reports` | Which two simulations a report compares (an economy report needs a reform; a household report may have only a baseline), both of the report's own country and kind, with its year and options, and, for a budget-window report, its window size (1 to 75 years from its year) |
 | `simulation_runs` | One execution of a simulation for a catalog version and year: the region code and dataset row it resolved in that version (economy runs only), its status, Modal call ID, timings, error, trigger (`initial`, `manual` or `system`) and attempt number |
-| `report_runs` | One calculation of a report: a baseline and a reform simulation run of the same catalog version and year (no reform run for a single-simulation household report), the trigger, and, for an economy report, the comparison step's own status and Modal call |
+| `report_runs` | One calculation of a report: a baseline and a reform simulation run of the same catalog version and year (no reform run for a single-simulation household report), the trigger, and, for an economy report, the comparison step's own status and Modal call; a budget-window report's report run names the budget-window run it is a year of |
+| `budget_window_runs` | One calculation of a budget-window report on a catalog version: its trigger, whether its years calculate their simulations again, how many years it calculates at once, its status and error, when the safety check next looks at it, and the lease of the caller starting its next years |
 
 `simulations` and `reports` are definitions: the runtime role may read and
 insert them but not update or delete them. Rows migrated from the Public API's v1 database keep their v1
@@ -69,6 +70,20 @@ transaction that marks a run succeeded, and dispatches left `dispatching` (and c
 steps whose simulation run failed) are failed so the work can be submitted
 again. A comparison step can start only once both of its simulation runs
 have succeeded; starting it is left to the stage 2 report path.
+
+### Budget-window runs
+
+A budget-window run groups one report run per year of its report's window,
+each of the same report and catalog version (a composite foreign key) and at
+most one per year (`uq_report_runs_budget_window_run_id_year`).
+`BudgetWindowRunStore` creates runs (`create_first_run` adds one only while
+the report has none, under a transaction-level advisory lock, as first report
+runs are), reads each year's report run with both of its simulation runs, and
+reads each year's `budget_impacts` row; nothing stores a total, so readers sum
+the years. A caller starting a run's next years first claims it
+(`claim_scheduling`, a lease on `scheduling_claimed_until`), and releasing the
+claim sets the run's next safety-check time. A run is finished once, with a
+conditional write, as `succeeded` or `failed`.
 
 ### Results
 
@@ -179,7 +194,8 @@ These rules are registered in `rules/registry.toml` and checked by
 The initial revision grants the runtime role its privileges, including default
 privileges on tables the migrator creates later; revision 0002 revokes
 `UPDATE` on the definition tables, which never change, and revision 0004 on
-the result tables, whose rows are written once. Both roles must exist
+the result tables, whose rows are written once; revision 0005's
+`budget_window_runs` takes the default privileges. Both roles must exist
 before the first migration runs; an operator creates them. Before revision
 0002 is deployed, the owner of the Public API's tables must also grant the
 migrator `REFERENCES` on `policies`, `households` and `dynamics`, and
