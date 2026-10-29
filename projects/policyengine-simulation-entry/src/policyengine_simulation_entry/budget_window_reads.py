@@ -31,13 +31,14 @@ from policyengine_simulation_entry.budget_window_schemas import (
     BudgetWindowYearResponse,
 )
 from policyengine_simulation_entry.economy_report_types import ReportNotFoundError
-from policyengine_simulation_entry.economy_routes import (
-    report_run_progress,
-    simulation_response,
-)
+from policyengine_simulation_entry.economy_routes import simulation_response
 from policyengine_simulation_entry.economy_schemas import (
     ReportStatus,
     RunErrorResponse,
+)
+from policyengine_simulation_entry.report_progress import (
+    report_run_progress,
+    run_error_response,
 )
 
 if TYPE_CHECKING:
@@ -148,20 +149,18 @@ def budget_window_result(
     )
 
 
-def _error(code: str | None, message: str | None) -> RunErrorResponse | None:
-    return None if code is None else RunErrorResponse(code=code, message=message)
-
-
 def _run_status(
     run: BudgetWindowRunRecord,
     report: ReportRecord,
     years: list[BudgetWindowYear],
 ) -> tuple[ReportStatus, RunErrorResponse | None]:
     if run.status is BudgetWindowStatus.FAILED:
-        return ReportStatus.FAILED, _error(run.error_code, run.error_message)
+        return ReportStatus.FAILED, run_error_response(
+            run.error_code, run.error_message
+        )
     state = window_state(report, years)
     if state.failed is not None:
-        return ReportStatus.FAILED, _error(
+        return ReportStatus.FAILED, run_error_response(
             state.failed.code.value, state.failed.message
         )
     if run.status is BudgetWindowStatus.SUCCEEDED or state.succeeded:

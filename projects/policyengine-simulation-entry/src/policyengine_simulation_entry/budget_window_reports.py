@@ -53,8 +53,8 @@ from policyengine_simulation_entry.economy_report_types import (
     EconomyRequestError,
     ReportNotFoundError,
 )
-from policyengine_simulation_entry.economy_routes import report_run_progress
 from policyengine_simulation_entry.economy_schemas import ReportStatus
+from policyengine_simulation_entry.report_progress import report_run_progress
 from policyengine_simulation_entry.run_recording import SAFETY_CHECK_INTERVAL
 
 if TYPE_CHECKING:
@@ -185,7 +185,7 @@ class BudgetWindowReportSubmission:
 
 
 @dataclass(frozen=True)
-class _WindowState:
+class WindowState:
     """What a run's started years say about it."""
 
     failed: RunError | None
@@ -201,7 +201,7 @@ def _run_error_code(code: str) -> RunErrorCode:
         return RunErrorCode.WORKER_ERROR
 
 
-def window_state(report: ReportRecord, years: list[BudgetWindowYear]) -> _WindowState:
+def window_state(report: ReportRecord, years: list[BudgetWindowYear]) -> WindowState:
     """Return whether a year failed, whether every year succeeded, and how many run.
 
     A year is failed, succeeded or running as its report run is
@@ -225,7 +225,7 @@ def window_state(report: ReportRecord, years: list[BudgetWindowYear]) -> _Window
             succeeded_years += 1
         elif status is not ReportStatus.FAILED:
             in_flight += 1
-    return _WindowState(
+    return WindowState(
         failed=failed,
         succeeded=succeeded_years == len(report.window_years),
         in_flight=in_flight,
@@ -545,7 +545,11 @@ class BudgetWindowReports:
         return started
 
     async def _resume(self, budget_window_run_id: UUID) -> int:
-        """Start one due run's years; a failure is logged and leaves it due."""
+        """Start one due run's years; a failure is logged, and a later pass retries.
+
+        Releasing the claim moves the run's next check one interval on, so the
+        next pass due after that tries it again.
+        """
         try:
             return await self.start_years(budget_window_run_id)
         except Exception as error:  # noqa: BLE001  # logged; the next pass tries again

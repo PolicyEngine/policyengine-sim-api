@@ -10,8 +10,7 @@ lease of the caller starting its next years. A report run gains
 ``budget_window_run_id``: the budget-window run it is a year of, of the same
 report and catalog version (a composite foreign key), with at most one report
 run per year. The default privileges let the runtime role read, insert and
-update the new table, and not delete from it. Nothing writes the new columns
-or table yet.
+update the new table, and not delete from it.
 
 Revision ID: 0005
 Revises: 0004

@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID  # noqa: TC003  # FastAPI evaluates the handlers' path parameters
 
 from fastapi import Depends, FastAPI, HTTPException, status
-from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_persistence import ReportKind, RunStatus, RunTrigger
 from sqlalchemy.exc import DBAPIError
 
@@ -57,9 +56,12 @@ from policyengine_simulation_entry.economy_schemas import (
     EconomyReportRunsResponse,
     EconomyReportSubmissionRequest,
     ReportStatus,
-    RunErrorResponse,
     SimulationResponse,
     SimulationRunResponse,
+)
+from policyengine_simulation_entry.report_progress import (
+    report_run_progress,
+    run_error_response,
 )
 
 if TYPE_CHECKING:
@@ -153,10 +155,6 @@ class RunReads(Protocol):
         ...
 
 
-def _error(code: str | None, message: str | None) -> RunErrorResponse | None:
-    return None if code is None else RunErrorResponse(code=code, message=message)
-
-
 def simulation_response(record: SimulationRecord) -> SimulationResponse:
     """Describe a simulation."""
     return SimulationResponse(
@@ -179,45 +177,11 @@ def _simulation_run(record: SimulationRunRecord) -> SimulationRunResponse:
         status=record.status.value,
         attempt=record.attempt,
         trigger=record.trigger.value,
-        error=_error(record.error_code, record.error_message),
+        error=run_error_response(record.error_code, record.error_message),
         dispatched_at=record.dispatched_at,
         completed_at=record.completed_at,
         created_at=record.created_at,
     )
-
-
-def report_run_progress(
-    report_run: ReportRunRecord,
-    runs: tuple[SimulationRunRecord, SimulationRunRecord],
-) -> tuple[ReportStatus, JobStage | None, RunErrorResponse | None]:
-    """Return a report run's status, its stage while it runs, and its error.
-
-    A failed simulation run fails the report run at once, before the safety
-    check fails its comparison step.
-    """
-    failed = next((run for run in runs if run.status is RunStatus.FAILED), None)
-    if failed is not None:
-        return (
-            ReportStatus.FAILED,
-            None,
-            _error(failed.error_code, failed.error_message),
-        )
-    comparison = report_run.comparison_status
-    if comparison is RunStatus.FAILED:
-        return (
-            ReportStatus.FAILED,
-            None,
-            _error(
-                report_run.comparison_error_code, report_run.comparison_error_message
-            ),
-        )
-    if comparison is RunStatus.SUCCEEDED:
-        return ReportStatus.SUCCEEDED, None, None
-    if all(run.status is RunStatus.SUCCEEDED for run in runs):
-        return ReportStatus.RUNNING, JobStage.OUTPUTS, None
-    if all(run.status is RunStatus.PENDING for run in runs):
-        return ReportStatus.PENDING, JobStage.QUEUED, None
-    return ReportStatus.RUNNING, JobStage.SIMULATING, None
 
 
 @dataclass
@@ -262,7 +226,7 @@ class EconomyReportReads:
             reform_run=_simulation_run(reform),
             comparison=ComparisonResponse(
                 status=(report_run.comparison_status or RunStatus.PENDING).value,
-                error=_error(
+                error=run_error_response(
                     report_run.comparison_error_code,
                     report_run.comparison_error_message,
                 ),

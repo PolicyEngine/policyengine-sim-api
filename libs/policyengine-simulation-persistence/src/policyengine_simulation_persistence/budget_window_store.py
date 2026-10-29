@@ -228,13 +228,13 @@ class BudgetWindowRunStore:
                 ).mappings()
             ]
             simulation_run_ids = {
-                run_id
+                simulation_run_id
                 for year_run in year_runs
-                for run_id in (
+                for simulation_run_id in (
                     year_run.baseline_simulation_run_id,
                     year_run.reform_simulation_run_id,
                 )
-                if run_id is not None
+                if simulation_run_id is not None
             }
             by_id = {
                 row["id"]: SimulationRunRecord.from_row(row)
