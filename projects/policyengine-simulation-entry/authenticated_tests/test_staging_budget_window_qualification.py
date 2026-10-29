@@ -60,7 +60,7 @@ import json
 import math
 import os
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
@@ -81,6 +81,9 @@ BUDGET_FIELDS = (
     "benefitSpendingImpact",
     "budgetaryImpact",
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SIMULATION_STAGING_BUDGET_WINDOW_QUALIFICATION") != "1",
@@ -104,9 +107,13 @@ def old_gateway_status(response: httpx.Response) -> dict[str, Any]:
     """Return an old-gateway batch's status from its status route's answer.
 
     The route answers 500 with the batch's status and error when the batch
-    failed; any other error answer is raised.
+    failed, or 400 when the failure carries the caller's errors; any other
+    error answer is raised.
     """
-    if response.status_code == httpx.codes.INTERNAL_SERVER_ERROR:
+    if response.status_code in {
+        httpx.codes.BAD_REQUEST,
+        httpx.codes.INTERNAL_SERVER_ERROR,
+    }:
         try:
             body = response.json()
         except ValueError:
@@ -189,7 +196,9 @@ def headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _wait(read, finished_statuses: set[str], deadline: float) -> dict[str, Any]:
+def _wait(
+    read: Callable[[], dict[str, Any]], finished_statuses: set[str], deadline: float
+) -> dict[str, Any]:
     while True:
         body = read()
         if body["status"] in finished_statuses:

@@ -15,6 +15,7 @@ from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from policyengine_simulation_contract.job_progress import JobStage
+from policyengine_simulation_persistence import MAX_BUDGET_WINDOW_YEARS
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from policyengine_simulation_entry.economy_schemas import (
@@ -28,9 +29,9 @@ from policyengine_simulation_entry.economy_schemas import (
 )
 
 # A window may end no later than this year, as the old gateway's budget
-# windows may, and have at most this many years.
+# windows may, and have at most as many years as a report may.
 LAST_WINDOW_YEAR = 2099
-MAX_WINDOW_YEARS = 75
+MAX_WINDOW_YEARS = MAX_BUDGET_WINDOW_YEARS
 
 
 class BudgetWindowReportSubmissionRequest(BaseModel):

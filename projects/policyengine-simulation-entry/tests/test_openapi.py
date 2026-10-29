@@ -339,3 +339,11 @@ def test_v2_routes_declare_each_error_answer_with_its_body():
             "type": "array",
         },
     ]
+
+
+def test_v2_budget_window_routes_describe_their_own_refusals():
+    spec = cast("dict[str, Any]", create_app().openapi())
+    submit = spec["paths"]["/v2/budget-window-reports"]["post"]["responses"]
+
+    assert "budget-window reports" in submit["503"]["description"]
+    assert "economy reports" not in submit["503"]["description"]

@@ -43,13 +43,12 @@ from policyengine_simulation_entry.economy_report_types import (
     SimulationChoice,
 )
 from policyengine_simulation_entry.economy_routes import (
-    REFUSED,
     RESULT_UNREADABLE,
-    UNAVAILABLE,
     answer_route,
 )
 from policyengine_simulation_entry.economy_schemas import (
     EconomyErrorResponse,
+    EconomyRefusalResponse,
     EconomyReportRunRequest,
 )
 
@@ -70,6 +69,24 @@ NOT_FOUND: dict[int | str, dict[str, Any]] = {
     status.HTTP_404_NOT_FOUND: {
         "model": EconomyErrorResponse,
         "description": "No such budget-window report",
+    },
+}
+REFUSED: dict[int | str, dict[str, Any]] = {
+    status.HTTP_422_UNPROCESSABLE_ENTITY: {
+        "model": EconomyRefusalResponse,
+        "description": (
+            "Refused: sim cannot run the budget window (its reason as text), or "
+            "a request field is invalid (one entry per field)"
+        ),
+    },
+}
+UNAVAILABLE: dict[int | str, dict[str, Any]] = {
+    status.HTTP_503_SERVICE_UNAVAILABLE: {
+        "model": EconomyErrorResponse,
+        "description": (
+            "The simulation database cannot be reached, or budget-window "
+            "reports are not configured on this deployment"
+        ),
     },
 }
 

@@ -124,3 +124,18 @@ def test_the_qualification_uses_the_cap_sim_uses() -> None:
     )
 
     assert _qualification().MAX_CONCURRENT_YEARS is BUDGET_WINDOW_MAX_CONCURRENT_YEARS
+
+
+def test_a_failed_batch_with_caller_errors_is_read_as_its_status() -> None:
+    """The old gateway answers 400 for a failed batch that carries caller errors."""
+    import httpx
+
+    qualification = _qualification()
+    request = httpx.Request("GET", "https://staging.example/budget-window-jobs/fc-1")
+    failed = httpx.Response(
+        400,
+        json={"status": "failed", "errors": [{"message": "no SPM for 2030"}]},
+        request=request,
+    )
+
+    assert qualification.old_gateway_status(failed)["status"] == "failed"

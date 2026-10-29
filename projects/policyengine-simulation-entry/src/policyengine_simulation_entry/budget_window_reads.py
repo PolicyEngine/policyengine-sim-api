@@ -57,14 +57,6 @@ if TYPE_CHECKING:
         SimulationDefinitions,
     )
 
-_BUDGET_FIELDS = (
-    "taxRevenueImpact",
-    "federalTaxRevenueImpact",
-    "stateTaxRevenueImpact",
-    "benefitSpendingImpact",
-    "budgetaryImpact",
-)
-
 
 class StoredWindowResultError(Exception):
     """A succeeded budget-window run's stored figures cannot be read back."""
@@ -110,19 +102,22 @@ def _annual_impact(budget: YearBudget) -> BudgetWindowYearImpact:
 
 def _totals(annual_impacts: list[BudgetWindowYearImpact]) -> BudgetWindowTotalImpact:
     """Sum the years' figures in decimal arithmetic, from each float's shortest form."""
-    sums = {
-        name: sum(
-            (Decimal(str(getattr(impact, name))) for impact in annual_impacts),
-            Decimal(0),
-        )
-        for name in _BUDGET_FIELDS
-    }
+
+    def total(figures: list[float]) -> float:
+        return float(sum((Decimal(str(figure)) for figure in figures), Decimal(0)))
+
     return BudgetWindowTotalImpact(
-        taxRevenueImpact=float(sums["taxRevenueImpact"]),
-        federalTaxRevenueImpact=float(sums["federalTaxRevenueImpact"]),
-        stateTaxRevenueImpact=float(sums["stateTaxRevenueImpact"]),
-        benefitSpendingImpact=float(sums["benefitSpendingImpact"]),
-        budgetaryImpact=float(sums["budgetaryImpact"]),
+        taxRevenueImpact=total([year.taxRevenueImpact for year in annual_impacts]),
+        federalTaxRevenueImpact=total(
+            [year.federalTaxRevenueImpact for year in annual_impacts]
+        ),
+        stateTaxRevenueImpact=total(
+            [year.stateTaxRevenueImpact for year in annual_impacts]
+        ),
+        benefitSpendingImpact=total(
+            [year.benefitSpendingImpact for year in annual_impacts]
+        ),
+        budgetaryImpact=total([year.budgetaryImpact for year in annual_impacts]),
     )
 
 
