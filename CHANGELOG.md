@@ -10,6 +10,17 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.2.0] - 2026-10-29
+
+### Added
+
+- Added changelog fragments: every pull request adds one or more files `changelog.d/<name>.<type>.md`, whose type (breaking, added, changed, fixed or removed) sets the version bump, and the `Changelog fragment` check, which CI complete needs, rejects a pull request that adds none, a file in a folder inside `changelog.d/`, an unknown type or an empty file. Added `CHANGELOG.md`, which starts with a 0.1.0 section holding the 63 entries of the former `changelog_entry.yaml`, and `VERSION`, the repository's release version, starting at 0.1.0.
+
+### Changed
+
+- A merge to `main` no longer deploys by itself. The new `versioning` job in `simulation-deploy.yml` raises `VERSION` from the merge's fragments, builds their `CHANGELOG.md` section with Towncrier, and pushes one release commit, `Update PolicyEngine simulation API`, with the GitHub App token; that commit's run deploys beta and prod and then publishes the API clients. A manual dispatch still deploys without a release. The daily dependency update and the policyengine.py update add their own fragments.
+
+
 ## [0.1.0] - 2026-10-28
 
 Main as it stood when changelog fragments started. These entries were
