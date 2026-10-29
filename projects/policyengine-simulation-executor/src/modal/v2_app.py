@@ -287,9 +287,11 @@ def validate_worker_uk() -> dict:
     memory=32768,
     timeout=3600,
     retries=0,
-    # Three US national budget windows at the Simulation Entrypoint's cap of
-    # five years each: two simulations a year, 20 segments each.
-    max_containers=600,
+    # Room for the segments of every US simulation call that may run at once
+    # (40 v2 economy simulations and 10 Stage 12 ones, 20 segments each), so
+    # no segment waits behind this limit, which would count against its
+    # caller's time limit.
+    max_containers=1000,
     secrets=worker_secrets,
 )
 def run_single_simulation_segment_us(
@@ -655,8 +657,8 @@ def _run_economy_simulation(
     memory=32768,
     timeout=US_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
-    # Four budget windows at the Simulation Entrypoint's cap of five years,
-    # two simulations a year.
+    # Three budget windows at the Simulation Entrypoint's cap of five years,
+    # two simulations a year, and the 10 it had for other reports.
     max_containers=40,
     secrets=worker_secrets,
 )
@@ -673,8 +675,8 @@ def run_economy_simulation_us(
     memory=32768,
     timeout=UK_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
-    # Four budget windows at the Simulation Entrypoint's cap of five years,
-    # two simulations a year.
+    # Three budget windows at the Simulation Entrypoint's cap of five years,
+    # two simulations a year, and the 10 it had for other reports.
     max_containers=40,
     secrets=worker_secrets,
 )
@@ -691,9 +693,9 @@ def run_economy_simulation_uk(
     memory=8192,
     timeout=ECONOMY_COMPARISON_TIMEOUT_SECONDS,
     retries=0,
-    # Four budget windows at the Simulation Entrypoint's cap of five years,
-    # one comparison a year, with as much room again for other reports.
-    max_containers=40,
+    # Three budget windows at the Simulation Entrypoint's cap of five years,
+    # one comparison a year, and the 10 it had for other reports.
+    max_containers=25,
     secrets=worker_secrets,
 )
 def compare_economy_simulations(
