@@ -37,6 +37,14 @@ Run it from ``projects/policyengine-simulation-entry`` with
   ``_RELATIVE_TOLERANCE`` (0.001), ``_ABSOLUTE_TOLERANCE`` (1000, in the
   country's currency) and ``_TIMEOUT_MINUTES`` (120).
 
+**Recovery after the caller stops** is an operator action beside it: while
+the v2 window runs (its run reads with queued years), promote a new
+entrypoint revision, or roll back to the previous one and forward again,
+with the deploy and rollback workflows. The window must still finish within
+the timeout: its later years are then started by the new revision's call
+reports and by the safety check, not by the instance that took the
+submission.
+
 For example:
 
     uv run --frozen pytest \
@@ -56,14 +64,16 @@ from typing import Any
 
 import httpx
 import pytest
+from policyengine_simulation_contract.economy_runs import (
+    BUDGET_WINDOW_MAX_CONCURRENT_YEARS,
+)
 
 POLL_INTERVAL_SECONDS = 30
 FINISHED = {"succeeded", "failed"}
 OLD_GATEWAY_FINISHED = {"complete", "failed"}
-# Sim calculates at most this many years of a window at once
-# (BUDGET_WINDOW_MAX_CONCURRENT_YEARS); a longer window needs recovery of
-# its queued years.
-MAX_CONCURRENT_YEARS = 5
+# Sim calculates at most this many years of a window at once; a longer
+# window needs recovery of its queued years.
+MAX_CONCURRENT_YEARS = BUDGET_WINDOW_MAX_CONCURRENT_YEARS
 BUDGET_FIELDS = (
     "taxRevenueImpact",
     "federalTaxRevenueImpact",
@@ -88,6 +98,23 @@ def _required(name: str) -> str:
 
 def _optional(name: str, default: str) -> str:
     return os.environ.get(name, "").strip() or default
+
+
+def old_gateway_status(response: httpx.Response) -> dict[str, Any]:
+    """Return an old-gateway batch's status from its status route's answer.
+
+    The route answers 500 with the batch's status and error when the batch
+    failed; any other error answer is raised.
+    """
+    if response.status_code == httpx.codes.INTERNAL_SERVER_ERROR:
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        if isinstance(body, dict) and body.get("status") == "failed":
+            return body
+    response.raise_for_status()
+    return response.json()
 
 
 def figures_differ(
@@ -235,13 +262,13 @@ def test_v2_budget_windows_match_the_old_gateways_and_recover(
         return response.json()
 
     def read_old() -> dict[str, Any]:
-        response = httpx.get(
-            f"{base_url}/budget-window-jobs/{batch_job_id}",
-            headers=headers,
-            timeout=120,
+        return old_gateway_status(
+            httpx.get(
+                f"{base_url}/budget-window-jobs/{batch_job_id}",
+                headers=headers,
+                timeout=120,
+            )
         )
-        response.raise_for_status()
-        return response.json()
 
     v2_report = _wait(read_v2, FINISHED, deadline)
     old_status = _wait(read_old, OLD_GATEWAY_FINISHED, deadline)

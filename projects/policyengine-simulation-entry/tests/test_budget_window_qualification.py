@@ -88,4 +88,39 @@ def test_the_qualification_runs_only_when_an_operator_asks(monkeypatch) -> None:
     marker = qualification.pytestmark.mark
     assert marker.name == "skipif"
     assert marker.args == (True,)
-    assert qualification.MAX_CONCURRENT_YEARS == 5
+
+
+def test_a_failed_old_gateway_batch_is_read_as_its_status() -> None:
+    """The old gateway answers 500 with the batch's status when it failed."""
+    import httpx
+
+    qualification = _qualification()
+    request = httpx.Request("GET", "https://staging.example/budget-window-jobs/fc-1")
+    failed = httpx.Response(
+        500, json={"status": "failed", "error": "year 2027 failed"}, request=request
+    )
+    running = httpx.Response(200, json={"status": "running"}, request=request)
+
+    assert qualification.old_gateway_status(failed) == {
+        "status": "failed",
+        "error": "year 2027 failed",
+    }
+    assert qualification.old_gateway_status(running) == {"status": "running"}
+    for unreadable in (
+        httpx.Response(502, text="Bad Gateway", request=request),
+        httpx.Response(500, json={"detail": "Internal Server Error"}, request=request),
+    ):
+        try:
+            qualification.old_gateway_status(unreadable)
+        except httpx.HTTPStatusError:
+            continue
+        msg = f"{unreadable.status_code} was read as a status"
+        raise AssertionError(msg)
+
+
+def test_the_qualification_uses_the_cap_sim_uses() -> None:
+    from policyengine_simulation_contract.economy_runs import (
+        BUDGET_WINDOW_MAX_CONCURRENT_YEARS,
+    )
+
+    assert _qualification().MAX_CONCURRENT_YEARS is BUDGET_WINDOW_MAX_CONCURRENT_YEARS
