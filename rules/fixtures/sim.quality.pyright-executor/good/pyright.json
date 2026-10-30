@@ -1,58 +1,9 @@
 {
   "version": "1.1.414",
-  "generalDiagnostics": [
-    {
-      "file": "/repository/projects/policyengine-simulation-executor/src/modal/app.py",
-      "severity": "error",
-      "message": "\"App\" is not a known attribute of module \"modal\"",
-      "range": {
-        "start": {
-          "line": 118,
-          "character": 12
-        },
-        "end": {
-          "line": 118,
-          "character": 15
-        }
-      },
-      "rule": "reportAttributeAccessIssue"
-    },
-    {
-      "file": "/repository/projects/policyengine-simulation-executor/src/modal/app.py",
-      "severity": "error",
-      "message": "\"Secret\" is not a known attribute of module \"modal\"",
-      "range": {
-        "start": {
-          "line": 122,
-          "character": 19
-        },
-        "end": {
-          "line": 122,
-          "character": 25
-        }
-      },
-      "rule": "reportAttributeAccessIssue"
-    },
-    {
-      "file": "/repository/projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py",
-      "severity": "error",
-      "message": "\"metadata\" is possibly unbound",
-      "range": {
-        "start": {
-          "line": 823,
-          "character": 15
-        },
-        "end": {
-          "line": 823,
-          "character": 23
-        }
-      },
-      "rule": "reportPossiblyUnboundVariable"
-    }
-  ],
+  "generalDiagnostics": [],
   "summary": {
-    "filesAnalyzed": 90,
-    "errorCount": 3,
+    "filesAnalyzed": 91,
+    "errorCount": 0,
     "warningCount": 0,
     "informationCount": 0
   }

@@ -21,7 +21,8 @@ python -m unittest discover -s scripts/rules/tests -t .            # the tool's 
 ```
 
 All commands use only the standard library, so they run without installing the
-project.
+project. When a rule has a `[rule.downgrade]` section, `guard` also runs
+`gh api` to look up its tracking issue; see [Baselines](#baselines).
 
 ## Adding or changing a rule
 
@@ -58,7 +59,7 @@ gap is visible, rather than leaving it out.
 | `[rule.proof]` | Optional; see "Proof". |
 | `[rule.baseline]` | Only for `ratcheted` rules: `file` listing tolerated violations, and their `count`. |
 | `[[rule.exception]]` | Temporary carve-out: `path`, `reason`, `expires`. |
-| `[rule.downgrade]` | Required `reason` when a rule moves from enforced/ratcheted to advisory/doc-only, or from enforced to ratcheted. |
+| `[rule.downgrade]` | `reason`, and `issue`: the number of an open issue in the registry's `issue_repository` that tracks restoring the rule. Not allowed on an enforced rule. Required when a rule moves from enforced/ratcheted to advisory/doc-only, or from enforced to ratcheted; on a new rule that starts ratcheted with a baseline count above 0; and on a rule that now lists a package from a stronger rule on the base branch. |
 
 `blocking` is derived, never declared: a rule blocks merges when its status is
 `enforced` or `ratcheted` and its tier is not `judgment`.
@@ -124,10 +125,45 @@ fail the guard yet.
   Outside the files that allow file-level exceptions, a justified exception is
   an inline `# noqa: CODE  # reason`.
 - Other enforcers (mypy, Pyright, Import Linter, custom guards) may start
-  `ratcheted` with a baseline file of tolerated violations. Baselines may only
-  shrink: the guard compares counts against the base branch.
+  `ratcheted` with a baseline file of tolerated violations. A new rule that
+  starts ratcheted with a count above 0 needs a `[rule.downgrade]` section,
+  as a downgrade does. Baselines may only shrink: the guard compares counts
+  against the base branch.
 - Moving a rule from enforced/ratcheted to advisory/doc-only, or from enforced
-  to ratcheted, needs an explicit `[rule.downgrade] reason`.
+  to ratcheted, needs a `[rule.downgrade]` section with a `reason` and an
+  `issue`.
+- A `[rule.downgrade]` section's `issue` is an open issue in
+  `issue_repository`, set at the top of the registry, that tracks restoring
+  the rule. The guard looks up every section's issue on every run, with
+  `gh api` and the token in `GH_TOKEN` or `GITHUB_TOKEN`. On GitHub Actions, a
+  missing token or a failed lookup fails it, and so does an
+  `issue_repository` other than the repository the workflow runs in
+  (`GITHUB_REPOSITORY`), so a pull request can't name an issue elsewhere.
+  Elsewhere, without a token, it prints a note for each issue it didn't
+  check. Closing the issue while the section is still in the registry fails
+  the guard on every pull request, and an enforced rule can't have the
+  section, so the pull request that restores the rule removes it. The guard
+  accepts any non-empty reason and any open issue; whether the issue is about
+  this rule, and whether a section was removed from a rule that stays
+  weakened, is for the reviewer.
+- A package in an enforced or ratcheted rule's `enforcer.projects` on the base
+  branch (only `pyright` enforcers list packages) stays, while its
+  `pyproject.toml` exists, in a rule of the same kind that is at least as
+  strong: enforced for a package from an enforced rule, enforced or
+  ratcheted for one from a ratcheted rule. If it moves to a weaker rule, that
+  rule needs a `[rule.downgrade]` section. Deleting the package, or moving it
+  to a rule at least as strong, passes this check; a new ratcheted rule with a
+  count above 0 still needs the section.
+- The guard compares rules by id. Removing a rule, or replacing it with a
+  weaker rule under a new id, produces only the notes "rule ... was removed"
+  and "rule ... is new", except that the checks above still cover Pyright
+  packages and new ratcheted rules. Review catches the rest.
+- **Weakening a rule is a decision for a person, not an agent.** Agents don't
+  downgrade a rule, add a `[rule.downgrade]` section, create a baseline or add
+  entries to one, or move a package or path out of a rule's scope. When a rule
+  reports violations an agent can't fix in its pull request, the agent stops
+  and reports them, with what it tried. Fixing violations and shrinking a
+  baseline is fine.
 
 ## File-level exceptions
 

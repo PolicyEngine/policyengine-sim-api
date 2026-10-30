@@ -8,6 +8,7 @@ from policyengine.core.scoping_strategy import (
     RowFilterStrategy,
     WeightReplacementStrategy,
 )
+from policyengine_simulation_executor import region_resolution
 from policyengine_simulation_executor import simulation_runtime as sr
 from policyengine_simulation_executor.simulation_output_geographic import (
     _should_build_us_congressional_district_impact as gate,
@@ -33,12 +34,14 @@ def _state(fips):
 class TestResolveRegionGroup:
     def test__builds_region_group_strategy_from_members(self, monkeypatch):
         monkeypatch.setattr(
-            sr, "_resolve_dataset_reference", lambda _country: "us-national"
+            region_resolution,
+            "resolve_dataset_reference",
+            lambda _country: "us-national",
         )
         cm = _country_module(
             {"state/hi": _region_with(_state(15)), "state/ia": _region_with(_state(19))}
         )
-        res = sr._resolve_region_group(
+        res = region_resolution._resolve_region_group(
             country_module=cm,
             country="us",
             params={"region_group": ["state/hi", "state/ia"]},
@@ -49,16 +52,18 @@ class TestResolveRegionGroup:
         assert res.dataset_reference == "us-national"
 
     def test__code_is_member_order_independent(self, monkeypatch):
-        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda _country: "x")
+        monkeypatch.setattr(
+            region_resolution, "resolve_dataset_reference", lambda _country: "x"
+        )
         cm = _country_module(
             {"state/hi": _region_with(_state(15)), "state/ia": _region_with(_state(19))}
         )
-        a = sr._resolve_region_group(
+        a = region_resolution._resolve_region_group(
             country_module=cm,
             country="us",
             params={"region_group": ["state/hi", "state/ia"]},
         )
-        b = sr._resolve_region_group(
+        b = region_resolution._resolve_region_group(
             country_module=cm,
             country="us",
             params={"region_group": ["state/ia", "state/hi"]},
@@ -66,15 +71,19 @@ class TestResolveRegionGroup:
         assert a.code == b.code
 
     def test__rejects_unknown_member(self, monkeypatch):
-        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda _country: "x")
+        monkeypatch.setattr(
+            region_resolution, "resolve_dataset_reference", lambda _country: "x"
+        )
         cm = _country_module({})  # get_region returns None
         with pytest.raises(ValueError, match="Unsupported"):
-            sr._resolve_region_group(
+            region_resolution._resolve_region_group(
                 country_module=cm, country="us", params={"region_group": ["state/zz"]}
             )
 
     def test__rejects_weight_replacement_member(self, monkeypatch):
-        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda _country: "x")
+        monkeypatch.setattr(
+            region_resolution, "resolve_dataset_reference", lambda _country: "x"
+        )
         weight_replacement = WeightReplacementStrategy(
             weight_matrix_bucket="b",
             weight_matrix_key="k",
@@ -85,22 +94,26 @@ class TestResolveRegionGroup:
         cm = MagicMock()
         cm.model.get_region.return_value = _region_with(weight_replacement)
         with pytest.raises(ValueError, match="not a row-filter"):
-            sr._resolve_region_group(
+            region_resolution._resolve_region_group(
                 country_module=cm, country="us", params={"region_group": ["state/hi"]}
             )
 
     def test__requires_nonempty_group(self, monkeypatch):
-        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda _country: "x")
+        monkeypatch.setattr(
+            region_resolution, "resolve_dataset_reference", lambda _country: "x"
+        )
         cm = _country_module({})
         with pytest.raises(ValueError, match="at least one"):
-            sr._resolve_region_group(
+            region_resolution._resolve_region_group(
                 country_module=cm, country="us", params={"region_group": []}
             )
 
     def test__resolve_region_dispatches_to_group(self, monkeypatch):
-        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda _country: "x")
+        monkeypatch.setattr(
+            region_resolution, "resolve_dataset_reference", lambda _country: "x"
+        )
         cm = _country_module({"state/hi": _region_with(_state(15))})
-        res = sr._resolve_region(
+        res = sr.resolve_region(
             country_module=cm, country="us", params={"region_group": ["state/hi"]}
         )
         assert isinstance(res.scoping_strategy, RegionGroupStrategy)

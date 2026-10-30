@@ -11,6 +11,7 @@ from scripts.rules.adapters import check_adapters
 from scripts.rules.baseline import (
     BaseUnavailableError,
     check_baselines,
+    check_pyright_packages,
     default_base_ref,
     load_base_registry,
 )
@@ -30,6 +31,7 @@ from scripts.rules.resolve import (
     resolve_enforcer,
     resolve_proof_ci,
 )
+from scripts.rules.tracking_issues import check_tracking_issues
 from scripts.rules.validate import validate
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -77,10 +79,9 @@ def run_guard(
     today: date | None = None,
     compare_base: bool = True,
 ) -> GuardResult:
-    """Run every registry check, then compare baselines with the base ref.
+    """Run every registry check, then compare the registry with the base ref.
 
-    Stop after the schema errors if the registry does not load. An unreadable
-    base ref is a violation on GitHub Actions and only a note elsewhere.
+    Stop after the schema errors if the registry does not load.
     """
     clear_caches()
     result = GuardResult()
@@ -98,44 +99,64 @@ def run_guard(
     if registry.agents is not None:
         result.violations += check_adapters(registry.agents, root)
     result.violations += _stale_outputs(registry, root)
+    violations, notes = check_tracking_issues(registry)
+    result.violations += violations
+    result.notes += notes
 
-    ref = base_ref or default_base_ref()
-    if not compare_base:
-        return result
+    if compare_base:
+        _compare_with_base(registry, root, base_ref or default_base_ref(), result)
+    return result
+
+
+def _compare_with_base(
+    registry: Registry, root: Path, ref: str | None, result: GuardResult
+) -> None:
+    """Add what comparing ``registry`` with the one on ``ref`` finds to ``result``.
+
+    An unreadable base ref is a violation on GitHub Actions and only a note
+    elsewhere.
+    """
     if ref is None:
         result.notes.append(
             "no base ref (set --base-ref or GITHUB_BASE_REF); "
             "baseline comparison skipped"
         )
-    else:
-        try:
-            base = load_base_registry(root, ref)
-        except BaseUnavailableError:
-            if os.environ.get("GITHUB_ACTIONS"):
-                result.violations.append(
-                    Violation(
-                        None,
-                        "baseline",
-                        f"base ref {ref} is not available",
-                        "check out with fetch-depth: 0",
-                    )
+        return
+    try:
+        base = load_base_registry(root, ref)
+    except BaseUnavailableError:
+        if os.environ.get("GITHUB_ACTIONS"):
+            result.violations.append(
+                Violation(
+                    None,
+                    "baseline",
+                    f"base ref {ref} is not available",
+                    "check out with fetch-depth: 0",
                 )
-            else:
-                result.notes.append(
-                    f"base ref {ref} is not available; baseline comparison skipped"
-                )
+            )
         else:
-            if base is None:
-                result.notes.append(
-                    f"{ref} has no registry yet; baseline comparison skipped"
-                )
-            else:
-                violations, notes = check_baselines(registry, base)
-                result.violations += violations
-                result.notes += notes
-    return result
+            result.notes.append(
+                f"base ref {ref} is not available; baseline comparison skipped"
+            )
+        return
+    if base is None:
+        result.notes.append(f"{ref} has no registry yet; baseline comparison skipped")
+        return
+    for violations, notes in (
+        check_baselines(registry, base),
+        check_pyright_packages(registry, base, root),
+    ):
+        result.violations += violations
+        result.notes += notes
 
 
-def check() -> list[str]:
-    """Adapter for scripts/run_quality_guards.py."""
-    return [str(v) for v in run_guard(REPO_ROOT).violations]
+def check(root: Path = REPO_ROOT) -> list[str]:
+    """Adapter for scripts/run_quality_guards.py: print the notes, return failures.
+
+    The notes say what the guard didn't check, such as a tracking issue it
+    had no token to look up.
+    """
+    result = run_guard(root)
+    for note in result.notes:
+        print(f"note: {note}")
+    return [str(violation) for violation in result.violations]

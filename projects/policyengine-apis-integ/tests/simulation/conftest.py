@@ -2,20 +2,18 @@ import json
 import time
 from dataclasses import dataclass
 from http import HTTPStatus
+from pathlib import Path
 
 import httpx
 import pytest
 from policyengine_api_simulation_client import AuthenticatedClient, Client
-from policyengine_api_simulation_client.api.default import (
-    get_budget_window_job_status_budget_window_jobs_batch_job_id_get,
-    submit_budget_window_batch_simulate_economy_budget_window_post,
-)
 from policyengine_api_simulation_client.models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from . import endpoint_calls
 from .polling import poll_retry_delay_seconds
 
 BUDGET_WINDOW_YEARS = ["2026", "2027"]
@@ -24,6 +22,29 @@ BUDGET_WINDOW_REFORM = {
 }
 BUDGET_WINDOW_REGION = "state/ut"
 BUDGET_WINDOW_MAX_PARALLEL = 2
+# simulation-run-integ-tests.sh runs the beta suite with pytest-xdist and
+# --dist loadgroup, which runs all tests of one xdist_group on one worker.
+SHORT_TESTS_XDIST_GROUP = "short_tests"
+_SIMULATION_TESTS_DIRECTORY = Path(__file__).parent
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Put every test here without ``beta_only`` in one xdist group.
+
+    Each ``beta_only`` test submits a calculation and waits minutes for it, and
+    stays a work unit of its own; the other tests take seconds. With one worker
+    per unit, every calculation starts at once on its own worker. This runs
+    first because pytest-xdist reads the groups in its own
+    ``pytest_collection_modifyitems``. Without ``--dist loadgroup`` the group
+    changes nothing.
+    """
+    for item in items:
+        if (
+            item.path.is_relative_to(_SIMULATION_TESTS_DIRECTORY)
+            and item.get_closest_marker("beta_only") is None
+        ):
+            item.add_marker(pytest.mark.xdist_group(SHORT_TESTS_XDIST_GROUP))
 
 
 class Settings(BaseSettings):
@@ -97,11 +118,8 @@ def _poll_budget_window_batch(
     last_status_code: HTTPStatus | None = None
     last_content = b""
 
-    status_endpoint = get_budget_window_job_status_budget_window_jobs_batch_job_id_get
     while time.monotonic() < deadline:
-        response = status_endpoint.sync_detailed(
-            batch_job_id=batch_job_id, client=client
-        )
+        response = endpoint_calls.budget_window_status(client, batch_job_id)
         last_status_code = response.status_code
         last_content = response.content
 
@@ -202,13 +220,9 @@ def decode_response_content():
 @pytest.fixture
 def submit_budget_window_batch(client: Client | AuthenticatedClient):
     """Submit a budget-window batch through the generated client."""
-    submit_endpoint = submit_budget_window_batch_simulate_economy_budget_window_post
 
     def submit(request: BudgetWindowBatchRequest):
-        return submit_endpoint.sync_detailed(
-            client=client,
-            body=request,
-        )
+        return endpoint_calls.submit_budget_window(client, request)
 
     return submit
 

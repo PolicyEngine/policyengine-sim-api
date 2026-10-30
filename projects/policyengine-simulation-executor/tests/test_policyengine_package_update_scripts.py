@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from typing import TYPE_CHECKING
 
 import pytest
+from fixtures.test_modal_scripts import REPO_ROOT
 from fixtures.test_policyengine_package_update_scripts import (
     SCRIPT,
     BundledVersions,
     FakeGitState,
     install_fake_gh,
     install_fake_git,
+    install_fake_sleep,
     install_fake_uv,
     run_updater,
     updater_env,
@@ -274,7 +277,10 @@ def test_update_policyengine_package_updates_only_wrapper_requirements(
     assert "policyengine-uk==" not in pyproject_text
     assert "spm-calculator==" not in pyproject_text
     uv_calls = uv_log.read_text(encoding="utf-8")
-    assert "run --isolated --no-project --with policyengine==4.1.0 python " in uv_calls
+    assert (
+        "run --isolated --no-project --with policyengine==4.1.0"
+        " --refresh-package policyengine python "
+    ) in uv_calls
     assert "update_policyengine_package.py bundle-versions" in uv_calls
     assert "lock --upgrade-package policyengine" not in uv_calls
     assert "uv lock" in uv_calls
@@ -288,6 +294,63 @@ def test_update_policyengine_package_updates_only_wrapper_requirements(
         encoding="utf-8"
     )
     assert "pr create" in gh_log.read_text(encoding="utf-8")
+
+
+def _fragment_problem(relative_path: str, fragment: Path) -> str | None:
+    """Return why the shared changelog definition rejects ``fragment``, or None."""
+    spec = importlib.util.spec_from_file_location(
+        "changelog_fragments",
+        REPO_ROOT / ".github" / "scripts" / "changelog_fragments.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    definition = module.FragmentDefinition.load(REPO_ROOT)
+    return definition.problem_with(relative_path, fragment)
+
+
+def test_update_policyengine_package_adds_a_changelog_fragment(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    """Every pull request adds one (rule sim.process.changelog-fragment)."""
+    git_log = tmp_path / "git.log"
+    install_fake_git(
+        fake_bin,
+        root=fake_repo,
+        log=git_log,
+        state=FakeGitState(diff_has_changes=True),
+    )
+    install_fake_gh(fake_bin, log=tmp_path / "gh.log")
+    install_fake_uv(fake_bin, log=tmp_path / "uv.log")
+
+    result = run_updater(env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0"))
+
+    assert result.returncode == 0, result.stderr
+    relative_path = "changelog.d/update-policyengine-4.1.0.changed.md"
+    fragment = fake_repo / relative_path
+    assert fragment.read_text(encoding="utf-8") == (
+        "Updated policyengine.py from 4.0.0 to 4.1.0 in the simulation runtime.\n"
+    )
+    project = fake_repo / "simulation"
+    assert (
+        f"git add {project}/pyproject.toml {project}/uv.lock {fragment}\n"
+        in git_log.read_text(encoding="utf-8")
+    )
+    assert _fragment_problem(relative_path, fragment) is None
+
+
+def test_update_policyengine_package_adds_no_fragment_without_changes(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    install_fake_git(fake_bin, root=fake_repo, log=tmp_path / "git.log")
+    install_fake_gh(fake_bin, log=tmp_path / "gh.log")
+    install_fake_uv(fake_bin, log=tmp_path / "uv.log")
+
+    result = run_updater(env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0"))
+
+    assert result.returncode == 0, result.stderr
+    assert "No changes after update" in result.stdout
+    assert not (fake_repo / "changelog.d").exists()
 
 
 def test_update_policyengine_package_creates_and_links_missing_issue(
@@ -316,6 +379,95 @@ def test_update_policyengine_package_creates_and_links_missing_issue(
     assert "issue view 680 --repo PolicyEngine/policyengine-sim-api" in gh_calls
     assert "pr-body-first-line Fixes #680" in gh_calls
     assert "pr create --draft --repo PolicyEngine/policyengine-sim-api" in gh_calls
+
+
+def test_update_policyengine_package_waits_for_pypi_to_serve_the_release(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    git_log = tmp_path / "git.log"
+    gh_log = tmp_path / "gh.log"
+    uv_log = tmp_path / "uv.log"
+    sleep_log = tmp_path / "sleep.log"
+    install_fake_git(
+        fake_bin, root=fake_repo, log=git_log, state=FakeGitState(diff_has_changes=True)
+    )
+    install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(fake_bin, log=uv_log, failed_inspections=5)
+    install_fake_sleep(fake_bin, log=sleep_log)
+
+    result = run_updater(
+        env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Bundle inspection attempt 5 of 20 failed; retrying in 30s..." in (
+        result.stdout
+    )
+    inspection_calls = [
+        call
+        for call in uv_log.read_text(encoding="utf-8").splitlines()
+        if "update_policyengine_package.py bundle-versions" in call
+    ]
+    assert len(inspection_calls) == 6
+    assert all("--refresh-package policyengine" in call for call in inspection_calls)
+    assert sleep_log.read_text(encoding="utf-8").splitlines() == ["sleep 30"] * 5
+    assert "pr create" in gh_log.read_text(encoding="utf-8")
+
+
+def test_update_policyengine_package_gives_up_when_pypi_never_serves_the_release(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    git_log = tmp_path / "git.log"
+    gh_log = tmp_path / "gh.log"
+    uv_log = tmp_path / "uv.log"
+    sleep_log = tmp_path / "sleep.log"
+    install_fake_git(
+        fake_bin, root=fake_repo, log=git_log, state=FakeGitState(diff_has_changes=True)
+    )
+    install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(fake_bin, log=uv_log, failed_inspections=20)
+    install_fake_sleep(fake_bin, log=sleep_log)
+
+    result = run_updater(
+        env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0"),
+    )
+
+    assert result.returncode != 0
+    assert "Could not inspect policyengine 4.1.0 after 20 attempts." in result.stderr
+    assert len(sleep_log.read_text(encoding="utf-8").splitlines()) == 19
+    git_calls = git_log.read_text(encoding="utf-8")
+    assert "git commit" not in git_calls
+    assert "git push" not in git_calls
+    assert "pr create" not in gh_log.read_text(encoding="utf-8")
+
+
+def test_update_policyengine_package_refreshes_the_index_when_retrying_the_lock(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    git_log = tmp_path / "git.log"
+    gh_log = tmp_path / "gh.log"
+    uv_log = tmp_path / "uv.log"
+    sleep_log = tmp_path / "sleep.log"
+    install_fake_git(
+        fake_bin, root=fake_repo, log=git_log, state=FakeGitState(diff_has_changes=True)
+    )
+    install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(fake_bin, log=uv_log, failed_locks=1)
+    install_fake_sleep(fake_bin, log=sleep_log)
+
+    result = run_updater(
+        env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    lock_calls = [
+        call
+        for call in uv_log.read_text(encoding="utf-8").splitlines()
+        if call.startswith("uv lock") and "--check" not in call
+    ]
+    assert lock_calls == ["uv lock", "uv lock --refresh"]
+    assert sleep_log.read_text(encoding="utf-8").splitlines() == ["sleep 30"]
+    assert "pr create" in gh_log.read_text(encoding="utf-8")
 
 
 def test_update_policyengine_package_stops_when_loaded_bundle_is_not_target(

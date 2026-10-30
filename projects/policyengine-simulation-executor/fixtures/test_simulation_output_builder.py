@@ -37,6 +37,7 @@ def fake_analysis() -> SimpleNamespace:
             [
                 {
                     "program_name": "income_tax",
+                    "is_tax": True,
                     "baseline_total": 100.0,
                     "reform_total": 125.0,
                     "change": 25.0,
@@ -48,12 +49,12 @@ def fake_analysis() -> SimpleNamespace:
                 {
                     "decile": 2,
                     "absolute_change": 20.0,
-                    "relative_change": 0.02,
+                    "relative_change": 2.0,
                 },
                 {
                     "decile": 1,
                     "absolute_change": 10.0,
-                    "relative_change": 0.01,
+                    "relative_change": 1.0,
                 },
             ]
         ),
@@ -62,7 +63,7 @@ def fake_analysis() -> SimpleNamespace:
                 {
                     "decile": 1,
                     "absolute_change": 30.0,
-                    "relative_change": 0.03,
+                    "relative_change": 3.0,
                 }
             ]
         ),

@@ -10,6 +10,7 @@ from scripts.rules.load import parse
 from scripts.rules.model import (
     Baseline,
     CiRef,
+    Downgrade,
     Enforcer,
     Kind,
     Proof,
@@ -31,6 +32,9 @@ KINDS = (
     "'workflow-job', 'docs-guard', 'llm-review', 'none']"
 )
 MALFORMED = "[ex.layers.malformed] schema: ex.layers.malformed"
+DOWNGRADE_ISSUE_FIX = (
+    "write issue = <number of the open issue that tracks restoring the rule>"
+)
 
 MALFORMED_RULE = {
     "id": "ex.layers.malformed",
@@ -87,7 +91,7 @@ SINGLE_TABLES_RULE = {
     "proof": {"test": BOUNDARY_NODE},
     "baseline": {"file": "rules/baselines/x.txt", "count": 2, "extra": True},
     "exception": {"path": "pkg/*.py", "reason": "legacy", "expires": "2026-12-31"},
-    "downgrade": {"reason": "too noisy"},
+    "downgrade": {"reason": "too noisy", "issue": 912},
 }
 
 
@@ -127,8 +131,13 @@ class RuleTableTest(unittest.TestCase):
                 "'removal'].",
                 f"{MALFORMED}.exception.expires must be a date. "
                 "Fix: write it as YYYY-MM-DD.",
-                f"{MALFORMED}.downgrade needs a 'reason'. "
-                'Fix: write [rule.downgrade] reason = "...".',
+                "[ex.layers.malformed] schema: unknown key 'why' in "
+                "ex.layers.malformed.downgrade. Fix: remove it or use one of "
+                "['issue', 'reason'].",
+                f"{MALFORMED}.downgrade.reason must be a non-empty string. "
+                "Fix: set reason.",
+                f"{MALFORMED}.downgrade.issue must be a positive issue number. "
+                f"Fix: {DOWNGRADE_ISSUE_FIX}.",
                 f"{MALFORMED}.autofix must be true or false. Fix: set autofix.",
                 f"{MALFORMED}.review_by must be a date. Fix: write it as YYYY-MM-DD.",
                 f"[registry] schema: rule #3.enforcer.kind is 'flake8'. "
@@ -186,9 +195,110 @@ class RuleTableTest(unittest.TestCase):
                 proof=Proof({"test": BOUNDARY_NODE}),
                 baseline=Baseline("rules/baselines/x.txt", 2),
                 exceptions=(RuleException("pkg/*.py", "legacy", date(2026, 12, 31)),),
-                downgrade_reason="too noisy",
+                downgrade=Downgrade("too noisy", 912),
             ),
         )
+
+
+class ExceptionIssueTest(unittest.TestCase):
+    def test_an_exception_issue_must_be_a_positive_whole_number(self) -> None:
+        for issue in (0, -5, "5", True, 5.0):
+            with self.subTest(issue=issue):
+                raw = tomllib.loads(REGISTRY)
+                raw["rule"] = [
+                    {
+                        **SINGLE_TABLES_RULE,
+                        "exception": {
+                            "path": "pkg/*.py",
+                            "reason": "legacy",
+                            "issue": issue,
+                        },
+                    }
+                ]
+
+                registry, violations = parse(raw)
+
+                self.assertIn(
+                    "[ex.layers.single-tables] schema: ex.layers.single-tables"
+                    ".exception.issue must be a positive issue number. "
+                    "Fix: write issue = <number>.",
+                    [str(violation) for violation in violations],
+                )
+                assert registry is not None
+                rule = registry.rule("ex.layers.single-tables")
+                assert rule is not None
+                self.assertIsNone(rule.exceptions[0].issue)
+
+
+class DowngradeTest(unittest.TestCase):
+    """A [rule.downgrade] says why the rule is weaker and which issue restores it."""
+
+    def downgrade_problems(self, downgrade: object) -> tuple[Rule | None, list[str]]:
+        """Parse SINGLE_TABLES_RULE with ``downgrade``; return it and the problems."""
+        raw = tomllib.loads(REGISTRY)
+        raw["rule"] = [{**SINGLE_TABLES_RULE, "downgrade": downgrade}]
+        registry, violations = parse(raw)
+        assert registry is not None
+        problems = [
+            str(violation)
+            for violation in violations
+            if "downgrade" in violation.message
+        ]
+        return registry.rule("ex.layers.single-tables"), problems
+
+    def test_a_reason_and_an_issue_number_make_a_downgrade(self) -> None:
+        rule, problems = self.downgrade_problems({"reason": "noisy", "issue": 1})
+
+        self.assertEqual(problems, [])
+        assert rule is not None
+        self.assertEqual(rule.downgrade, Downgrade("noisy", 1))
+
+    def test_the_issue_must_be_a_positive_whole_number(self) -> None:
+        for issue in (None, 0, -912, "912", "#912", 912.0, True):
+            with self.subTest(issue=issue):
+                downgrade = {"reason": "noisy"}
+                if issue is not None:
+                    downgrade["issue"] = issue
+
+                rule, problems = self.downgrade_problems(downgrade)
+
+                self.assertEqual(
+                    problems,
+                    [
+                        "[ex.layers.single-tables] schema: ex.layers.single-tables"
+                        ".downgrade.issue must be a positive issue number. "
+                        f"Fix: {DOWNGRADE_ISSUE_FIX}."
+                    ],
+                )
+                assert rule is not None
+                self.assertIsNone(rule.downgrade)
+
+    def test_the_reason_must_not_be_empty(self) -> None:
+        rule, problems = self.downgrade_problems({"reason": " ", "issue": 912})
+
+        self.assertEqual(
+            problems,
+            [
+                "[ex.layers.single-tables] schema: ex.layers.single-tables"
+                ".downgrade.reason must be a non-empty string. Fix: set reason."
+            ],
+        )
+        assert rule is not None
+        self.assertIsNone(rule.downgrade)
+
+    def test_a_downgrade_must_be_a_table(self) -> None:
+        rule, problems = self.downgrade_problems("too noisy")
+
+        self.assertEqual(
+            problems,
+            [
+                "[ex.layers.single-tables] schema: ex.layers.single-tables"
+                ".downgrade must be a table. Fix: write [rule.downgrade] with "
+                'reason = "..." and issue = <number>.'
+            ],
+        )
+        assert rule is not None
+        self.assertIsNone(rule.downgrade)
 
 
 if __name__ == "__main__":

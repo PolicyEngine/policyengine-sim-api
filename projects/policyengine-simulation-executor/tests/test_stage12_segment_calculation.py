@@ -27,7 +27,7 @@ from policyengine_simulation_executor.stage12_runtime import (
     merge_segment_results,
     should_segment_simulation,
 )
-from test_stage12_runtime import _planned_simulation
+from stage12_runtime_support import planned_simulation
 
 
 def _frames(index: int) -> dict[str, pd.DataFrame]:
@@ -93,7 +93,7 @@ def _spm_provenance() -> SPMProvenance:
 
 
 def test_merge_preserves_one_identical_compact_spm_receipt() -> None:
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     receipt = _spm_provenance()
 
     calculated = merge_segment_results(simulation, _results(simulation, receipt))
@@ -106,7 +106,7 @@ def test_merge_preserves_one_identical_compact_spm_receipt() -> None:
 def test_merge_rejects_missing_or_incompatible_segment_spm_receipts(
     difference: str,
 ) -> None:
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     receipt = _spm_provenance()
     results = _results(simulation, receipt)
     alternative = {
@@ -136,7 +136,7 @@ def test_merge_rejects_missing_or_incompatible_segment_spm_receipts(
 
 
 def test_eligibility_matches_stage12_supported_national_shape() -> None:
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     requirements = simulation.output_plan.requirements
     assert should_segment_simulation(simulation) is True
     assert (
@@ -176,7 +176,7 @@ def test_eligibility_matches_stage12_supported_national_shape() -> None:
 
 
 def test_builds_twenty_single_policy_segment_inputs() -> None:
-    simulation = _planned_simulation(SimulationRole.REFORM)
+    simulation = planned_simulation(SimulationRole.REFORM)
 
     segments = build_segment_inputs(simulation)
 
@@ -187,7 +187,7 @@ def test_builds_twenty_single_policy_segment_inputs() -> None:
 
 
 def test_segment_calculation_scopes_one_group_and_preserves_dtypes() -> None:
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     segment = build_segment_inputs(simulation)[0]
     received = []
 
@@ -218,7 +218,7 @@ def test_segment_calculation_scopes_one_group_and_preserves_dtypes() -> None:
 
 
 def test_merge_rejects_missing_duplicate_and_cross_role_results() -> None:
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     results = _results(simulation)
 
     with pytest.raises(ValueError, match="incomplete"):
@@ -236,7 +236,7 @@ def test_merge_rejects_missing_duplicate_and_cross_role_results() -> None:
 
 
 def test_merge_rejects_duplicate_entity_ids_across_groups() -> None:
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     results = _results(simulation)
     duplicate_payload, _ = serialize_simulation_frames(_frames(0))
     results[1] = results[1].model_copy(
@@ -263,7 +263,7 @@ def _with_frames(
 
 
 def test_merge_rejects_a_result_set_that_omits_a_segment() -> None:
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     results = _results(simulation)
     results[-1] = results[-1].model_copy(update={"segment_index": 99})
 
@@ -274,7 +274,7 @@ def test_merge_rejects_a_result_set_that_omits_a_segment() -> None:
 
 
 def test_merge_rejects_a_result_for_another_region_group() -> None:
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     results = _results(simulation)
     results[0] = results[0].model_copy(update={"region_codes": results[1].region_codes})
 
@@ -285,7 +285,7 @@ def test_merge_rejects_a_result_for_another_region_group() -> None:
 
 
 def test_merge_rejects_segments_with_different_entities() -> None:
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     results = _results(simulation)
     results[1] = _with_frames(results[1], {"household": _frames(1)["household"]})
 
@@ -296,7 +296,7 @@ def test_merge_rejects_segments_with_different_entities() -> None:
 
 
 def test_merge_rejects_segments_with_different_column_dtypes() -> None:
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     results = _results(simulation)
     frames = _frames(1)
     frames["household"] = frames["household"].astype(
@@ -324,7 +324,7 @@ def test_merge_rejects_an_entity_without_its_identifier(monkeypatch) -> None:
         "deserialize_simulation_frames",
         lambda _payload: without_identifier,
     )
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
 
     with pytest.raises(
         ValueError, match=r"^Stage 12 segment entity 'household' has no identifier$"

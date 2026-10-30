@@ -13,6 +13,7 @@ from policyengine_simulation_contract.gateway_models import (
     PolicyEngineBundle,
 )
 from src.modal.budget_window_batch import run_budget_window_batch_impl
+from src.modal.budget_window_context import ChildSimulationHandle
 from src.modal.fanout import PollBackoff
 
 
@@ -255,6 +256,19 @@ def test_run_budget_window_batch_impl_completes_and_respects_max_parallel(
     assert state.result.totals.budgetaryImpact == 51
 
 
+def test_run_budget_window_batch_impl_refuses_to_run_outside_a_modal_call(
+    mock_batch_modal, observability_runtime, monkeypatch
+):
+    """Without a Modal call id there is no batch job id to key the batch by."""
+    _, payload = _build_parent_payload()
+    monkeypatch.setattr(batch_module.modal, "current_function_call_id", lambda: None)
+
+    with pytest.raises(RuntimeError, match="must run inside a Modal function call"):
+        run_budget_window_batch_impl(payload, runtime=observability_runtime)
+
+    assert mock_batch_modal["call_registry"] == {}
+
+
 def test_run_budget_window_batch_impl_marks_failure(
     mock_batch_modal, observability_runtime
 ):
@@ -300,6 +314,35 @@ def test_run_budget_window_batch_impl_marks_failure(
     assert state.error.startswith("Simulation failed")
     assert state.running_years == []
     assert state.child_jobs["2027"].status == "cancelled"
+
+
+def test_a_child_without_a_call_handle_fails_the_batch(
+    monkeypatch, mock_batch_modal, observability_runtime
+):
+    """A missing call handle fails the batch like any other child poll error."""
+    request, payload = _build_parent_payload(window_size=1)
+    _seed_parent_batch(request, mock_batch_modal["parent_call_id"])
+    run_simulation = MockRunSimulationFunction(
+        tracker=SpawnTracker(),
+        results_by_year={"2026": [TimeoutError()]},
+        call_registry=mock_batch_modal["call_registry"],
+    )
+    mock_batch_modal["functions"][
+        ("policyengine-simulation-py4-10-0", "run_simulation")
+    ] = run_simulation
+    monkeypatch.setattr(
+        scheduler_module.BudgetWindowBatchRunner,
+        "resolve_child_handle",
+        lambda _runner, simulation_year: ChildSimulationHandle(
+            simulation_year=simulation_year, job_id="child-2026", call=None
+        ),
+    )
+
+    result = run_budget_window_batch_impl(payload, runtime=observability_runtime)
+
+    assert result["status"] == "failed"
+    assert result["failed_years"] == ["2026"]
+    assert result["error"].startswith("Simulation failed")
 
 
 def test_scheduler_sleep_exponentially_backs_off_then_resets_on_progress(

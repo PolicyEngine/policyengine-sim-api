@@ -6,6 +6,7 @@ as violations instead of raising, so one run shows every problem at once.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from datetime import date
 from enum import Enum
@@ -19,6 +20,7 @@ from scripts.rules.model import (
     CiRef,
     CiScripts,
     Discovery,
+    Downgrade,
     Enforcer,
     Ignored,
     Kind,
@@ -43,7 +45,10 @@ _TOP_KEYS = {
     "rule",
     "agents",
     "ci_scripts",
+    "issue_repository",
 }
+# A GitHub repository's owner/name.
+_REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _AGENTS_KEYS = {"instructions", "adapters", "max_adapter_lines"}
 _CI_SCRIPTS_KEYS = {
     "workflows",
@@ -70,6 +75,10 @@ _RULE_KEYS = {
     "exception",
     "downgrade",
 }
+_DOWNGRADE_KEYS = {"reason", "issue"}
+DOWNGRADE_ISSUE_FIX = (
+    "write issue = <number of the open issue that tracks restoring the rule>"
+)
 _DISCOVERY_KEYS = {
     "workflows",
     "guard_test_globs",
@@ -327,7 +336,7 @@ def _exceptions(
             else None
         )
         issue = entry.get("issue")
-        if issue is not None and (not isinstance(issue, int) or issue <= 0):
+        if issue is not None and _issue_number(issue) is None:
             c.add(
                 rule_id,
                 f"{label}.exception.issue must be a positive issue number",
@@ -348,22 +357,49 @@ def _exceptions(
     return tuple(exceptions)
 
 
-def _downgrade_reason(
+def _issue_number(value: object) -> int | None:
+    """Return ``value`` if it is a positive issue number, otherwise None.
+
+    TOML's ``true`` reads as a Python ``bool``, which is an ``int``; it is no
+    issue number.
+    """
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
+def _downgrade(
     c: _Collector, rule_id: str | None, raw: dict[str, Any], label: str
-) -> str | None:
-    """Read the reason in ``[rule.downgrade]``, which is optional."""
+) -> Downgrade | None:
+    """Read ``[rule.downgrade]``, which is optional.
+
+    It needs a reason and the number of the issue that tracks restoring the
+    rule. A section without both is reported and read as absent, so it never
+    allows a weaker rule.
+    """
     if "downgrade" not in raw:
         return None
-    draw = raw["downgrade"]
-    if isinstance(draw, dict) and isinstance(draw.get("reason"), str):
-        reason: str = draw["reason"]
-        return reason
-    c.add(
-        rule_id,
-        f"{label}.downgrade needs a 'reason'",
-        'write [rule.downgrade] reason = "..."',
-    )
-    return None
+    downgrade_raw = raw["downgrade"]
+    where = f"{label}.downgrade"
+    if not isinstance(downgrade_raw, dict):
+        c.add(
+            rule_id,
+            f"{where} must be a table",
+            'write [rule.downgrade] with reason = "..." and issue = <number>',
+        )
+        return None
+    c.unknown_keys(rule_id, downgrade_raw, _DOWNGRADE_KEYS, where)
+    reason = c.string(rule_id, downgrade_raw, "reason", where)
+    issue = _issue_number(downgrade_raw.get("issue"))
+    if issue is None:
+        c.add(
+            rule_id,
+            f"{where}.issue must be a positive issue number",
+            DOWNGRADE_ISSUE_FIX,
+        )
+    if not reason or issue is None:
+        return None
+    return Downgrade(reason, issue)
 
 
 def _autofix(
@@ -390,7 +426,7 @@ def _rule(c: _Collector, raw: object, index: int) -> Rule | None:
     proof = _proof(c, rule_id, raw, label)
     baseline = _baseline(c, rule_id, raw, label)
     exceptions = _exceptions(c, rule_id, raw, label)
-    downgrade_reason = _downgrade_reason(c, rule_id, raw, label)
+    downgrade = _downgrade(c, rule_id, raw, label)
     autofix = _autofix(c, rule_id, raw, label)
     review_by = None
     if "review_by" in raw:
@@ -416,8 +452,24 @@ def _rule(c: _Collector, raw: object, index: int) -> Rule | None:
         proof=proof,
         baseline=baseline,
         exceptions=exceptions,
-        downgrade_reason=downgrade_reason,
+        downgrade=downgrade,
     )
+
+
+def _issue_repository(c: _Collector, raw: dict[str, Any]) -> str:
+    """Read ``issue_repository``, which is optional but must be owner/name."""
+    value = raw.get("issue_repository")
+    if value is None:
+        return ""
+    if isinstance(value, str) and _REPOSITORY.fullmatch(value):
+        return value
+    c.add(
+        None,
+        "registry.issue_repository must be <owner>/<name>, the GitHub repository "
+        "that tracks issues",
+        'set issue_repository = "<owner>/<name>"',
+    )
+    return ""
 
 
 def parse(raw: dict[str, Any]) -> tuple[Registry | None, list[Violation]]:
@@ -453,6 +505,7 @@ def parse(raw: dict[str, Any]) -> tuple[Registry | None, list[Violation]]:
         rules=tuple(rule for rule in rules if rule is not None),
         agents=_agents(c, raw.get("agents")),
         ci_scripts=_ci_scripts(c, raw.get("ci_scripts")),
+        issue_repository=_issue_repository(c, raw),
     )
     return registry, c.violations
 

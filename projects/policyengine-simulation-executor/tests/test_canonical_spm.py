@@ -689,12 +689,12 @@ def test_identity_errors_do_not_degrade_to_an_unidentified_baseline(monkeypatch)
     ],
 )
 def test_gateway_poll_returns_structured_400(monkeypatch, code):
-    from policyengine_simulation_gateway import endpoints
+    from policyengine_simulation_gateway import job_status_routes
     from policyengine_simulation_gateway.testing import create_gateway_app
 
-    monkeypatch.setattr(endpoints, "_job_metadata_store", lambda: {"job": {}})
+    monkeypatch.setattr(job_status_routes, "job_metadata_store", lambda: {"job": {}})
     monkeypatch.setattr(
-        endpoints,
+        job_status_routes,
         "modal",
         SimpleNamespace(
             FunctionCall=SimpleNamespace(
@@ -716,7 +716,7 @@ def test_gateway_poll_returns_structured_400(monkeypatch, code):
 
 def test_gateway_submission_uses_registry_capability_before_spawn(monkeypatch):
     from policyengine_simulation_contract.gateway_models import PolicyEngineBundle
-    from policyengine_simulation_gateway import endpoints
+    from policyengine_simulation_gateway import job_creation_routes
     from policyengine_simulation_gateway.testing import create_gateway_app
 
     route = SimpleNamespace(
@@ -727,14 +727,16 @@ def test_gateway_submission_uses_registry_capability_before_spawn(monkeypatch):
         country_model_version="test-only",
         route_provenance=None,
     )
-    monkeypatch.setattr(endpoints, "resolve_route", lambda *_args: route)
+    monkeypatch.setattr(job_creation_routes, "resolve_route", lambda *_args: route)
     bundle = PolicyEngineBundle(
         model_version="test-only", policyengine_version="test-only", spm=CAPABILITY
     )
-    monkeypatch.setattr(endpoints, "_build_policyengine_bundle", lambda *_args: bundle)
+    monkeypatch.setattr(
+        job_creation_routes, "build_policyengine_bundle", lambda *_args: bundle
+    )
     spawn = Mock(return_value=SimpleNamespace(object_id="job"))
     monkeypatch.setattr(
-        endpoints,
+        job_creation_routes,
         "modal",
         SimpleNamespace(
             Function=SimpleNamespace(
@@ -742,7 +744,7 @@ def test_gateway_submission_uses_registry_capability_before_spawn(monkeypatch):
             )
         ),
     )
-    monkeypatch.setattr(endpoints, "_job_metadata_store", dict)
+    monkeypatch.setattr(job_creation_routes, "job_metadata_store", dict)
     response = TestClient(create_gateway_app()).post(
         "/simulate/economy/comparison",
         json={"country": "us", "spm": {"geography_kind": "national"}},
@@ -892,7 +894,7 @@ def test_optional_analysis_does_not_swallow_spm_input_errors(code):
 )
 def test_as_of_presence_survives_budget_parent(date_fields, expected_as_of):
     from policyengine_simulation_contract.gateway_models import PolicyEngineBundle
-    from policyengine_simulation_gateway.endpoints import (
+    from policyengine_simulation_gateway.job_creation_routes import (
         _build_budget_window_parent_payload,
         _resolve_request_spm,
     )
@@ -930,8 +932,9 @@ def test_as_of_presence_survives_budget_parent(date_fields, expected_as_of):
 
 
 def test_versions_http_retains_capability_contract_version(monkeypatch):
-    from policyengine_simulation_gateway import endpoints
+    from policyengine_simulation_gateway import version_routes
     from policyengine_simulation_gateway.testing import create_gateway_app
+    from src.modal.routing_publisher import state as routing_state
     from src.modal.utils import update_version_registry as registry
 
     metadata = {
@@ -942,7 +945,7 @@ def test_versions_http_retains_capability_contract_version(monkeypatch):
         "spm": CAPABILITY,
     }
     monkeypatch.setattr(
-        registry, "build_bundle_manifest_metadata", lambda **_kwargs: metadata
+        routing_state, "build_bundle_manifest_metadata", lambda **_kwargs: metadata
     )
     state = registry.build_next_routing_state(
         current_state=None,
@@ -953,7 +956,7 @@ def test_versions_http_retains_capability_contract_version(monkeypatch):
             uk_version="test-uk",
         ),
     )
-    monkeypatch.setattr(endpoints, "_active_routing_state", lambda: state)
+    monkeypatch.setattr(version_routes, "active_routing_state", lambda: state)
     response = TestClient(create_gateway_app()).get("/versions")
     assert response.status_code == 200
     payload = response.json()

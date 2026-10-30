@@ -35,6 +35,9 @@
           "400": {
             "description": "Invalid request (unknown country/version)"
           },
+          "500": {
+            "description": "Server failure (redacted error with a correlation ID)"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -76,6 +79,9 @@
           },
           "400": {
             "description": "Invalid request (unknown country/version/year)"
+          },
+          "500": {
+            "description": "Server failure (redacted error with a correlation ID)"
           },
           "422": {
             "description": "Validation Error",
@@ -1033,6 +1039,65 @@
       },
       "ConstituencyImpactRecord": {
         "properties": {
+          "disclosure_tier": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "reported",
+                  "approximate"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disclosure Tier"
+          },
+          "average_household_income_change_lower": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Household Income Change Lower"
+          },
+          "average_household_income_change_upper": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Household Income Change Upper"
+          },
+          "relative_household_income_change_lower": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relative Household Income Change Lower"
+          },
+          "relative_household_income_change_upper": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relative Household Income Change Upper"
+          },
           "constituency_code": {
             "type": "string",
             "title": "Constituency Code"
@@ -1088,7 +1153,7 @@
           "population"
         ],
         "title": "ConstituencyImpactRecord",
-        "description": "Reform impact on household net income in one UK parliamentary constituency.\n\n``average_household_income_change`` is the average change per household and\n``relative_household_income_change`` the relative change in the area's total\nhousehold net income. ``x`` and ``y`` are integer map-rendering coordinates."
+        "description": "Reform impact on household net income in one UK parliamentary constituency.\n\n``average_household_income_change`` is the average change per household and\n``relative_household_income_change`` the relative change in the area's total\nhousehold net income, both rounded to the order of their standard error.\n``population`` is the weighted number of households. ``x`` and ``y`` are\ninteger map-rendering coordinates."
       },
       "DecileOutput": {
         "properties": {
@@ -1137,6 +1202,17 @@
           "difference": {
             "type": "number",
             "title": "Difference"
+          },
+          "is_tax": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Tax"
           }
         },
         "additionalProperties": false,
@@ -1147,7 +1223,7 @@
           "difference"
         ],
         "title": "DetailedBudgetProgramOutput",
-        "description": "Baseline and reform totals for one program.\n\n``difference`` is reform minus baseline."
+        "description": "Baseline and reform totals for one program.\n\n``difference`` is reform minus baseline. ``is_tax`` says whether the\nprogram is a tax (its rise adds to the budget) or a benefit (its rise is\nspending); it is None in outputs built before the flag was recorded."
       },
       "GenderPovertyOutput": {
         "properties": {
@@ -1180,7 +1256,7 @@
         },
         "type": "array",
         "title": "GeographicImpactOutput",
-        "description": "UK constituency or local-authority impact records."
+        "description": "UK constituency or local-authority impact records.\n\nAreas whose income change disclosure control withholds are left out."
       },
       "HTTPValidationError": {
         "properties": {
@@ -1310,9 +1386,13 @@
                 "$ref": "#/components/schemas/SingleYearMacroOutput"
               },
               {
+                "$ref": "#/components/schemas/LocalAreaBreakdownOutput"
+              },
+              {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Result"
           },
           "errors": {
             "anyOf": [
@@ -1680,8 +1760,119 @@
         "title": "LaborSupplyResponseOutput",
         "description": "Behavioral labor supply response to the reform.\n\n``income_lsr`` and ``substitution_lsr`` are the total earnings changes from\nthe income and substitution effects, and ``total_change`` is their sum."
       },
+      "LocalAreaBreakdownOutput": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "local_areas",
+            "title": "Kind"
+          },
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          },
+          "policyengine_version": {
+            "type": "string",
+            "title": "Policyengine Version"
+          },
+          "dataset": {
+            "type": "string",
+            "title": "Dataset"
+          },
+          "data_version": {
+            "type": "string",
+            "title": "Data Version"
+          },
+          "constituency_impact": {
+            "items": {
+              "$ref": "#/components/schemas/ConstituencyImpactRecord"
+            },
+            "type": "array",
+            "title": "Constituency Impact"
+          },
+          "local_authority_impact": {
+            "items": {
+              "$ref": "#/components/schemas/LocalAuthorityImpactRecord"
+            },
+            "type": "array",
+            "title": "Local Authority Impact"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "model_version",
+          "policyengine_version",
+          "dataset",
+          "data_version",
+          "constituency_impact",
+          "local_authority_impact"
+        ],
+        "title": "LocalAreaBreakdownOutput",
+        "description": "Completed result of a UK local-area breakdown run.\n\nA request with ``breakdown: \"local_areas\"`` returns this instead of a\n``SingleYearMacroOutput``. The run covers the requested UK-wide or nation\nregion on the local-area dataset alone, and computes only the\nconstituency and local-authority impacts; every other figure comes from\nthe national run. ``kind`` is always ``local_areas``. ``dataset`` names the\nlocal-area dataset, ``data_version`` its release revision, and\n``model_version`` and ``policyengine_version`` the country model and the\npolicyengine.py release that computed it. Each list holds only its own\nlevel's records. Areas whose income change disclosure control withholds\nare left out of each list, so a list may be empty."
+      },
       "LocalAuthorityImpactRecord": {
         "properties": {
+          "disclosure_tier": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "reported",
+                  "approximate"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disclosure Tier"
+          },
+          "average_household_income_change_lower": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Household Income Change Lower"
+          },
+          "average_household_income_change_upper": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Household Income Change Upper"
+          },
+          "relative_household_income_change_lower": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relative Household Income Change Lower"
+          },
+          "relative_household_income_change_upper": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relative Household Income Change Upper"
+          },
           "local_authority_code": {
             "type": "string",
             "title": "Local Authority Code"
@@ -2353,6 +2544,18 @@
               }
             ],
             "title": "Region"
+          },
+          "breakdown": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "local_areas"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Breakdown"
           }
         },
         "additionalProperties": false,
@@ -2361,7 +2564,7 @@
           "country"
         ],
         "title": "SimulationRequest",
-        "description": "Request model for simulation submission."
+        "description": "Request model for simulation submission.\n\n``breakdown: \"local_areas\"`` asks a UK-wide or nation run for its\nconstituency and local-authority impacts alone, computed on the\nlocal-area dataset; the job's result is then a\n``LocalAreaBreakdownOutput``. Without it, the job runs the usual\ncomparison."
       },
       "SingleYearMacroOutput": {
         "properties": {
@@ -2665,6 +2868,28 @@
             "type": "object",
             "title": "Bundles",
             "description": "Deployed bundle identity keyed by exact PolicyEngine wrapper version, then country: model and data versions, the default dataset and the SHA-256 the bundle records for it (the certified artifact's, or the dataset entry's). `policyengine.latest` is a wrapper version: read its identity at `bundles[latest]`."
+          },
+          "published_at": {
+            "additionalProperties": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "type": "object",
+            "title": "Published At",
+            "description": "When each exact PolicyEngine wrapper version's route was first published, as an ISO 8601 UTC time. Republishing a version keeps its date; versions published before the gateway recorded dates have no entry."
+          },
+          "latest_since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Since",
+            "description": "When `policyengine.latest` last changed (a publish that advanced it, a forced latest or a rollback), as an ISO 8601 UTC time; null until a publish records it."
           }
         },
         "type": "object",

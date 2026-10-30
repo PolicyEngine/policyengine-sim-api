@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
+from changelog_release_support import load_fragments_module
 from workflow_script_support import (
     REPOSITORY_ROOT,
     WORKFLOWS_DIR,
@@ -44,21 +46,48 @@ PREPARE_BRANCH = "dependency-update-prepare-branch.sh"
 COMMIT_AND_PUSH = "dependency-update-commit-and-push.sh"
 CREATE_PR = "dependency-update-create-pr.sh"
 
+REMOTE_HEAD = "0123456789abcdef0123456789abcdef01234567"
+
+# The scripts no longer ask gh about pull requests; this fake answers as the
+# pre-fix script expected, so a test can show that an open PR changes nothing.
 FAKE_GH_PR_LIST = """\
 if [[ "$1 $2" == "pr list" ]]; then
   printf '%s' "${FAKE_OPEN_PR:-}"
-  exit "${FAKE_GH_EXIT:-0}"
 fi
-exit "${FAKE_GH_EXIT:-0}"
 """
 
+# Each run rebuilds the update branch from main; the fake git reports the
+# remote branch's head from FAKE_REMOTE_HEAD (unset: the branch does not exist).
 FAKE_GIT = """\
 case "$1" in
+  ls-remote)
+    if [[ -n "${FAKE_REMOTE_HEAD:-}" ]]; then
+      printf '%s\\trefs/heads/update-dependencies\\n' "${FAKE_REMOTE_HEAD}"
+    fi
+    exit "${FAKE_GIT_LS_REMOTE_EXIT:-0}"
+    ;;
   status) printf '%s' "${FAKE_GIT_STATUS:-}" ;;
-  rev-list) printf '%s\\n' "${FAKE_COMMITS_TO_PUSH:-0}" ;;
+  diff) exit "${FAKE_GIT_DIFF_EXIT:-1}" ;;
   push) exit "${FAKE_GIT_PUSH_EXIT:-0}" ;;
 esac
 """
+GIT_IDENTITY = [
+    ["git", "config", "user.name", "policyengine-auto"],
+    [
+        "git",
+        "config",
+        "user.email",
+        "policyengine-auto@users.noreply.github.com",
+    ],
+]
+REMOTE_BRANCH_LOOKUP = [
+    "git",
+    "ls-remote",
+    "--heads",
+    "origin",
+    "refs/heads/update-dependencies",
+]
+REBUILD_FROM_MAIN = ["git", "checkout", "-B", "update-dependencies", "origin/main"]
 
 
 def test_update_dependencies_workflow_runs_the_tested_scripts():
@@ -68,10 +97,18 @@ def test_update_dependencies_workflow_runs_the_tested_scripts():
         assert f"run: .github/scripts/{script}" in workflow
 
 
+def _update_dependencies_steps() -> dict[str, dict]:
+    workflow = yaml.safe_load(
+        (WORKFLOWS_DIR / "update-dependencies.yml").read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"]["update-dependencies"]["steps"]
+    return {step["run"]: step for step in steps if "run" in step}
+
+
 def _prepare_branch(fakes: FakeCommands, tmp_path: Path, **env: str):
     output = tmp_path / "github-output"
     fakes.add("gh", FAKE_GH_PR_LIST)
-    fakes.add("git")
+    fakes.add("git", FAKE_GIT)
     result = run_script(
         PREPARE_BRANCH,
         env=fakes.env(
@@ -83,159 +120,227 @@ def _prepare_branch(fakes: FakeCommands, tmp_path: Path, **env: str):
     return result, output
 
 
-def test_prepare_branch_reuses_the_branch_of_an_open_update_pr(fakes, tmp_path):
-    result, output = _prepare_branch(fakes, tmp_path, FAKE_OPEN_PR="42")
+def test_prepare_branch_rebuilds_the_branch_from_main_when_an_update_pr_is_open(
+    fakes, tmp_path
+):
+    """Merging main into an old update branch mixed two uv.lock resolutions."""
+    result, output = _prepare_branch(
+        fakes, tmp_path, FAKE_OPEN_PR="583", FAKE_REMOTE_HEAD=REMOTE_HEAD
+    )
 
     assert result.returncode == 0, result.stderr
-    assert github_output(output) == {"has_open_pr": "true"}
-    assert fakes.calls("gh") == [
-        [
-            "gh",
-            "pr",
-            "list",
-            "--repo",
-            "PolicyEngine/policyengine-sim-api",
-            "--base",
-            "main",
-            "--head",
-            "update-dependencies",
-            "--state",
-            "open",
-            "--json",
-            "number",
-            "--jq",
-            ".[0].number // empty",
-        ]
-    ]
     assert fakes.calls("git") == [
-        ["git", "config", "user.name", "policyengine-auto"],
-        [
-            "git",
-            "config",
-            "user.email",
-            "policyengine-auto@users.noreply.github.com",
-        ],
-        ["git", "fetch", "origin", "update-dependencies"],
-        [
-            "git",
-            "checkout",
-            "-B",
-            "update-dependencies",
-            "origin/update-dependencies",
-        ],
-        ["git", "merge", "--no-edit", "-X", "theirs", "origin/main"],
+        *GIT_IDENTITY,
+        REMOTE_BRANCH_LOOKUP,
+        ["git", "fetch", "--quiet", "origin", REMOTE_HEAD],
+        REBUILD_FROM_MAIN,
     ]
+    assert fakes.calls("gh") == []
+    assert github_output(output) == {"remote_head": REMOTE_HEAD}
 
 
-def test_prepare_branch_starts_from_main_without_an_open_update_pr(fakes, tmp_path):
+def test_prepare_branch_starts_from_main_without_an_update_branch(fakes, tmp_path):
     result, output = _prepare_branch(fakes, tmp_path)
 
     assert result.returncode == 0, result.stderr
-    assert github_output(output) == {"has_open_pr": "false"}
-    assert fakes.calls("git")[2:] == [
-        ["git", "checkout", "-B", "update-dependencies", "origin/main"]
+    assert github_output(output) == {"remote_head": ""}
+    assert fakes.calls("git") == [
+        *GIT_IDENTITY,
+        REMOTE_BRANCH_LOOKUP,
+        REBUILD_FROM_MAIN,
     ]
 
 
-def test_prepare_branch_fails_when_the_pr_lookup_fails(fakes, tmp_path):
-    result, output = _prepare_branch(fakes, tmp_path, FAKE_GH_EXIT="1")
+def test_prepare_branch_fails_when_the_branch_lookup_fails(fakes, tmp_path):
+    result, output = _prepare_branch(fakes, tmp_path, FAKE_GIT_LS_REMOTE_EXIT="128")
 
     assert result.returncode != 0
     assert github_output(output) == {}
     assert not any(call[1] == "checkout" for call in fakes.calls("git"))
 
 
-def test_prepare_branch_requires_the_repository(fakes, tmp_path):
-    fakes.add("gh", FAKE_GH_PR_LIST)
-    fakes.add("git")
-    env = fakes.env(GITHUB_OUTPUT=str(tmp_path / "github-output"))
-    env.pop("GITHUB_REPOSITORY", None)
+def test_prepare_branch_requires_the_output_file(fakes, tmp_path):
+    fakes.add("git", FAKE_GIT)
+    env = fakes.env()
+    env.pop("GITHUB_OUTPUT", None)
 
     result = run_script(PREPARE_BRANCH, env=env)
 
     assert result.returncode != 0
-    assert "GITHUB_REPOSITORY is required" in result.stderr
+    assert "GITHUB_OUTPUT is required" in result.stderr
     assert fakes.calls() == []
 
 
-def _commit_and_push(fakes: FakeCommands, tmp_path: Path, has_open_pr: str, **env):
+def test_update_dependencies_workflow_passes_the_recorded_head_to_the_push():
+    steps = _update_dependencies_steps()
+
+    assert "env" not in steps[f".github/scripts/{PREPARE_BRANCH}"]
+    assert steps[f".github/scripts/{COMMIT_AND_PUSH}"]["env"] == {
+        "REMOTE_HEAD": "${{ steps.branch.outputs.remote_head }}"
+    }
+
+
+# Every pull request adds a changelog fragment (rule
+# sim.process.changelog-fragment); the update's never changes, so the push
+# still compares only the update with the remote branch.
+DEPENDENCY_UPDATE_FRAGMENT = "changelog.d/update-dependencies.changed.md"
+DEPENDENCY_UPDATE_FRAGMENT_TEXT = (
+    "Updated every project's locked dependencies to the newest versions their "
+    "requirements allow.\n"
+)
+# Records which fragments exist when git add stages the update.
+FAKE_GIT_RECORDING_FRAGMENTS = """\
+if [[ "$1" == "add" ]]; then
+  ls changelog.d > "$FAKE_FRAGMENTS_AT_ADD" 2>/dev/null || true
+fi
+"""
+
+
+def _commit_and_push(
+    fakes: FakeCommands, tmp_path: Path, git_body: str = FAKE_GIT, **env: str
+):
+    """Run the script in an empty checkout folder, which it may write a fragment to."""
     output = tmp_path / "github-output"
-    fakes.add("git", FAKE_GIT)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir(exist_ok=True)
+    fakes.add("git", git_body)
     fakes.add("date", "echo 2026-10-13\n")
     result = run_script(
         COMMIT_AND_PUSH,
-        env=fakes.env(GITHUB_OUTPUT=str(output), HAS_OPEN_PR=has_open_pr, **env),
+        env=fakes.env(GITHUB_OUTPUT=str(output), **env),
+        cwd=checkout,
     )
     return result, output
 
 
-def test_commit_and_push_replaces_the_branch_when_no_pr_owns_it(fakes, tmp_path):
+def test_commit_and_push_replaces_the_branch_with_a_lease_on_the_recorded_head(
+    fakes, tmp_path
+):
     result, output = _commit_and_push(
-        fakes, tmp_path, "false", FAKE_GIT_STATUS=" M uv.lock\n"
+        fakes, tmp_path, REMOTE_HEAD=REMOTE_HEAD, FAKE_GIT_STATUS=" M uv.lock\n"
     )
 
     assert result.returncode == 0, result.stderr
     assert "Changes detected" in result.stdout
-    assert github_output(output) == {"branch_pushed": "true"}
-    assert fakes.calls("git") == [
+    assert github_output(output)["branch_pushed"] == "true"
+    git_calls = fakes.calls("git")
+    assert git_calls[:3] == [
         ["git", "status", "--porcelain"],
         ["git", "add", "--all"],
         ["git", "commit", "-m", "Update dependencies (2026-10-13)"],
-        [
-            "git",
-            "push",
-            "--force-with-lease",
-            "origin",
-            "HEAD:update-dependencies",
-        ],
+    ]
+    assert git_calls[-1] == [
+        "git",
+        "push",
+        f"--force-with-lease=refs/heads/update-dependencies:{REMOTE_HEAD}",
+        "origin",
+        "HEAD:refs/heads/update-dependencies",
     ]
     assert fakes.calls("date") == [["date", "-u", "+%Y-%m-%d"]]
 
 
-def test_commit_and_push_appends_to_the_branch_of_an_open_pr(fakes, tmp_path):
-    result, output = _commit_and_push(
+def test_commit_and_push_adds_a_changelog_fragment_to_the_update(fakes, tmp_path):
+    fragments_at_add = tmp_path / "fragments-at-add"
+    result, _output = _commit_and_push(
         fakes,
         tmp_path,
-        "true",
+        git_body=FAKE_GIT_RECORDING_FRAGMENTS + FAKE_GIT,
+        REMOTE_HEAD=REMOTE_HEAD,
         FAKE_GIT_STATUS=" M uv.lock\n",
-        FAKE_COMMITS_TO_PUSH="1",
+        FAKE_FRAGMENTS_AT_ADD=str(fragments_at_add),
     )
 
     assert result.returncode == 0, result.stderr
-    assert github_output(output) == {"branch_pushed": "true"}
-    assert fakes.calls("git")[-2:] == [
-        ["git", "rev-list", "--count", "origin/update-dependencies..HEAD"],
-        ["git", "push", "origin", "HEAD:update-dependencies"],
+    fragment = tmp_path / "checkout" / DEPENDENCY_UPDATE_FRAGMENT
+    assert fragment.read_text(encoding="utf-8") == DEPENDENCY_UPDATE_FRAGMENT_TEXT
+    assert fragments_at_add.read_text(encoding="utf-8") == (
+        "update-dependencies.changed.md\n"
+    )
+    definition = load_fragments_module().FragmentDefinition.load(REPOSITORY_ROOT)
+    assert definition.problem_with(DEPENDENCY_UPDATE_FRAGMENT, fragment) is None
+
+
+def test_commit_and_push_adds_no_fragment_without_an_update(fakes, tmp_path):
+    result, _output = _commit_and_push(fakes, tmp_path, REMOTE_HEAD=REMOTE_HEAD)
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "checkout" / "changelog.d").exists()
+
+
+def test_commit_and_push_creates_the_branch_with_a_plain_push(fakes, tmp_path):
+    result, output = _commit_and_push(
+        fakes, tmp_path, REMOTE_HEAD="", FAKE_GIT_STATUS=" M uv.lock\n"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert github_output(output)["branch_pushed"] == "true"
+    assert fakes.calls("git")[3:] == [
+        ["git", "push", "origin", "HEAD:refs/heads/update-dependencies"]
     ]
 
 
-def test_commit_and_push_pushes_earlier_commits_to_an_open_pr(fakes, tmp_path):
-    """A merge from main can leave commits to push even without new changes."""
-    result, output = _commit_and_push(fakes, tmp_path, "true", FAKE_COMMITS_TO_PUSH="2")
+def test_commit_and_push_skips_the_push_when_the_branch_holds_the_update(
+    fakes, tmp_path
+):
+    """The commit's date differs every day, so the push compares files."""
+    result, output = _commit_and_push(
+        fakes,
+        tmp_path,
+        REMOTE_HEAD=REMOTE_HEAD,
+        FAKE_GIT_STATUS=" M uv.lock\n",
+        FAKE_GIT_DIFF_EXIT="0",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "update-dependencies already holds this update" in result.stdout
+    assert github_output(output) == {
+        "changes_detected": "true",
+        "branch_pushed": "false",
+    }
+    assert fakes.calls("git")[-1] == [
+        "git",
+        "diff",
+        "--quiet",
+        REMOTE_HEAD,
+        "HEAD",
+        "--",
+    ]
+
+
+def test_commit_and_push_reports_a_push_that_changed_the_branch(fakes, tmp_path):
+    result, output = _commit_and_push(
+        fakes, tmp_path, REMOTE_HEAD=REMOTE_HEAD, FAKE_GIT_STATUS=" M uv.lock\n"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert github_output(output) == {
+        "changes_detected": "true",
+        "branch_pushed": "true",
+    }
+    assert ["git", "diff", "--quiet", REMOTE_HEAD, "HEAD", "--"] in fakes.calls("git")
+
+
+@pytest.mark.parametrize("remote_head", [REMOTE_HEAD, ""])
+def test_commit_and_push_does_nothing_when_the_update_changes_nothing(
+    fakes, tmp_path, remote_head
+):
+    """Pushing main's own commit would leave an open update PR with no changes."""
+    result, output = _commit_and_push(fakes, tmp_path, REMOTE_HEAD=remote_head)
 
     assert result.returncode == 0, result.stderr
     assert "No changes detected" in result.stdout
-    assert github_output(output) == {"branch_pushed": "true"}
-    assert ["git", "push", "origin", "HEAD:update-dependencies"] in fakes.calls("git")
-    assert not any(call[1] == "commit" for call in fakes.calls("git"))
+    assert github_output(output) == {
+        "changes_detected": "false",
+        "branch_pushed": "false",
+    }
+    assert fakes.calls("git") == [["git", "status", "--porcelain"]]
 
 
-@pytest.mark.parametrize("has_open_pr", ["true", "false"])
-def test_commit_and_push_skips_the_push_when_nothing_is_new(
-    fakes, tmp_path, has_open_pr
-):
-    result, output = _commit_and_push(fakes, tmp_path, has_open_pr)
-
-    assert result.returncode == 0, result.stderr
-    assert github_output(output) == {"branch_pushed": "false"}
-    assert not any(call[1] in ("commit", "push") for call in fakes.calls("git"))
-
-
-def test_commit_and_push_rejects_an_invalid_open_pr_flag(fakes, tmp_path):
-    result, output = _commit_and_push(fakes, tmp_path, "yes")
+def test_commit_and_push_rejects_a_remote_head_that_is_not_a_commit(fakes, tmp_path):
+    result, output = _commit_and_push(fakes, tmp_path, REMOTE_HEAD="main")
 
     assert result.returncode == 1
-    assert "HAS_OPEN_PR must be either true or false" in result.stderr
+    assert "REMOTE_HEAD must be empty or a full commit hash" in result.stderr
     assert github_output(output) == {}
     assert fakes.calls() == []
 
@@ -244,7 +349,7 @@ def test_commit_and_push_fails_when_the_push_fails(fakes, tmp_path):
     result, output = _commit_and_push(
         fakes,
         tmp_path,
-        "false",
+        REMOTE_HEAD=REMOTE_HEAD,
         FAKE_GIT_STATUS=" M uv.lock\n",
         FAKE_GIT_PUSH_EXIT="1",
     )
@@ -253,15 +358,92 @@ def test_commit_and_push_fails_when_the_push_fails(fakes, tmp_path):
     assert github_output(output) == {}
 
 
-def test_create_pr_opens_the_update_pr(fakes):
-    fakes.add("gh")
+# The create-PR script finds the open "Update dependencies" issue, or opens
+# one, and names it on the first line of the update PR's description (rule
+# sim.process.pr-tracking-issue). The fake gh answers each call from the
+# environment and writes each description it is given to FAKE_PR_BODY_LOG.
+FAKE_GH_FOR_CREATE_PR = """\
+case "$1 $2" in
+  "pr list") printf '%s' "${FAKE_OPEN_PR:-}" ;;
+  "pr view") printf '%s' "${FAKE_OPEN_PR_BODY:-}" ;;
+  "pr create" | "pr edit") cat >> "$FAKE_PR_BODY_LOG" ;;
+  "issue create") printf '%s\\n' "${FAKE_CREATED_ISSUE_URL:-}" ;;
+  "api --paginate")
+    printf '%s' "${FAKE_OPEN_ISSUES:-}"
+    exit "${FAKE_GH_API_EXIT:-0}"
+    ;;
+esac
+"""
+UPDATE_PR_SUMMARY = (
+    "Automated daily dependency update by "
+    "`.github/workflows/update-dependencies.yml`. It runs "
+    "`./scripts/generate-clients.sh` (the generated clients are not "
+    "committed), then `make update`, which runs `uv lock --upgrade` in every "
+    "project, so this pull request changes only `uv.lock` files. CI on this "
+    "pull request tests the upgraded versions.\n\n"
+    "Each run rebuilds `update-dependencies` from `main` and replaces it, so "
+    "commits pushed to this branch by hand are lost on the next run."
+)
+# The summary of update PRs opened before each run rebuilt the branch.
+APPENDING_UPDATE_PR_SUMMARY = (
+    "Automated daily dependency updates. Subsequent runs append commits to "
+    "this branch while the pull request remains open."
+)
+LEGACY_UPDATE_PR_BODY = (
+    "Automated dependency updates\n\n"
+    "This PR was automatically created by the dependency update workflow."
+)
+OPEN_UPDATE_PR_LOOKUP = [
+    "gh",
+    "pr",
+    "list",
+    "--repo",
+    "PolicyEngine/policyengine-sim-api",
+    "--base",
+    "main",
+    "--head",
+    "update-dependencies",
+    "--state",
+    "open",
+    "--json",
+    "number,isCrossRepository",
+    "--jq",
+    "map(select(.isCrossRepository | not)) | .[0].number // empty",
+]
+OPEN_TRACKING_ISSUE_LOOKUP = [
+    "gh",
+    "api",
+    "--paginate",
+    "repos/PolicyEngine/policyengine-sim-api/issues?state=open&per_page=100",
+    "--jq",
+    '.[] | select(.pull_request == null and .title == "Update dependencies") | .number',
+]
 
+
+def _create_pr(fakes: FakeCommands, tmp_path: Path, **env: str):
+    """Run the create-PR script; return its result and the descriptions it set."""
+    body_log = tmp_path / "pr-bodies"
+    fakes.add("gh", FAKE_GH_FOR_CREATE_PR)
     result = run_script(
-        CREATE_PR, env=fakes.env(GITHUB_REPOSITORY="PolicyEngine/policyengine-sim-api")
+        CREATE_PR,
+        env=fakes.env(
+            GITHUB_REPOSITORY="PolicyEngine/policyengine-sim-api",
+            FAKE_PR_BODY_LOG=str(body_log),
+            **env,
+        ),
     )
+    # Read bytes: read_text would turn the CRLF line endings under test into LF.
+    descriptions = body_log.read_bytes().decode("utf-8") if body_log.exists() else ""
+    return result, descriptions
+
+
+def test_create_pr_opens_the_update_pr_naming_the_open_tracking_issue(fakes, tmp_path):
+    result, descriptions = _create_pr(fakes, tmp_path, FAKE_OPEN_ISSUES="870\n")
 
     assert result.returncode == 0, result.stderr
     assert fakes.calls() == [
+        OPEN_UPDATE_PR_LOOKUP,
+        OPEN_TRACKING_ISSUE_LOOKUP,
         [
             "gh",
             "pr",
@@ -270,15 +452,162 @@ def test_create_pr_opens_the_update_pr(fakes):
             "PolicyEngine/policyengine-sim-api",
             "--title",
             "Update dependencies",
-            "--body",
-            "Automated daily dependency updates. Subsequent runs append commits "
-            "to this branch while the pull request remains open.",
+            "--body-file",
+            "-",
             "--base",
             "main",
             "--head",
             "update-dependencies",
-        ]
+        ],
     ]
+    assert descriptions == f"Fixes #870\n\n{UPDATE_PR_SUMMARY}\n"
+
+
+def test_create_pr_names_the_oldest_open_tracking_issue(fakes, tmp_path):
+    result, descriptions = _create_pr(
+        fakes, tmp_path, FAKE_OPEN_ISSUES="875\n870\n1001\n"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert descriptions.startswith("Fixes #870\n\n")
+
+
+def test_create_pr_opens_a_tracking_issue_when_none_is_open(fakes, tmp_path):
+    result, descriptions = _create_pr(
+        fakes,
+        tmp_path,
+        FAKE_CREATED_ISSUE_URL=(
+            "https://github.com/PolicyEngine/policyengine-sim-api/issues/871"
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert fakes.calls()[2] == [
+        "gh",
+        "issue",
+        "create",
+        "--repo",
+        "PolicyEngine/policyengine-sim-api",
+        "--title",
+        "Update dependencies",
+        "--body",
+        "Tracks the automated daily dependency updates from "
+        "update-dependencies.yml. The update pull request names this issue on "
+        "the first line of its description and closes it when it merges.",
+    ]
+    assert fakes.calls()[3][:3] == ["gh", "pr", "create"]
+    assert descriptions == f"Fixes #871\n\n{UPDATE_PR_SUMMARY}\n"
+
+
+def test_create_pr_fails_when_the_new_issue_has_no_number(fakes, tmp_path):
+    result, descriptions = _create_pr(
+        fakes, tmp_path, FAKE_CREATED_ISSUE_URL="could not create the issue"
+    )
+
+    assert result.returncode == 1
+    assert "Could not resolve the dependency-update tracking issue" in result.stderr
+    assert not any(call[1:3] == ["pr", "create"] for call in fakes.calls())
+    assert descriptions == ""
+
+
+def test_create_pr_fails_when_the_issue_lookup_fails(fakes, tmp_path):
+    result, descriptions = _create_pr(fakes, tmp_path, FAKE_GH_API_EXIT="1")
+
+    assert result.returncode == 1
+    assert fakes.calls() == [OPEN_UPDATE_PR_LOOKUP, OPEN_TRACKING_ISSUE_LOOKUP]
+    assert descriptions == ""
+
+
+def test_create_pr_reuses_the_open_update_pr_and_rewrites_its_description(
+    fakes, tmp_path
+):
+    """An update PR opened before the rule, such as #583, is kept and rewritten."""
+    result, descriptions = _create_pr(
+        fakes,
+        tmp_path,
+        FAKE_OPEN_PR="583",
+        FAKE_OPEN_PR_BODY=LEGACY_UPDATE_PR_BODY,
+        FAKE_OPEN_ISSUES="870\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert fakes.calls() == [
+        OPEN_UPDATE_PR_LOOKUP,
+        OPEN_TRACKING_ISSUE_LOOKUP,
+        [
+            "gh",
+            "pr",
+            "view",
+            "583",
+            "--repo",
+            "PolicyEngine/policyengine-sim-api",
+            "--json",
+            "body",
+            "--jq",
+            ".body",
+        ],
+        [
+            "gh",
+            "pr",
+            "edit",
+            "583",
+            "--repo",
+            "PolicyEngine/policyengine-sim-api",
+            "--body-file",
+            "-",
+        ],
+    ]
+    assert descriptions == f"Fixes #870\n\n{UPDATE_PR_SUMMARY}\n"
+
+
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"])
+def test_create_pr_names_the_open_issue_instead_of_a_closed_one(
+    fakes, tmp_path, line_ending
+):
+    """An open update PR whose issue was closed names the open one instead."""
+    result, descriptions = _create_pr(
+        fakes,
+        tmp_path,
+        FAKE_OPEN_PR="900",
+        FAKE_OPEN_PR_BODY=f"Fixes #860{line_ending}{line_ending}{UPDATE_PR_SUMMARY}",
+        FAKE_OPEN_ISSUES="870\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert descriptions == f"Fixes #870\n\n{UPDATE_PR_SUMMARY}\n"
+
+
+def test_create_pr_rewrites_a_description_that_says_runs_append_commits(
+    fakes, tmp_path
+):
+    result, descriptions = _create_pr(
+        fakes,
+        tmp_path,
+        FAKE_OPEN_PR="900",
+        FAKE_OPEN_PR_BODY=f"Fixes #870\n\n{APPENDING_UPDATE_PR_SUMMARY}",
+        FAKE_OPEN_ISSUES="870\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert descriptions == f"Fixes #870\n\n{UPDATE_PR_SUMMARY}\n"
+
+
+def test_create_pr_leaves_an_open_update_pr_with_the_current_description(
+    fakes, tmp_path
+):
+    result, descriptions = _create_pr(
+        fakes,
+        tmp_path,
+        FAKE_OPEN_PR="900",
+        FAKE_OPEN_PR_BODY=f"Fixes #870\n\n{UPDATE_PR_SUMMARY}",
+        FAKE_OPEN_ISSUES="870\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not any(
+        call[1:3] in (["pr", "edit"], ["pr", "create"]) for call in fakes.calls()
+    )
+    assert descriptions == ""
 
 
 def test_create_pr_fails_when_gh_fails(fakes):
@@ -289,6 +618,7 @@ def test_create_pr_fails_when_gh_fails(fakes):
     )
 
     assert result.returncode == 1
+    assert fakes.calls() == [OPEN_UPDATE_PR_LOOKUP]
 
 
 def test_create_pr_requires_the_repository(fakes):
@@ -301,6 +631,14 @@ def test_create_pr_requires_the_repository(fakes):
     assert result.returncode != 0
     assert "GITHUB_REPOSITORY is required" in result.stderr
     assert fakes.calls() == []
+
+
+def test_update_dependencies_workflow_updates_the_pr_whenever_files_change():
+    """The PR step runs even when the branch already held the update."""
+    create_pr = _update_dependencies_steps()[f".github/scripts/{CREATE_PR}"]
+
+    assert create_pr["if"] == "steps.push.outputs.changes_detected == 'true'"
+    assert create_pr["env"] == {"GH_TOKEN": "${{ steps.app-token.outputs.token }}"}
 
 
 # --- pr.yml ---------------------------------------------------------------

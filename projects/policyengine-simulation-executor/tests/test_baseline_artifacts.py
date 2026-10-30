@@ -91,7 +91,7 @@ class TestDeterministicBaselineId:
         path = "gov.hmrc.income_tax.rates.uk[0].rate"
         policy = {path: {"2027-04-06.2028-04-05": 0.21}}
         if kind == "bounded_policy":
-            policy = sr._compile_interval_policy(
+            policy = sr.compile_interval_policy(
                 policy, country_module=sr._country_module("uk"), year=2027
             )
         elif kind == "scalar":
@@ -123,6 +123,18 @@ class TestDeterministicBaselineId:
 
     def test_nondefault_dataset_disqualifies(self, collected):
         assert self._id(collected, dataset_is_default=False) is None
+
+    def test_a_uk_local_area_baseline_gets_no_deterministic_id(self, collected):
+        # A UK-wide local-area breakdown simulates the whole local-area
+        # dataset with no scoping, as a national run does. Its baseline must
+        # never load the national file's precomputed artifact.
+        assert (
+            self._id(
+                collected, country="uk", region_code="uk", dataset_is_default=False
+            )
+            is None
+        )
+        assert collected == []
 
     def test_missing_region_code_disqualifies(self, collected):
         assert self._id(collected, region_code=None) is None

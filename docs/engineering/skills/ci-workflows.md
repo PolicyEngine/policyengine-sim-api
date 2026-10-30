@@ -50,3 +50,31 @@ does a baseline entry that no longer applies, so each list only shrinks. When
 you convert an existing multi-line block into a script, or add a missing test,
 remove its baseline entry and lower the rule's `baseline.count` in
 `rules/registry.toml`.
+
+## Pushing to main from a workflow
+
+Only the `versioning` job in `simulation-deploy.yml` pushes to `main`: one
+release commit per merge, with the GitHub App token from `APP_ID` and
+`APP_PRIVATE_KEY`, whose App is on the `main` ruleset's bypass list. Its push
+starts the workflow again, and only that run deploys. Don't add another job
+that pushes to `main`, and don't change the release commit's message in one
+place only: each deploy job's `if` and `publish-clients.yml` compare against
+it. Rule `sim.deploy.release-commit-deploys-once`, and
+`projects/policyengine-simulation-entry/tests/test_release_workflow.py`, check
+both; see
+[How a merge is released and deployed](github-prs.md#how-a-merge-is-released-and-deployed).
+
+## Installing uv
+
+A step that installs uv with `astral-sh/setup-uv` sets `with: version:` to the
+release in `.uv-version`:
+
+```yaml
+- name: Install uv
+  uses: astral-sh/setup-uv@v8.1.0
+  with:
+    version: "0.13.6"
+```
+
+Rule `sim.dependencies.uv-version-pinned` requires it; see
+[the dependency locking skill](dependencies.md#we-pin-one-uv-version).

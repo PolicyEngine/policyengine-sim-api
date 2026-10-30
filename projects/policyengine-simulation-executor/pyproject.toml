@@ -21,10 +21,10 @@ dependencies = [
     "policyengine-stage12-persistence",
     # PolicyEngine.py's models extra is the only selector for core, country
     # models, and the SPM calculator. Do not duplicate those versions here.
-    "policyengine[models]==6.7.5",
+    "policyengine[models]==6.11.1",
     "tables>=3.10.2",
     "modal>=0.73.0",
-    "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.2,<4",
+    "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.4,<4",
     # Imported directly by the artifact store client; do not rely on the
     # transitive pin via policyengine.
     "google-cloud-storage>=2",
@@ -46,10 +46,10 @@ packages = ["src/policyengine_simulation_executor"]
 # certified datasets and writes their receipt.
 [dependency-groups]
 modal-simulation-image = [
-    "policyengine[models]==6.7.5",
+    "policyengine[models]==6.11.1",
     "fastapi>=0.115.0",
     "tables>=3.10.2",
-    "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.2,<4",
+    "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.4,<4",
     # The artifact fetch layer and store client read GCS. The lib is also a
     # transitive dependency of policyengine, but the image must not depend
     # on an upstream package keeping it.
@@ -97,3 +97,12 @@ markers = [
 [tool.pyright]
 # The pr.yml pyright job checks these paths: python -m scripts.rules pyright.
 include = ["src"]
+# Without extraPaths, Pyright adds src as an import root, and `import modal`
+# in the Modal app modules under src/modal resolves to that directory instead
+# of the installed modal library. Where the apps run (modal deploy and
+# modal run, and the Modal containers), src is not an import root: the package
+# is installed from src, and the app modules import each other as
+# src.modal.<module> from the project directory. The unit tests are the
+# exception: pytest's pythonpath puts src first, so there `import modal` can
+# find src/modal, and the tests replace the modal module where they need it.
+extraPaths = []

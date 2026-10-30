@@ -161,6 +161,8 @@ def build_v2_image(
             uv_project_dir=_UV_PROJECT_DIR,
             frozen=True,
             extra_options="--only-group modal-simulation-image",
+            # The repository's uv release, from .uv-version.
+            uv_version="0.13.6",
         )
         .run_commands(
             bundle_data_install_command(
@@ -195,7 +197,9 @@ def build_v2_image(
             secrets=[gcp_secret],
             cpu=2.0,
             memory=4096,
-            timeout=1800,
+            # The 63 national files and the state datasets (a file per state
+            # for each precomputed year), downloaded and hashed in turn.
+            timeout=3600,
         )
     image = image.add_local_python_source(
         "src.modal",
@@ -277,7 +281,6 @@ def run_single_simulation_segment_us(
 
     try:
         propagated = normalize_observability_context(observability_context)
-        result = None
         with runtime.operation(
             STAGE12_SEGMENT_STAGES.name(Stage.STAGE12_SEGMENT_EXECUTION),
             attributes={
@@ -287,13 +290,9 @@ def run_single_simulation_segment_us(
             },
             remote_context=propagated,
         ):
-            result = stage12_runtime.calculate_segment(
+            return stage12_runtime.calculate_segment(
                 payload, runtime=runtime
             ).model_dump(mode="python")
-        if result is None:
-            msg = "Stage 12 segment calculation returned no result"
-            raise RuntimeError(msg)
-        return result
     finally:
         runtime.shutdown()
 
@@ -334,7 +333,6 @@ def run_single_simulation_us(
 
     try:
         propagated = normalize_observability_context(observability_context)
-        result = None
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
@@ -343,7 +341,7 @@ def run_single_simulation_us(
             },
             remote_context=propagated,
         ):
-            result = stage12_runtime.run_single_simulation(
+            return stage12_runtime.run_single_simulation(
                 payload,
                 context,
                 required_country="us",
@@ -352,10 +350,6 @@ def run_single_simulation_us(
                     runtime=runtime,
                 ),
             )
-        if result is None:
-            msg = "Stage 12 US simulation returned no result"
-            raise RuntimeError(msg)
-        return result
     finally:
         runtime.shutdown()
 
@@ -384,7 +378,6 @@ def run_single_simulation_uk(
     )
     try:
         propagated = normalize_observability_context(observability_context)
-        result = None
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
@@ -393,7 +386,7 @@ def run_single_simulation_uk(
             },
             remote_context=propagated,
         ):
-            result = stage12_runtime.run_single_simulation(
+            return stage12_runtime.run_single_simulation(
                 payload,
                 context,
                 required_country="uk",
@@ -401,10 +394,6 @@ def run_single_simulation_uk(
                     runtime=runtime
                 ),
             )
-        if result is None:
-            msg = "Stage 12 UK simulation returned no result"
-            raise RuntimeError(msg)
-        return result
     finally:
         runtime.shutdown()
 
@@ -450,7 +439,6 @@ def coordinate_report(
     )
     try:
         propagated = normalize_observability_context(observability_context)
-        result = None
         with runtime.operation(
             stage_plan.name(Stage.STAGE12_COORDINATOR_EXECUTION),
             attributes={
@@ -463,7 +451,7 @@ def coordinate_report(
             },
             remote_context=propagated,
         ):
-            result = stage12_runtime.coordinate_report(
+            return stage12_runtime.coordinate_report(
                 payload,
                 context,
                 parent,
@@ -473,9 +461,5 @@ def coordinate_report(
                 ),
                 dependencies=stage12_runtime.CoordinatorDependencies(runtime=runtime),
             )
-        if result is None:
-            msg = "Stage 12 report coordinator returned no result"
-            raise RuntimeError(msg)
-        return result
     finally:
         runtime.shutdown()

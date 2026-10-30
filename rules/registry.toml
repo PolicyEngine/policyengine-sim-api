@@ -10,6 +10,8 @@
 
 schema_version = 1
 repo = "policyengine-sim-api"
+# Each [rule.downgrade] names an open issue here that tracks restoring the rule.
+issue_repository = "PolicyEngine/policyengine-sim-api"
 
 [[category]]
 id = "boundaries"
@@ -52,19 +54,19 @@ id = "process"
 title = "Process and repository hygiene"
 
 [discovery]
-workflows = [".github/workflows/pr.yml", ".github/workflows/pr-image-smoke.yml"]
+workflows = [".github/workflows/pr.yml", ".github/workflows/pr-image-smoke.yml", ".github/workflows/pr-description.yml"]
 guard_test_globs = [
   "projects/*/tests/test_*boundar*.py",
   "libs/*/tests/test_*boundar*.py",
   "projects/*/tests/test_*schema_authority*.py",
-  "projects/policyengine-simulation-entry/tests/test_deployment_assets.py",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets*.py",
   "projects/policyengine-simulation-gateway/tests/test_openapi_golden.py",
   "projects/*/tests/test_runtime_evaluated_annotations.py",
 ]
 ignore_tests = [
-  { node = "projects/policyengine-simulation-entry/tests/test_deployment_assets.py::test_the_expression_evaluator_follows_github_semantics", reason = "Checks the GitHub Actions expression evaluator that the workflow-condition tests use; it enforces no repository rule itself." },
-  { node = "projects/policyengine-simulation-entry/tests/test_deployment_assets.py::test_the_expression_evaluator_returns_operands_and_job_statuses", reason = "Pins the operand values and job statuses the GitHub Actions expression evaluator returns; it enforces no repository rule itself." },
-  { node = "projects/policyengine-simulation-entry/tests/test_deployment_assets.py::test_the_expression_evaluator_refuses_what_it_cannot_read", reason = "Pins that the GitHub Actions expression evaluator refuses expressions it cannot read; it enforces no repository rule itself." },
+  { node = "projects/policyengine-simulation-entry/tests/test_deployment_assets_release_gates.py::test_the_expression_evaluator_follows_github_semantics", reason = "Checks the GitHub Actions expression evaluator that the workflow-condition tests use; it enforces no repository rule itself." },
+  { node = "projects/policyengine-simulation-entry/tests/test_deployment_assets_release_gates.py::test_the_expression_evaluator_returns_operands_and_job_statuses", reason = "Pins the operand values and job statuses the GitHub Actions expression evaluator returns; it enforces no repository rule itself." },
+  { node = "projects/policyengine-simulation-entry/tests/test_deployment_assets_release_gates.py::test_the_expression_evaluator_refuses_what_it_cannot_read", reason = "Pins that the GitHub Actions expression evaluator refuses expressions it cannot read; it enforces no repository rule itself." },
 ]
 
 [agents]
@@ -244,12 +246,12 @@ autofix = false
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
-  "tests/test_deployment_assets.py::test_main_deployment_automatically_deploys_stage12_in_both_environments",
-  "tests/test_deployment_assets.py::test_stage12_only_deployment_runs_candidate_tests_and_requested_promotion",
-  "tests/test_deployment_assets.py::test_stage12_only_deployment_cannot_redeploy_existing_modal_resources",
-  "tests/test_deployment_assets.py::test_stage12_only_deployment_skips_existing_stack_integration_suite",
-  "tests/test_deployment_assets.py::test_stage12_worker_deployment_can_request_a_google_oidc_token",
-  "tests/test_deployment_assets.py::test_stage12_only_promotion_runs_whatever_the_skipped_stack_jobs",
+  "tests/test_deployment_assets_promotion.py::test_main_deployment_automatically_deploys_stage12_in_both_environments",
+  "tests/test_deployment_assets_promotion.py::test_stage12_only_deployment_runs_candidate_tests_and_requested_promotion",
+  "tests/test_deployment_assets_promotion.py::test_stage12_only_deployment_cannot_redeploy_existing_modal_resources",
+  "tests/test_deployment_assets_promotion.py::test_stage12_only_deployment_skips_existing_stack_integration_suite",
+  "tests/test_deployment_assets_promotion.py::test_stage12_worker_deployment_can_request_a_google_oidc_token",
+  "tests/test_deployment_assets_release_gates.py::test_stage12_only_promotion_runs_whatever_the_skipped_stack_jobs",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
@@ -268,7 +270,7 @@ autofix = false
 [rule.enforcer]
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
-nodes = ["tests/test_deployment_assets.py::test_production_lock_contains_the_direct_stage12_database_runtime"]
+nodes = ["tests/test_deployment_assets_traffic.py::test_production_lock_contains_the_direct_stage12_database_runtime"]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
@@ -325,8 +327,8 @@ autofix = false
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
-  "tests/test_deployment_assets.py::test_cloud_run_deployment_does_not_interpolate_github_values_in_shell",
-  "tests/test_deployment_assets.py::test_cloud_run_deployment_escapes_environment_and_pins_secret_versions",
+  "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_does_not_interpolate_github_values_in_shell",
+  "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_escapes_environment_and_pins_secret_versions",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
@@ -346,8 +348,8 @@ autofix = false
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
-  "tests/test_deployment_assets.py::test_cloud_run_revision_tags_are_valid_on_the_first_workflow_run",
-  "tests/test_deployment_assets.py::test_revision_tags_fit_existing_cloud_run_service_names",
+  "tests/test_deployment_assets_cloud_run.py::test_cloud_run_revision_tags_are_valid_on_the_first_workflow_run",
+  "tests/test_deployment_assets_cloud_run.py::test_revision_tags_fit_existing_cloud_run_service_names",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
@@ -367,8 +369,8 @@ autofix = false
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
-  "tests/test_deployment_assets.py::test_full_stack_promotion_order_is_explicit",
-  "tests/test_deployment_assets.py::test_reusable_deployment_rejects_unexpected_skipped_phases",
+  "tests/test_deployment_assets_promotion.py::test_full_stack_promotion_order_is_explicit",
+  "tests/test_deployment_assets_promotion.py::test_reusable_deployment_rejects_unexpected_skipped_phases",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
@@ -388,7 +390,7 @@ autofix = false
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
-  "tests/test_deployment_assets.py::test_staging_deployments_promote_their_tested_entrypoint_revision",
+  "tests/test_deployment_assets_promotion.py::test_staging_deployments_promote_their_tested_entrypoint_revision",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
@@ -398,7 +400,7 @@ invocation = "uv run --frozen pytest tests/"
 bad_fixture = "rules/fixtures/sim.deploy.staging-promotes-tested-revision/bad_simulation_deploy.yml"
 good_fixture = "rules/fixtures/sim.deploy.staging-promotes-tested-revision/good_simulation_deploy.yml"
 project = "projects/policyengine-simulation-entry"
-test = "tests/test_deployment_assets.py::test_rule_proof_staging_promotes_tested_revision"
+test = "tests/test_deployment_assets_promotion.py::test_rule_proof_staging_promotes_tested_revision"
 
 [[rule]]
 id = "sim.deploy.smoke-tests-strict"
@@ -436,9 +438,9 @@ autofix = false
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
-  "tests/test_deployment_assets.py::test_cloud_run_deployment_defaults_permission_enforcement_to_log_only",
-  "tests/test_deployment_assets.py::test_cloud_run_deployment_rejects_invalid_permission_enforcement",
-  "tests/test_deployment_assets.py::test_permission_enforcement_reaches_candidate_and_authenticated_tests",
+  "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_defaults_permission_enforcement_to_log_only",
+  "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_rejects_invalid_permission_enforcement",
+  "tests/test_deployment_assets_cloud_run.py::test_permission_enforcement_reaches_candidate_and_authenticated_tests",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
@@ -458,8 +460,8 @@ autofix = false
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
-  "tests/test_deployment_assets.py::test_traffic_changes_are_exact_revision_validated_and_reversible",
-  "tests/test_deployment_assets.py::test_traffic_change_refuses_an_intervening_promotion",
+  "tests/test_deployment_assets_traffic.py::test_traffic_changes_are_exact_revision_validated_and_reversible",
+  "tests/test_deployment_assets_traffic.py::test_traffic_change_refuses_an_intervening_promotion",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
@@ -479,26 +481,26 @@ autofix = false
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
-  "tests/test_deployment_assets.py::test_deploy_gates_pass_the_release_identity_to_the_smoke",
-  "tests/test_deployment_assets.py::test_latest_is_expected_only_when_the_release_advances_it",
-  "tests/test_deployment_assets.py::test_smoke_without_expectations_only_requires_versions_json",
-  "tests/test_deployment_assets.py::test_smoke_accepts_the_gateway_identity_of_a_new_release",
-  "tests/test_deployment_assets.py::test_smoke_accepts_an_older_release_by_its_route",
-  "tests/test_deployment_assets.py::test_smoke_accepts_an_unrecorded_digest_only_when_none_is_served",
-  "tests/test_deployment_assets.py::test_smoke_requires_every_expectation_when_identity_is_required",
-  "tests/test_deployment_assets.py::test_smoke_refuses_an_incomplete_identity",
-  "tests/test_deployment_assets.py::test_smoke_refuses_malformed_expectations",
-  "tests/test_deployment_assets.py::test_smoke_rejects_identity_expectations_without_a_version",
-  "tests/test_deployment_assets.py::test_smoke_rejects_a_release_without_a_route",
-  "tests/test_deployment_assets.py::test_smoke_rejects_worker_routes_to_an_old_app",
-  "tests/test_deployment_assets.py::test_smoke_rejects_a_uk_model_routed_to_another_app",
-  "tests/test_deployment_assets.py::test_smoke_rejects_latest_routing_to_another_version",
-  "tests/test_deployment_assets.py::test_smoke_rejects_a_latest_wrapper_that_lags_alone",
-  "tests/test_deployment_assets.py::test_smoke_rejects_a_uk_latest_that_lags_the_wrapper",
-  "tests/test_deployment_assets.py::test_smoke_rejects_a_missing_bundle_identity",
-  "tests/test_deployment_assets.py::test_smoke_rejects_a_bundle_recorded_for_another_wrapper",
-  "tests/test_deployment_assets.py::test_smoke_rejects_another_uk_model",
-  "tests/test_deployment_assets.py::test_smoke_rejects_another_uk_dataset",
+  "tests/test_deployment_assets_identity_smoke.py::test_deploy_gates_pass_the_release_identity_to_the_smoke",
+  "tests/test_deployment_assets_routing.py::test_latest_is_expected_only_when_the_release_advances_it",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_without_expectations_only_requires_versions_json",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_accepts_the_gateway_identity_of_a_new_release",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_accepts_an_older_release_by_its_route",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_accepts_an_unrecorded_digest_only_when_none_is_served",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_requires_every_expectation_when_identity_is_required",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_refuses_an_incomplete_identity",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_refuses_malformed_expectations",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_rejects_identity_expectations_without_a_version",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_rejects_a_release_without_a_route",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_rejects_worker_routes_to_an_old_app",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_rejects_a_uk_model_routed_to_another_app",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_rejects_latest_routing_to_another_version",
+  "tests/test_deployment_assets_release_gates.py::test_smoke_rejects_a_latest_wrapper_that_lags_alone",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_rejects_a_uk_latest_that_lags_the_wrapper",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_rejects_a_missing_bundle_identity",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_rejects_a_bundle_recorded_for_another_wrapper",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_rejects_another_uk_model",
+  "tests/test_deployment_assets_identity_smoke.py::test_smoke_rejects_another_uk_dataset",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
@@ -518,8 +520,8 @@ autofix = false
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
-  "tests/test_deployment_assets.py::test_deployed_stack_must_reproduce_the_numerical_sentinel",
-  "tests/test_deployment_assets.py::test_a_failing_sentinel_fails_its_step",
+  "tests/test_deployment_assets_promotion.py::test_deployed_stack_must_reproduce_the_numerical_sentinel",
+  "tests/test_deployment_assets_release_gates.py::test_a_failing_sentinel_fails_its_step",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
@@ -539,19 +541,52 @@ autofix = false
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
-  "tests/test_deployment_assets.py::test_each_publication_is_named_by_its_run_attempt_and_environment",
-  "tests/test_deployment_assets.py::test_publication_keeps_the_plan_but_finalization_reads_the_journal",
-  "tests/test_deployment_assets.py::test_finalizer_always_resolves_a_publication_with_the_release_gate_outcome",
-  "tests/test_deployment_assets.py::test_deployment_ready_requires_the_journal_finalizer_to_complete",
-  "tests/test_deployment_assets.py::test_release_success_requires_completed_finalization_for_published_routing",
-  "tests/test_deployment_assets.py::test_failed_release_gate_cannot_report_a_successful_release",
-  "tests/test_deployment_assets.py::test_a_failing_routing_command_fails_its_step_and_job",
-  "tests/test_deployment_assets.py::test_routing_jobs_never_allow_command_failures",
+  "tests/test_deployment_assets_routing.py::test_each_publication_is_named_by_its_run_attempt_and_environment",
+  "tests/test_deployment_assets_routing.py::test_publication_keeps_the_plan_but_finalization_reads_the_journal",
+  "tests/test_deployment_assets_release_gates.py::test_finalizer_always_resolves_a_publication_with_the_release_gate_outcome",
+  "tests/test_deployment_assets_routing.py::test_deployment_ready_requires_the_journal_finalizer_to_complete",
+  "tests/test_deployment_assets_routing.py::test_release_success_requires_completed_finalization_for_published_routing",
+  "tests/test_deployment_assets_routing.py::test_failed_release_gate_cannot_report_a_successful_release",
+  "tests/test_deployment_assets_routing.py::test_a_failing_routing_command_fails_its_step_and_job",
+  "tests/test_deployment_assets_routing.py::test_routing_jobs_never_allow_command_failures",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
 invocation = "uv run --frozen pytest tests/"
+
+[[rule]]
+id = "sim.deploy.release-commit-deploys-once"
+category = "deployment"
+statement = "A merge to main deploys only through the release commit the versioning job in simulation-deploy.yml pushes with the GitHub App token: every other push to main runs only that job, the release commit runs only the deploy jobs and never another release, a manual dispatch deploys without a release, and client publication follows only the release commit's run, so each merge deploys once and nothing loops."
+rationale = "docs/engineering/skills/github-prs.md#changelog-fragments"
+scope = [".github/workflows/simulation-deploy.yml", ".github/workflows/publish-clients.yml", ".github/scripts/build-changelog.sh", ".github/scripts/commit-release.sh"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_release_workflow.py::test_the_deploy_workflow_releases_each_merge_before_deploying_it",
+  "tests/test_release_workflow.py::test_each_merge_deploys_once_and_its_release_commit_starts_nothing",
+  "tests/test_release_workflow.py::test_the_versioning_job_pushes_its_release_with_the_app_token",
+  "tests/test_release_workflow.py::test_clients_publish_after_the_release_commit_deploys",
+  "tests/test_release_workflow.py::test_clients_publish_after_no_other_run",
+  "tests/test_release_workflow.py::test_commit_release_pushes_one_release_commit_to_main",
+  "tests/test_release_workflow.py::test_commit_release_leaves_the_release_to_a_newer_merge",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
+[rule.proof]
+# The bad fixture is simulation-deploy.yml as it was on main before releases,
+# when every push to main deployed.
+bad_fixture = "rules/fixtures/sim.deploy.release-commit-deploys-once/bad_simulation-deploy.yml"
+good_fixture = "rules/fixtures/sim.deploy.release-commit-deploys-once/good_simulation-deploy.yml"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_release_workflow.py::test_rule_proof_release_commit_deploys_once"
 
 [[rule]]
 id = "sim.deploy.container-context-minimal"
@@ -566,8 +601,8 @@ autofix = false
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
-  "tests/test_deployment_assets.py::test_container_context_excludes_local_environments_and_unrelated_projects",
-  "tests/test_deployment_assets.py::test_entrypoint_container_uses_requested_target_platform",
+  "tests/test_deployment_assets_traffic.py::test_container_context_excludes_local_environments_and_unrelated_projects",
+  "tests/test_deployment_assets_cloud_run.py::test_entrypoint_container_uses_requested_target_platform",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
@@ -678,7 +713,7 @@ autofix = false
 [rule.enforcer]
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
-nodes = ["tests/test_deployment_assets.py::test_complete_integration_suite_is_configured_for_beta_only"]
+nodes = ["tests/test_deployment_assets_promotion.py::test_complete_integration_suite_is_configured_for_beta_only"]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
@@ -696,7 +731,7 @@ autofix = false
 [rule.enforcer]
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
-nodes = ["tests/test_deployment_assets.py::test_client_publication_checks_out_the_deployed_commit"]
+nodes = ["tests/test_deployment_assets_traffic.py::test_client_publication_checks_out_the_deployed_commit"]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
@@ -816,7 +851,7 @@ project = "projects/policyengine-simulation-executor"
 test = "tests/test_microdata_weight_boundaries.py::test_rule_proof_weight_stripping_confined"
 [rule.baseline]
 file = "rules/baselines/sim-microdata-weight-stripping.txt"
-count = 1
+count = 0
 
 [[rule]]
 id = "sim.microdata.builder-tests-use-weighted-frames"
@@ -1126,11 +1161,11 @@ invocation = "unittest discover -s scripts/rules/tests"
 [[rule]]
 id = "sim.quality.pyright-gateway"
 category = "quality"
-statement = "The simulation gateway has no Pyright errors beyond those its baseline lists, and the baseline lists only errors that still occur, so it only shrinks; checked with the pinned Pyright version in the gateway's own locked environment."
-rationale = "docs/engineering/skills/type-checking.md#baselines"
+statement = "The simulation gateway has no Pyright errors, checked with the pinned Pyright version in the gateway's own locked environment."
+rationale = "docs/engineering/skills/type-checking.md#rules"
 scope = ["projects/policyengine-simulation-gateway/src/**/*.py"]
 tier = "mechanical"
-status = "ratcheted"
+status = "enforced"
 autofix = false
 [rule.enforcer]
 kind = "pyright"
@@ -1139,9 +1174,6 @@ projects = ["projects/policyengine-simulation-gateway"]
 workflow = ".github/workflows/pr.yml"
 job = "pyright"
 invocation = "python -m scripts.rules pyright"
-[rule.baseline]
-file = "rules/baselines/pyright-gateway.txt"
-count = 0
 [rule.proof]
 bad_fixture = "rules/fixtures/sim.quality.pyright-gateway/bad"
 good_fixture = "rules/fixtures/sim.quality.pyright-gateway/good"
@@ -1153,11 +1185,11 @@ invocation = "unittest discover -s scripts/rules/tests"
 [[rule]]
 id = "sim.quality.pyright-executor"
 category = "quality"
-statement = "The simulation executor has no Pyright errors beyond those its baseline lists, and the baseline lists only errors that still occur, so it only shrinks; checked with the pinned Pyright version in the executor's own locked environment."
-rationale = "docs/engineering/skills/type-checking.md#baselines"
+statement = "The simulation executor has no Pyright errors, checked with the pinned Pyright version in the executor's own locked environment."
+rationale = "docs/engineering/skills/type-checking.md#rules"
 scope = ["projects/policyengine-simulation-executor/src/**/*.py"]
 tier = "mechanical"
-status = "ratcheted"
+status = "enforced"
 autofix = false
 [rule.enforcer]
 kind = "pyright"
@@ -1166,9 +1198,6 @@ projects = ["projects/policyengine-simulation-executor"]
 workflow = ".github/workflows/pr.yml"
 job = "pyright"
 invocation = "python -m scripts.rules pyright"
-[rule.baseline]
-file = "rules/baselines/pyright-executor.txt"
-count = 124
 [rule.proof]
 bad_fixture = "rules/fixtures/sim.quality.pyright-executor/bad"
 good_fixture = "rules/fixtures/sim.quality.pyright-executor/good"
@@ -1180,11 +1209,11 @@ invocation = "unittest discover -s scripts/rules/tests"
 [[rule]]
 id = "sim.quality.pyright-apis-integ"
 category = "quality"
-statement = "The generated-client integration-test project, apis-integ, has no Pyright errors beyond those its baseline lists, and the baseline lists only errors that still occur, so it only shrinks; checked with the pinned Pyright version in the project's own locked environment."
-rationale = "docs/engineering/skills/type-checking.md#baselines"
+statement = "The generated-client integration-test project, apis-integ, has no Pyright errors, checked with the pinned Pyright version in the project's own locked environment."
+rationale = "docs/engineering/skills/type-checking.md#rules"
 scope = ["projects/policyengine-apis-integ/tests/**/*.py", "projects/policyengine-apis-integ/policyengine_api_full_integ/*.py"]
 tier = "mechanical"
-status = "ratcheted"
+status = "enforced"
 autofix = false
 [rule.enforcer]
 kind = "pyright"
@@ -1193,13 +1222,37 @@ projects = ["projects/policyengine-apis-integ"]
 workflow = ".github/workflows/pr.yml"
 job = "pyright"
 invocation = "python -m scripts.rules pyright"
-[rule.baseline]
-file = "rules/baselines/pyright-apis-integ.txt"
-count = 4
 [rule.proof]
 bad_fixture = "rules/fixtures/sim.quality.pyright-apis-integ/bad"
 good_fixture = "rules/fixtures/sim.quality.pyright-apis-integ/good"
 test = "scripts/rules/tests/test_pyright.py::TestPyrightProof::test_rule_proof_pyright_apis_integ"
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "unittest discover -s scripts/rules/tests"
+
+[[rule]]
+id = "sim.quality.python-file-length"
+category = "quality"
+statement = "No tracked Python file has more than 800 lines, or more than 1,500 lines if it is test code: a file under a tests or fixtures directory, or a conftest.py."
+rationale = "docs/engineering/skills/file-length.md#the-rule"
+scope = ["**/*.py"]
+tier = "metric"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "file-length"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+[rule.proof]
+# Files at their limit (below) pass, and files one line over it (above) fail.
+below_fixture = "rules/fixtures/sim.quality.python-file-length/good_files.toml"
+above_fixture = "rules/fixtures/sim.quality.python-file-length/bad_files.toml"
+# The source limit; both fixtures also cover the 1,500-line limit for test code.
+threshold = 800
+test = "scripts/rules/tests/test_file_length.py::TestFileLengthProof::test_rule_proof_python_file_length"
 workflow = ".github/workflows/pr.yml"
 job = "quality-guards"
 invocation = "unittest discover -s scripts/rules/tests"
@@ -1332,6 +1385,33 @@ invocation = "run_quality_guards.py"
 bad_fixture = "scripts/rules/tests/fixtures/locked_installs/relock_bad"
 good_fixture = "scripts/rules/tests/fixtures/locked_installs/relock_good"
 test = "scripts/rules/tests/test_locked_installs.py::TestLockedInstallsProof::test_rule_proof_scheduled_relock"
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "unittest discover -s scripts/rules/tests"
+
+[[rule]]
+id = "sim.dependencies.uv-version-pinned"
+category = "dependencies"
+statement = "Every uv install pins the one uv release written in .uv-version: each astral-sh/setup-uv step sets with: version:, each uv container image reference (such as a Dockerfile's COPY --from=ghcr.io/astral-sh/uv) is tagged with the release, each Modal uv_sync or uv_pip_install call passes uv_version=, and any uv install script, release download, pip, pipx or uv tool install of uv, or uv self update names the release."
+rationale = "docs/engineering/skills/dependencies.md#we-pin-one-uv-version"
+scope = [".uv-version", ".github/workflows/*.yml", ".github/scripts/*.sh", "scripts/*.sh", "Makefile", "projects/*/Dockerfile", "projects/*/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "uv-version"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+[rule.proof]
+# The bad fixture holds the unpinned setup-uv step from pr.yml and the
+# ghcr.io/astral-sh/uv:latest copy from the two Dockerfiles, as they were
+# before uv was pinned.
+bad_fixture = "rules/fixtures/sim.dependencies.uv-version-pinned/bad"
+good_fixture = "rules/fixtures/sim.dependencies.uv-version-pinned/good"
+test = "scripts/rules/tests/test_uv_version.py::TestUvVersionProof::test_rule_proof_uv_version_pinned"
 workflow = ".github/workflows/pr.yml"
 job = "quality-guards"
 invocation = "unittest discover -s scripts/rules/tests"
@@ -1510,14 +1590,54 @@ invocation = "unittest discover -s scripts/rules/tests"
 [[rule]]
 id = "sim.process.pr-tracking-issue"
 category = "process"
-statement = "Every PR has a tracking issue in this repository, and the first line of its description is Fixes #ISSUE_NUMBER."
-rationale = "docs/engineering/skills/github-prs.md#same-repository-draft-prs-only"
-scope = [".github/pull_request_template.md"]
+statement = "The first line of every PR's description is Fixes #ISSUE_NUMBER, naming an open issue, not a pull request, in this repository; automated PRs open or reuse such an issue."
+rationale = "docs/engineering/skills/github-prs.md#the-fixes-line"
+scope = [".github/pull_request_template.md", ".github/workflows/pr-description.yml", ".github/scripts/check_pr_description.py", ".github/scripts/dependency-update-create-pr.sh", ".github/scripts/update-policyengine-package.sh"]
 tier = "mechanical"
-status = "doc-only"
+status = "enforced"
 autofix = false
 [rule.enforcer]
-kind = "none"
+kind = "workflow-job"
+step = "Check the first line and the tracking issue"
+[[rule.ci]]
+workflow = ".github/workflows/pr-description.yml"
+job = "pr-description"
+invocation = "check_pr_description.py"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.process.pr-tracking-issue/bad_event.json"
+good_fixture = "rules/fixtures/sim.process.pr-tracking-issue/good_event.json"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_pr_description_check.py::test_rule_proof_pr_tracking_issue"
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
+
+[[rule]]
+id = "sim.process.changelog-fragment"
+category = "process"
+statement = "Every pull request adds at least one changelog fragment: a non-empty file directly in changelog.d/, named <name>.<type>.md with a type towncrier.toml lists. Every file in changelog.d/ other than .gitkeep is such a fragment, and the release's version bump reads fragments by the same definition, so the check accepts exactly what the release builds."
+rationale = "docs/engineering/skills/github-prs.md#changelog-fragments"
+scope = [".github/workflows/pr.yml", ".github/scripts/check-changelog-fragment.sh", ".github/scripts/changelog_fragments.py", "towncrier.toml", "changelog.d/.gitkeep"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "workflow-job"
+step = "Require a changelog fragment"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "check-changelog"
+invocation = "check-changelog-fragment.sh"
+[rule.proof]
+# The bad fixture is policyengine-api #4084's fragment, changelog.d/added/4083.md:
+# that repository's check accepted it, and its release found no fragment.
+bad_fixture = "rules/fixtures/sim.process.changelog-fragment/bad"
+good_fixture = "rules/fixtures/sim.process.changelog-fragment/good"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_changelog_fragment_check.py::test_rule_proof_changelog_fragment"
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.process.same-repo-draft-prs"

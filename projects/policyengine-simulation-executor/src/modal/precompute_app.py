@@ -197,9 +197,10 @@ def main(*, force: bool = False) -> None:
     run_precompute(
         resolve_bucket_name(),
         force=force,
-        # Pyright doesn't resolve `modal` here to the Modal package (it reports
-        # `modal.App` as unknown), so it types each decorated function as the
-        # plain function it wraps. At run time each is a Modal function.
+        # Pyright types each decorated function as a modal.Function whose
+        # `remote` and `spawn` take that function's own parameters, which it
+        # doesn't accept for RemoteFunction's `*args: Any`. At run time each is
+        # a Modal function, called with its own arguments.
         functions=PrecomputeFunctions(
             plan_artifacts=cast("RemoteFunction", plan_artifacts),
             build_dataset=cast("RemoteFunction", build_dataset),

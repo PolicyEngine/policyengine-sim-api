@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -25,7 +24,6 @@ from policyengine_simulation_executor.job_progress import (
     NULL_JOB_PROGRESS,
     JobProgressReporter,
 )
-from policyengine_simulation_executor.release_bundle import get_country_release_bundle
 from policyengine_simulation_executor.simulation_macro_output import (
     BudgetaryImpact,
     CliffImpactOutput,
@@ -42,8 +40,15 @@ from policyengine_simulation_executor.simulation_macro_output import (
     PovertyOutput,
     SingleYearMacroOutput,
 )
+from policyengine_simulation_executor.simulation_output_provenance import (
+    output_data_version,
+    output_model_version,
+    output_span,
+)
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
@@ -53,7 +58,11 @@ class SimulationOutputBuilder:
     """Assemble one year's macro output from a computed baseline and reform.
 
     Each output segment is built inside its own observability span when a
-    ``runtime`` is given.
+    ``runtime`` is given. ``omit_uk_area_breakdowns`` leaves the UK
+    constituency and local-authority breakdowns out, for a UK-wide or
+    nation-level run on a bundle that routes area regions to a local-area
+    dataset (``uk_area_breakdowns_omitted``); those results come from a
+    separate local-area breakdown run (``LocalAreaBreakdownBuilder``).
     """
 
     country: str
@@ -66,15 +75,19 @@ class SimulationOutputBuilder:
     resolved_region_code: str | None = None
     runtime: ObservabilityRuntime | None = None
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
+    omit_uk_area_breakdowns: bool = False
     progress: JobProgressReporter = NULL_JOB_PROGRESS
     _analysis: Any = field(default=None, init=False)
+    _uk_geography_disclosure: (
+        simulation_output_geographic.UKGeographyDisclosureOutput | None
+    ) = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         """Normalize ``country`` to lower case."""
         self.country = self.country.lower()
 
     def _span(self, name: str) -> AbstractContextManager[object]:
-        return self.runtime.span(name) if self.runtime is not None else nullcontext()
+        return output_span(self.runtime, name)
 
     @property
     def analysis(self) -> object:
@@ -257,38 +270,68 @@ class SimulationOutputBuilder:
                 region_code=self.resolved_region_code,
             )
 
+    def _uk_geography_disclosure_output(
+        self,
+    ) -> simulation_output_geographic.UKGeographyDisclosureOutput | None:
+        """Return UK area changes under disclosure control, computed once.
+
+        Constituencies and local authorities go through one release, so the
+        disclosure check sees both. None for other countries.
+        """
+        if self.country != "uk":
+            return None
+        if self._uk_geography_disclosure is None:
+            self._uk_geography_disclosure = (
+                simulation_output_geographic.compute_uk_geography_disclosure_output(
+                    self.country,
+                    self.baseline,
+                    self.reform,
+                    year=self._simulation_year(),
+                )
+            )
+        return self._uk_geography_disclosure
+
+    def _simulation_year(self) -> int:
+        """Return the simulated year, which labels the disclosure release."""
+        for value in (
+            self.simulation_params.get("time_period"),
+            self.simulation_params.get("year"),
+            getattr(self.dataset, "year", None),
+        ):
+            if value is None:
+                continue
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+        return 0
+
     def _build_uk_constituency_impact(self) -> GeographicImpactOutput | None:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_CONSTITUENCY)):
+            if self.omit_uk_area_breakdowns:
+                return None
             return simulation_output_geographic.build_uk_constituency_impact(
-                self.country, self.baseline, self.reform
+                self.country, self._uk_geography_disclosure_output()
             )
 
     def _build_uk_local_authority_impact(self) -> GeographicImpactOutput | None:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_LOCAL_AUTHORITY)):
+            if self.omit_uk_area_breakdowns:
+                return None
             return simulation_output_geographic.build_uk_local_authority_impact(
                 self.country,
-                self.baseline,
-                self.reform,
+                self._uk_geography_disclosure_output(),
                 uk_local_authority_metadata=self.uk_local_authority_metadata,
             )
 
     def _model_version(self) -> str:
-        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_MODEL_VERSION)):
-            return str(getattr(self.country_module.model, "version", ""))
+        return output_model_version(self.country_module, runtime=self.runtime)
 
     def _data_version(self) -> str:
-        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_DATA_VERSION)):
-            if self.resolved_data_version:
-                return str(self.resolved_data_version)
-            if self.simulation_params.get("data_version"):
-                return str(self.simulation_params["data_version"])
-            metadata = getattr(self.dataset, "metadata", {}) or {}
-            for key in ("data_version", "version"):
-                value = metadata.get(key)
-                if value is not None:
-                    return str(value)
-            try:
-                return get_country_release_bundle(self.country).data_version
-            except ValueError:
-                pass
-            return ""
+        return output_data_version(
+            self.country,
+            runtime=self.runtime,
+            resolved=self.resolved_data_version,
+            simulation_params=self.simulation_params,
+            dataset=self.dataset,
+        )

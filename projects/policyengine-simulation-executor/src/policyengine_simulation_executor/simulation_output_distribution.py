@@ -34,7 +34,9 @@ def build_decile(analysis: object) -> DecileOutput:
 def build_decile_output(collection: object) -> DecileOutput:
     """Key absolute and relative changes by decile number (``"1"``..``"10"``).
 
-    Rows with a decile of 0 or below are dropped; missing values become 0.0.
+    policyengine.py reports ``relative_change`` as a percentage; ``relative`` is
+    a fraction, so it is divided by 100. Rows with a decile of 0 or below are
+    dropped; missing values become 0.0.
     """
     if isinstance(collection, DecileOutput):
         return collection
@@ -49,7 +51,7 @@ def build_decile_output(collection: object) -> DecileOutput:
             continue
         key = str(decile)
         average[key] = _number(row.get("absolute_change"))
-        relative[key] = _number(row.get("relative_change"))
+        relative[key] = _number(row.get("relative_change")) / 100
     return DecileOutput(average=average, relative=relative)
 
 

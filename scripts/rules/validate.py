@@ -514,6 +514,39 @@ def _pyright_projects_listed_twice(registry: Registry) -> list[Violation]:
     return violations
 
 
+def _validate_downgrades(registry: Registry) -> list[Violation]:
+    """Check that downgrades can be looked up, and only weakened rules have one.
+
+    An enforced rule is as strong as a rule can be. Its downgrade section would
+    keep naming a tracking issue that restoring the rule lets someone close,
+    and the guard would then fail every pull request.
+    """
+    violations = [
+        _schema_violation(
+            rule,
+            "an enforced rule has no downgrade",
+            "remove [rule.downgrade] once the rule is enforced again; the issue it "
+            "names can then be closed",
+        )
+        for rule in registry.rules
+        if rule.downgrade is not None and rule.status is Status.ENFORCED
+    ]
+    if not registry.issue_repository and any(
+        rule.downgrade is not None for rule in registry.rules
+    ):
+        violations.append(
+            Violation(
+                None,
+                "schema",
+                "a [rule.downgrade] names an issue, but the registry has no "
+                "issue_repository",
+                'set issue_repository = "<owner>/<name>" at the top of '
+                "rules/registry.toml",
+            )
+        )
+    return violations
+
+
 def validate(registry: Registry, root: Path, today: date) -> list[Violation]:
     """Check the registry's fields and file references against the tree at ``root``.
 
@@ -528,4 +561,5 @@ def validate(registry: Registry, root: Path, today: date) -> list[Violation]:
     for rule in registry.rules:
         violations.extend(_validate_rule(rule, root, category_ids, today))
     violations.extend(_pyright_projects_listed_twice(registry))
+    violations.extend(_validate_downgrades(registry))
     return violations

@@ -155,6 +155,39 @@ def test_adapter_returns_bounded_skip_reason(update, reason) -> None:
     assert result.skip_reason is reason
 
 
+def _uk_payload(**fields: object) -> dict:
+    return {
+        **eligible_payload(),
+        "country": "uk",
+        "region": "uk",
+        "version": "2.90.2",
+        **fields,
+    }
+
+
+def test_a_local_area_breakdown_gets_no_comparison_run() -> None:
+    # No Stage 12 report computes a local-area breakdown alone.
+    result = adapt_annual_comparison(
+        _uk_payload(breakdown="local_areas"),
+        evaluation_id=EVALUATION_ID,
+        worker=worker(),
+    )
+
+    assert result.report is None
+    assert result.skip_reason is ComparisonSkipReason.UNSUPPORTED_OPTIONS
+
+
+def test_an_absent_breakdown_keeps_a_uk_request_eligible() -> None:
+    result = adapt_annual_comparison(
+        _uk_payload(breakdown=None),
+        evaluation_id=EVALUATION_ID,
+        worker=worker(),
+    )
+
+    assert result.skip_reason is None
+    assert result.report is not None
+
+
 def _expected_simulation(role: str, execution_id: str, policy: dict) -> dict:
     dataset_uri = "hf://policyengine/data/populace_us_2024.h5@populace_us_2024-revision"
     return {
@@ -311,3 +344,87 @@ def test_adapter_checks_eligibility_in_order(update, reason) -> None:
 
     assert result.skip_reason is reason
     assert result.eligible is (reason is None)
+
+
+def _datasets_named(report) -> set[tuple[str, str, str, str, str]]:
+    return {
+        (
+            simulation.bundle.dataset.identity,
+            simulation.bundle.dataset.uri,
+            simulation.bundle.dataset.artifact_revision,
+            simulation.population.artifact.uri,
+            simulation.population.artifact.content_sha256,
+        )
+        for simulation in (report.baseline, report.reform)
+    }
+
+
+@pytest.mark.parametrize(
+    "region", ["state/ut", "State/UT", "ut", " ut ", "congressional_district/UT-01"]
+)
+def test_state_and_district_requests_name_the_regional_dataset(region) -> None:
+    from stage12_fixtures import (
+        REGIONAL_DATASET,
+        REGIONAL_REVISION,
+        REGIONAL_URI,
+        regional_worker,
+    )
+
+    result = adapt_annual_comparison(
+        {**eligible_payload(), "region": region},
+        evaluation_id=EVALUATION_ID,
+        worker=regional_worker(),
+    )
+
+    assert result.skip_reason is None
+    assert _datasets_named(result.report) == {
+        (REGIONAL_DATASET, REGIONAL_URI, REGIONAL_REVISION, REGIONAL_URI, "c" * 64)
+    }
+    assert result.report.baseline.geography.region == region
+
+
+def test_a_national_request_keeps_the_default_dataset_with_regional_workers() -> None:
+    from stage12_fixtures import regional_worker
+
+    payload = {**eligible_payload(), "include_cliffs": True}
+    payload["spm"] = {"geography_kind": "national"}
+
+    national = adapt_annual_comparison(
+        payload, evaluation_id=EVALUATION_ID, worker=regional_worker()
+    )
+    today = adapt_annual_comparison(
+        payload, evaluation_id=EVALUATION_ID, worker=worker()
+    )
+
+    assert national.report.model_dump(mode="json") == today.report.model_dump(
+        mode="json"
+    )
+
+
+def test_a_worker_without_region_datasets_gets_the_default_dataset() -> None:
+    result = adapt_annual_comparison(
+        {**eligible_payload(), "region": "state/ut"},
+        evaluation_id=EVALUATION_ID,
+        worker=worker(),
+    )
+
+    assert result.skip_reason is None
+    assert {item[0] for item in _datasets_named(result.report)} == {"populace_us_2024"}
+
+
+def test_a_uk_request_keeps_the_default_dataset_with_regional_workers() -> None:
+    from stage12_fixtures import regional_worker
+
+    result = adapt_annual_comparison(
+        {
+            **eligible_payload(),
+            "country": "uk",
+            "region": "country/scotland",
+            "version": "2.90.2",
+        },
+        evaluation_id=EVALUATION_ID,
+        worker=regional_worker(),
+    )
+
+    assert result.skip_reason is None
+    assert {item[0] for item in _datasets_named(result.report)} == {"populace_uk_2023"}

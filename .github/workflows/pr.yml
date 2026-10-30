@@ -16,7 +16,7 @@ jobs:
     # every job passed. See docs/engineering/skills/github-prs.md.
     name: CI complete
     if: ${{ always() }}
-    needs: [test, lint, pyright, quality-guards, docker-build, test-integration]
+    needs: [test, lint, pyright, quality-guards, check-changelog, docker-build, test-integration]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -65,6 +65,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v8.1.0
       with:
+        version: "0.13.6"
         enable-cache: true
 
     - name: Install dependencies
@@ -91,6 +92,8 @@ jobs:
 
     - name: Install uv
       uses: astral-sh/setup-uv@v8.1.0
+      with:
+        version: "0.13.6"
 
     - name: Install ruff
       # Pinned so a ruff release cannot change CI results; see ruff.toml.
@@ -107,6 +110,11 @@ jobs:
     # Full CI runs only on the lowest unmerged pull request in a stack.
     if: ${{ !github.event.pull_request.stack || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref }}
     runs-on: ubuntu-latest
+    # The checkout reads the repository, and the rules guard looks up the
+    # tracking issue of each [rule.downgrade] with the job's token.
+    permissions:
+      contents: read
+      issues: read
 
     steps:
     - uses: actions/checkout@v6
@@ -121,6 +129,8 @@ jobs:
 
     - name: Install uv (the Pyright check's tests run the pinned Pyright)
       uses: astral-sh/setup-uv@v8.1.0
+      with:
+        version: "0.13.6"
 
     - name: Test the rules registry tool
       run: python -m unittest discover -s scripts/rules/tests -t .
@@ -129,7 +139,40 @@ jobs:
       run: pip install "shellcheck-py==0.11.0.1"
 
     - name: Run quality guards
+      env:
+        # Read by gh, which the rules guard runs to confirm that each
+        # [rule.downgrade] names an open issue; without it the guard fails.
+        GH_TOKEN: ${{ github.token }}
       run: python scripts/run_quality_guards.py
+
+  check-changelog:
+    # Rule sim.process.changelog-fragment: every pull request adds a changelog
+    # fragment the release can read. See
+    # docs/engineering/skills/github-prs.md#changelog-fragments.
+    name: Changelog fragment
+    # Full CI runs only on the lowest unmerged pull request in a stack.
+    if: ${{ !github.event.pull_request.stack || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        # The check diffs the merged result against its merge base with the
+        # base branch, so it needs the base branch's history.
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+
+    - name: Require a changelog fragment
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: .github/scripts/check-changelog-fragment.sh
 
   pyright:
     name: Pyright
@@ -166,6 +209,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v8.1.0
       with:
+        version: "0.13.6"
         enable-cache: true
 
     - name: Generate API clients
@@ -219,6 +263,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v8.1.0
       with:
+        version: "0.13.6"
         enable-cache: true
 
     - name: Set up Docker Buildx

@@ -1,5 +1,5 @@
 # Simplified Makefile using docker-compose
-.PHONY: help dev up down build test clean logs format check require-ruff-version push-pr-branch
+.PHONY: help dev up down build test clean logs format check require-ruff-version push-pr-branch changelog changelog-draft
 
 # Load environment variables if .env exists
 ifneq (,$(wildcard deployment/.env))
@@ -32,6 +32,8 @@ help:
 	@echo "  make format           - Format code with ruff"
 	@echo "  make check            - CI's ruff checks + Pyright in each package"
 	@echo "  make update           - uv lock --upgrade across packages"
+	@echo "  make changelog-draft  - Print the CHANGELOG.md section the next release adds"
+	@echo "  make changelog        - Build the next release: raise VERSION, build CHANGELOG.md"
 	@echo "  make clean            - Remove caches and stop containers"
 	@echo "  make push-pr-branch   - Push current branch to origin for a PR"
 	@echo ""
@@ -134,7 +136,7 @@ test-complete: test test-integration-with-services
 # Update dependencies
 update:
 	@echo "Updating dependencies for all packages..."
-	@for pyproject in libs/*/pyproject.toml projects/*/pyproject.toml; do \
+	@for pyproject in libs/*/pyproject.toml projects/*/pyproject.toml .github/towncrier/pyproject.toml; do \
 		if [ -f "$$pyproject" ]; then \
 			dir=$$(dirname "$$pyproject"); \
 			echo "Updating $$dir..."; \
@@ -142,6 +144,15 @@ update:
 		fi \
 	done
 	@echo "✅ All dependencies updated"
+
+# Changelog. The versioning job in simulation-deploy.yml builds each release
+# after a merge to main; changelog-draft shows what the next one adds. See
+# docs/engineering/skills/github-prs.md#changelog-fragments.
+changelog:
+	.github/scripts/build-changelog.sh
+
+changelog-draft:
+	.github/scripts/build-changelog.sh --draft
 
 # Code quality
 format: require-ruff-version

@@ -1,0 +1,31 @@
+# Proof fixture for sim.quality.python-file-length: files at their limit, and
+# long files that are not Python. The proof test writes each file, with this
+# many lines, into a temporary directory and runs the file-length guard on it.
+
+# Source code may have at most 800 lines.
+[[file]]
+path = "projects/example/src/example/service.py"
+lines = 800
+
+[[file]]
+path = "scripts/report.py"
+lines = 800
+
+# Test code may have at most 1,500 lines: files under a tests or fixtures
+# directory, and conftest.py files.
+[[file]]
+path = "projects/example/tests/test_service.py"
+lines = 1500
+
+[[file]]
+path = "rules/fixtures/example/module.py"
+lines = 1500
+
+[[file]]
+path = "projects/example/conftest.py"
+lines = 1500
+
+# Only Python files are measured.
+[[file]]
+path = "projects/example/data/households.csv"
+lines = 5000

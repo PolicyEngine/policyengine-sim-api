@@ -79,10 +79,11 @@ All span names for supported run configurations are defined in
 appropriate `StagePlan` and call `plan.name(Stage.VALUE)`. Do not add span name
 string literals in services or workers.
 
-Open a span with `scopes.span(runtime, plan.name(Stage.VALUE))` from
-`policyengine_simulation_observability.scopes` rather than `runtime.span(...)`.
-It returns the same scope, typed so that Pyright knows an exception raised in
-the block propagates; see `docs/engineering/skills/type-checking.md`.
+Open a span with `runtime.span(plan.name(Stage.VALUE))`, and an operation with
+`runtime.operation(...)`. policyengine-observability 3.0.4 types both scopes
+correctly: their `__exit__` and `__aexit__` return `Literal[False]`, so Pyright
+knows an exception raised in the block propagates; see
+`docs/engineering/skills/type-checking.md`.
 
 When adding a run configuration or runtime stage:
 

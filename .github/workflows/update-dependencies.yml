@@ -37,16 +37,18 @@ jobs:
       
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.13.6"
       
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
+      # Rebuilds update-dependencies from main on every run, and records the
+      # commit the remote branch points at for the push step's lease.
       - name: Prepare update branch
         id: branch
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: .github/scripts/dependency-update-prepare-branch.sh
       
       - name: Generate API clients
@@ -58,11 +60,15 @@ jobs:
       - name: Commit and push update
         id: push
         env:
-          HAS_OPEN_PR: ${{ steps.branch.outputs.has_open_pr }}
+          REMOTE_HEAD: ${{ steps.branch.outputs.remote_head }}
         run: .github/scripts/dependency-update-commit-and-push.sh
 
-      - name: Create pull request
-        if: steps.branch.outputs.has_open_pr == 'false' && steps.push.outputs.branch_pushed == 'true'
+      # Opens the update PR, or, when one is open, replaces its description,
+      # whose first line names the tracking issue (rule
+      # sim.process.pr-tracking-issue). It runs whenever the update changed
+      # files on main, including when the branch already held them.
+      - name: Open or update the pull request
+        if: steps.push.outputs.changes_detected == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: .github/scripts/dependency-update-create-pr.sh

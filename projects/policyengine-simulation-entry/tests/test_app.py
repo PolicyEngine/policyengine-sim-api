@@ -16,6 +16,7 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationRole,
 )
 from policyengine_simulation_entry import app as app_module
+from policyengine_simulation_entry import entry_runtime
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.backend import (
     BackendResponse,
@@ -278,7 +279,9 @@ def test_comparison_dispatch_timeout_cannot_change_production_response(
         "policyengine_bundle": {"model_version": "1.0.0"},
     }
     backend.responses[("POST", "/simulate/economy/comparison")] = response(202, payload)
-    monkeypatch.setattr(app_module, "STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(
+        entry_runtime, "STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS", 0.001
+    )
     app = create_app(
         settings=automatic_stage12_settings(),
         backend=backend,
@@ -909,6 +912,50 @@ def test_request_validation_matches_shared_contract(client):
     )
 
     assert result.status_code == 422
+
+
+def _uk_submission(**fields: object) -> dict:
+    return {
+        "country": "uk",
+        "scope": "macro",
+        "reform": {},
+        "region": "uk",
+        "include_cliffs": False,
+        "time_period": "2026",
+        **fields,
+    }
+
+
+def test_a_local_area_breakdown_is_forwarded_to_the_gateway(client, backend):
+    result = client.post(
+        "/simulate/economy/comparison",
+        json=_uk_submission(breakdown="local_areas"),
+    )
+
+    assert result.status_code == 200
+    assert backend.requests[-1].json_body["breakdown"] == "local_areas"
+
+
+def test_a_breakdown_for_one_constituency_is_refused_before_the_gateway(
+    client, backend
+):
+    result = client.post(
+        "/simulate/economy/comparison",
+        json=_uk_submission(region="constituency/E14001063", breakdown="local_areas"),
+    )
+
+    assert result.status_code == 422
+    (error,) = result.json()["detail"]
+    assert error["type"] == "value_error"
+    assert "breakdown" in error["msg"]
+    assert backend.requests == []
+
+
+def test_a_national_submission_carries_no_breakdown(client, backend):
+    result = client.post("/simulate/economy/comparison", json=_uk_submission())
+
+    assert result.status_code == 200
+    assert "breakdown" not in backend.requests[-1].json_body
 
 
 @pytest.mark.parametrize(

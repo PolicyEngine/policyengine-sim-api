@@ -106,6 +106,22 @@ def test_canonical_spm_extensions_are_public():
         assert "400" in spec["paths"][path]["get"]["responses"]
 
 
+def test_local_area_breakdowns_are_public():
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    breakdown = schemas["SimulationRequest"]["properties"]["breakdown"]
+    assert breakdown["anyOf"] == [
+        {"type": "string", "const": "local_areas"},
+        {"type": "null"},
+    ]
+    assert schemas["LocalAreaBreakdownOutput"]["properties"]["kind"]["const"] == (
+        "local_areas"
+    )
+    assert {"$ref": "#/components/schemas/LocalAreaBreakdownOutput"} in schemas[
+        "JobStatusResponse"
+    ]["properties"]["result"]["anyOf"]
+
+
 def test_route_table_is_frozen():
     assert methods(cast("OpenAPIDocument", create_app().openapi())) == EXPECTED_ROUTES
 

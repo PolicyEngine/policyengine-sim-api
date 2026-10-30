@@ -82,9 +82,14 @@ make generate-clients # regenerate the OpenAPI Python client
 Simulation workers and the old gateway continue to deploy to Modal. The
 permanent Simulation Entrypoint deploys to Cloud Run as tagged no-traffic
 candidates. Beta qualification uses Cloud Run's generated candidate URLs and
-does not require a custom beta domain. On merge to `main`,
-`.github/workflows/simulation-deploy.yml` releases one complete stack at a
-time:
+does not require a custom beta domain.
+
+A merge to `main` doesn't deploy by itself. Its push runs only the `versioning`
+job of `.github/workflows/simulation-deploy.yml`, which raises `VERSION`, builds
+the merge's section of `CHANGELOG.md` from the fragments in `changelog.d/`, and
+pushes one release commit, `Update PolicyEngine simulation API`. That commit's
+push deploys one complete stack at a time (see
+`docs/engineering/skills/github-prs.md#how-a-merge-is-released-and-deployed`):
 
 1. prepare the environment's deployment inputs and runtime secrets;
 2. deploy and unit test the Entrypoint, Modal gateway, and Modal executor in
@@ -106,8 +111,9 @@ service, reach the build the deployment tested. After each successful
 promotion, the deployment deletes the service's older revisions, keeping only
 the promoted revision and the one it replaced, for rollback.
 
-A successful push-triggered full-stack deployment publishes the API client from
-the exact deployed commit.
+A successful deployment of a release commit publishes the API client from the
+exact deployed commit. A manual dispatch of the workflow deploys without a
+release and publishes no client.
 
 The stable production service is exposed through a separately managed global
 external HTTPS load balancer and canonical hostname. Domain ownership, DNS,
@@ -154,8 +160,9 @@ See [AGENTS.md](AGENTS.md) and
 for the canonical same-repository draft PR workflow.
 
 1. Create a feature branch (never commit to `main`).
-2. Open a GitHub issue for non-trivial work; put `Fixes #ISSUE_NUMBER` as the
-   first line of the PR description.
+2. Open a GitHub issue for the work; put `Fixes #ISSUE_NUMBER` as the first
+   line of the PR description. Every PR needs one: the `PR description` check
+   fails otherwise.
 3. Make changes and run the relevant tests locally.
 4. Open a same-repository draft PR: `make push-pr-branch`, then
    `gh pr create --draft`.

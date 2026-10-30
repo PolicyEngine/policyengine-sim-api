@@ -37,7 +37,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 from policyengine_simulation_executor.uk_local_authority_metadata import (
-    detect_uk_local_authority_metadata,
+    detect_uk_run_dataset_metadata,
 )
 
 from .cached_simulation import Stage12CachedSimulation, qualifying_cache_identity
@@ -115,17 +115,24 @@ def build_stage12_simulation(
         scoping_strategy=resolved.region.scoping_strategy,
         spm=selection,
     )
-    simulation_type = Stage12CachedSimulation if identity is not None else Simulation
-    model = simulation_type(
-        **({"spm": selection} if selection is not None else {}),
-        **({"id": identity.simulation_id} if identity is not None else {}),
+    spm_kwargs: dict[str, Any] = {"spm": selection} if selection is not None else {}
+    if identity is None:
+        return Simulation(
+            **spm_kwargs,
+            dataset=resolved.dataset,
+            tax_benefit_model_version=resolved.country_module.model,
+            policy=policy,
+            scoping_strategy=resolved.region.scoping_strategy,
+        )
+    model = Stage12CachedSimulation(
+        **spm_kwargs,
+        id=identity.simulation_id,
         dataset=resolved.dataset,
         tax_benefit_model_version=resolved.country_module.model,
         policy=policy,
         scoping_strategy=resolved.region.scoping_strategy,
     )
-    if isinstance(model, Stage12CachedSimulation):
-        model.configure_stage12_cache(execution.output_plan)
+    model.configure_stage12_cache(execution.output_plan)
     return model
 
 
@@ -187,12 +194,30 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
         for item in resolved.bundle.countries
         if item.country == simulation.geography.country
     )
+    # A region loads the dataset the bundle names for its region type. Entry
+    # services released before regional provenance name the default dataset
+    # for every region, so the default stays accepted until they are updated.
+    regional = country.dataset_for_region(simulation.geography.region)
+    named = simulation.bundle.dataset.identity
+    regional_entry = next(
+        (item for item in country.datasets if item.identity == regional), None
+    )
+    if regional_entry is not None and named == regional_entry.identity:
+        expected_dataset = {
+            "dataset_identity": regional_entry.identity,
+            "dataset_uri": regional_entry.uri,
+            "dataset_revision": regional_entry.artifact_revision,
+        }
+    else:
+        expected_dataset = {
+            "dataset_identity": country.default_dataset,
+            "dataset_uri": country.default_dataset_uri,
+            "dataset_revision": country.data_artifact_revision,
+        }
     expected = {
         "country_package_name": country.country_package_name,
         "country_package_version": country.country_package_version,
-        "dataset_identity": country.default_dataset,
-        "dataset_uri": country.default_dataset_uri,
-        "dataset_revision": country.data_artifact_revision,
+        **expected_dataset,
     }
     actual = {
         "country_package_name": simulation.bundle.country_package_name,
@@ -204,6 +229,34 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
     if actual != expected:
         msg = "simulation provenance differs from the installed bundle"
         raise RuntimeError(msg)
+
+
+def _require_loaded_dataset_matches_provenance(
+    simulation: SimulationExecutionInput, selection: DatasetSelection
+) -> None:
+    """Require a calculation to load the dataset its provenance names.
+
+    The provenance is recorded with the comparison run, so it must name the
+    dataset the region actually loads. The one accepted difference is a
+    state or district run whose provenance names the default dataset while it
+    loads a regional one: entry services released before regional provenance
+    send that until they are updated.
+    """
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
+        resolve_dataset_reference,
+    )
+
+    named = simulation.bundle.dataset
+    if (selection.name, selection.uri) == (named.identity, named.uri):
+        return
+    if not selection.is_default and named.identity == resolve_dataset_reference(
+        simulation.geography.country
+    ):
+        return
+    msg = (
+        "simulation provenance names a dataset other than the dataset its region loads"
+    )
+    raise RuntimeError(msg)
 
 
 def calculate_simulation_frames(
@@ -232,11 +285,14 @@ def calculate_simulation_frames(
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _country_module,
         _load_dataset,
-        _normalise_policy,
-        _require_certified_uk_weight_matrix,
         _resolve_dataset_selection,
-        _resolve_region,
+        normalise_policy,
+        resolve_data_folder,
+        resolve_region,
         setup_gcp_credentials,
+    )
+    from policyengine_simulation_executor.stage12_cache import (  # noqa: PLC0415  # resolved per call so tests can patch the baked-folder lookup
+        state_datasets,
     )
 
     with (
@@ -246,7 +302,7 @@ def calculate_simulation_frames(
         with stage_span(Stage.COUNTRY_MODULE_LOAD):
             country_module = _country_module(country)
         with stage_span(Stage.REGION_RESOLUTION):
-            region = _resolve_region(
+            region = resolve_region(
                 country_module=country_module,
                 country=country,
                 params=params,
@@ -256,22 +312,28 @@ def calculate_simulation_frames(
                 params,
                 region_resolution=region,
             )
+        _require_loaded_dataset_matches_provenance(simulation, dataset_selection)
         with stage_span(Stage.DATASET_LOAD):
             dataset = _load_dataset(
                 params,
                 selection=dataset_selection,
                 country_module=country_module,
+                data_folder=state_datasets.baked_state_data_folder(
+                    country=country,
+                    selection=dataset_selection,
+                    state_code=region.state_code,
+                    year=simulation.year,
+                    data_folder=resolve_data_folder(),
+                ),
             )
-        uk_local_authority_metadata = detect_uk_local_authority_metadata(
+        uk_local_authority_metadata = detect_uk_run_dataset_metadata(
             country,
             dataset,
             region_code=region.code,
-        )
-        _require_certified_uk_weight_matrix(
-            region.scoping_strategy, dataset, dataset_selection
+            dataset_name=dataset_selection.name,
         )
         with stage_span(Stage.POLICY_NORMALIZATION):
-            policy = _normalise_policy(simulation.policy)
+            policy = normalise_policy(simulation.policy)
         with stage_span(Stage.SIMULATION_BUILD):
             model = build_stage12_simulation(
                 params,

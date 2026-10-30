@@ -190,57 +190,53 @@ class TestPyrightProof(unittest.TestCase):
 
     def test_rule_proof_pyright_gateway(self) -> None:
         rule_id = "sim.quality.pyright-gateway"
-        # The baseline lists one of two "route" errors, and an error that no
-        # longer occurs.
+        # Three of the gateway's 81 real errors before its fixes: variables
+        # assigned inside a span, which Pyright took to swallow exceptions.
         bad = proof_comparison(rule_id, "bad")
 
         self.assertEqual(
             [(error.line, error.summary) for error in bad.new_errors],
-            [(924, '"route" is possibly unbound')],
+            [
+                (923, '"route" is possibly unbound'),
+                (924, '"route" is possibly unbound'),
+                (935, '"payload" is possibly unbound'),
+            ],
         )
-        self.assertEqual(
-            bad.stale_entries,
-            (f'{GATEWAY_ENDPOINTS} :: {UNBOUND} :: "bundle" is possibly unbound',),
-        )
+        self.assertEqual(bad.stale_entries, ())
         self.assertTrue(proof_comparison(rule_id, "good").passed)
 
     def test_rule_proof_pyright_executor(self) -> None:
         rule_id = "sim.quality.pyright-executor"
+        # Three of the executor's 178 real errors before its fixes: modal
+        # attributes unknown while src/modal shadowed the library, and a
+        # variable assigned inside a span.
         bad = proof_comparison(rule_id, "bad")
 
         self.assertEqual(
             [(error.line, error.summary) for error in bad.new_errors],
-            [(123, '"Secret" is not a known attribute of module "modal"')],
+            [
+                (119, '"App" is not a known attribute of module "modal"'),
+                (123, '"Secret" is not a known attribute of module "modal"'),
+                (824, '"metadata" is possibly unbound'),
+            ],
         )
-        self.assertEqual(
-            bad.stale_entries,
-            (
-                f"{EXECUTOR_APP} :: reportAttributeAccessIssue :: "
-                '"Image" is not a known attribute of module "modal"',
-            ),
-        )
+        self.assertEqual(bad.stale_entries, ())
         self.assertTrue(proof_comparison(rule_id, "good").passed)
 
     def test_rule_proof_pyright_apis_integ(self) -> None:
         rule_id = "sim.quality.pyright-apis-integ"
-        client_mismatch = (
-            'Argument of type "Client | AuthenticatedClient" cannot be assigned to '
-            'parameter "client" of type "AuthenticatedClient" in function '
-            '"sync_detailed"'
-        )
+        # The integration tests' real errors before their fix: a plain Client
+        # passed to endpoints typed as needing an AuthenticatedClient.
         bad = proof_comparison(rule_id, "bad")
 
         self.assertEqual(
             [(error.path, error.line) for error in bad.new_errors],
-            [(f"{APIS_INTEG_TESTS}/test_calculate.py", 99)],
+            [
+                (f"{APIS_INTEG_TESTS}/conftest.py", 103),
+                (f"{APIS_INTEG_TESTS}/test_calculate.py", 99),
+            ],
         )
-        self.assertEqual(
-            bad.stale_entries,
-            (
-                f"{APIS_INTEG_TESTS}/conftest.py :: reportArgumentType :: "
-                f"{client_mismatch}",
-            ),
-        )
+        self.assertEqual(bad.stale_entries, ())
         self.assertTrue(proof_comparison(rule_id, "good").passed)
 
 

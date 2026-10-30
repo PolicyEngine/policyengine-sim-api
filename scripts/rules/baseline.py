@@ -7,10 +7,40 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from scripts.rules.load import REGISTRY_PATH, load_text
-from scripts.rules.model import Registry, Status, Violation
+from scripts.rules.model import (
+    Kind,
+    Registry,
+    Rule,
+    Status,
+    Violation,
+    normalized_package,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+# How a person, never an agent, records a weaker rule; each fix ends with it.
+PERSON_DOWNGRADE = (
+    'only a person may weaken a rule, by adding [rule.downgrade] with reason = "..." '
+    "and issue = <number of the open issue that tracks restoring the rule>"
+)
+
+
+# The statuses a package or a rule may keep, or move to, without a downgrade.
+_AT_LEAST_AS_STRONG = {
+    Status.ENFORCED: (Status.ENFORCED,),
+    Status.RATCHETED: (Status.ENFORCED, Status.RATCHETED),
+}
+
+
+def _weakens(old: Status, new: Status) -> bool:
+    """Whether going from ``old`` to ``new`` weakens a rule that blocked merges.
+
+    A ratcheted rule tolerates its baseline, so ratcheting an enforced rule
+    weakens it too, with whatever count its new baseline starts at.
+    """
+    return old in _AT_LEAST_AS_STRONG and new not in _AT_LEAST_AS_STRONG[old]
 
 
 class BaseUnavailableError(Exception):
@@ -71,15 +101,11 @@ def check_baselines(
                     "fix the new violations instead of adding them to the baseline",
                 )
             )
-        weaker = (Status.ADVISORY, Status.DOC_ONLY)
-        # A ratcheted rule tolerates its baseline, so ratcheting an enforced
-        # rule weakens it too, with whatever count its new baseline starts at.
-        if (
-            old.status in (Status.ENFORCED, Status.RATCHETED) and new.status in weaker
-        ) or (old.status is Status.ENFORCED and new.status is Status.RATCHETED):
-            if new.downgrade_reason:
+        if _weakens(old.status, new.status):
+            if new.downgrade:
                 notes.append(
-                    f"rule {new.id} downgraded to {new.status}: {new.downgrade_reason}"
+                    f"rule {new.id} downgraded to {new.status}: "
+                    f"{new.downgrade.reason} (issue #{new.downgrade.issue})"
                 )
             else:
                 violations.append(
@@ -87,12 +113,114 @@ def check_baselines(
                         new.id,
                         "baseline",
                         f"status weakened from {old.status} to {new.status}",
-                        'add [rule.downgrade] reason = "..." so the downgrade is '
-                        "explicit and reviewable",
+                        f'restore status = "{old.status}"; {PERSON_DOWNGRADE}',
                     )
                 )
-    notes.extend(
-        f"rule {rule_id} is new"
-        for rule_id in sorted(current_ids - {rule.id for rule in base.rules})
-    )
+    for rule_id in sorted(current_ids - {rule.id for rule in base.rules}):
+        notes.append(f"rule {rule_id} is new")
+        new_violations, new_notes = _check_new_rule(current.rule(rule_id))
+        violations += new_violations
+        notes += new_notes
+    return violations, notes
+
+
+def _check_new_rule(rule: Rule | None) -> tuple[list[Violation], list[str]]:
+    """Check a rule the base branch doesn't have; return (violations, notes).
+
+    A new rule that starts ratcheted with tolerated violations is weaker than
+    an enforced one from the start, so it needs ``[rule.downgrade]`` too.
+    """
+    if (
+        rule is None
+        or rule.status is not Status.RATCHETED
+        or rule.baseline is None
+        or rule.baseline.count <= 0
+    ):
+        return [], []
+    starts = f"starts ratcheted with {rule.baseline.count} tolerated violations"
+    if rule.downgrade:
+        return [], [
+            f"rule {rule.id} {starts}: {rule.downgrade.reason} "
+            f"(issue #{rule.downgrade.issue})"
+        ]
+    return [
+        Violation(
+            rule.id,
+            "baseline",
+            f"new rule {starts}",
+            f"fix them and make the rule enforced; {PERSON_DOWNGRADE}",
+        )
+    ], []
+
+
+def _pyright_listings(registry: Registry) -> dict[str, Rule]:
+    """Map each package a Pyright rule lists to that rule.
+
+    A package listed twice maps to the first rule, the one the Pyright check
+    holds it to.
+    """
+    listings: dict[str, Rule] = {}
+    for rule in registry.rules:
+        if rule.enforcer.kind is not Kind.PYRIGHT:
+            continue
+        for project in rule.enforcer.get("projects", []):
+            listings.setdefault(normalized_package(str(project)), rule)
+    return listings
+
+
+def check_pyright_packages(
+    current: Registry, base: Registry, root: Path
+) -> tuple[list[Violation], list[str]]:
+    """Check that each package a blocking Pyright rule lists on the base still is.
+
+    Return (violations, notes). A package from an enforced rule stays in an
+    enforced Pyright rule, and one from a ratcheted rule in an enforced or
+    ratcheted one, unless its ``pyproject.toml`` was deleted. Moving it to a
+    weaker rule needs ``[rule.downgrade]`` on that rule. A rule that keeps the
+    package under the same id is left to ``check_baselines``, which compares
+    its status, and so is a ratcheted rule's baseline count.
+    """
+    violations: list[Violation] = []
+    notes: list[str] = []
+    head_listings = _pyright_listings(current)
+    for package, base_rule in _pyright_listings(base).items():
+        allowed = _AT_LEAST_AS_STRONG.get(base_rule.status)
+        if allowed is None or not (root / package / "pyproject.toml").is_file():
+            continue
+        relist = (
+            f"list {package} in an "
+            f"{' or '.join(str(status) for status in allowed)} Pyright rule again"
+        )
+        head_rule = head_listings.get(package)
+        if head_rule is None:
+            violations.append(
+                Violation(
+                    base_rule.id,
+                    "baseline",
+                    f"package {package} left {base_rule.status} rule {base_rule.id}, "
+                    "and no Pyright rule lists it now",
+                    f"{relist}, or delete the package",
+                )
+            )
+            continue
+        if head_rule.status in allowed or head_rule.id == base_rule.id:
+            continue
+        move = (
+            f"package {package} moved from {base_rule.status} rule {base_rule.id} "
+            f"to {head_rule.status} rule {head_rule.id}"
+        )
+        if head_rule.downgrade:
+            notes.append(
+                f"{move}: {head_rule.downgrade.reason} "
+                f"(issue #{head_rule.downgrade.issue})"
+            )
+        else:
+            violations.append(
+                Violation(
+                    head_rule.id,
+                    "baseline",
+                    move,
+                    f"{relist}; {PERSON_DOWNGRADE}",
+                )
+            )
     return violations, notes

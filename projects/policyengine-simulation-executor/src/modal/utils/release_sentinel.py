@@ -411,7 +411,8 @@ def _report(line: str, *, error: bool = False) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the ``expected`` or ``check`` command and return its exit status."""
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    # __doc__ is None when Python runs with -OO, which strips docstrings.
+    parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
     expected_parser = commands.add_parser("expected", help="compute in-process values")
     expected_parser.add_argument("--output", required=True)

@@ -11,6 +11,7 @@ make check                 # Ruff check + Pyright over source directories
 make test                  # service unit tests in Docker
 make test-complete         # unit tests + local integration tests
 make push-pr-branch        # push current branch to origin with tracking
+make changelog-draft       # print the CHANGELOG.md section the next release adds
 ./scripts/generate-clients.sh
 ```
 
@@ -51,6 +52,11 @@ gh pr view <PR> --repo PolicyEngine/policyengine-sim-api --json isDraft,headRepo
 
 Before opening the PR, open or identify a GitHub issue for the work. The first
 line of the PR description must be `Fixes #ISSUE_NUMBER`.
+
+Every PR adds a changelog fragment, `changelog.d/<name>.<type>.md`, where
+`<type>` is breaking, added, changed, fixed or removed; don't edit
+`CHANGELOG.md` yourself. The release after each merge builds the fragments into
+`CHANGELOG.md`. See `docs/engineering/skills/github-prs.md#changelog-fragments`.
 
 The PR is valid only if it is a draft and the head repository is
 `PolicyEngine/policyengine-sim-api`. If you cannot push to that repository, ask
