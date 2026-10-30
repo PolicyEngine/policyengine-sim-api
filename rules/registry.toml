@@ -380,7 +380,7 @@ invocation = "uv run --frozen pytest tests/"
 [[rule]]
 id = "sim.deploy.staging-promotes-tested-revision"
 category = "deployment"
-statement = "Every staging deployment passes promote_entrypoint: true, as production deployments do, so the staging service's stable URL serves the entrypoint revision that passed the staging tests."
+statement = "Every staging deployment passes promote_entrypoint: ${{ github.ref == 'refs/heads/main' }}, so a run from main moves the staging service's stable URL to the entrypoint revision that passed the staging tests, and a manual run from another branch never changes it."
 rationale = "projects/policyengine-simulation-entry/DEPLOYMENT.md#promotion-and-rollback"
 scope = [".github/workflows/*.yml"]
 tier = "mechanical"

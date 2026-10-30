@@ -98,7 +98,8 @@ push deploys one complete stack at a time (see
 4. run generated-client and live authentication tests through the complete
    three-service request path;
 5. assign the environment's stable traffic to the exact tested entrypoint
-   revision after that environment's tests pass, in `beta` as in `prod`;
+   revision after that environment's tests pass, in `beta` as in `prod`
+   (`beta` only for a run from `main`);
 6. verify the stable endpoint, restoring its previous revision if immediate
    post-promotion checks fail; and
 7. begin the `prod` deployment only after every `beta` deployment,

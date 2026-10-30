@@ -41,7 +41,8 @@ during qualification.
 
 ## Promotion and rollback
 
-Both `beta` and `prod` promote. After an environment's complete suite passes,
+Both `beta` and `prod` promote, `beta` only for a run from `main`. After an
+environment's complete suite passes,
 the workflow verifies that the exact tested revision belongs to that
 environment's service and is ready. It also checks that stable traffic still
 points to the revision recorded before deployment. If those checks pass, it
@@ -55,11 +56,11 @@ in the same way. Rule `sim.deploy.staging-promotes-tested-revision` requires
 both.
 
 Both workflows can also be started manually, and the `beta` environment does
-not restrict which branch a run may come from. A manual run from a branch other
-than `main` therefore promotes that branch's build to the staging stable URL,
-and every staging caller of that URL reaches the unmerged build until the next
-deployment from `main` promotes again. Start a staging deployment from another
-branch only when that is intended.
+not restrict which branch a run may come from. Both therefore pass
+`promote_entrypoint: ${{ github.ref == 'refs/heads/main' }}`: a manual run from
+a branch other than `main` deploys and tests its candidate revision, but never
+moves the staging stable URL to it and never deletes older staging revisions,
+so the last revision deployed from `main` stays available for rollback.
 
 The workflow then checks the stable generated Cloud Run URL. It uses the
 runtime revision header to prove that the stable URL reaches the exact revision
@@ -102,9 +103,10 @@ The deployment workflow passes each environment's
 unset or empty variable deploys `0`, which records callers that lack a route's
 permission but lets them through. `1` rejects those callers with 403. Any other
 value fails the deployment before Cloud Run changes. A new value takes effect
-at the next entrypoint deployment, which both `beta` and `prod` promote to
-stable traffic once their tests pass. A `beta` value therefore applies to every
-caller of the staging stable URL as well as to the deployment tests. The route
+at the next entrypoint deployment, which `prod`, and `beta` for a run from
+`main`, promote to stable traffic once their tests pass. A `beta` value
+therefore applies to every caller of the staging stable URL as well as to the
+deployment tests. The route
 permissions are listed in `README.md`.
 
 ### Auth0 prerequisites

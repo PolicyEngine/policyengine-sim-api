@@ -101,8 +101,10 @@ jobs:
       entrypoint_max_instances: 2
       # Staging's stable URL must serve the revision this deployment tested,
       # because staging callers such as the Public API's staging service use
-      # that URL. Rule: sim.deploy.staging-promotes-tested-revision.
-      promote_entrypoint: true
+      # that URL. Only a run from main promotes: a manual run from another
+      # branch tests its candidate but leaves stable traffic and older
+      # revisions alone. Rule: sim.deploy.staging-promotes-tested-revision.
+      promote_entrypoint: ${{ github.ref == 'refs/heads/main' }}
       run_full_integration: true
       deploy_existing_stack: true
       deploy_stage12_v2: true

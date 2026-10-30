@@ -53,9 +53,9 @@ jobs:
       entrypoint_revision_prefix: s-
       entrypoint_min_instances: 0
       entrypoint_max_instances: 2
-      # Like the main deployment, promote the tested staging revision.
-      # Rule: sim.deploy.staging-promotes-tested-revision.
-      promote_entrypoint: true
+      # Like the main deployment, promote the tested staging revision, and
+      # only from main. Rule: sim.deploy.staging-promotes-tested-revision.
+      promote_entrypoint: ${{ github.ref == 'refs/heads/main' }}
       # This workflow deploys and validates only the independent Stage 12 path.
       # The main API deployment continues to run the existing-stack suite.
       run_full_integration: false
