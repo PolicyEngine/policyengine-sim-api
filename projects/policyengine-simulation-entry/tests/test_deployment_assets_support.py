@@ -42,6 +42,10 @@ REUSABLE_DEPLOY_WORKFLOW = (
 REUSABLE_DEPLOY_WORKFLOW_REFERENCE = (
     "./.github/workflows/simulation-deploy.reusable.yml"
 )
+# The promotion input every staging deployment passes: true only for a run
+# from main, so an accidental manual run from another branch never moves
+# staging's stable traffic or deletes its older revisions.
+MAIN_ONLY_PROMOTION = "${{ github.ref == 'refs/heads/main' }}"
 STAGING_PROMOTION_FIXTURES = (
     REPOSITORY_ROOT
     / "rules"

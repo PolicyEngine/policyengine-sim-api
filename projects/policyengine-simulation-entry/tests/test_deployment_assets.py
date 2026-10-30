@@ -9,6 +9,7 @@ from test_deployment_assets_support import (
     AUTHENTICATED_TESTS,
     CLOUD_RUN_DEPLOY_SCRIPT,
     DEPLOY_WORKFLOW,
+    MAIN_ONLY_PROMOTION,
     REPOSITORY_ROOT,
     REUSABLE_DEPLOY_WORKFLOW,
     SMOKE_SCRIPT,
@@ -200,9 +201,7 @@ def _assert_beta_then_prod_release(
     assert deploy_workflow.count("deploy_existing_stack: true") == 2
     # prod always promotes; beta promotes only a run from main.
     assert deploy_workflow.count("promote_entrypoint: true") == 1
-    assert (
-        "promote_entrypoint: ${{ github.ref == 'refs/heads/main' }}" in deploy_workflow
-    )
+    assert f"promote_entrypoint: {MAIN_ONLY_PROMOTION}" in deploy_workflow
     assert "promote_entrypoint: false" not in deploy_workflow
     assert "entrypoint_environment" not in deploy_workflow
     assert "entrypoint_environment" not in reusable_workflow

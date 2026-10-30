@@ -1,4 +1,4 @@
-"""Tests for promotion order, Stage 12-only deployments and the sentinel."""
+"""Tests for promotion order, Stage 12-only runs, the sentinel and staging promotion."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import re
 from test_deployment_assets_support import (
     DEPLOY_WORKFLOW,
     DEPLOYMENT_READY_SCRIPT,
+    MAIN_ONLY_PROMOTION,
     REUSABLE_DEPLOY_WORKFLOW,
     REUSABLE_DEPLOY_WORKFLOW_REFERENCE,
     STAGE12_DEPLOY_WORKFLOW,
@@ -272,12 +273,6 @@ def test_deployed_stack_must_reproduce_the_numerical_sentinel():
         for index, name in enumerate(names)
         if name.startswith("Restore previous revision")
     )
-
-
-# The promotion input every staging deployment passes: true only for a run
-# from main, so a manual run from another branch never moves staging's stable
-# traffic or deletes its older revisions.
-MAIN_ONLY_PROMOTION = "${{ github.ref == 'refs/heads/main' }}"
 
 
 def _staging_deployment_job_ids(jobs: dict) -> list[str]:
