@@ -198,7 +198,11 @@ def _assert_beta_then_prod_release(
     assert "deployment_environment: staging" in deploy_workflow
     assert "deployment_environment: production" in deploy_workflow
     assert deploy_workflow.count("deploy_existing_stack: true") == 2
-    assert deploy_workflow.count("promote_entrypoint: true") == 2
+    # prod always promotes; beta promotes only a run from main.
+    assert deploy_workflow.count("promote_entrypoint: true") == 1
+    assert (
+        "promote_entrypoint: ${{ github.ref == 'refs/heads/main' }}" in deploy_workflow
+    )
     assert "promote_entrypoint: false" not in deploy_workflow
     assert "entrypoint_environment" not in deploy_workflow
     assert "entrypoint_environment" not in reusable_workflow

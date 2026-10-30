@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import re
 
 from test_deployment_assets_support import (
@@ -12,6 +13,7 @@ from test_deployment_assets_support import (
     STAGE12_DEPLOY_WORKFLOW,
     STAGING_PROMOTION_FIXTURES,
     WORKFLOWS_DIRECTORY,
+    evaluate_github_expression,
     job_section,
     sentinel_check_step,
     workflow_jobs,
@@ -272,6 +274,12 @@ def test_deployed_stack_must_reproduce_the_numerical_sentinel():
     )
 
 
+# The promotion input every staging deployment passes: true only for a run
+# from main, so a manual run from another branch never moves staging's stable
+# traffic or deletes its older revisions.
+MAIN_ONLY_PROMOTION = "${{ github.ref == 'refs/heads/main' }}"
+
+
 def _staging_deployment_job_ids(jobs: dict) -> list[str]:
     """Return the jobs that run the reusable deployment workflow for staging."""
     return [
@@ -283,17 +291,18 @@ def _staging_deployment_job_ids(jobs: dict) -> list[str]:
 
 
 def staging_promotion_violations(jobs: dict) -> list[str]:
-    """Return each staging deployment job that leaves stable traffic unchanged.
+    """Return each staging deployment job that doesn't promote exactly from main.
 
     Rule sim.deploy.staging-promotes-tested-revision: a staging deployment must
-    pass ``promote_entrypoint: true`` to the reusable deployment workflow, as
-    production deployments do. Any other value, including an expression,
-    counts as a violation.
+    pass ``promote_entrypoint: ${{ github.ref == 'refs/heads/main' }}`` to the
+    reusable deployment workflow. Any other value counts as a violation:
+    ``false`` leaves the stable URL on a revision the deployment never tested,
+    and ``true`` lets a run from another branch promote an unmerged build.
     """
     return [
-        f"{job_id} must pass promote_entrypoint: true"
+        f"{job_id} must pass promote_entrypoint: {MAIN_ONLY_PROMOTION}"
         for job_id in _staging_deployment_job_ids(jobs)
-        if jobs[job_id]["with"].get("promote_entrypoint") is not True
+        if jobs[job_id]["with"].get("promote_entrypoint") != MAIN_ONLY_PROMOTION
     ]
 
 
@@ -337,11 +346,25 @@ def test_rule_proof_staging_promotes_tested_revision():
 
     The bad fixture is the `beta` deployment as it was before the rule: it
     tested a tagged candidate but never moved staging's stable traffic to it.
+    Passing a literal ``true`` is also a violation, since a run from another
+    branch would then promote that branch's build.
     """
     bad_jobs = workflow_jobs(STAGING_PROMOTION_FIXTURES / "bad_simulation_deploy.yml")
     good_jobs = workflow_jobs(STAGING_PROMOTION_FIXTURES / "good_simulation_deploy.yml")
+    any_branch_jobs = copy.deepcopy(good_jobs)
+    any_branch_jobs["beta"]["with"]["promote_entrypoint"] = True
 
-    assert staging_promotion_violations(bad_jobs) == [
-        "beta must pass promote_entrypoint: true"
-    ]
+    violation = f"beta must pass promote_entrypoint: {MAIN_ONLY_PROMOTION}"
+    assert staging_promotion_violations(bad_jobs) == [violation]
+    assert staging_promotion_violations(any_branch_jobs) == [violation]
     assert staging_promotion_violations(good_jobs) == []
+    # The required value is true for a run from main and false for any other
+    # branch or for a tag.
+    for ref, promotes in (
+        ("refs/heads/main", True),
+        ("refs/heads/feat/stage12-segmentation-cache", False),
+        ("refs/heads/main-backport", False),
+        ("refs/tags/v1.0.0", False),
+    ):
+        context = {"github": {"ref": ref}}
+        assert evaluate_github_expression(MAIN_ONLY_PROMOTION, context) is promotes
