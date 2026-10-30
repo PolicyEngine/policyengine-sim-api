@@ -96,13 +96,21 @@ push deploys one complete stack at a time (see
    three parallel service jobs;
 3. publish routing only after all three service jobs pass;
 4. run generated-client and live authentication tests through the complete
-   three-service request path; and
-5. begin the `prod` deployment only after every `beta` deployment and
-   qualification job succeeds;
-6. assign stable production traffic to the exact tested entrypoint revision
-   after the complete production suite passes; and
-7. verify the stable endpoint, restoring its previous revision if immediate
-   post-promotion checks fail.
+   three-service request path;
+5. assign the environment's stable traffic to the exact tested entrypoint
+   revision after that environment's tests pass, in `beta` as in `prod`
+   (`beta` only for a run from `main`);
+6. verify the stable endpoint, restoring its previous revision if immediate
+   post-promotion checks fail; and
+7. begin the `prod` deployment only after every `beta` deployment,
+   qualification, promotion and revision clean-up job succeeds, so a failed
+   staging clean-up also stops the production deployment.
+
+The staging service's stable URL therefore serves the revision that passed the
+staging tests, so staging callers of that URL, such as the Public API's staging
+service, reach the build the deployment tested. After each successful
+promotion, the deployment deletes the service's older revisions, keeping only
+the promoted revision and the one it replaced, for rollback.
 
 A successful deployment of a release commit publishes the API client from the
 exact deployed commit. A manual dispatch of the workflow deploys without a

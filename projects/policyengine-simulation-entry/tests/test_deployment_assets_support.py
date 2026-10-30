@@ -34,9 +34,23 @@ CLOUD_RUN_DEPLOY_SCRIPT = (
 DEPLOYMENT_READY_SCRIPT = (
     REPOSITORY_ROOT / ".github" / "scripts" / "simulation-deployment-ready.sh"
 )
+WORKFLOWS_DIRECTORY = REPOSITORY_ROOT / ".github" / "workflows"
 DEPLOY_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.yml"
 REUSABLE_DEPLOY_WORKFLOW = (
     REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
+)
+REUSABLE_DEPLOY_WORKFLOW_REFERENCE = (
+    "./.github/workflows/simulation-deploy.reusable.yml"
+)
+# The promotion input every staging deployment passes: true only for a run
+# from main, so an accidental manual run from another branch never moves
+# staging's stable traffic or deletes its older revisions.
+MAIN_ONLY_PROMOTION = "${{ github.ref == 'refs/heads/main' }}"
+STAGING_PROMOTION_FIXTURES = (
+    REPOSITORY_ROOT
+    / "rules"
+    / "fixtures"
+    / "sim.deploy.staging-promotes-tested-revision"
 )
 ROLLBACK_WORKFLOW = (
     REPOSITORY_ROOT / ".github" / "workflows" / "simulation-rollback.yml"
