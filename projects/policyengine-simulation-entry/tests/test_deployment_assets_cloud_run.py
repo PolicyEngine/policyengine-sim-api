@@ -10,10 +10,12 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from deployment_rule_checks import SECRET_RESOLUTION, combined_secret_resolutions
 from test_deployment_assets_support import (
     CLOUD_RUN_DEPLOY_SCRIPT,
     DEPLOY_WORKFLOW,
     DOCKERFILE,
+    REPOSITORY_ROOT,
     REUSABLE_DEPLOY_WORKFLOW,
     STAGE12_DEPLOY_WORKFLOW,
 )
@@ -39,7 +41,7 @@ def test_cloud_run_deployment_does_not_interpolate_github_values_in_shell():
     assert ":latest" not in deployment_script
 
 
-def _cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
+def cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
     """Return a complete deployment environment backed by a fake gcloud."""
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -114,11 +116,14 @@ def _cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
         "STAGE12_DATABASE_URL_SECRET_NAME": "stage12-staging-database-url",
         "MODAL_TOKEN_ID_SECRET_NAME": "modal-token-id",
         "MODAL_TOKEN_SECRET_SECRET_NAME": "modal-token-secret",
+        "SIMULATION_DATABASE_URL_SECRET_NAME": (
+            "simulation-staging-runtime-database-url"
+        ),
     }
 
 
 def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_path):
-    command_environment = _cloud_run_deploy_environment(tmp_path)
+    command_environment = cloud_run_deploy_environment(tmp_path)
     arguments_capture = Path(command_environment["GCLOUD_ARGUMENTS_CAPTURE"])
     env_capture = Path(command_environment["GCLOUD_ENV_FILE_CAPTURE"])
 
@@ -152,11 +157,81 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
     secrets_argument = arguments[arguments.index("--set-secrets") + 1]
     assert secrets_argument == (
         "OLD_GATEWAY_AUTH_CLIENT_SECRET=old-client-secret:3,"
+        "SIMULATION_DATABASE_URL=simulation-staging-runtime-database-url:3,"
         "MODAL_TOKEN_ID=modal-token-id:3,"
         "MODAL_TOKEN_SECRET=modal-token-secret:3,"
         "STAGE12_DATABASE_URL=stage12-staging-database-url:3"
     )
     assert ":latest" not in secrets_argument
+
+
+@pytest.mark.parametrize(
+    "secret_name_variable",
+    [
+        "OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME",
+        "SIMULATION_DATABASE_URL_SECRET_NAME",
+        "MODAL_TOKEN_ID_SECRET_NAME",
+        "MODAL_TOKEN_SECRET_SECRET_NAME",
+        "STAGE12_DATABASE_URL_SECRET_NAME",
+    ],
+)
+def test_cloud_run_deployment_stops_when_a_runtime_secret_cannot_be_resolved(
+    tmp_path, secret_name_variable
+):
+    command_environment = cloud_run_deploy_environment(tmp_path) | {
+        secret_name_variable: "not a secret name"
+    }
+
+    result = subprocess.run(
+        [CLOUD_RUN_DEPLOY_SCRIPT],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=command_environment,
+    )
+
+    assert result.returncode != 0
+    assert "invalid Secret Manager reference" in result.stderr
+    assert not Path(command_environment["GCLOUD_ARGUMENTS_CAPTURE"]).exists()
+
+
+def test_cloud_run_deployment_resolves_each_secret_in_its_own_assignment():
+    script = Path(CLOUD_RUN_DEPLOY_SCRIPT).read_text(encoding="utf-8")
+
+    assert SECRET_RESOLUTION in script
+    assert combined_secret_resolutions(script) == []
+
+
+def test_rule_proof_workflow_shell_safety():
+    """Proof for rule sim.deploy.workflow-shell-safety (rules/registry.toml)."""
+    fixtures = (
+        REPOSITORY_ROOT / "rules" / "fixtures" / ("sim.deploy.workflow-shell-safety")
+    )
+
+    assert combined_secret_resolutions(
+        (fixtures / "bad_deploy_script.sh").read_text(encoding="utf-8")
+    ) == ["runtime_secrets=("]
+    assert (
+        combined_secret_resolutions(
+            (fixtures / "good_deploy_script.sh").read_text(encoding="utf-8")
+        )
+        == []
+    )
+
+
+def test_stage12_secrets_are_resolved_by_the_stage12_block_alone():
+    """The comparison path shares no deploy helper with the main path."""
+    script = Path(CLOUD_RUN_DEPLOY_SCRIPT).read_text(encoding="utf-8")
+    stage12_block = script.split('if [[ "${DEPLOY_STAGE12_V2}" == "true" ]]; then', 1)[
+        1
+    ].split("\nfi\n", 1)[0]
+    main_path = script.replace(stage12_block, "")
+
+    assert "add_stage12_runtime_secret STAGE12_DATABASE_URL" in stage12_block
+    assert "add_runtime_secret " not in stage12_block
+    assert "add_stage12_runtime_secret " not in main_path.replace(
+        "add_stage12_runtime_secret() {", ""
+    )
 
 
 @pytest.mark.parametrize(
@@ -169,7 +244,7 @@ def test_cloud_run_deployment_defaults_permission_enforcement_to_log_only(
     configured,
     expected,
 ):
-    command_environment = _cloud_run_deploy_environment(tmp_path)
+    command_environment = cloud_run_deploy_environment(tmp_path)
     if configured is not None:
         command_environment["SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"] = (
             configured
@@ -192,7 +267,7 @@ def test_cloud_run_deployment_rejects_invalid_permission_enforcement(
     tmp_path,
     configured,
 ):
-    command_environment = _cloud_run_deploy_environment(tmp_path)
+    command_environment = cloud_run_deploy_environment(tmp_path)
     command_environment["SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"] = configured
 
     result = subprocess.run(

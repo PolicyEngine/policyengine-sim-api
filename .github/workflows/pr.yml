@@ -16,7 +16,7 @@ jobs:
     # every job passed. See docs/engineering/skills/github-prs.md.
     name: CI complete
     if: ${{ always() }}
-    needs: [test, lint, pyright, quality-guards, check-changelog, docker-build, test-integration]
+    needs: [test, simulation-database, lint, pyright, quality-guards, check-changelog, docker-build, test-integration]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -51,6 +51,7 @@ jobs:
           - projects/policyengine-simulation-gateway
           - libs/policyengine-simulation-contract
           - libs/policyengine-simulation-observability
+          - libs/policyengine-simulation-persistence
           - libs/policyengine-stage12-persistence
           - libs/policyengine-fastapi
 
@@ -75,6 +76,55 @@ jobs:
     - name: Run tests
       working-directory: ${{ matrix.project }}
       run: uv run --frozen pytest tests/ -v
+
+  simulation-database:
+    name: Simulation database
+    # Runs the simulation schema's migration chain (upgrade, alembic check,
+    # downgrade, upgrade) and the persistence tests that need a database, on a
+    # fresh PostgreSQL. Full CI runs only on the lowest unmerged pull request
+    # in a stack.
+    if: ${{ !github.event.pull_request.stack || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref }}
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: simulation_ci
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      SIMULATION_TEST_DATABASE_URL: postgresql://postgres:simulation_ci@127.0.0.1:5432/postgres
+      # A missing server fails the tests instead of skipping them.
+      SIMULATION_REQUIRE_DATABASE_TESTS: "1"
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v8.1.0
+      with:
+        version: "0.13.6"
+        enable-cache: true
+
+    - name: Install dependencies
+      working-directory: libs/policyengine-simulation-persistence
+      run: uv sync --extra test --frozen
+
+    - name: Run the migration chain and persistence tests on PostgreSQL
+      working-directory: libs/policyengine-simulation-persistence
+      run: uv run --frozen pytest tests/ -v -m postgres
 
   lint:
     name: Lint
@@ -191,6 +241,7 @@ jobs:
         package:
           - libs/policyengine-simulation-contract
           - libs/policyengine-simulation-observability
+          - libs/policyengine-simulation-persistence
           - libs/policyengine-stage12-persistence
           - libs/policyengine-fastapi
           - projects/policyengine-simulation-entry

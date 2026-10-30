@@ -21,31 +21,32 @@ It builds on the Stage 12 rules:
 - `sim.stage12.no-schema-ddl`: the simulation runtimes and the Stage 12
   persistence library contain no schema DDL. Its `DDL_PATTERN` regex is the
   one this rule matches against every source directory's string literals.
-- `sim.stage12.no-migration-chain`: this repository has no migration chain
-  of its own; policyengine-api migrates the Stage 12 tables.
+- `sim.persistence.one-migration-chain`: the repository's one Alembic chain,
+  at `migrations/`, owns the Simulation Entrypoint's `simulation` schema;
+  the Public API migrates the Stage 12 tables.
 - `sim.stage12.persistence-typed-dml-only` and
   `sim.stage12.deployment-uses-api-schema`: the Stage 12 persistence
   library uses typed SQLAlchemy Core DML only, with no raw SQL text.
 
 ## Who owns the schema
 
-- **Today**, policyengine-api's Alembic migrations own the only tables this
-  repository uses, the Stage 12 comparison tables
-  (`sim.stage12.no-migration-chain`). This repository's code reads and
-  writes their rows, and deployment validation compares their live schema
-  with its SQLAlchemy mappings; nothing here changes them.
-- **Once #847 merges**, this repository's own Alembic chain at `migrations/`
-  owns the `simulation` schema, and the Stage 12 tables stay with
-  policyengine-api.
+- **The `simulation` schema** belongs to this repository's own Alembic chain
+  at `migrations/` (`sim.persistence.one-migration-chain`). The tables are
+  declared in `libs/policyengine-simulation-persistence`, whose README
+  describes the chain, the database roles and how to add a revision.
+- **The Stage 12 comparison tables** belong to the Public API's Alembic
+  migrations. This repository's code reads and writes their rows, and
+  deployment validation compares their live schema with its SQLAlchemy
+  mappings; nothing here changes them.
 
-The rule holds either way: whichever chain owns a table, only that chain's
-migrations change it.
+Either way, only the chain that owns a table changes it.
 
 ## What the guard checks
 
 `projects/policyengine-simulation-entry/tests/test_database_access_boundaries.py`
 parses every Python file under `projects/*/src` (including the executor's
-`src/modal`), `libs/*/src` and `.github/scripts`, and runs in the entry
+`src/modal`), `libs/*/src`, `.github/scripts` and the repository's
+`migrations/` chain, and runs in the entry
 project's `Test` job. The checks live in `database_access_support.py` next to
 it. It fails on:
 

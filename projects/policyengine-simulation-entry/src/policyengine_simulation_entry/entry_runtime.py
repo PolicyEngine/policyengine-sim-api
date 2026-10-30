@@ -210,6 +210,21 @@ def _add_response_telemetry(
         attributes[response_identifier_key] = response_identifier
 
 
+class SimulationDatabaseConnection(Protocol):
+    """The Simulation Entrypoint's own database, as the routes use it.
+
+    The real implementation is ``SimulationDatabase``; tests inject fakes.
+    """
+
+    async def read_revision(self) -> str | None:
+        """Return the applied migration revision, or None before the first one."""
+        ...
+
+    def dispose(self) -> None:
+        """Close every pooled connection."""
+        ...
+
+
 class EntryRuntime:
     """The settings, telemetry runtime and backends the entry routes share."""
 
@@ -220,12 +235,14 @@ class EntryRuntime:
         runtime: ObservabilityRuntime,
         backend: SimulationBackend,
         comparison: ComparisonBackend | None,
+        database: SimulationDatabaseConnection | None,
     ) -> None:
         """Keep the dependencies that ``create_app`` resolved."""
         self.settings = settings
         self.runtime = runtime
         self.backend = backend
         self.comparison = comparison
+        self.database = database
 
     def bind_observability_id(self, request: Request, value: object) -> str | None:
         """Bind a normalized observability ID to the request and telemetry context."""
