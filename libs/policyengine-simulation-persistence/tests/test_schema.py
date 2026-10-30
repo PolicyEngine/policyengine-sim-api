@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
+
+import policyengine_simulation_persistence
 import pytest
 from alembic import command
 from alembic.script import ScriptDirectory
@@ -104,3 +108,12 @@ def test_migrations_refuse_offline_sql_generation(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="online"):
         command.upgrade(alembic_config(), "head", sql=True)
+
+
+def test_importing_the_package_registers_every_table() -> None:
+    package_tables = set(simulation_metadata.tables)
+    for module in pkgutil.iter_modules(policyengine_simulation_persistence.__path__):
+        importlib.import_module(f"policyengine_simulation_persistence.{module.name}")
+
+    assert set(simulation_metadata.tables) == package_tables
+    assert {"simulation.simulations", "simulation.reports"} <= package_tables

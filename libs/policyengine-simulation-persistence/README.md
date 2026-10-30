@@ -8,6 +8,24 @@ The temporary Stage 12 comparison tables are not part of this schema: they are
 owned and migrated by the Public API, and `libs/policyengine-stage12-persistence`
 writes them with DML only.
 
+## Tables
+
+| Table | Holds |
+| --- | --- |
+| `simulations` | What to run, independent of model versions: kind (`economy` or `household`), country, policy (null for current law), dynamic, and either a household or a region code (`state/ca`) with an optional dataset name (null means the region's default dataset in each catalog version) |
+| `reports` | Which two simulations a report compares (an economy report needs a reform; a household report may have only a baseline), both of the report's own country and kind, with its year and options |
+
+Both are definitions: the runtime role may read and insert them but not update
+or delete them. Rows migrated from the Public API's v1 database keep their v1
+IDs in the unique `legacy_simulation_id` and `legacy_report_id` columns, and
+the stores' `create_migrated` methods return the existing row when the same v1
+ID is migrated again.
+
+Foreign keys into the Public API's tables in the same database (`policies` and
+`households`, each together with its country, and `dynamics`) are
+`ON DELETE RESTRICT`. Creating them needs `REFERENCES` on those tables for the
+migrator role; the runtime role needs no privilege on them.
+
 ## Ownership rules
 
 These rules are registered in `rules/registry.toml` and checked by
@@ -39,12 +57,18 @@ These rules are registered in `rules/registry.toml` and checked by
 
 | Role | Used by | Privileges |
 | --- | --- | --- |
-| `simulation_migrator` | The deploy workflow's migration job, through `SIMULATION_MIGRATION_DATABASE_URL` | Creates the `simulation` schema if it is missing, and owns every object in it |
-| `simulation_runtime` | The Simulation Entrypoint, through `SIMULATION_DATABASE_URL` | `USAGE` on the schema, `SELECT` on the version table, and `SELECT`, `INSERT` and `UPDATE` on the tables the migrations create |
+| `simulation_migrator` | The deploy workflow's migration job, through `SIMULATION_MIGRATION_DATABASE_URL` | Creates the `simulation` schema if it is missing, and owns every object in it; `REFERENCES` on the Public API tables its foreign keys point to |
+| `simulation_runtime` | The Simulation Entrypoint, through `SIMULATION_DATABASE_URL` | `USAGE` on the schema, `SELECT` on the version table, and `SELECT`, `INSERT` and `UPDATE` on the tables the migrations create, except `UPDATE` on the definition tables (`simulations`, `reports`); never `DELETE`, and nothing on the Public API tables |
 
 The initial revision grants the runtime role its privileges, including default
-privileges on tables the migrator creates later. Both roles must exist before
-the first migration runs; an operator creates them. The migrator needs either
+privileges on tables the migrator creates later; revision 0002 revokes
+`UPDATE` on the definition tables, which never change. Both roles must exist
+before the first migration runs; an operator creates them. Before revision
+0002 is deployed, the owner of the Public API's tables must also grant the
+migrator `REFERENCES` on `policies`, `households` and `dynamics` (the
+operator step grants it on `tax_benefit_model_versions`, `datasets` and
+`regions` too, for later revisions); without it the migration fails and
+applies nothing. The migrator needs either
 `CREATE` on the database or a `simulation` schema created in advance and owned
 by it: the environment creates the schema only when it is missing, because
 PostgreSQL checks `CREATE` on the database even for
