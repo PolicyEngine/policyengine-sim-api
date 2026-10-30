@@ -29,6 +29,7 @@ from sqlalchemy import (
     Integer,
     Table,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
     select,
@@ -106,6 +107,9 @@ reports = Table(
         name="fk_reports_reform_simulation",
         ondelete="RESTRICT",
     ),
+    # Report runs refer to a report together with its kind, so only an economy
+    # report run has a comparison step.
+    UniqueConstraint("id", "kind"),
 )
 Index("ix_reports_baseline_simulation_id", reports.c.baseline_simulation_id)
 Index("ix_reports_reform_simulation_id", reports.c.reform_simulation_id)

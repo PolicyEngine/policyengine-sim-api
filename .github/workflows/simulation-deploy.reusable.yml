@@ -279,6 +279,7 @@ jobs:
           STAGE12_DATABASE_URL_SECRET_NAME: ${{ vars.STAGE12_DATABASE_URL_SECRET_NAME }}
           MODAL_TOKEN_ID_SECRET_NAME: ${{ vars.MODAL_TOKEN_ID_SECRET_NAME }}
           MODAL_TOKEN_SECRET_SECRET_NAME: ${{ vars.MODAL_TOKEN_SECRET_SECRET_NAME }}
+          MODAL_WORKSPACE_ID_VALUE: ${{ vars.MODAL_WORKSPACE_ID }}
         run: .github/scripts/deploy-cloud-run-simulation-entry.sh
 
       - name: Resolve exact candidate metadata
@@ -670,12 +671,22 @@ jobs:
           STAGE12_CACHE_BUCKET: ${{ vars.STAGE12_CACHE_BUCKET }}
         run: ../../.github/scripts/stage12-cache-precompute.sh "${{ inputs.modal_environment }}"
 
+      # The v2 functions report to sim's main URL that a call ended.
+      - name: Find the Simulation Entrypoint's main URL
+        id: entry_url
+        env:
+          PROJECT_ID: ${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}
+          REGION: ${{ vars.SIMULATION_ENTRYPOINT_GCP_REGION || 'us-central1' }}
+          SERVICE: ${{ inputs.entrypoint_service }}
+        run: .github/scripts/simulation-entry-main-url.sh
+
       - name: Deploy the additional versioned v2 Modal application
         working-directory: projects/policyengine-simulation-executor
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           MODAL_APP_NAME: ${{ steps.application.outputs.name }}
+          SIMULATION_ENTRY_URL: ${{ steps.entry_url.outputs.url }}
           STAGE12_EXPECT_POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
           STAGE12_EXPECT_US_VERSION: ${{ needs.prepare.outputs.us_version }}
           STAGE12_EXPECT_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}
@@ -1011,6 +1022,15 @@ jobs:
           SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS: ${{ vars.SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS }}
         run: uv run --frozen pytest authenticated_tests/ -v
 
+      # Only a verified, promoted revision records outcomes in the safety
+      # check, so a rejected candidate never records anything.
+      - name: Point the safety check at the promoted revision
+        id: safety_check
+        env:
+          SAFETY_CHECK_REVISION: ${{ env.TARGET_REVISION }}
+          SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.SIMULATION_SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT }}
+        run: .github/scripts/deploy-cloud-run-simulation-safety-check.sh
+
       - name: Restore previous revision after failed verification
         if: ${{ failure() && steps.promote.outcome == 'success' }}
         env:
@@ -1020,6 +1040,18 @@ jobs:
           SIMULATION_ENTRYPOINT_TARGET_REVISION: ${{ env.PREVIOUS_REVISION }}
           SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION: ${{ env.TARGET_REVISION }}
         run: .github/scripts/set-cloud-run-simulation-entry-revision.sh
+
+      - name: Point the safety check back at the previous revision
+        id: safety_check_restore
+        if: ${{ failure() && steps.safety_check.outcome == 'failure' && env.PREVIOUS_REVISION != '' }}
+        env:
+          SAFETY_CHECK_REVISION: ${{ env.PREVIOUS_REVISION }}
+          SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.SIMULATION_SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT }}
+        run: .github/scripts/deploy-cloud-run-simulation-safety-check.sh
+
+      - name: Pause the safety check after a failed restore
+        if: ${{ failure() && steps.safety_check_restore.outcome == 'failure' }}
+        run: .github/scripts/deploy-cloud-run-simulation-safety-check.sh pause
 
   finalize_routing:
     name: Finalize the Modal routing publication

@@ -56,6 +56,83 @@ rollback checks do not, because an older image may run against a newer schema.
 The ownership rules and roles are described in
 `libs/policyengine-simulation-persistence/README.md`.
 
+## Recording run outcomes
+
+The Simulation Entrypoint records a run's outcome in the `simulation` schema
+within a request; nothing runs between requests, so Cloud Run keeps no CPU
+allocated outside them. Every deploy mounts sim's own Modal token as
+`MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`, whatever the Stage 12 setting: the
+deploy step resolves the Secret Manager secrets named by the `beta` and `prod`
+environment variables `MODAL_TOKEN_ID_SECRET_NAME` and
+`MODAL_TOKEN_SECRET_SECRET_NAME` to their newest enabled versions. The runtime
+service account must be able to read both secrets. The Stage 12 comparison
+path's Modal calls use the same token until it is removed.
+
+A Modal call reports that it ended on `POST /internal/modal-calls/ended`
+(`policyengine_simulation_entry.call_report_route`), with the Modal identity
+token of the `report_call_ended` function as a bearer token. The entrypoint
+checks the token against Modal's published keys and accepts only that
+function, in a v2 app, of the workspace in the `beta`/`prod` environment
+variable `MODAL_WORKSPACE_ID` and of the deployment's own Modal environment;
+the deploy passes both to the runtime as
+`SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID` and
+`SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT`, and stops when the workspace ID is
+missing. The service already allows unauthenticated requests through Cloud
+Run (`--allow-unauthenticated`): callers prove who they are to the
+entrypoint, so Modal needs no Google credentials.
+
+The reports come from the v2 Modal app's `report_call_ended` function, which
+the v2 functions start as their last step (`src/modal/call_reports.py` in the
+executor). It posts to the entrypoint's main URL: the v2 deploy job reads the
+service's stable URL (`status.url`) with
+`.github/scripts/simulation-entry-main-url.sh` and passes it to `modal deploy`
+as `SIMULATION_ENTRY_URL`. Only the revision that serves traffic receives
+these requests. `beta` does not promote its candidate yet, so in staging the
+main URL reaches an older revision until it does (plan item 1.39), and
+staging calls are recorded by the safety check only once it exists there.
+
+## Safety check
+
+A call whose report never arrives is recorded by the safety check, the Cloud
+Run job `<entrypoint service>-safety-check`. Each execution runs one recording
+pass (`python -m policyengine_simulation_entry.safety_check`) and exits: it
+fails runs left `dispatching` for ten minutes and records what Modal reports
+for calls dispatched, or last checked, at least five minutes ago. Cloud
+Scheduler starts it every five minutes (`*/5 * * * *`, UTC): a lost report is
+recorded within about ten minutes, and each execution is a single short
+container start, so the job costs little when every call reports.
+
+`.github/scripts/deploy-cloud-run-simulation-safety-check.sh` points the job
+at one entrypoint revision. It copies that revision's image digest, service
+account, the secret versions it pins for `SIMULATION_DATABASE_URL`,
+`MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`, and its plain telemetry settings,
+then creates or updates the schedule. Only two places call it, so the job
+only ever runs a revision that serves traffic and a rejected candidate never
+records anything:
+
+- the promotion job, after the promoted revision passes every check; if this
+  step fails, the previous revision is restored and the job is pointed back
+  at it, and if that fails too, the schedule is paused;
+- the rollback workflow, after it restores entrypoint traffic; if this step
+  fails, the schedule is paused, so the job never keeps running the image
+  traffic just moved away from.
+
+A revision deployed before the safety check existed (without
+`SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID`) has no job code, so pointing the
+job at it pauses the schedule instead.
+
+`beta` does not promote its candidate yet, so staging has no safety check
+until it does (plan item 1.39).
+
+One-time operator steps, in each environment: enable the Cloud Scheduler
+API; create the scheduler's service account, give it `roles/run.invoker`
+on the job (or the project), and set its email in the GitHub environment
+variable `SIMULATION_SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT`; give the deploy
+service account permission to deploy Cloud Run jobs and manage Cloud
+Scheduler jobs, and `iam.serviceAccounts.actAs` on the scheduler's service
+account. The job uses the entrypoint's runtime service account, which can
+already read its secrets.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`

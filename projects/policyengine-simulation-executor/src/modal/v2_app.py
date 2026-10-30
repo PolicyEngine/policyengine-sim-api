@@ -94,6 +94,23 @@ def _deploy_time_cache_inputs() -> tuple[str, dict | None]:
 STAGE12_CACHE_BUCKET, STAGE12_CACHE_MANIFEST = _deploy_time_cache_inputs()
 
 
+def _deploy_time_entry_url() -> str:
+    """Return sim's main URL, which the deploy passes, for report_call_ended."""
+    if not modal.is_local():
+        return ""
+    url = os.environ.get("SIMULATION_ENTRY_URL", "")
+    if url and (url != url.strip() or not url.startswith("https://")):
+        msg = "SIMULATION_ENTRY_URL must be an https URL"
+        raise RuntimeError(msg)
+    return url
+
+
+SIMULATION_ENTRY_URL = _deploy_time_entry_url()
+# Every attempt to report, each with its request timeout, and every wait
+# between them (src/modal/call_reports.py), with a margin.
+CALL_REPORT_TIMEOUT_SECONDS = 300
+
+
 def _external_assertions(environment: dict[str, str]) -> dict[str, str]:
     mapping = {
         "STAGE12_EXPECT_POLICYENGINE_VERSION": "policyengine_version",
@@ -463,3 +480,29 @@ def coordinate_report(
             )
     finally:
         runtime.shutdown()
+
+
+@app.function(
+    image=coordinator_image,
+    cpu=0.25,
+    memory=512,
+    timeout=CALL_REPORT_TIMEOUT_SECONDS,
+    retries=0,
+    max_containers=20,
+    # No secrets: sim accepts this function's own Modal identity token.
+    env={"SIMULATION_ENTRY_URL": SIMULATION_ENTRY_URL},
+)
+def report_call_ended(report: dict) -> str:
+    """Tell sim that the call in ``report`` ended; return how that went.
+
+    The v2 functions start this as their last step
+    (``src.modal.call_reports.reporting_call_end``) and then return, so the
+    reported call has usually returned by the time sim asks Modal for its
+    outcome; when it has not, sim answers still_running and this reports
+    again after a wait.
+    """
+    from src.modal.call_reports import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        send_call_ended_report_from_container,
+    )
+
+    return send_call_ended_report_from_container(report)

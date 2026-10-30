@@ -106,6 +106,9 @@ simulations = Table(
     # Reports refer to a simulation together with its country and kind, so a
     # report can only compare simulations of its own country and kind.
     UniqueConstraint("id", "country", "kind"),
+    # Simulation runs refer to a simulation together with its kind, so a run
+    # names a region and dataset exactly when its simulation is an economy.
+    UniqueConstraint("id", "kind"),
     ForeignKeyConstraint(
         ["policy_id", "country"],
         [public_api.policies.c.id, public_api.policies.c.country_id],

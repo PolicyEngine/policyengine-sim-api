@@ -10,6 +10,7 @@ import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -51,6 +52,11 @@ from policyengine_simulation_entry.auth import (
     CallerAuthorizer,
 )
 from policyengine_simulation_entry.backend import OldGatewayBackend, SimulationBackend
+from policyengine_simulation_entry.call_report_route import (
+    CallReportRecorder,
+    ModalCallerVerifier,
+    register_call_report_route,
+)
 from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.entry_runtime import (
     BACKEND_RESPONSE_HEADER,
@@ -65,6 +71,7 @@ from policyengine_simulation_entry.entry_runtime import (
     route_template,
     set_observability_header,
 )
+from policyengine_simulation_entry.modal_identity import ModalIdentityVerifier
 from policyengine_simulation_entry.schemas import (
     SimulationDatabaseReadiness,
     SimulationEntrypointReadinessResponse,
@@ -88,6 +95,7 @@ __all__ = [
     "STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS",
     "ComparisonBackend",
     "ResponseIdentifier",
+    "RunServices",
     "SimulationDatabaseConnection",
     "app",
     "create_app",
@@ -95,6 +103,20 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS = 3.0
+
+
+@dataclass(frozen=True)
+class RunServices:
+    """The simulation database and the call-ended route's seams, for tests.
+
+    ``create_app`` builds each one it is not given: the database from
+    ``SIMULATION_DATABASE_URL``, the call recorder from that database, and the
+    Modal identity verifier from the expected Modal caller.
+    """
+
+    database: SimulationDatabaseConnection | None = None
+    call_recorder: CallReportRecorder | None = None
+    modal_identity_verifier: ModalCallerVerifier | None = None
 
 
 def _temporary_submission_payload(
@@ -564,15 +586,23 @@ def create_app(
     backend: SimulationBackend | None = None,
     auth_dependency: AuthenticationDependency | None = None,
     comparison_backend: ComparisonBackend | None = None,
-    simulation_database: SimulationDatabaseConnection | None = None,
+    run_services: RunServices | None = None,
 ) -> FastAPI:
     """Build the app with injectable auth/backend seams for hermetic tests."""
     runtime_settings = settings or Settings.from_env()
-    runtime_database = simulation_database
+    services = run_services or RunServices()
+    runtime_database = services.database
     if runtime_database is None and runtime_settings.simulation_database_url:
         runtime_database = SimulationDatabase.from_url(
             runtime_settings.simulation_database_url
         )
+    call_recorder = services.call_recorder
+    if call_recorder is None and isinstance(runtime_database, SimulationDatabase):
+        call_recorder = runtime_database.call_recorder()
+    modal_identity_verifier = services.modal_identity_verifier
+    expected_modal_caller = runtime_settings.expected_modal_caller
+    if modal_identity_verifier is None and expected_modal_caller is not None:
+        modal_identity_verifier = ModalIdentityVerifier(expected_modal_caller)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -635,6 +665,9 @@ def create_app(
         reader=simulation_reader,
     )
     _register_service_routes(app, entry)
+    register_call_report_route(
+        app, verifier=modal_identity_verifier, recorder=call_recorder
+    )
     return app
 
 

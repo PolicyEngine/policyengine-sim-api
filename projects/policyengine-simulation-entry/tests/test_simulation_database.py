@@ -9,7 +9,7 @@ from conftest import FakeBackend, make_settings
 from fastapi.testclient import TestClient
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry import simulation_database as database_module
-from policyengine_simulation_entry.app import create_app
+from policyengine_simulation_entry.app import RunServices, create_app
 from policyengine_simulation_entry.simulation_database import SimulationDatabase
 from policyengine_simulation_persistence import HEAD_REVISION
 from sqlalchemy.exc import OperationalError
@@ -43,7 +43,7 @@ def _client(backend, database):
             settings=make_settings(simulation_database_url=DATABASE_URL),
             backend=backend,
             auth_dependency=lambda: None,
-            simulation_database=database,
+            run_services=RunServices(database=database),
         )
     )
 
