@@ -20,7 +20,6 @@ from policyengine_simulation_contract.stage12_execution import (
     ResultComparisonStatus,
 )
 from policyengine_simulation_contract.stage12_manifest import (
-    V2CountryWorker,
     V2ManifestLoader,
     V2WorkerVersion,
 )
@@ -99,12 +98,16 @@ class ReportOrigin:
 
 @dataclass(frozen=True)
 class PreparedReport:
-    """A comparison run ready to dispatch: its parent row, inputs and worker."""
+    """A comparison run ready to dispatch: its parent row, inputs and worker.
+
+    ``simulation_callable`` runs one of the report country's simulations; the
+    country is economy-capable, or the adapter would have skipped it.
+    """
 
     parent: ComparisonReportRecord
     report: ReportExecutionInput
     worker_version: ResolvedWorkerVersion
-    country_worker: V2CountryWorker
+    simulation_callable: str
 
 
 class TemporaryStage12UnsupportedRequestError(ValueError):
@@ -290,7 +293,6 @@ class Stage12ComparisonBackend:
     ) -> tuple[
         ReportExecutionInput | None,
         ResolvedWorkerVersion,
-        V2CountryWorker,
         str | None,
     ]:
         worker_version = ResolvedWorkerVersion(
@@ -302,21 +304,8 @@ class Stage12ComparisonBackend:
             evaluation_id=evaluation_id,
             worker=worker,
         )
-        country = request_payload.get("country")
-        bundle_country = next(
-            (item for item in worker.bundle.countries if item.country == country),
-            worker.bundle.countries[0],
-        )
-        country_worker = next(
-            item for item in worker.countries if item.country == bundle_country.country
-        )
         skip_reason = adapted.skip_reason.value if adapted.skip_reason else None
-        return (
-            adapted.report,
-            worker_version,
-            country_worker,
-            skip_reason,
-        )
+        return adapted.report, worker_version, skip_reason
 
     def _parent_record(
         self,
@@ -364,7 +353,7 @@ class Stage12ComparisonBackend:
         request_id: str,
     ) -> PreparedReport:
         evaluation_id = uuid4()
-        report, worker_version, country_worker, skip_reason = self._resolve_report(
+        report, worker_version, skip_reason = self._resolve_report(
             request_payload=request_payload,
             evaluation_id=evaluation_id,
         )
@@ -387,7 +376,9 @@ class Stage12ComparisonBackend:
             parent=parent,
             report=report,
             worker_version=worker_version,
-            country_worker=country_worker,
+            simulation_callable=worker_version.worker.economy_simulation_callable(
+                str(request_payload.get("country"))
+            ),
         )
 
     def _prepare_automatic_report(
@@ -432,14 +423,6 @@ class Stage12ComparisonBackend:
                 },
             )
             return None
-        country = request_payload.get("country")
-        bundle_country = next(
-            (item for item in worker.bundle.countries if item.country == country),
-            worker.bundle.countries[0],
-        )
-        country_worker = next(
-            item for item in worker.countries if item.country == bundle_country.country
-        )
         parent = self._parent_record(
             evaluation_id=evaluation_id,
             origin=ReportOrigin(
@@ -455,7 +438,9 @@ class Stage12ComparisonBackend:
             parent=parent,
             report=adapted.report,
             worker_version=worker_version,
-            country_worker=country_worker,
+            simulation_callable=worker.economy_simulation_callable(
+                str(request_payload.get("country"))
+            ),
         )
 
     async def _spawn_report(
@@ -517,9 +502,7 @@ class Stage12ComparisonBackend:
                         ),
                         "worker_version": version,
                         "modal_application": worker.application_name,
-                        "simulation_callable": (
-                            prepared.country_worker.single_simulation_callable
-                        ),
+                        "simulation_callable": prepared.simulation_callable,
                         "version_manifest_sha256": manifest_sha256,
                         "bundle_manifest_sha256": worker.bundle_manifest_sha256,
                         "artifact_prefix": artifact_prefix,
