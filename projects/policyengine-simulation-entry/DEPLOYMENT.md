@@ -72,14 +72,21 @@ not restrict which branch a run may come from. Both therefore pass
 `promote_entrypoint: ${{ github.ref == 'refs/heads/main' }}`. A manual run from
 a branch other than `main` deploys and tests its candidate revision, but leaves
 the staging service's Cloud Run traffic where it was and deletes no revisions,
-so the last revision deployed from `main` stays available for rollback. Such a
-run of the main deployment workflow still deploys its Modal gateway and
-executor to the staging Modal environment and publishes its routing there, as
-every staging deployment does, so callers of the staging stable URL can reach
-that branch's Modal services until the next deployment from `main`. The check
-reads the branch's own copy of the workflow: it stops an accidental branch run
-from promoting, not a branch that edits it. Only a branch restriction on the
-`beta` environment would enforce it.
+so the last revision deployed from `main` stays available for rollback.
+
+Promotion covers only the Cloud Run entrypoint. A branch run still deploys the
+branch's Modal services to the staging Modal environment and publishes their
+routing there, so callers of the staging stable URL can reach them: the main
+deployment workflow deploys the gateway, the executor and the Stage 12 workers,
+and the Stage 12 workflow deploys the Stage 12 workers. A later deployment from
+`main` replaces the apps it deploys, but routes and versions that it doesn't
+deploy can stay.
+
+The check reads the branch's own copy of the workflow: it stops an accidental
+branch run from promoting, not a branch that edits it. Only a branch
+restriction on the `beta` environment would enforce it, and that would also
+refuse every branch run's candidate deployment and tests, since each of the
+reusable workflow's deployment jobs runs in that environment.
 
 Deployment concurrency prevents two releases from changing the entrypoint
 service simultaneously. Promotion never targets `LATEST`.
@@ -115,8 +122,7 @@ value fails the deployment before Cloud Run changes. A new value takes effect
 at the next entrypoint deployment, which `prod`, and `beta` for a run from
 `main`, promote to stable traffic once their tests pass. A `beta` value
 therefore applies to every caller of the staging stable URL as well as to the
-deployment tests. The route
-permissions are listed in `README.md`.
+deployment tests. The route permissions are listed in `README.md`.
 
 ### Auth0 prerequisites
 
