@@ -1,0 +1,760 @@
+{
+ "spm_provenance": {
+  "schema_version": "canonical-spm-comparison-v2",
+  "baseline": {
+   "receipt": {
+    "schema_version": "canonical-spm-provenance-v2",
+    "forecast_id": "spm-forecast-2022-2036",
+    "forecast_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "scenario": "central",
+    "geography_kind": "county",
+    "geography_id": null,
+    "county_vintage": "2020",
+    "as_of": null,
+    "years": [
+     "2026"
+    ],
+    "runtime_versions": {
+     "policyengine": "6.10.0",
+     "policyengine-core": "3.20.0",
+     "policyengine-us": "1.715.2",
+     "spm-calculator": "0.4.1"
+    }
+   },
+   "execution_count": 2
+  },
+  "reform": {
+   "receipt": {
+    "schema_version": "canonical-spm-provenance-v2",
+    "forecast_id": "spm-forecast-2022-2036",
+    "forecast_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "scenario": "central",
+    "geography_kind": "county",
+    "geography_id": null,
+    "county_vintage": "2020",
+    "as_of": null,
+    "years": [
+     "2026"
+    ],
+    "runtime_versions": {
+     "policyengine": "6.10.0",
+     "policyengine-core": "3.20.0",
+     "policyengine-us": "1.715.2",
+     "spm-calculator": "0.4.1"
+    }
+   },
+   "execution_count": 2
+  }
+ },
+ "model_version": "1.715.2",
+ "data_version": "1.115.5",
+ "budget": {
+  "tax_revenue_impact": 89565497411.86987,
+  "state_tax_revenue_impact": -886897264.5463827,
+  "benefit_spending_impact": -83025600968.21567,
+  "budgetary_impact": 91206854377.84988,
+  "households": 136709977.562589,
+  "baseline_net_income": 12471939978137.047
+ },
+ "detailed_budget": {
+  "income_tax": {
+   "baseline": 339460802.8804418,
+   "reform": -383727084.8217116,
+   "difference": 211888331.35692486
+  },
+  "snap": {
+   "baseline": 213603467.2816758,
+   "reform": 162408034.22400618,
+   "difference": -683234259.4903889
+  },
+  "eitc": {
+   "baseline": -138660719.4174627,
+   "reform": -212936359.58925727,
+   "difference": 446024162.4749317
+  },
+  "ctc": {
+   "baseline": 989639125.8994855,
+   "reform": 898790946.1864872,
+   "difference": 88354094.85864165
+  },
+  "ssi": {
+   "baseline": -110291622.54829283,
+   "reform": -463518516.70134383,
+   "difference": -928151341.2142848
+  },
+  "state_income_tax": {
+   "baseline": -945110285.818362,
+   "reform": -70212275.80537581,
+   "difference": -363069744.29264516
+  }
+ },
+ "decile": {
+  "average": {
+   "1": -719.9104685957303,
+   "2": 2350.7367469697247,
+   "3": 154.51661487616985,
+   "4": 363.06216615899325,
+   "5": -1583.2595573096276,
+   "6": -2856.8515251553067,
+   "7": -1049.1424274330398,
+   "8": -2179.8156420812,
+   "9": 61.34307502320691,
+   "10": 2992.101409155312
+  },
+  "relative": {
+   "1": -0.0,
+   "2": -3.5e-9,
+   "3": 0.7967599214216395,
+   "4": 1e-12,
+   "5": 1e-12,
+   "6": -3.5e-9,
+   "7": -3.5e-9,
+   "8": -3.5e-9,
+   "9": -0.0,
+   "10": -3.5e-9
+  }
+ },
+ "inequality": {
+  "gini": {
+   "baseline": 0.5008410626306549,
+   "reform": 0.8315244897918123
+  },
+  "top_10_pct_share": {
+   "baseline": 0.3539242048687159,
+   "reform": 0.8828509185812531
+  },
+  "top_1_pct_share": {
+   "baseline": 0.8997005887566257,
+   "reform": 0.46101216488163765
+  }
+ },
+ "poverty": {
+  "poverty": {
+   "child": {
+    "baseline": 0.5677050704202443,
+    "reform": 0.9203304391919288
+   },
+   "adult": {
+    "baseline": 0.7237729538720183,
+    "reform": 0.48660855486158505
+   },
+   "senior": {
+    "baseline": 0.22181101099101086,
+    "reform": 0.324667243768898
+   },
+   "all": {
+    "baseline": 0.6995716380702436,
+    "reform": 0.16606968549412615
+   }
+  },
+  "deep_poverty": {
+   "child": {
+    "baseline": 0.9079404966260946,
+    "reform": 0.26813751289981635
+   },
+   "adult": {
+    "baseline": 0.9113778358680468,
+    "reform": 0.3095631249494607
+   },
+   "senior": {
+    "baseline": 0.957361711556158,
+    "reform": 0.7062058063676047
+   },
+   "all": {
+    "baseline": 0.5042488169833176,
+    "reform": 0.5177477561485521
+   }
+  }
+ },
+ "poverty_by_gender": {
+  "poverty": {
+   "male": {
+    "baseline": 0.6514143989667908,
+    "reform": 0.5879447117944846
+   },
+   "female": {
+    "baseline": 0.3118443245510002,
+    "reform": 0.20781847453792723
+   }
+  },
+  "deep_poverty": {
+   "male": {
+    "baseline": 0.5118916583552825,
+    "reform": 0.9341543591337786
+   },
+   "female": {
+    "baseline": 0.6232650867258723,
+    "reform": 0.0753753690740454
+   }
+  }
+ },
+ "poverty_by_race": {
+  "poverty": {
+   "white": {
+    "baseline": 0.8203999947120169,
+    "reform": 0.7259492874772981
+   },
+   "black": {
+    "baseline": 0.9076536209513208,
+    "reform": 0.1914027333041175
+   },
+   "hispanic": {
+    "baseline": 0.7447827242773541,
+    "reform": 0.058758896398655724
+   },
+   "other": {
+    "baseline": 0.6529099274345497,
+    "reform": 0.27309973233714935
+   }
+  }
+ },
+ "intra_decile": {
+  "deciles": {
+   "Gain more than 5%": [
+    0.22661652924476305,
+    0.8754911714482378,
+    0.10626598264552489,
+    0.52236266535893,
+    0.853943007184872,
+    0.2448319779690169,
+    0.2104789386956465,
+    0.8805817593662799,
+    0.42291764838969603,
+    0.7169610989049753
+   ],
+   "Gain less than 5%": [
+    0.03187307012674512,
+    0.36235691130324066,
+    0.17188099212573238,
+    0.6727654414135418,
+    0.08290317740457553,
+    0.9545621653457477,
+    0.025344714826901038,
+    0.7294235074418041,
+    0.02114486972315066,
+    0.2556900540574426
+   ],
+   "No change": [
+    0.8133543874022758,
+    0.1571182886867749,
+    0.1837388092509762,
+    0.6914954260135907,
+    0.38556588135256054,
+    0.043160995797499324,
+    0.9900015462028011,
+    0.15142010875655154,
+    0.03626899424341401,
+    0.34420100553679467
+   ],
+   "Lose less than 5%": [
+    0.6152394833248576,
+    0.7424596231257796,
+    0.11311490301807692,
+    0.33721377319664525,
+    0.03081085762668856,
+    0.448653262492294,
+    0.7659699365880781,
+    0.7399466637207005,
+    0.9020201583500368,
+    0.7556621536750643
+   ],
+   "Lose more than 5%": [
+    0.8624457763254278,
+    0.7053451400507655,
+    0.4727795120983127,
+    0.22552757034788762,
+    0.6608284986570139,
+    0.3163059267282592,
+    0.10204910504969822,
+    0.44782186141915115,
+    0.8747630413479673,
+    0.12753646461878787
+   ]
+  },
+  "all": {
+   "Gain more than 5%": 0.5849556981106074,
+   "Gain less than 5%": 0.3929525501051674,
+   "No change": 0.5148026967641771,
+   "Lose less than 5%": 0.14382946397694396,
+   "Lose more than 5%": 0.9597311864871608
+  }
+ },
+ "wealth_decile": null,
+ "intra_wealth_decile": null,
+ "labor_supply_response": null,
+ "constituency_impact": null,
+ "local_authority_impact": null,
+ "congressional_district_impact": {
+  "districts": [
+   {
+    "district": "CA-01",
+    "average_household_income_change": -1340.202080667208,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.4791004720574512,
+    "loser_percentage": 0.21601434789390284,
+    "no_change_percentage": 0.7926333582002464,
+    "population": 1615708.6039068555
+   },
+   {
+    "district": "CA-02",
+    "average_household_income_change": 49.8249585503725,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.7884035185216414,
+    "loser_percentage": 0.014121348940183798,
+    "no_change_percentage": 0.9327781318527646,
+    "population": 856382.2369167916
+   },
+   {
+    "district": "CA-03",
+    "average_household_income_change": -1420.3115763142403,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.6939185190374807,
+    "loser_percentage": 0.43685591964096726,
+    "no_change_percentage": 0.9953730235896091,
+    "population": 1541402.9341196942
+   },
+   {
+    "district": "CA-04",
+    "average_household_income_change": -372.9236836466168,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.5401493571516298,
+    "loser_percentage": 0.6939154052422181,
+    "no_change_percentage": 0.6488161903021046,
+    "population": 1875821.4170999322
+   },
+   {
+    "district": "CA-05",
+    "average_household_income_change": -1907.1033848877832,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.1248771012471086,
+    "loser_percentage": 0.9279438631202989,
+    "no_change_percentage": 0.45312759400232583,
+    "population": 1104005.7499476979
+   },
+   {
+    "district": "CA-06",
+    "average_household_income_change": -628.3143043117749,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.6651080998565223,
+    "loser_percentage": 0.4699420173904715,
+    "no_change_percentage": 0.8201443868492999,
+    "population": 149246.67448191857
+   },
+   {
+    "district": "CA-07",
+    "average_household_income_change": -1210.490429146224,
+    "relative_household_income_change": 0.6737943587360455,
+    "winner_percentage": 0.988819150103311,
+    "loser_percentage": 0.07092682363448932,
+    "no_change_percentage": 0.5601229852164192,
+    "population": 1117885.1846906256
+   },
+   {
+    "district": "CA-08",
+    "average_household_income_change": -447.9625165140804,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.8875597159253288,
+    "loser_percentage": 0.40960169056048457,
+    "no_change_percentage": 0.3652205463834728,
+    "population": 902643.2559108599
+   },
+   {
+    "district": "CA-09",
+    "average_household_income_change": -456.8892622604417,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.2657046394559417,
+    "loser_percentage": 0.8341206393633971,
+    "no_change_percentage": 0.15894373296270192,
+    "population": 1431995.9281805663
+   },
+   {
+    "district": "CA-10",
+    "average_household_income_change": 1929.5672028067936,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.5504308983637247,
+    "loser_percentage": 0.7481760198039773,
+    "no_change_percentage": 0.22203302064179198,
+    "population": 1217802.7826345137
+   },
+   {
+    "district": "CA-11",
+    "average_household_income_change": 225.94800531849612,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.6696762455261636,
+    "loser_percentage": 0.626497070105428,
+    "no_change_percentage": 0.8336585978200555,
+    "population": 664756.392637095
+   },
+   {
+    "district": "CA-12",
+    "average_household_income_change": 1047.4084793697762,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.10327322906771608,
+    "loser_percentage": 0.06564394327349787,
+    "no_change_percentage": 0.8136958418340839,
+    "population": 1554037.175010373
+   },
+   {
+    "district": "CA-13",
+    "average_household_income_change": -500.4977834258955,
+    "relative_household_income_change": 0.6833517926685315,
+    "winner_percentage": 0.8986976344732958,
+    "loser_percentage": 0.9582801181193664,
+    "no_change_percentage": 0.40701465992468444,
+    "population": 1978219.2582351891
+   },
+   {
+    "district": "CA-14",
+    "average_household_income_change": 1845.7190615493287,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.4909118600646697,
+    "loser_percentage": 0.37556014706891894,
+    "no_change_percentage": 0.24720779013847893,
+    "population": 1752289.2094533443
+   },
+   {
+    "district": "CA-15",
+    "average_household_income_change": -1350.8297335560103,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.7739166225598225,
+    "loser_percentage": 0.48317292375438614,
+    "no_change_percentage": 0.8369988075493334,
+    "population": 104347.25662033516
+   },
+   {
+    "district": "CA-16",
+    "average_household_income_change": -968.0935544244576,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.24859453119806696,
+    "loser_percentage": 0.39452527515181346,
+    "no_change_percentage": 0.8703856344378171,
+    "population": 1290870.9481231153
+   },
+   {
+    "district": "CA-17",
+    "average_household_income_change": -1415.5413513348383,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.049402104707172434,
+    "loser_percentage": 0.13958869843838762,
+    "no_change_percentage": 0.6502503344835922,
+    "population": 1822890.3670401648
+   },
+   {
+    "district": "CA-18",
+    "average_household_income_change": -83.73355781139668,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.7952183049458383,
+    "loser_percentage": 0.8814528015908482,
+    "no_change_percentage": 0.6013557819482931,
+    "population": 852164.9909683842
+   },
+   {
+    "district": "CA-19",
+    "average_household_income_change": 324.5580465373026,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.13879509668301637,
+    "loser_percentage": 0.5884124731718138,
+    "no_change_percentage": 0.13931078291129895,
+    "population": 1441535.0110863678
+   },
+   {
+    "district": "CA-20",
+    "average_household_income_change": -470.5363903850697,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.2644210278517495,
+    "loser_percentage": 0.3261696595241047,
+    "no_change_percentage": 0.24976541736485114,
+    "population": 1911351.331835094
+   },
+   {
+    "district": "CA-21",
+    "average_household_income_change": -315.60128160724776,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.13353777782594412,
+    "loser_percentage": 0.09483912882924739,
+    "no_change_percentage": 0.09393882890552552,
+    "population": 50634.006287708646
+   },
+   {
+    "district": "CA-22",
+    "average_household_income_change": -212.57815402313707,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.6553232690791773,
+    "loser_percentage": 0.12652804183979316,
+    "no_change_percentage": 0.5386586184955431,
+    "population": 648553.7647646856
+   },
+   {
+    "district": "CA-23",
+    "average_household_income_change": -24.53294730317035,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.1815753145809701,
+    "loser_percentage": 0.857494044138571,
+    "no_change_percentage": 0.20162091933172333,
+    "population": 1488396.6527884605
+   },
+   {
+    "district": "CA-24",
+    "average_household_income_change": 1028.2245590144817,
+    "relative_household_income_change": 0.6038979940926733,
+    "winner_percentage": 0.8738689850685158,
+    "loser_percentage": 0.7742488313963415,
+    "no_change_percentage": 0.7907254914134034,
+    "population": 15645.68858814286
+   },
+   {
+    "district": "CA-25",
+    "average_household_income_change": -144.4811563353863,
+    "relative_household_income_change": 0.0634914219225714,
+    "winner_percentage": 0.17529714744120328,
+    "loser_percentage": 0.7114876004555625,
+    "no_change_percentage": 0.2529059496820111,
+    "population": 1393466.1836204943
+   },
+   {
+    "district": "CA-26",
+    "average_household_income_change": -745.5308811125443,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.15617347739198484,
+    "loser_percentage": 0.726143113529342,
+    "no_change_percentage": 0.9904837928341851,
+    "population": 1635204.4120896044
+   },
+   {
+    "district": "CA-27",
+    "average_household_income_change": 1212.2940882841444,
+    "relative_household_income_change": 0.49005924871725615,
+    "winner_percentage": 0.09856340695484134,
+    "loser_percentage": 0.6011795331541527,
+    "no_change_percentage": 0.5082125559059094,
+    "population": 1469145.2283251747
+   },
+   {
+    "district": "CA-28",
+    "average_household_income_change": 1868.445322419666,
+    "relative_household_income_change": 0.31015720435692795,
+    "winner_percentage": 0.5257866588071927,
+    "loser_percentage": 0.5606768219884671,
+    "no_change_percentage": 0.06372394872053855,
+    "population": 1629376.6398093402
+   },
+   {
+    "district": "CA-29",
+    "average_household_income_change": 1907.390809098553,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6579595952720738,
+    "loser_percentage": 0.42027314087455103,
+    "no_change_percentage": 0.8679698934861128,
+    "population": 1303425.8793790916
+   },
+   {
+    "district": "CA-30",
+    "average_household_income_change": 506.1883573034174,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5050432802840407,
+    "loser_percentage": 0.94705073550179,
+    "no_change_percentage": 0.6798941392052675,
+    "population": 1411300.6359731662
+   },
+   {
+    "district": "CA-31",
+    "average_household_income_change": -116.47956021349427,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.07035418767844082,
+    "loser_percentage": 0.024948612219243826,
+    "no_change_percentage": 0.6615002783679655,
+    "population": 84079.98453165463
+   },
+   {
+    "district": "CA-32",
+    "average_household_income_change": -897.6705758518216,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.7237596916187159,
+    "loser_percentage": 0.45599214581860004,
+    "no_change_percentage": 0.23643698095484955,
+    "population": 770813.9915391634
+   },
+   {
+    "district": "CA-33",
+    "average_household_income_change": -52.86141551185253,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.03743134796401293,
+    "loser_percentage": 0.1728476844123371,
+    "no_change_percentage": 0.37302769509832234,
+    "population": 1209181.9329632234
+   },
+   {
+    "district": "CA-34",
+    "average_household_income_change": -1136.3743609334404,
+    "relative_household_income_change": 0.44974025060838185,
+    "winner_percentage": 0.6680286879169739,
+    "loser_percentage": 0.8589059159576242,
+    "no_change_percentage": 0.699025972338484,
+    "population": 1365950.6330220753
+   },
+   {
+    "district": "CA-35",
+    "average_household_income_change": -1018.775031530851,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.305951912810726,
+    "loser_percentage": 0.3818494888010229,
+    "no_change_percentage": 0.524231157926504,
+    "population": 1422756.954866777
+   },
+   {
+    "district": "CA-36",
+    "average_household_income_change": 1636.3690795417276,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.31173263397561823,
+    "loser_percentage": 0.39122298893643304,
+    "no_change_percentage": 0.14542152800186026,
+    "population": 1106487.3959916614
+   },
+   {
+    "district": "CA-37",
+    "average_household_income_change": -1681.9329702146072,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.7423554937763153,
+    "loser_percentage": 0.46234896766399936,
+    "no_change_percentage": 0.1082182749423255,
+    "population": 1912003.3408171246
+   },
+   {
+    "district": "CA-38",
+    "average_household_income_change": 815.8015737913117,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.3719751435635782,
+    "loser_percentage": 0.5816750130178863,
+    "no_change_percentage": 0.18881197468094058,
+    "population": 163990.98860082752
+   },
+   {
+    "district": "CA-39",
+    "average_household_income_change": -1885.6368564930008,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.8997208675828816,
+    "loser_percentage": 0.5070490702977853,
+    "no_change_percentage": 0.23838487713015877,
+    "population": 1376329.3814273335
+   },
+   {
+    "district": "CA-40",
+    "average_household_income_change": 864.7549563346893,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.4669656708961981,
+    "loser_percentage": 0.4368809942954668,
+    "no_change_percentage": 0.6170923684966161,
+    "population": 561254.8689483237
+   },
+   {
+    "district": "CA-41",
+    "average_household_income_change": -1302.6132980683976,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.09895846388084228,
+    "loser_percentage": 0.9751742106734704,
+    "no_change_percentage": 0.21518936033827352,
+    "population": 701197.8299980335
+   },
+   {
+    "district": "CA-42",
+    "average_household_income_change": 517.8454200848881,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.018987857363210625,
+    "loser_percentage": 0.5012020362915018,
+    "no_change_percentage": 0.03926851151996702,
+    "population": 1215724.072474778
+   },
+   {
+    "district": "CA-43",
+    "average_household_income_change": 801.631195832408,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.9415549378425223,
+    "loser_percentage": 0.14788159798472278,
+    "no_change_percentage": 0.9728397004974083,
+    "population": 380605.45107877883
+   },
+   {
+    "district": "CA-44",
+    "average_household_income_change": -517.7072914107455,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.1349522811977817,
+    "loser_percentage": 0.7917141311763941,
+    "no_change_percentage": 0.8223465638768986,
+    "population": 1058831.0784220085
+   },
+   {
+    "district": "CA-45",
+    "average_household_income_change": -1803.3634630249749,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.8825392168156697,
+    "loser_percentage": 0.24432321805596258,
+    "no_change_percentage": 0.5748886823831034,
+    "population": 1647570.443801504
+   },
+   {
+    "district": "CA-46",
+    "average_household_income_change": 338.45063820962815,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.6587134494041641,
+    "loser_percentage": 0.07301193535656736,
+    "no_change_percentage": 0.43578737154362135,
+    "population": 1665433.0603320487
+   },
+   {
+    "district": "CA-47",
+    "average_household_income_change": 1956.4619290612816,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.0596454627614903,
+    "loser_percentage": 0.8152030671131772,
+    "no_change_percentage": 0.6065200458135751,
+    "population": 1240564.5324497477
+   },
+   {
+    "district": "CA-48",
+    "average_household_income_change": -115.56590559409318,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.1527065431306417,
+    "loser_percentage": 0.1534710999811163,
+    "no_change_percentage": 0.28797260893872434,
+    "population": 1279944.9805484125
+   },
+   {
+    "district": "CA-49",
+    "average_household_income_change": -1963.029387886932,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.1863473319393073,
+    "loser_percentage": 0.09815282134718561,
+    "no_change_percentage": 0.8283105804754989,
+    "population": 720381.8897881922
+   },
+   {
+    "district": "CA-50",
+    "average_household_income_change": -590.5154925954253,
+    "relative_household_income_change": 0.1620999651934779,
+    "winner_percentage": 0.4950585460308846,
+    "loser_percentage": 0.680757133582871,
+    "no_change_percentage": 0.653173233564723,
+    "population": 316374.24278914207
+   },
+   {
+    "district": "CA-51",
+    "average_household_income_change": -1583.5641255176856,
+    "relative_household_income_change": 0.9308651041879465,
+    "winner_percentage": 0.2504366070659293,
+    "loser_percentage": 0.1989707551215727,
+    "no_change_percentage": 0.19353466278177012,
+    "population": 1908012.2191396358
+   },
+   {
+    "district": "CA-52",
+    "average_household_income_change": -306.0961640384328,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.2137151770500293,
+    "loser_percentage": 0.04047780281107205,
+    "no_change_percentage": 0.35227293973175733,
+    "population": 1065100.5898863673
+   }
+  ]
+ },
+ "cliff_impact": null
+}

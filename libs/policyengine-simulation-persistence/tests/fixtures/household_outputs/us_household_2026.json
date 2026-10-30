@@ -1,0 +1,53 @@
+{
+ "schema_version": 1,
+ "household": {
+  "people": {
+   "you": {
+    "age": {"2026": 40},
+    "employment_income": {"2026": 52000.5},
+    "is_tax_unit_head": {"2026": true},
+    "ssi": {"2026": 0.0},
+    "medicaid": {"2026": -0.0},
+    "marginal_tax_rate": {"2026": 0.30645000000000006}
+   },
+   "your first dependent": {
+    "age": {"2026": 7},
+    "employment_income": {"2026": 0},
+    "is_tax_unit_dependent": {"2026": true},
+    "ctc_child_individual_maximum": {"2026": 2200.0}
+   }
+  },
+  "families": {"your family": {"members": ["you", "your first dependent"]}},
+  "marital_units": {
+   "your marital unit": {"members": ["you"]},
+   "your first dependent's marital unit": {
+    "members": ["your first dependent"],
+    "marital_unit_id": {"2026": 1}
+   }
+  },
+  "tax_units": {
+   "your tax unit": {
+    "members": ["you", "your first dependent"],
+    "eitc": {"2026": 3584.123456789},
+    "ctc": {"2026": 2200.0},
+    "income_tax": {"2026": -1452.25},
+    "state_income_tax": {"2026": null}
+   }
+  },
+  "spm_units": {
+   "your household": {
+    "members": ["you", "your first dependent"],
+    "snap": {"2026": 0.0},
+    "spm_unit_net_income": {"2026": 55410.873}
+   }
+  },
+  "households": {
+   "your household": {
+    "members": ["you", "your first dependent"],
+    "state_name": {"2026": "CA"},
+    "household_net_income": {"2026": 55410.873},
+    "household_benefits": {"2026": 1e-12}
+   }
+  }
+ }
+}

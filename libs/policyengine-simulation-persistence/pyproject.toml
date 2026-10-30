@@ -8,7 +8,11 @@ authors = [
 license = {file = "../../LICENSE"}
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    # The result models the result tables store and rebuild.
+    "policyengine-simulation-contract",
     "psycopg[binary]>=3.2,<4",
+    # The household writer validates with pydantic directly.
+    "pydantic>=2,<3",
     "sqlalchemy>=2,<3",
 ]
 
@@ -27,6 +31,10 @@ test = [
 build = [
     "pyright>=1.1.401",
 ]
+
+[tool.uv.sources]
+policyengine-simulation-contract = { path = "../policyengine-simulation-contract", editable = true }
+policyengine-simulation-observability = { path = "../policyengine-simulation-observability", editable = true }
 
 [build-system]
 requires = ["hatchling>=1.26"]

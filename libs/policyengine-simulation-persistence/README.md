@@ -63,6 +63,52 @@ steps whose simulation run failed) are failed so the work can be submitted
 again. A comparison step can start only once both of its simulation runs
 have succeeded; starting it is left to the stage 2 report path.
 
+### Results
+
+Every economy result is stored as rows (`result_tables`), one table per
+section of today's result model, `SingleYearMacroOutput`:
+
+| Belongs to | Tables |
+| --- | --- |
+| A simulation run (its own figures, as each report run's comparison computed them) | `poverty_rates`, `inequality`, `cliff_impacts` |
+| A report run (the comparison) | `budget_impacts`, `program_budget_impacts`, `decile_impacts` (income and wealth), `intra_decile_impacts` (income and wealth), `labor_supply_responses`, `labor_supply_decile_impacts`, `congressional_district_impacts`, `constituency_impacts`, `local_authority_impacts` |
+
+A reused simulation run's own figures are keyed by the report run and the
+side (baseline or reform) too, because they can differ between comparisons
+(US poverty rates follow each comparison's SPM selection) and one run can be
+both sides of a report run. Labour supply decile rows keep the average and
+the relative maps' orders separately, since the average maps may name a
+decile the relative maps leave out (-1, for households with negative
+income). Lists and maps keep their order in a `position`
+column. Result rows are written once and never changed: the runtime role may
+read and insert them but not update or delete them. The report run also
+records which optional sections its result holds (`result_sections`), its SPM
+provenance, and the model and data versions the result reports (a US state
+run reports the revision of the dataset it loaded, which is not the release's
+default data version). `write_economy_comparison` checks the result can be
+held exactly (`check_storable`) and writes its rows in the transaction that
+marks the comparison step succeeded (`RunTransitions.complete_comparison`);
+`EconomyComparisonRecorder` pairs that writer with validation against the
+result model. `read_economy_comparison` rebuilds the result exactly from the
+rows and from labels the region catalog supplies (`EconomyResultLabels`):
+constituency and local-authority names and map positions by code. Each UK
+area's disclosure tier and the 90% interval bounds of its income changes are
+stored with its figures (null for a result computed before disclosure
+control).
+
+A computed household is one JSON value (`household_outputs`, PostgreSQL
+`json`, so its text, key order included, is kept as written) on its
+simulation run, with its schema version. `write_household_output` stores it
+in the transaction that marks the run succeeded
+(`RunTransitions.complete_simulation_call`); a household report's two runs
+share one Modal call and each gets its own household. `read_household_output`
+returns it unchanged.
+
+`output_files` links each stored file (its role, URI and SHA-256) to the one
+simulation run or report run that wrote it. `available_output_files` offers a
+link for 30 days after its file was written (`OUTPUT_FILE_RETENTION`), as long
+as the artifact bucket keeps it; result rows stay for good.
+
 ## Ownership rules
 
 These rules are registered in `rules/registry.toml` and checked by
@@ -95,11 +141,12 @@ These rules are registered in `rules/registry.toml` and checked by
 | Role | Used by | Privileges |
 | --- | --- | --- |
 | `simulation_migrator` | The deploy workflow's migration job, through `SIMULATION_MIGRATION_DATABASE_URL` | Creates the `simulation` schema if it is missing, and owns every object in it; `REFERENCES` on the Public API tables its foreign keys point to |
-| `simulation_runtime` | The Simulation Entrypoint, through `SIMULATION_DATABASE_URL` | `USAGE` on the schema, `SELECT` on the version table, and `SELECT`, `INSERT` and `UPDATE` on the tables the migrations create, except `UPDATE` on the definition tables (`simulations`, `reports`); never `DELETE`, and nothing on the Public API tables |
+| `simulation_runtime` | The Simulation Entrypoint, through `SIMULATION_DATABASE_URL` | `USAGE` on the schema, `SELECT` on the version table, and `SELECT`, `INSERT` and `UPDATE` on the tables the migrations create, except `UPDATE` on the definition tables (`simulations`, `reports`) and the result tables; never `DELETE`, and nothing on the Public API tables |
 
 The initial revision grants the runtime role its privileges, including default
 privileges on tables the migrator creates later; revision 0002 revokes
-`UPDATE` on the definition tables, which never change. Both roles must exist
+`UPDATE` on the definition tables, which never change, and revision 0004 on
+the result tables, whose rows are written once. Both roles must exist
 before the first migration runs; an operator creates them. Before revision
 0002 is deployed, the owner of the Public API's tables must also grant the
 migrator `REFERENCES` on `policies`, `households` and `dynamics`, and

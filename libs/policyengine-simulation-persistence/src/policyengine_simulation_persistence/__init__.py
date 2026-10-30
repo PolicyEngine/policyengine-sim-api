@@ -4,10 +4,32 @@ Importing the package registers every table in ``simulation_metadata``, which
 the migration environment compares with the database.
 """
 
+from policyengine_simulation_persistence.economy_results import (
+    OPTIONAL_SECTIONS,
+    RESULT_FIELD_STORAGE,
+    EconomyComparisonRecorder,
+    EconomyResultLabels,
+    GeographyLabel,
+    check_storable,
+    read_economy_comparison,
+    write_economy_comparison,
+)
 from policyengine_simulation_persistence.engine import (
     create_simulation_engine,
     normalized_database_url,
     read_schema_revision,
+)
+from policyengine_simulation_persistence.household_results import (
+    HouseholdOutput,
+    read_household_output,
+    write_household_output,
+)
+from policyengine_simulation_persistence.output_files import (
+    OUTPUT_FILE_RETENTION,
+    OutputFile,
+    OutputFileRecord,
+    available_output_files,
+    record_output_files,
 )
 from policyengine_simulation_persistence.reports import (
     NewReport,
@@ -52,15 +74,24 @@ from policyengine_simulation_persistence.simulations import (
 __all__ = [
     "ALEMBIC_VERSION_TABLE",
     "HEAD_REVISION",
+    "OPTIONAL_SECTIONS",
+    "OUTPUT_FILE_RETENTION",
+    "RESULT_FIELD_STORAGE",
     "RUNTIME_ROLE",
     "SIMULATION_SCHEMA",
     "SUCCEEDED_RUN_REUSE_WINDOW",
     "AbandonedDispatches",
     "DueSimulationCall",
+    "EconomyComparisonRecorder",
+    "EconomyResultLabels",
+    "GeographyLabel",
+    "HouseholdOutput",
     "NewReport",
     "NewReportRun",
     "NewSimulation",
     "NewSimulationRun",
+    "OutputFile",
+    "OutputFileRecord",
     "ReportKind",
     "ReportRecord",
     "ReportRunRecord",
@@ -76,8 +107,15 @@ __all__ = [
     "SimulationRunRecord",
     "SimulationStore",
     "StartedSimulationRun",
+    "available_output_files",
+    "check_storable",
     "create_simulation_engine",
     "normalized_database_url",
+    "read_economy_comparison",
+    "read_household_output",
     "read_schema_revision",
+    "record_output_files",
     "simulation_metadata",
+    "write_economy_comparison",
+    "write_household_output",
 ]
