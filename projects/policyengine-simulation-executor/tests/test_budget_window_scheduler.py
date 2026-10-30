@@ -18,6 +18,11 @@ import policyengine_simulation_contract.budget_window_state as state_module
 import pytest
 import src.modal.budget_window_batch as batch_module
 import src.modal.budget_window_scheduler as scheduler_module
+from dataset_year_errors import (
+    DATASET_YEAR_MESSAGE,
+    DATASET_YEAR_UNAVAILABLE,
+    dataset_year_error,
+)
 from fastapi.testclient import TestClient
 from policyengine_simulation_contract.budget_window_state import (
     BUDGET_WINDOW_JOB_DICT_NAME,
@@ -432,6 +437,28 @@ def test_typed_child_call_failure_persists_errors_and_stops_the_batch(
     # The scheduler returns early: the remaining years are never spawned.
     assert body["queued_years"] == ["2027", "2028"]
     assert [payload["time_period"] for payload in runtime.child_payloads] == ["2026"]
+
+
+def test_dataset_year_child_failure_persists_the_code_and_stops_the_batch(
+    budget_window_semi_integration_client,
+):
+    """A child year the model cannot project fails the batch as a caller error."""
+    client, runtime = budget_window_semi_integration_client
+    runtime.child_errors["2026"] = dataset_year_error()
+
+    batch_job_id = submit_budget_window(client)
+    assert client.get(f"/budget-window-jobs/{batch_job_id}").status_code == 202
+
+    failure = client.get(f"/budget-window-jobs/{batch_job_id}")
+    assert failure.status_code == 400
+    body = failure.json()
+    expected = [{"code": DATASET_YEAR_UNAVAILABLE, "message": DATASET_YEAR_MESSAGE}]
+    assert body["status"] == "failed"
+    assert body["errors"] == expected
+    assert body["error"] == DATASET_YEAR_MESSAGE
+    assert body["child_jobs"]["2026"]["errors"] == expected
+    assert body["failed_years"] == ["2026"]
+    assert body["queued_years"] == ["2027", "2028"]
 
 
 def test_typed_result_validation_failure_persists_errors_and_stops_the_batch(

@@ -5,6 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from dataset_year_errors import (
+    DATASET_YEAR_MESSAGE,
+    DATASET_YEAR_UNAVAILABLE,
+    dataset_year_error,
+)
 from policyengine_simulation_contract.spm import SPMInputError
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
@@ -153,6 +158,31 @@ def test_single_worker_preserves_typed_failure_values() -> None:
     child = store.children[simulation.simulation_execution_id]
     assert child.error_code == "SPM_YEAR_UNAVAILABLE"
     assert child.error_summary == "No SPM values for 2026"
+
+
+def test_single_worker_preserves_the_dataset_year_code() -> None:
+    store = FakeStore()
+    simulation = planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = child_record(simulation)
+
+    def fail_with_dataset_year_error(_simulation):
+        raise dataset_year_error()
+
+    with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            invocation_context().model_dump(mode="json"),
+            required_country="us",
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail_with_dataset_year_error,
+            ),
+        )
+
+    child = store.children[simulation.simulation_execution_id]
+    assert child.error_code == DATASET_YEAR_UNAVAILABLE
+    assert child.error_summary == DATASET_YEAR_MESSAGE
 
 
 def test_single_worker_rejects_bare_year_policy_period_before_calculation() -> None:

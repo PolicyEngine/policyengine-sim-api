@@ -1,5 +1,7 @@
 """Tests for polling a submitted simulation job's status."""
 
+import pickle
+
 import pytest
 from fastapi.testclient import TestClient
 from fixtures.gateway_responses import (
@@ -7,7 +9,23 @@ from fixtures.gateway_responses import (
     OBSERVABILITY_ID,
     expected_bundle,
 )
+from policyengine_simulation_contract.input_errors import DatasetYearUnavailableError
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
+
+DATASET_YEAR_MESSAGE = (
+    "UK results are available for 2024 to 2032. 2033 is outside the years the "
+    "current UK model and data cover."
+)
+
+
+class WorkerDatasetYearError(ValueError):
+    """A worker error carrying the stable ``DATASET_YEAR_UNAVAILABLE`` code.
+
+    Services recognise a caller-correctable error by its stable code, as they
+    recognise the SPM input errors, whatever class carried it across Modal.
+    """
+
+    code = "DATASET_YEAR_UNAVAILABLE"
 
 
 class TestSubmitSimulationEndpoint:
@@ -267,3 +285,65 @@ class TestSubmitSimulationEndpoint:
         assert body["error"].startswith("Simulation failed")
         assert "correlation_id=" in body["error"]
         assert "worker crashed" not in body["error"]
+
+    def test__given_unsupported_dataset_year__then_polling_returns_400_with_the_code(
+        self, mock_modal, client: TestClient
+    ):
+        submit_response = client.post(
+            "/simulate/economy/comparison",
+            json={
+                "country": "uk",
+                "scope": "macro",
+                "region": "uk",
+                "time_period": "2033",
+                "reform": {},
+            },
+        )
+        job_id = submit_response.json()["job_id"]
+        mock_modal["func"].last_call.error = WorkerDatasetYearError(
+            DATASET_YEAR_MESSAGE
+        )
+
+        response = client.get(f"/jobs/{job_id}")
+
+        assert response.status_code == 400
+        body = response.json()
+        assert body["status"] == "failed"
+        assert body["result"] is None
+        assert body["error"] == DATASET_YEAR_MESSAGE
+        assert body["errors"] == [
+            {"code": "DATASET_YEAR_UNAVAILABLE", "message": DATASET_YEAR_MESSAGE}
+        ]
+
+    def test__given_transported_dataset_year_error__then_polling_returns_400(
+        self, mock_modal, client: TestClient
+    ):
+        submit_response = client.post(
+            "/simulate/economy/comparison",
+            json={
+                "country": "us",
+                "scope": "macro",
+                "time_period": "2036",
+                "reform": {},
+            },
+        )
+        # The worker's error as Modal delivers it: pickled, then rebuilt in a
+        # gateway image that has no country packages.
+        mock_modal["func"].last_call.error = pickle.loads(
+            pickle.dumps(DatasetYearUnavailableError("us", 2036, 2024, 2035))
+        )
+
+        response = client.get(f"/jobs/{submit_response.json()['job_id']}")
+
+        assert response.status_code == 400
+        body = response.json()
+        assert body["status"] == "failed"
+        assert body["errors"] == [
+            {
+                "code": "DATASET_YEAR_UNAVAILABLE",
+                "message": (
+                    "US results are available for 2024 to 2035. 2036 is outside "
+                    "the years the current US model and data cover."
+                ),
+            }
+        ]
