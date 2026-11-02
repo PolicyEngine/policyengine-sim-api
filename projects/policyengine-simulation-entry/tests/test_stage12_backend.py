@@ -690,6 +690,8 @@ def test_an_unsupported_us_state_request_keeps_its_unsupported_reason() -> None:
         ("us", "place/CA-44000", "1.764.6"),
         ("uk", "uk", "2.90.2"),
         ("uk", "country/scotland", "2.90.2"),
+        # A US reading would take this two-letter code for a state.
+        ("uk", "ni", "2.90.2"),
     ],
 )
 def test_automatic_dispatch_still_compares_every_other_region(
@@ -714,7 +716,7 @@ def test_automatic_dispatch_still_compares_every_other_region(
     assert _event_names(backend) == ["stage12_comparison_run_dispatched"]
 
 
-def test_an_operator_submission_still_compares_a_us_state() -> None:
+def test_an_operator_submission_still_accepts_a_us_state() -> None:
     # Only automatic shadow reports exclude state runs; an operator can still
     # submit one directly.
     invoker = FakeInvoker()

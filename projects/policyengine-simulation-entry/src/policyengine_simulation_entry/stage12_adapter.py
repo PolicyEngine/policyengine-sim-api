@@ -242,13 +242,13 @@ def adapt_automatic_comparison(
 ) -> AdaptedComparisonRun:
     """Adapt an accepted production request into a shadow report, if one runs.
 
-    A US state request gets none (``EXCLUDED_US_STATE_REGION``). The app runs
-    every state for a nationwide report's district view, and Stage 12 is
-    being replaced, so shadowing them would start two simulations per state
-    for results nothing reads. The check follows the adapter's own, so the
-    reason counts only state requests that would otherwise have been
-    compared. Operator direct submissions use ``adapt_annual_comparison`` and
-    still accept state regions.
+    A US state request gets none (``EXCLUDED_US_STATE_REGION``). The app will
+    run every state for a nationwide report's district view, so shadowing them
+    would start two simulations per state, and Stage 12 is being replaced, so
+    state results are no longer compared with production. The check follows
+    the adapter's own, so the reason counts only state requests that would
+    otherwise have been compared. Operator direct submissions use
+    ``adapt_annual_comparison`` and still accept state regions.
     """
     adapted = adapt_annual_comparison(
         payload, evaluation_id=evaluation_id, worker=worker
