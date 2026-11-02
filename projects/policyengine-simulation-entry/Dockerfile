@@ -1,6 +1,6 @@
 FROM python:3.13-slim AS runtime
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /uvx /bin/
 
 # grpcio (used by the Google Cloud and OTLP telemetry exporters) otherwise
 # verifies servers against its own compiled-in CA list, which in every release

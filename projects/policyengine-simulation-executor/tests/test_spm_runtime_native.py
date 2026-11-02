@@ -24,7 +24,7 @@ def forecast():
 
 
 def _worker_entrypoint(params, monkeypatch):
-    from policyengine_simulation_executor import simulation_runtime
+    from policyengine_simulation_executor import region_resolution, simulation_runtime
     from src.modal import budget_window_batch
 
     if "start_year" in params:
@@ -34,7 +34,7 @@ def _worker_entrypoint(params, monkeypatch):
     else:
         entrypoint = simulation_runtime._run_simulation_impl_core
         boundary = Mock(side_effect=AssertionError("Must reject before dataset lookup"))
-        monkeypatch.setattr(simulation_runtime, "_resolve_dataset_reference", boundary)
+        monkeypatch.setattr(region_resolution, "resolve_dataset_reference", boundary)
     return entrypoint, boundary
 
 

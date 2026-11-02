@@ -367,7 +367,10 @@ def mock_modal(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         job_progress_state,
     )
     from policyengine_simulation_gateway import (  # noqa: PLC0415  # patch targets, imported when the fixture runs
-        endpoints,
+        job_creation_routes,
+        job_status_routes,
+        modal_routing,
+        version_routes,
     )
 
     mock_func = MockFunction()
@@ -400,7 +403,11 @@ def mock_modal(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         FunctionCall = MockFunctionCall
         exception = MockModalException
 
-    monkeypatch.setattr(endpoints, "modal", MockModal)
+    # Every gateway module that looks up modal: the routes and their Modal reads.
+    monkeypatch.setattr(job_creation_routes, "modal", MockModal)
+    monkeypatch.setattr(job_status_routes, "modal", MockModal)
+    monkeypatch.setattr(modal_routing, "modal", MockModal)
+    monkeypatch.setattr(version_routes, "modal", MockModal)
     monkeypatch.setattr(budget_window_state, "modal", MockModal)
     monkeypatch.setattr(job_progress_state, "modal", MockModal)
     monkeypatch.setattr(

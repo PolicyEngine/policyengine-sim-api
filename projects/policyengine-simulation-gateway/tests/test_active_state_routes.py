@@ -6,7 +6,7 @@ from dataclasses import asdict
 
 import pytest
 from fixtures.gateway_endpoints import TEST_APP_RELEASE_BUNDLE, TEST_ROUTING_STATE
-from policyengine_simulation_gateway.endpoints import _resolve_from_active_state
+from policyengine_simulation_gateway.route_resolution import resolve_from_active_state
 
 CURRENT_APP = "policyengine-simulation-py4-10-0"
 PREVIOUS_APP = "policyengine-simulation-py3-9-0"
@@ -15,7 +15,7 @@ PREVIOUS_BUNDLE = TEST_ROUTING_STATE["bundles"]["3.9.0"]
 
 def _resolve(state=None, *, country="us", version=None, policyengine_version=None):
     return asdict(
-        _resolve_from_active_state(
+        resolve_from_active_state(
             state=deepcopy(TEST_ROUTING_STATE) if state is None else state,
             country=country,
             version=version,

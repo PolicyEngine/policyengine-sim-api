@@ -14,7 +14,7 @@ from policyengine_simulation_executor.release_bundle import (
     resolve_local_bundle_dataset_path,
 )
 from policyengine_simulation_executor.simulation_runtime import (
-    _normalise_policy,
+    normalise_policy,
     resolve_data_folder,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
@@ -22,9 +22,9 @@ from policyengine_simulation_executor.stage12_cache import (
     precompute as cache_precompute,
 )
 from policyengine_simulation_executor.stage12_cache.models import CacheManifest
-from policyengine_simulation_executor.stage12_cache.precompute import (
-    PRECOMPUTE_YEARS,
-    _scoped_planned_simulation,
+from policyengine_simulation_executor.stage12_cache.precompute import PRECOMPUTE_YEARS
+from policyengine_simulation_executor.stage12_cache.precompute_planning import (
+    scoped_planned_simulation,
 )
 from policyengine_simulation_executor.stage12_runtime.partition import (
     US_REGION_GROUPS,
@@ -96,7 +96,7 @@ def _run_non_serving_calculation(country: CountryId) -> None:
         ]
         extra_variables.append("ctc")
         options["spm"] = {"geography_kind": "national"}
-        options["reform"] = _normalise_policy(US_VALIDATION_REFORM)
+        options["reform"] = normalise_policy(US_VALIDATION_REFORM)
     result = country_module.calculate_household(
         people=people,
         year=2026,
@@ -200,7 +200,7 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
     probe_path = data_folder / probe.filename
     _check_dataset_access(str(probe_path), probe.content_sha256)
     calculation = calculate_simulation_frames(
-        _scoped_planned_simulation(STAGE12_CACHE_PROBE_YEAR, US_REGION_GROUPS[0])
+        scoped_planned_simulation(STAGE12_CACHE_PROBE_YEAR, US_REGION_GROUPS[0])
     )
     if calculation.cache_outcome != "hit":
         msg = "deployed Stage 12 cache probe did not load a cache hit"

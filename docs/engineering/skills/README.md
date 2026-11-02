@@ -15,6 +15,8 @@ Current skills:
   them, the daily relock, and how to register an exception.
 - `database-access.md`: SQLAlchemy-only database connections, schema changes
   only through Alembic migrations, and the guard that checks both.
+- `file-length.md`: the line limit for Python files, its baseline, and how
+  to split a long module without changing behaviour.
 - `github-prs.md`: same-repository draft PR workflow, issue linkage, PR head
   verification, and title conventions.
 - `testing.md`: test placement, dependency boundaries, and expected validation

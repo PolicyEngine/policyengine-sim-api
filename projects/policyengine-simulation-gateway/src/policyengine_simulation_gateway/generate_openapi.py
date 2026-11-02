@@ -40,6 +40,9 @@ def create_openapi_app() -> FastAPI:
         responses={
             200: {"description": "Job submitted successfully"},
             400: {"description": "Invalid request (unknown country/version)"},
+            500: {
+                "description": "Server failure (redacted error with a correlation ID)"
+            },
         },
     )
     async def submit_simulation(request: SimulationRequest) -> JobSubmitResponse:
@@ -56,6 +59,9 @@ def create_openapi_app() -> FastAPI:
         responses={
             200: {"description": "Budget-window batch submitted successfully"},
             400: {"description": "Invalid request (unknown country/version/year)"},
+            500: {
+                "description": "Server failure (redacted error with a correlation ID)"
+            },
         },
     )
     async def submit_budget_window_batch(

@@ -69,6 +69,8 @@ def build_gateway_image() -> modal.Image:
             uv_project_dir=_UV_PROJECT_DIR,
             frozen=True,
             extra_options="--no-default-groups",
+            # The repository's uv release, from .uv-version.
+            uv_version="0.13.6",
         )
         .add_local_python_source(
             "policyengine_simulation_gateway",

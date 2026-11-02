@@ -13,7 +13,6 @@ from policyengine_simulation_contract.stage12_execution import (
     ResultComparisonStatus,
     Stage12InvocationContext,
 )
-from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.stages import Stage, StagePlan
 
 from policyengine_simulation_executor.stage12_result_comparison import compare_results
@@ -60,7 +59,7 @@ def compare_completed_report(
         return
     try:
         comparison_span = (
-            scopes.span(runtime, stage_plan.name(Stage.STAGE12_RESULT_COMPARISON))
+            runtime.span(stage_plan.name(Stage.STAGE12_RESULT_COMPARISON))
             if runtime is not None and stage_plan is not None
             else nullcontext()
         )

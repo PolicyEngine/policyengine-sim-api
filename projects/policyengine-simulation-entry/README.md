@@ -21,8 +21,9 @@ Cloud Run's generated revision name is returned in a response header so
 deployment checks can prove which revision a tagged or stable URL serves.
 
 Live caller/backend authentication checks are isolated in `authenticated_tests`.
-They qualify tagged Cloud Run candidates before production traffic changes and
-verify the stable production endpoint immediately after promotion.
+They qualify tagged Cloud Run candidates before an environment's stable traffic
+changes and verify its stable endpoint immediately after promotion, in both
+staging and production.
 
 ## Caller authentication and permissions
 
