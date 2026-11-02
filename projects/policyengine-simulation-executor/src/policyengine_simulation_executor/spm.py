@@ -212,11 +212,11 @@ def normalize_runtime_spm(params: dict[str, Any]) -> dict[str, Any] | None:
         canonical = json.dumps(selection, sort_keys=True, separators=(",", ":"))
         try:
             from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # simulation_runtime imports this module lazily; kept lazy on both sides
-                _parse_year,
+                parse_year,
             )
 
             try:
-                start = int(params.get("start_year") or _parse_year(params))
+                start = int(params.get("start_year") or parse_year(params))
                 window = int(params.get("window_size", 1))
             except ValueError:
                 # Keep the order the range's old parse position gave it: the

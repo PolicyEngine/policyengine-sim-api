@@ -82,25 +82,39 @@ make generate-clients # regenerate the OpenAPI Python client
 Simulation workers and the old gateway continue to deploy to Modal. The
 permanent Simulation Entrypoint deploys to Cloud Run as tagged no-traffic
 candidates. Beta qualification uses Cloud Run's generated candidate URLs and
-does not require a custom beta domain. On merge to `main`,
-`.github/workflows/simulation-deploy.yml` releases one complete stack at a
-time:
+does not require a custom beta domain.
+
+A merge to `main` doesn't deploy by itself. Its push runs only the `versioning`
+job of `.github/workflows/simulation-deploy.yml`, which raises `VERSION`, builds
+the merge's section of `CHANGELOG.md` from the fragments in `changelog.d/`, and
+pushes one release commit, `Update PolicyEngine simulation API`. That commit's
+push deploys one complete stack at a time (see
+`docs/engineering/skills/github-prs.md#how-a-merge-is-released-and-deployed`):
 
 1. prepare the environment's deployment inputs and runtime secrets;
 2. deploy and unit test the Entrypoint, Modal gateway, and Modal executor in
    three parallel service jobs;
 3. publish routing only after all three service jobs pass;
 4. run generated-client and live authentication tests through the complete
-   three-service request path; and
-5. begin the `prod` deployment only after every `beta` deployment and
-   qualification job succeeds;
-6. assign stable production traffic to the exact tested entrypoint revision
-   after the complete production suite passes; and
-7. verify the stable endpoint, restoring its previous revision if immediate
-   post-promotion checks fail.
+   three-service request path;
+5. assign the environment's stable traffic to the exact tested entrypoint
+   revision after that environment's tests pass, in `beta` as in `prod`
+   (`beta` only for a run from `main`);
+6. verify the stable endpoint, restoring its previous revision if immediate
+   post-promotion checks fail; and
+7. begin the `prod` deployment only after every `beta` deployment,
+   qualification, promotion and revision clean-up job succeeds, so a failed
+   staging clean-up also stops the production deployment.
 
-A successful push-triggered full-stack deployment publishes the API client from
-the exact deployed commit.
+The staging service's stable URL therefore serves the revision that passed the
+staging tests, so staging callers of that URL, such as the Public API's staging
+service, reach the build the deployment tested. After each successful
+promotion, the deployment deletes the service's older revisions, keeping only
+the promoted revision and the one it replaced, for rollback.
+
+A successful deployment of a release commit publishes the API client from the
+exact deployed commit. A manual dispatch of the workflow deploys without a
+release and publishes no client.
 
 The stable production service is exposed through a separately managed global
 external HTTPS load balancer and canonical hostname. Domain ownership, DNS,

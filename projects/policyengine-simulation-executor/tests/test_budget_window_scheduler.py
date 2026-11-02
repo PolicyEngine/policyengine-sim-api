@@ -24,7 +24,12 @@ from policyengine_simulation_contract.budget_window_state import (
     BUDGET_WINDOW_JOB_SEED_DICT_NAME,
 )
 from policyengine_simulation_contract.spm import SPMInputError, SPMSelection
-from policyengine_simulation_gateway import endpoints
+from policyengine_simulation_gateway import (
+    job_creation_routes,
+    job_status_routes,
+    modal_routing,
+    version_routes,
+)
 from policyengine_simulation_gateway.testing import create_gateway_app
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 
@@ -289,7 +294,10 @@ def budget_window_semi_integration_client(
                 raise RuntimeError(msg)
             return runtime.current_parent_call_id
 
-    monkeypatch.setattr(endpoints, "modal", MockModal)
+    monkeypatch.setattr(job_creation_routes, "modal", MockModal)
+    monkeypatch.setattr(job_status_routes, "modal", MockModal)
+    monkeypatch.setattr(modal_routing, "modal", MockModal)
+    monkeypatch.setattr(version_routes, "modal", MockModal)
     monkeypatch.setattr(state_module, "modal", MockModal)
     monkeypatch.setattr(scheduler_module, "modal", MockModal)
     monkeypatch.setattr(batch_module, "modal", MockModal)

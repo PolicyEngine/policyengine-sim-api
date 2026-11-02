@@ -221,11 +221,16 @@ def install_fake_uv(
     *,
     log: Path,
     bundled: BundledVersions | None = None,
+    failed_inspections: int = 0,
+    failed_locks: int = 0,
 ) -> None:
     """Install a fake ``uv`` that appends each call to ``log``.
 
     Only the updater's isolated ``bundle-versions`` query for policyengine
     4.1.0 prints anything: the ``bundled`` versions as ``key=value`` lines.
+    The first ``failed_inspections`` of those queries, and the first
+    ``failed_locks`` project locks, fail instead, as uv does while PyPI
+    doesn't yet serve the release.
     """
     bundled = bundled or BundledVersions()
     write_executable(
@@ -234,9 +239,27 @@ def install_fake_uv(
 set -euo pipefail
 printf 'uv %s\\n' "$*" >> "{log}"
 
+if [[ "$1" == "lock" && "$*" != *"--check"* ]]; then
+  locks_file="{log}.locks"
+  locks=$(( $(cat "$locks_file" 2>/dev/null || echo 0) + 1 ))
+  echo "$locks" > "$locks_file"
+  if (( locks <= {failed_locks} )); then
+    echo "error: No solution found when resolving dependencies" >&2
+    exit 1
+  fi
+  exit 0
+fi
+
 if [[ "$1" == "run" \
   && "$*" == *"--isolated --no-project --with policyengine==4.1.0"* \
   && "$*" == *"update_policyengine_package.py bundle-versions"* ]]; then
+  inspections_file="{log}.inspections"
+  inspections=$(( $(cat "$inspections_file" 2>/dev/null || echo 0) + 1 ))
+  echo "$inspections" > "$inspections_file"
+  if (( inspections <= {failed_inspections} )); then
+    echo "error: No solution found when resolving --with dependencies" >&2
+    exit 1
+  fi
   echo "policyengine_version={bundled.policyengine_version}"
   echo "policyengine_core_version={bundled.core_version}"
   echo "spm_calculator_version={bundled.spm_version}"
@@ -252,6 +275,17 @@ if [[ "$1" == "run" \
 fi
 
 exit 0
+""",
+    )
+
+
+def install_fake_sleep(fake_bin: Path, *, log: Path) -> None:
+    """Install a fake ``sleep`` that logs each call to ``log`` and returns at once."""
+    write_executable(
+        fake_bin / "sleep",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+printf 'sleep %s\\n' "$*" >> "{log}"
 """,
     )
 

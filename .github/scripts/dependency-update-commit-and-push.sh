@@ -4,6 +4,10 @@
 # the prepare step rebuilt from main, and replace the remote update branch.
 #
 # - When the update changes no file on main, nothing is committed or pushed.
+# - Otherwise the commit also adds changelog.d/update-dependencies.changed.md,
+#   since every pull request adds a changelog fragment (rule
+#   sim.process.changelog-fragment). Its name and text never change, so the
+#   comparison below still compares only the update.
 # - When the remote branch already holds the same files, the push is skipped.
 #   The commit message carries the date, so commits are compared by their files.
 # - Otherwise the push replaces the remote branch only while it still points at
@@ -35,6 +39,9 @@ if [[ -z "$(git status --porcelain)" ]]; then
 else
   echo "Changes detected"
   changes_detected=true
+  mkdir -p changelog.d
+  echo "Updated every project's locked dependencies to the newest versions their requirements allow." \
+    > changelog.d/update-dependencies.changed.md
   git add --all
   git commit -m "Update dependencies ($(date -u +%Y-%m-%d))"
 

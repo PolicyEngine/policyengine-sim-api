@@ -45,12 +45,15 @@ BudgetaryOutput = BudgetaryImpact
 class DetailedBudgetProgramOutput(MacroOutputModel):
     """Baseline and reform totals for one program.
 
-    ``difference`` is reform minus baseline.
+    ``difference`` is reform minus baseline. ``is_tax`` says whether the
+    program is a tax (its rise adds to the budget) or a benefit (its rise is
+    spending); it is None in outputs built before the flag was recorded.
     """
 
     baseline: float
     reform: float
     difference: float
+    is_tax: bool | None = None
 
 
 class DetailedBudgetOutput(MacroRootModel[dict[str, DetailedBudgetProgramOutput]]):

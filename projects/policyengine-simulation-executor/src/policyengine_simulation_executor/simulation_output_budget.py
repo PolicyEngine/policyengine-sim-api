@@ -37,7 +37,9 @@ def build_detailed_budget(analysis: object) -> DetailedBudgetOutput:
     """Return per-program baseline, reform and difference totals from the analysis.
 
     Rows without a program name are skipped, and a missing or non-finite
-    ``change`` falls back to reform minus baseline.
+    ``change`` falls back to reform minus baseline. Each program carries the
+    analysis's ``is_tax`` flag, so consumers sign it without a list of their
+    own; it is None when the row has no flag.
     """
     collection = getattr(analysis, "program_statistics", None)
     if isinstance(collection, DetailedBudgetOutput):
@@ -53,8 +55,17 @@ def build_detailed_budget(analysis: object) -> DetailedBudgetOutput:
             baseline=baseline,
             reform=reform,
             difference=_number(row.get("change"), reform - baseline),
+            is_tax=_is_tax(row.get("is_tax")),
         )
     return DetailedBudgetOutput(detailed_budget)
+
+
+def _is_tax(value: object) -> bool | None:
+    """Return a row's ``is_tax`` flag as a bool, or None when the row has none."""
+    item = getattr(value, "item", None)
+    if callable(item):
+        value = item()  # a numpy scalar
+    return value if isinstance(value, bool) else None
 
 
 def _require_plausible_households(country: str, households: float) -> None:

@@ -24,7 +24,6 @@ from policyengine_simulation_executor.release_bundle import (
     get_bundled_country_model_version,
     get_bundled_package_version,
 )
-from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.observability import (
     init_process_observability,
     modal_image_environment,
@@ -208,6 +207,8 @@ def build_runtime_simulation_image() -> modal.Image:
             uv_project_dir=_UV_PROJECT_DIR,
             frozen=True,
             extra_options="--only-group modal-simulation-image",
+            # The repository's uv release, from .uv-version.
+            uv_version="0.13.6",
         )
         # Packages are already installed from the frozen lock. The wrapper CLI
         # downloads only the certified datasets and writes their receipt.
@@ -367,8 +368,7 @@ def run_simulation(
     }
     try:
         propagated = normalize_observability_context(observability_context)
-        with scopes.operation(
-            runtime,
+        with runtime.operation(
             ANNUAL_IMPACT_STAGES.name(Stage.ANNUAL_EXECUTION),
             attributes=redacted_params,
             remote_context=propagated,
@@ -440,8 +440,7 @@ def run_simulation_segment(
     }
     try:
         propagated = normalize_observability_context(observability_context)
-        with scopes.operation(
-            runtime,
+        with runtime.operation(
             SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_EXECUTION),
             attributes=redacted_params,
             remote_context=propagated,
@@ -481,8 +480,7 @@ def run_budget_window_batch(
     }
     try:
         propagated = normalize_observability_context(observability_context)
-        with scopes.operation(
-            runtime,
+        with runtime.operation(
             BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_EXECUTION),
             attributes=redacted_params,
             remote_context=propagated,
