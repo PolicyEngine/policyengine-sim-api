@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from changelog_release_support import load_fragments_module
 from workflow_script_support import (
     REPOSITORY_ROOT,
     WORKFLOWS_DIR,
@@ -179,13 +180,35 @@ def test_update_dependencies_workflow_passes_the_recorded_head_to_the_push():
     }
 
 
-def _commit_and_push(fakes: FakeCommands, tmp_path: Path, **env: str):
+# Every pull request adds a changelog fragment (rule
+# sim.process.changelog-fragment); the update's never changes, so the push
+# still compares only the update with the remote branch.
+DEPENDENCY_UPDATE_FRAGMENT = "changelog.d/update-dependencies.changed.md"
+DEPENDENCY_UPDATE_FRAGMENT_TEXT = (
+    "Updated every project's locked dependencies to the newest versions their "
+    "requirements allow.\n"
+)
+# Records which fragments exist when git add stages the update.
+FAKE_GIT_RECORDING_FRAGMENTS = """\
+if [[ "$1" == "add" ]]; then
+  ls changelog.d > "$FAKE_FRAGMENTS_AT_ADD" 2>/dev/null || true
+fi
+"""
+
+
+def _commit_and_push(
+    fakes: FakeCommands, tmp_path: Path, git_body: str = FAKE_GIT, **env: str
+):
+    """Run the script in an empty checkout folder, which it may write a fragment to."""
     output = tmp_path / "github-output"
-    fakes.add("git", FAKE_GIT)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir(exist_ok=True)
+    fakes.add("git", git_body)
     fakes.add("date", "echo 2026-10-13\n")
     result = run_script(
         COMMIT_AND_PUSH,
         env=fakes.env(GITHUB_OUTPUT=str(output), **env),
+        cwd=checkout,
     )
     return result, output
 
@@ -214,6 +237,34 @@ def test_commit_and_push_replaces_the_branch_with_a_lease_on_the_recorded_head(
         "HEAD:refs/heads/update-dependencies",
     ]
     assert fakes.calls("date") == [["date", "-u", "+%Y-%m-%d"]]
+
+
+def test_commit_and_push_adds_a_changelog_fragment_to_the_update(fakes, tmp_path):
+    fragments_at_add = tmp_path / "fragments-at-add"
+    result, _output = _commit_and_push(
+        fakes,
+        tmp_path,
+        git_body=FAKE_GIT_RECORDING_FRAGMENTS + FAKE_GIT,
+        REMOTE_HEAD=REMOTE_HEAD,
+        FAKE_GIT_STATUS=" M uv.lock\n",
+        FAKE_FRAGMENTS_AT_ADD=str(fragments_at_add),
+    )
+
+    assert result.returncode == 0, result.stderr
+    fragment = tmp_path / "checkout" / DEPENDENCY_UPDATE_FRAGMENT
+    assert fragment.read_text(encoding="utf-8") == DEPENDENCY_UPDATE_FRAGMENT_TEXT
+    assert fragments_at_add.read_text(encoding="utf-8") == (
+        "update-dependencies.changed.md\n"
+    )
+    definition = load_fragments_module().FragmentDefinition.load(REPOSITORY_ROOT)
+    assert definition.problem_with(DEPENDENCY_UPDATE_FRAGMENT, fragment) is None
+
+
+def test_commit_and_push_adds_no_fragment_without_an_update(fakes, tmp_path):
+    result, _output = _commit_and_push(fakes, tmp_path, REMOTE_HEAD=REMOTE_HEAD)
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "checkout" / "changelog.d").exists()
 
 
 def test_commit_and_push_creates_the_branch_with_a_plain_push(fakes, tmp_path):

@@ -5,7 +5,10 @@ runs tests: a workflow step, a `.github/scripts/` or `scripts/` script, a
 Makefile target, a Dockerfile, a Compose file or a Modal image definition.
 
 Every project directory (`projects/*`, `libs/*`) is its own uv project with its
-own `uv.lock`. The repository root has no project. Four rules keep every
+own `uv.lock`, and so is `.github/towncrier`, which only locks the Towncrier the
+release runs to build `CHANGELOG.md` (`build-changelog.sh` runs
+`uv run --frozen --project .github/towncrier towncrier build`). The repository
+root has no project. Four rules keep every
 environment on the locked versions. The `locked-installs` quality guard
 (`scripts/rules/locked_installs.py`) checks all four on every pull request. A
 fifth rule, [checked by the `uv-version` guard](#we-pin-one-uv-version), makes
@@ -50,8 +53,9 @@ no packages, so they are not reported.
 
 `sim.dependencies.scheduled-relock`: `.github/workflows/update-dependencies.yml`
 runs every day. Its `make update` step runs `uv lock --upgrade` in every
-`libs/*` and `projects/*` directory with a `pyproject.toml`, and its scripts
-open or update the dependency-update pull request. The guard checks this
+`libs/*` and `projects/*` directory with a `pyproject.toml` and in
+`.github/towncrier`, and its scripts open or update the dependency-update pull
+request, with its changelog fragment. The guard checks this
 configuration statically: a `schedule:` workflow whose job, through the
 scripts and Make targets it runs, relocks with upgrades, covers every project
 directory and runs `gh pr create`. It does not check that the scheduled runs

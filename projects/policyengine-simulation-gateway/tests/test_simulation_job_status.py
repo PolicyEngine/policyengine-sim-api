@@ -79,14 +79,15 @@ class TestSubmitSimulationEndpoint:
         assert response.headers[OBSERVABILITY_ID_HEADER] == OBSERVABILITY_ID
 
     @pytest.mark.usefixtures("mock_modal")
-    def test__given_unknown_job_id__then_polling_returns_404(
+    def test__given_unknown_job_id__then_polling_returns_404_without_exception(
         self, client: TestClient, monkeypatch
     ):
         """Return 404 for a job ID the gateway never issued, without asking Modal.
 
         Given a job id that the gateway never issued
         When polling job status
-        Then the gateway returns 404 before asking Modal for a call result.
+        Then the gateway returns 404 before asking Modal for a call result,
+        and records no exception, because the 404 is a client error.
         """
         recorded_errors = []
         monkeypatch.setattr(
@@ -103,11 +104,7 @@ class TestSubmitSimulationEndpoint:
         assert response.status_code == 404
         assert response.json()["detail"] == "Job not found: unknown-job-id"
         assert OBSERVABILITY_ID_HEADER not in response.headers
-        assert str(recorded_errors[0][0]) == "Job not found: unknown-job-id"
-        assert recorded_errors[0][1] == {
-            "handled": True,
-            "status_code": 404,
-        }
+        assert recorded_errors == []
 
     def test__given_lazy_modal_call_without_metadata__then_polling_returns_404(
         self, mock_modal, client: TestClient

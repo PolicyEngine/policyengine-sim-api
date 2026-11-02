@@ -22,12 +22,13 @@ from policyengine_simulation_gateway.route_resolution import (
     SUPPORTED_ROUTE_KINDS,
     routing_state_bundles,
     routing_state_latest,
+    routing_state_latest_since,
+    routing_state_published_at,
     routing_state_routes,
 )
 from policyengine_simulation_gateway.routes_common import (
     logger,
     observability_runtime,
-    record_not_found,
     router,
 )
 
@@ -53,6 +54,8 @@ async def list_versions(request: Request) -> VersionsResponse:
             us=_version_map_from_state(state, "us"),
             uk=_version_map_from_state(state, "uk"),
             bundles=bundle_identities(state),
+            published_at=routing_state_published_at(state),
+            latest_since=routing_state_latest_since(state),
         )
 
     # ``Dict.from_name`` is a lazy handle; the RPCs fire during the
@@ -88,7 +91,6 @@ async def get_country_versions(kind: str, request: Request) -> VersionMap:
     runtime = observability_runtime(request)
     kind_lower = kind.lower()
     if kind_lower not in SUPPORTED_ROUTE_KINDS:
-        record_not_found(runtime, f"Unknown version kind: {kind}")
         raise HTTPException(status_code=404, detail=f"Unknown version kind: {kind}")
 
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):

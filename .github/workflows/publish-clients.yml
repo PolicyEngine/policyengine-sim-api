@@ -13,7 +13,9 @@ jobs:
   publish:
     name: Publish API clients
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    # Only the release commit's push run deploys; a merge's run only builds
+    # its release (see simulation-deploy.yml).
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_commit.message == 'Update PolicyEngine simulation API' }}
     environment: pypi
     permissions:
       contents: read
