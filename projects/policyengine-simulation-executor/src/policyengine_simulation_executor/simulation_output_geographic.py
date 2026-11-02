@@ -231,8 +231,9 @@ def _should_build_us_congressional_district_impact(region_code: str | None) -> b
     national report: a nationwide report takes its districts from a separate
     run of each state on that state's dataset, which gives each district the
     same figures as its state's own report. Stage 12 aggregation of a state
-    report still computes that state's districts. District and place runs
-    compute none.
+    report still computes that state's districts when the request spells the
+    region ``state/...``: that path passes the region as sent, so a bare code
+    such as ``ut`` computes none there. District and place runs compute none.
     """
     return region_code is not None and region_code.lower().startswith("state/")
 

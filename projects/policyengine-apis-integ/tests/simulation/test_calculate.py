@@ -237,16 +237,15 @@ def assert_congressional_district_results(
 
 
 def assert_no_congressional_district_results(economy_result: object) -> None:
-    """Check a US national result has congressional_district_impact set to null.
+    """Check a US national result has no congressional_district_impact.
 
     Only state runs compute districts: nationwide reports take them from a
-    separate run of each state.
+    separate run of each state. The field is null in the run's output, and the
+    gateway's job-status response leaves null fields out, so a deployed result
+    has no such field.
     """
     economy_result = _as_mapping(economy_result, label="economy result")
-    assert "congressional_district_impact" in economy_result, (
-        f"Missing 'congressional_district_impact' in result: {economy_result.keys()}"
-    )
-    district_impact = economy_result["congressional_district_impact"]
+    district_impact = economy_result.get("congressional_district_impact")
     assert district_impact is None, (
         "Expected no congressional_district_impact in a US national result, "
         f"got {district_impact!r}"
@@ -335,6 +334,10 @@ def test_national_us_assertions_accept_a_result_without_districts() -> None:
         _GeneratedClientObject({"budget": {}, "congressional_district_impact": None})
     )
     assert_no_congressional_district_results({"congressional_district_impact": None})
+    # The gateway's job-status response leaves null fields out, so a deployed
+    # national result has no district field at all.
+    assert_no_congressional_district_results({"budget": {}})
+    assert_no_congressional_district_results(_GeneratedClientObject({"budget": {}}))
 
 
 @pytest.mark.parametrize(
@@ -351,11 +354,6 @@ def test_national_us_assertions_reject_district_results(district_impact) -> None
         assert_no_congressional_district_results(
             {"congressional_district_impact": district_impact}
         )
-
-
-def test_national_us_assertions_reject_a_result_without_the_district_field() -> None:
-    with pytest.raises(AssertionError, match="congressional_district_impact"):
-        assert_no_congressional_district_results({"budget": {}})
 
 
 _BREAKDOWN_CONSTITUENCY = {
