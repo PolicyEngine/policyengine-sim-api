@@ -171,7 +171,10 @@ congressional district view, so comparing them would start two simulations per
 state, and Stage 12 is being replaced, so state results are no longer compared
 with production. The entry logs
 `stage12_comparison_run_skipped` with reason `excluded_us_state_region`, and
-only for state requests the adapter would otherwise have compared. US
+only for state requests the adapter would otherwise have compared. Knowing
+that needs the worker bundle, so the check runs after the v2 manifest is read:
+a state request whose manifest read fails or passes the five-second wait logs
+that failure instead, as any other request would. US
 national, congressional district and place requests, and every UK request
 the adapter supports, are still compared. The operator direct-submission
 route still accepts state regions.
@@ -614,8 +617,9 @@ production submissions can request more than one coordinator invocation, but
 the deterministic evaluation identifier and database uniqueness constraint
 make them one logical Stage 12 run. A later
 coordinator that finds the run already active or complete exits without
-starting child simulations. Unsupported automatic inputs are logged with a
-bounded reason and are not persisted.
+starting child simulations. Unsupported automatic inputs, and US state
+requests (see "Initial flow"), are logged with a bounded reason and are not
+persisted.
 
 The report coordinator starts baseline and reform as independent Modal calls,
 observes both until they succeed, and derives the Stage 12 aggregate. It then restores the
