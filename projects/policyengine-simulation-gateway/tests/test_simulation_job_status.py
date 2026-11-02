@@ -176,8 +176,8 @@ class TestSubmitSimulationEndpoint:
     def test__given_breakdown_records_without_x_and_y__then_json_has_no_x_or_y(
         self, mock_modal, client: TestClient, map_position: dict[str, None]
     ):
-        # Executors built for the current policyengine.py version send no
-        # x or y on UK area records; the JSON must not invent null keys.
+        # Once the executor stops sending x and y on UK area records, the
+        # JSON must not invent null keys.
         constituency = _without_x_and_y(
             LOCAL_AREA_BREAKDOWN_RESULT["constituency_impact"][0]
         )

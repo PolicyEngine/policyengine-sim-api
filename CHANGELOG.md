@@ -10,6 +10,20 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.2.5] - 2026-11-02
+
+### Changed
+
+- Updated policyengine.py from 6.11.1 to 6.12.0 in the simulation runtime.
+
+
+## [0.2.4] - 2026-11-02
+
+### Changed
+
+- The `x` and `y` fields of UK constituency and local-authority records, each area's integer position on the hex map, are now optional in the contract, as the first of three steps that remove them. A record validates with or without them, and one without them leaves both keys out of its JSON instead of writing `null`. The executor still sends both. The gateway's OpenAPI document no longer lists them as required, and the contract now requires pydantic 2.12 or later, the first release with field-level `exclude_if`.
+
+
 ## [0.2.3] - 2026-10-30
 
 ### Changed

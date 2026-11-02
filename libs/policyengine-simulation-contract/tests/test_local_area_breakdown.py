@@ -207,7 +207,7 @@ def _without_map_position(record: dict[str, object]) -> dict[str, object]:
     return {key: value for key, value in record.items() if key not in {"x", "y"}}
 
 
-# Newer executors leave out each area's map position (x and y).
+# Records from an executor that no longer sends each area's map position.
 BREAKDOWN_WITHOUT_MAP_POSITIONS = {
     **BREAKDOWN,
     "constituency_impact": [_without_map_position(CONSTITUENCY)],

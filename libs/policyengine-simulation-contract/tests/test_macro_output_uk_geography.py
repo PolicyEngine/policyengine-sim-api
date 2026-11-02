@@ -76,9 +76,9 @@ def test_an_empty_area_list_is_valid() -> None:
     assert GeographicImpactOutput.model_validate([]).root == []
 
 
-# Executors built for older policyengine.py versions are never rebuilt, and
-# they keep sending each area's integer map position as x and y. Newer
-# executors send neither.
+# x and y, each area's integer map position, are being removed. The executor
+# sends them until a later change stops it, so a record validates with or
+# without them.
 CONSTITUENCY_WITHOUT_MAP_POSITION = {
     **{
         key: value
@@ -122,16 +122,16 @@ def test_records_without_a_map_position_validate_and_dump_without_one(
 
 
 @pytest.mark.parametrize(("record_type", "payload"), AREA_RECORDS_WITHOUT_MAP_POSITION)
-def test_records_from_older_executors_keep_their_map_position(
+def test_records_with_a_map_position_keep_it(
     record_type: type[ConstituencyImpactRecord | LocalAuthorityImpactRecord],
     payload: dict[str, object],
 ) -> None:
-    sent_by_older_executor = {**payload, "x": 56, "y": -40}
+    with_map_position = {**payload, "x": 56, "y": -40}
 
-    record = record_type.model_validate(sent_by_older_executor)
+    record = record_type.model_validate(with_map_position)
 
     assert (record.x, record.y) == (56, -40)
-    assert record.model_dump(mode="json") == sent_by_older_executor
+    assert record.model_dump(mode="json") == with_map_position
 
 
 @pytest.mark.parametrize(("record_type", "payload"), AREA_RECORDS_WITHOUT_MAP_POSITION)

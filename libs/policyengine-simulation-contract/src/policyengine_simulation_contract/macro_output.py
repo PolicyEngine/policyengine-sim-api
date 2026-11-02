@@ -273,9 +273,9 @@ class ConstituencyImpactRecord(UKAreaDisclosureFields):
     household net income, both rounded to the order of their standard error.
     ``population`` is the weighted number of households.
 
-    ``x`` and ``y`` are the area's integer map position. Results from apps
-    deployed for older policyengine.py versions still carry them; current
-    results leave both out rather than sending them as null.
+    ``x`` and ``y`` are the area's integer map position, which is being
+    removed: a record validates with or without them, and one without them
+    leaves both out of its JSON rather than writing null.
     """
 
     constituency_code: str
