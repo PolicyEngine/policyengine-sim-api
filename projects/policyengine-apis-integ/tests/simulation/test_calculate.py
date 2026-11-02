@@ -195,6 +195,7 @@ def assert_congressional_district_results(
     economy_result: object,
     *,
     expected_district_prefix: str | None = None,
+    expected_district_ids: set[str] | None = None,
 ) -> None:
     economy_result = _as_mapping(economy_result, label="economy result")
     assert "congressional_district_impact" in economy_result, (
@@ -233,6 +234,13 @@ def assert_congressional_district_results(
         ), (
             f"Expected all district IDs to start with {expected_district_prefix!r}, "
             f"got {district_ids}"
+        )
+
+    if expected_district_ids is not None:
+        district_ids = _district_ids(district_results)
+        assert set(district_ids) == expected_district_ids, (
+            f"Expected district IDs {sorted(expected_district_ids)}, "
+            f"got {sorted(district_ids)}"
         )
 
 
@@ -327,6 +335,47 @@ def test_result_assertions_accept_generated_client_objects() -> None:
 
     assert_economy_result_sections(result)
     assert_congressional_district_results(result, expected_district_prefix="UT-")
+
+
+def _state_result_with_districts(*district_ids: str) -> dict:
+    return {
+        "congressional_district_impact": {
+            "districts": [
+                {
+                    "district": district_id,
+                    "average_household_income_change": 0.0,
+                    "relative_household_income_change": 0.0,
+                    "winner_percentage": 0.0,
+                    "loser_percentage": 0.0,
+                    "no_change_percentage": 1.0,
+                    "population": 1.0,
+                }
+                for district_id in district_ids
+            ]
+        }
+    }
+
+
+def test_state_assertions_accept_an_at_large_state_with_its_one_district() -> None:
+    assert_congressional_district_results(
+        _state_result_with_districts("VT-01"),
+        expected_district_prefix="VT-",
+        expected_district_ids={"VT-01"},
+    )
+
+
+@pytest.mark.parametrize(
+    "district_ids",
+    [("VT-00",), ("VT-01", "VT-02")],
+    ids=["another-id", "an-extra-district"],
+)
+def test_state_assertions_reject_other_district_ids(district_ids) -> None:
+    with pytest.raises(AssertionError, match="district IDs"):
+        assert_congressional_district_results(
+            _state_result_with_districts(*district_ids),
+            expected_district_prefix="VT-",
+            expected_district_ids={"VT-01"},
+        )
 
 
 def test_national_us_assertions_accept_a_result_without_districts() -> None:
@@ -750,16 +799,18 @@ def test_calculate_specific_model(
 ):
     """A simulation pinned to a specific US model version returns impact data.
 
-    Given a simulation request with a specific model version
+    Given a simulation request with a specific model version, for Vermont
     When the simulation is submitted and polled to completion
-    Then the result contains expected economic impact data.
+    Then the result contains expected economic impact data, and Vermont's one
+    at-large district: nationwide reports take each at-large district from its
+    state's own run, as here.
     """
     # Given
     request = SimulationRequest.from_dict(
         {
             "country": "us",
             "version": us_model_version,
-            "region": "state/ut",
+            "region": "state/vt",
             "scope": "macro",
             "reform": {
                 "gov.irs.credits.ctc.refundable.fully_refundable": {
@@ -794,7 +845,8 @@ def test_calculate_specific_model(
     assert_economy_result_sections(economy_result)
     assert_congressional_district_results(
         economy_result,
-        expected_district_prefix="UT-",
+        expected_district_prefix="VT-",
+        expected_district_ids={"VT-01"},
     )
 
 
