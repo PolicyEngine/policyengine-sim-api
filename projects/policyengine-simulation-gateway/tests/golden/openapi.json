@@ -1146,14 +1146,12 @@
         "required": [
           "constituency_code",
           "constituency_name",
-          "x",
-          "y",
           "average_household_income_change",
           "relative_household_income_change",
           "population"
         ],
         "title": "ConstituencyImpactRecord",
-        "description": "Reform impact on household net income in one UK parliamentary constituency.\n\n``average_household_income_change`` is the average change per household and\n``relative_household_income_change`` the relative change in the area's total\nhousehold net income, both rounded to the order of their standard error.\n``population`` is the weighted number of households. ``x`` and ``y`` are\ninteger map-rendering coordinates."
+        "description": "Reform impact on household net income in one UK parliamentary constituency.\n\n``average_household_income_change`` is the average change per household and\n``relative_household_income_change`` the relative change in the area's total\nhousehold net income, both rounded to the order of their standard error.\n``population`` is the weighted number of households.\n\n``x`` and ``y`` are the area's integer map position, which is being\nremoved: a record validates with or without them, and one without them\nleaves both out of its JSON rather than writing null."
       },
       "DecileOutput": {
         "properties": {
@@ -1921,8 +1919,6 @@
         "required": [
           "local_authority_code",
           "local_authority_name",
-          "x",
-          "y",
           "average_household_income_change",
           "relative_household_income_change",
           "population"
