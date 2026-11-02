@@ -266,8 +266,8 @@ def assert_uk_local_area_breakdown(breakdown_result: object) -> None:
     """Check a local-area breakdown came from the local-area dataset.
 
     Both area levels must publish at least one area, and every published area
-    must carry a disclosure tier and no x or y, which only apps deployed for
-    older policyengine.py versions still send.
+    must carry a disclosure tier and no x or y, which the executor no longer
+    sends.
     """
     breakdown = _as_mapping(breakdown_result, label="local-area breakdown")
     assert breakdown.get("kind") == "local_areas", (
@@ -364,6 +364,10 @@ _BREAKDOWN_RESULT = {
     "constituency_impact": [_BREAKDOWN_CONSTITUENCY],
     "local_authority_impact": [_BREAKDOWN_LOCAL_AUTHORITY],
 }
+
+
+def _without_x_and_y(record: Mapping) -> dict:
+    return {key: value for key, value in record.items() if key not in {"x", "y"}}
 
 
 def test_breakdown_assertions_accept_generated_client_objects() -> None:
