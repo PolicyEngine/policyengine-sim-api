@@ -238,7 +238,8 @@ def assert_congressional_district_results(
 
     if expected_district_ids is not None:
         district_ids = _district_ids(district_results)
-        assert set(district_ids) == expected_district_ids, (
+        # Sorted lists, not sets, so a district listed twice fails too.
+        assert sorted(district_ids) == sorted(expected_district_ids), (
             f"Expected district IDs {sorted(expected_district_ids)}, "
             f"got {sorted(district_ids)}"
         )
@@ -366,8 +367,8 @@ def test_state_assertions_accept_an_at_large_state_with_its_one_district() -> No
 
 @pytest.mark.parametrize(
     "district_ids",
-    [("VT-00",), ("VT-01", "VT-02")],
-    ids=["another-id", "an-extra-district"],
+    [("VT-00",), ("VT-01", "VT-02"), ("VT-01", "VT-01")],
+    ids=["another-id", "an-extra-district", "a-repeated-district"],
 )
 def test_state_assertions_reject_other_district_ids(district_ids) -> None:
     with pytest.raises(AssertionError, match="district IDs"):
