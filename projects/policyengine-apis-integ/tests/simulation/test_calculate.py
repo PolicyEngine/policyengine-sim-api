@@ -263,8 +263,8 @@ def assert_uk_local_area_breakdown(breakdown_result: object) -> None:
     """Check a local-area breakdown came from the local-area dataset.
 
     Both area levels must publish at least one area, and every published area
-    must carry a disclosure tier and no x or y, which only apps deployed for
-    older policyengine.py versions still send.
+    must carry a disclosure tier and no x or y, which the executor no longer
+    sends.
     """
     breakdown = _as_mapping(breakdown_result, label="local-area breakdown")
     assert breakdown.get("kind") == "local_areas", (
@@ -390,21 +390,13 @@ def test_generated_client_reads_area_records_without_x_and_y() -> None:
     assert status.result.to_dict() == breakdown
 
 
-@pytest.mark.parametrize(
-    "map_position",
-    [
-        pytest.param({}, id="current-app"),
-        pytest.param({"x": 56, "y": -40}, id="older-app"),
-    ],
-)
-def test_generated_client_reads_area_records_with_and_without_x_and_y(
-    map_position: dict[str, int],
-) -> None:
-    # Apps deployed for older policyengine.py versions still send x and y.
+def test_generated_client_reads_area_records_with_x_and_y() -> None:
+    # Breakdowns that started before the executor stopped sending x and y
+    # still carry them, until the contract removes the two fields.
     breakdown = {
         **_BREAKDOWN_RESULT,
-        "constituency_impact": [{**_BREAKDOWN_CONSTITUENCY, **map_position}],
-        "local_authority_impact": [{**_BREAKDOWN_LOCAL_AUTHORITY, **map_position}],
+        "constituency_impact": [{**_BREAKDOWN_CONSTITUENCY, "x": 56, "y": -40}],
+        "local_authority_impact": [{**_BREAKDOWN_LOCAL_AUTHORITY, "x": 4, "y": 18}],
     }
 
     status = JobStatusResponse.from_dict({"status": "complete", "result": breakdown})
