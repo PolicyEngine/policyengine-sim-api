@@ -226,7 +226,7 @@ class TestVersionEndpoints:
         assert response.json()["latest"] == "4.10.0"
 
     @pytest.mark.usefixtures("mock_modal")
-    def test__given_unknown_version_kind__then_records_handled_404(
+    def test__given_unknown_version_kind__then_404_without_exception(
         self, client: TestClient, monkeypatch
     ):
         recorded_errors = []
@@ -240,11 +240,7 @@ class TestVersionEndpoints:
 
         assert response.status_code == 404
         assert response.json()["detail"] == "Unknown version kind: fr"
-        assert str(recorded_errors[0][0]) == "Unknown version kind: fr"
-        assert recorded_errors[0][1] == {
-            "handled": True,
-            "status_code": 404,
-        }
+        assert recorded_errors == []
 
     def test__given_no_active_state__then_versions_fall_back_to_old_dicts(
         self, mock_modal, client: TestClient

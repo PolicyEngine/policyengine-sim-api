@@ -35,6 +35,9 @@
           "400": {
             "description": "Invalid request (unknown country/version)"
           },
+          "500": {
+            "description": "Server failure (redacted error with a correlation ID)"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -76,6 +79,9 @@
           },
           "400": {
             "description": "Invalid request (unknown country/version/year)"
+          },
+          "500": {
+            "description": "Server failure (redacted error with a correlation ID)"
           },
           "422": {
             "description": "Validation Error",

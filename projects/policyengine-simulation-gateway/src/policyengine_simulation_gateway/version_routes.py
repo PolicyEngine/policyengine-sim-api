@@ -29,7 +29,6 @@ from policyengine_simulation_gateway.route_resolution import (
 from policyengine_simulation_gateway.routes_common import (
     logger,
     observability_runtime,
-    record_not_found,
     router,
 )
 
@@ -92,7 +91,6 @@ async def get_country_versions(kind: str, request: Request) -> VersionMap:
     runtime = observability_runtime(request)
     kind_lower = kind.lower()
     if kind_lower not in SUPPORTED_ROUTE_KINDS:
-        record_not_found(runtime, f"Unknown version kind: {kind}")
         raise HTTPException(status_code=404, detail=f"Unknown version kind: {kind}")
 
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
