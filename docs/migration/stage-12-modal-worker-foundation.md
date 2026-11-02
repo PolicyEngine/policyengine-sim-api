@@ -88,8 +88,9 @@ with the live API-owned schema.
   psycopg 3 driver internally.
 - `STAGE12_ENABLED` is the only Stage 12 execution setting. Missing or `0`
   disables automatic runs and rejects new direct Stage 12 submissions. `1`
-  enables every supported newly accepted annual society-wide report and the
-  authenticated direct submission route. Any other value prevents service
+  enables every supported newly accepted annual society-wide report, except
+  US state requests (see "Initial flow" below), and the authenticated direct
+  submission route. Any other value prevents service
   startup. Changing the setting requires a Cloud Run deployment. There is no
   percentage, request-bucket, shared runtime-control document, or
   partial-dataset mode.
