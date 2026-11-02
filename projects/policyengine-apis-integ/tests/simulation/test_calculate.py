@@ -263,7 +263,8 @@ def assert_uk_local_area_breakdown(breakdown_result: object) -> None:
     """Check a local-area breakdown came from the local-area dataset.
 
     Both area levels must publish at least one area, and every published area
-    must carry a disclosure tier.
+    must carry a disclosure tier and no x or y, which the executor no longer
+    sends.
     """
     breakdown = _as_mapping(breakdown_result, label="local-area breakdown")
     assert breakdown.get("kind") == "local_areas", (
@@ -282,6 +283,10 @@ def assert_uk_local_area_breakdown(breakdown_result: object) -> None:
             record = _as_mapping(area, label=f"{key} record")
             assert record.get("disclosure_tier") in _PUBLISHED_DISCLOSURE_TIERS, (
                 f"Expected a published disclosure_tier in {key}, got {record}"
+            )
+            map_position = {"x", "y"} & set(record)
+            assert not map_position, (
+                f"Expected {key} records without x or y, got {record}"
             )
 
 
@@ -326,8 +331,6 @@ def test_result_assertions_accept_generated_client_objects() -> None:
 _BREAKDOWN_CONSTITUENCY = {
     "constituency_code": "E14001063",
     "constituency_name": "Aldershot",
-    "x": 56,
-    "y": -40,
     "average_household_income_change": -150.0,
     "relative_household_income_change": -0.0026,
     "population": 40530.0,
@@ -340,8 +343,6 @@ _BREAKDOWN_CONSTITUENCY = {
 _BREAKDOWN_LOCAL_AUTHORITY = {
     "local_authority_code": "E06000063",
     "local_authority_name": "Cumberland",
-    "x": 4,
-    "y": 18,
     "average_household_income_change": -120.0,
     "relative_household_income_change": -0.002,
     "population": 120000.0,
@@ -389,6 +390,21 @@ def test_generated_client_reads_area_records_without_x_and_y() -> None:
     assert status.result.to_dict() == breakdown
 
 
+def test_generated_client_reads_area_records_with_x_and_y() -> None:
+    # Breakdowns that started before the executor stopped sending x and y
+    # still carry them, until the contract removes the two fields.
+    breakdown = {
+        **_BREAKDOWN_RESULT,
+        "constituency_impact": [{**_BREAKDOWN_CONSTITUENCY, "x": 56, "y": -40}],
+        "local_authority_impact": [{**_BREAKDOWN_LOCAL_AUTHORITY, "x": 4, "y": 18}],
+    }
+
+    status = JobStatusResponse.from_dict({"status": "complete", "result": breakdown})
+
+    assert isinstance(status.result, LocalAreaBreakdownOutput)
+    assert status.result.to_dict() == breakdown
+
+
 @pytest.mark.parametrize(
     ("change", "message"),
     [
@@ -402,6 +418,18 @@ def test_generated_client_reads_area_records_without_x_and_y() -> None:
                 ]
             },
             "disclosure_tier",
+        ),
+        (
+            {"constituency_impact": [{**_BREAKDOWN_CONSTITUENCY, "x": 56, "y": -40}]},
+            "x or y",
+        ),
+        (
+            {
+                "local_authority_impact": [
+                    {**_BREAKDOWN_LOCAL_AUTHORITY, "x": 4, "y": 18}
+                ]
+            },
+            "x or y",
         ),
     ],
 )
