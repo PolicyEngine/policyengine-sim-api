@@ -46,7 +46,6 @@ from policyengine_simulation_executor.segmented_national_reduce import (
     NationalReduceInputs,
     build_national_output,
 )
-from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.errors import log_and_redact_exception
 from policyengine_simulation_observability.stages import (
     SEGMENTED_NATIONAL_STAGES,
@@ -330,8 +329,7 @@ class SegmentedNationalRunner:
     def _spawn_child(self, group: list[str], *, attempt: int) -> modal.FunctionCall:
         payload = build_group_child_payload(self.params, group)
         observability_context = self.runtime.capture_context()
-        with scopes.span(
-            self.runtime,
+        with self.runtime.span(
             SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_CHILD_SPAWN),
             attributes={"region_group": "+".join(group), "child_attempt": attempt},
         ):
@@ -581,14 +579,13 @@ class SegmentedNationalRunner:
         self, child_results: list[dict], *, country_module: ModuleType
     ) -> dict[str, Any]:
         from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # Modal worker code: bound per call, like this module's other simulation_runtime imports
-            _parse_year,
+            parse_year,
         )
 
         # The canonical internal-key stripper, plus the opt-out knob.
         simulation_params, _, _ = split_internal_payload(self.params)
         simulation_params.pop("segmented", None)
-        with scopes.span(
-            self.runtime,
+        with self.runtime.span(
             SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_REDUCE),
         ):
             output = build_national_output(
@@ -597,7 +594,7 @@ class SegmentedNationalRunner:
                     country=self.country,
                     simulation_params=simulation_params,
                     country_module=country_module,
-                    year=_parse_year(simulation_params),
+                    year=parse_year(simulation_params),
                     resolved_data_version=None,
                 ),
                 runtime=self.runtime,
@@ -606,7 +603,7 @@ class SegmentedNationalRunner:
             combine_spm_results(
                 child_results,
                 simulation_params.get("spm"),
-                expected_year=_parse_year(simulation_params),
+                expected_year=parse_year(simulation_params),
             )
         )
         for key in ("model_version", "data_version"):

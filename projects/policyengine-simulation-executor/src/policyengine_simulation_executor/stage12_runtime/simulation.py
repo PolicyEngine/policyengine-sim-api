@@ -243,13 +243,13 @@ def _require_loaded_dataset_matches_provenance(
     send that until they are updated.
     """
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
-        _resolve_dataset_reference,
+        resolve_dataset_reference,
     )
 
     named = simulation.bundle.dataset
     if (selection.name, selection.uri) == (named.identity, named.uri):
         return
-    if not selection.is_default and named.identity == _resolve_dataset_reference(
+    if not selection.is_default and named.identity == resolve_dataset_reference(
         simulation.geography.country
     ):
         return
@@ -285,10 +285,10 @@ def calculate_simulation_frames(
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _country_module,
         _load_dataset,
-        _normalise_policy,
         _resolve_dataset_selection,
-        _resolve_region,
+        normalise_policy,
         resolve_data_folder,
+        resolve_region,
         setup_gcp_credentials,
     )
     from policyengine_simulation_executor.stage12_cache import (  # noqa: PLC0415  # resolved per call so tests can patch the baked-folder lookup
@@ -302,7 +302,7 @@ def calculate_simulation_frames(
         with stage_span(Stage.COUNTRY_MODULE_LOAD):
             country_module = _country_module(country)
         with stage_span(Stage.REGION_RESOLUTION):
-            region = _resolve_region(
+            region = resolve_region(
                 country_module=country_module,
                 country=country,
                 params=params,
@@ -333,7 +333,7 @@ def calculate_simulation_frames(
             dataset_name=dataset_selection.name,
         )
         with stage_span(Stage.POLICY_NORMALIZATION):
-            policy = _normalise_policy(simulation.policy)
+            policy = normalise_policy(simulation.policy)
         with stage_span(Stage.SIMULATION_BUILD):
             model = build_stage12_simulation(
                 params,

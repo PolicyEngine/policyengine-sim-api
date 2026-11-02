@@ -593,7 +593,7 @@ def test_runtime_reports_baseline_then_reform_when_each_calculation_starts(
     )
     monkeypatch.setattr(
         sr,
-        "_resolve_region",
+        "resolve_region",
         lambda **_kwargs: RegionResolution(code="us", dataset_reference=None),
     )
     monkeypatch.setattr(

@@ -91,7 +91,7 @@ class TestDeterministicBaselineId:
         path = "gov.hmrc.income_tax.rates.uk[0].rate"
         policy = {path: {"2027-04-06.2028-04-05": 0.21}}
         if kind == "bounded_policy":
-            policy = sr._compile_interval_policy(
+            policy = sr.compile_interval_policy(
                 policy, country_module=sr._country_module("uk"), year=2027
             )
         elif kind == "scalar":

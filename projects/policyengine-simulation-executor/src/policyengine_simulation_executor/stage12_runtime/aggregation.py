@@ -182,7 +182,7 @@ def build_aggregate_report(
     )
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime._country_module
         _country_module,
-        _runtime_policy,
+        wrapper_policy,
     )
     from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
         uk_area_breakdowns_omitted,
@@ -212,7 +212,7 @@ def build_aggregate_report(
             tax_benefit_model_version=country_module.model,
             # Interval keys need compiling: the wrapper's dict compiler
             # rejects them.
-            policy=_runtime_policy(
+            policy=wrapper_policy(
                 policy, country_module=country_module, year=dataset.year
             ),
         )

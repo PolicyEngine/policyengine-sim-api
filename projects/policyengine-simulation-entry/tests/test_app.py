@@ -16,6 +16,7 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationRole,
 )
 from policyengine_simulation_entry import app as app_module
+from policyengine_simulation_entry import entry_runtime
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.backend import (
     BackendResponse,
@@ -278,7 +279,9 @@ def test_comparison_dispatch_timeout_cannot_change_production_response(
         "policyengine_bundle": {"model_version": "1.0.0"},
     }
     backend.responses[("POST", "/simulate/economy/comparison")] = response(202, payload)
-    monkeypatch.setattr(app_module, "STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(
+        entry_runtime, "STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS", 0.001
+    )
     app = create_app(
         settings=automatic_stage12_settings(),
         backend=backend,

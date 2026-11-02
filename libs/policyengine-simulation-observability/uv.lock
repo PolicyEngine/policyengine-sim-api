@@ -720,11 +720,11 @@ wheels = [
 
 [[package]]
 name = "policyengine-observability"
-version = "3.0.2"
+version = "3.0.4"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/74/2a/0c261c8ca693bb3a13d7fe837d3f89f7fdda245496d4b3e92eefed3c972e/policyengine_observability-3.0.2.tar.gz", hash = "sha256:554f907e43d8eeb274c1298fbe990b1626ac45f194c49995ddde091ddcdc2a64", size = 125718, upload-time = "2026-09-30T21:36:02.028Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c3/d0/09b91aca37fb3efd493c164082097e85705fcac2062d2b5ef8a8c4e2be04/policyengine_observability-3.0.4.tar.gz", hash = "sha256:7e43a5d0e9b9e5f683623643efca7c47e651baaad7b557a50ec8b344602dc61f", size = 127972, upload-time = "2026-10-27T17:23:24.343Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a5/9c/b48fb64c1bebf83bd5fdeebe914188806c3513cf2de0fc95ee1d95082fc4/policyengine_observability-3.0.2-py3-none-any.whl", hash = "sha256:d84c7564922f6a3294268e89549065924edde932c31adf8b7c714558e107cb31", size = 42029, upload-time = "2026-09-30T21:36:00.841Z" },
+    { url = "https://files.pythonhosted.org/packages/00/00/d9c4850a12b4d0bef72034316909aac97228de302384af8936a958b7dc8e/policyengine_observability-3.0.4-py3-none-any.whl", hash = "sha256:1b3ebbfd00c138abcc2ec9580b13aa55679b91745783c5567cc73f8b2bbaaaf7", size = 42204, upload-time = "2026-10-27T17:23:22.641Z" },
 ]
 
 [package.optional-dependencies]
@@ -768,7 +768,7 @@ requires-dist = [
     { name = "black", marker = "extra == 'build'", specifier = ">=25.1.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx2", marker = "extra == 'test'" },
-    { name = "policyengine-observability", extras = ["fastapi", "google", "otlp-grpc"], specifier = ">=3.0.2,<4" },
+    { name = "policyengine-observability", extras = ["fastapi", "google", "otlp-grpc"], specifier = ">=3.0.4,<4" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyright", marker = "extra == 'build'", specifier = ">=1.1.401" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },

@@ -505,6 +505,23 @@ class VersionsResponse(BaseModel):
             "wrapper version: read its identity at `bundles[latest]`."
         ),
     )
+    published_at: dict[str, AwareDatetime] = Field(
+        default_factory=dict,
+        description=(
+            "When each exact PolicyEngine wrapper version's route was first "
+            "published, as an ISO 8601 UTC time. Republishing a version keeps "
+            "its date; versions published before the gateway recorded dates "
+            "have no entry."
+        ),
+    )
+    latest_since: AwareDatetime | None = Field(
+        default=None,
+        description=(
+            "When `policyengine.latest` last changed (a publish that advanced "
+            "it, a forced latest or a rollback), as an ISO 8601 UTC time; null "
+            "until a publish records it."
+        ),
+    )
 
 
 class HealthResponse(BaseModel):

@@ -15,8 +15,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIRECTORY = REPOSITORY_ROOT / ".github" / "workflows"
 REGISTRY_MODULE = (
     REPOSITORY_ROOT
-    / "projects/policyengine-simulation-executor/src/modal/utils"
-    / "update_version_registry.py"
+    / "projects/policyengine-simulation-executor/src/modal/routing_publisher"
+    / "writers.py"
 )
 REGISTRY_COMMAND = "src.modal.utils.update_version_registry"
 REGISTRY_INVOCATION = re.compile(

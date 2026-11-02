@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from typing import TYPE_CHECKING
 
 import pytest
+from fixtures.test_modal_scripts import REPO_ROOT
 from fixtures.test_policyengine_package_update_scripts import (
     SCRIPT,
     BundledVersions,
@@ -292,6 +294,63 @@ def test_update_policyengine_package_updates_only_wrapper_requirements(
         encoding="utf-8"
     )
     assert "pr create" in gh_log.read_text(encoding="utf-8")
+
+
+def _fragment_problem(relative_path: str, fragment: Path) -> str | None:
+    """Return why the shared changelog definition rejects ``fragment``, or None."""
+    spec = importlib.util.spec_from_file_location(
+        "changelog_fragments",
+        REPO_ROOT / ".github" / "scripts" / "changelog_fragments.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    definition = module.FragmentDefinition.load(REPO_ROOT)
+    return definition.problem_with(relative_path, fragment)
+
+
+def test_update_policyengine_package_adds_a_changelog_fragment(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    """Every pull request adds one (rule sim.process.changelog-fragment)."""
+    git_log = tmp_path / "git.log"
+    install_fake_git(
+        fake_bin,
+        root=fake_repo,
+        log=git_log,
+        state=FakeGitState(diff_has_changes=True),
+    )
+    install_fake_gh(fake_bin, log=tmp_path / "gh.log")
+    install_fake_uv(fake_bin, log=tmp_path / "uv.log")
+
+    result = run_updater(env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0"))
+
+    assert result.returncode == 0, result.stderr
+    relative_path = "changelog.d/update-policyengine-4.1.0.changed.md"
+    fragment = fake_repo / relative_path
+    assert fragment.read_text(encoding="utf-8") == (
+        "Updated policyengine.py from 4.0.0 to 4.1.0 in the simulation runtime.\n"
+    )
+    project = fake_repo / "simulation"
+    assert (
+        f"git add {project}/pyproject.toml {project}/uv.lock {fragment}\n"
+        in git_log.read_text(encoding="utf-8")
+    )
+    assert _fragment_problem(relative_path, fragment) is None
+
+
+def test_update_policyengine_package_adds_no_fragment_without_changes(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    install_fake_git(fake_bin, root=fake_repo, log=tmp_path / "git.log")
+    install_fake_gh(fake_bin, log=tmp_path / "gh.log")
+    install_fake_uv(fake_bin, log=tmp_path / "uv.log")
+
+    result = run_updater(env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0"))
+
+    assert result.returncode == 0, result.stderr
+    assert "No changes after update" in result.stdout
+    assert not (fake_repo / "changelog.d").exists()
 
 
 def test_update_policyengine_package_creates_and_links_missing_issue(

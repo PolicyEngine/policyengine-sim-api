@@ -1,0 +1,48 @@
+# Towncrier builds CHANGELOG.md from the fragments in changelog.d/, one or more
+# files per pull request, when the versioning job in
+# .github/workflows/simulation-deploy.yml releases a merge to main. See
+# docs/engineering/skills/github-prs.md#changelog-fragments (rule
+# sim.process.changelog-fragment).
+#
+# .github/scripts/changelog_fragments.py reads `directory` and the fragment
+# types below, so the pull request check, the version bump and Towncrier use
+# one list. A type's `directory` is the type's name in a fragment's file name:
+# changelog.d/<name>.<type>.md. Adding or removing a type also needs its
+# version bump in changelog_fragments.py, which refuses to run otherwise.
+
+[tool.towncrier]
+directory = "changelog.d"
+filename = "CHANGELOG.md"
+start_string = "<!-- towncrier release notes start -->\n"
+title_format = "## [{version}] - {project_date}"
+# Fragment names are issue numbers or other labels; entries cite none of them.
+issue_format = ""
+underlines = ["", "", ""]
+# With an ignore list, Towncrier stops at any other file in changelog.d/ instead
+# of skipping it.
+ignore = [".gitkeep"]
+
+[[tool.towncrier.type]]
+directory = "breaking"
+name = "Breaking changes"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "added"
+name = "Added"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "changed"
+name = "Changed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "fixed"
+name = "Fixed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "removed"
+name = "Removed"
+showcontent = true
