@@ -72,9 +72,8 @@ def test_an_empty_area_list_is_valid() -> None:
     assert GeographicImpactOutput.model_validate([]).root == []
 
 
-# The records have no x or y (an area's integer map position). Apps deployed
-# for older policyengine.py versions still send both, and their records are
-# refused, so this contract is deployed only once no such app is routed.
+# The records have no x or y (an area's integer map position), and a record
+# that carries either is refused.
 CONSTITUENCY_WITHOUT_MAP_POSITION = {**RECORD_WITHOUT_DISCLOSURE, **DISCLOSURE_FIELDS}
 LOCAL_AUTHORITY_WITHOUT_MAP_POSITION = {
     "local_authority_code": "E06000063",

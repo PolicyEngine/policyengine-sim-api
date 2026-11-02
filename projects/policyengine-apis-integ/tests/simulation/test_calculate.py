@@ -366,10 +366,6 @@ _BREAKDOWN_RESULT = {
 }
 
 
-def _without_x_and_y(record: Mapping) -> dict:
-    return {key: value for key, value in record.items() if key not in {"x", "y"}}
-
-
 def test_breakdown_assertions_accept_generated_client_objects() -> None:
     status = JobStatusResponse.from_dict(
         {"status": "complete", "result": _BREAKDOWN_RESULT}

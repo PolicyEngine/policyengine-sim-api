@@ -212,9 +212,8 @@ def test_a_national_result_reads_its_area_lists():
     assert response.model_dump(mode="json")["result"] == national
 
 
-# Apps deployed for older policyengine.py versions still send each area's map
-# position as x and y. The contract has no such fields, so their results are
-# refused: this contract is deployed only once no such app is routed.
+# The contract has no x or y (each area's map position), so a result whose
+# records carry either is refused.
 @pytest.mark.parametrize(
     "result",
     [

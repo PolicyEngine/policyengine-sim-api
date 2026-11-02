@@ -210,12 +210,12 @@ class TestSubmitSimulationEndpoint:
         assert response.status_code == 200
         assert response.json()["result"]["constituency_impact"] == [constituency]
 
-    def test__given_records_with_x_and_y_from_an_older_app__then_the_job_fails(
+    def test__given_records_with_x_and_y__then_the_job_fails(
         self, mock_modal, client: TestClient
     ):
-        # Apps deployed for older policyengine.py versions still send x and y,
-        # which the contract no longer has: their results fail validation.
-        # This is why the contract change waits until no such app is routed.
+        # The contract no longer has x and y, so a result whose records carry
+        # them fails validation. This is why the contract change waits until no
+        # breakdown started before the executor stopped sending them is running.
         constituency = LOCAL_AREA_BREAKDOWN_RESULT["constituency_impact"][0]
         submit_response = client.post(
             "/simulate/economy/comparison",
