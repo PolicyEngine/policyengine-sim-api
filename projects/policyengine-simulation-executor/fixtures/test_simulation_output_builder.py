@@ -37,6 +37,7 @@ def fake_analysis() -> SimpleNamespace:
             [
                 {
                     "program_name": "income_tax",
+                    "is_tax": True,
                     "baseline_total": 100.0,
                     "reform_total": 125.0,
                     "change": 25.0,

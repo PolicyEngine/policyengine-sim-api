@@ -35,7 +35,7 @@ from policyengine_simulation_contract.spm import (
     resolve_spm_selection,
     spm_error_detail,
 )
-from policyengine_simulation_observability import scopes
+from policyengine_simulation_observability.errors import log_and_redact_exception
 from policyengine_simulation_observability.identifiers import (
     OBSERVABILITY_ID_HEADER,
     resolve_observability_id,
@@ -219,7 +219,7 @@ async def submit_simulation(
         breakdown=request.breakdown,
     )
     try:
-        with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
+        with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
             route = resolve_route(
                 request.country,
                 request.version,
@@ -227,7 +227,6 @@ async def submit_simulation(
             )
         _require_route_serves_breakdown(request, route)
     except ValueError as e:
-        runtime.record_exception(e, handled=True, status_code=400)
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     runtime.set_context(
@@ -236,7 +235,7 @@ async def submit_simulation(
         policyengine_version=route.policyengine_version,
     )
 
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.REQUEST_PARSE)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.REQUEST_PARSE)):
         payload = request.model_dump(
             exclude={"version", "policyengine_version", "telemetry"},
             mode="json",
@@ -246,7 +245,7 @@ async def submit_simulation(
         payload["_telemetry"] = request.telemetry.model_dump(mode="json")
 
     try:
-        with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.POLICYENGINE_BUNDLE)):
+        with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.POLICYENGINE_BUNDLE)):
             bundle = build_policyengine_bundle(
                 request.country,
                 route,
@@ -260,8 +259,20 @@ async def submit_simulation(
                 errors=[detail.model_dump()],
                 headers=observability_headers(observability_id),
             )
-        runtime.record_exception(exc, handled=True, status_code=400)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # No request input reaches this point: the country and version are
+        # already checked, and every request-driven SPM error has a code. The
+        # error comes from the deployed bundle manifest, so it is a server
+        # failure, and the caller gets a redacted message.
+        redacted_error = log_and_redact_exception(
+            exc,
+            runtime=runtime,
+            scope="simulation_submission",
+            context={"resolved_app_name": route.app_name},
+        )
+        return failed_job_response(
+            error=redacted_error,
+            headers=observability_headers(observability_id),
+        )
 
     if request.spm is not None:
         payload["spm"] = request.spm.model_dump(mode="json")
@@ -279,7 +290,7 @@ async def submit_simulation(
     # handle — the control-plane RPC (hydration) happens inside ``spawn`` —
     # so both live under the spawn segment to time the real network cost.
     submitted_at = datetime.now(UTC)
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
         sim_func = modal.Function.from_name(route.app_name, "run_simulation")
         call = sim_func.spawn(
             payload,
@@ -295,12 +306,10 @@ async def submit_simulation(
         submitted_at=submitted_at,
         job_progress=_route_job_progress_capability(route),
     )
-    with scopes.span(
-        runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_METADATA_WRITE)
-    ):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_METADATA_WRITE)):
         job_metadata_store()[call.object_id] = job_metadata
 
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
         return JobSubmitResponse(
             job_id=call.object_id,
             status="submitted",
@@ -332,14 +341,13 @@ async def submit_budget_window_batch(
         observability_id=observability_id,
     )
     try:
-        with scopes.span(runtime, BUDGET_WINDOW_STAGES.name(Stage.ROUTE_RESOLUTION)):
+        with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.ROUTE_RESOLUTION)):
             route = resolve_route(
                 request.country,
                 request.version,
                 request.policyengine_version,
             )
     except ValueError as e:
-        runtime.record_exception(e, handled=True, status_code=400)
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     runtime.set_context(
@@ -349,7 +357,7 @@ async def submit_budget_window_batch(
     )
 
     try:
-        with scopes.span(runtime, BUDGET_WINDOW_STAGES.name(Stage.POLICYENGINE_BUNDLE)):
+        with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.POLICYENGINE_BUNDLE)):
             bundle = build_policyengine_bundle(
                 request.country,
                 route,
@@ -363,9 +371,21 @@ async def submit_budget_window_batch(
                 errors=[detail.model_dump()],
                 headers=observability_headers(observability_id),
             )
-        runtime.record_exception(exc, handled=True, status_code=400)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    with scopes.span(runtime, BUDGET_WINDOW_STAGES.name(Stage.REQUEST_PARSE)):
+        # No request input reaches this point: the country and version are
+        # already checked, and every request-driven SPM error has a code. The
+        # error comes from the deployed bundle manifest, so it is a server
+        # failure, and the caller gets a redacted message.
+        redacted_error = log_and_redact_exception(
+            exc,
+            runtime=runtime,
+            scope="budget_window_submission",
+            context={"resolved_app_name": route.app_name},
+        )
+        return failed_job_response(
+            error=redacted_error,
+            headers=observability_headers(observability_id),
+        )
+    with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.REQUEST_PARSE)):
         payload = _build_budget_window_parent_payload(
             request,
             resolved_version=route.response_version,
@@ -375,7 +395,7 @@ async def submit_budget_window_batch(
 
     # Lazy handle + spawn together: the RPC cost lands in ``spawn``.
     observability_context = runtime.capture_context()
-    with scopes.span(runtime, BUDGET_WINDOW_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
+    with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
         batch_func = modal.Function.from_name(route.app_name, "run_budget_window_batch")
         call = batch_func.spawn(
             payload,
@@ -391,12 +411,10 @@ async def submit_budget_window_batch(
         bundle=bundle,
         observability_id=observability_id,
     )
-    with scopes.span(
-        runtime, BUDGET_WINDOW_STAGES.name(Stage.MODAL_JOB_METADATA_WRITE)
-    ):
+    with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.MODAL_JOB_METADATA_WRITE)):
         put_batch_job_seed(seed_state)
 
-    with scopes.span(runtime, BUDGET_WINDOW_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
+    with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
         return BudgetWindowBatchSubmitResponse(
             batch_job_id=batch_job_id,
             # A new batch's seed state is always submitted.

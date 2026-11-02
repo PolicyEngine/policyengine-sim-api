@@ -50,6 +50,29 @@ def observability_runtime():
     return NoOpObservabilityRuntime()
 
 
+@pytest.fixture
+def real_observability_runtime(monkeypatch):
+    """Build the observability runtime the services build, exporting nothing.
+
+    Its span and operation scopes are the ones deployed code opens, so a test
+    can check what a block inside them returns or raises. OpenTelemetry is
+    disabled and Google Cloud logging is not configured.
+    """
+    from policyengine_simulation_observability.observability import build_runtime
+
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    monkeypatch.delenv("OBSERVABILITY_LOGGING_PROJECT_ID", raising=False)
+    monkeypatch.delenv("OBSERVABILITY_LOG_NAME", raising=False)
+    runtime = build_runtime(
+        service_name="policyengine-simulation-executor-test",
+        service_role="test",
+        platform="local",
+        environment="test",
+    )
+    yield runtime
+    runtime.shutdown()
+
+
 @pytest.fixture(autouse=True)
 def _forget_spm_runtime_caches():
     """Keep the SPM runtime memoization out of every other test's way.

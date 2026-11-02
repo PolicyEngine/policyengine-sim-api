@@ -378,6 +378,31 @@ job = "test"
 invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
+id = "sim.deploy.staging-promotes-tested-revision"
+category = "deployment"
+statement = "Every staging deployment passes promote_entrypoint: ${{ github.ref == 'refs/heads/main' }}, so a run from main moves the staging service's stable Cloud Run traffic to the entrypoint revision that passed the staging tests, and an accidental manual run from another branch neither moves that traffic nor deletes older revisions."
+rationale = "projects/policyengine-simulation-entry/DEPLOYMENT.md#promotion-and-rollback"
+scope = [".github/workflows/*.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets_promotion.py::test_staging_deployments_promote_their_tested_entrypoint_revision",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.deploy.staging-promotes-tested-revision/bad_simulation_deploy.yml"
+good_fixture = "rules/fixtures/sim.deploy.staging-promotes-tested-revision/good_simulation_deploy.yml"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_deployment_assets_promotion.py::test_rule_proof_staging_promotes_tested_revision"
+
+[[rule]]
 id = "sim.deploy.smoke-tests-strict"
 category = "deployment"
 statement = "Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge."
@@ -529,6 +554,39 @@ nodes = [
 workflow = ".github/workflows/pr.yml"
 job = "test"
 invocation = "uv run --frozen pytest tests/"
+
+[[rule]]
+id = "sim.deploy.release-commit-deploys-once"
+category = "deployment"
+statement = "A merge to main deploys only through the release commit the versioning job in simulation-deploy.yml pushes with the GitHub App token: every other push to main runs only that job, the release commit runs only the deploy jobs and never another release, a manual dispatch deploys without a release, and client publication follows only the release commit's run, so each merge deploys once and nothing loops."
+rationale = "docs/engineering/skills/github-prs.md#changelog-fragments"
+scope = [".github/workflows/simulation-deploy.yml", ".github/workflows/publish-clients.yml", ".github/scripts/build-changelog.sh", ".github/scripts/commit-release.sh"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_release_workflow.py::test_the_deploy_workflow_releases_each_merge_before_deploying_it",
+  "tests/test_release_workflow.py::test_each_merge_deploys_once_and_its_release_commit_starts_nothing",
+  "tests/test_release_workflow.py::test_the_versioning_job_pushes_its_release_with_the_app_token",
+  "tests/test_release_workflow.py::test_clients_publish_after_the_release_commit_deploys",
+  "tests/test_release_workflow.py::test_clients_publish_after_no_other_run",
+  "tests/test_release_workflow.py::test_commit_release_pushes_one_release_commit_to_main",
+  "tests/test_release_workflow.py::test_commit_release_leaves_the_release_to_a_newer_merge",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
+[rule.proof]
+# The bad fixture is simulation-deploy.yml as it was on main before releases,
+# when every push to main deployed.
+bad_fixture = "rules/fixtures/sim.deploy.release-commit-deploys-once/bad_simulation-deploy.yml"
+good_fixture = "rules/fixtures/sim.deploy.release-commit-deploys-once/good_simulation-deploy.yml"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_release_workflow.py::test_rule_proof_release_commit_deploys_once"
 
 [[rule]]
 id = "sim.deploy.container-context-minimal"
@@ -1331,6 +1389,33 @@ workflow = ".github/workflows/pr.yml"
 job = "quality-guards"
 invocation = "unittest discover -s scripts/rules/tests"
 
+[[rule]]
+id = "sim.dependencies.uv-version-pinned"
+category = "dependencies"
+statement = "Every uv install pins the one uv release written in .uv-version: each astral-sh/setup-uv step sets with: version:, each uv container image reference (such as a Dockerfile's COPY --from=ghcr.io/astral-sh/uv) is tagged with the release, each Modal uv_sync or uv_pip_install call passes uv_version=, and any uv install script, release download, pip, pipx or uv tool install of uv, or uv self update names the release."
+rationale = "docs/engineering/skills/dependencies.md#we-pin-one-uv-version"
+scope = [".uv-version", ".github/workflows/*.yml", ".github/scripts/*.sh", "scripts/*.sh", "Makefile", "projects/*/Dockerfile", "projects/*/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "uv-version"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+[rule.proof]
+# The bad fixture holds the unpinned setup-uv step from pr.yml and the
+# ghcr.io/astral-sh/uv:latest copy from the two Dockerfiles, as they were
+# before uv was pinned.
+bad_fixture = "rules/fixtures/sim.dependencies.uv-version-pinned/bad"
+good_fixture = "rules/fixtures/sim.dependencies.uv-version-pinned/good"
+test = "scripts/rules/tests/test_uv_version.py::TestUvVersionProof::test_rule_proof_uv_version_pinned"
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "unittest discover -s scripts/rules/tests"
+
 # --- CI workflows and scripts ----------------------------------------------
 
 [[rule]]
@@ -1523,6 +1608,33 @@ bad_fixture = "rules/fixtures/sim.process.pr-tracking-issue/bad_event.json"
 good_fixture = "rules/fixtures/sim.process.pr-tracking-issue/good_event.json"
 project = "projects/policyengine-simulation-entry"
 test = "tests/test_pr_description_check.py::test_rule_proof_pr_tracking_issue"
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
+
+[[rule]]
+id = "sim.process.changelog-fragment"
+category = "process"
+statement = "Every pull request adds at least one changelog fragment: a non-empty file directly in changelog.d/, named <name>.<type>.md with a type towncrier.toml lists. Every file in changelog.d/ other than .gitkeep is such a fragment, and the release's version bump reads fragments by the same definition, so the check accepts exactly what the release builds."
+rationale = "docs/engineering/skills/github-prs.md#changelog-fragments"
+scope = [".github/workflows/pr.yml", ".github/scripts/check-changelog-fragment.sh", ".github/scripts/changelog_fragments.py", "towncrier.toml", "changelog.d/.gitkeep"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "workflow-job"
+step = "Require a changelog fragment"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "check-changelog"
+invocation = "check-changelog-fragment.sh"
+[rule.proof]
+# The bad fixture is policyengine-api #4084's fragment, changelog.d/added/4083.md:
+# that repository's check accepted it, and its release found no fragment.
+bad_fixture = "rules/fixtures/sim.process.changelog-fragment/bad"
+good_fixture = "rules/fixtures/sim.process.changelog-fragment/good"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_changelog_fragment_check.py::test_rule_proof_changelog_fragment"
 workflow = ".github/workflows/pr.yml"
 job = "test"
 invocation = "uv run --frozen pytest tests/"

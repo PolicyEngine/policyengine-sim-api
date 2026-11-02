@@ -179,5 +179,9 @@ def merge_legacy_seed_into_current(
             merged["latest"][kind] = current_latest
 
     merged["bundles"].update(current["bundles"])
+    if "published_at" in current:
+        merged.setdefault("published_at", {}).update(current["published_at"])
+    if "latest_since" in current:
+        merged["latest_since"] = current["latest_since"]
     validate_routing_state(merged)
     return merged

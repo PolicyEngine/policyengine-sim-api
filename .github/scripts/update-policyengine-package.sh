@@ -327,7 +327,13 @@ if git diff --quiet -- "$PYPROJECT" "$LOCKFILE"; then
   exit 0
 fi
 
-git add "$PYPROJECT" "$LOCKFILE"
+# Every pull request adds a changelog fragment (rule
+# sim.process.changelog-fragment).
+FRAGMENT="${ROOT_DIR}/changelog.d/update-policyengine-${LATEST}.changed.md"
+mkdir -p "${ROOT_DIR}/changelog.d"
+echo "Updated policyengine.py from ${CURRENT} to ${LATEST} in the simulation runtime." > "$FRAGMENT"
+
+git add "$PYPROJECT" "$LOCKFILE" "$FRAGMENT"
 git commit -m "chore(deps): update policyengine to ${LATEST}"
 git push -u origin "$BRANCH"
 

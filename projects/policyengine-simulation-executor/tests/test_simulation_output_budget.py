@@ -10,6 +10,7 @@ import pytest
 from fixtures.weighted_frames import weighted_entity_frame
 from policyengine_simulation_executor.simulation_output_budget import (
     build_budgetary_impact,
+    build_detailed_budget,
 )
 
 COMMON_LOGGER = "policyengine_simulation_executor.simulation_output_common"
@@ -111,3 +112,63 @@ def test_change_totals_accept_weights_after_a_float32_round_trip(
         50.0 - 40.0
     )
     assert budget.tax_revenue_impact == pytest.approx(expected_change)
+
+
+def _program_statistics(rows: list[dict]) -> SimpleNamespace:
+    """Build an analysis whose program statistics are the given rows."""
+    return SimpleNamespace(program_statistics=rows)
+
+
+def test_detailed_budget_carries_each_programs_tax_flag():
+    # Report 4738: Universal Credit and Scottish Child Payment are benefits, so
+    # consumers sign them as spending without a list of their own.
+    analysis = _program_statistics(
+        [
+            {
+                "program_name": "universal_credit",
+                "is_tax": False,
+                "baseline_total": 82_244.8e6,
+                "reform_total": 81_311.3e6,
+                "change": -933.5e6,
+            },
+            {
+                "program_name": "scottish_child_payment",
+                "is_tax": False,
+                "baseline_total": 600e6,
+                "reform_total": 575e6,
+                "change": -25e6,
+            },
+            {
+                "program_name": "income_tax",
+                "is_tax": True,
+                "baseline_total": 300e9,
+                "reform_total": 300e9,
+                "change": 0.0,
+            },
+        ]
+    )
+
+    budget = build_detailed_budget(analysis).root
+
+    assert budget["universal_credit"].is_tax is False
+    assert budget["scottish_child_payment"].is_tax is False
+    assert budget["scottish_child_payment"].difference == -25e6
+    assert budget["income_tax"].is_tax is True
+
+
+def test_detailed_budget_leaves_the_tax_flag_unset_when_rows_have_none():
+    analysis = _program_statistics(
+        [
+            {
+                "program_name": "universal_credit",
+                "baseline_total": 2.0,
+                "reform_total": 1.0,
+                "change": -1.0,
+            }
+        ]
+    )
+
+    budget = build_detailed_budget(analysis).root
+
+    assert budget["universal_credit"].is_tax is None
+    assert budget["universal_credit"].model_dump()["is_tax"] is None

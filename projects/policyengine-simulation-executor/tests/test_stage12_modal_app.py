@@ -398,6 +398,57 @@ def test_stage12_functions_close_runtime_after_application_error(
     assert runtime.shutdown_calls == 1
 
 
+@pytest.mark.parametrize(
+    "function_name",
+    [
+        "run_single_simulation_us",
+        "run_single_simulation_uk",
+        "run_single_simulation_segment_us",
+        "coordinate_report",
+    ],
+)
+def test_stage12_functions_return_the_result_from_the_real_operation_scope(
+    monkeypatch,
+    real_observability_runtime,
+    function_name,
+) -> None:
+    module = _load(monkeypatch)
+    monkeypatch.setattr(
+        module, "init_process_observability", lambda **_: real_observability_runtime
+    )
+
+    result = _invoke(monkeypatch, module, function_name, lambda *_, **__: {"ok": True})
+
+    assert result == {"ok": True}
+
+
+@pytest.mark.parametrize(
+    "function_name",
+    [
+        "run_single_simulation_us",
+        "run_single_simulation_uk",
+        "run_single_simulation_segment_us",
+        "coordinate_report",
+    ],
+)
+def test_stage12_functions_raise_the_application_error_from_the_real_operation_scope(
+    monkeypatch,
+    real_observability_runtime,
+    function_name,
+) -> None:
+    module = _load(monkeypatch)
+    monkeypatch.setattr(
+        module, "init_process_observability", lambda **_: real_observability_runtime
+    )
+
+    def fail(*_, **__):
+        msg = "application failure"
+        raise LookupError(msg)
+
+    with pytest.raises(LookupError, match="application failure"):
+        _invoke(monkeypatch, module, function_name, fail)
+
+
 def test_external_package_values_are_assertions_only(monkeypatch) -> None:
     install_fake_modal(monkeypatch)
     monkeypatch.setenv("STAGE12_EXPECT_US_VERSION", "not-the-bundled-version")

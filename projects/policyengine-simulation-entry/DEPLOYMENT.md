@@ -33,23 +33,60 @@ qualification uses Cloud Run's generated tagged revision URL and does not
 require a custom domain.
 
 The `prod` environment follows the same sequence automatically, but cannot
-begin until every `beta` deployment, routing, integration, and authentication
-job has succeeded. Production tests also use the tagged candidate URL, so the
-currently serving revision remains unchanged during qualification.
+begin until every `beta` deployment, routing, integration, authentication,
+promotion, and revision clean-up job has succeeded, so a failed staging
+clean-up also stops the production deployment. A run from a branch other than
+`main` skips `beta`'s promotion and clean-up, and the `prod` environment then
+refuses the run, since it accepts only `main`. Both environments' tests use
+the tagged candidate URL, so the currently serving revision remains unchanged
+during qualification.
 
 ## Promotion and rollback
 
-After the complete production suite passes, the workflow verifies that the
-exact tested revision belongs to the production service and is ready. It also
+Both `beta` and `prod` promote, `beta` only for a run from `main`. After an
+environment's complete suite passes, the workflow verifies that the exact
+tested revision belongs to that environment's service and is ready. It also
 checks that stable traffic still points to the revision recorded before
-deployment. If those guards pass, it assigns all stable service traffic to the
-tested production revision.
+deployment. If those checks pass, it assigns all stable service traffic to the
+tested revision.
+
+In `beta`, promotion keeps the staging service's stable URL on the revision
+that passed the staging tests, so staging callers of that URL, such as the
+Public API's staging service, reach the build the deployment tested. The
+staging deployment of the **Deploy Stage 12 comparison path** workflow promotes
+in the same way. Rule `sim.deploy.staging-promotes-tested-revision` requires
+both.
 
 The workflow then checks the stable generated Cloud Run URL. It uses the
 runtime revision header to prove that the stable URL reaches the exact revision
 that passed candidate tests, and it repeats the deployed authentication checks.
 If an immediate post-promotion check fails, the workflow restores the exact
 previous revision recorded before deployment and fails visibly.
+
+After a successful promotion and deployment, the workflow deletes the
+service's older revisions. It keeps only the promoted revision and the one it
+replaced, which `simulation-rollback.yml` can route back to.
+
+Both workflows can also be started manually, and the `beta` environment does
+not restrict which branch a run may come from. Both therefore pass
+`promote_entrypoint: ${{ github.ref == 'refs/heads/main' }}`. A manual run from
+a branch other than `main` deploys and tests its candidate revision, but leaves
+the staging service's Cloud Run traffic where it was and deletes no revisions,
+so the last revision deployed from `main` stays available for rollback.
+
+Promotion covers only the Cloud Run entrypoint. A branch run still deploys the
+branch's Modal services to the staging Modal environment and publishes their
+routing there, so callers of the staging stable URL can reach them: the main
+deployment workflow deploys the gateway, the executor and the Stage 12 workers,
+and the Stage 12 workflow deploys the Stage 12 workers. A later deployment from
+`main` replaces the apps it deploys, but routes and versions that it doesn't
+deploy can stay.
+
+The check reads the branch's own copy of the workflow: it stops an accidental
+branch run from promoting, not a branch that edits it. Only a branch
+restriction on the `beta` environment would enforce it, and that would also
+refuse every branch run's candidate deployment and tests, since each of the
+reusable workflow's deployment jobs runs in that environment.
 
 Deployment concurrency prevents two releases from changing the entrypoint
 service simultaneously. Promotion never targets `LATEST`.
@@ -82,10 +119,10 @@ The deployment workflow passes each environment's
 unset or empty variable deploys `0`, which records callers that lack a route's
 permission but lets them through. `1` rejects those callers with 403. Any other
 value fails the deployment before Cloud Run changes. A new value takes effect
-at the next entrypoint deployment. In `prod` that deployment is promoted to
-stable traffic. `beta` never promotes its candidate revision, so a `beta` value
-applies only to the tagged candidate that the deployment tests call. The route
-permissions are listed in `README.md`.
+at the next entrypoint deployment, which `prod`, and `beta` for a run from
+`main`, promote to stable traffic once their tests pass. A `beta` value
+therefore applies to every caller of the staging stable URL as well as to the
+deployment tests. The route permissions are listed in `README.md`.
 
 ### Auth0 prerequisites
 
@@ -117,11 +154,12 @@ variable to `1`:
 1. Deploy with the variable unset or `0`, and complete the Auth0 setup.
 2. Watch the `prod` service for `simulation_entry_permission_missing` events
    with `enforced=false`. Each one names the missing permission and the
-   caller's `client_id`. Only `prod` serves real callers such as API v1: a
-   `beta` candidate receives only the deployment tests' own requests, so `beta`
-   events cannot show a missing API v1 grant. Access tokens issued before a
-   grant do not carry it, so wait at least one access-token lifetime after the
-   last grant with no new events.
+   caller's `client_id`. Only `prod` is certain to receive requests from every
+   real caller: the staging stable URL receives requests only from the staging
+   callers configured to use it, and tagged candidates only from the
+   deployment tests, so `beta` events cannot show every missing grant. Access
+   tokens issued before a grant do not carry it, so wait at least one
+   access-token lifetime after the last grant with no new events.
 3. Set the `beta` variable to `1` and deploy. With enforcement on, the
    authenticated deployment tests also check that the test client's token is
    rejected on `GET /internal/stage12/reports/{evaluation_id}`, which requires

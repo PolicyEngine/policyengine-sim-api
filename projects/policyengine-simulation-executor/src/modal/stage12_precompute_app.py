@@ -57,6 +57,8 @@ precompute_image = (
         uv_project_dir=_UV_PROJECT_DIR,
         frozen=True,
         extra_options="--only-group modal-simulation-image",
+        # The repository's uv release, from .uv-version.
+        uv_version="0.13.6",
     )
     # The locked environment already holds .py and the country packages, so
     # the bundle installs only the US data, as the v2 worker images do.

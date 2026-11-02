@@ -15,6 +15,7 @@ from scripts.rules import (  # noqa: E402
     file_length,
     locked_installs,
     pyright,
+    uv_version,
 )
 from scripts.rules import guard as rules_guard  # noqa: E402
 
@@ -25,6 +26,7 @@ GUARDS: tuple[Guard, ...] = (
     ("ci-scripts", ci_scripts.check),
     ("pyright-coverage", pyright.check_coverage),
     ("locked-installs", locked_installs.check),
+    ("uv-version", uv_version.check),
     ("file-length", file_length.check),
 )
 

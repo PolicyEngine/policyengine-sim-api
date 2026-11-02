@@ -5,7 +5,6 @@ from __future__ import annotations
 from contextlib import AbstractContextManager, nullcontext
 from typing import TYPE_CHECKING, Any
 
-from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
     Stage,
@@ -26,7 +25,7 @@ def output_span(
     """Open a span named ``name``, or nothing when no runtime is given."""
     if runtime is None:
         return nullcontext()
-    return scopes.span(runtime, name)
+    return runtime.span(name)
 
 
 def output_model_version(
