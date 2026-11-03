@@ -24,9 +24,15 @@ from policyengine_simulation_executor.stage12_timeouts import (
     SIMULATION_WAIT_TIMEOUT_SECONDS,
 )
 
-from .coordinated_simulations import SIMULATION_CANCELLED_ERROR_CODE, logger
+from .coordinated_simulations import (
+    SIMULATION_CANCELLED_ERROR_CODE,
+    cancel_pending_simulations,
+    cancellation,
+    logger,
+)
 from .dependencies import ModalChildInvoker, artifact_store, runtime_store
 from .failure_causes import StageProgress
+from .failures import Stage12ExecutionError, Stage12FailureDetail
 from .parent_claim import (
     validate_dispatch_context,
     validate_submitted_parent,
@@ -128,11 +134,39 @@ def coordinate_report(
         coordination.fail(parent, error)
         msg = "Stage 12 report coordination failed"
         raise RuntimeError(msg) from None
-    except BaseException:
-        # Modal pre-empts a call with KeyboardInterrupt and cancels one with
-        # InputCancellation, neither an Exception, and runs a pre-empted call
-        # again under the same call ID. A report run's coordinator stops its
-        # unfinished children and records nothing, so that run starts again.
+    except KeyboardInterrupt:
+        # Modal pre-empts a call with SIGINT and runs it again under the same
+        # call ID. A report run's coordinator stops its unfinished children
+        # and records nothing, so the restarted call starts them again.
         if report_run is not None:
             coordination.stop_children()
         raise
+    except BaseException:
+        # Modal cancels a call with InputCancellation, which is not an
+        # Exception, and never runs it again: a report run's coordinator
+        # records its report, report run and unfinished children as failed.
+        if report_run is not None:
+            _record_cancellation(coordination, parent)
+        raise
+
+
+def _record_cancellation(
+    coordination: ReportCoordination, parent: ComparisonReportRecord
+) -> None:
+    """Stop and fail the unfinished children, then fail the report and its run."""
+    cancel_pending_simulations(
+        calls=coordination.calls,
+        simulations=coordination.simulations,
+        roles=set(coordination.calls) - set(coordination.descriptors),
+        store=coordination.persistence,
+        detail=cancellation("the coordinator's call was cancelled"),
+    )
+    coordination.fail(
+        parent,
+        Stage12ExecutionError(
+            Stage12FailureDetail(
+                error_code="report_cancelled",
+                error_summary="Modal cancelled the report's coordinator call.",
+            )
+        ),
+    )

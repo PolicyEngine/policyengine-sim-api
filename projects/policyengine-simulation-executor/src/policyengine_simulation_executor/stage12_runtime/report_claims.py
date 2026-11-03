@@ -8,6 +8,7 @@ the call returns instead.
 
 from __future__ import annotations
 
+from functools import partial
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +18,7 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from policyengine_stage12_persistence import RunStatus
 
+from .failure_recording import persist_failure_record
 from .failures import Stage12FailureDetail
 from .parent_claim import claim_parent
 
@@ -39,24 +41,55 @@ def claim_report(
     A report run another call holds, or one already finished, returns its
     status. A call Modal restarted after its Stage 12 report succeeded, but
     before its report run did, completes the report run from the stored
-    aggregate and returns that it succeeded.
+    aggregate and returns that it succeeded. Once this call holds the report
+    run, any error before the report starts fails the run, then propagates.
     """
     report_run = coordination.report_run
+    if report_run is None:
+        parent, should_execute = claim_parent(
+            submitted=submitted,
+            coordinator_invocation_id=coordination.invocation.invocation_id,
+            store=coordination.persistence,
+        )
+        return (parent, None) if should_execute else (None, _stage12_summary(parent))
+    claimed = report_run.claim()
+    if not claimed.changed:
+        return None, _report_run_summary(report_run, claimed.status)
+    try:
+        return _claim_held_report(coordination, report_run, submitted=submitted)
+    except Exception as error:
+        persist_failure_record(
+            partial(
+                report_run.fail,
+                Stage12FailureDetail(
+                    error_code="report_claim_failed",
+                    error_summary=(
+                        f"Claiming the Stage 12 report failed ({type(error).__name__})."
+                    ),
+                ),
+            ),
+            runtime=coordination.runtime,
+            failure_scope="report_claim",
+        )
+        raise
+
+
+def _claim_held_report(
+    coordination: ReportCoordination,
+    report_run: ReportRunRecorder,
+    *,
+    submitted: ComparisonReportRecord,
+) -> tuple[ComparisonReportRecord | None, dict[str, Any] | None]:
+    """Claim the Stage 12 report of a report run this call holds."""
     invocation_id = coordination.invocation.invocation_id
-    if report_run is not None:
-        claimed = report_run.claim()
-        if not claimed.changed:
-            return None, _report_run_summary(report_run, claimed.status)
     parent, should_execute = claim_parent(
         submitted=submitted,
         coordinator_invocation_id=invocation_id,
         store=coordination.persistence,
-        resume_own_claim=report_run is not None,
+        resume_own_claim=True,
     )
     if should_execute:
         return parent, None
-    if report_run is None:
-        return None, _stage12_summary(parent)
     if (
         parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
         and parent.coordinator_invocation_id == invocation_id

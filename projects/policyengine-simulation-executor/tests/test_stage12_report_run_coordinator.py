@@ -215,6 +215,52 @@ def test_a_failed_report_records_its_stage12_failure_before_its_report_run() -> 
     ] == ["stage12:failed", "fail_report_run"]
 
 
+def test_a_stage12_claim_that_fails_fails_the_report_run() -> None:
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+
+    def unreachable(_record):
+        msg = "the Stage 12 database refused the connection"
+        raise ConnectionError(msg)
+
+    store.create_or_resolve_report = unreachable
+    artifacts = FakeArtifacts()
+    invoker = RecordingInvoker(artifacts)
+
+    with pytest.raises(ConnectionError):
+        _coordinate(store, report_runs, invoker, artifacts)
+
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message.startswith("report_claim_failed: ")
+    assert "refused the connection" not in run.error_message
+    assert invoker.events == []
+
+
+def test_a_stage12_report_another_call_finished_fails_the_report_run() -> None:
+    store = FakeStore()
+    store.parent = parent_record().model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
+            "coordinator_invocation_id": "fc-another-coordinator",
+        }
+    )
+    report_runs = FakeReportRuns()
+    artifacts = FakeArtifacts()
+    invoker = RecordingInvoker(artifacts)
+
+    result = _coordinate(store, report_runs, invoker, artifacts)
+
+    assert result["deduplicated"] is True
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message == (
+        "report_already_claimed: This report's Stage 12 record is succeeded "
+        "under another call."
+    )
+    assert invoker.events == []
+
+
 def test_report_run_coordinator_names_its_aggregate_by_digest(monkeypatch) -> None:
     built = []
     artifacts = FakeArtifacts()

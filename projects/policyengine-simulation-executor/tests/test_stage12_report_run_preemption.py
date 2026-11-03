@@ -225,6 +225,43 @@ def test_a_call_restarted_after_its_report_run_succeeded_records_nothing_again()
     assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
 
 
+class InputCancelledForTest(BaseException):
+    """Stands in for Modal's InputCancellation, a BaseException but not an Exception."""
+
+
+def _cancel(_seconds):
+    raise InputCancelledForTest
+
+
+def test_a_cancelled_coordinator_records_its_report_run_and_children_failed() -> None:
+    # Modal does not run a cancelled call again, so nothing would ever finish
+    # these runs if the coordinator left them running.
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+
+    with pytest.raises(InputCancelledForTest):
+        _coordinate(
+            store,
+            report_runs,
+            TimeoutInvoker(),
+            context=report_run_context(),
+            sleep=_cancel,
+        )
+
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message.startswith("report_cancelled: ")
+    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
+    assert all(
+        child.status is ComparisonRunLifecycleStatus.FAILED
+        for child in store.children.values()
+    )
+    assert all(
+        simulation_run.status is RunStatus.FAILED
+        for simulation_run in report_runs.simulation_runs.values()
+    )
+
+
 def test_a_preempted_comparison_run_behaves_as_before() -> None:
     store = FakeStore()
     report_runs = FakeReportRuns()
