@@ -1106,28 +1106,6 @@
             "type": "string",
             "title": "Constituency Name"
           },
-          "x": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "X"
-          },
-          "y": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Y"
-          },
           "average_household_income_change": {
             "type": "number",
             "title": "Average Household Income Change"
@@ -1151,7 +1129,7 @@
           "population"
         ],
         "title": "ConstituencyImpactRecord",
-        "description": "Reform impact on household net income in one UK parliamentary constituency.\n\n``average_household_income_change`` is the average change per household and\n``relative_household_income_change`` the relative change in the area's total\nhousehold net income, both rounded to the order of their standard error.\n``population`` is the weighted number of households.\n\n``x`` and ``y`` are the area's integer map position, which is being\nremoved: a record validates with or without them, and one without them\nleaves both out of its JSON rather than writing null."
+        "description": "Reform impact on household net income in one UK parliamentary constituency.\n\n``average_household_income_change`` is the average change per household and\n``relative_household_income_change`` the relative change in the area's total\nhousehold net income, both rounded to the order of their standard error.\n``population`` is the weighted number of households."
       },
       "DecileOutput": {
         "properties": {
@@ -1878,28 +1856,6 @@
           "local_authority_name": {
             "type": "string",
             "title": "Local Authority Name"
-          },
-          "x": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "X"
-          },
-          "y": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Y"
           },
           "average_household_income_change": {
             "type": "number",

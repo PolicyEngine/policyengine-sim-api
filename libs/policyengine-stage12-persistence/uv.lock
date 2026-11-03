@@ -604,7 +604,7 @@ requires-dist = [
     { name = "modal", marker = "extra == 'test'", specifier = ">=1.4,<2" },
     { name = "packaging", specifier = ">=24" },
     { name = "policyengine-simulation-observability", editable = "../policyengine-simulation-observability" },
-    { name = "pydantic", specifier = ">=2.12" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "pyright", marker = "extra == 'build'", specifier = ">=1.1.401" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.25.3" },

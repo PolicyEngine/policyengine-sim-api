@@ -4,6 +4,7 @@ These tests run against the staging Modal deployment and verify
 that economy-wide simulations complete successfully.
 """
 
+import inspect
 import json
 import time
 from collections.abc import Mapping
@@ -14,10 +15,12 @@ from typing import Protocol, TypeGuard, cast
 import pytest
 from policyengine_api_simulation_client import AuthenticatedClient, Client
 from policyengine_api_simulation_client.models import (
+    ConstituencyImpactRecord,
     JobStage,
     JobStatusResponse,
     JobSubmitResponse,
     LocalAreaBreakdownOutput,
+    LocalAuthorityImpactRecord,
     SimulationRequest,
 )
 
@@ -363,10 +366,6 @@ _BREAKDOWN_RESULT = {
 }
 
 
-def _without_x_and_y(record: Mapping) -> dict:
-    return {key: value for key, value in record.items() if key not in {"x", "y"}}
-
-
 def test_breakdown_assertions_accept_generated_client_objects() -> None:
     status = JobStatusResponse.from_dict(
         {"status": "complete", "result": _BREAKDOWN_RESULT}
@@ -376,33 +375,11 @@ def test_breakdown_assertions_accept_generated_client_objects() -> None:
     assert_uk_local_area_breakdown(status.result)
 
 
-def test_generated_client_reads_area_records_without_x_and_y() -> None:
-    # Once the executor stops sending x and y, records arrive without them.
-    breakdown = {
-        **_BREAKDOWN_RESULT,
-        "constituency_impact": [_without_x_and_y(_BREAKDOWN_CONSTITUENCY)],
-        "local_authority_impact": [_without_x_and_y(_BREAKDOWN_LOCAL_AUTHORITY)],
-    }
-
-    status = JobStatusResponse.from_dict({"status": "complete", "result": breakdown})
-
-    assert isinstance(status.result, LocalAreaBreakdownOutput)
-    assert status.result.to_dict() == breakdown
-
-
-def test_generated_client_reads_area_records_with_x_and_y() -> None:
-    # Breakdowns that started before the executor stopped sending x and y
-    # still carry them, until the contract removes the two fields.
-    breakdown = {
-        **_BREAKDOWN_RESULT,
-        "constituency_impact": [{**_BREAKDOWN_CONSTITUENCY, "x": 56, "y": -40}],
-        "local_authority_impact": [{**_BREAKDOWN_LOCAL_AUTHORITY, "x": 4, "y": 18}],
-    }
-
-    status = JobStatusResponse.from_dict({"status": "complete", "result": breakdown})
-
-    assert isinstance(status.result, LocalAreaBreakdownOutput)
-    assert status.result.to_dict() == breakdown
+@pytest.mark.parametrize(
+    "record_model", [ConstituencyImpactRecord, LocalAuthorityImpactRecord]
+)
+def test_generated_client_area_records_have_no_x_or_y(record_model: type) -> None:
+    assert {"x", "y"}.isdisjoint(inspect.signature(record_model).parameters)
 
 
 @pytest.mark.parametrize(
