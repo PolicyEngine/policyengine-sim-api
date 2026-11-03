@@ -291,6 +291,8 @@ report_runs = Table(
     Column("modal_call_id", String(MODAL_CALL_ID_LENGTH), nullable=True),
     Column("labor_supply_result", JSON, nullable=True),
     Column("cliff_impact_result", JSON, nullable=True),
+    Column("spm_provenance", JSON, nullable=True),
+    Column("data_version", String(VERSION_LENGTH), nullable=True),
     PrimaryKeyConstraint("id", name="pk_report_runs"),
     ForeignKeyConstraint(
         ["report_id"],
