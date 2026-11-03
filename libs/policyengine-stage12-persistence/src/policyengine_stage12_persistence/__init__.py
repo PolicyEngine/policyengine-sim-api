@@ -7,6 +7,8 @@ from policyengine_stage12_persistence.report_run_results import (
 )
 from policyengine_stage12_persistence.report_run_store import (
     ReportRunStore,
+    RunKind,
+    RunningRun,
     RunStatus,
     RunWrite,
 )
@@ -26,8 +28,10 @@ __all__ = [
     "DistrictCodes",
     "ReportRunResult",
     "ReportRunStore",
+    "RunKind",
     "RunStatus",
     "RunWrite",
+    "RunningRun",
     "Stage12PersistenceStore",
     "Stage12RuntimeAccessError",
     "create_stage12_engine",

@@ -51,6 +51,25 @@ class RunStatus(StrEnum):
 ACTIVE_STATUSES = (RunStatus.PENDING.value, RunStatus.RUNNING.value)
 
 
+class RunKind(StrEnum):
+    """Which run table a run is in."""
+
+    REPORT_RUN = "report_run"
+    SIMULATION_RUN = "simulation_run"
+
+
+RUN_TABLES = {RunKind.REPORT_RUN: report_runs, RunKind.SIMULATION_RUN: simulation_runs}
+
+
+@dataclass(frozen=True)
+class RunningRun:
+    """A run recorded as running, and the Modal call recorded as running it."""
+
+    kind: RunKind
+    run_id: UUID
+    modal_call_id: str
+
+
 @dataclass(frozen=True)
 class RunWrite:
     """One conditional write's outcome: whether it changed the run, and its status."""
@@ -297,6 +316,65 @@ class ReportRunStore:
         return self._write(
             simulation_runs, simulation_run_id, statement, "fail_simulation_run"
         )
+
+    def list_running_runs(
+        self, *, started_before: datetime, limit: int = 500
+    ) -> tuple[RunningRun, ...]:
+        """Return up to ``limit`` runs of each kind running since before a time.
+
+        Only runs with a recorded Modal call are returned, oldest first; a run
+        without a recorded start counts from its last update.
+        """
+        running: list[RunningRun] = []
+        with self._transaction("list_running_runs") as connection:
+            for kind, table in RUN_TABLES.items():
+                started = func.coalesce(table.c.started_at, table.c.updated_at)
+                statement = (
+                    select(table.c.id, table.c.modal_call_id)
+                    .where(
+                        table.c.status == RunStatus.RUNNING.value,
+                        table.c.modal_call_id.is_not(None),
+                        started < started_before,
+                    )
+                    .order_by(started, table.c.id)
+                    .limit(limit)
+                )
+                running.extend(
+                    RunningRun(
+                        kind=kind, run_id=row.id, modal_call_id=row.modal_call_id
+                    )
+                    for row in connection.execute(statement)
+                )
+        return tuple(running)
+
+    def fail_run_of_ended_call(
+        self,
+        run: RunningRun,
+        *,
+        error_message: str,
+        failed_at: datetime,
+    ) -> RunWrite:
+        """Mark ``run`` failed, only while it is running under ``run.modal_call_id``.
+
+        A run that finished, or that moved to another call since it was
+        listed, is left as it is, so concurrent sweeps change it once.
+        """
+        table = RUN_TABLES[run.kind]
+        statement = (
+            update(table)
+            .where(
+                table.c.id == run.run_id,
+                table.c.status == RunStatus.RUNNING.value,
+                table.c.modal_call_id == run.modal_call_id,
+            )
+            .values(
+                status=RunStatus.FAILED.value,
+                error_message=error_message,
+                completed_at=failed_at,
+                updated_at=failed_at,
+            )
+        )
+        return self._write(table, run.run_id, statement, "fail_run_of_ended_call")
 
     def _write(
         self,
