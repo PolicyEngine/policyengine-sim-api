@@ -190,8 +190,6 @@ INTRA_DECILE_COLUMNS = {
     "Gain less than 5%": "gain_less_than_5pct",
     "Gain more than 5%": "gain_more_than_5pct",
 }
-# The intra-decile row holding each category's share across all deciles.
-ALL_DECILES = 0
 DISCLOSURE_FIELDS = (
     "disclosure_tier",
     "average_household_income_change_lower",
@@ -433,7 +431,8 @@ def _decile_rows(
             "decile": int(decile),
             "quantiles": 10,
             "absolute_change": average,
-            "relative_change": economy.decile.relative[decile],
+            # .py's rows hold a percentage; today's output, a fraction.
+            "relative_change": economy.decile.relative[decile] * 100,
         }
         for decile, average in economy.decile.average.items()
     )
@@ -451,24 +450,26 @@ def _intra_decile_rows(
 def _intra_decile_type_rows(
     shares: IntraDecileOutput, decile_type: str, keys: Mapping[str, Any]
 ) -> tuple[dict[str, Any], ...]:
+    """Return one row per decile, 1 to 10.
+
+    Row 0 is .py's share across the whole population, which the output
+    doesn't carry: its ``all`` is the mean of the decile shares, which a
+    reader computes again from these rows.
+    """
     decile_count = max((len(values) for values in shares.deciles.values()), default=0)
-    by_decile: list[dict[str, Any]] = [
-        {
-            column: shares.deciles[label][index]
-            for label, column in INTRA_DECILE_COLUMNS.items()
-            if index < len(shares.deciles.get(label, ()))
-        }
-        | {"decile": index + 1}
-        for index in range(decile_count)
-    ]
-    overall = {
-        column: shares.all[label]
-        for label, column in INTRA_DECILE_COLUMNS.items()
-        if label in shares.all
-    } | {"decile": ALL_DECILES}
     return tuple(
-        {"id": uuid4(), **keys, "decile_type": decile_type, **values}
-        for values in (*by_decile, overall)
+        {
+            "id": uuid4(),
+            **keys,
+            "decile_type": decile_type,
+            "decile": index + 1,
+            **{
+                column: shares.deciles[label][index]
+                for label, column in INTRA_DECILE_COLUMNS.items()
+                if index < len(shares.deciles.get(label, ()))
+            },
+        }
+        for index in range(decile_count)
     )
 
 

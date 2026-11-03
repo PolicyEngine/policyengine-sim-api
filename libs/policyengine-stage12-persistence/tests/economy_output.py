@@ -125,7 +125,10 @@ def uk_economy_output() -> dict[str, Any]:
     output["poverty_by_race"] = None
     output["budget"]["state_tax_revenue_impact"] = 0.0
     output["intra_wealth_decile"] = deepcopy(output["intra_decile"])
-    output["intra_wealth_decile"]["all"]["No change"] = 0.5
+    wealth = output["intra_wealth_decile"]
+    wealth["deciles"]["No change"] = [0.4, 0.6]
+    # Today's builder makes each overall share the mean of the decile shares.
+    wealth["all"]["No change"] = (0.4 + 0.6) / 2
     return output
 
 

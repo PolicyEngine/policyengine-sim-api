@@ -104,16 +104,19 @@ def _rebuilt_budget(seeder, report_run_id):
 
 
 def _rebuilt_intra_decile(rows):
+    """Rebuild today's shares; each overall one is the deciles' mean, as today."""
     by_decile = {row["decile"]: row for row in rows}
-    deciles = sorted(decile for decile in by_decile if decile != 0)
+    deciles = sorted(by_decile)
+    shares = {
+        label: [by_decile[decile][column] for decile in deciles]
+        for label, column in INTRA_DECILE_LABELS.items()
+    }
     return {
         "all": {
-            label: by_decile[0][column] for label, column in INTRA_DECILE_LABELS.items()
+            label: sum(values) / len(values) if values else 0.0
+            for label, values in shares.items()
         },
-        "deciles": {
-            label: [by_decile[decile][column] for decile in deciles]
-            for label, column in INTRA_DECILE_LABELS.items()
-        },
+        "deciles": shares,
     }
 
 
@@ -139,10 +142,17 @@ def test_a_report_run_stores_its_economy_output_as_rows(
     output = US_ECONOMY_OUTPUT
     assert _rebuilt_budget(seeder, run_ids.report_run_id) == output["budget"]
     deciles = seeder.rows("decile_impacts", report_run_id=run_ids.report_run_id)
+    assert {str(row["decile"]): row["absolute_change"] for row in deciles} == output[
+        "decile"
+    ]["average"]
+    # .py's rows hold the relative change as a percentage; today's output
+    # holds a fraction, so a reader divides by 100.
     assert {
-        "average": {str(row["decile"]): row["absolute_change"] for row in deciles},
-        "relative": {str(row["decile"]): row["relative_change"] for row in deciles},
-    } == output["decile"]
+        str(row["decile"]): row["relative_change"] / 100 for row in deciles
+    } == pytest.approx(output["decile"]["relative"], rel=1e-12)
+    assert sorted(row["relative_change"] for row in deciles) == pytest.approx(
+        [1.0, 2.0]
+    )
     assert {row["income_variable"] for row in deciles} == {"household_net_income"}
     assert all(
         row["baseline_simulation_run_id"] == run_ids.baseline_simulation_run_id
@@ -150,6 +160,9 @@ def test_a_report_run_stores_its_economy_output_as_rows(
         for row in deciles
     )
     intra = seeder.rows("intra_decile_impacts", report_run_id=run_ids.report_run_id)
+    # Row 0 is .py's share across the whole population, which today's output
+    # doesn't carry, so none is written.
+    assert sorted(row["decile"] for row in intra) == [1, 2]
     assert _rebuilt_intra_decile(intra) == output["intra_decile"]
     for side, run_id in (
         ("baseline", run_ids.baseline_simulation_run_id),
