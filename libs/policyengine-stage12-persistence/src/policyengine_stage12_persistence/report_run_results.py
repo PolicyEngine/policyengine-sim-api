@@ -12,7 +12,7 @@ row for the report run and its two simulation runs.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from uuid import uuid4
 
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
@@ -25,13 +25,16 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from policyengine_simulation_contract.macro_output import (
+        AgePovertyOutput,
         BaselineReformValue,
         CongressionalDistrictImpactRecord,
         ConstituencyImpactRecord,
         DecileOutput,
+        GenderPovertyOutput,
         GeographicImpactOutput,
         IntraDecileOutput,
         LocalAuthorityImpactRecord,
+        RacePovertyOutput,
     )
     from policyengine_simulation_contract.stage12_execution import ReportRunIds
 
@@ -194,11 +197,13 @@ POVERTY_TYPES = {
     "us": {"poverty": "spm", "deep_poverty": "spm_deep"},
     "uk": {"poverty": "relative_bhc", "deep_poverty": "absolute_bhc"},
 }
-# .py's poverty groups (``policyengine.outputs.poverty``), named as the
-# output's parts name them; ``age``, ``is_male`` and ``race`` select them.
-AGE_GROUPS = ("child", "adult", "senior")
-GENDER_GROUPS = ("male", "female")
-RACE_GROUPS = ("white", "black", "hispanic", "other")
+# .py's poverty groups (``policyengine.outputs.poverty``), by the variable
+# that selects them, named as the output's parts name them.
+POVERTY_GROUPS = {
+    "age": ("child", "adult", "senior"),
+    "is_male": ("male", "female"),
+    "race": ("white", "black", "hispanic", "other"),
+}
 # The variable .py groups UK wealth deciles' household net income by.
 WEALTH_DECILE_VARIABLE = "household_wealth_decile"
 INEQUALITY_INCOME_VARIABLES = {
@@ -523,50 +528,63 @@ def _poverty_rows(
     """Return each simulation run's poverty rates, for everyone and by group.
 
     As in .py's rows, ``filter_variable`` names the variable that selects a
-    group and ``filter_group`` the group; both are null for everyone.
+    group and ``filter_group`` the group; both are null for everyone. Today's
+    output reports 0.0 for a rate .py didn't report and for every rate of a
+    breakdown it failed to calculate, so a stored 0.0 may be such a rate.
     """
     poverty_types = POVERTY_TYPES[country]
     return tuple(
         {
             "id": uuid4(),
             "simulation_run_id": simulation_run_id,
-            "poverty_type": poverty_types[measure],
+            "poverty_type": poverty_types[rate.measure],
             "entity": "person",
-            "filter_variable": filter_variable,
-            "filter_group": filter_group,
-            "rate": getattr(rates, side),
+            "filter_variable": rate.filter_variable,
+            "filter_group": rate.filter_group,
+            "rate": getattr(rate.rates, side),
         }
         for side, simulation_run_id in _sides(run_ids)
-        for measure, filter_variable, filter_group, rates in _poverty_rates(economy)
+        for rate in _poverty_rates(economy)
     )
 
 
-def _poverty_rates(
-    economy: SingleYearMacroOutput,
-) -> list[tuple[str, str | None, str | None, BaselineReformValue]]:
-    """Return each measure's rates with the variable and group that select them.
+class _PovertyRate(NamedTuple):
+    """One measure's rates for everyone, or for the group a variable selects."""
+
+    measure: str
+    filter_variable: str | None
+    filter_group: str | None
+    rates: BaselineReformValue
+
+
+def _poverty_rates(economy: SingleYearMacroOutput) -> list[_PovertyRate]:
+    """Return each measure's rates for everyone and by group.
 
     Ages and genders have both measures; the output breaks only poverty, not
     deep poverty, down by race, and only in the US.
     """
-    rates: list[tuple[str, str | None, str | None, BaselineReformValue]] = []
+    rates: list[_PovertyRate] = []
     for measure in ("poverty", "deep_poverty"):
         by_age = getattr(economy.poverty, measure)
-        by_gender = getattr(economy.poverty_by_gender, measure)
-        rates.append((measure, None, None, by_age.all))
-        rates += [
-            (measure, "age", group, getattr(by_age, group)) for group in AGE_GROUPS
-        ]
-        rates += [
-            (measure, "is_male", group, getattr(by_gender, group))
-            for group in GENDER_GROUPS
-        ]
+        rates.append(_PovertyRate(measure, None, None, by_age.all))
+        rates += _group_rates(measure, "age", by_age)
+        rates += _group_rates(
+            measure, "is_male", getattr(economy.poverty_by_gender, measure)
+        )
     if economy.poverty_by_race is not None:
-        by_race = economy.poverty_by_race.poverty
-        rates += [
-            ("poverty", "race", group, getattr(by_race, group)) for group in RACE_GROUPS
-        ]
+        rates += _group_rates("poverty", "race", economy.poverty_by_race.poverty)
     return rates
+
+
+def _group_rates(
+    measure: str,
+    filter_variable: str,
+    rates_by_group: AgePovertyOutput | GenderPovertyOutput | RacePovertyOutput,
+) -> list[_PovertyRate]:
+    return [
+        _PovertyRate(measure, filter_variable, group, getattr(rates_by_group, group))
+        for group in POVERTY_GROUPS[filter_variable]
+    ]
 
 
 def _inequality_rows(

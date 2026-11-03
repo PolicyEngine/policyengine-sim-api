@@ -249,13 +249,11 @@ def test_the_uk_output_uses_its_own_poverty_types_and_wealth_deciles(
         "household_net_income"
     }
     assert {row["entity"] for row in wealth_deciles} == {"household"}
-    rebuilt_wealth = _rebuilt_deciles(wealth_deciles)
-    assert rebuilt_wealth["average"] == output["wealth_decile"]["average"]
-    assert rebuilt_wealth["relative"] == pytest.approx(
-        output["wealth_decile"]["relative"], rel=1e-12
-    )
     income_deciles = [row for row in deciles if row["decile_variable"] is None]
-    assert _rebuilt_deciles(income_deciles)["average"] == output["decile"]["average"]
+    for rows, part in ((wealth_deciles, "wealth_decile"), (income_deciles, "decile")):
+        rebuilt = _rebuilt_deciles(rows)
+        assert rebuilt["average"] == output[part]["average"]
+        assert rebuilt["relative"] == pytest.approx(output[part]["relative"], rel=1e-12)
     assert "household_state_income_tax" not in {
         row["variable_name"]
         for row in seeder.rows("budget_summary", report_run_id=run_ids.report_run_id)
