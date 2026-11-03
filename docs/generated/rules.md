@@ -464,7 +464,7 @@ flowchart LR
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `sim.agents.adapters-point-to-agents-md` | CLAUDE.md and .github/copilot-instructions.md only point to AGENTS.md; skills and rules are listed in AGENTS.md alone. | mechanical | enforced | yes | quality guard `rules-registry` | `pr.yml:quality-guards` | yes |
 | `sim.process.agents-never-bypass` | Agents never bypass branch rules, even with admin credentials: no gh pr merge --admin and no bypass option; a blocked merge is reported to a human. | mechanical | doc-only | no | nothing | — | — |
-| `sim.process.changelog-fragment` | Every pull request adds at least one changelog fragment: a non-empty file directly in changelog.d/, named <name>.<type>.md with a type towncrier.toml lists. Every file in changelog.d/ other than .gitkeep is such a fragment, and the release's version bump reads fragments by the same definition, so the check accepts exactly what the release builds. | mechanical | enforced | yes | CI job `check-changelog` | `pr.yml:check-changelog` | yes |
+| `sim.process.changelog-fragment` | Every pull request adds at least one changelog fragment: a non-empty file directly in changelog.d/, named <name>.<type>.md with a type towncrier.toml lists. Every file in changelog.d/ other than .gitkeep is such a fragment, and the release's version bump reads fragments by the same definition, so the check accepts exactly what the release builds. The check runs in its own workflow on every pull request, with no branches or paths filter and no condition, so it is never skipped, and compares each pull request with its own base branch, so each pull request in a stack adds its own fragment. | mechanical | enforced | yes | CI job `check-changelog` | `changelog-fragment.yml:check-changelog` | yes |
 | `sim.process.pr-tracking-issue` | The first line of every PR's description is Fixes #ISSUE_NUMBER, naming an open issue, not a pull request, in this repository; automated PRs open or reuse such an issue. | mechanical | enforced | yes | CI job `pr-description` | `pr-description.yml:pr-description` | yes |
 | `sim.process.rule-machinery-code-owned` | Changes to the rule machinery (rules/, scripts/rules/, scripts/run_quality_guards.py and CODEOWNERS) need approval from a core developer other than the author. | mechanical | doc-only | no | nothing | — | — |
 | `sim.process.rules-registry` | Every rule is registered in rules/registry.toml, is enforced where it claims to be, and its rendered views are current. | mechanical | enforced | yes | quality guard `rules-registry` | `pr.yml:quality-guards` | **unproven** |
@@ -480,7 +480,7 @@ flowchart LR
   gap_unenforced>"not enforced"]
   r_sim_process_changelog_fragment("sim.process.changelog-fragment (enforced)")
   e_CI_job_check_changelog["CI job check-changelog"]
-  j_CI_pr_yml_check_changelog["CI pr.yml:check-changelog"]
+  j_CI_changelog_fragment_yml_check_changelog["CI changelog-fragment.yml:check-changelog"]
   r_sim_process_pr_tracking_issue("sim.process.pr-tracking-issue (enforced)")
   e_CI_job_pr_description["CI job pr-description"]
   j_CI_pr_description_yml_pr_description["CI pr-description.yml:pr-description"]
@@ -495,7 +495,7 @@ flowchart LR
   e_quality_guard_rules_registry --> j_CI_pr_yml_quality_guards
   r_sim_process_agents_never_bypass -.-> gap_unenforced
   r_sim_process_changelog_fragment --> e_CI_job_check_changelog
-  e_CI_job_check_changelog --> j_CI_pr_yml_check_changelog
+  e_CI_job_check_changelog --> j_CI_changelog_fragment_yml_check_changelog
   r_sim_process_pr_tracking_issue --> e_CI_job_pr_description
   e_CI_job_pr_description --> j_CI_pr_description_yml_pr_description
   r_sim_process_rule_machinery_code_owned -.-> gap_unenforced
