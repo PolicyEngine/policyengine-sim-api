@@ -88,8 +88,9 @@ with the live API-owned schema.
   psycopg 3 driver internally.
 - `STAGE12_ENABLED` is the only Stage 12 execution setting. Missing or `0`
   disables automatic runs and rejects new direct Stage 12 submissions. `1`
-  enables every supported newly accepted annual society-wide report and the
-  authenticated direct submission route. Any other value prevents service
+  enables every supported newly accepted annual society-wide report, except
+  US state requests (see "Initial flow" below), and the authenticated direct
+  submission route. Any other value prevents service
   startup. Changing the setting requires a Cloud Run deployment. There is no
   percentage, request-bucket, shared runtime-control document, or
   partial-dataset mode.
@@ -162,6 +163,21 @@ annual society-wide comparison inputs. The production request is forwarded
 unchanged. Only a newly accepted supported production job may create one
 corresponding comparison run; polls, cached results, and repeated submissions
 that resolve the same production job do not create another comparison.
+
+US state requests (a `state/*` region, in any case, or a bare two-letter code,
+which the runtime reads as a state) get no shadow comparison, even when the
+adapter supports them. The app will run every state for a nationwide report's
+congressional district view, so comparing them would start two simulations per
+state, and Stage 12 is being replaced, so state results are no longer compared
+with production. The entry logs
+`stage12_comparison_run_skipped` with reason `excluded_us_state_region`, and
+only for state requests the adapter would otherwise have compared. Knowing
+that needs the worker bundle, so the check runs after the v2 manifest is read:
+a state request whose manifest read fails or passes the five-second wait logs
+that failure instead, as any other request would. US
+national, congressional district and place requests, and every UK request
+the adapter supports, are still compared. The operator direct-submission
+route still accepts state regions.
 
 The Simulation Entrypoint, Modal report coordinator, and single-simulation
 functions use each environment's existing `policyengine_v2_runtime` PostgreSQL
@@ -609,8 +625,9 @@ production submissions can request more than one coordinator invocation, but
 the deterministic evaluation identifier and database uniqueness constraint
 make them one logical Stage 12 run. A later
 coordinator that finds the run already active or complete exits without
-starting child simulations. Unsupported automatic inputs are logged with a
-bounded reason and are not persisted.
+starting child simulations. Unsupported automatic inputs, and US state
+requests (see "Initial flow"), are logged with a bounded reason and are not
+persisted.
 
 The report coordinator starts baseline and reform as independent Modal calls,
 observes both until they succeed, and derives the Stage 12 aggregate. It then restores the
