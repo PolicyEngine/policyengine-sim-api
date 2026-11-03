@@ -258,21 +258,35 @@ def test_a_stalled_database_holds_one_thread_and_no_thread_of_the_default_pool(
         database.executor.shutdown(wait=True)
 
     assert all(isinstance(result, TimeoutError) for result in results)
-    assert max(most_running_at_once) == 1
+    # Only the first check ever ran: the two that timed out while it held the
+    # thread were cancelled before they started, and never ran afterwards.
+    assert most_running_at_once == [1]
     assert default_pool_threads == []
 
 
-def test_disposing_the_database_also_stops_its_thread():
+def test_disposing_the_database_also_stops_its_thread(monkeypatch):
     class FakeEngine:
         disposed = False
 
         def dispose(self):
             self.disposed = True
 
+    monkeypatch.setattr(
+        database_module,
+        "read_missing_table_privileges",
+        lambda engine, *, statement_timeout_milliseconds: [],
+    )
     engine = FakeEngine()
     database = SimulationDatabase(engine)
+    asyncio.run(database.missing_privileges())
+    [worker] = [
+        thread
+        for thread in threading.enumerate()
+        if thread.name.startswith(database_module.READINESS_THREAD_NAME_PREFIX)
+    ]
+
     database.dispose()
+    worker.join(timeout=5)
 
     assert engine.disposed is True
-    with pytest.raises(RuntimeError):
-        database.executor.submit(print)
+    assert not worker.is_alive()

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from policyengine_simulation_persistence import (
     SERVICE_TABLE_PRIVILEGES,
+    SimulationStatus,
     service_metadata,
 )
+from policyengine_simulation_persistence import tables as tables_module
 from sqlalchemy import Enum
 
 
@@ -37,7 +39,12 @@ def test_every_table_names_the_public_schema() -> None:
 
 
 def test_every_enum_type_names_the_public_schema() -> None:
-    """Enum types resolve to the Public API's whatever the SQLAlchemy release."""
+    """Enum types resolve to the Public API's whatever the SQLAlchemy release.
+
+    SQLAlchemy 2.1 gives an enum attached to a table the metadata's schema,
+    2.0 doesn't, so the types the tables use are checked, and so is the type
+    the helper builds before any table adopts it.
+    """
     enum_columns = [
         column
         for table in service_metadata.tables.values()
@@ -48,3 +55,6 @@ def test_every_enum_type_names_the_public_schema() -> None:
     assert len(enum_columns) == 6
     for column in enum_columns:
         assert column.type.schema == "public", f"{column.table.name}.{column.name}"
+    # The helper every enum column uses, before any table adopts its type.
+    helper_type = tables_module._enum_type(SimulationStatus, "v2_example")
+    assert helper_type.schema == "public"

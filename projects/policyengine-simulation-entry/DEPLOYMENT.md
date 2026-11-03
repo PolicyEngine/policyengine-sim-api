@@ -48,9 +48,10 @@ readable by the runtime service account; and the `beta` or `prod`
 variable the deploy stops at once; without the tables, the role or its grants
 the candidate check below fails.
 
-`GET /ready` reports, under `simulation_database`, whether the database
-answered within three seconds (`reachable`; false also when it was reached
-but didn't answer in time) and which table privileges its role lacks
+`GET /ready` reports, under `simulation_database`, whether the check of the
+database succeeded within three seconds (`reachable`; false when the
+database wasn't reached, refused the role's login, or didn't answer in time)
+and which table privileges its role lacks
 (`missing_privileges`, such as `"INSERT on reports"`; the list is in
 `libs/policyengine-simulation-persistence`). The database does not change the
 readiness status, because no old-gateway or Stage 12 route uses it. The

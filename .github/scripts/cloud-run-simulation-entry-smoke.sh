@@ -159,7 +159,7 @@ if [ "${require_database_access}" = "true" ]; then
   database_attempt=1
   while [ "${database_attempt}" -lt "${database_ready_max_attempts}" ] &&
     jq -e '.simulation_database.reachable == false' <<<"${ready_body}" >/dev/null; do
-    printf '%s: the simulation database did not answer in time; asking again (%s/%s)\n' \
+    printf '%s: the simulation database check failed; asking again (%s/%s)\n' \
       "${base_url}" "${database_attempt}" "${database_ready_max_attempts}" >&2
     sleep "${routing_retry_delay_seconds}"
     ready_body="$(curl --fail --silent --show-error "${base_url}/ready")"

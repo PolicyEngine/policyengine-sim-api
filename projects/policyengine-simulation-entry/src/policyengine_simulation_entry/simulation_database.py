@@ -55,6 +55,10 @@ class SimulationDatabase:
         )
 
     def dispose(self) -> None:
-        """Stop the check's thread and close every pooled connection."""
+        """Stop the check's thread and close every pooled connection.
+
+        The thread doesn't restart, so a disposed database reports every later
+        check as failed; the app disposes of it once, at shutdown.
+        """
         self.executor.shutdown(wait=False, cancel_futures=True)
         self.engine.dispose()
