@@ -107,6 +107,10 @@ def test_coordinator_completes_its_report_run_with_the_economy_output_as_rows() 
         result.labor_supply_result
         == (CURRENT_SINGLE_YEAR_MACRO_RESULT["labor_supply_response"])
     )
+    # Alabama's first district, by .py's state FIPS codes.
+    (district,) = rows["congressional_district_impacts"]
+    assert (district["state_fips"], district["district_number"]) == (1, 1)
+    assert district["district_geoid"] == 101
 
 
 def test_comparison_children_receive_the_context_they_received_before() -> None:

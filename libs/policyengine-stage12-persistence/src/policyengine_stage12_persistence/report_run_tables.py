@@ -43,6 +43,8 @@ report_runs = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("labor_supply_result", JSON(none_as_null=True)),
     Column("cliff_impact_result", JSON(none_as_null=True)),
+    Column("spm_provenance", JSON(none_as_null=True)),
+    Column("data_version", String(128)),
 )
 
 simulation_runs = Table(

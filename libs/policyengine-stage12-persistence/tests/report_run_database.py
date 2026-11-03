@@ -39,6 +39,10 @@ SEEDED_TABLES = (
     "intra_decile_impacts",
     "poverty",
     "inequality",
+    "program_statistics",
+    "congressional_district_impacts",
+    "constituency_impacts",
+    "local_authority_impacts",
 )
 NOW = datetime(2026, 11, 4, tzinfo=UTC)
 VERSIONS = {"country_package_version": "1.0.0", "policyengine_version": "6.12.0"}

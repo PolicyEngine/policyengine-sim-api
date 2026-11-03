@@ -15,7 +15,11 @@ from typing import TYPE_CHECKING
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
 )
-from policyengine_stage12_persistence import RunStatus, report_run_result
+from policyengine_stage12_persistence import (
+    DistrictCodes,
+    RunStatus,
+    report_run_result,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -34,6 +38,20 @@ if TYPE_CHECKING:
     from .dependencies import ComparisonStore
     from .failures import Stage12FailureDetail
     from .report_run_access import ReportRunWriter
+
+
+def us_district_codes() -> DistrictCodes:
+    """Return .py's US state FIPS codes and at-large states, for district rows."""
+    # .py's US data loads only for a US report's result.
+    from policyengine.countries.us.data import (
+        AT_LARGE_STATES,
+        US_STATE_FIPS,
+    )
+
+    return DistrictCodes(
+        state_fips={state: int(fips) for state, fips in US_STATE_FIPS.items()},
+        at_large_states=frozenset(AT_LARGE_STATES),
+    )
 
 
 def run_error_message(error_code: str | None, error_summary: str | None) -> str:
@@ -69,7 +87,10 @@ class ReportRunRecorder:
             modal_call_id=self.modal_call_id,
             completed_at=datetime.now(UTC),
             result=report_run_result(
-                economy_output, run_ids=self.run_ids, country=country
+                economy_output,
+                run_ids=self.run_ids,
+                country=country,
+                district_codes=us_district_codes() if country == "us" else None,
             ),
         )
 

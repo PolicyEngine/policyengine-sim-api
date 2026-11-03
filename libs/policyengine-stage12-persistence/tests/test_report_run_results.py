@@ -6,8 +6,16 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
-from economy_output import US_ECONOMY_OUTPUT, uk_economy_output
+from economy_output import (
+    US_AT_LARGE_STATES,
+    US_ECONOMY_OUTPUT,
+    US_STATE_FIPS,
+    uk_economy_output,
+    uk_output_with_areas,
+    us_output_with_every_part,
+)
 from policyengine_stage12_persistence import (
+    DistrictCodes,
     ReportRunStore,
     RunStatus,
     RunWrite,
@@ -38,6 +46,22 @@ def store():
         run_store.engine.dispose()
 
 
+DISTRICT_CODES = DistrictCodes(
+    state_fips=US_STATE_FIPS, at_large_states=US_AT_LARGE_STATES
+)
+STATE_BY_FIPS = {fips: state for state, fips in US_STATE_FIPS.items()}
+AREA_FIELDS = (
+    "average_household_income_change",
+    "relative_household_income_change",
+    "population",
+    "disclosure_tier",
+    "average_household_income_change_lower",
+    "average_household_income_change_upper",
+    "relative_household_income_change_lower",
+    "relative_household_income_change_upper",
+)
+
+
 def _complete(store, seeded_run, output=US_ECONOMY_OUTPUT, country="us"):
     store.claim_report_run(
         seeded_run.run_ids.report_run_id, modal_call_id="fc-coordinator", claimed_at=NOW
@@ -46,8 +70,20 @@ def _complete(store, seeded_run, output=US_ECONOMY_OUTPUT, country="us"):
         seeded_run.run_ids,
         modal_call_id="fc-coordinator",
         completed_at=LATER,
-        result=report_run_result(output, run_ids=seeded_run.run_ids, country=country),
+        result=report_run_result(
+            output,
+            run_ids=seeded_run.run_ids,
+            country=country,
+            district_codes=DISTRICT_CODES,
+        ),
     )
+
+
+def _rebuilt_district(row):
+    """Rebuild today's district code as the output builder formats it."""
+    state = STATE_BY_FIPS[row["state_fips"]]
+    number = 1 if state in US_AT_LARGE_STATES else row["district_number"]
+    return f"{state}-{number:02d}"
 
 
 def _rebuilt_budget(seeder, report_run_id):
@@ -272,3 +308,95 @@ def test_a_shared_simulation_run_keeps_the_results_first_stored_for_it(
     assert len(stored) == len({row["filter_variable"] for row in stored})
     reform = seeder.rows("poverty", simulation_run_id=run_ids.reform_simulation_run_id)
     assert len(reform) == 2 * 6 + 4
+
+
+def test_the_detailed_budget_districts_and_receipts_are_stored_losslessly(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    report_run_id = seeded_run.run_ids.report_run_id
+    output = us_output_with_every_part()
+
+    _complete(store, seeded_run, output=output)
+
+    programs = seeder.rows("program_statistics", report_run_id=report_run_id)
+    assert {
+        row["program_name"]: {
+            "baseline": row["baseline_total"],
+            "reform": row["reform_total"],
+            "difference": row["change"],
+            "is_tax": row["is_tax"],
+        }
+        for row in programs
+    } == output["detailed_budget"]
+    assert {row["entity"] for row in programs} == {None}
+    districts = seeder.rows(
+        "congressional_district_impacts", report_run_id=report_run_id
+    )
+    assert sorted(
+        (
+            {
+                "district": _rebuilt_district(row),
+                **{
+                    field: row[field]
+                    for field in (
+                        "average_household_income_change",
+                        "relative_household_income_change",
+                        "winner_percentage",
+                        "loser_percentage",
+                        "no_change_percentage",
+                        "population",
+                    )
+                },
+            }
+            for row in districts
+        ),
+        key=lambda district: district["district"],
+    ) == sorted(
+        output["congressional_district_impact"]["districts"],
+        key=lambda district: district["district"],
+    )
+    # Census GEOIDs: an at-large district is numbered 00.
+    assert {row["district_geoid"] for row in districts} == {101, 107, 200, 612}
+    report_run = seeder.row("report_runs", report_run_id)
+    assert report_run["spm_provenance"] == output["spm_provenance"]
+    assert report_run["data_version"] == output["data_version"]
+
+
+def test_the_uk_area_impacts_are_stored_with_their_disclosure_fields(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    report_run_id = seeded_run.run_ids.report_run_id
+    output = uk_output_with_areas()
+
+    _complete(store, seeded_run, output=output, country="uk")
+
+    for table_name, kind in (
+        ("constituency_impacts", "constituency"),
+        ("local_authority_impacts", "local_authority"),
+    ):
+        stored = {
+            row[f"{kind}_code"]: {
+                f"{kind}_code": row[f"{kind}_code"],
+                f"{kind}_name": row[f"{kind}_name"],
+                **{field: row[field] for field in AREA_FIELDS},
+            }
+            for row in seeder.rows(table_name, report_run_id=report_run_id)
+        }
+        expected = {
+            record[f"{kind}_code"]: dict.fromkeys(AREA_FIELDS) | record
+            for record in output[f"{kind}_impact"]
+        }
+        assert stored == expected
+
+
+def test_a_district_in_an_unknown_state_is_refused(seeded_run: SeededReportRun) -> None:
+    output = us_output_with_every_part()
+    output["congressional_district_impact"]["districts"][0]["district"] = "ZZ-01"
+
+    with pytest.raises(ValueError, match="ZZ"):
+        report_run_result(
+            output,
+            run_ids=seeded_run.run_ids,
+            country="us",
+            district_codes=DISTRICT_CODES,
+        )

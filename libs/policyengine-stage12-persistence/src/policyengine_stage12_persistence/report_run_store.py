@@ -179,6 +179,8 @@ class ReportRunStore:
                     {
                         "labor_supply_result": result.labor_supply_result,
                         "cliff_impact_result": result.cliff_impact_result,
+                        "spm_provenance": result.spm_provenance,
+                        "data_version": result.data_version,
                     }
                     if result is not None
                     else {}
