@@ -24,13 +24,11 @@ child) before the parent's Modal timeout would kill it.
 from __future__ import annotations
 
 import contextlib
-import copy
 import logging
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from policyengine_simulation_contract.input_errors import input_error_detail
 from policyengine_simulation_contract.job_progress import JobExecution, JobStage
 from policyengine_simulation_contract.spm import (
     SPMInputError,
@@ -224,20 +222,6 @@ class ChildExecution:
         return "+".join(self.group)
 
 
-def _child_input_error(error: Exception) -> ValueError | None:
-    """Return a fresh copy of a child's caller-correctable error, or None.
-
-    An SPM input error becomes ``SPMInputError``. A dataset-year error already
-    arrives as a contract class with its code, so it is copied as it is.
-    """
-    detail = spm_error_detail(error)
-    if detail:
-        return SPMInputError(detail.code, detail.message)
-    if isinstance(error, ValueError) and input_error_detail(error) is not None:
-        return copy.copy(error)
-    return None
-
-
 class SegmentedNationalRunner:
     """Runs one segmented national request to completion."""
 
@@ -400,10 +384,10 @@ class SegmentedNationalRunner:
                         )
                     continue
                 except Exception as exc:
-                    input_error = _child_input_error(exc)
-                    if input_error is not None:
+                    detail = spm_error_detail(exc)
+                    if detail:
                         self._cancel_all(children)
-                        raise input_error from exc
+                        raise SPMInputError(detail.code, detail.message) from exc
                     # One transient poll-RPC blip must not kill the job; a
                     # real child failure re-raises on the next probe too.
                     attempts = poll_errors.get(index, 0) + 1
