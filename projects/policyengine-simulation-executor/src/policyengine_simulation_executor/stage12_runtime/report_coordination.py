@@ -606,7 +606,7 @@ class ReportCoordination:
         if self.report_run is not None:
             # Before the Stage 12 report, so a call Modal restarts between the
             # two writes finds that report running and resumes it.
-            self._complete_report_run()
+            self._complete_report_run(aggregate)
         completed = datetime.now(UTC)
         completed_parent = self.persistence.replace_report(
             parent.model_copy(
@@ -635,11 +635,16 @@ class ReportCoordination:
         )
         return descriptor.model_dump(mode="json")
 
-    def _complete_report_run(self) -> None:
-        """Mark the report run succeeded; log a run this call no longer holds."""
+    def _complete_report_run(self, aggregate: Mapping[str, Any]) -> None:
+        """Store the aggregate's result with the report run's success.
+
+        A report run this call no longer holds is logged and left as it is.
+        """
         if self.report_run is None:
             return
-        written = self.report_run.complete()
+        written = self.report_run.complete(
+            aggregate["result"], country=self.report.baseline.geography.country
+        )
         if not written.changed and written.status is not RunStatus.SUCCEEDED:
             logger.warning(
                 "Stage 12 report %s finished, but its report run %s is %s",

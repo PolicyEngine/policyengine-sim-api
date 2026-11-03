@@ -15,9 +15,11 @@ from typing import TYPE_CHECKING
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
 )
-from policyengine_stage12_persistence import RunStatus
+from policyengine_stage12_persistence import RunStatus, report_run_result
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from typing import Any
     from uuid import UUID
 
     from policyengine_simulation_contract.stage12_execution import (
@@ -56,12 +58,19 @@ class ReportRunRecorder:
             claimed_at=datetime.now(UTC),
         )
 
-    def complete(self) -> RunWrite:
-        """Mark the report run succeeded while this call holds it."""
+    def complete(self, economy_output: Mapping[str, Any], *, country: str) -> RunWrite:
+        """Mark the report run succeeded with its economy output as result rows.
+
+        The rows are written in the same transaction, only while this call
+        holds the run. An output that cannot be stored raises ValueError.
+        """
         return self.writer.complete_report_run(
             self.run_ids,
             modal_call_id=self.modal_call_id,
             completed_at=datetime.now(UTC),
+            result=report_run_result(
+                economy_output, run_ids=self.run_ids, country=country
+            ),
         )
 
     def fail(self, detail: Stage12FailureDetail) -> RunWrite:

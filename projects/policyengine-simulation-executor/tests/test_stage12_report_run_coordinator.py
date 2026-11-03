@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
 )
@@ -15,11 +16,11 @@ from stage12_fake_report_runs import (
     REFORM_RUN_ID,
     REPORT_RUN_ID,
     FakeReportRuns,
+    economy_aggregate,
     report_run_context,
 )
 from stage12_fake_stores import FakeArtifacts, FakeStore
 from stage12_runtime_support import (
-    aggregate_payload,
     coordinate_report,
     parent_record,
     report_execution_input,
@@ -51,7 +52,7 @@ def _coordinate(store, report_runs, invoker, artifacts, *, context=None):
         store=store,
         artifacts=artifacts,
         invoker=invoker,
-        aggregator=lambda **_: aggregate_payload(),
+        aggregator=economy_aggregate,
         report_runs=report_runs,
     )
 
@@ -87,6 +88,25 @@ def test_coordinator_claims_and_completes_its_report_run_before_stage12() -> Non
     assert [context["report_run"] for context in invoker.contexts] == [
         report_run_context().report_run.model_dump(mode="json")
     ] * 2
+
+
+def test_coordinator_completes_its_report_run_with_the_economy_output_as_rows() -> None:
+    report_runs = FakeReportRuns()
+    artifacts = FakeArtifacts()
+
+    _coordinate(FakeStore(), report_runs, RecordingInvoker(artifacts), artifacts)
+
+    result = report_runs.report_runs[REPORT_RUN_ID].result
+    rows = {rows.table.name: rows.rows for rows in result.rows}
+    budget = {row["variable_name"]: row for row in rows["budget_summary"]}
+    assert budget["household_tax"]["change"] == 100.0
+    assert budget["household_tax"]["report_run_id"] == REPORT_RUN_ID
+    # The shared report is a US one, so its poverty rows use the SPM types.
+    assert {row["poverty_type"] for row in rows["poverty"]} == {"spm", "spm_deep"}
+    assert (
+        result.labor_supply_result
+        == (CURRENT_SINGLE_YEAR_MACRO_RESULT["labor_supply_response"])
+    )
 
 
 def test_comparison_children_receive_the_context_they_received_before() -> None:
@@ -189,7 +209,7 @@ def test_report_run_coordinator_names_its_aggregate_by_digest(monkeypatch) -> No
         coordinator_invocation_id=COORDINATOR_CALL_ID,
         store=FakeStore(),
         invoker=RecordingInvoker(artifacts),
-        aggregator=lambda **_: aggregate_payload(),
+        aggregator=economy_aggregate,
         report_runs=FakeReportRuns(),
     )
 

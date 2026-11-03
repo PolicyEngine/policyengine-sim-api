@@ -9,9 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_stage12_persistence import RunStatus, RunWrite
-from stage12_runtime_support import invocation_context
+from stage12_runtime_support import aggregate_payload, invocation_context
 
 REPORT_RUN_ID = UUID("00000000-0000-0000-0000-0000000000a1")
 BASELINE_RUN_ID = UUID("00000000-0000-0000-0000-0000000000b1")
@@ -29,6 +30,11 @@ def report_run_context():
     return invocation_context().model_copy(update={"report_run": REPORT_RUN_IDS})
 
 
+def economy_aggregate(**_values):
+    """Aggregate the report into a complete single-year economy output."""
+    return aggregate_payload(result=CURRENT_SINGLE_YEAR_MACRO_RESULT)
+
+
 @dataclass
 class FakeRun:
     """One report run's or simulation run's mutable columns."""
@@ -38,6 +44,7 @@ class FakeRun:
     error_message: str | None = None
     output_uri: str | None = None
     output_sha256: str | None = None
+    result: object | None = None
     writes: list[str] = field(default_factory=list)
 
 
@@ -74,7 +81,7 @@ class FakeReportRuns:
             modal_call_id=modal_call_id,
         )
 
-    def complete_report_run(self, run_ids, *, modal_call_id, completed_at):
+    def complete_report_run(self, run_ids, *, modal_call_id, completed_at, result=None):
         run = self._run(self.report_runs, run_ids.report_run_id, "report run")
         holds_it = self._holds(run, modal_call_id)
         return self._apply(
@@ -82,6 +89,7 @@ class FakeReportRuns:
             "complete_report_run",
             changed=holds_it,
             status=RunStatus.SUCCEEDED,
+            result=result,
         )
 
     def fail_report_run(

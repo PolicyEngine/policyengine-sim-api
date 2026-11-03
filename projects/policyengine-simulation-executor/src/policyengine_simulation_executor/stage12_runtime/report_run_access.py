@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.stage12_execution import ReportRunIds
-    from policyengine_stage12_persistence import RunWrite
+    from policyengine_stage12_persistence import ReportRunResult, RunWrite
 
 # The Modal secret and the one key it must hold: a postgresql:// URL for the
 # Modal worker role on the database that holds the Public API's run tables.
@@ -53,8 +53,9 @@ class ReportRunWriter(Protocol):
         *,
         modal_call_id: str,
         completed_at: datetime,
+        result: ReportRunResult | None = None,
     ) -> RunWrite:
-        """Mark the report run succeeded while ``modal_call_id`` holds it."""
+        """Mark the report run succeeded with ``result`` while this call holds it."""
         ...
 
     def fail_report_run(

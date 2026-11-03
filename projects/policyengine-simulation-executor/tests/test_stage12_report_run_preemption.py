@@ -15,10 +15,14 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from policyengine_stage12_persistence import RunStatus
 from stage12_child_call_support import ConcurrentInvoker, TimeoutInvoker
-from stage12_fake_report_runs import REPORT_RUN_ID, FakeReportRuns, report_run_context
+from stage12_fake_report_runs import (
+    REPORT_RUN_ID,
+    FakeReportRuns,
+    economy_aggregate,
+    report_run_context,
+)
 from stage12_fake_stores import FakeArtifacts, FakeStore
 from stage12_runtime_support import (
-    aggregate_payload,
     coordinate_report,
     invocation_context,
     parent_record,
@@ -69,7 +73,7 @@ def _coordinate(store, report_runs, invoker, *, context, **seams):
         store=store,
         artifacts=seams.pop("artifacts", FakeArtifacts()),
         invoker=invoker,
-        aggregator=lambda **_: aggregate_payload(),
+        aggregator=economy_aggregate,
         report_runs=report_runs,
         **seams,
     )
