@@ -15,6 +15,7 @@ from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchStatusResponse,
     JobStatusResponse,
 )
+from policyengine_simulation_contract.input_errors import input_error_detail
 from policyengine_simulation_contract.job_progress import (
     JOB_PROGRESS_CAPABILITY_KEY,
     JobStatus,
@@ -22,7 +23,6 @@ from policyengine_simulation_contract.job_progress import (
     supported_job_progress_capability,
 )
 from policyengine_simulation_contract.job_progress_state import get_job_progress
-from policyengine_simulation_contract.spm import spm_error_detail
 from policyengine_simulation_observability.errors import log_and_redact_exception
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 from policyengine_simulation_observability.stages import (
@@ -170,7 +170,7 @@ async def get_job_status(
             raise HTTPException(
                 status_code=404, detail=f"Job not found: {job_id}"
             ) from exc
-        detail = spm_error_detail(exc)
+        detail = input_error_detail(exc)
         if detail:
             return failed_job_response(
                 error=detail.message,
@@ -276,7 +276,7 @@ async def get_budget_window_job_status(
         # "submitted" status from the seed store (#448). We deliberately
         # overwrite the main job store entry as well as the seed so either
         # lookup path observes the terminal failed state.
-        detail = spm_error_detail(exc)
+        detail = input_error_detail(exc)
         message = (
             detail.message
             if detail

@@ -22,6 +22,9 @@ from policyengine_simulation_observability.stages import ANNUAL_IMPACT_STAGES, S
 from policyengine_simulation_observability.telemetry import split_internal_payload
 
 from policyengine_simulation_executor import state_datasets
+from policyengine_simulation_executor.dataset_years import (
+    require_supported_dataset_year,
+)
 from policyengine_simulation_executor.gcp_credentials import setup_gcp_credentials
 from policyengine_simulation_executor.job_progress import (
     NULL_JOB_PROGRESS,
@@ -231,7 +234,8 @@ def _load_dataset(
 
     ``data_folder`` replaces the folder the selection would otherwise use: the
     image's data folder for the default dataset, or a temporary folder for any
-    other dataset.
+    other dataset. A year the installed model cannot project the dataset to
+    raises ``DatasetYearUnavailableError`` before .py prepares anything.
     """
     country = params.get("country", "us").lower()
     year = parse_year(params)
@@ -242,6 +246,9 @@ def _load_dataset(
             if selection.is_default
             else _nondefault_data_folder(country, selection.name, selection.uri)
         )
+    require_supported_dataset_year(
+        country, year, dataset_name=selection.name, data_folder=data_folder
+    )
 
     start = time.monotonic()
     load_options = {"years": [year], "data_folder": data_folder}

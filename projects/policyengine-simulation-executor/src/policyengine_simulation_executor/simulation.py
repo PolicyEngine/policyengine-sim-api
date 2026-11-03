@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from policyengine_observability import ObservabilityRuntime
-from policyengine_simulation_contract.spm import spm_error_detail
+from policyengine_simulation_contract.input_errors import input_error_detail
 
 from policyengine_simulation_executor.compat_models import (
     EconomyComparison,
@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 def create_router(runtime: ObservabilityRuntime) -> APIRouter:
     """Build the router whose comparison endpoint runs simulations through ``runtime``.
 
-    SPM selection errors become a 400 failure payload; other ``ValueError``s propagate.
+    SPM selection and dataset-year errors become a 400 failure payload; other
+    ``ValueError``s propagate.
     """
     router = APIRouter()
 
@@ -34,7 +35,7 @@ def create_router(runtime: ObservabilityRuntime) -> APIRouter:
                 payload["spm"] = parameters.spm.model_dump(mode="json")
             result = run_simulation_impl(payload, runtime=runtime)
         except ValueError as exc:
-            detail = spm_error_detail(exc)
+            detail = input_error_detail(exc)
             if detail:
                 return JSONResponse(
                     status_code=400,
