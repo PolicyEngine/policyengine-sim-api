@@ -137,31 +137,54 @@ def test_the_weekly_run_reads_no_secret() -> None:
     assert workflow["permissions"] == {"contents": "read"}
 
 
-def test_every_test_the_rule_names_runs_in_its_jobs_alone() -> None:
-    """The jobs select ``-m public_api_schema``; an unmarked test leaves them.
+SKIPPING_MARKS = frozenset({"skip", "skipif", "xfail"})
+# The Simulation database job selects postgres but has no Public API
+# database, so a schema test marked postgres could only skip there.
+EXCLUDED_MARKERS = {"sim.persistence.models-match-public-api": {"postgres"}}
 
-    The rules guard trusts the jobs' pytest command without reading markers,
-    so this checks each test the rule names, its proof included, and that
-    none is also marked ``postgres``, which the Simulation database job
-    selects and where it could only skip.
-    """
-    rule = next(
+
+def _persistence_rules() -> list[dict]:
+    return [
         entry
         for entry in tomllib.loads(REGISTRY.read_text(encoding="utf-8"))["rule"]
-        if entry["id"] == "sim.persistence.models-match-public-api"
-    )
-    node_ids = [*rule["enforcer"]["nodes"], rule["proof"]["test"]]
+        if entry["enforcer"].get("project")
+        == "libs/policyengine-simulation-persistence"
+        and entry["enforcer"]["kind"] == "pytest"
+    ]
 
-    for node_id in node_ids:
-        module_path, test_name = node_id.split("::")
-        module = importlib.import_module(Path(module_path).stem)
-        module_marks = getattr(module, "pytestmark", [])
-        if not isinstance(module_marks, list):
-            module_marks = [module_marks]
-        test_marks = getattr(getattr(module, test_name), "pytestmark", [])
-        marks = {mark.name for mark in [*module_marks, *test_marks]}
-        assert "public_api_schema" in marks, node_id
-        assert "postgres" not in marks, node_id
+
+def _marks(node_id: str) -> set[str]:
+    """Return the names of a test's marks, its module's included."""
+    module_path, test_name = node_id.split("::")
+    module = importlib.import_module(Path(module_path).stem)
+    module_marks = getattr(module, "pytestmark", [])
+    if not isinstance(module_marks, list):
+        module_marks = [module_marks]
+    test_marks = getattr(getattr(module, test_name), "pytestmark", [])
+    return {mark.name for mark in [*module_marks, *test_marks]}
+
+
+def test_every_persistence_rule_test_runs_in_the_jobs_that_enforce_it() -> None:
+    """Each rule's jobs select tests by marker, which the rules guard can't read.
+
+    So each test a persistence rule names, its proof included, must carry
+    every marker its jobs select, none that would send it to a job without
+    its database, and no mark that would let it skip or fail unnoticed.
+    """
+    rules = _persistence_rules()
+    assert {rule["id"] for rule in rules} >= set(EXCLUDED_MARKERS)
+    for rule in rules:
+        selected = {
+            ci["invocation"].split(" -m ", 1)[1].split()[0]
+            for ci in rule["ci"]
+            if " -m " in ci["invocation"]
+        }
+        assert selected, rule["id"]
+        for node_id in [*rule["enforcer"]["nodes"], rule["proof"]["test"]]:
+            marks = _marks(node_id)
+            assert selected <= marks, (rule["id"], node_id)
+            assert not marks & EXCLUDED_MARKERS.get(rule["id"], set()), node_id
+            assert not marks & SKIPPING_MARKS, node_id
 
 
 def test_no_checkout_leaves_a_token_while_the_public_api_code_runs() -> None:

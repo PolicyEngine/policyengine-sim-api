@@ -79,8 +79,9 @@ jobs:
 
   simulation-database:
     name: Simulation database
-    # Runs the persistence tests that need PostgreSQL, which the Test job
-    # skips, on a fresh server. Full CI runs only on the lowest unmerged pull
+    # Runs the persistence tests marked postgres, which the Test job skips,
+    # on a fresh server; the Public API schema job runs those that also need
+    # the Public API's tables. Full CI runs only on the lowest unmerged pull
     # request in a stack.
     if: ${{ !github.event.pull_request.stack || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref }}
     runs-on: ubuntu-latest
