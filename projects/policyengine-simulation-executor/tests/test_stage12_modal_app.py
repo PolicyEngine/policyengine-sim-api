@@ -375,6 +375,30 @@ def test_only_report_run_writers_receive_the_modal_worker_database_secret(
 
 
 @pytest.mark.parametrize(
+    "function_name", ["run_single_simulation_us", "run_single_simulation_uk"]
+)
+def test_simulation_workers_pass_their_own_modal_call_id(
+    monkeypatch, function_name
+) -> None:
+    module = _load(monkeypatch)
+    monkeypatch.setattr(
+        module.modal,
+        "current_function_call_id",
+        lambda: "fc-simulation-worker",
+        raising=False,
+    )
+    received = {}
+
+    def implementation(*_args, **kwargs):
+        received.update(kwargs)
+        return {"role": "baseline"}
+
+    _invoke(monkeypatch, module, function_name, implementation)
+
+    assert received["modal_call_id"] == "fc-simulation-worker"
+
+
+@pytest.mark.parametrize(
     "function_name",
     [
         "run_single_simulation_us",

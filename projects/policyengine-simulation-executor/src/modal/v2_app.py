@@ -360,6 +360,7 @@ def run_single_simulation_us(
                     segmented_calculator=segmented_calculator,
                     runtime=runtime,
                 ),
+                modal_call_id=modal.current_function_call_id(),
             )
     finally:
         runtime.shutdown()
@@ -404,6 +405,7 @@ def run_single_simulation_uk(
                 dependencies=stage12_runtime.SimulationWorkerDependencies(
                     runtime=runtime
                 ),
+                modal_call_id=modal.current_function_call_id(),
             )
     finally:
         runtime.shutdown()

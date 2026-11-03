@@ -1,0 +1,181 @@
+"""Recording a report call's simulation runs beside its Stage 12 child records.
+
+A call that names a report run keeps the comparison path's Stage 12 records,
+which coordinate its workers. Every claim, success and failure of a child
+record is also written to that child's simulation run, as the Modal worker
+role, so the workers and the coordinator need no other change to record them.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+from policyengine_simulation_contract.stage12_execution import (
+    ComparisonRunLifecycleStatus,
+)
+from policyengine_stage12_persistence import RunStatus
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from policyengine_simulation_contract.stage12_execution import (
+        ComparisonReportPersistenceResult,
+        ComparisonReportRecord,
+        ComparisonSimulationPersistenceResult,
+        ComparisonSimulationRecord,
+        ReportRunIds,
+    )
+
+    from .dependencies import ComparisonStore
+    from .report_run_access import ReportRunWriter
+
+
+def run_error_message(error_code: str | None, error_summary: str | None) -> str:
+    """Return the redacted failure a run records: its code, then its summary."""
+    return f"{error_code or 'simulation_failed'}: {error_summary or 'no summary'}"
+
+
+class SimulationRunRecordingStore:
+    """A ``ComparisonStore`` that also records each child's simulation run.
+
+    ``modal_call_id`` is the worker's own call, recorded on its simulation run
+    when it claims it; the coordinator never claims one and passes None.
+    """
+
+    def __init__(
+        self,
+        store: ComparisonStore,
+        runs: ReportRunWriter,
+        run_ids: ReportRunIds,
+        *,
+        modal_call_id: str | None = None,
+    ) -> None:
+        """Record on ``run_ids``'s simulation runs through ``runs``."""
+        self._store = store
+        self._runs = runs
+        self._run_ids = run_ids
+        self._modal_call_id = modal_call_id
+
+    def create_or_resolve_report(
+        self, record: ComparisonReportRecord
+    ) -> ComparisonReportPersistenceResult:
+        """Delegate to the Stage 12 store."""
+        return self._store.create_or_resolve_report(record)
+
+    def get_report(self, evaluation_id: UUID) -> ComparisonReportRecord:
+        """Delegate to the Stage 12 store."""
+        return self._store.get_report(evaluation_id)
+
+    def replace_report(self, record: ComparisonReportRecord) -> ComparisonReportRecord:
+        """Delegate to the Stage 12 store."""
+        return self._store.replace_report(record)
+
+    def replace_report_result_comparison(
+        self, record: ComparisonReportRecord
+    ) -> ComparisonReportRecord:
+        """Delegate to the Stage 12 store."""
+        return self._store.replace_report_result_comparison(record)
+
+    def create_or_resolve_simulation(
+        self, record: ComparisonSimulationRecord
+    ) -> ComparisonSimulationPersistenceResult:
+        """Delegate to the Stage 12 store."""
+        return self._store.create_or_resolve_simulation(record)
+
+    def get_simulation(
+        self, simulation_execution_id: UUID
+    ) -> ComparisonSimulationRecord:
+        """Delegate to the Stage 12 store."""
+        return self._store.get_simulation(simulation_execution_id)
+
+    def replace_simulation(
+        self, record: ComparisonSimulationRecord
+    ) -> ComparisonSimulationRecord:
+        """Delegate to the Stage 12 store; a dispatch placeholder records nothing."""
+        return self._store.replace_simulation(record)
+
+    def attach_simulation_invocation(
+        self,
+        simulation_execution_id: UUID,
+        *,
+        expected_placeholder: str,
+        modal_invocation_id: str,
+        updated_at: datetime,
+    ) -> ComparisonSimulationRecord:
+        """Delegate to the Stage 12 store."""
+        return self._store.attach_simulation_invocation(
+            simulation_execution_id,
+            expected_placeholder=expected_placeholder,
+            modal_invocation_id=modal_invocation_id,
+            updated_at=updated_at,
+        )
+
+    def replace_simulation_if_status(
+        self,
+        record: ComparisonSimulationRecord,
+        *,
+        expected_status: ComparisonRunLifecycleStatus,
+    ) -> tuple[ComparisonSimulationRecord, bool]:
+        """Write the child record and its simulation run, in a restart-safe order.
+
+        A success is recorded on the simulation run first, so a call Modal
+        restarts between the two writes finds its Stage 12 record still
+        running and runs again without recording a second output. A claim or
+        failure is recorded on the simulation run only after the Stage 12
+        record changed. A simulation run that is already failed refuses the
+        child's claim and success, which its worker treats as a cancellation.
+        """
+        simulation_run_id = self._run_ids.simulation_run_id(record.role)
+        written_at = record.updated_at or datetime.now(UTC)
+        if record.status is ComparisonRunLifecycleStatus.SUCCEEDED:
+            completed = self._complete(simulation_run_id, record, written_at)
+            if completed is not RunStatus.SUCCEEDED:
+                return self._store.get_simulation(record.simulation_execution_id), False
+            return self._store.replace_simulation_if_status(
+                record, expected_status=expected_status
+            )
+        stored, replaced = self._store.replace_simulation_if_status(
+            record, expected_status=expected_status
+        )
+        if not replaced:
+            return stored, replaced
+        if record.status is ComparisonRunLifecycleStatus.RUNNING:
+            claimed = self._runs.claim_simulation_run(
+                simulation_run_id,
+                modal_call_id=self._require_modal_call_id(),
+                claimed_at=written_at,
+            )
+            if claimed.status is RunStatus.FAILED:
+                return stored, False
+        elif record.status is ComparisonRunLifecycleStatus.FAILED:
+            self._runs.fail_simulation_run(
+                simulation_run_id,
+                error_message=run_error_message(
+                    record.error_code, record.error_summary
+                ),
+                failed_at=record.completed_at or written_at,
+            )
+        return stored, replaced
+
+    def _complete(
+        self,
+        simulation_run_id: UUID,
+        record: ComparisonSimulationRecord,
+        written_at: datetime,
+    ) -> RunStatus:
+        if record.output_uri is None or record.output_sha256 is None:
+            msg = "a succeeded simulation must name its output file"
+            raise ValueError(msg)
+        return self._runs.complete_simulation_run(
+            simulation_run_id,
+            output_uri=record.output_uri,
+            output_sha256=record.output_sha256,
+            completed_at=record.completed_at or written_at,
+        ).status
+
+    def _require_modal_call_id(self) -> str:
+        if self._modal_call_id is None:
+            msg = "only a worker with its Modal call ID claims a simulation run"
+            raise ValueError(msg)
+        return self._modal_call_id
