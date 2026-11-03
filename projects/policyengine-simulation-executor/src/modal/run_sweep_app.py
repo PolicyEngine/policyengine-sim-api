@@ -48,6 +48,8 @@ sweep_image = (
         uv_version="0.13.6",
     )
     .add_local_python_source(
+        # This module imports src.modal, so the container needs it too.
+        "src.modal",
         "policyengine_simulation_executor",
         "policyengine_simulation_observability",
         "policyengine_simulation_contract",

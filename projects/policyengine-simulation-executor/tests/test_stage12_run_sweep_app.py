@@ -47,7 +47,9 @@ def test_the_sweep_image_installs_the_locked_group_and_the_runtime_sources(
 
     assert calls["uv_sync"][1]["frozen"] is True
     assert calls["uv_sync"][1]["extra_options"] == "--only-group modal-simulation-image"
+    # The app module imports src.modal at module level, in the container too.
     assert calls["add_local_python_source"][0] == (
+        "src.modal",
         "policyengine_simulation_executor",
         "policyengine_simulation_observability",
         "policyengine_simulation_contract",
