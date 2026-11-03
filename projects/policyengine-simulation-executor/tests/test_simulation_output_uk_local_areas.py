@@ -686,13 +686,38 @@ class _RecordingProgress:
         self.events.append(stage)
 
 
-def _breakdown_builder(monkeypatch, *, events, runtime=None):
+# The release estimated three seats and published one, the seat the faked
+# constituency output lists; it estimated no local authority.
+_PUBLISHED_SEAT = constituency_impact_record().constituency_code
+_WITHHELD_SEATS = ["E14000529", "E14000531"]
+_SEAT_CHANGE = simulation_output_geographic.UKAreaIncomeChange(
+    tier="reported",
+    average=10.0,
+    average_lower=8.0,
+    average_upper=12.0,
+    relative=0.01,
+    relative_lower=0.008,
+    relative_upper=0.012,
+    population=1000.0,
+)
+_BREAKDOWN_DISCLOSURE = simulation_output_geographic.UKGeographyDisclosureOutput(
+    areas={"constituency": {_PUBLISHED_SEAT: _SEAT_CHANGE}},
+    estimated={
+        "constituency": frozenset({_PUBLISHED_SEAT, *_WITHHELD_SEATS}),
+        "local_authority": frozenset(),
+    },
+)
+
+
+def _breakdown_builder(monkeypatch, *, events, runtime=None, disclosure=None):
     """Return a UK breakdown builder whose area outputs are faked.
 
     The country module's impact analysis fails the test if it is called.
-    Each fake records into ``events``.
+    Each fake records into ``events``. The faked release returns
+    ``disclosure``, by default ``_BREAKDOWN_DISCLOSURE``.
     """
-    disclosure = simulation_output_geographic.UKGeographyDisclosureOutput()
+    if disclosure is None:
+        disclosure = _BREAKDOWN_DISCLOSURE
 
     def compute(country, baseline_simulation, reform_simulation, *, year):
         events.append(
@@ -762,7 +787,41 @@ def test_a_local_area_breakdown_publishes_both_levels_from_one_release(monkeypat
         "data_version": _LOCAL_AREA_REVISION,
         "constituency_impact": [constituency_impact_record().model_dump(mode="json")],
         "local_authority_impact": [],
+        "constituency_withheld_codes": _WITHHELD_SEATS,
+        # The release withheld no local authority, which is reported as such.
+        "local_authority_withheld_codes": [],
     }
+
+
+def test_a_local_area_breakdown_lists_every_estimated_area_when_none_is_published(
+    monkeypatch,
+):
+    events: list[object] = []
+    disclosure = simulation_output_geographic.UKGeographyDisclosureOutput(
+        estimated={
+            "constituency": frozenset({"E14000531", "E14000529"}),
+            "local_authority": frozenset({"E06000064", "E06000063"}),
+        }
+    )
+    builder, _ = _breakdown_builder(monkeypatch, events=events, disclosure=disclosure)
+
+    output = builder.serialize()
+
+    assert output["constituency_withheld_codes"] == ["E14000529", "E14000531"]
+    assert output["local_authority_withheld_codes"] == ["E06000063", "E06000064"]
+
+
+def test_a_local_area_breakdown_needs_the_disclosure_output(monkeypatch):
+    # Without the release, the breakdown could not say which areas it withheld.
+    builder, _ = _breakdown_builder(monkeypatch, events=[])
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_output_geographic."
+        "compute_uk_geography_disclosure_output",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(ValueError, match="disclosure-controlled"):
+        builder.build()
 
 
 def test_a_local_area_breakdown_enters_outputs_after_both_simulations(monkeypatch):

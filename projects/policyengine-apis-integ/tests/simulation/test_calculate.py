@@ -250,6 +250,15 @@ def assert_congressional_district_results(
 
 
 _UK_AREA_RESULT_KEYS = ("constituency_impact", "local_authority_impact")
+# For each UK area level: its records, their code field and its withheld codes.
+_UK_AREA_LEVEL_KEYS = (
+    ("constituency_impact", "constituency_code", "constituency_withheld_codes"),
+    (
+        "local_authority_impact",
+        "local_authority_code",
+        "local_authority_withheld_codes",
+    ),
+)
 _PUBLISHED_DISCLOSURE_TIERS = {"reported", "approximate"}
 
 
@@ -267,7 +276,8 @@ def assert_uk_local_area_breakdown(breakdown_result: object) -> None:
 
     Both area levels must publish at least one area, and every published area
     must carry a disclosure tier and no x or y, which the executor no longer
-    sends.
+    sends. Each level must list the codes of the areas disclosure control
+    withheld, sorted and without a published area.
     """
     breakdown = _as_mapping(breakdown_result, label="local-area breakdown")
     assert breakdown.get("kind") == "local_areas", (
@@ -278,10 +288,11 @@ def assert_uk_local_area_breakdown(breakdown_result: object) -> None:
     assert dataset.endswith("_dense"), (
         f"Expected the local-area dataset, got {dataset!r}"
     )
-    for key in _UK_AREA_RESULT_KEYS:
+    for key, code_key, withheld_key in _UK_AREA_LEVEL_KEYS:
         areas = breakdown.get(key)
         assert isinstance(areas, list), f"Expected {key} to be a list, got {areas!r}"
         assert areas, f"Expected {key} to publish at least one area"
+        published_codes: set[object] = set()
         for area in areas:
             record = _as_mapping(area, label=f"{key} record")
             assert record.get("disclosure_tier") in _PUBLISHED_DISCLOSURE_TIERS, (
@@ -291,6 +302,29 @@ def assert_uk_local_area_breakdown(breakdown_result: object) -> None:
             assert not map_position, (
                 f"Expected {key} records without x or y, got {record}"
             )
+            published_codes.add(record.get(code_key))
+        assert_withheld_area_codes(breakdown, withheld_key, published_codes)
+
+
+def assert_withheld_area_codes(
+    breakdown: Mapping, withheld_key: str, published_codes: set[object]
+) -> None:
+    """Check one level's withheld codes are sorted strings and none is published."""
+    withheld_codes = breakdown.get(withheld_key)
+    assert isinstance(withheld_codes, list), (
+        f"Expected {withheld_key} to be a list, got {withheld_codes!r}"
+    )
+    assert all(isinstance(code, str) for code in withheld_codes), (
+        f"Expected {withheld_key} to hold area codes, got {withheld_codes!r}"
+    )
+    assert withheld_codes == sorted(set(withheld_codes)), (
+        f"Expected {withheld_key} sorted and without repeats, got {withheld_codes}"
+    )
+    published_and_withheld = published_codes & set(withheld_codes)
+    assert not published_and_withheld, (
+        f"Expected no published area in {withheld_key}, got "
+        f"{sorted(map(str, published_and_withheld))}"
+    )
 
 
 class _GeneratedClientObject:
@@ -363,6 +397,8 @@ _BREAKDOWN_RESULT = {
     "data_version": "microcosm-uk-2024-25-dense-20261019T000432Z-ee5c2dbe",
     "constituency_impact": [_BREAKDOWN_CONSTITUENCY],
     "local_authority_impact": [_BREAKDOWN_LOCAL_AUTHORITY],
+    "constituency_withheld_codes": ["E14000530", "E14001172"],
+    "local_authority_withheld_codes": [],
 }
 
 
@@ -396,6 +432,14 @@ def test_generated_client_area_records_have_no_x_or_y(record_model: type) -> Non
             },
             "disclosure_tier",
         ),
+        # The executor under test reports the withheld areas of each level.
+        ({"constituency_withheld_codes": None}, "constituency_withheld_codes"),
+        ({"local_authority_withheld_codes": None}, "local_authority_withheld_codes"),
+        (
+            {"constituency_withheld_codes": ["E14001172", "E14000530"]},
+            "sorted",
+        ),
+        ({"local_authority_withheld_codes": ["E06000063"]}, "published"),
         (
             {"constituency_impact": [{**_BREAKDOWN_CONSTITUENCY, "x": 56, "y": -40}]},
             "x or y",
@@ -854,7 +898,8 @@ def test_calculate_uk_local_area_breakdown(
     Given a UK-wide request with breakdown=local_areas
     When the simulation is submitted and polled to completion
     Then the result is a local-area breakdown with published constituencies
-    and local authorities, each with a disclosure tier.
+    and local authorities, each with a disclosure tier, and each level lists
+    the codes of the areas disclosure control withheld.
     """
     # Given
     request = SimulationRequest.from_dict(
