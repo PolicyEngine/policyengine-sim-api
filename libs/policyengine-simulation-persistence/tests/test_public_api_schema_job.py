@@ -1,16 +1,20 @@
-"""The PR job that compares sim's table models with the Public API's tables.
+"""The CI jobs that run the persistence library's database rules.
 
-Rule sim.persistence.models-match-public-api. The job builds the Public
-API's tables with its own v2 migration chain at the pinned commit, runs the
-tests marked ``public_api_schema`` against them, and requires the pinned
-commit to be on the Public API's default branch.
+Rule sim.persistence.models-match-public-api: the PR job and the weekly run
+build the Public API's tables with its own v2 migration chain (at the pinned
+commit, or at the head of its default branch), run the tests marked
+``public_api_schema`` against them, and the PR job requires the pinned
+commit to be on the Public API's default branch. A last test checks, for
+every persistence rule, that its jobs run each test it names.
 """
 
 from __future__ import annotations
 
 import importlib
+import shlex
 from pathlib import Path
 
+import pytest
 import tomllib
 import yaml
 
@@ -153,6 +157,19 @@ def _persistence_rules() -> list[dict]:
     ]
 
 
+def _selected_marker(invocation: str) -> str:
+    """Return the one marker a pytest invocation selects with ``-m``.
+
+    Fail for an invocation that selects none, or an expression rather than
+    one marker: this test couldn't tell which tests such a job runs.
+    """
+    arguments = shlex.split(invocation)
+    assert "-m" in arguments, f"{invocation!r} selects no marker"
+    marker = arguments[arguments.index("-m") + 1]
+    assert marker.isidentifier(), f"{invocation!r} selects {marker!r}, not one marker"
+    return marker
+
+
 def _marks(node_id: str) -> set[str]:
     """Return the names of a test's marks, its module's included."""
     module_path, test_name = node_id.split("::")
@@ -174,12 +191,9 @@ def test_every_persistence_rule_test_runs_in_the_jobs_that_enforce_it() -> None:
     rules = _persistence_rules()
     assert {rule["id"] for rule in rules} >= set(EXCLUDED_MARKERS)
     for rule in rules:
-        selected = {
-            ci["invocation"].split(" -m ", 1)[1].split()[0]
-            for ci in rule["ci"]
-            if " -m " in ci["invocation"]
-        }
-        assert selected, rule["id"]
+        # Every job of the rule selects its tests by one marker, so each
+        # job's tests are known.
+        selected = {_selected_marker(ci["invocation"]) for ci in rule["ci"]}
         for node_id in [*rule["enforcer"]["nodes"], rule["proof"]["test"]]:
             marks = _marks(node_id)
             assert selected <= marks, (rule["id"], node_id)
@@ -213,3 +227,16 @@ def test_the_weekly_run_builds_the_reference_and_installs_like_the_pr_job() -> N
     )
     assert _step(drift_job, "Install uv") == _step(pr_job, "Install uv")
     assert _step(drift_job, "Set up Python") == _step(pr_job, "Set up Python")
+
+
+def test_a_rule_job_must_select_its_tests_by_one_marker() -> None:
+    """An invocation without a marker can't be checked, so it is refused."""
+    assert _selected_marker("uv run --frozen pytest tests/ -v -m postgres") == (
+        "postgres"
+    )
+    for invocation in (
+        "uv run --frozen pytest tests/",
+        'uv run --frozen pytest tests/ -m "postgres and not slow"',
+    ):
+        with pytest.raises(AssertionError):
+            _selected_marker(invocation)
