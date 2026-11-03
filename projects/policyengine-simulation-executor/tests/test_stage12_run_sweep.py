@@ -31,13 +31,20 @@ class FakeInputStatus(Enum):
 
 
 class FakeSweepStore:
-    def __init__(self, runs):
+    def __init__(self, runs, *, expired=()):
         self.runs = list(runs)
+        # Runs older than the maximum age, listed with or without a call.
+        self.expired = list(expired)
         self.cutoffs = []
         self.failed = []
         self.events = []
 
-    def list_running_runs(self, kind, *, started_before):
+    def list_running_runs(
+        self, kind, *, started_before, include_runs_without_call=False
+    ):
+        if include_runs_without_call:
+            self.events.append(f"list-expired:{kind.value}")
+            return tuple(run for run in self.expired if run.kind is kind)
         self.cutoffs.append(started_before)
         self.events.append(f"list:{kind.value}")
         return tuple(run for run in self.runs if run.kind is kind)
@@ -69,7 +76,9 @@ def test_only_runs_whose_call_ended_are_failed() -> None:
     (_, message, failed_at) = store.failed[0]
     assert message.startswith("modal_call_ended: ")
     assert failed_at == NOW
-    assert summary == SweepSummary(checked=3, failed=1, running=1, unknown=1)
+    assert summary == SweepSummary(
+        checked=3, failed=1, running=1, unknown=1, left=0, failed_for_age=0
+    )
 
 
 def test_the_sweep_lists_runs_older_than_its_minimum_age() -> None:
@@ -98,8 +107,10 @@ def test_report_runs_are_swept_before_simulation_runs_are_listed() -> None:
     assert store.events == [
         "list:report_run",
         "fail:report_run",
+        "list-expired:report_run",
         "list:simulation_run",
         "fail:simulation_run",
+        "list-expired:simulation_run",
     ]
 
 
@@ -130,7 +141,9 @@ def test_a_failed_status_lookup_never_fails_the_run() -> None:
     summary = sweep_stuck_runs(store, call_state=call_state, now=NOW)
 
     assert store.failed == []
-    assert summary == SweepSummary(checked=1, failed=0, running=0, unknown=1)
+    assert summary == SweepSummary(
+        checked=1, failed=0, running=0, unknown=1, left=0, failed_for_age=0
+    )
 
 
 def test_a_run_another_sweep_failed_first_is_not_counted_again() -> None:
@@ -148,6 +161,8 @@ def test_a_run_another_sweep_failed_first_is_not_counted_again() -> None:
     )
 
     assert summary.failed == 0
+    # It finished, or moved to another call, after it was listed.
+    assert summary.left == 1
 
 
 def _node(call_id, status, children=()):
@@ -231,6 +246,42 @@ def test_modal_call_state_reads_the_recorded_calls_own_inputs(
 
 def test_a_call_missing_from_its_call_graph_is_unknown() -> None:
     graph = [_node("fc-coordinator", FakeInputStatus.SUCCESS)]
+
+    assert (
+        modal_call_state("fc-1", modal_module=_fake_modal(graph=graph))
+        is CallState.UNKNOWN
+    )
+
+
+def test_a_run_past_the_maximum_age_is_failed_whatever_modal_reports() -> None:
+    # Modal reports a call it won't retry after an internal failure as
+    # pending, and no longer describes old calls; neither may keep a run
+    # running for good, and nor may a run with no recorded call.
+    reported_running = _run("fc-reported-running", RunKind.REPORT_RUN)
+    without_call = RunningRun(
+        kind=RunKind.REPORT_RUN, run_id=uuid4(), modal_call_id=None
+    )
+    store = FakeSweepStore([reported_running], expired=[reported_running, without_call])
+
+    summary = sweep_stuck_runs(
+        store,
+        call_state=lambda _: CallState.RUNNING,
+        now=NOW,
+        maximum_age=timedelta(hours=24),
+    )
+
+    assert [run for run, _, _ in store.failed] == [reported_running, without_call]
+    assert all(
+        message.startswith("run_exceeded_maximum_age: ")
+        for _, message, _ in store.failed
+    )
+    assert summary.failed_for_age == 2
+    assert summary.running == 1
+
+
+def test_an_unrecognised_input_status_leaves_the_call_unknown() -> None:
+    unrecognised = SimpleNamespace(name="SOMETHING_NEW")
+    graph = [_node("fc-1", unrecognised)]
 
     assert (
         modal_call_state("fc-1", modal_module=_fake_modal(graph=graph))

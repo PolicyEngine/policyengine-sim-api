@@ -65,7 +65,9 @@ def test_the_scheduled_function_sweeps_with_the_report_run_store(monkeypatch) ->
 
     def recording_sweep(received_store):
         swept.append(received_store)
-        return run_sweep.SweepSummary(checked=3, failed=1, running=1, unknown=1)
+        return run_sweep.SweepSummary(
+            checked=3, failed=1, running=1, unknown=1, left=0, failed_for_age=2
+        )
 
     monkeypatch.setattr(run_sweep, "sweep_stuck_runs", recording_sweep)
 
@@ -74,5 +76,7 @@ def test_the_scheduled_function_sweeps_with_the_report_run_store(monkeypatch) ->
         "failed": 1,
         "running": 1,
         "unknown": 1,
+        "left": 0,
+        "failed_for_age": 2,
     }
     assert swept == [store]

@@ -63,11 +63,14 @@ RUN_TABLES = {RunKind.REPORT_RUN: report_runs, RunKind.SIMULATION_RUN: simulatio
 
 @dataclass(frozen=True)
 class RunningRun:
-    """A run recorded as running, and the Modal call recorded as running it."""
+    """A run recorded as running, and the Modal call recorded as running it.
+
+    ``modal_call_id`` is None for a run marked running with no call recorded.
+    """
 
     kind: RunKind
     run_id: UUID
-    modal_call_id: str
+    modal_call_id: str | None
 
 
 @dataclass(frozen=True)
@@ -318,24 +321,30 @@ class ReportRunStore:
         )
 
     def list_running_runs(
-        self, kind: RunKind, *, started_before: datetime
+        self,
+        kind: RunKind,
+        *,
+        started_before: datetime,
+        include_runs_without_call: bool = False,
     ) -> tuple[RunningRun, ...]:
-        """Return the runs of ``kind`` running under a recorded call since a time.
+        """Return the runs of ``kind`` running since before a time.
 
-        Runs are oldest first; a run without a recorded start counts from its
-        last update. A simulation run is listed only while no running report
-        run names it as its baseline or reform: that report run's coordinator
-        records its children's outcomes, and stops and starts them again when
-        Modal restarts it, so their calls are its to judge until it has
-        finished.
+        Only runs with a recorded Modal call are returned, unless
+        ``include_runs_without_call``. Runs are oldest first; a run without a
+        recorded start counts from its last update. A simulation run is
+        listed only while no running report run names it as its baseline or
+        reform: that report run's coordinator records its children's
+        outcomes, and stops and starts them again when Modal restarts it, so
+        their calls are its to judge until it has finished.
         """
         table = RUN_TABLES[kind]
         started = func.coalesce(table.c.started_at, table.c.updated_at)
         conditions = [
             table.c.status == RunStatus.RUNNING.value,
-            table.c.modal_call_id.is_not(None),
             started < started_before,
         ]
+        if not include_runs_without_call:
+            conditions.append(table.c.modal_call_id.is_not(None))
         if kind is RunKind.SIMULATION_RUN:
             conditions.append(
                 ~exists().where(
@@ -367,15 +376,21 @@ class ReportRunStore:
         """Mark ``run`` failed, only while it is running under ``run.modal_call_id``.
 
         A run that finished, or that moved to another call since it was
-        listed, is left as it is, so concurrent sweeps change it once.
+        listed, is left as it is, so concurrent sweeps change it once. A run
+        listed with no call is failed only while it still has none.
         """
         table = RUN_TABLES[run.kind]
+        same_call = (
+            table.c.modal_call_id.is_(None)
+            if run.modal_call_id is None
+            else table.c.modal_call_id == run.modal_call_id
+        )
         statement = (
             update(table)
             .where(
                 table.c.id == run.run_id,
                 table.c.status == RunStatus.RUNNING.value,
-                table.c.modal_call_id == run.modal_call_id,
+                same_call,
             )
             .values(
                 status=RunStatus.FAILED.value,

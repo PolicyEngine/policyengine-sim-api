@@ -9,6 +9,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Barrier
+from uuid import uuid4
 
 import pytest
 from policyengine_stage12_persistence import (
@@ -19,6 +20,7 @@ from policyengine_stage12_persistence import (
     RunWrite,
 )
 from report_run_database import NOW, SeededReportRun, worker_database_url
+from sqlalchemy import insert
 
 CUTOFF = NOW + timedelta(minutes=30)
 ENDED_MESSAGE = "modal_call_ended: the run's Modal call ended without recording it"
@@ -204,3 +206,71 @@ def test_two_sweeps_at_once_fail_each_run_exactly_once(
     assert seeder.row("report_runs", seeded_run.run_ids.report_run_id)["status"] == (
         "failed"
     )
+
+
+def _second_report_run(seeder, seeded_run: SeededReportRun, status):
+    """Insert another report run of the same report, naming the same two runs."""
+    first = seeder.row("report_runs", seeded_run.run_ids.report_run_id)
+    second_id = uuid4()
+    with seeder.engine.begin() as connection:
+        connection.execute(
+            insert(seeder.table("report_runs")).values(
+                id=second_id,
+                report_id=first["report_id"],
+                baseline_simulation_run_id=first["baseline_simulation_run_id"],
+                reform_simulation_run_id=first["reform_simulation_run_id"],
+                status=status,
+                trigger="manual",
+                country_package_version=first["country_package_version"],
+                policyengine_version=first["policyengine_version"],
+                **({"completed_at": CUTOFF} if status == "succeeded" else {}),
+            )
+        )
+    return second_id
+
+
+def _baseline_listed(store, seeded_run):
+    baseline_id = seeded_run.run_ids.baseline_simulation_run_id
+    return any(
+        run.run_id == baseline_id
+        for run in store.list_running_runs(
+            RunKind.SIMULATION_RUN, started_before=CUTOFF
+        )
+    )
+
+
+def test_a_simulation_run_is_listed_unless_a_report_run_naming_it_is_running(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    _running(seeder, seeded_run)
+    # The first report run is running, so its coordinator judges the run.
+    assert not _baseline_listed(store, seeded_run)
+
+    _set_run(seeder, "report_runs", seeded_run.run_ids.report_run_id, status="pending")
+    assert _baseline_listed(store, seeded_run)
+
+    second = _second_report_run(seeder, seeded_run, "running")
+    assert not _baseline_listed(store, seeded_run)
+
+    _set_run(seeder, "report_runs", second, status="succeeded", completed_at=CUTOFF)
+    assert _baseline_listed(store, seeded_run)
+
+
+def test_runs_past_the_maximum_age_are_listed_and_failed_without_a_call(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    report_run_id = seeded_run.run_ids.report_run_id
+    _set_run(seeder, "report_runs", report_run_id, status="running", started_at=NOW)
+
+    with_calls = store.list_running_runs(RunKind.REPORT_RUN, started_before=CUTOFF)
+    every_run = store.list_running_runs(
+        RunKind.REPORT_RUN, started_before=CUTOFF, include_runs_without_call=True
+    )
+
+    assert report_run_id not in {run.run_id for run in with_calls}
+    (unrecorded,) = [run for run in every_run if run.run_id == report_run_id]
+    assert unrecorded.modal_call_id is None
+    failed = store.fail_run_of_ended_call(
+        unrecorded, error_message="run_exceeded_maximum_age: too old", failed_at=CUTOFF
+    )
+    assert failed == RunWrite(changed=True, status=RunStatus.FAILED)

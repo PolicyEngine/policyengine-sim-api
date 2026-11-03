@@ -36,6 +36,17 @@ ENDED_CALL_MESSAGE = (
     "modal_call_ended: The Modal call recorded for this run ended without "
     "recording the run's outcome."
 )
+# A run still running this long after its first claim is failed whatever
+# Modal reports, or with no call recorded at all. No attempt of the v2
+# functions can run anywhere near this long (the coordinator's own time
+# limit is 90 minutes), however often Modal pre-empts and restarts it; it
+# stops Modal's pending status for an internal failure it won't retry, or
+# a call Modal no longer describes, from keeping a run running for good.
+DEFAULT_MAXIMUM_AGE = timedelta(hours=24)
+EXCEEDED_AGE_MESSAGE = (
+    "run_exceeded_maximum_age: The run was still running 24 hours after it "
+    "was first claimed, longer than any Modal call of it can run."
+)
 # Modal's input statuses (``modal.call_graph.InputStatus``) by name. A pending
 # input is running or waiting to run again; Modal reports an input pre-empted
 # and waiting to restart (internally INTERNAL_FAILURE) as pending. Any other
@@ -58,9 +69,13 @@ class StuckRunStore(Protocol):
     """The sweep's reads and writes; ``ReportRunStore`` implements them."""
 
     def list_running_runs(
-        self, kind: RunKind, *, started_before: datetime
+        self,
+        kind: RunKind,
+        *,
+        started_before: datetime,
+        include_runs_without_call: bool = False,
     ) -> tuple[RunningRun, ...]:
-        """Return the runs of ``kind`` running under a recorded call since a time."""
+        """Return the runs of ``kind`` running since before a time."""
         ...
 
     def fail_run_of_ended_call(
@@ -72,12 +87,20 @@ class StuckRunStore(Protocol):
 
 @dataclass(frozen=True)
 class SweepSummary:
-    """How many listed runs the sweep checked, failed, and left for each reason."""
+    """What the sweep did with the runs it listed.
+
+    ``checked`` runs had their call asked about: ``failed`` because it ended,
+    left because it is ``running`` or its state is ``unknown``, or ``left``
+    because the run finished or moved to another call after it was listed.
+    ``failed_for_age`` runs were failed for exceeding the maximum age.
+    """
 
     checked: int
     failed: int
     running: int
     unknown: int
+    left: int = 0
+    failed_for_age: int = 0
 
 
 def modal_call_state(modal_call_id: str, *, modal_module: Any = None) -> CallState:  # noqa: ANN401  # the modal module, or a stand-in for it
@@ -87,8 +110,8 @@ def modal_call_state(modal_call_id: str, *, modal_module: Any = None) -> CallSta
     spawned inside another call's input is nested under it, so the call's own
     inputs are found by their call ID anywhere in the graph. A call whose
     inputs are all finished has ended; one with any pending input is running.
-    A call missing from its graph, or any error asking, is unknown, so the
-    sweep leaves its run alone.
+    A call missing from its graph, a status this code doesn't know, or any
+    error asking, is unknown, so the sweep leaves its run alone.
     """
     modal = modal_module if modal_module is not None else import_module("modal")
     try:
@@ -97,11 +120,7 @@ def modal_call_state(modal_call_id: str, *, modal_module: Any = None) -> CallSta
             input_info.status.name for input_info in _inputs_of(graph, modal_call_id)
         }
     except Exception as error:  # noqa: BLE001  # any failure to ask leaves the run as it is
-        logger.warning(
-            "Could not read the status of Modal call %s (%s)",
-            modal_call_id,
-            type(error).__name__,
-        )
+        _log_unreadable_call(modal_call_id, error)
         return CallState.UNKNOWN
     if statuses & RUNNING_INPUT_STATUSES:
         return CallState.RUNNING
@@ -122,74 +141,90 @@ def _inputs_of(graph: list[Any], modal_call_id: str) -> list[Any]:
     return found
 
 
-def sweep_stuck_runs(
+@dataclass
+class _Tally:
+    """Running counts of one sweep."""
+
+    checked: int = 0
+    failed: int = 0
+    running: int = 0
+    unknown: int = 0
+    left: int = 0
+    failed_for_age: int = 0
+
+
+def sweep_stuck_runs(  # the store, then keyword-only seams and limits
     store: StuckRunStore,
     *,
     call_state: Callable[[str], CallState] = modal_call_state,
     now: datetime | None = None,
     minimum_age: timedelta = DEFAULT_MINIMUM_AGE,
+    maximum_age: timedelta = DEFAULT_MAXIMUM_AGE,
 ) -> SweepSummary:
     """Fail every listed run whose recorded Modal call has ended.
 
     Report runs are swept first, so a dead coordinator's simulation runs are
     listed in the same sweep. Each call is asked about once. A run whose call
-    is running, or whose state is unknown, is left as it is; so is one that
-    finished or moved to another call since it was listed, which makes two
-    sweeps at once safe.
+    is running, or whose state is unknown, is left as it is, unless it has
+    been running longer than ``maximum_age``; so is one that finished or
+    moved to another call since it was listed, which makes two sweeps at
+    once safe.
     """
     now = now or datetime.now(UTC)
     states: dict[str, CallState] = {}
-    checked = failed = running = unknown = 0
+    tally = _Tally()
     for kind in (RunKind.REPORT_RUN, RunKind.SIMULATION_RUN):
-        runs = store.list_running_runs(kind, started_before=now - minimum_age)
-        checked += len(runs)
-        outcome = _sweep_runs(
-            store, runs, states=states, call_state=call_state, now=now
-        )
-        failed += outcome.failed
-        running += outcome.running
-        unknown += outcome.unknown
-    return SweepSummary(
-        checked=checked, failed=failed, running=running, unknown=unknown
-    )
+        for run in store.list_running_runs(kind, started_before=now - minimum_age):
+            _sweep_run(
+                store, run, states=states, call_state=call_state, now=now, tally=tally
+            )
+        for run in store.list_running_runs(
+            kind, started_before=now - maximum_age, include_runs_without_call=True
+        ):
+            if store.fail_run_of_ended_call(
+                run, error_message=EXCEEDED_AGE_MESSAGE, failed_at=now
+            ).changed:
+                tally.failed_for_age += 1
+    return SweepSummary(**vars(tally))
 
 
-def _sweep_runs(
+def _sweep_run(  # noqa: PLR0913  # one run, the store, and the sweep's shared state
     store: StuckRunStore,
-    runs: tuple[RunningRun, ...],
+    run: RunningRun,
     *,
     states: dict[str, CallState],
     call_state: Callable[[str], CallState],
     now: datetime,
-) -> SweepSummary:
-    """Fail each of ``runs`` whose call has ended, asking about each call once."""
-    failed = running = unknown = 0
-    for run in runs:
-        if run.modal_call_id not in states:
-            states[run.modal_call_id] = _safe_call_state(call_state, run.modal_call_id)
-        state = states[run.modal_call_id]
-        if state is CallState.RUNNING:
-            running += 1
-        elif state is CallState.UNKNOWN:
-            unknown += 1
-        elif store.fail_run_of_ended_call(
-            run, error_message=ENDED_CALL_MESSAGE, failed_at=now
-        ).changed:
-            failed += 1
-    return SweepSummary(
-        checked=len(runs), failed=failed, running=running, unknown=unknown
+    tally: _Tally,
+) -> None:
+    """Fail ``run`` if its call has ended, asking about each call once."""
+    tally.checked += 1
+    modal_call_id = run.modal_call_id
+    if modal_call_id is None:
+        tally.unknown += 1
+        return
+    if modal_call_id not in states:
+        try:
+            states[modal_call_id] = call_state(modal_call_id)
+        except Exception as error:  # noqa: BLE001  # a failed lookup must never fail the run
+            _log_unreadable_call(modal_call_id, error)
+            states[modal_call_id] = CallState.UNKNOWN
+    state = states[modal_call_id]
+    if state is CallState.RUNNING:
+        tally.running += 1
+    elif state is CallState.UNKNOWN:
+        tally.unknown += 1
+    elif store.fail_run_of_ended_call(
+        run, error_message=ENDED_CALL_MESSAGE, failed_at=now
+    ).changed:
+        tally.failed += 1
+    else:
+        tally.left += 1
+
+
+def _log_unreadable_call(modal_call_id: str, error: Exception) -> None:
+    logger.warning(
+        "Could not read the status of Modal call %s (%s)",
+        modal_call_id,
+        type(error).__name__,
     )
-
-
-def _safe_call_state(
-    call_state: Callable[[str], CallState], modal_call_id: str
-) -> CallState:
-    try:
-        return call_state(modal_call_id)
-    except Exception as error:  # noqa: BLE001  # a failed lookup must never fail the run
-        logger.warning(
-            "Could not read the status of Modal call %s (%s)",
-            modal_call_id,
-            type(error).__name__,
-        )
-        return CallState.UNKNOWN
