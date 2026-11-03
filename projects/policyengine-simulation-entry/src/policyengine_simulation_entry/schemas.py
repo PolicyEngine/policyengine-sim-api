@@ -115,3 +115,25 @@ class TemporaryStage12ReportResponse(BaseModel):
 
     report: ComparisonReportRecord
     simulations: tuple[ComparisonSimulationRecord, ...]
+
+
+class SimulationDatabaseReadiness(BaseModel):
+    """The simulation service's database, as the readiness check found it.
+
+    ``reachable`` says whether a pooled connection answered within the check's
+    time limit. It doesn't change ``status``: no old-gateway or Stage 12 route
+    uses this database.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    reachable: bool
+
+
+class SimulationEntrypointReadinessResponse(BaseModel):
+    """Old-gateway readiness, plus the database check when one is configured."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["ready", "not_ready"]
+    simulation_database: SimulationDatabaseReadiness | None = None
