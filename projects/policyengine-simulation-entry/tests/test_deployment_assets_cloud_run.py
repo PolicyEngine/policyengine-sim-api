@@ -160,6 +160,50 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
 
 
 @pytest.mark.parametrize(
+    "secret_name_variable",
+    [
+        "OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME",
+        "MODAL_TOKEN_ID_SECRET_NAME",
+        "MODAL_TOKEN_SECRET_SECRET_NAME",
+        "STAGE12_DATABASE_URL_SECRET_NAME",
+    ],
+)
+def test_cloud_run_deployment_stops_when_a_runtime_secret_cannot_be_resolved(
+    tmp_path, secret_name_variable
+):
+    command_environment = _cloud_run_deploy_environment(tmp_path) | {
+        secret_name_variable: "not a secret name"
+    }
+
+    result = subprocess.run(
+        [CLOUD_RUN_DEPLOY_SCRIPT],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=command_environment,
+    )
+
+    assert result.returncode != 0
+    assert "invalid Secret Manager reference" in result.stderr
+    assert not Path(command_environment["GCLOUD_ARGUMENTS_CAPTURE"]).exists()
+
+
+def test_stage12_secrets_are_resolved_by_the_stage12_block_alone():
+    """The comparison path shares no deploy helper with the main path."""
+    script = Path(CLOUD_RUN_DEPLOY_SCRIPT).read_text(encoding="utf-8")
+    stage12_block = script.split('if [[ "${DEPLOY_STAGE12_V2}" == "true" ]]; then', 1)[
+        1
+    ].split("\nfi\n", 1)[0]
+    main_path = script.replace(stage12_block, "")
+
+    assert "add_stage12_runtime_secret STAGE12_DATABASE_URL" in stage12_block
+    assert "add_runtime_secret " not in stage12_block
+    assert "add_stage12_runtime_secret " not in main_path.replace(
+        "add_stage12_runtime_secret() {", ""
+    )
+
+
+@pytest.mark.parametrize(
     ("configured", "expected"),
     [(None, "0"), ("", "0"), ("0", "0"), ("1", "1")],
     ids=["unset", "empty", "log-only", "enforced"],
