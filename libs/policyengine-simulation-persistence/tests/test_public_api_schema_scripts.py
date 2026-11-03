@@ -168,9 +168,9 @@ def _fake_reference_commands(tmp_path, *, failing_step: str = "") -> None:
         "uv",
         textwrap.dedent(
             f"""\
-            printf 'uv-env|%s|%s|%s\\n' "${{V2_MIGRATION_DATABASE_URL:-}}" \\
+            printf 'uv-env|%s|%s|%s|%s\\n' "${{V2_MIGRATION_DATABASE_URL:-}}" \\
               "${{V2_ALEMBIC_DISPOSABLE_TEST:-}}" "${{DEPLOYMENT_ENVIRONMENT:-}}" \\
-              >> "${{FAKE_COMMAND_LOG}}"
+              "${{UV_PYTHON:-}}" >> "${{FAKE_COMMAND_LOG}}"
             case "$*" in
               *"{failing_step}"*) [ -n "{failing_step}" ] && exit 3 ;;
             esac
@@ -203,7 +203,8 @@ def test_the_reference_migrates_the_public_api_and_grants_its_privileges(tmp_pat
         "apply --create-missing-roles",
     ]
     psycopg_url = "postgresql+psycopg://" + DATABASE_URL.split("://", 1)[1]
-    assert f"uv-env|{psycopg_url}|1|ci" in commands
+    # The Public API's lock installs on Python 3.12, as its own CI does.
+    assert f"uv-env|{psycopg_url}|1|ci|3.12" in commands
     assert f"Public API commit: {PINNED_COMMIT}" in result.stdout
     assert github_env.read_text(encoding="utf-8") == (
         f"PUBLIC_API_SCHEMA_COMMIT={PINNED_COMMIT}\n"

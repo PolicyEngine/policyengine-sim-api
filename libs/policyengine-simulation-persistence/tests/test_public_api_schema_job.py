@@ -138,8 +138,34 @@ def test_the_rule_proof_runs_in_the_jobs_that_enforce_the_rule() -> None:
     """The jobs select ``-m public_api_schema``; an unmarked proof is skipped."""
     from test_public_api_schema import test_rule_proof_models_match_public_api
 
-    marks = {
-        mark.name for mark in test_rule_proof_models_match_public_api.pytestmark
-    }
+    marks = {mark.name for mark in test_rule_proof_models_match_public_api.pytestmark}
 
     assert "public_api_schema" in marks
+
+
+def test_no_checkout_leaves_a_token_while_the_public_api_code_runs() -> None:
+    """The jobs run the Public API's code from a pinned, perhaps unmerged commit."""
+    jobs = [_jobs()[JOB_ID], _drift_workflow()["jobs"][DRIFT_JOB_ID]]
+
+    for job in jobs:
+        checkouts = [
+            step
+            for step in job["steps"]
+            if step.get("uses", "").startswith("actions/checkout@")
+        ]
+        assert len(checkouts) == 2
+        for checkout in checkouts:
+            assert checkout["with"]["persist-credentials"] is False, checkout
+
+
+def test_the_weekly_run_builds_the_reference_and_installs_like_the_pr_job() -> None:
+    pr_job = _jobs()[JOB_ID]
+    drift_job = _drift_workflow()["jobs"][DRIFT_JOB_ID]
+    build = _step(drift_job, "Build the Public API's tables at its default branch")
+
+    assert build["run"] == ".github/scripts/public-api-schema-reference.sh public-api"
+    assert _step(drift_job, "Install dependencies") == _step(
+        pr_job, "Install dependencies"
+    )
+    assert _step(drift_job, "Install uv") == _step(pr_job, "Install uv")
+    assert _step(drift_job, "Set up Python") == _step(pr_job, "Set up Python")

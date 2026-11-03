@@ -92,7 +92,9 @@ same-repository draft PR.
 - The simulation service lives in `projects/policyengine-simulation-executor`.
 - API integration tests live in `projects/policyengine-apis-integ`.
 - PR CI runs simulation unit tests, the persistence tests that need
-  PostgreSQL, Ruff format and lint checks, Pyright for every package, quality
+  PostgreSQL, the comparison of the persistence models with the Public API's
+  tables at a pinned commit, Ruff format and lint checks, Pyright for every
+  package, quality
   guards (including the rules registry), the changelog fragment check, Docker
   build, and local integration tests. A separate
   `PR description` job checks that every open PR's description starts with

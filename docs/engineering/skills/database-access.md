@@ -73,9 +73,11 @@ but still connect through SQLAlchemy.
 
 The guard reads source, not types. It misses imports through `importlib` or
 `__import__`, a table reached through some other local variable, and SQL text
-assembled from separate literals. It doesn't read shell scripts or SQL files;
-today no shell script calls a database client, and the repository has no SQL
-files.
+assembled from separate literals. It doesn't read shell scripts or SQL files.
+The one shell script that reaches a database,
+`.github/scripts/public-api-schema-reference.sh`, runs the Public API's own
+migration and privilege commands against a disposable CI database for
+`sim.persistence.models-match-public-api`; the repository has no SQL files.
 
 ## Out of scope
 

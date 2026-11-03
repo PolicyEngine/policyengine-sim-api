@@ -3,10 +3,12 @@ name: Public API schema drift
 # Compares sim's table models with the tables the Public API's v2 migration
 # chain builds at the head of its default branch, every Monday and on demand.
 # Pull requests compare them at the pinned commit instead (the PR workflow's
-# public-api-schema job); a failure here means the Public API has merged a
-# change to a table the simulation service writes, so the models and the pin
-# need to follow it (rule sim.persistence.models-match-public-api). The
-# Public API's repository is public, so the workflow reads no secret.
+# public-api-schema job). A failure here means the Public API has merged a
+# change to a table the simulation service writes, or to its role's grants,
+# that the models and the pin need to follow, or that its tables can't be
+# built at that head; the log says which (rule
+# sim.persistence.models-match-public-api). The Public API's repository is
+# public, so the workflow reads no secret.
 
 on:
   schedule:
@@ -45,7 +47,11 @@ jobs:
       SIMULATION_REQUIRE_PUBLIC_API_SCHEMA: "1"
 
     steps:
+    # Neither checkout keeps the job's token, since the job runs the Public
+    # API's code.
     - uses: actions/checkout@v6
+      with:
+        persist-credentials: false
 
     - name: Check out the Public API's default branch
       uses: actions/checkout@v6

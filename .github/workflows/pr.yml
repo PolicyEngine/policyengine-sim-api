@@ -167,7 +167,11 @@ jobs:
       SIMULATION_REQUIRE_PUBLIC_API_SCHEMA: "1"
 
     steps:
+    # Neither checkout keeps the job's token, since the job runs the Public
+    # API's code from a pinned commit.
     - uses: actions/checkout@v6
+      with:
+        persist-credentials: false
 
     - name: Read the pinned Public API commit
       id: public-api

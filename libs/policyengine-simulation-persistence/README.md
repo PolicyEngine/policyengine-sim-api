@@ -52,13 +52,17 @@ ever describe a chain the Public API has merged.
 models describe: the merge commit of the Public API change that last
 altered a modelled table, or, while that change is still a pull request, its
 head commit. Until that pull request merges, the job's last step fails and
-says so.
+says so. A merge commit keeps the pull request's head on `master`; if the
+Public API squashes or rebases the pull request instead, its head never
+reaches `master`, so move the pin to the commit that landed.
 
 **Keeping it current.** A sim pull request that changes the models moves the
 pin in the same change. The `Public API schema drift` workflow runs the same
-comparison every Monday, and on demand, against the head of the Public
-API's `master`; it fails when the Public API has merged a change to a
-modelled table that the models and the pin haven't followed yet.
+tests every Monday, and on demand, against the head of the Public API's
+`master`. It fails when the Public API has merged a change to a modelled
+table, or to the service role's grants, that the models and the pin haven't
+followed yet, and also when the Public API's tables can't be built at that
+head; its log says which.
 
 To run the comparison locally, build the reference with the script (it
 needs an empty `policyengine_v2_alembic_test` database and a checkout of the
@@ -96,11 +100,13 @@ uv sync --extra test
 uv run pytest tests/
 ```
 
-Tests marked `public_api_schema` run as the service's role in a database
-the Public API's own v2 migration chain built, with the privileges its
-manifest declares granted: set `PUBLIC_API_SCHEMA_DATABASE_URL` to that
-database's superuser URL. They create a row in every modelled table and roll
-it back. Without the variable they skip.
+Tests marked `public_api_schema` need a database the Public API's own v2
+migration chain built, with the privileges its manifest declares granted:
+set `PUBLIC_API_SCHEMA_DATABASE_URL` to that database's superuser URL.
+`test_service_writes` creates a row in every modelled table as the service's
+role and rolls it back; the comparison in `test_public_api_schema` also needs
+`SIMULATION_TEST_DATABASE_URL`, to build the models' own tables. Without the
+variables they skip.
 
 Tests marked `postgres` need a PostgreSQL server: set
 `SIMULATION_TEST_DATABASE_URL` to its superuser URL, such as

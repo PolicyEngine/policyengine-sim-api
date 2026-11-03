@@ -224,6 +224,17 @@ def test_an_index_with_another_definition_is_reported() -> None:
     ]
 
 
+def test_an_index_only_the_model_has_is_reported() -> None:
+    real = _simulation_runs(without_indexes=["ix_simulation_runs_status_started_at"])
+
+    assert schema_differences(_simulation_runs(), real) == [
+        "simulation_runs: the Public API's table has no index "
+        "ix_simulation_runs_status_started_at (CREATE INDEX "
+        "ix_simulation_runs_status_started_at ON public.simulation_runs USING "
+        "btree (status, created_at))",
+    ]
+
+
 def test_tables_the_models_leave_out_are_not_compared() -> None:
     real = _simulation_runs()
     real.tables["users"] = TableShape(
