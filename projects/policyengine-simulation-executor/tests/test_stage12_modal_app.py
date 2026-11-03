@@ -344,6 +344,36 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     assert "asgi_app" not in vars(module)
 
 
+def test_only_report_run_writers_receive_the_modal_worker_database_secret(
+    monkeypatch,
+) -> None:
+    module = _load(monkeypatch)
+    functions = dict(module.app.function_calls)
+    worker_database_secret = {
+        "args": ("policyengine-modal-worker-database",),
+        "kwargs": {"required_keys": ["MODAL_WORKER_DATABASE_URL"]},
+    }
+
+    assert module.modal_worker_database_secret == worker_database_secret
+    for writer in (
+        "coordinate_report",
+        "run_single_simulation_us",
+        "run_single_simulation_uk",
+    ):
+        assert functions[writer]["secrets"] == [
+            *module.worker_secrets,
+            worker_database_secret,
+        ]
+    # Segments return their result to their worker, and validation records
+    # nothing, so neither holds the database credentials.
+    for other in (
+        "run_single_simulation_segment_us",
+        "validate_worker_us",
+        "validate_worker_uk",
+    ):
+        assert functions[other]["secrets"] == module.worker_secrets
+
+
 @pytest.mark.parametrize(
     "function_name",
     [

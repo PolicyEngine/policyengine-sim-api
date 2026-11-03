@@ -25,6 +25,10 @@ from policyengine_simulation_executor.stage12_bundle import (
 )
 from policyengine_simulation_executor.stage12_cache.models import CacheManifest
 from policyengine_simulation_executor.stage12_cache.store import Stage12CacheStore
+from policyengine_simulation_executor.stage12_runtime.report_run_access import (
+    MODAL_WORKER_DATABASE_SECRET_NAME,
+    MODAL_WORKER_DATABASE_URL_ENV,
+)
 from policyengine_simulation_executor.stage12_timeouts import (
     COORDINATOR_TIMEOUT_SECONDS,
     UK_SIMULATION_TIMEOUT_SECONDS,
@@ -130,6 +134,13 @@ worker_secrets = [
     hf_secret,
     comparison_runtime_secret,
 ]
+# Only the functions that record a report run's or simulation run's status
+# and results hold the Modal worker role's database credentials.
+modal_worker_database_secret = modal.Secret.from_name(
+    MODAL_WORKER_DATABASE_SECRET_NAME,
+    required_keys=[MODAL_WORKER_DATABASE_URL_ENV],
+)
+report_run_writer_secrets = [*worker_secrets, modal_worker_database_secret]
 
 
 def _country_bundle(country: CountryId) -> Stage12CountryBundle:
@@ -304,7 +315,7 @@ def run_single_simulation_segment_us(
     timeout=US_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
     max_containers=10,
-    secrets=worker_secrets,
+    secrets=report_run_writer_secrets,
 )
 def run_single_simulation_us(
     payload: dict,
@@ -361,7 +372,7 @@ def run_single_simulation_us(
     timeout=UK_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
     max_containers=10,
-    secrets=worker_secrets,
+    secrets=report_run_writer_secrets,
 )
 def run_single_simulation_uk(
     payload: dict,
@@ -407,7 +418,7 @@ def run_single_simulation_uk(
     timeout=COORDINATOR_TIMEOUT_SECONDS,
     retries=0,
     max_containers=10,
-    secrets=worker_secrets,
+    secrets=report_run_writer_secrets,
 )
 def coordinate_report(
     payload: dict,
