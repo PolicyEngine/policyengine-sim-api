@@ -11,7 +11,7 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
-from sqlalchemy import String, column, false, func, select, values
+from sqlalchemy import String, and_, column, false, func, select, table, values
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -19,6 +19,19 @@ if TYPE_CHECKING:
     from sqlalchemy import Connection
 
 TABLE_SCHEMA: Final = "public"
+# PostgreSQL's catalog, which any role may read: a table is found by name
+# without the USAGE privilege on its schema that to_regclass would need.
+_pg_class = table(
+    "pg_class",
+    column("oid"),
+    column("relname"),
+    column("relnamespace"),
+    column("relkind"),
+    schema="pg_catalog",
+)
+_pg_namespace = table(
+    "pg_namespace", column("oid"), column("nspname"), schema="pg_catalog"
+)
 _CREATE: Final = frozenset({"SELECT", "INSERT"})
 _READ: Final = frozenset({"SELECT"})
 
@@ -48,7 +61,9 @@ def missing_table_privileges(connection: Connection) -> list[str]:
     """Return each required privilege the connected role lacks, ordered by table.
 
     Each is named as ``"<PRIVILEGE> on <table>"``. A table missing from the
-    ``public`` schema lacks every privilege the service needs on it.
+    ``public`` schema lacks every privilege the service needs on it. A role
+    without the USAGE privilege on that schema can't use any table grant, so
+    ``"USAGE on schema public"`` comes first.
     """
     required = values(
         column("table_name", String),
@@ -61,18 +76,37 @@ def missing_table_privileges(connection: Connection) -> list[str]:
             for privilege in sorted(privileges)
         ]
     )
-    # to_regclass returns null for a missing table, and has_table_privilege
-    # returns null for a null table, so a missing table counts as not granted.
+    public_tables = (
+        select(_pg_class.c.oid, _pg_class.c.relname)
+        .join(_pg_namespace, _pg_namespace.c.oid == _pg_class.c.relnamespace)
+        .where(
+            and_(
+                _pg_namespace.c.nspname == TABLE_SCHEMA,
+                _pg_class.c.relkind.in_(["r", "p"]),
+            )
+        )
+        .subquery("public_tables")
+    )
+    # A missing table joins to a null oid, and has_table_privilege returns
+    # null for a null table, so a missing table counts as not granted.
     granted = func.coalesce(
-        func.has_table_privilege(
-            func.to_regclass(func.concat(f"{TABLE_SCHEMA}.", required.c.table_name)),
-            required.c.privilege,
-        ),
+        func.has_table_privilege(public_tables.c.oid, required.c.privilege),
         false(),
     )
     rows = connection.execute(
         select(required.c.table_name, required.c.privilege)
+        .select_from(
+            required.outerjoin(
+                public_tables, public_tables.c.relname == required.c.table_name
+            )
+        )
         .where(~granted)
         .order_by(required.c.table_name, required.c.privilege)
     )
-    return [f"{privilege} on {table_name}" for table_name, privilege in rows]
+    missing = [f"{privilege} on {table_name}" for table_name, privilege in rows]
+    schema_usage = connection.execute(
+        select(func.has_schema_privilege(TABLE_SCHEMA, "USAGE"))
+    ).scalar_one()
+    if not schema_usage:
+        missing.insert(0, f"USAGE on schema {TABLE_SCHEMA}")
+    return missing

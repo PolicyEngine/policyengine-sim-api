@@ -140,7 +140,7 @@ flowchart LR
 
 | Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `sim.persistence.missing-privileges-reported` | The simulation service's readiness check names every table privilege its role needs on the Public API's tables and lacks, as PostgreSQL reports it, and counts a table missing from the public schema as lacking all of them. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_access.py` | `pr.yml:simulation-database` | yes |
+| `sim.persistence.missing-privileges-reported` | The simulation service's privilege check, which its readiness check reports, names every table privilege its role needs on the Public API's tables and lacks, as PostgreSQL reports it, counts a table missing from the public schema as lacking all of them, and names a missing USAGE privilege on that schema. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_access.py` | `pr.yml:simulation-database` | yes |
 
 ```mermaid
 flowchart LR

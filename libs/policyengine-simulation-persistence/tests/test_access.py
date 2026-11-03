@@ -208,3 +208,15 @@ def test_rule_proof_missing_privileges_reported(
     )
 
     assert _missing_privileges_as_the_service(disposable_database) == expected_missing
+
+
+@pytest.mark.postgres
+def test_a_role_without_usage_on_the_schema_is_told_so(disposable_database):
+    """Without USAGE on ``public``, the role can't use its table grants."""
+    _create_tables(disposable_database, SERVICE_TABLE_PRIVILEGES)
+    _grant_every_required_privilege(disposable_database)
+    _grant(disposable_database, ["REVOKE USAGE ON SCHEMA public FROM PUBLIC"])
+
+    assert _missing_privileges_as_the_service(disposable_database) == [
+        "USAGE on schema public",
+    ]
