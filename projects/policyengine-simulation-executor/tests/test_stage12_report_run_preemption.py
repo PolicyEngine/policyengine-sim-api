@@ -143,19 +143,21 @@ def test_restarted_coordinator_resumes_its_claim_and_starts_its_children_again()
     assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
 
 
-def test_a_call_restarted_after_its_report_run_succeeded_records_nothing_again() -> (
-    None
-):
-    store = FakeStore()
-    report_runs = FakeReportRuns()
-    replace_report = store.replace_report
+def _preempted_around_completion(report_runs, *, after_writing):
+    """Make the report run's completion pre-empt the call, before or after writing."""
+    complete = report_runs.complete_report_run
 
-    def preempted_before_the_stage12_success(record):
-        if record.status is ComparisonRunLifecycleStatus.SUCCEEDED:
-            raise KeyboardInterrupt
-        return replace_report(record)
+    def preempted_completion(*args, **kwargs):
+        if after_writing:
+            complete(*args, **kwargs)
+        raise KeyboardInterrupt
 
-    store.replace_report = preempted_before_the_stage12_success
+    report_runs.complete_report_run = preempted_completion
+    return complete
+
+
+def _first_attempt_preempted_at_completion(store, report_runs, *, after_writing):
+    complete = _preempted_around_completion(report_runs, after_writing=after_writing)
     artifacts = FakeArtifacts()
     with pytest.raises(KeyboardInterrupt):
         _coordinate(
@@ -165,6 +167,46 @@ def test_a_call_restarted_after_its_report_run_succeeded_records_nothing_again()
             context=report_run_context(),
             artifacts=artifacts,
         )
+    report_runs.complete_report_run = complete
+    return artifacts
+
+
+def test_a_call_restarted_between_its_two_success_writes_completes_the_run() -> None:
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+    artifacts = _first_attempt_preempted_at_completion(
+        store, report_runs, after_writing=False
+    )
+    restart_invoker = RestartInvoker(artifacts)
+
+    result = _coordinate(
+        store,
+        report_runs,
+        restart_invoker,
+        context=report_run_context(),
+        artifacts=artifacts,
+    )
+
+    assert result == {
+        "deduplicated": True,
+        "report_run_id": str(REPORT_RUN_ID),
+        "status": "succeeded",
+    }
+    # Nothing is calculated again: the result comes from the stored aggregate.
+    assert restart_invoker.events == []
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is RunStatus.SUCCEEDED
+    rows = {rows.table.name: rows.rows for rows in run.result.rows}
+    assert {row["variable_name"] for row in rows["budget_summary"]} >= {"household_tax"}
+    assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
+
+
+def test_a_call_restarted_after_its_report_run_succeeded_records_nothing_again() -> (
+    None
+):
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+    _first_attempt_preempted_at_completion(store, report_runs, after_writing=True)
     restart_invoker = RestartInvoker(FakeArtifacts())
 
     result = _coordinate(
@@ -179,6 +221,8 @@ def test_a_call_restarted_after_its_report_run_succeeded_records_nothing_again()
     assert restart_invoker.events == []
     run = report_runs.report_runs[REPORT_RUN_ID]
     assert run.writes == ["claim_report_run", "complete_report_run", "claim_report_run"]
+    # Both records agree: the Stage 12 report succeeded before the report run.
+    assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
 
 
 def test_a_preempted_comparison_run_behaves_as_before() -> None:

@@ -603,10 +603,6 @@ class ReportCoordination:
             reform_artifact_sha256=reform.descriptor.artifact.content_sha256,
             bundle=self.report.baseline.bundle,
         )
-        if self.report_run is not None:
-            # Before the Stage 12 report, so a call Modal restarts between the
-            # two writes finds that report running and resumes it.
-            self._complete_report_run(aggregate)
         completed = datetime.now(UTC)
         completed_parent = self.persistence.replace_report(
             parent.model_copy(
@@ -621,6 +617,10 @@ class ReportCoordination:
                 }
             )
         )
+        # After the Stage 12 report: a call Modal restarts between the two
+        # writes finds that report succeeded and completes the report run
+        # from its stored aggregate.
+        self.complete_report_run(aggregate)
         compare_completed_report(
             parent=completed_parent,
             aggregate=aggregate,
@@ -635,10 +635,11 @@ class ReportCoordination:
         )
         return descriptor.model_dump(mode="json")
 
-    def _complete_report_run(self, aggregate: Mapping[str, Any]) -> None:
+    def complete_report_run(self, aggregate: Mapping[str, Any]) -> None:
         """Store the aggregate's result with the report run's success.
 
         A report run this call no longer holds is logged and left as it is.
+        A call that names no report run records nothing.
         """
         if self.report_run is None:
             return
@@ -684,12 +685,6 @@ class ReportCoordination:
                 detail=cancellation("the coordinator failed"),
             )
         record_failure_cause(self.runtime, error, detail.error_summary)
-        if self.report_run is not None:
-            persist_failure_record(
-                partial(self.report_run.fail, detail),
-                runtime=self.runtime,
-                failure_scope="report_coordination",
-            )
         failed_at = datetime.now(UTC)
         persist_failure_record(
             partial(
@@ -708,3 +703,11 @@ class ReportCoordination:
             runtime=self.runtime,
             failure_scope="report_coordination",
         )
+        # After the Stage 12 report, as on success: a call Modal restarts
+        # between the two writes finds that report failed and runs it again.
+        if self.report_run is not None:
+            persist_failure_record(
+                partial(self.report_run.fail, detail),
+                runtime=self.runtime,
+                failure_scope="report_coordination",
+            )

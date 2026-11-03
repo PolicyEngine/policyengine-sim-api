@@ -57,7 +57,7 @@ def _run_worker(simulation, store, report_runs, *, context=None, calculator=None
     )
 
 
-def test_worker_records_its_simulation_run_before_its_stage12_record() -> None:
+def test_worker_records_its_simulation_run_after_its_stage12_record() -> None:
     events: list[str] = []
     simulation = planned_simulation(SimulationRole.BASELINE)
     store = _seeded_store(simulation, events)
@@ -70,13 +70,14 @@ def test_worker_records_its_simulation_run_before_its_stage12_record() -> None:
     assert run.modal_call_id == "fc-baseline-worker"
     assert run.output_uri == result["artifact"]["uri"]
     assert run.output_sha256 == result["artifact"]["content_sha256"]
-    # The simulation run succeeds first, so a restart between the two writes
-    # finds its Stage 12 record still running and records nothing twice.
+    # The simulation run succeeds last, so a worker Modal restarts between
+    # the two writes finds its Stage 12 record succeeded and completes the
+    # simulation run from it, with the same output file.
     assert events == [
         "stage12:running",
         "claim_simulation_run",
-        "complete_simulation_run",
         "stage12:succeeded",
+        "complete_simulation_run",
     ]
 
 
@@ -118,12 +119,49 @@ def test_worker_refuses_a_simulation_run_that_was_already_failed() -> None:
     assert report_runs.simulation_runs[BASELINE_RUN_ID].output_uri is None
 
 
-def test_restarted_worker_keeps_the_output_its_earlier_attempt_recorded() -> None:
+def test_restarted_worker_completes_its_run_from_its_succeeded_stage12_record() -> None:
     simulation = planned_simulation(SimulationRole.BASELINE)
     store = _seeded_store(simulation)
     report_runs = FakeReportRuns()
-    # The earlier attempt recorded its simulation run, then Modal pre-empted
-    # it before it marked its Stage 12 record succeeded.
+    # The earlier attempt marked its Stage 12 record succeeded, then Modal
+    # pre-empted it before it completed its simulation run.
+    store.children[simulation.simulation_execution_id] = store.children[
+        simulation.simulation_execution_id
+    ].model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
+            "output_uri": "gs://private/earlier-attempt.parquet",
+            "output_sha256": "e" * 64,
+            "output_schema_version": 1,
+            "row_identity_columns": ("household.household_id",),
+            "row_count": 1,
+            "row_identity_sha256": "f" * 64,
+            "completed_at": child_record(simulation).created_at,
+        }
+    )
+    run = report_runs.simulation_runs[BASELINE_RUN_ID]
+    run.status, run.modal_call_id = RunStatus.RUNNING, "fc-baseline-worker"
+    calculated = []
+
+    result = _run_worker(
+        simulation,
+        store,
+        report_runs,
+        calculator=lambda value: calculated.append(value) or simulation_frames(),
+    )
+
+    assert calculated == []
+    assert result["artifact"]["uri"] == "gs://private/earlier-attempt.parquet"
+    assert run.status is RunStatus.SUCCEEDED
+    assert run.output_uri == "gs://private/earlier-attempt.parquet"
+    assert run.output_sha256 == "e" * 64
+
+
+def test_a_simulation_run_another_report_recorded_keeps_its_output() -> None:
+    simulation = planned_simulation(SimulationRole.BASELINE)
+    store = _seeded_store(simulation)
+    report_runs = FakeReportRuns()
+    # Another report run, sharing this simulation run, already recorded it.
     store.children[simulation.simulation_execution_id] = store.children[
         simulation.simulation_execution_id
     ].model_copy(update={"status": ComparisonRunLifecycleStatus.RUNNING})

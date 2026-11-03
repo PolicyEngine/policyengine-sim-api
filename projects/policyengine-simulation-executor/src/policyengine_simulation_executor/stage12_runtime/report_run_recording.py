@@ -185,30 +185,24 @@ class SimulationRunRecordingStore:
         *,
         expected_status: ComparisonRunLifecycleStatus,
     ) -> tuple[ComparisonSimulationRecord, bool]:
-        """Write the child record and its simulation run, in a restart-safe order.
+        """Write the child record, then its simulation run once the record changed.
 
-        A success is recorded on the simulation run first, so a call Modal
-        restarts between the two writes finds its Stage 12 record still
-        running and runs again without recording a second output. A claim or
-        failure is recorded on the simulation run only after the Stage 12
-        record changed. A simulation run that is already failed refuses the
-        child's claim and success, which its worker treats as a cancellation.
+        A worker Modal restarts after its record succeeded, but before its
+        simulation run did, completes the run from that record (see
+        ``complete_from_succeeded_child``), so both name the same output
+        file. A simulation run that is already failed refuses the child's
+        claim, which its worker treats as a cancellation.
         """
         simulation_run_id = self._run_ids.simulation_run_id(record.role)
         written_at = record.updated_at or datetime.now(UTC)
-        if record.status is ComparisonRunLifecycleStatus.SUCCEEDED:
-            completed = self._complete(simulation_run_id, record, written_at)
-            if completed is not RunStatus.SUCCEEDED:
-                return self._store.get_simulation(record.simulation_execution_id), False
-            return self._store.replace_simulation_if_status(
-                record, expected_status=expected_status
-            )
         stored, replaced = self._store.replace_simulation_if_status(
             record, expected_status=expected_status
         )
         if not replaced:
             return stored, replaced
-        if record.status is ComparisonRunLifecycleStatus.RUNNING:
+        if record.status is ComparisonRunLifecycleStatus.SUCCEEDED:
+            self._complete(simulation_run_id, record, written_at)
+        elif record.status is ComparisonRunLifecycleStatus.RUNNING:
             claimed = self._runs.claim_simulation_run(
                 simulation_run_id,
                 modal_call_id=self._require_modal_call_id(),
@@ -225,6 +219,14 @@ class SimulationRunRecordingStore:
                 failed_at=record.completed_at or written_at,
             )
         return stored, replaced
+
+    def complete_from_succeeded_child(self, record: ComparisonSimulationRecord) -> None:
+        """Complete a child's simulation run from its succeeded Stage 12 record."""
+        self._complete(
+            self._run_ids.simulation_run_id(record.role),
+            record,
+            record.updated_at or datetime.now(UTC),
+        )
 
     def _complete(
         self,

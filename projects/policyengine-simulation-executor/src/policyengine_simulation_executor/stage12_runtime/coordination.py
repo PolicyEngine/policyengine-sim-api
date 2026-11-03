@@ -27,12 +27,11 @@ from policyengine_simulation_executor.stage12_timeouts import (
 from .coordinated_simulations import SIMULATION_CANCELLED_ERROR_CODE, logger
 from .dependencies import ModalChildInvoker, artifact_store, runtime_store
 from .failure_causes import StageProgress
-from .failures import Stage12FailureDetail
 from .parent_claim import (
-    claim_parent,
     validate_dispatch_context,
     validate_submitted_parent,
 )
+from .report_claims import claim_report
 from .report_coordination import (
     SIMULATION_POLL_BACKOFF_FACTOR,
     SIMULATION_POLL_INITIAL_SECONDS,
@@ -118,35 +117,9 @@ def coordinate_report(
         report_run=report_run,
     )
     with coordination.span(Stage.STAGE12_COORDINATOR_CLAIM):
-        if report_run is not None:
-            # The report run decides whether this call works: another call
-            # may hold it, or it may already be finished.
-            claimed = report_run.claim()
-            if not claimed.changed:
-                return {
-                    "deduplicated": True,
-                    "report_run_id": str(report_run.run_ids.report_run_id),
-                    "status": claimed.status.value,
-                }
-        parent, should_execute = claim_parent(
-            submitted=submitted_parent,
-            coordinator_invocation_id=invocation.invocation_id,
-            store=coordination.persistence,
-            resume_own_claim=report_run is not None,
-        )
-    if not should_execute:
-        if report_run is not None:
-            report_run.fail(
-                Stage12FailureDetail(
-                    error_code="report_already_claimed",
-                    error_summary="Another call holds this report's Stage 12 record.",
-                )
-            )
-        return {
-            "deduplicated": True,
-            "evaluation_id": str(parent.evaluation_id),
-            "status": parent.status.value,
-        }
+        parent, summary = claim_report(coordination, submitted=submitted_parent)
+    if parent is None:
+        return summary or {}
     try:
         return coordination.run(parent)
     # Persist a redacted cause for any coordinator, child-call, aggregation, or

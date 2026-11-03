@@ -68,7 +68,9 @@ def _recording_report_writes(store, events):
     return store
 
 
-def test_coordinator_claims_and_completes_its_report_run_before_stage12() -> None:
+def test_coordinator_claims_its_report_run_first_and_completes_it_after_stage12() -> (
+    None
+):
     events: list[str] = []
     store = _recording_report_writes(FakeStore(), events)
     report_runs = FakeReportRuns(events)
@@ -81,9 +83,10 @@ def test_coordinator_claims_and_completes_its_report_run_before_stage12() -> Non
     assert run.status is RunStatus.SUCCEEDED
     assert run.modal_call_id == COORDINATOR_CALL_ID
     assert result["evaluation_id"] == str(report_execution_input().evaluation_id)
-    # The report run is claimed before, and completed before, the Stage 12
-    # report, so a restart between the two finds the Stage 12 report running.
-    assert events == ["claim_report_run", "complete_report_run", "stage12:succeeded"]
+    # The report run is claimed first and completed last, so a call Modal
+    # restarts between the two success writes finds its Stage 12 report
+    # succeeded, and completes the report run from the stored aggregate.
+    assert events == ["claim_report_run", "stage12:succeeded", "complete_report_run"]
     assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
     assert [context["report_run"] for context in invoker.contexts] == [
         report_run_context().report_run.model_dump(mode="json")
@@ -193,6 +196,23 @@ def test_a_failed_report_fails_its_report_run_and_the_failed_simulation_run() ->
     assert reform.status is RunStatus.FAILED
     assert reform.error_message == run.error_message
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
+
+
+def test_a_failed_report_records_its_stage12_failure_before_its_report_run() -> None:
+    events: list[str] = []
+    store = _recording_report_writes(FakeStore(), events)
+    report_runs = FakeReportRuns(events)
+    artifacts = FakeArtifacts()
+    invoker = RecordingInvoker(
+        artifacts, faults=InjectedChildFaults(fail_role="reform")
+    )
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(store, report_runs, invoker, artifacts)
+
+    assert [
+        event for event in events if event in {"stage12:failed", "fail_report_run"}
+    ] == ["stage12:failed", "fail_report_run"]
 
 
 def test_report_run_coordinator_names_its_aggregate_by_digest(monkeypatch) -> None:

@@ -521,21 +521,28 @@ def run_single_simulation(
     context = Stage12InvocationContext.model_validate(context_payload)
     _require_context(simulation, context, required_country=required_country)
     persistence = dependencies.store or runtime_store(runtime)
+    recording = None
     if context.report_run is not None:
         if modal_call_id is None:
             msg = "a report run's worker needs its Modal call ID"
             raise ValueError(msg)
-        persistence = SimulationRunRecordingStore(
+        recording = SimulationRunRecordingStore(
             persistence,
             dependencies.report_runs or report_run_store(runtime),
             context.report_run,
             modal_call_id=modal_call_id,
         )
+        persistence = recording
     artifact_storage = dependencies.artifacts or artifact_store(
         content_addressed=context.report_run is not None
     )
     child = persistence.get_simulation(simulation.simulation_execution_id)
     if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
+        if recording is not None:
+            # An earlier attempt stopped between the child's and the run's
+            # success; the run's completion is conditional, so this repeats
+            # nothing that was recorded.
+            recording.complete_from_succeeded_child(child)
         return descriptor_from_record(child, simulation).model_dump(mode="json")
     running = _claim_simulation(persistence, child)
     cancellation_requested = _cancellation_check(persistence, simulation)
