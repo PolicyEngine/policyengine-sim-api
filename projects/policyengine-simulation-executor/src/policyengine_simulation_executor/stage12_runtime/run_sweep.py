@@ -84,7 +84,12 @@ class StuckRunStore(Protocol):
     def fail_stuck_run(
         self, run: RunningRun, *, error_message: str, failed_at: datetime
     ) -> RunWrite:
-        """Mark ``run`` failed while it is still running under its listed call."""
+        """Mark ``run`` failed while it is as it was listed.
+
+        It must still be running under its listed call, or with no call if it
+        was listed with none; a simulation run must still have no running
+        report run combining it.
+        """
         ...
 
 
@@ -93,9 +98,11 @@ class SweepSummary:
     """What the sweep did with the runs it listed.
 
     ``checked`` runs had their call asked about: ``failed`` because it ended,
-    left because it is ``running`` or its state is ``unknown``, or ``left``
-    because the run finished or moved to another call after it was listed.
-    ``failed_for_age`` runs were failed for exceeding the maximum age.
+    or left because it is ``running`` or its state is ``unknown``.
+    ``failed_for_age`` runs were failed for exceeding the maximum age. ``left``
+    counts listed runs whose conditional failure changed nothing, because
+    they finished, moved to another call, or a running report run started
+    combining them after they were listed.
     """
 
     checked: int
@@ -166,13 +173,13 @@ def sweep_stuck_runs(  # the store, then keyword-only seams and limits
 ) -> SweepSummary:
     """Fail every listed run whose recorded Modal call has ended.
 
-    Report runs are swept first, so a dead coordinator's simulation runs are
-    listed in the same sweep. For each kind, runs older than ``maximum_age``
-    are failed first, before any Modal lookup can use up the scheduled
-    function's time. Each call is then asked about once. A run whose call is
-    running, or whose state is unknown, is left as it is; so is one that
-    finished or moved to another call since it was listed, which makes two
-    sweeps at once safe.
+    Runs older than ``maximum_age`` are failed first, report runs then
+    simulation runs, before any Modal lookup can use up the scheduled
+    function's time. Then each recorded call is asked about once, report
+    runs first, so a dead coordinator's simulation runs are listed in the
+    same sweep. A run whose call is running, or whose state is unknown, is
+    left as it is; so is one whose conditional failure changes nothing, which
+    makes two sweeps at once safe.
     """
     now = now or datetime.now(UTC)
     states: dict[str, CallState] = {}
@@ -185,6 +192,9 @@ def sweep_stuck_runs(  # the store, then keyword-only seams and limits
                 run, error_message=EXCEEDED_AGE_MESSAGE, failed_at=now
             ).changed:
                 tally.failed_for_age += 1
+            else:
+                tally.left += 1
+    for kind in (RunKind.REPORT_RUN, RunKind.SIMULATION_RUN):
         for run in store.list_running_runs(kind, started_before=now - minimum_age):
             _sweep_run(
                 store, run, states=states, call_state=call_state, now=now, tally=tally

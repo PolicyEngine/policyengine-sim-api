@@ -43,13 +43,17 @@ class FakeSweepStore:
     def list_running_runs(
         self, kind, *, started_before, include_runs_without_call=False
     ):
+        # As the real store, a run this fake failed is no longer listed.
+        failed = {failed_run for failed_run, _, _ in self.failed}
         if include_runs_without_call:
             self.expired_cutoffs.append(started_before)
             self.events.append(f"list-expired:{kind.value}")
-            return tuple(run for run in self.expired if run.kind is kind)
-        self.cutoffs.append(started_before)
-        self.events.append(f"list:{kind.value}")
-        return tuple(run for run in self.runs if run.kind is kind)
+            listed = self.expired
+        else:
+            self.cutoffs.append(started_before)
+            self.events.append(f"list:{kind.value}")
+            listed = self.runs
+        return tuple(run for run in listed if run.kind is kind and run not in failed)
 
     def fail_stuck_run(self, run, *, error_message, failed_at):
         self.failed.append((run, error_message, failed_at))
@@ -108,9 +112,9 @@ def test_report_runs_are_swept_before_simulation_runs_are_listed() -> None:
 
     assert store.events == [
         "list-expired:report_run",
+        "list-expired:simulation_run",
         "list:report_run",
         "fail:report_run",
-        "list-expired:simulation_run",
         "list:simulation_run",
         "fail:simulation_run",
     ]
@@ -278,7 +282,8 @@ def test_a_run_past_the_maximum_age_is_failed_whatever_modal_reports() -> None:
         for _, message, _ in store.failed
     )
     assert summary.failed_for_age == 2
-    assert summary.running == 1
+    # Failed for its age first, it is no longer listed for a lookup.
+    assert summary.running == 0
 
 
 def test_an_unrecognised_input_status_leaves_the_call_unknown() -> None:
@@ -311,4 +316,14 @@ def test_the_age_limit_is_checked_first_with_its_own_cutoff() -> None:
 
     assert store.expired_cutoffs == [NOW - timedelta(hours=24)] * 2
     assert store.cutoffs == [NOW - timedelta(minutes=10)] * 2
-    assert asked == [("fc-1", ["list-expired:report_run", "list:report_run"])]
+    # Both kinds' age checks come before any lookup.
+    assert asked == [
+        (
+            "fc-1",
+            [
+                "list-expired:report_run",
+                "list-expired:simulation_run",
+                "list:report_run",
+            ],
+        )
+    ]
