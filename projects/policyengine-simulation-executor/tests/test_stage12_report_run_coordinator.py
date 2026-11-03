@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_contract.stage12_execution import (
@@ -9,10 +11,18 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationRole,
 )
 from policyengine_simulation_executor.stage12_runtime import (
+    SimulationWorkerDependencies,
+    run_single_simulation,
+)
+from policyengine_simulation_executor.stage12_runtime import (
     coordination as coordination_module,
 )
 from policyengine_stage12_persistence import RunStatus
-from stage12_child_call_support import ConcurrentInvoker, InjectedChildFaults
+from stage12_child_call_support import (
+    ConcurrentInvoker,
+    FutureCall,
+    InjectedChildFaults,
+)
 from stage12_fake_report_runs import (
     BASELINE_RUN_ID,
     REFORM_RUN_ID,
@@ -21,7 +31,7 @@ from stage12_fake_report_runs import (
     economy_aggregate,
     report_run_context,
 )
-from stage12_fake_stores import FakeArtifacts, FakeStore
+from stage12_fake_stores import FakeArtifacts, FakeStore, simulation_frames
 from stage12_runtime_support import (
     child_record,
     coordinate_report,
@@ -334,6 +344,80 @@ def test_a_reused_succeeded_child_completes_its_simulation_run() -> None:
     assert report_runs.events.index("complete_simulation_run") < (
         report_runs.events.index("complete_report_run")
     )
+
+
+class WorkerInvoker:
+    """Run each child through the real worker code, sharing the coordinator's stores."""
+
+    def __init__(self, store, artifacts, report_runs):
+        self.store = store
+        self.artifacts = artifacts
+        self.report_runs = report_runs
+        self.executor = ThreadPoolExecutor(max_workers=2)
+
+    def spawn(self, request):
+        role = request.simulation["role"]
+        frames = simulation_frames(100.0 if role == "baseline" else 120.0)
+        future = self.executor.submit(
+            run_single_simulation,
+            request.simulation,
+            request.context,
+            required_country="us",
+            modal_call_id=f"fc-{role}-worker",
+            dependencies=SimulationWorkerDependencies(
+                store=self.store,
+                artifacts=self.artifacts,
+                calculator=lambda _simulation: frames,
+                report_runs=self.report_runs,
+            ),
+        )
+        return FutureCall(f"fc-{role}-worker", future)
+
+    def restore(self, invocation_id):
+        msg = f"unexpected restored invocation {invocation_id}"
+        raise AssertionError(msg)
+
+
+def test_a_report_run_through_real_workers_records_every_run_once() -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    report_runs = FakeReportRuns()
+
+    report = report_execution_input()
+    # A reform the real worker accepts: an effective period with dates.
+    report = report.model_copy(
+        update={
+            "reform": report.reform.model_copy(
+                update={"policy": {"reform": {"2026-01-01.2026-12-31": 1}}}
+            )
+        }
+    )
+
+    coordinate_report(
+        report.model_dump(mode="json"),
+        report_run_context().model_dump(mode="json"),
+        parent_record().model_dump(mode="json"),
+        application_name=report_run_context().modal_application,
+        coordinator_invocation_id=COORDINATOR_CALL_ID,
+        store=store,
+        artifacts=artifacts,
+        invoker=WorkerInvoker(store, artifacts, report_runs),
+        aggregator=economy_aggregate,
+        report_runs=report_runs,
+    )
+
+    assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
+    for role, run_id in (("baseline", BASELINE_RUN_ID), ("reform", REFORM_RUN_ID)):
+        run = report_runs.simulation_runs[run_id]
+        (child,) = [child for child in store.children.values() if child.role == role]
+        assert run.status is RunStatus.SUCCEEDED
+        assert run.modal_call_id == f"fc-{role}-worker"
+        assert run.output_uri == child.output_uri
+        assert run.writes.count("complete_simulation_run") >= 1
+    assert report_runs.report_runs[REPORT_RUN_ID].writes == [
+        "claim_report_run",
+        "complete_report_run",
+    ]
 
 
 def test_report_run_coordinator_names_its_aggregate_by_digest(monkeypatch) -> None:
