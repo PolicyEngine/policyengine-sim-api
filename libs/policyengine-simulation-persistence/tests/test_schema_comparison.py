@@ -15,6 +15,8 @@ from schema_comparison import (
     TableShape,
     describe_tables,
     schema_differences,
+    schema_from_json,
+    schema_to_json,
 )
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
@@ -307,3 +309,11 @@ def test_the_catalog_describes_each_part_of_a_table(disposable_database) -> None
         },
         enums={"v2_simulation_status": ("pending", "running")},
     )
+
+
+def test_a_description_round_trips_through_json(tmp_path) -> None:
+    described = _simulation_runs()
+    path = tmp_path / "schema.json"
+    path.write_text(schema_to_json(described), encoding="utf-8")
+
+    assert schema_from_json(path) == described

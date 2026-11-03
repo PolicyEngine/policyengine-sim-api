@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 58 | 2 | 0 | 14 | 74 |
+| mechanical | 59 | 2 | 0 | 14 | 75 |
 | metric | 1 | 0 | 0 | 0 | 1 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 61 of 75 rules.
+**Blocking:** 62 of 76 rules.
 
 ## Gaps
 
@@ -141,14 +141,22 @@ flowchart LR
 | Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `sim.persistence.missing-privileges-reported` | The simulation service's privilege check, which its readiness check reports, names every table privilege its role needs on the Public API's tables and lacks, as PostgreSQL reports it, counts a table missing from the public schema as lacking all of them, and names a missing USAGE privilege on that schema. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_access.py` | `pr.yml:simulation-database` | yes |
+| `sim.persistence.models-match-public-api` | Sim's models of the Public API's tables match the tables the Public API's v2 migration chain builds at the pinned Public API commit, which is on the Public API's default branch: every column's type, nullability and default, every constraint and index by name and definition, and every enum's values; and the simulation service's role, with the privileges the Public API's manifest declares, writes every modelled table. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_public_api_schema.py`, `libs/policyengine-simulation-persistence/tests/test_service_writes.py` | `pr.yml:public-api-schema`, `public-api-schema-drift.yml:public-api-schema-drift` | yes |
 
 ```mermaid
 flowchart LR
   r_sim_persistence_missing_privileges_reported("sim.persistence.missing-privileges-reported (enforced)")
   e_pytest_libs_policyengine_simulation_persistence_tests_test_access_py["pytest libs/policyengine-simulation-persistence/tests/test_access.py"]
   j_CI_pr_yml_simulation_database["CI pr.yml:simulation-database"]
+  r_sim_persistence_models_match_public_api("sim.persistence.models-match-public-api (enforced)")
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_public_api_schema_py__libs_policyengine_simulation_persistence_tests_test_service_writes_py["pytest libs/policyengine-simulation-persistence/tests/test_public_api_schema.py, libs/policyengine-simulation-persistence/tests/test_service_writes.py"]
+  j_CI_pr_yml_public_api_schema["CI pr.yml:public-api-schema"]
+  j_CI_public_api_schema_drift_yml_public_api_schema_drift["CI public-api-schema-drift.yml:public-api-schema-drift"]
   r_sim_persistence_missing_privileges_reported --> e_pytest_libs_policyengine_simulation_persistence_tests_test_access_py
   e_pytest_libs_policyengine_simulation_persistence_tests_test_access_py --> j_CI_pr_yml_simulation_database
+  r_sim_persistence_models_match_public_api --> e_pytest_libs_policyengine_simulation_persistence_tests_test_public_api_schema_py__libs_policyengine_simulation_persistence_tests_test_service_writes_py
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_public_api_schema_py__libs_policyengine_simulation_persistence_tests_test_service_writes_py --> j_CI_pr_yml_public_api_schema
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_public_api_schema_py__libs_policyengine_simulation_persistence_tests_test_service_writes_py --> j_CI_public_api_schema_drift_yml_public_api_schema_drift
 ```
 
 ## Deployment pipeline

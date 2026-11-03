@@ -133,7 +133,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Simulation service database
 
-- Checked: `sim.persistence.missing-privileges-reported`
+- Checked: `sim.persistence.missing-privileges-reported`, `sim.persistence.models-match-public-api`
 
 ### Deployment pipeline
 

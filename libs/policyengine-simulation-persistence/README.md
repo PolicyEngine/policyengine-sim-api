@@ -32,6 +32,44 @@ between these tables, because another service writes the policy, household
 and catalog rows they name. Status and other enum columns use the `StrEnum`
 classes beside them and store each member's value.
 
+## Checking the models against the Public API
+
+Rule `sim.persistence.models-match-public-api`. The PR workflow's
+`Public API schema` job checks out the Public API at the commit pinned in
+`public-api-commit`, builds its tables with its own v2 migration chain and
+grants the privileges its manifest declares
+(`.github/scripts/public-api-schema-reference.sh`), then runs the tests
+marked `public_api_schema`. `test_public_api_schema` builds the models' tables
+from `service_metadata` in a disposable database and compares both through
+PostgreSQL's catalog (`tests/schema_comparison.py`): every column's type,
+nullability and default, every constraint and index by name and definition,
+and every enum's values must match. `test_service_writes` creates a row in
+every modelled table as the service's role. Last, the job requires the
+pinned commit to be on the Public API's `master` branch, so the models only
+ever describe a chain the Public API has merged.
+
+**Choosing the pin.** Pin the Public API commit whose migration chain the
+models describe: the merge commit of the Public API change that last
+altered a modelled table, or, while that change is still a pull request, its
+head commit. Until that pull request merges, the job's last step fails and
+says so.
+
+**Keeping it current.** A sim pull request that changes the models moves the
+pin in the same change. The `Public API schema drift` workflow runs the same
+comparison every Monday, and on demand, against the head of the Public
+API's `master`; it fails when the Public API has merged a change to a
+modelled table that the models and the pin haven't followed yet.
+
+To run the comparison locally, build the reference with the script (it
+needs an empty `policyengine_v2_alembic_test` database and a checkout of the
+Public API at the pinned commit), then:
+
+```bash
+SIMULATION_TEST_DATABASE_URL=postgresql://postgres:password@127.0.0.1:5432/postgres \
+PUBLIC_API_SCHEMA_DATABASE_URL=postgresql://postgres:password@127.0.0.1:5432/policyengine_v2_alembic_test \
+uv run pytest tests/ -m public_api_schema
+```
+
 ## The role's privileges
 
 `SERVICE_TABLE_PRIVILEGES` lists the table privileges the service's role

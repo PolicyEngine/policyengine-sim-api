@@ -168,6 +168,43 @@ good_fixture = "rules/fixtures/sim.persistence.missing-privileges-reported/good_
 project = "libs/policyengine-simulation-persistence"
 test = "tests/test_access.py::test_rule_proof_missing_privileges_reported"
 
+[[rule]]
+id = "sim.persistence.models-match-public-api"
+category = "persistence"
+statement = "Sim's models of the Public API's tables match the tables the Public API's v2 migration chain builds at the pinned Public API commit, which is on the Public API's default branch: every column's type, nullability and default, every constraint and index by name and definition, and every enum's values; and the simulation service's role, with the privileges the Public API's manifest declares, writes every modelled table."
+rationale = "libs/policyengine-simulation-persistence/README.md#checking-the-models-against-the-public-api"
+scope = [
+  "libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py",
+  "libs/policyengine-simulation-persistence/public-api-commit",
+  ".github/scripts/public-api-schema-commit.sh",
+  ".github/scripts/public-api-schema-reference.sh",
+  ".github/scripts/public-api-commit-on-default-branch.sh",
+]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "libs/policyengine-simulation-persistence"
+nodes = [
+  "tests/test_public_api_schema.py::test_the_models_match_the_public_api_tables",
+  "tests/test_service_writes.py::test_the_service_role_holds_every_privilege_the_service_needs",
+  "tests/test_service_writes.py::test_the_service_role_creates_and_reads_a_row_in_every_table_it_writes",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "public-api-schema"
+invocation = "uv run --frozen pytest tests/ -v -m public_api_schema"
+[[rule.ci]]
+workflow = ".github/workflows/public-api-schema-drift.yml"
+job = "public-api-schema-drift"
+invocation = "uv run --frozen pytest tests/ -v -m public_api_schema"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.persistence.models-match-public-api/bad_models.json"
+good_fixture = "rules/fixtures/sim.persistence.models-match-public-api/good_models.json"
+project = "libs/policyengine-simulation-persistence"
+test = "tests/test_public_api_schema.py::test_rule_proof_models_match_public_api"
+
 # --- Stage 12 persistence --------------------------------------------------
 
 [[rule]]

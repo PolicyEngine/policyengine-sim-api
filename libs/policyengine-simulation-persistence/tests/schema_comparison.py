@@ -16,13 +16,15 @@ real ones. Tables the models leave out are not compared.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Collection
+    from pathlib import Path
 
     from sqlalchemy import Connection
 
@@ -249,3 +251,27 @@ def schema_differences(models: SchemaShape, real: SchemaShape) -> list[str]:
                 f"the Public API has ({', '.join(actual_values)})"
             )
     return found
+
+
+def schema_to_json(schema: SchemaShape) -> str:
+    """Write a description as JSON, as the rule's proof fixtures store it."""
+    return json.dumps(asdict(schema), indent=2, sort_keys=True) + "\n"
+
+
+def schema_from_json(path: Path) -> SchemaShape:
+    """Read a description that ``schema_to_json`` wrote."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return SchemaShape(
+        tables={
+            name: TableShape(
+                columns={
+                    column_name: ColumnShape(**column)
+                    for column_name, column in table["columns"].items()
+                },
+                constraints=dict(table["constraints"]),
+                indexes=dict(table["indexes"]),
+            )
+            for name, table in payload["tables"].items()
+        },
+        enums={name: tuple(values) for name, values in payload["enums"].items()},
+    )
