@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.2.7] - 2026-11-03
+
+### Changed
+
+- UK constituency and local-authority records no longer have `x` or `y` fields in the contract or in the gateway's OpenAPI document. A record that carries either, even as `null`, is now refused. The contract's pydantic requirement returns to 2.0 or later, since nothing uses field-level `exclude_if` any more.
+
+
 ## [0.2.6] - 2026-11-02
 
 ### Changed
