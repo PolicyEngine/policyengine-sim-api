@@ -51,6 +51,7 @@ jobs:
           - projects/policyengine-simulation-gateway
           - libs/policyengine-simulation-contract
           - libs/policyengine-simulation-observability
+          - libs/policyengine-simulation-persistence
           - libs/policyengine-stage12-persistence
           - libs/policyengine-fastapi
 
@@ -191,6 +192,7 @@ jobs:
         package:
           - libs/policyengine-simulation-contract
           - libs/policyengine-simulation-observability
+          - libs/policyengine-simulation-persistence
           - libs/policyengine-stage12-persistence
           - libs/policyengine-fastapi
           - projects/policyengine-simulation-entry
