@@ -34,6 +34,17 @@ INTRA_DECILE_LABELS = {
     "Gain less than 5%": "gain_less_than_5pct",
     "Gain more than 5%": "gain_more_than_5pct",
 }
+US_POVERTY_TYPES = {"poverty": "spm", "deep_poverty": "spm_deep"}
+UK_POVERTY_TYPES = {"poverty": "relative_bhc", "deep_poverty": "absolute_bhc"}
+# The output part each of .py's poverty filter variables rebuilds; a row
+# with none is everyone's rate, the part's "all".
+POVERTY_PARTS = {
+    None: "poverty",
+    "age": "poverty",
+    "is_male": "poverty_by_gender",
+    "race": "poverty_by_race",
+}
+POVERTY_PART_NAMES = ("poverty", "poverty_by_gender", "poverty_by_race")
 
 
 @pytest.fixture
@@ -121,6 +132,34 @@ def _rebuilt_intra_decile(rows):
     }
 
 
+def _rebuilt_poverty(seeder, run_ids, poverty_types):
+    """Rebuild today's three poverty parts from both simulation runs' rows."""
+    measures = {
+        poverty_type: measure for measure, poverty_type in poverty_types.items()
+    }
+    parts = {}
+    for side, run_id in (
+        ("baseline", run_ids.baseline_simulation_run_id),
+        ("reform", run_ids.reform_simulation_run_id),
+    ):
+        for row in seeder.rows("poverty", simulation_run_id=run_id):
+            assert row["entity"] == "person"
+            # A group needs the variable that selects it, and everyone has neither.
+            assert (row["filter_variable"] is None) == (row["filter_group"] is None)
+            part = parts.setdefault(POVERTY_PARTS[row["filter_variable"]], {})
+            groups = part.setdefault(measures[row["poverty_type"]], {})
+            groups.setdefault(row["filter_group"] or "all", {})[side] = row["rate"]
+    return {name: parts.get(name) for name in POVERTY_PART_NAMES}
+
+
+def _rebuilt_deciles(rows):
+    """Rebuild today's decile part; .py's relative change is a percentage."""
+    return {
+        "average": {str(row["decile"]): row["absolute_change"] for row in rows},
+        "relative": {str(row["decile"]): row["relative_change"] / 100 for row in rows},
+    }
+
+
 def test_a_report_run_stores_its_economy_output_as_rows(
     store, seeder, seeded_run: SeededReportRun
 ) -> None:
@@ -145,6 +184,8 @@ def test_a_report_run_stores_its_economy_output_as_rows(
         [1.0, 2.0]
     )
     assert {row["income_variable"] for row in deciles} == {"household_net_income"}
+    # Income deciles name no separate variable to group households by.
+    assert {row["decile_variable"] for row in deciles} == {None}
     assert all(
         row["baseline_simulation_run_id"] == run_ids.baseline_simulation_run_id
         and row["reform_simulation_run_id"] == run_ids.reform_simulation_run_id
@@ -155,22 +196,14 @@ def test_a_report_run_stores_its_economy_output_as_rows(
     # doesn't carry, so none is written.
     assert sorted(row["decile"] for row in intra) == [1, 2]
     assert _rebuilt_intra_decile(intra) == output["intra_decile"]
+    # Everyone's rates, and those by age, gender and race, under .py's groups.
+    assert _rebuilt_poverty(seeder, run_ids, US_POVERTY_TYPES) == {
+        part: output[part] for part in POVERTY_PART_NAMES
+    }
     for side, run_id in (
         ("baseline", run_ids.baseline_simulation_run_id),
         ("reform", run_ids.reform_simulation_run_id),
     ):
-        # Only everyone's rate has a column with .py's meaning: in .py's rows
-        # a filter variable names the model variable filtered on (age, sex,
-        # race), and the table has no column for the group or its bounds.
-        poverty_rows = seeder.rows("poverty", simulation_run_id=run_id)
-        assert {
-            (row["poverty_type"], row["filter_variable"]): row["rate"]
-            for row in poverty_rows
-        } == {
-            ("spm", None): output["poverty"]["poverty"]["all"][side],
-            ("spm_deep", None): output["poverty"]["deep_poverty"]["all"][side],
-        }
-        assert {row["entity"] for row in poverty_rows} == {"person"}
         (inequality,) = seeder.rows("inequality", simulation_run_id=run_id)
         assert inequality["income_variable"] == "household_net_income"
         assert inequality["entity"] == "household"
@@ -183,25 +216,46 @@ def test_a_report_run_stores_its_economy_output_as_rows(
             output["inequality"]["top_10_pct_share"][side],
             output["inequality"]["top_1_pct_share"][side],
         )
-    report_run = seeder.row("report_runs", run_ids.report_run_id)
-    assert report_run["labor_supply_result"] == output["labor_supply_response"]
-    assert report_run["cliff_impact_result"] == output["cliff_impact"]
+    # The parts with no result table are kept whole for the compared pair.
+    (comparison,) = seeder.rows(
+        "report_run_comparisons", report_run_id=run_ids.report_run_id
+    )
+    assert (
+        comparison["baseline_simulation_run_id"],
+        comparison["reform_simulation_run_id"],
+    ) == (run_ids.baseline_simulation_run_id, run_ids.reform_simulation_run_id)
+    assert comparison["labor_supply_result"] == output["labor_supply_response"]
+    assert comparison["cliff_impact_result"] == output["cliff_impact"]
 
 
-def test_the_uk_output_uses_its_own_poverty_types_and_wealth_shares(
+def test_the_uk_output_uses_its_own_poverty_types_and_wealth_deciles(
     store, seeder, seeded_run: SeededReportRun
 ) -> None:
     run_ids = seeded_run.run_ids
+    output = uk_economy_output()
 
-    _complete(store, seeded_run, output=uk_economy_output(), country="uk")
+    _complete(store, seeded_run, output=output, country="uk")
 
-    poverty_types = {
-        row["poverty_type"]
-        for row in seeder.rows(
-            "poverty", simulation_run_id=run_ids.baseline_simulation_run_id
-        )
+    # No race breakdown outside the US.
+    assert _rebuilt_poverty(seeder, run_ids, UK_POVERTY_TYPES) == {
+        part: output[part] for part in POVERTY_PART_NAMES
     }
-    assert poverty_types == {"relative_bhc", "absolute_bhc"}
+    deciles = seeder.rows("decile_impacts", report_run_id=run_ids.report_run_id)
+    # .py groups wealth deciles' household net income by the wealth decile.
+    wealth_deciles = [
+        row for row in deciles if row["decile_variable"] == "household_wealth_decile"
+    ]
+    assert {row["income_variable"] for row in wealth_deciles} == {
+        "household_net_income"
+    }
+    assert {row["entity"] for row in wealth_deciles} == {"household"}
+    rebuilt_wealth = _rebuilt_deciles(wealth_deciles)
+    assert rebuilt_wealth["average"] == output["wealth_decile"]["average"]
+    assert rebuilt_wealth["relative"] == pytest.approx(
+        output["wealth_decile"]["relative"], rel=1e-12
+    )
+    income_deciles = [row for row in deciles if row["decile_variable"] is None]
+    assert _rebuilt_deciles(income_deciles)["average"] == output["decile"]["average"]
     assert "household_state_income_tax" not in {
         row["variable_name"]
         for row in seeder.rows("budget_summary", report_run_id=run_ids.report_run_id)
@@ -240,6 +294,10 @@ def test_a_repeated_completion_stores_no_second_result(
     assert repeated == RunWrite(changed=False, status=RunStatus.SUCCEEDED)
     assert len(seeder.rows("budget_summary", report_run_id=run_ids.report_run_id)) == 5
     assert len(seeder.rows("decile_impacts", report_run_id=run_ids.report_run_id)) == 2
+    assert (
+        len(seeder.rows("report_run_comparisons", report_run_id=run_ids.report_run_id))
+        == 1
+    )
 
 
 def test_a_result_that_cannot_be_stored_leaves_the_report_run_running(
@@ -259,8 +317,6 @@ def test_a_result_that_cannot_be_stored_leaves_the_report_run_running(
     )
     broken = result.__class__(
         rows=(*[rows for rows in result.rows if rows is not budget], duplicated),
-        labor_supply_result=result.labor_supply_result,
-        cliff_impact_result=result.cliff_impact_result,
     )
 
     with pytest.raises(IntegrityError):
@@ -270,8 +326,12 @@ def test_a_result_that_cannot_be_stored_leaves_the_report_run_running(
 
     report_run = seeder.row("report_runs", run_ids.report_run_id)
     assert report_run["status"] == "running"
-    assert report_run["labor_supply_result"] is None
-    for table_name in ("decile_impacts", "budget_summary", "intra_decile_impacts"):
+    for table_name in (
+        "report_run_comparisons",
+        "decile_impacts",
+        "budget_summary",
+        "intra_decile_impacts",
+    ):
         assert seeder.rows(table_name, report_run_id=run_ids.report_run_id) == []
     assert (
         seeder.rows("poverty", simulation_run_id=run_ids.baseline_simulation_run_id)
@@ -292,6 +352,7 @@ def test_a_shared_simulation_run_keeps_the_results_first_stored_for_it(
                 poverty_type="spm",
                 entity="person",
                 filter_variable=None,
+                filter_group=None,
                 rate=0.5,
             )
         )
@@ -302,10 +363,16 @@ def test_a_shared_simulation_run_keeps_the_results_first_stored_for_it(
         "poverty",
         simulation_run_id=run_ids.baseline_simulation_run_id,
         poverty_type="spm",
+        filter_variable=None,
     )
     assert [row["rate"] for row in stored] == [0.5]
+    # Everyone, three ages and two genders under both poverty types, and four
+    # races under SPM poverty; the baseline gains all but the stored one.
+    baseline = seeder.rows(
+        "poverty", simulation_run_id=run_ids.baseline_simulation_run_id
+    )
     reform = seeder.rows("poverty", simulation_run_id=run_ids.reform_simulation_run_id)
-    assert len(reform) == 2
+    assert len(reform) == len(baseline) == 16
 
 
 def test_the_detailed_budget_districts_and_receipts_are_stored_losslessly(
@@ -355,9 +422,9 @@ def test_the_detailed_budget_districts_and_receipts_are_stored_losslessly(
     )
     # Census GEOIDs: an at-large district is numbered 00.
     assert {row["district_geoid"] for row in districts} == {101, 107, 200, 612}
-    report_run = seeder.row("report_runs", report_run_id)
-    assert report_run["spm_provenance"] == output["spm_provenance"]
-    assert report_run["data_version"] == output["data_version"]
+    (comparison,) = seeder.rows("report_run_comparisons", report_run_id=report_run_id)
+    assert comparison["spm_provenance"] == output["spm_provenance"]
+    assert comparison["data_version"] == output["data_version"]
 
 
 def test_the_uk_area_impacts_are_stored_with_their_disclosure_fields(

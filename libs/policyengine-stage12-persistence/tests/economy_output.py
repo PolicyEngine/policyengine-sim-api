@@ -124,6 +124,10 @@ def uk_economy_output() -> dict[str, Any]:
     output = deepcopy(US_ECONOMY_OUTPUT)
     output["poverty_by_race"] = None
     output["budget"]["state_tax_revenue_impact"] = 0.0
+    output["wealth_decile"] = {
+        "relative": {"1": 0.03, "2": 0.04},
+        "average": {"1": 30.0, "2": 40.0},
+    }
     output["intra_wealth_decile"] = deepcopy(output["intra_decile"])
     wealth = output["intra_wealth_decile"]
     wealth["deciles"]["No change"] = [0.4, 0.6]

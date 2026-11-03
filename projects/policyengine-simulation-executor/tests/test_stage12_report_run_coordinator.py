@@ -120,8 +120,10 @@ def test_coordinator_completes_its_report_run_with_the_economy_output_as_rows() 
     assert budget["household_tax"]["report_run_id"] == REPORT_RUN_ID
     # The shared report is a US one, so its poverty rows use the SPM types.
     assert {row["poverty_type"] for row in rows["poverty"]} == {"spm", "spm_deep"}
+    (comparison,) = rows["report_run_comparisons"]
+    assert comparison["report_run_id"] == REPORT_RUN_ID
     assert (
-        result.labor_supply_result
+        comparison["labor_supply_result"]
         == (CURRENT_SINGLE_YEAR_MACRO_RESULT["labor_supply_response"])
     )
     # Alabama's first district, by .py's state FIPS codes.

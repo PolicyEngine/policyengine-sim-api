@@ -4,8 +4,9 @@ The output is the single-year economy result Stage 12's coordinator builds,
 in the format API v1 and v3 read today. Each part with a lossless place in a
 result table becomes rows: per-report parts keyed by the report run and its
 two simulation runs, poverty and inequality keyed by each simulation run. The
-labour supply response, cliff impact and SPM receipts are stored whole on the
-report run, with the data version.
+labour supply response, cliff impact and SPM receipts, which no result table
+holds, are stored whole with the data version, in one ``report_run_comparisons``
+row for the report run and its two simulation runs.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
-from sqlalchemy import Boolean, Column, Float, Integer, String, Table
+from sqlalchemy import JSON, Boolean, Column, Float, Integer, String, Table
 from sqlalchemy.dialects.postgresql import ENUM, UUID
 
 from policyengine_stage12_persistence.report_run_tables import metadata
@@ -24,8 +25,10 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from policyengine_simulation_contract.macro_output import (
+        BaselineReformValue,
         CongressionalDistrictImpactRecord,
         ConstituencyImpactRecord,
+        DecileOutput,
         GeographicImpactOutput,
         IntraDecileOutput,
         LocalAuthorityImpactRecord,
@@ -51,6 +54,15 @@ def _simulation_run_keys() -> tuple[Column[Any], ...]:
     )
 
 
+report_run_comparisons = Table(
+    "report_run_comparisons",
+    metadata,
+    *_report_run_keys(),
+    Column("labor_supply_result", JSON(none_as_null=True)),
+    Column("cliff_impact_result", JSON(none_as_null=True)),
+    Column("spm_provenance", JSON(none_as_null=True)),
+    Column("data_version", String(128)),
+)
 program_statistics = Table(
     "program_statistics",
     metadata,
@@ -127,6 +139,7 @@ decile_impacts = Table(
     metadata,
     *_report_run_keys(),
     Column("income_variable", String(512), nullable=False),
+    Column("decile_variable", String(512)),
     Column("entity", String(128), nullable=False),
     Column("decile", Integer, nullable=False),
     Column("quantiles", Integer, nullable=False),
@@ -152,6 +165,7 @@ poverty = Table(
     Column("poverty_type", String(128), nullable=False),
     Column("entity", String(128), nullable=False),
     Column("filter_variable", String(512)),
+    Column("filter_group", String(64)),
     Column("rate", Float),
 )
 inequality = Table(
@@ -180,6 +194,13 @@ POVERTY_TYPES = {
     "us": {"poverty": "spm", "deep_poverty": "spm_deep"},
     "uk": {"poverty": "relative_bhc", "deep_poverty": "absolute_bhc"},
 }
+# .py's poverty groups (``policyengine.outputs.poverty``), named as the
+# output's parts name them; ``age``, ``is_male`` and ``race`` select them.
+AGE_GROUPS = ("child", "adult", "senior")
+GENDER_GROUPS = ("male", "female")
+RACE_GROUPS = ("white", "black", "hispanic", "other")
+# The variable .py groups UK wealth deciles' household net income by.
+WEALTH_DECILE_VARIABLE = "household_wealth_decile"
 INEQUALITY_INCOME_VARIABLES = {
     "us": "household_net_income",
     "uk": "equiv_hbai_household_net_income",
@@ -231,10 +252,6 @@ class ReportRunResult:
     """Everything a report run's economy output is stored as."""
 
     rows: tuple[ResultRows, ...]
-    labor_supply_result: dict[str, Any] | None
-    cliff_impact_result: dict[str, Any] | None
-    spm_provenance: dict[str, Any] | None = None
-    data_version: str | None = None
 
 
 def report_run_result(
@@ -260,8 +277,17 @@ def report_run_result(
         "reform_simulation_run_id": run_ids.reform_simulation_run_id,
     }
     dumped = economy.model_dump(mode="json")
+    comparison = {
+        "id": uuid4(),
+        **report_keys,
+        "labor_supply_result": dumped["labor_supply_response"],
+        "cliff_impact_result": dumped["cliff_impact"],
+        "spm_provenance": dumped["spm_provenance"],
+        "data_version": economy.data_version,
+    }
     return ReportRunResult(
         rows=(
+            ResultRows(report_run_comparisons, (comparison,), shared_by_reports=False),
             ResultRows(
                 budget_summary,
                 _budget_rows(economy, report_keys, country),
@@ -310,10 +336,6 @@ def report_run_result(
                 shared_by_reports=False,
             ),
         ),
-        labor_supply_result=dumped["labor_supply_response"],
-        cliff_impact_result=dumped["cliff_impact"],
-        spm_provenance=dumped["spm_provenance"],
-        data_version=economy.data_version,
     )
 
 
@@ -429,19 +451,34 @@ def _budget_rows(
 def _decile_rows(
     economy: SingleYearMacroOutput, keys: Mapping[str, Any]
 ) -> tuple[dict[str, Any], ...]:
+    rows = _decile_type_rows(economy.decile, None, keys)
+    if economy.wealth_decile is not None:
+        rows += _decile_type_rows(economy.wealth_decile, WEALTH_DECILE_VARIABLE, keys)
+    return rows
+
+
+def _decile_type_rows(
+    deciles: DecileOutput, decile_variable: str | None, keys: Mapping[str, Any]
+) -> tuple[dict[str, Any], ...]:
+    """Return the change in household net income in each decile.
+
+    Income deciles rank households by that income, so they name no separate
+    ``decile_variable``; wealth deciles name the variable that ranks them.
+    """
     return tuple(
         {
             "id": uuid4(),
             **keys,
             "income_variable": "household_net_income",
+            "decile_variable": decile_variable,
             "entity": "household",
             "decile": int(decile),
             "quantiles": 10,
             "absolute_change": average,
             # .py's rows hold a percentage; today's output, a fraction.
-            "relative_change": economy.decile.relative[decile] * 100,
+            "relative_change": deciles.relative[decile] * 100,
         }
-        for decile, average in economy.decile.average.items()
+        for decile, average in deciles.average.items()
     )
 
 
@@ -483,30 +520,53 @@ def _intra_decile_type_rows(
 def _poverty_rows(
     economy: SingleYearMacroOutput, run_ids: ReportRunIds, country: str
 ) -> tuple[dict[str, Any], ...]:
-    """Return each simulation run's poverty and deep poverty rate for everyone.
+    """Return each simulation run's poverty rates, for everyone and by group.
 
-    In .py's rows a filter variable names the model variable a group is
-    filtered on (age, sex, race), with its bounds, and the table has columns
-    for neither the group nor the bounds; the age, gender and race rates
-    therefore have no lossless column and are not written.
+    As in .py's rows, ``filter_variable`` names the variable that selects a
+    group and ``filter_group`` the group; both are null for everyone.
     """
     poverty_types = POVERTY_TYPES[country]
-    everyone = {
-        "poverty": economy.poverty.poverty.all,
-        "deep_poverty": economy.poverty.deep_poverty.all,
-    }
     return tuple(
         {
             "id": uuid4(),
             "simulation_run_id": simulation_run_id,
             "poverty_type": poverty_types[measure],
             "entity": "person",
-            "filter_variable": None,
+            "filter_variable": filter_variable,
+            "filter_group": filter_group,
             "rate": getattr(rates, side),
         }
         for side, simulation_run_id in _sides(run_ids)
-        for measure, rates in everyone.items()
+        for measure, filter_variable, filter_group, rates in _poverty_rates(economy)
     )
+
+
+def _poverty_rates(
+    economy: SingleYearMacroOutput,
+) -> list[tuple[str, str | None, str | None, BaselineReformValue]]:
+    """Return each measure's rates with the variable and group that select them.
+
+    Ages and genders have both measures; the output breaks only poverty, not
+    deep poverty, down by race, and only in the US.
+    """
+    rates: list[tuple[str, str | None, str | None, BaselineReformValue]] = []
+    for measure in ("poverty", "deep_poverty"):
+        by_age = getattr(economy.poverty, measure)
+        by_gender = getattr(economy.poverty_by_gender, measure)
+        rates.append((measure, None, None, by_age.all))
+        rates += [
+            (measure, "age", group, getattr(by_age, group)) for group in AGE_GROUPS
+        ]
+        rates += [
+            (measure, "is_male", group, getattr(by_gender, group))
+            for group in GENDER_GROUPS
+        ]
+    if economy.poverty_by_race is not None:
+        by_race = economy.poverty_by_race.poverty
+        rates += [
+            ("poverty", "race", group, getattr(by_race, group)) for group in RACE_GROUPS
+        ]
+    return rates
 
 
 def _inequality_rows(

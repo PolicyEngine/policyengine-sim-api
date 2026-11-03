@@ -7,7 +7,7 @@ the coordinator and workers can issue typed DML; runtime code never emits DDL.
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table
+from sqlalchemy import Column, DateTime, MetaData, String, Table
 from sqlalchemy.dialects.postgresql import ENUM, UUID
 
 RUN_STATUS_VALUES = ("pending", "running", "succeeded", "failed")
@@ -41,10 +41,6 @@ report_runs = Table(
     Column("started_at", DateTime(timezone=True)),
     Column("completed_at", DateTime(timezone=True)),
     Column("updated_at", DateTime(timezone=True), nullable=False),
-    Column("labor_supply_result", JSON(none_as_null=True)),
-    Column("cliff_impact_result", JSON(none_as_null=True)),
-    Column("spm_provenance", JSON(none_as_null=True)),
-    Column("data_version", String(128)),
 )
 
 simulation_runs = Table(

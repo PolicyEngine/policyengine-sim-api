@@ -34,6 +34,7 @@ SEEDED_TABLES = (
     "report_runs",
     "simulation_runs",
     "report_run_simulation_runs",
+    "report_run_comparisons",
     "budget_summary",
     "decile_impacts",
     "intra_decile_impacts",
