@@ -4,6 +4,7 @@ These tests run against the staging Modal deployment and verify
 that economy-wide simulations complete successfully.
 """
 
+import inspect
 import json
 import time
 from collections.abc import Mapping
@@ -14,10 +15,12 @@ from typing import Protocol, TypeGuard, cast
 import pytest
 from policyengine_api_simulation_client import AuthenticatedClient, Client
 from policyengine_api_simulation_client.models import (
+    ConstituencyImpactRecord,
     JobStage,
     JobStatusResponse,
     JobSubmitResponse,
     LocalAreaBreakdownOutput,
+    LocalAuthorityImpactRecord,
     SimulationRequest,
 )
 
@@ -272,8 +275,9 @@ def assert_uk_local_area_breakdown(breakdown_result: object) -> None:
     """Check a local-area breakdown came from the local-area dataset.
 
     Both area levels must publish at least one area, and every published area
-    must carry a disclosure tier. Each level must list the codes of the areas
-    disclosure control withheld, sorted and without a published area.
+    must carry a disclosure tier and no x or y, which the executor no longer
+    sends. Each level must list the codes of the areas disclosure control
+    withheld, sorted and without a published area.
     """
     breakdown = _as_mapping(breakdown_result, label="local-area breakdown")
     assert breakdown.get("kind") == "local_areas", (
@@ -293,6 +297,10 @@ def assert_uk_local_area_breakdown(breakdown_result: object) -> None:
             record = _as_mapping(area, label=f"{key} record")
             assert record.get("disclosure_tier") in _PUBLISHED_DISCLOSURE_TIERS, (
                 f"Expected a published disclosure_tier in {key}, got {record}"
+            )
+            map_position = {"x", "y"} & set(record)
+            assert not map_position, (
+                f"Expected {key} records without x or y, got {record}"
             )
             published_codes.add(record.get(code_key))
         assert_withheld_area_codes(breakdown, withheld_key, published_codes)
@@ -360,8 +368,6 @@ def test_result_assertions_accept_generated_client_objects() -> None:
 _BREAKDOWN_CONSTITUENCY = {
     "constituency_code": "E14001063",
     "constituency_name": "Aldershot",
-    "x": 56,
-    "y": -40,
     "average_household_income_change": -150.0,
     "relative_household_income_change": -0.0026,
     "population": 40530.0,
@@ -374,8 +380,6 @@ _BREAKDOWN_CONSTITUENCY = {
 _BREAKDOWN_LOCAL_AUTHORITY = {
     "local_authority_code": "E06000063",
     "local_authority_name": "Cumberland",
-    "x": 4,
-    "y": 18,
     "average_household_income_change": -120.0,
     "relative_household_income_change": -0.002,
     "population": 120000.0,
@@ -408,6 +412,13 @@ def test_breakdown_assertions_accept_generated_client_objects() -> None:
 
 
 @pytest.mark.parametrize(
+    "record_model", [ConstituencyImpactRecord, LocalAuthorityImpactRecord]
+)
+def test_generated_client_area_records_have_no_x_or_y(record_model: type) -> None:
+    assert {"x", "y"}.isdisjoint(inspect.signature(record_model).parameters)
+
+
+@pytest.mark.parametrize(
     ("change", "message"),
     [
         ({"dataset": "microcosm_uk_2024_25"}, "local-area dataset"),
@@ -429,6 +440,18 @@ def test_breakdown_assertions_accept_generated_client_objects() -> None:
             "sorted",
         ),
         ({"local_authority_withheld_codes": ["E06000063"]}, "published"),
+        (
+            {"constituency_impact": [{**_BREAKDOWN_CONSTITUENCY, "x": 56, "y": -40}]},
+            "x or y",
+        ),
+        (
+            {
+                "local_authority_impact": [
+                    {**_BREAKDOWN_LOCAL_AUTHORITY, "x": 4, "y": 18}
+                ]
+            },
+            "x or y",
+        ),
     ],
 )
 def test_breakdown_assertions_reject_an_incomplete_breakdown(change, message) -> None:

@@ -1106,28 +1106,6 @@
             "type": "string",
             "title": "Constituency Name"
           },
-          "x": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "X"
-          },
-          "y": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Y"
-          },
           "average_household_income_change": {
             "type": "number",
             "title": "Average Household Income Change"
@@ -1146,14 +1124,12 @@
         "required": [
           "constituency_code",
           "constituency_name",
-          "x",
-          "y",
           "average_household_income_change",
           "relative_household_income_change",
           "population"
         ],
         "title": "ConstituencyImpactRecord",
-        "description": "Reform impact on household net income in one UK parliamentary constituency.\n\n``average_household_income_change`` is the average change per household and\n``relative_household_income_change`` the relative change in the area's total\nhousehold net income, both rounded to the order of their standard error.\n``population`` is the weighted number of households. ``x`` and ``y`` are\ninteger map-rendering coordinates."
+        "description": "Reform impact on household net income in one UK parliamentary constituency.\n\n``average_household_income_change`` is the average change per household and\n``relative_household_income_change`` the relative change in the area's total\nhousehold net income, both rounded to the order of their standard error.\n``population`` is the weighted number of households."
       },
       "DecileOutput": {
         "properties": {
@@ -1838,7 +1814,7 @@
           "local_authority_impact"
         ],
         "title": "LocalAreaBreakdownOutput",
-        "description": "Completed result of a UK local-area breakdown run.\n\nA request with ``breakdown: \"local_areas\"`` returns this instead of a\n``SingleYearMacroOutput``. The run covers the requested UK-wide or nation\nregion on the local-area dataset alone, and computes only the\nconstituency and local-authority impacts; every other figure comes from\nthe national run. ``kind`` is always ``local_areas``. ``dataset`` names the\nlocal-area dataset, ``data_version`` its release revision, and\n``model_version`` and ``policyengine_version`` the country model and the\npolicyengine.py release that computed it. Each list holds only its own\nlevel's records. Areas whose income change disclosure control withholds\nare left out of each list, so a list may be empty.\n\n``constituency_withheld_codes`` and ``local_authority_withheld_codes``\nhold, sorted, the ONS codes of that level's areas that the run estimated\nbut disclosure control did not publish, so a client can tell a withheld\narea from an absent one. An area the run never estimated, such as one with\nno households in the dataset, is in neither list. An empty list means\nthat no area of the level was withheld. Null means that the result does\nnot report them, as results from older executors do not."
+        "description": "Completed result of a UK local-area breakdown run.\n\nA request with ``breakdown: \"local_areas\"`` returns this instead of a\n``SingleYearMacroOutput``. The run covers the requested UK-wide or nation\nregion on the local-area dataset alone, and computes only the\nconstituency and local-authority impacts; every other figure comes from\nthe national run. ``kind`` is always ``local_areas``. ``dataset`` names the\nlocal-area dataset, ``data_version`` its release revision, and\n``model_version`` and ``policyengine_version`` the country model and the\npolicyengine.py release that computed it. Each list holds only its own\nlevel's records. Areas whose income change disclosure control withholds\nare left out of each list, so a list may be empty.\n\n``constituency_withheld_codes`` and ``local_authority_withheld_codes``\nhold, sorted, the ONS codes of that level's areas that the run estimated\nbut disclosure control did not publish, so a client can tell a withheld\narea from an absent one. An area the run never estimated, such as one with\nno households in the dataset, is in neither list. An empty list means\nthat no area of the level was withheld. Null means that the result does\nnot report them, as results from older executors do not; the JSON then\nleaves both keys out rather than writing null."
       },
       "LocalAuthorityImpactRecord": {
         "properties": {
@@ -1909,28 +1885,6 @@
             "type": "string",
             "title": "Local Authority Name"
           },
-          "x": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "X"
-          },
-          "y": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Y"
-          },
           "average_household_income_change": {
             "type": "number",
             "title": "Average Household Income Change"
@@ -1949,8 +1903,6 @@
         "required": [
           "local_authority_code",
           "local_authority_name",
-          "x",
-          "y",
           "average_household_income_change",
           "relative_household_income_change",
           "population"

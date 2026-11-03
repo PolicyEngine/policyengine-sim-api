@@ -162,6 +162,75 @@ class TestSubmitSimulationEndpoint:
         assert response.json()["status"] == "complete"
         assert response.json()["result"] == LOCAL_AREA_BREAKDOWN_RESULT
 
+    def test__given_breakdown_records_without_x_and_y__then_json_has_no_x_or_y(
+        self, mock_modal, client: TestClient
+    ):
+        constituency = LOCAL_AREA_BREAKDOWN_RESULT["constituency_impact"][0]
+        local_authority = {
+            "local_authority_code": "E06000063",
+            "local_authority_name": "Cumberland",
+            "average_household_income_change": -120.0,
+            "relative_household_income_change": -0.002,
+            "population": 120000.0,
+            "disclosure_tier": "approximate",
+            "average_household_income_change_lower": -160.0,
+            "average_household_income_change_upper": -80.0,
+            "relative_household_income_change_lower": -0.003,
+            "relative_household_income_change_upper": -0.001,
+        }
+        submit_response = client.post(
+            "/simulate/economy/comparison",
+            json={"country": "uk", "scope": "macro", "region": "uk", "reform": {}},
+        )
+        mock_modal["func"].last_call.result = {
+            **LOCAL_AREA_BREAKDOWN_RESULT,
+            "local_authority_impact": [local_authority],
+        }
+
+        response = client.get(f"/jobs/{submit_response.json()['job_id']}")
+
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["constituency_impact"] == [constituency]
+        assert result["local_authority_impact"] == [local_authority]
+
+    def test__given_national_records_without_x_and_y__then_json_has_no_x_or_y(
+        self, mock_modal, client: TestClient
+    ):
+        constituency = LOCAL_AREA_BREAKDOWN_RESULT["constituency_impact"][0]
+        submit_response = client.post(
+            "/simulate/economy/comparison",
+            json={"country": "uk", "scope": "macro", "region": "uk", "reform": {}},
+        )
+        call = mock_modal["func"].last_call
+        call.result = {**call.result, "constituency_impact": [constituency]}
+
+        response = client.get(f"/jobs/{submit_response.json()['job_id']}")
+
+        assert response.status_code == 200
+        assert response.json()["result"]["constituency_impact"] == [constituency]
+
+    def test__given_records_with_x_and_y__then_the_job_fails(
+        self, mock_modal, client: TestClient
+    ):
+        # The contract no longer has x and y, so a result whose records carry
+        # them fails validation. This is why the contract change waits until no
+        # breakdown started before the executor stopped sending them is running.
+        constituency = LOCAL_AREA_BREAKDOWN_RESULT["constituency_impact"][0]
+        submit_response = client.post(
+            "/simulate/economy/comparison",
+            json={"country": "uk", "scope": "macro", "region": "uk", "reform": {}},
+        )
+        mock_modal["func"].last_call.result = {
+            **LOCAL_AREA_BREAKDOWN_RESULT,
+            "constituency_impact": [{**constituency, "x": 56, "y": -40}],
+        }
+
+        response = client.get(f"/jobs/{submit_response.json()['job_id']}")
+
+        assert response.status_code == 500
+        assert response.json()["status"] == "failed"
+
     def test__given_running_job__then_polling_returns_202(
         self, mock_modal, client: TestClient
     ):

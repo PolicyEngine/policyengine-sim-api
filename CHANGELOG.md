@@ -10,6 +10,52 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.3.0] - 2026-11-03
+
+### Added
+
+- UK local-area breakdown results (`LocalAreaBreakdownOutput`, the result of a `breakdown=local_areas` run) can now carry two optional fields, `constituency_withheld_codes` and `local_authority_withheld_codes`, and the contract and the gateway accept a result with or without them. Each will hold, sorted, the ONS codes of that level's areas that the run estimated but disclosure control did not publish: `[]` when none were withheld, and never an area the run did not estimate. No executor fills them yet.
+
+  A result without them still validates, and its JSON leaves both keys out rather than writing `null`. This uses field-level `exclude_if`, so the contract now requires pydantic 2.12 or later. The gateway's OpenAPI document lists both fields as optional.
+
+
+## [0.2.8] - 2026-11-03
+
+### Changed
+
+- Started no Stage 12 shadow comparison for a US state request (a `state/*` region in any case, or a bare two-letter code, which the runtime reads as a state), since the app will run every state for a nationwide report's congressional district view and Stage 12 is being replaced; the entry logs `stage12_comparison_run_skipped` with the new reason `excluded_us_state_region`, only for state requests the adapter would otherwise have compared. US national, congressional district and place requests and UK requests are compared as before, and the operator direct-submission route still accepts state regions.
+
+
+## [0.2.7] - 2026-11-03
+
+### Changed
+
+- UK constituency and local-authority records no longer have `x` or `y` fields in the contract or in the gateway's OpenAPI document. A record that carries either, even as `null`, is now refused. The contract's pydantic requirement returns to 2.0 or later, since nothing uses field-level `exclude_if` any more.
+
+
+## [0.2.6] - 2026-11-02
+
+### Changed
+
+- The executor no longer sends `x` or `y` on UK constituency and local-authority records. It no longer reads the `x` and `y` columns of policyengine.py's constituency lookup or attaches its packaged local-authority positions, and it no longer refuses a published area without a map position. Results it returns from now on carry neither key, which the contract already allows (#984). The beta integration check of a local-area breakdown now requires records without them.
+
+  The executor no longer ships `coordinates_lad22.csv` and `coordinates_lad23.csv`. Each boundary version's local-authority codes now come from `codes_lad22.csv` and `codes_lad23.csv`, which list exactly the codes the coordinate files did, so detecting LAD22 or LAD23 codes, and its checks, are unchanged. The Stage 12 static runtime file smoke test reports `lad22_codes` and `lad23_codes` instead of `lad22_coordinates` and `lad23_coordinates`.
+
+
+## [0.2.5] - 2026-11-02
+
+### Changed
+
+- Updated policyengine.py from 6.11.1 to 6.12.0 in the simulation runtime.
+
+
+## [0.2.4] - 2026-11-02
+
+### Changed
+
+- The `x` and `y` fields of UK constituency and local-authority records, each area's integer position on the hex map, are now optional in the contract, as the first of three steps that remove them. A record validates with or without them, and one without them leaves both keys out of its JSON instead of writing `null`. The executor still sends both. The gateway's OpenAPI document no longer lists them as required, and the contract now requires pydantic 2.12 or later, the first release with field-level `exclude_if`.
+
+
 ## [0.2.3] - 2026-10-30
 
 ### Changed
