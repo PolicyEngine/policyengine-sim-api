@@ -34,6 +34,11 @@ SEEDED_TABLES = (
     "report_runs",
     "simulation_runs",
     "report_run_simulation_runs",
+    "budget_summary",
+    "decile_impacts",
+    "intra_decile_impacts",
+    "poverty",
+    "inequality",
 )
 NOW = datetime(2026, 11, 4, tzinfo=UTC)
 VERSIONS = {"country_package_version": "1.0.0", "policyengine_version": "6.12.0"}

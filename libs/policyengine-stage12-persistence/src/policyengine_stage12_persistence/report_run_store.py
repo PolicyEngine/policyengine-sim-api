@@ -10,9 +10,10 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, func, insert, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from policyengine_stage12_persistence.report_run_tables import (
     report_run_simulation_runs,
@@ -26,13 +27,15 @@ from policyengine_stage12_persistence.store import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from datetime import datetime
     from uuid import UUID
 
     from policyengine_simulation_contract.stage12_execution import ReportRunIds
     from sqlalchemy import Engine, Table, Update
     from sqlalchemy.engine import Connection
+
+    from policyengine_stage12_persistence.report_run_results import ReportRunResult
 
 
 class RunStatus(StrEnum):
@@ -150,8 +153,16 @@ class ReportRunStore:
         *,
         modal_call_id: str,
         completed_at: datetime,
+        result: ReportRunResult | None = None,
     ) -> RunWrite:
-        """Mark the report run succeeded while ``modal_call_id`` holds it running."""
+        """Mark the report run succeeded while ``modal_call_id`` holds it running.
+
+        ``result``'s rows are inserted in the same transaction, only when the
+        status changed, so a repeated completion stores nothing twice and a
+        failed insert leaves the run running. A row of a simulation run that
+        already has one for the same measure, from a report run sharing that
+        simulation run, keeps the stored row.
+        """
         statement = (
             update(report_runs)
             .where(
@@ -164,10 +175,22 @@ class ReportRunStore:
                 error_message=None,
                 completed_at=completed_at,
                 updated_at=completed_at,
+                **(
+                    {
+                        "labor_supply_result": result.labor_supply_result,
+                        "cliff_impact_result": result.cliff_impact_result,
+                    }
+                    if result is not None
+                    else {}
+                ),
             )
         )
         return self._write(
-            report_runs, run_ids.report_run_id, statement, "complete_report_run"
+            report_runs,
+            run_ids.report_run_id,
+            statement,
+            "complete_report_run",
+            after_change=None if result is None else _result_inserts(result),
         )
 
     def fail_report_run(
@@ -283,16 +306,21 @@ class ReportRunStore:
         run_id: UUID,
         statement: Update,
         operation_name: str,
+        *,
+        after_change: Callable[[Connection], None] | None = None,
     ) -> RunWrite:
         """Run a conditional update; return whether it changed the run, and its status.
 
-        Raises LookupError when the run does not exist.
+        ``after_change`` runs in the same transaction, only after the update
+        changed the run. Raises LookupError when the run does not exist.
         """
         with self._transaction(operation_name) as connection:
             changed = connection.execute(
                 statement.returning(table.c.status)
             ).scalar_one_or_none()
             if changed is not None:
+                if after_change is not None:
+                    after_change(connection)
                 return RunWrite(changed=True, status=RunStatus(changed))
             current = connection.execute(
                 select(table.c.status).where(table.c.id == run_id)
@@ -302,3 +330,26 @@ class ReportRunStore:
             msg = f"{noun} {run_id} does not exist"
             raise LookupError(msg)
         return RunWrite(changed=False, status=RunStatus(current))
+
+
+def _result_inserts(result: ReportRunResult) -> Callable[[Connection], None]:
+    """Return the step that inserts ``result``'s rows on an open transaction."""
+
+    def insert_rows(connection: Connection) -> None:
+        for result_rows in result.rows:
+            if not result_rows.rows:
+                continue
+            statement = (
+                postgresql_insert(result_rows.table).on_conflict_do_nothing()
+                if result_rows.shared_by_reports
+                else insert(result_rows.table)
+            )
+            connection.execute(statement, _uniform_rows(result_rows.rows))
+
+    return insert_rows
+
+
+def _uniform_rows(rows: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
+    """Give every row the same columns, unset ones null, for one batched insert."""
+    columns = {name for row in rows for name in row}
+    return [dict.fromkeys(columns) | row for row in rows]
