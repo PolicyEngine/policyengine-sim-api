@@ -100,8 +100,10 @@ uv sync --extra test
 uv run pytest tests/
 ```
 
-Tests marked `public_api_schema` need a database the Public API's own v2
-migration chain built, with the privileges its manifest declares granted:
+Tests marked `public_api_schema` run in the `Public API schema` jobs; the
+rule's proof among them needs no database, and the others need one the
+Public API's own v2 migration chain built, with the privileges its manifest
+declares granted:
 set `PUBLIC_API_SCHEMA_DATABASE_URL` to that database's superuser URL.
 `test_service_writes` creates a row in every modelled table as the service's
 role and rolls it back; the comparison in `test_public_api_schema` also needs

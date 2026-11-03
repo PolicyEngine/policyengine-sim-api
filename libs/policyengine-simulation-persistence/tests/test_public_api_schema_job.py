@@ -8,12 +8,15 @@ commit to be on the Public API's default branch.
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
+import tomllib
 import yaml
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 PR_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "pr.yml"
+REGISTRY = REPOSITORY_ROOT / "rules" / "registry.toml"
 JOB_ID = "public-api-schema"
 PIN_FILE = "libs/policyengine-simulation-persistence/public-api-commit"
 DRIFT_WORKFLOW = (
@@ -134,13 +137,31 @@ def test_the_weekly_run_reads_no_secret() -> None:
     assert workflow["permissions"] == {"contents": "read"}
 
 
-def test_the_rule_proof_runs_in_the_jobs_that_enforce_the_rule() -> None:
-    """The jobs select ``-m public_api_schema``; an unmarked proof is skipped."""
-    from test_public_api_schema import test_rule_proof_models_match_public_api
+def test_every_test_the_rule_names_runs_in_its_jobs_alone() -> None:
+    """The jobs select ``-m public_api_schema``; an unmarked test leaves them.
 
-    marks = {mark.name for mark in test_rule_proof_models_match_public_api.pytestmark}
+    The rules guard trusts the jobs' pytest command without reading markers,
+    so this checks each test the rule names, its proof included, and that
+    none is also marked ``postgres``, which the Simulation database job
+    selects and where it could only skip.
+    """
+    rule = next(
+        entry
+        for entry in tomllib.loads(REGISTRY.read_text(encoding="utf-8"))["rule"]
+        if entry["id"] == "sim.persistence.models-match-public-api"
+    )
+    node_ids = [*rule["enforcer"]["nodes"], rule["proof"]["test"]]
 
-    assert "public_api_schema" in marks
+    for node_id in node_ids:
+        module_path, test_name = node_id.split("::")
+        module = importlib.import_module(Path(module_path).stem)
+        module_marks = getattr(module, "pytestmark", [])
+        if not isinstance(module_marks, list):
+            module_marks = [module_marks]
+        test_marks = getattr(getattr(module, test_name), "pytestmark", [])
+        marks = {mark.name for mark in [*module_marks, *test_marks]}
+        assert "public_api_schema" in marks, node_id
+        assert "postgres" not in marks, node_id
 
 
 def test_no_checkout_leaves_a_token_while_the_public_api_code_runs() -> None:

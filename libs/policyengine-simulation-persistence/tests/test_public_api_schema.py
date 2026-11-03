@@ -34,7 +34,8 @@ def _engine(database_url: str):
     return create_engine(make_url(database_url).set(drivername="postgresql+psycopg"))
 
 
-@pytest.mark.postgres
+# Not marked postgres: the Simulation database job, which selects that
+# marker, has no Public API database, so the test could only skip there.
 @pytest.mark.public_api_schema
 def test_the_models_match_the_public_api_tables(
     disposable_database, public_api_database_url
