@@ -39,20 +39,21 @@ def _engine(database_url: str):
 def test_the_models_match_the_public_api_tables(
     disposable_database, public_api_database_url
 ) -> None:
+    table_names = [table.name for table in service_metadata.tables.values()]
     models_engine = _engine(disposable_database.superuser_url)
     real_engine = _engine(public_api_database_url)
     try:
         # Tests may build the models' tables; runtime code never does.
         service_metadata.create_all(models_engine)
         with models_engine.connect() as connection:
-            models = describe_tables(connection, service_metadata.tables)
+            models = describe_tables(connection, table_names)
         with real_engine.connect() as connection:
-            real = describe_tables(connection, service_metadata.tables)
+            real = describe_tables(connection, table_names)
     finally:
         models_engine.dispose()
         real_engine.dispose()
 
-    assert set(models.tables) == set(service_metadata.tables)
+    assert set(models.tables) == set(table_names)
     compared_with = os.environ.get(COMMIT_VARIABLE) or "an unrecorded commit"
     assert schema_differences(models, real) == [], (
         f"compared with the Public API at {compared_with}"
