@@ -54,7 +54,9 @@ def test_runtime_engine_never_prepares_server_side_statements(monkeypatch) -> No
         capture_engine,
     )
 
-    create_simulation_engine("postgresql://simulation_service:secret@db.example/postgres")
+    create_simulation_engine(
+        "postgresql://simulation_service:secret@db.example/postgres"
+    )
 
     assert captured_options["url"].drivername == "postgresql+psycopg"
     assert captured_options["connect_args"]["prepare_threshold"] is None

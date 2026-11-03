@@ -112,9 +112,7 @@ def _ready_body(*, reachable=True, missing_privileges=()):
             "status": "ready",
             "simulation_database": {
                 "reachable": reachable,
-                "missing_privileges": (
-                    list(missing_privileges) if reachable else None
-                ),
+                "missing_privileges": (list(missing_privileges) if reachable else None),
             },
         }
     )
