@@ -93,10 +93,15 @@ class HouseholdJobStatus(StrEnum):
 
 
 def _enum_type(values: type[StrEnum], name: str) -> Enum:
-    """Store each member's value, under the Postgres type the chain names."""
+    """Store each member's value, under the Postgres type the chain names.
+
+    The type names its schema itself: SQLAlchemy 2.0 doesn't give an enum the
+    metadata's schema, so it would otherwise follow the role's search_path.
+    """
     return Enum(
         values,
         name=name,
+        schema=TABLE_SCHEMA,
         values_callable=lambda members: [member.value for member in members],
     )
 
