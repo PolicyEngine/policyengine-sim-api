@@ -563,6 +563,7 @@ def create_app(
     runtime_settings = settings or Settings.from_env()
     runtime_database = simulation_database
     if runtime_database is None and runtime_settings.simulation_database_url:
+        runtime_settings.validate_simulation_database()
         runtime_database = SimulationDatabase.from_url(
             runtime_settings.simulation_database_url
         )

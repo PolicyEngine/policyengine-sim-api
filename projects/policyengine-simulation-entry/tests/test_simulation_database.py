@@ -274,3 +274,18 @@ def test_the_readiness_query_is_bounded_on_the_server(monkeypatch):
         database_module.READINESS_STATEMENT_TIMEOUT_MILLISECONDS
         < app_module.SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS * 1000
     )
+
+
+def test_a_malformed_database_url_stops_the_app_with_a_configuration_error():
+    """The settings' check runs before the engine is built, as at startup."""
+    from policyengine_simulation_entry.config import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="SIMULATION_DATABASE_URL") as error:
+        create_app(
+            settings=make_settings(
+                simulation_database_url="postgresql://db.example/postgres?password=secret"
+            ),
+            backend=FakeBackend(),
+        )
+
+    assert "secret" not in str(error.value)

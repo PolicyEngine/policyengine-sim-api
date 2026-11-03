@@ -176,7 +176,7 @@ class Settings:
         self._validate_caller_auth()
         self._validate_old_gateway()
         self._validate_stage12()
-        self._validate_simulation_database()
+        self.validate_simulation_database()
 
     def _validate_caller_auth(self) -> None:
         """Require caller authentication in production, with an HTTPS issuer."""
@@ -275,11 +275,13 @@ class Settings:
             msg = "STAGE12_DATABASE_URL must use the canonical postgresql:// scheme."
             raise ConfigurationError(msg)
 
-    def _validate_simulation_database(self) -> None:
+    def validate_simulation_database(self) -> None:
         """Require a complete canonical URL for the service role, when set.
 
         The persistence library's own check decides, so the settings accept
         exactly the URLs the engine does; its message never repeats the URL.
+        ``create_app`` calls it before building the engine, so a malformed URL
+        is a ConfigurationError at startup.
         """
         if not self.simulation_database_url:
             return
