@@ -18,7 +18,7 @@ from policyengine_simulation_persistence.tables import TABLE_SCHEMA
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from sqlalchemy import Connection
+    from sqlalchemy import Connection, Engine
 
 # PostgreSQL's catalog, which any role may read: a table is found by name
 # without the USAGE privilege on its schema that to_regclass would need.
@@ -111,3 +111,26 @@ def missing_table_privileges(connection: Connection) -> list[str]:
     if not schema_usage:
         missing.insert(0, f"USAGE on schema {TABLE_SCHEMA}")
     return missing
+
+
+def read_missing_table_privileges(
+    engine: Engine, *, statement_timeout_milliseconds: int
+) -> list[str]:
+    """Run ``missing_table_privileges`` in a transaction the database bounds.
+
+    ``statement_timeout`` is set with ``set_config`` local to the transaction,
+    so it works through Supabase's transaction pooler and never stays on the
+    pooled connection; a statement that runs longer raises the database's
+    cancellation as an OperationalError.
+    """
+    with engine.connect() as connection, connection.begin():
+        connection.execute(
+            select(
+                func.set_config(
+                    "statement_timeout",
+                    str(statement_timeout_milliseconds),
+                    True,  # noqa: FBT003  # set_config's is_local argument
+                )
+            )
+        )
+        return missing_table_privileges(connection)

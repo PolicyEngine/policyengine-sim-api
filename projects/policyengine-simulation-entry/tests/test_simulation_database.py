@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import threading
 
 import pytest
@@ -160,120 +159,12 @@ def test_settings_build_the_database_only_when_it_is_configured(monkeypatch):
     assert built_urls == [DATABASE_URL]
 
 
-def test_the_database_reads_the_missing_privileges_off_the_event_loop(monkeypatch):
-    connections = []
-    query_threads = []
-
-    class FakeConnection:
-        def __enter__(self):
-            connections.append(self)
-            return self
-
-        def __exit__(self, *_):
-            return False
-
-        def begin(self):
-            return contextlib.nullcontext()
-
-        def execute(self, statement):
-            return None
-
-    class FakeEngine:
-        disposed = False
-
-        def connect(self):
-            return FakeConnection()
-
-        def dispose(self):
-            self.disposed = True
-
-    def missing_table_privileges(connection):
-        assert connection in connections
-        query_threads.append(threading.get_ident())
-        return ["INSERT on reports"]
-
-    monkeypatch.setattr(
-        database_module, "missing_table_privileges", missing_table_privileges
-    )
-    engine = FakeEngine()
-    database = SimulationDatabase(engine)
-
-    async def read_from_the_event_loop():
-        return await database.missing_privileges(), threading.get_ident()
-
-    missing, event_loop_thread = asyncio.run(read_from_the_event_loop())
-    database.dispose()
-
-    assert missing == ["INSERT on reports"]
-    assert query_threads != [event_loop_thread]
-    assert engine.disposed is True
-
-
 @pytest.mark.parametrize("database_url", ["", "postgres://user:secret@db/postgres"])
 def test_a_malformed_database_url_never_builds_an_engine(database_url):
     with pytest.raises(ValueError, match="Simulation database URL") as error:
         SimulationDatabase.from_url(database_url)
 
     assert "secret" not in str(error.value)
-
-
-def test_the_readiness_query_is_bounded_on_the_server(monkeypatch):
-    """A stalled database can't hold a worker thread past the statement limit."""
-    executed = []
-
-    class FakeTransaction:
-        def __enter__(self):
-            executed.append("BEGIN")
-            return self
-
-        def __exit__(self, *_):
-            executed.append("END")
-            return False
-
-    class FakeConnection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            return False
-
-        def begin(self):
-            return FakeTransaction()
-
-        def execute(self, statement):
-            compiled = statement.compile()
-            executed.append((str(compiled), dict(compiled.params)))
-
-    class FakeEngine:
-        def connect(self):
-            return FakeConnection()
-
-    def missing_table_privileges(connection):
-        executed.append("privileges")
-        return []
-
-    monkeypatch.setattr(
-        database_module, "missing_table_privileges", missing_table_privileges
-    )
-
-    asyncio.run(SimulationDatabase(FakeEngine()).missing_privileges())
-
-    assert executed[0] == "BEGIN"
-    statement, parameters = executed[1]
-    assert "set_config" in statement
-    assert sorted(parameters.values(), key=str) == sorted(
-        [
-            "statement_timeout",
-            str(database_module.READINESS_STATEMENT_TIMEOUT_MILLISECONDS),
-            True,
-        ],
-        key=str,
-    )
-    assert executed[2:] == ["privileges", "END"]
-    assert (
-        database_module.READINESS_STATEMENT_TIMEOUT_MILLISECONDS
-        < app_module.SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS * 1000
-    )
 
 
 def test_a_malformed_database_url_stops_the_app_with_a_configuration_error():
@@ -289,3 +180,99 @@ def test_a_malformed_database_url_stops_the_app_with_a_configuration_error():
         )
 
     assert "secret" not in str(error.value)
+
+
+def test_the_check_runs_on_its_own_thread_within_the_database_time_limit(
+    monkeypatch,
+):
+    calls = []
+
+    def read_missing_table_privileges(engine, *, statement_timeout_milliseconds):
+        calls.append(
+            (engine, statement_timeout_milliseconds, threading.current_thread().name)
+        )
+        return ["INSERT on reports"]
+
+    monkeypatch.setattr(
+        database_module, "read_missing_table_privileges", read_missing_table_privileges
+    )
+    engine = object()
+    database = SimulationDatabase(engine)
+
+    try:
+        missing = asyncio.run(database.missing_privileges())
+    finally:
+        database.executor.shutdown(wait=True)
+
+    assert missing == ["INSERT on reports"]
+    [(called_engine, timeout_milliseconds, thread_name)] = calls
+    assert called_engine is engine
+    expected_timeout = database_module.READINESS_STATEMENT_TIMEOUT_MILLISECONDS
+    assert timeout_milliseconds == expected_timeout
+    assert timeout_milliseconds < (
+        app_module.SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS * 1000
+    )
+    assert thread_name.startswith(database_module.READINESS_THREAD_NAME_PREFIX)
+
+
+def test_a_stalled_database_holds_one_thread_and_no_thread_of_the_default_pool(
+    monkeypatch,
+):
+    """Checks that time out don't pile up threads other routes need."""
+    release = threading.Event()
+    running = []
+    most_running_at_once = []
+    lock = threading.Lock()
+
+    def stall(engine, *, statement_timeout_milliseconds):
+        with lock:
+            running.append(threading.current_thread().name)
+            most_running_at_once.append(len(running))
+        release.wait(timeout=5)
+        with lock:
+            running.remove(threading.current_thread().name)
+        return []
+
+    monkeypatch.setattr(database_module, "read_missing_table_privileges", stall)
+    database = SimulationDatabase(object())
+
+    async def three_checks_that_time_out():
+        results = await asyncio.gather(
+            *(
+                asyncio.wait_for(database.missing_privileges(), timeout=0.05)
+                for _ in range(3)
+            ),
+            return_exceptions=True,
+        )
+        default_pool_threads = [
+            thread.name
+            for thread in threading.enumerate()
+            if thread.name.startswith("asyncio_")
+        ]
+        return results, default_pool_threads
+
+    try:
+        results, default_pool_threads = asyncio.run(three_checks_that_time_out())
+    finally:
+        release.set()
+        database.executor.shutdown(wait=True)
+
+    assert all(isinstance(result, TimeoutError) for result in results)
+    assert max(most_running_at_once) == 1
+    assert default_pool_threads == []
+
+
+def test_disposing_the_database_also_stops_its_thread():
+    class FakeEngine:
+        disposed = False
+
+        def dispose(self):
+            self.disposed = True
+
+    engine = FakeEngine()
+    database = SimulationDatabase(engine)
+    database.dispose()
+
+    assert engine.disposed is True
+    with pytest.raises(RuntimeError):
+        database.executor.submit(print)

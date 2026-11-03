@@ -3,6 +3,7 @@
 from policyengine_simulation_persistence.access import (
     SERVICE_TABLE_PRIVILEGES,
     missing_table_privileges,
+    read_missing_table_privileges,
 )
 from policyengine_simulation_persistence.engine import (
     create_simulation_engine,
@@ -36,6 +37,7 @@ __all__ = [
     "household_jobs",
     "missing_table_privileges",
     "normalized_database_url",
+    "read_missing_table_privileges",
     "report_run_simulation_runs",
     "report_runs",
     "reports",

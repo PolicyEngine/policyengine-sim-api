@@ -44,8 +44,11 @@ connected role lacks, as `"INSERT on reports"`; a table missing from the
 `public` schema lacks all of its privileges, and a role without the `USAGE`
 privilege on that schema is told so first (`"USAGE on schema public"`), since
 it can use none of its table grants. Tables are found through PostgreSQL's
-catalog, which needs no privilege. The Simulation Entrypoint's readiness
-check reports the result.
+catalog, which needs no privilege. `read_missing_table_privileges` runs that
+check in a transaction whose `statement_timeout` it sets with `set_config`,
+local to the transaction, so the database ends a check that runs too long;
+the Simulation Entrypoint's readiness check uses it, on a thread of its own,
+and reports the result.
 
 ## Tests
 

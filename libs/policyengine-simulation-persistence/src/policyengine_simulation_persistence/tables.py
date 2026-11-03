@@ -5,7 +5,7 @@ module only describes them, so the service can write typed rows. Each table
 matches what the chain builds, column for column, with its constraints and
 indexes under the same names. Foreign keys stay between these tables: the
 policy, household and catalog rows they name are written by another service,
-so the simulation service checks them itself.
+so no foreign key checks them, and the code that writes these rows must.
 """
 
 from __future__ import annotations

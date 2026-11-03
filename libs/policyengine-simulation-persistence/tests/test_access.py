@@ -10,9 +10,12 @@ from policyengine_simulation_persistence import (
     SERVICE_TABLE_PRIVILEGES,
     create_simulation_engine,
     missing_table_privileges,
+    read_missing_table_privileges,
 )
-from sqlalchemy import create_engine, text
+from policyengine_simulation_persistence import access as access_module
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 
 PROOF_FIXTURES = (
     Path(__file__).resolve().parents[3]
@@ -220,3 +223,56 @@ def test_a_role_without_usage_on_the_schema_is_told_so(disposable_database):
     assert _missing_privileges_as_the_service(disposable_database) == [
         "USAGE on schema public",
     ]
+
+
+def _service_engine_with_one_connection(database):
+    """Return an engine whose next connection is always the one it pooled."""
+    return create_engine(
+        make_url(database.service_url).set(drivername="postgresql+psycopg"),
+        pool_size=1,
+        max_overflow=0,
+    )
+
+
+def _statement_timeout(engine) -> str:
+    with engine.connect() as connection:
+        return connection.execute(text("SHOW statement_timeout")).scalar_one()
+
+
+@pytest.mark.postgres
+def test_the_bounded_check_reads_the_privileges_and_leaves_no_timeout_behind(
+    disposable_database,
+):
+    _create_tables(disposable_database, SERVICE_TABLE_PRIVILEGES)
+    _grant_every_required_privilege(disposable_database)
+    engine = _service_engine_with_one_connection(disposable_database)
+    try:
+        missing = read_missing_table_privileges(
+            engine, statement_timeout_milliseconds=2000
+        )
+        timeout_afterwards = _statement_timeout(engine)
+    finally:
+        engine.dispose()
+
+    assert missing == []
+    assert timeout_afterwards == "0"
+
+
+@pytest.mark.postgres
+def test_the_database_ends_a_bounded_check_that_runs_too_long(
+    disposable_database, monkeypatch
+):
+    def sleep_instead(connection):
+        connection.execute(select(func.pg_sleep(2)))
+        return []
+
+    monkeypatch.setattr(access_module, "missing_table_privileges", sleep_instead)
+    engine = _service_engine_with_one_connection(disposable_database)
+    try:
+        with pytest.raises(OperationalError, match="statement timeout"):
+            read_missing_table_privileges(engine, statement_timeout_milliseconds=100)
+        timeout_afterwards = _statement_timeout(engine)
+    finally:
+        engine.dispose()
+
+    assert timeout_afterwards == "0"
