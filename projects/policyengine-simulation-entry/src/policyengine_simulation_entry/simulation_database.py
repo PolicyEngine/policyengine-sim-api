@@ -15,8 +15,8 @@ from policyengine_simulation_persistence import (
 if TYPE_CHECKING:
     from sqlalchemy import Engine
 
-# The readiness check stops waiting after three seconds; the database ends the
-# query sooner, once the connection answers.
+# The readiness check stops waiting after three seconds; the database ends
+# each statement of the check that runs longer than this, once connected.
 READINESS_STATEMENT_TIMEOUT_MILLISECONDS = 2000
 READINESS_THREAD_NAME_PREFIX = "simulation-database-readiness"
 

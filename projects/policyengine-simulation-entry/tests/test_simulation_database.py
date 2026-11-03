@@ -290,3 +290,25 @@ def test_disposing_the_database_also_stops_its_thread(monkeypatch):
 
     assert engine.disposed is True
     assert not worker.is_alive()
+
+
+def test_a_disposed_database_reports_every_later_check_as_failed(monkeypatch):
+    class FakeEngine:
+        def dispose(self):
+            return None
+
+    monkeypatch.setattr(
+        database_module,
+        "read_missing_table_privileges",
+        lambda engine, *, statement_timeout_milliseconds: [],
+    )
+    database = SimulationDatabase(FakeEngine())
+    database.dispose()
+
+    with _client(FakeBackend(), database) as client:
+        result = client.get("/ready")
+
+    assert result.json()["simulation_database"] == {
+        "reachable": False,
+        "missing_privileges": None,
+    }

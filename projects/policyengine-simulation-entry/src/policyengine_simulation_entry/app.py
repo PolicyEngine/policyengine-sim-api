@@ -470,7 +470,7 @@ def _register_simulation_routes(
 async def _simulation_database_readiness(
     database: SimulationDatabaseConnection,
 ) -> SimulationDatabaseReadiness:
-    """Report whether the service reached its database, and what its role lacks."""
+    """Report whether the database check succeeded, and what the role lacks."""
     try:
         missing_privileges = await asyncio.wait_for(
             database.missing_privileges(),

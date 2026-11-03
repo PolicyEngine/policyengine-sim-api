@@ -78,7 +78,7 @@ fi
 routing_max_attempts="${SIMULATION_ENTRYPOINT_ROUTING_MAX_ATTEMPTS:-24}"
 routing_retry_delay_seconds="${SIMULATION_ENTRYPOINT_ROUTING_RETRY_DELAY_SECONDS:-5}"
 # A cold candidate may not reach its database within /ready's three-second
-# wait; an unreachable database is asked about again, up to this many
+# wait; a failed database check is asked about again, up to this many
 # requests in all.
 database_ready_max_attempts="${SIMULATION_DATABASE_READY_MAX_ATTEMPTS:-6}"
 

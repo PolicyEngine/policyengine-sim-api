@@ -57,9 +57,10 @@ and which table privileges its role lacks
 readiness status, because no old-gateway or Stage 12 route uses it. The
 candidate smoke check (`REQUIRE_SIMULATION_DATABASE_ACCESS=true`) requires the
 database reached with no privilege missing, which shows that the role's URL
-reached the revision and that the role holds its grants. While a cold
-candidate has not reached its database yet, it asks again, up to six requests
-in all; a reached database with a missing privilege fails at once. The stable
+reached the revision and that the role holds its grants. While the check
+fails, as it does for a cold candidate that hasn't reached its database yet,
+it asks again, up to six requests in all; a database that answers with a
+privilege missing fails at once. The stable
 and rollback checks don't require it, because an older image may not use the
 database.
 
