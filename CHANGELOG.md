@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.4.1] - 2026-11-03
+
+### Changed
+
+- Withdrew the unreleased refusal of simulation years the model cannot project its dataset to (#970), until the Public API and the app refuse those years first.
+
+
 ## [0.4.0] - 2026-11-03
 
 ### Added
