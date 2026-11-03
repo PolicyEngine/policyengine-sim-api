@@ -280,7 +280,13 @@ class ReportCoordination:
                 and child.modal_invocation_id is not None
                 and not child.modal_invocation_id.startswith("dispatch-pending-")
             ):
-                calls[role] = self.child_invoker.restore(child.modal_invocation_id)
+                if self.report_run is None:
+                    calls[role] = self.child_invoker.restore(child.modal_invocation_id)
+                else:
+                    # A report run's coordinator cancelled this child when it
+                    # was pre-empted; make sure it stopped, then start it again.
+                    self._cancel_earlier_child(child)
+                    calls[role] = self._dispatch_child(child, simulation)
             else:
                 calls[role] = self._dispatch_child(child, simulation)
         return descriptors, calls
@@ -308,6 +314,38 @@ class ReportCoordination:
                 ),
             }
         )
+
+    def _cancel_earlier_child(self, child: ComparisonSimulationRecord) -> None:
+        """Cancel the child call an earlier attempt of this call started."""
+        if child.modal_invocation_id is None:
+            return
+        try:
+            self.child_invoker.restore(child.modal_invocation_id).cancel()
+        except Exception as error:  # noqa: BLE001  # cancelling an earlier attempt's child is best effort; the new child starts regardless
+            logger.warning(
+                "Stage 12 could not cancel an earlier %s simulation call in report "
+                "%s (%s)",
+                child.role.value,
+                child.evaluation_id,
+                type(error).__name__,
+            )
+
+    def stop_children(self) -> None:
+        """Cancel every started, unfinished child call, recording nothing.
+
+        Each child's record stays running, so the call Modal restarts starts
+        it again. A cancellation error is logged, never raised.
+        """
+        for role in sorted(set(self.calls) - set(self.descriptors)):
+            try:
+                self.calls[role].cancel()
+            except Exception as error:  # noqa: BLE001  # every child must be asked to stop; a failed cancellation is logged
+                logger.warning(
+                    "Stage 12 could not cancel the %s simulation of report %s (%s)",
+                    role,
+                    self.report.evaluation_id,
+                    type(error).__name__,
+                )
 
     def _dispatch_child(
         self,

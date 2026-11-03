@@ -132,6 +132,7 @@ def coordinate_report(
             submitted=submitted_parent,
             coordinator_invocation_id=invocation.invocation_id,
             store=coordination.persistence,
+            resume_own_claim=report_run is not None,
         )
     if not should_execute:
         if report_run is not None:
@@ -154,3 +155,11 @@ def coordinate_report(
         coordination.fail(parent, error)
         msg = "Stage 12 report coordination failed"
         raise RuntimeError(msg) from None
+    except BaseException:
+        # Modal pre-empts a call with KeyboardInterrupt and cancels one with
+        # InputCancellation, neither an Exception, and runs a pre-empted call
+        # again under the same call ID. A report run's coordinator stops its
+        # unfinished children and records nothing, so that run starts again.
+        if report_run is not None:
+            coordination.stop_children()
+        raise
