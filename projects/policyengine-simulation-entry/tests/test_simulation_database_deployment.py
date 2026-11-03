@@ -12,11 +12,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from test_deployment_assets_cloud_run import cloud_run_deploy_environment
 from test_deployment_assets_support import (
     CLOUD_RUN_DEPLOY_SCRIPT,
     REUSABLE_DEPLOY_WORKFLOW,
     SMOKE_SCRIPT,
+    cloud_run_deploy_environment,
     smoke_test_env,
     workflow_jobs,
     write_fake_smoke_curl,

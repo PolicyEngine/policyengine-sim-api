@@ -438,3 +438,84 @@ def workflow_jobs(path: Path) -> dict:
     import yaml
 
     return yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]
+
+
+def cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
+    """Return a complete deployment environment backed by a fake gcloud."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            if [[ "$1 $2 $3" == "secrets versions list" ]]; then
+              printf '%s\n' 1 3 2
+              exit 0
+            fi
+
+            if [[ "$1 $2" == "run deploy" ]]; then
+              printf '%s\n' "$@" > "${GCLOUD_ARGUMENTS_CAPTURE}"
+              while (($#)); do
+                if [[ "$1" == "--env-vars-file" ]]; then
+                  cp "$2" "${GCLOUD_ENV_FILE_CAPTURE}"
+                  exit 0
+                fi
+                shift
+              done
+            fi
+
+            printf 'unexpected gcloud invocation\n' >&2
+            exit 1
+            """
+        ),
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name != "SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"
+    }
+    return environment | {
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "RUNNER_TEMP": str(tmp_path),
+        "GCLOUD_ARGUMENTS_CAPTURE": str(tmp_path / "gcloud-arguments.txt"),
+        "GCLOUD_ENV_FILE_CAPTURE": str(tmp_path / "runtime-environment.json"),
+        "PROJECT_ID": "policyengine-staging",
+        "REGION": "us-central1",
+        "IMAGE": "us-central1-docker.pkg.dev/project/repository/image:sha",
+        "TAG": "s-123",
+        "DEPLOY_STAGE12_V2": "true",
+        "APP_ENVIRONMENT": "staging",
+        "MODAL_ENVIRONMENT": "staging",
+        "ENTRYPOINT_SERVICE": "policyengine-simulation-entry-staging",
+        "ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT": (
+            "simulation-entry@policyengine-staging.iam.gserviceaccount.com"
+        ),
+        "ENTRYPOINT_MIN_INSTANCES": "0",
+        "ENTRYPOINT_MAX_INSTANCES": "10",
+        "SIMULATION_ENTRYPOINT_AUTH_ISSUER_VALUE": (
+            "https://issuer.example/path?literal=$(not-a-command)"
+        ),
+        "SIMULATION_ENTRYPOINT_AUTH_AUDIENCE_VALUE": "simulation-api",
+        "OLD_GATEWAY_URL_VALUE": "https://legacy.example",
+        "OLD_GATEWAY_AUTH_ISSUER_VALUE": "https://issuer.example",
+        "OLD_GATEWAY_AUTH_AUDIENCE_VALUE": "legacy-api",
+        "OLD_GATEWAY_AUTH_CLIENT_ID_VALUE": "entrypoint-client",
+        "OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME": "old-client-secret",
+        "OBSERVABILITY_SERVICE_NAMESPACE": "policyengine.simulation-entry",
+        "OBSERVABILITY_TRACE_PROJECT_ID": "policyengine-observability",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://collector.example",
+        "POLICYENGINE_OTEL_GOOGLE_AUDIENCE": "https://collector.example",
+        "STAGE12_ENABLED_VALUE": "0",
+        "STAGE12_ARTIFACT_BUCKET_VALUE": "policyengine-stage12-staging",
+        "STAGE12_DATABASE_URL_SECRET_NAME": "stage12-staging-database-url",
+        "MODAL_TOKEN_ID_SECRET_NAME": "modal-token-id",
+        "MODAL_TOKEN_SECRET_SECRET_NAME": "modal-token-secret",
+        "SIMULATION_DATABASE_URL_SECRET_NAME": (
+            "simulation-staging-service-database-url"
+        ),
+    }
