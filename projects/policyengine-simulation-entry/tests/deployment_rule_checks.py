@@ -27,7 +27,9 @@ def combined_secret_resolutions(script_text: str) -> list[str]:
     for match in ARRAY_ASSIGNMENT.finditer(script_text):
         line_end = script_text.find("\n", match.end())
         first_line = script_text[match.start() : line_end if line_end >= 0 else None]
-        if ")" in first_line:
+        # A command substitution on the first line closes its own parenthesis,
+        # so the assignment ends on that line only if they all balance.
+        if first_line.count("(") == first_line.count(")"):
             assignment = first_line
         else:
             closing = ARRAY_END.search(script_text, match.end())

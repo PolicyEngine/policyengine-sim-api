@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -111,6 +112,20 @@ def test_cloud_run_deployment_stops_when_a_runtime_secret_cannot_be_resolved(
     assert result.returncode != 0
     assert "invalid Secret Manager reference" in result.stderr
     assert not Path(command_environment["GCLOUD_ARGUMENTS_CAPTURE"]).exists()
+
+
+def test_an_assignment_that_opens_with_a_resolved_secret_is_still_found():
+    script = textwrap.dedent(
+        """\
+        runtime_secrets=("A=$(resolve_secret_reference "${A_NAME}")"
+          "B=$(resolve_secret_reference "${B_NAME}")"
+        )
+        """
+    )
+
+    assert combined_secret_resolutions(script) == [
+        'runtime_secrets=("A=$(resolve_secret_reference "${A_NAME}")"'
+    ]
 
 
 def test_cloud_run_deployment_resolves_each_secret_in_its_own_assignment():

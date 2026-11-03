@@ -366,6 +366,7 @@ nodes = [
   "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_escapes_environment_and_pins_secret_versions",
   "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_stops_when_a_runtime_secret_cannot_be_resolved",
   "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_resolves_each_secret_in_its_own_assignment",
+  "tests/test_deployment_assets_cloud_run.py::test_an_assignment_that_opens_with_a_resolved_secret_is_still_found",
   "tests/test_deployment_assets_cloud_run.py::test_stage12_secrets_are_resolved_by_the_stage12_block_alone",
 ]
 [[rule.ci]]
