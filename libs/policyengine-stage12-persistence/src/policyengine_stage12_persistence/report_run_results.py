@@ -11,7 +11,7 @@ report run, with the data version.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from policyengine_simulation_contract.macro_output import (
         CongressionalDistrictImpactRecord,
         ConstituencyImpactRecord,
+        GeographicImpactOutput,
         IntraDecileOutput,
         LocalAuthorityImpactRecord,
     )
@@ -263,7 +264,7 @@ def report_run_result(
         rows=(
             ResultRows(
                 budget_summary,
-                _budget_rows(economy, report_keys),
+                _budget_rows(economy, report_keys, country),
                 shared_by_reports=False,
             ),
             ResultRows(
@@ -380,9 +381,9 @@ def _district_row(
 
 
 def _area_rows(
-    areas: Any,  # noqa: ANN401  # a GeographicImpactOutput, or None
+    areas: GeographicImpactOutput | None,
     keys: Mapping[str, Any],
-    kind: str,
+    kind: Literal["constituency", "local_authority"],
 ) -> tuple[dict[str, Any], ...]:
     if areas is None:
         return ()
@@ -405,8 +406,13 @@ def _area_rows(
 
 
 def _budget_rows(
-    economy: SingleYearMacroOutput, keys: Mapping[str, Any]
+    economy: SingleYearMacroOutput, keys: Mapping[str, Any], country: str
 ) -> tuple[dict[str, Any], ...]:
+    """Return the headline budget figures; state income tax only for the US.
+
+    Today's output reports 0.0 state income tax for a country without it, so a
+    reader without that row reports 0.0 again.
+    """
     return tuple(
         {
             "id": uuid4(),
@@ -416,6 +422,7 @@ def _budget_rows(
             column: getattr(economy.budget, figure),
         }
         for figure, variable, column in BUDGET_FIGURES
+        if variable != "household_state_income_tax" or country == "us"
     )
 
 
@@ -476,28 +483,29 @@ def _intra_decile_type_rows(
 def _poverty_rows(
     economy: SingleYearMacroOutput, run_ids: ReportRunIds, country: str
 ) -> tuple[dict[str, Any], ...]:
+    """Return each simulation run's poverty and deep poverty rate for everyone.
+
+    In .py's rows a filter variable names the model variable a group is
+    filtered on (age, sex, race), with its bounds, and the table has columns
+    for neither the group nor the bounds; the age, gender and race rates
+    therefore have no lossless column and are not written.
+    """
     poverty_types = POVERTY_TYPES[country]
-    blocks: list[tuple[str, Mapping[str, Any]]] = [
-        ("poverty", economy.poverty.poverty.model_dump()),
-        ("deep_poverty", economy.poverty.deep_poverty.model_dump()),
-        ("poverty", economy.poverty_by_gender.poverty.model_dump()),
-        ("deep_poverty", economy.poverty_by_gender.deep_poverty.model_dump()),
-    ]
-    if economy.poverty_by_race is not None:
-        blocks.append(("poverty", economy.poverty_by_race.poverty.model_dump()))
+    everyone = {
+        "poverty": economy.poverty.poverty.all,
+        "deep_poverty": economy.poverty.deep_poverty.all,
+    }
     return tuple(
         {
             "id": uuid4(),
             "simulation_run_id": simulation_run_id,
             "poverty_type": poverty_types[measure],
             "entity": "person",
-            # Everyone's rate has no filter; each group's names the group.
-            "filter_variable": None if group == "all" else group,
-            "rate": rates[side],
+            "filter_variable": None,
+            "rate": getattr(rates, side),
         }
         for side, simulation_run_id in _sides(run_ids)
-        for measure, groups in blocks
-        for group, rates in groups.items()
+        for measure, rates in everyone.items()
     )
 
 

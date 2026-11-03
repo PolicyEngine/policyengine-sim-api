@@ -34,7 +34,6 @@ INTRA_DECILE_LABELS = {
     "Gain less than 5%": "gain_less_than_5pct",
     "Gain more than 5%": "gain_more_than_5pct",
 }
-AGE_GROUPS = ("child", "adult", "senior")
 
 
 @pytest.fixture
@@ -93,10 +92,12 @@ def _rebuilt_budget(seeder, report_run_id):
     }
     tax = rows["household_tax"]["change"]
     benefits = rows["household_benefits"]["change"]
+    # Only the US models state income tax; today's output reports 0.0 elsewhere.
+    state_tax = rows.get("household_state_income_tax", {"change": 0.0})["change"]
     return {
         "budgetary_impact": tax - benefits,
         "tax_revenue_impact": tax,
-        "state_tax_revenue_impact": rows["household_state_income_tax"]["change"],
+        "state_tax_revenue_impact": state_tax,
         "benefit_spending_impact": benefits,
         "households": rows["household_weight"]["baseline_total"],
         "baseline_net_income": rows["household_net_income"]["baseline_total"],
@@ -118,16 +119,6 @@ def _rebuilt_intra_decile(rows):
         },
         "deciles": shares,
     }
-
-
-def _rebuilt_poverty(seeder, simulation_run_id, *, poverty_type, groups):
-    rows = {
-        row["filter_variable"]: row["rate"]
-        for row in seeder.rows(
-            "poverty", simulation_run_id=simulation_run_id, poverty_type=poverty_type
-        )
-    }
-    return {group: rows[None if group == "all" else group] for group in groups}
 
 
 def test_a_report_run_stores_its_economy_output_as_rows(
@@ -168,31 +159,18 @@ def test_a_report_run_stores_its_economy_output_as_rows(
         ("baseline", run_ids.baseline_simulation_run_id),
         ("reform", run_ids.reform_simulation_run_id),
     ):
-        for poverty_type, key in (("spm", "poverty"), ("spm_deep", "deep_poverty")):
-            assert _rebuilt_poverty(
-                seeder,
-                run_id,
-                poverty_type=poverty_type,
-                groups=(*AGE_GROUPS, "all", "male", "female"),
-            ) == {
-                **{
-                    group: output["poverty"][key][group][side]
-                    for group in (*AGE_GROUPS, "all")
-                },
-                **{
-                    group: output["poverty_by_gender"][key][group][side]
-                    for group in ("male", "female")
-                },
-            }
-        assert _rebuilt_poverty(
-            seeder,
-            run_id,
-            poverty_type="spm",
-            groups=("white", "black", "hispanic", "other"),
-        ) == {
-            group: value[side]
-            for group, value in output["poverty_by_race"]["poverty"].items()
+        # Only everyone's rate has a column with .py's meaning: in .py's rows
+        # a filter variable names the model variable filtered on (age, sex,
+        # race), and the table has no column for the group or its bounds.
+        poverty_rows = seeder.rows("poverty", simulation_run_id=run_id)
+        assert {
+            (row["poverty_type"], row["filter_variable"]): row["rate"]
+            for row in poverty_rows
+        } == {
+            ("spm", None): output["poverty"]["poverty"]["all"][side],
+            ("spm_deep", None): output["poverty"]["deep_poverty"]["all"][side],
         }
+        assert {row["entity"] for row in poverty_rows} == {"person"}
         (inequality,) = seeder.rows("inequality", simulation_run_id=run_id)
         assert inequality["income_variable"] == "household_net_income"
         assert inequality["entity"] == "household"
@@ -224,6 +202,14 @@ def test_the_uk_output_uses_its_own_poverty_types_and_wealth_shares(
         )
     }
     assert poverty_types == {"relative_bhc", "absolute_bhc"}
+    assert "household_state_income_tax" not in {
+        row["variable_name"]
+        for row in seeder.rows("budget_summary", report_run_id=run_ids.report_run_id)
+    }
+    assert (
+        _rebuilt_budget(seeder, run_ids.report_run_id)
+        == (uk_economy_output()["budget"])
+    )
     (inequality,) = seeder.rows(
         "inequality", simulation_run_id=run_ids.reform_simulation_run_id
     )
@@ -317,10 +303,9 @@ def test_a_shared_simulation_run_keeps_the_results_first_stored_for_it(
         simulation_run_id=run_ids.baseline_simulation_run_id,
         poverty_type="spm",
     )
-    assert next(row for row in stored if row["filter_variable"] is None)["rate"] == 0.5
-    assert len(stored) == len({row["filter_variable"] for row in stored})
+    assert [row["rate"] for row in stored] == [0.5]
     reform = seeder.rows("poverty", simulation_run_id=run_ids.reform_simulation_run_id)
-    assert len(reform) == 2 * 6 + 4
+    assert len(reform) == 2
 
 
 def test_the_detailed_budget_districts_and_receipts_are_stored_losslessly(
