@@ -1,7 +1,8 @@
 """Deployment wiring for the simulation service's database.
 
 The entrypoint receives its role's URL as a pinned Cloud Run secret on every
-deploy, whatever the Stage 12 setting.
+deploy, whatever the Stage 12 setting, and the candidate smoke requires it to
+reach the database with every table privilege its role needs.
 """
 
 from __future__ import annotations
@@ -15,7 +16,10 @@ from test_deployment_assets_cloud_run import cloud_run_deploy_environment
 from test_deployment_assets_support import (
     CLOUD_RUN_DEPLOY_SCRIPT,
     REUSABLE_DEPLOY_WORKFLOW,
+    SMOKE_SCRIPT,
+    smoke_test_env,
     workflow_jobs,
+    write_fake_smoke_curl,
 )
 
 
@@ -86,3 +90,142 @@ def test_the_deploy_step_passes_the_database_url_secret_name():
     assert deploy_step["env"]["SIMULATION_DATABASE_URL_SECRET_NAME"] == (
         "${{ vars.SIMULATION_DATABASE_URL_SECRET_NAME }}"
     )
+
+
+# --- The candidate smoke --------------------------------------------------
+
+
+def test_the_candidate_smoke_requires_access_to_the_database():
+    integration = workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["integration"]
+    smoke = next(
+        step
+        for step in integration["steps"]
+        if step.get("name") == "Verify the complete deployed request path"
+    )
+
+    assert smoke["env"]["REQUIRE_SIMULATION_DATABASE_ACCESS"] == "true"
+
+
+def _ready_body(*, reachable=True, missing_privileges=()):
+    return json.dumps(
+        {
+            "status": "ready",
+            "simulation_database": {
+                "reachable": reachable,
+                "missing_privileges": (
+                    list(missing_privileges) if reachable else None
+                ),
+            },
+        }
+    )
+
+
+def _run_smoke(tmp_path, ready_body, *, require):
+    state_file, revisions_file = write_fake_smoke_curl(tmp_path, ["revision-1"])
+    environment = smoke_test_env(tmp_path, state_file, revisions_file) | {
+        "FAKE_CURL_READY": ready_body,
+    }
+    if require is not None:
+        environment["REQUIRE_SIMULATION_DATABASE_ACCESS"] = require
+    return subprocess.run(
+        ["bash", SMOKE_SCRIPT, "https://candidate.example.test", "revision-1"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+
+def test_the_smoke_accepts_a_reached_database_with_every_privilege(tmp_path):
+    result = _run_smoke(tmp_path, _ready_body(), require="true")
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "ready_body",
+    [
+        _ready_body(reachable=False),
+        _ready_body(missing_privileges=["INSERT on simulation_runs"]),
+        json.dumps({"status": "ready"}),
+    ],
+    ids=["unreachable", "missing-privilege", "unconfigured"],
+)
+def test_the_smoke_rejects_a_database_the_service_cannot_use(tmp_path, ready_body):
+    result = _run_smoke(tmp_path, ready_body, require="true")
+
+    assert result.returncode == 1
+    assert "simulation database" in result.stderr
+
+
+def test_the_smoke_names_the_missing_privileges(tmp_path):
+    result = _run_smoke(
+        tmp_path,
+        _ready_body(missing_privileges=["INSERT on simulation_runs"]),
+        require="true",
+    )
+
+    assert "INSERT on simulation_runs" in result.stderr
+
+
+def _run_smoke_with_ready_bodies(tmp_path, bodies):
+    bodies_file = tmp_path / "ready-bodies"
+    bodies_file.write_text("\n".join(bodies) + "\n", encoding="utf-8")
+    state_file, revisions_file = write_fake_smoke_curl(tmp_path, ["revision-1"])
+    environment = smoke_test_env(tmp_path, state_file, revisions_file) | {
+        "FAKE_CURL_READY_BODIES": str(bodies_file),
+        "REQUIRE_SIMULATION_DATABASE_ACCESS": "true",
+        "SIMULATION_DATABASE_READY_MAX_ATTEMPTS": "3",
+    }
+    result = subprocess.run(
+        ["bash", SMOKE_SCRIPT, "https://candidate.example.test", "revision-1"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    ready_requests = int(Path(f"{bodies_file}.count").read_text(encoding="utf-8"))
+    return result, ready_requests
+
+
+def test_the_smoke_waits_for_a_database_a_cold_instance_has_not_reached(tmp_path):
+    result, ready_requests = _run_smoke_with_ready_bodies(
+        tmp_path,
+        [_ready_body(reachable=False), _ready_body(reachable=False), _ready_body()],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert ready_requests == 3
+
+
+def test_the_smoke_stops_waiting_for_an_unreachable_database(tmp_path):
+    result, ready_requests = _run_smoke_with_ready_bodies(
+        tmp_path, [_ready_body(reachable=False)]
+    )
+
+    assert result.returncode == 1
+    assert ready_requests == 3
+    assert "simulation database" in result.stderr
+
+
+def test_the_smoke_does_not_wait_for_privileges_the_role_lacks(tmp_path):
+    result, ready_requests = _run_smoke_with_ready_bodies(
+        tmp_path,
+        [_ready_body(missing_privileges=["SELECT on policies"]), _ready_body()],
+    )
+
+    assert result.returncode == 1
+    assert ready_requests == 1
+
+
+def test_stable_and_rollback_smokes_ignore_the_database(tmp_path):
+    result = _run_smoke(tmp_path, _ready_body(reachable=False), require=None)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_smoke_refuses_an_unknown_database_requirement(tmp_path):
+    result = _run_smoke(tmp_path, _ready_body(), require="yes")
+
+    assert result.returncode == 2
+    assert "REQUIRE_SIMULATION_DATABASE_ACCESS" in result.stderr

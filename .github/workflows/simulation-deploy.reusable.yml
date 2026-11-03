@@ -765,6 +765,8 @@ jobs:
           EXPECTED_UK_DATASET_SHA256: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_dataset_sha256 || '' }}
           # Latest must route to this release only when it should advance it.
           EXPECTED_LATEST: ${{ inputs.deploy_existing_stack && needs.update_routing.outputs.advances_latest == 'true' && 'true' || '' }}
+          # The candidate reaches its database, and its role holds its grants.
+          REQUIRE_SIMULATION_DATABASE_ACCESS: "true"
         run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.deploy_entrypoint.outputs.revision }}"
 
       - name: Download the numerical release sentinel

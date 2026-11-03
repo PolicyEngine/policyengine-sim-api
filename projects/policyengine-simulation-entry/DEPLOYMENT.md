@@ -43,7 +43,14 @@ stops the deploy before `gcloud run deploy` runs.
 reached the database and which table privileges its role lacks
 (`missing_privileges`, such as `"INSERT on reports"`; the list is in
 `libs/policyengine-simulation-persistence`). The database does not change the
-readiness status, because no old-gateway or Stage 12 route uses it.
+readiness status, because no old-gateway or Stage 12 route uses it. The
+candidate smoke check (`REQUIRE_SIMULATION_DATABASE_ACCESS=true`) requires the
+database reached with no privilege missing, which shows that the role's URL
+reached the revision and that the role holds its grants. While a cold
+candidate has not reached its database yet, it asks again, up to six requests
+in all; a reached database with a missing privilege fails at once. The stable
+and rollback checks don't require it, because an older image may not use the
+database.
 
 ## Candidate qualification
 

@@ -447,7 +447,7 @@ test = "tests/test_deployment_assets_promotion.py::test_rule_proof_staging_promo
 [[rule]]
 id = "sim.deploy.smoke-tests-strict"
 category = "deployment"
-statement = "Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge."
+statement = "Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge; the candidate smoke also requires the simulation service to reach its database with every table privilege its role needs."
 rationale = "docs/operations"
 scope = [".github/scripts/*.sh"]
 tier = "mechanical"
@@ -461,6 +461,9 @@ nodes = [
   "tests/test_deployment_assets.py::test_stable_smoke_rejects_an_unexpected_revision_without_retrying",
   "tests/test_deployment_assets.py::test_stable_smoke_retries_the_previous_revision_until_target_is_served",
   "tests/test_deployment_assets.py::test_stable_smoke_fails_when_the_previous_revision_does_not_converge",
+  "tests/test_simulation_database_deployment.py::test_the_candidate_smoke_requires_access_to_the_database",
+  "tests/test_simulation_database_deployment.py::test_the_smoke_rejects_a_database_the_service_cannot_use",
+  "tests/test_simulation_database_deployment.py::test_the_smoke_does_not_wait_for_privileges_the_role_lacks",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
