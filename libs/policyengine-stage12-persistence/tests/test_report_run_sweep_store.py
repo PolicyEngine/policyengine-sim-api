@@ -72,23 +72,36 @@ def _running(seeder, seeded_run: SeededReportRun):
     )
 
 
+def _listed(store, cutoff):
+    return (
+        *store.list_running_runs(RunKind.REPORT_RUN, started_before=cutoff),
+        *store.list_running_runs(RunKind.SIMULATION_RUN, started_before=cutoff),
+    )
+
+
 def _listed_for(store, seeded_run):
     ids = {
         seeded_run.run_ids.report_run_id,
         seeded_run.run_ids.baseline_simulation_run_id,
         seeded_run.run_ids.reform_simulation_run_id,
     }
-    return {
-        run
-        for run in store.list_running_runs(started_before=CUTOFF)
-        if run.run_id in ids
-    }
+    return {run for run in _listed(store, CUTOFF) if run.run_id in ids}
 
 
 def test_the_sweep_lists_runs_running_under_a_call_since_before_the_cutoff(
     store, seeder, seeded_run: SeededReportRun
 ) -> None:
     report_run, baseline_run = _running(seeder, seeded_run)
+    # Only once its report run is no longer running is a simulation run's
+    # call the sweep's to check.
+    assert _listed_for(store, seeded_run) == {report_run}
+    _set_run(
+        seeder,
+        "report_runs",
+        seeded_run.run_ids.report_run_id,
+        status="failed",
+        completed_at=CUTOFF,
+    )
     # The reform run is running, but its call has no ID recorded yet.
     _set_run(
         seeder,
@@ -98,7 +111,7 @@ def test_the_sweep_lists_runs_running_under_a_call_since_before_the_cutoff(
         started_at=NOW,
     )
 
-    assert _listed_for(store, seeded_run) == {report_run, baseline_run}
+    assert _listed_for(store, seeded_run) == {baseline_run}
     assert _listed_for_cutoff(store, seeded_run, NOW) == set()
 
 
@@ -107,11 +120,7 @@ def _listed_for_cutoff(store, seeded_run, cutoff):
         seeded_run.run_ids.report_run_id,
         seeded_run.run_ids.baseline_simulation_run_id,
     }
-    return {
-        run
-        for run in store.list_running_runs(started_before=cutoff)
-        if run.run_id in ids
-    }
+    return {run for run in _listed(store, cutoff) if run.run_id in ids}
 
 
 def test_the_sweep_fails_a_run_once_while_its_ended_call_still_holds_it(

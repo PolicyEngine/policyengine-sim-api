@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, insert, or_, select, update
+from sqlalchemy import exists, func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from policyengine_stage12_persistence.report_run_tables import (
@@ -318,34 +318,44 @@ class ReportRunStore:
         )
 
     def list_running_runs(
-        self, *, started_before: datetime, limit: int = 500
+        self, kind: RunKind, *, started_before: datetime
     ) -> tuple[RunningRun, ...]:
-        """Return up to ``limit`` runs of each kind running since before a time.
+        """Return the runs of ``kind`` running under a recorded call since a time.
 
-        Only runs with a recorded Modal call are returned, oldest first; a run
-        without a recorded start counts from its last update.
+        Runs are oldest first; a run without a recorded start counts from its
+        last update. A simulation run is listed only while no running report
+        run names it as its baseline or reform: that report run's coordinator
+        records its children's outcomes, and stops and starts them again when
+        Modal restarts it, so their calls are its to judge until it has
+        finished.
         """
-        running: list[RunningRun] = []
+        table = RUN_TABLES[kind]
+        started = func.coalesce(table.c.started_at, table.c.updated_at)
+        conditions = [
+            table.c.status == RunStatus.RUNNING.value,
+            table.c.modal_call_id.is_not(None),
+            started < started_before,
+        ]
+        if kind is RunKind.SIMULATION_RUN:
+            conditions.append(
+                ~exists().where(
+                    or_(
+                        report_runs.c.baseline_simulation_run_id == table.c.id,
+                        report_runs.c.reform_simulation_run_id == table.c.id,
+                    ),
+                    report_runs.c.status == RunStatus.RUNNING.value,
+                )
+            )
+        statement = (
+            select(table.c.id, table.c.modal_call_id)
+            .where(*conditions)
+            .order_by(started, table.c.id)
+        )
         with self._transaction("list_running_runs") as connection:
-            for kind, table in RUN_TABLES.items():
-                started = func.coalesce(table.c.started_at, table.c.updated_at)
-                statement = (
-                    select(table.c.id, table.c.modal_call_id)
-                    .where(
-                        table.c.status == RunStatus.RUNNING.value,
-                        table.c.modal_call_id.is_not(None),
-                        started < started_before,
-                    )
-                    .order_by(started, table.c.id)
-                    .limit(limit)
-                )
-                running.extend(
-                    RunningRun(
-                        kind=kind, run_id=row.id, modal_call_id=row.modal_call_id
-                    )
-                    for row in connection.execute(statement)
-                )
-        return tuple(running)
+            return tuple(
+                RunningRun(kind=kind, run_id=row.id, modal_call_id=row.modal_call_id)
+                for row in connection.execute(statement)
+            )
 
     def fail_run_of_ended_call(
         self,

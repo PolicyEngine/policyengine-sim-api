@@ -35,13 +35,16 @@ class FakeSweepStore:
         self.runs = list(runs)
         self.cutoffs = []
         self.failed = []
+        self.events = []
 
-    def list_running_runs(self, *, started_before):
+    def list_running_runs(self, kind, *, started_before):
         self.cutoffs.append(started_before)
-        return tuple(self.runs)
+        self.events.append(f"list:{kind.value}")
+        return tuple(run for run in self.runs if run.kind is kind)
 
     def fail_run_of_ended_call(self, run, *, error_message, failed_at):
         self.failed.append((run, error_message, failed_at))
+        self.events.append(f"fail:{run.kind.value}")
         return RunWrite(changed=True, status=RunStatus.FAILED)
 
 
@@ -79,7 +82,25 @@ def test_the_sweep_lists_runs_older_than_its_minimum_age() -> None:
         minimum_age=timedelta(minutes=15),
     )
 
-    assert store.cutoffs == [NOW - timedelta(minutes=15)]
+    assert store.cutoffs == [NOW - timedelta(minutes=15)] * 2
+
+
+def test_report_runs_are_swept_before_simulation_runs_are_listed() -> None:
+    # A simulation run is listed only once no report run combining it is
+    # running, so failing a dead coordinator's report run first lets the same
+    # sweep reach its children.
+    report_run = _run("fc-coordinator", RunKind.REPORT_RUN)
+    simulation_run = _run("fc-worker")
+    store = FakeSweepStore([simulation_run, report_run])
+
+    sweep_stuck_runs(store, call_state=lambda _: CallState.ENDED, now=NOW)
+
+    assert store.events == [
+        "list:report_run",
+        "fail:report_run",
+        "list:simulation_run",
+        "fail:simulation_run",
+    ]
 
 
 def test_a_call_running_several_runs_is_asked_once() -> None:
@@ -129,16 +150,29 @@ def test_a_run_another_sweep_failed_first_is_not_counted_again() -> None:
     assert summary.failed == 0
 
 
-def _fake_modal(statuses=None, error=None):
+def _node(call_id, status, children=()):
+    return SimpleNamespace(
+        function_call_id=call_id, status=status, children=list(children)
+    )
+
+
+def _fake_modal(statuses=None, error=None, *, graph=None):
+    """Return a modal stand-in whose call graph holds call fc-1's inputs.
+
+    By default fc-1 is a top-level call; ``graph`` gives the whole graph a
+    spawned call is part of instead.
+    """
+
     def from_id(call_id):
         if error is not None:
             raise error
         assert call_id == "fc-1"
-        return SimpleNamespace(
-            get_call_graph=lambda: [
-                SimpleNamespace(status=status) for status in (statuses or [])
-            ]
+        roots = (
+            graph
+            if graph is not None
+            else [_node("fc-1", status) for status in (statuses or [])]
         )
+        return SimpleNamespace(get_call_graph=lambda: roots)
 
     return SimpleNamespace(FunctionCall=SimpleNamespace(from_id=from_id))
 
@@ -166,3 +200,39 @@ def test_modal_call_state_is_unknown_when_modal_cannot_answer() -> None:
     )
 
     assert state is CallState.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("coordinator_status", "worker_status", "expected"),
+    [
+        # A coordinator that ran out of memory left its worker running.
+        (FakeInputStatus.FAILURE, FakeInputStatus.PENDING, CallState.RUNNING),
+        (FakeInputStatus.PENDING, FakeInputStatus.TERMINATED, CallState.ENDED),
+    ],
+)
+def test_modal_call_state_reads_the_recorded_calls_own_inputs(
+    coordinator_status, worker_status, expected
+) -> None:
+    # A worker is spawned inside its coordinator's input, so Modal nests its
+    # inputs under the coordinator's in the call graph.
+    graph = [
+        _node(
+            "fc-coordinator",
+            coordinator_status,
+            children=[
+                _node("fc-1", worker_status, children=[_node("fc-segment", "x")]),
+                _node("fc-other-worker", FakeInputStatus.SUCCESS),
+            ],
+        )
+    ]
+
+    assert modal_call_state("fc-1", modal_module=_fake_modal(graph=graph)) is expected
+
+
+def test_a_call_missing_from_its_call_graph_is_unknown() -> None:
+    graph = [_node("fc-coordinator", FakeInputStatus.SUCCESS)]
+
+    assert (
+        modal_call_state("fc-1", modal_module=_fake_modal(graph=graph))
+        is CallState.UNKNOWN
+    )
