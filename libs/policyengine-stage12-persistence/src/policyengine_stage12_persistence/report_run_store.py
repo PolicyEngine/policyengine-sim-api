@@ -1,8 +1,10 @@
 """Conditional writes of report run and simulation run status, as the Modal worker role.
 
-Every write is one ``UPDATE`` conditional on the run's expected status, so a
-call that Modal restarts after pre-emption, or a second writer, changes
-nothing that is already final.
+Every status write is one ``UPDATE`` conditional on the run's expected
+status, so a call that Modal restarts after pre-emption, or a second writer,
+changes nothing that is already final. A report run's completion also inserts
+its result rows, in the same transaction and only when its update changed
+the run.
 """
 
 from __future__ import annotations

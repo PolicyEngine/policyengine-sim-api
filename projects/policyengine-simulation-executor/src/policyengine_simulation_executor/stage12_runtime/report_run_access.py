@@ -3,7 +3,9 @@
 An operator creates the Modal secret in each Modal environment. The v2 Modal
 application attaches it to the coordinator and the simulation workers, which
 record the status and results of the report run and simulation runs their
-call names.
+call names. The secret must exist in a Modal environment before the v2
+application deploys there: ``modal deploy`` checks its required key and fails
+without it.
 """
 
 from __future__ import annotations

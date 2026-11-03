@@ -34,6 +34,11 @@ It builds on the Stage 12 rules:
   (`sim.stage12.no-migration-chain`). This repository's code reads and
   writes their rows, and deployment validation compares their live schema
   with its SQLAlchemy mappings; nothing here changes them.
+- policyengine-api also owns the run tables the v2 Modal coordinator and
+  workers write as the Modal worker role: `report_runs`, `simulation_runs`,
+  `report_run_simulation_runs` and the result tables. Their mappings in
+  `policyengine_stage12_persistence.report_run_tables` and
+  `report_run_results` declare only the columns those writes touch.
 - **Once #847 merges**, this repository's own Alembic chain at `migrations/`
   owns the `simulation` schema, and the Stage 12 tables stay with
   policyengine-api.
