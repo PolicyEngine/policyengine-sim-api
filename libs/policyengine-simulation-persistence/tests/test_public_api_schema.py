@@ -60,6 +60,8 @@ def test_the_models_match_the_public_api_tables(
     )
 
 
+# Marked so the rule's own CI jobs, which select public_api_schema, collect it.
+@pytest.mark.public_api_schema
 def test_rule_proof_models_match_public_api() -> None:
     """Proof for rule sim.persistence.models-match-public-api.
 

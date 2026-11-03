@@ -132,3 +132,14 @@ def test_the_weekly_run_reads_no_secret() -> None:
 
     assert "secrets." not in DRIFT_WORKFLOW.read_text(encoding="utf-8")
     assert workflow["permissions"] == {"contents": "read"}
+
+
+def test_the_rule_proof_runs_in_the_jobs_that_enforce_the_rule() -> None:
+    """The jobs select ``-m public_api_schema``; an unmarked proof is skipped."""
+    from test_public_api_schema import test_rule_proof_models_match_public_api
+
+    marks = {
+        mark.name for mark in test_rule_proof_models_match_public_api.pytestmark
+    }
+
+    assert "public_api_schema" in marks
