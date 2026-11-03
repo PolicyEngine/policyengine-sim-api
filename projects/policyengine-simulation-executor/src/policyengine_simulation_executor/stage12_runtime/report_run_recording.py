@@ -8,6 +8,7 @@ role, so the workers and the coordinator need no other change to record them.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -26,14 +27,51 @@ if TYPE_CHECKING:
         ComparisonSimulationRecord,
         ReportRunIds,
     )
+    from policyengine_stage12_persistence import RunWrite
 
     from .dependencies import ComparisonStore
+    from .failures import Stage12FailureDetail
     from .report_run_access import ReportRunWriter
 
 
 def run_error_message(error_code: str | None, error_summary: str | None) -> str:
     """Return the redacted failure a run records: its code, then its summary."""
     return f"{error_code or 'simulation_failed'}: {error_summary or 'no summary'}"
+
+
+@dataclass(frozen=True)
+class ReportRunRecorder:
+    """The coordinator's writes to the report run its call names, under its call ID."""
+
+    writer: ReportRunWriter
+    run_ids: ReportRunIds
+    modal_call_id: str
+
+    def claim(self) -> RunWrite:
+        """Check the run combines the call's simulation runs, then claim it."""
+        self.writer.require_simulation_runs(self.run_ids)
+        return self.writer.claim_report_run(
+            self.run_ids.report_run_id,
+            modal_call_id=self.modal_call_id,
+            claimed_at=datetime.now(UTC),
+        )
+
+    def complete(self) -> RunWrite:
+        """Mark the report run succeeded while this call holds it."""
+        return self.writer.complete_report_run(
+            self.run_ids,
+            modal_call_id=self.modal_call_id,
+            completed_at=datetime.now(UTC),
+        )
+
+    def fail(self, detail: Stage12FailureDetail) -> RunWrite:
+        """Mark the report run failed with ``detail`` while this call holds it."""
+        return self.writer.fail_report_run(
+            self.run_ids.report_run_id,
+            modal_call_id=self.modal_call_id,
+            error_message=run_error_message(detail.error_code, detail.error_summary),
+            failed_at=datetime.now(UTC),
+        )
 
 
 class SimulationRunRecordingStore:

@@ -27,6 +27,7 @@ from policyengine_simulation_executor.stage12_timeouts import (
 from .coordinated_simulations import SIMULATION_CANCELLED_ERROR_CODE, logger
 from .dependencies import ModalChildInvoker, artifact_store, runtime_store
 from .failure_causes import StageProgress
+from .failures import Stage12FailureDetail
 from .parent_claim import (
     claim_parent,
     validate_dispatch_context,
@@ -40,6 +41,8 @@ from .report_coordination import (
     CoordinatorInvocation,
     ReportCoordination,
 )
+from .report_run_access import report_run_store
+from .report_run_recording import ReportRunRecorder, SimulationRunRecordingStore
 
 __all__ = [
     "SIMULATION_CANCELLED_ERROR_CODE",
@@ -85,12 +88,24 @@ def coordinate_report(
         context=context,
         parent=submitted_parent,
     )
+    persistence = dependencies.store or runtime_store(dependencies.runtime)
+    report_run = None
+    if context.report_run is not None:
+        report_run = ReportRunRecorder(
+            writer=dependencies.report_runs or report_run_store(dependencies.runtime),
+            run_ids=context.report_run,
+            modal_call_id=invocation.invocation_id,
+        )
+        persistence = SimulationRunRecordingStore(
+            persistence, report_run.writer, context.report_run
+        )
     coordination = ReportCoordination(
         report=report,
         context=context,
         invocation=invocation,
-        persistence=dependencies.store or runtime_store(dependencies.runtime),
-        artifact_storage=dependencies.artifacts or artifact_store(),
+        persistence=persistence,
+        artifact_storage=dependencies.artifacts
+        or artifact_store(content_addressed=report_run is not None),
         child_invoker=dependencies.invoker or ModalChildInvoker(),
         dependencies=dependencies,
         stage_plan=(
@@ -100,14 +115,32 @@ def coordinate_report(
         ),
         progress=StageProgress(),
         child_wait_deadline=child_wait_deadline,
+        report_run=report_run,
     )
     with coordination.span(Stage.STAGE12_COORDINATOR_CLAIM):
+        if report_run is not None:
+            # The report run decides whether this call works: another call
+            # may hold it, or it may already be finished.
+            claimed = report_run.claim()
+            if not claimed.changed:
+                return {
+                    "deduplicated": True,
+                    "report_run_id": str(report_run.run_ids.report_run_id),
+                    "status": claimed.status.value,
+                }
         parent, should_execute = claim_parent(
             submitted=submitted_parent,
             coordinator_invocation_id=invocation.invocation_id,
             store=coordination.persistence,
         )
     if not should_execute:
+        if report_run is not None:
+            report_run.fail(
+                Stage12FailureDetail(
+                    error_code="report_already_claimed",
+                    error_summary="Another call holds this report's Stage 12 record.",
+                )
+            )
         return {
             "deduplicated": True,
             "evaluation_id": str(parent.evaluation_id),
