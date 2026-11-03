@@ -132,7 +132,10 @@ def _year_between(table_name: str, *, nullable: bool) -> CheckConstraint:
     return CheckConstraint(condition, name=f"ck_{table_name}_year")
 
 
-service_metadata = MetaData()
+# Named explicitly, so writes reach the Public API's tables whatever the
+# role's search_path.
+TABLE_SCHEMA: Final = "public"
+service_metadata = MetaData(schema=TABLE_SCHEMA)
 
 simulations = Table(
     "simulations",
@@ -197,13 +200,13 @@ reports = Table(
     PrimaryKeyConstraint("id", name="pk_reports"),
     ForeignKeyConstraint(
         ["baseline_simulation_id"],
-        ["simulations.id"],
+        [f"{TABLE_SCHEMA}.simulations.id"],
         name="fk_reports_baseline_simulation_id_simulations",
         ondelete="SET NULL",
     ),
     ForeignKeyConstraint(
         ["reform_simulation_id"],
-        ["simulations.id"],
+        [f"{TABLE_SCHEMA}.simulations.id"],
         name="fk_reports_reform_simulation_id_simulations",
         ondelete="SET NULL",
     ),
@@ -239,7 +242,7 @@ simulation_runs = Table(
     PrimaryKeyConstraint("id", name="pk_simulation_runs"),
     ForeignKeyConstraint(
         ["simulation_id"],
-        ["simulations.id"],
+        [f"{TABLE_SCHEMA}.simulations.id"],
         name="fk_simulation_runs_simulation_id_simulations",
         ondelete="CASCADE",
     ),
@@ -296,7 +299,7 @@ report_runs = Table(
     PrimaryKeyConstraint("id", name="pk_report_runs"),
     ForeignKeyConstraint(
         ["report_id"],
-        ["reports.id"],
+        [f"{TABLE_SCHEMA}.reports.id"],
         name="fk_report_runs_report_id_reports",
         ondelete="CASCADE",
     ),
@@ -329,13 +332,13 @@ report_run_simulation_runs = Table(
     PrimaryKeyConstraint("id", name="pk_report_run_simulation_runs"),
     ForeignKeyConstraint(
         ["report_run_id"],
-        ["report_runs.id"],
+        [f"{TABLE_SCHEMA}.report_runs.id"],
         name="fk_report_run_simulation_runs_report_run_id_report_runs",
         ondelete="CASCADE",
     ),
     ForeignKeyConstraint(
         ["simulation_run_id"],
-        ["simulation_runs.id"],
+        [f"{TABLE_SCHEMA}.simulation_runs.id"],
         name="fk_report_run_simulation_runs_simulation_run_id_simulation_runs",
         ondelete="RESTRICT",
     ),

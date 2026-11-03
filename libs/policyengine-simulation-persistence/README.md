@@ -21,7 +21,9 @@ URL, which holds a password.
 
 `tables.py` models, with SQLAlchemy Core, the six tables the service creates
 rows in: `simulations`, `reports`, `simulation_runs`, `report_runs`,
-`report_run_simulation_runs` and `household_jobs`, all in `service_metadata`.
+`report_run_simulation_runs` and `household_jobs`, all in `service_metadata`,
+which names the `public` schema so writes reach those tables whatever the
+role's `search_path`.
 Each model matches the table the Public API's v2 migration chain builds:
 every column with its type, nullability and server default, and every
 constraint and index under the chain's name. The models only describe the

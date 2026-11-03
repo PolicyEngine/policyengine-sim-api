@@ -13,12 +13,13 @@ from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import String, and_, column, false, func, select, table, values
 
+from policyengine_simulation_persistence.tables import TABLE_SCHEMA
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from sqlalchemy import Connection
 
-TABLE_SCHEMA: Final = "public"
 # PostgreSQL's catalog, which any role may read: a table is found by name
 # without the USAGE privilege on its schema that to_regclass would need.
 _pg_class = table(
