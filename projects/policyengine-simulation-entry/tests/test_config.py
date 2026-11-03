@@ -328,6 +328,10 @@ def test_the_simulation_database_url_is_read_from_the_environment(monkeypatch):
         "postgres://simulation_service:secret@db.example/postgres",
         "postgresql+psycopg://simulation_service:secret@db.example/postgres",
         "mysql://simulation_service:secret@db.example/postgres",
+        # The engine refuses these too, so the settings must.
+        "postgresql://db.example/postgres",
+        "postgresql://simulation_service:secret@db.example",
+        " postgresql://simulation_service:secret@db.example/postgres",
     ],
 )
 def test_the_simulation_database_url_must_be_canonical(database_url):

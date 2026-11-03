@@ -11,6 +11,7 @@ from policyengine_simulation_contract.stage12_manifest import (
     V2_VERSION_MANIFEST_NAME,
     assert_separate_manifest_names,
 )
+from policyengine_simulation_persistence import normalized_database_url
 
 PRODUCTION_ENVIRONMENTS = frozenset({"main", "prod", "production"})
 MODAL_GATEWAY_HOST_SUFFIX = ".modal.run"
@@ -275,9 +276,15 @@ class Settings:
             raise ConfigurationError(msg)
 
     def _validate_simulation_database(self) -> None:
-        """Require the canonical scheme for the service role's URL, when set."""
-        if self.simulation_database_url and not self.simulation_database_url.startswith(
-            "postgresql://"
-        ):
-            msg = "SIMULATION_DATABASE_URL must use the canonical postgresql:// scheme."
-            raise ConfigurationError(msg)
+        """Require a complete canonical URL for the service role, when set.
+
+        The persistence library's own check decides, so the settings accept
+        exactly the URLs the engine does; its message never repeats the URL.
+        """
+        if not self.simulation_database_url:
+            return
+        try:
+            normalized_database_url(self.simulation_database_url)
+        except ValueError as error:
+            msg = f"SIMULATION_DATABASE_URL is invalid: {error}"
+            raise ConfigurationError(msg) from None
