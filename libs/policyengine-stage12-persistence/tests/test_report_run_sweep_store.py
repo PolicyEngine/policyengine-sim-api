@@ -130,13 +130,13 @@ def test_the_sweep_fails_a_run_once_while_its_ended_call_still_holds_it(
 ) -> None:
     report_run, baseline_run = _running(seeder, seeded_run)
 
-    first = store.fail_run_of_ended_call(
+    first = store.fail_stuck_run(
         report_run, error_message=ENDED_MESSAGE, failed_at=CUTOFF
     )
-    again = store.fail_run_of_ended_call(
+    again = store.fail_stuck_run(
         report_run, error_message=ENDED_MESSAGE, failed_at=CUTOFF
     )
-    simulation = store.fail_run_of_ended_call(
+    simulation = store.fail_stuck_run(
         baseline_run, error_message=ENDED_MESSAGE, failed_at=CUTOFF
     )
 
@@ -168,10 +168,10 @@ def test_the_sweep_leaves_a_run_that_moved_to_another_call_or_finished(
         completed_at=CUTOFF,
     )
 
-    moved = store.fail_run_of_ended_call(
+    moved = store.fail_stuck_run(
         baseline_run, error_message=ENDED_MESSAGE, failed_at=CUTOFF
     )
-    finished = store.fail_run_of_ended_call(
+    finished = store.fail_stuck_run(
         report_run, error_message=ENDED_MESSAGE, failed_at=CUTOFF
     )
 
@@ -189,7 +189,7 @@ def test_two_sweeps_at_once_fail_each_run_exactly_once(
     def sweep(run_store):
         start_together.wait()
         return [
-            run_store.fail_run_of_ended_call(
+            run_store.fail_stuck_run(
                 run, error_message=ENDED_MESSAGE, failed_at=CUTOFF
             ).changed
             for run in runs
@@ -270,7 +270,30 @@ def test_runs_past_the_maximum_age_are_listed_and_failed_without_a_call(
     assert report_run_id not in {run.run_id for run in with_calls}
     (unrecorded,) = [run for run in every_run if run.run_id == report_run_id]
     assert unrecorded.modal_call_id is None
-    failed = store.fail_run_of_ended_call(
+    failed = store.fail_stuck_run(
         unrecorded, error_message="run_exceeded_maximum_age: too old", failed_at=CUTOFF
     )
     assert failed == RunWrite(changed=True, status=RunStatus.FAILED)
+
+
+def test_a_simulation_run_a_report_run_is_now_running_is_not_failed(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    _, baseline_run = _running(seeder, seeded_run)
+    _set_run(
+        seeder,
+        "report_runs",
+        seeded_run.run_ids.report_run_id,
+        status="failed",
+        completed_at=CUTOFF,
+    )
+    assert _baseline_listed(store, seeded_run)
+    # After the listing, another report run naming it starts running; its
+    # coordinator now judges the simulation run.
+    _second_report_run(seeder, seeded_run, "running")
+
+    write = store.fail_stuck_run(
+        baseline_run, error_message=ENDED_MESSAGE, failed_at=CUTOFF
+    )
+
+    assert write == RunWrite(changed=False, status=RunStatus.RUNNING)

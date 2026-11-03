@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from policyengine_simulation_contract.stage12_execution import ReportRunIds
-    from sqlalchemy import Engine, Table, Update
+    from sqlalchemy import ColumnElement, Engine, Table, Update
     from sqlalchemy.engine import Connection
 
     from policyengine_stage12_persistence.report_run_results import ReportRunResult
@@ -346,15 +346,7 @@ class ReportRunStore:
         if not include_runs_without_call:
             conditions.append(table.c.modal_call_id.is_not(None))
         if kind is RunKind.SIMULATION_RUN:
-            conditions.append(
-                ~exists().where(
-                    or_(
-                        report_runs.c.baseline_simulation_run_id == table.c.id,
-                        report_runs.c.reform_simulation_run_id == table.c.id,
-                    ),
-                    report_runs.c.status == RunStatus.RUNNING.value,
-                )
-            )
+            conditions.append(_no_running_report_run_names(table))
         statement = (
             select(table.c.id, table.c.modal_call_id)
             .where(*conditions)
@@ -366,18 +358,20 @@ class ReportRunStore:
                 for row in connection.execute(statement)
             )
 
-    def fail_run_of_ended_call(
+    def fail_stuck_run(
         self,
         run: RunningRun,
         *,
         error_message: str,
         failed_at: datetime,
     ) -> RunWrite:
-        """Mark ``run`` failed, only while it is running under ``run.modal_call_id``.
+        """Mark a stuck ``run`` failed, while it is as it was listed.
 
-        A run that finished, or that moved to another call since it was
-        listed, is left as it is, so concurrent sweeps change it once. A run
-        listed with no call is failed only while it still has none.
+        It must still be running under ``run.modal_call_id``, or with no call
+        if it was listed with none, and a simulation run must still have no
+        running report run naming it. A run that finished, moved to another
+        call, or that a running report run has named since it was listed, is
+        left as it is, so concurrent sweeps change it once.
         """
         table = RUN_TABLES[run.kind]
         same_call = (
@@ -391,6 +385,11 @@ class ReportRunStore:
                 table.c.id == run.run_id,
                 table.c.status == RunStatus.RUNNING.value,
                 same_call,
+                *(
+                    (_no_running_report_run_names(table),)
+                    if run.kind is RunKind.SIMULATION_RUN
+                    else ()
+                ),
             )
             .values(
                 status=RunStatus.FAILED.value,
@@ -399,7 +398,7 @@ class ReportRunStore:
                 updated_at=failed_at,
             )
         )
-        return self._write(table, run.run_id, statement, "fail_run_of_ended_call")
+        return self._write(table, run.run_id, statement, "fail_stuck_run")
 
     def _write(
         self,
@@ -454,3 +453,17 @@ def _uniform_rows(rows: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
     """Give every row the same columns, unset ones null, for one batched insert."""
     columns = {name for row in rows for name in row}
     return [dict.fromkeys(columns) | row for row in rows]
+
+
+def _no_running_report_run_names(table: Table) -> ColumnElement[bool]:
+    """Return the condition that no running report run names the run.
+
+    A report run names its simulation runs as its baseline and its reform.
+    """
+    return ~exists().where(
+        or_(
+            report_runs.c.baseline_simulation_run_id == table.c.id,
+            report_runs.c.reform_simulation_run_id == table.c.id,
+        ),
+        report_runs.c.status == RunStatus.RUNNING.value,
+    )

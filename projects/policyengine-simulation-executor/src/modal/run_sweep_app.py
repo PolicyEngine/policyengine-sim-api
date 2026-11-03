@@ -3,8 +3,10 @@
 Every ten minutes it lists the Public API's report runs and simulation runs
 that have been running under a recorded Modal call for at least ten minutes,
 asks Modal for each call's status, and marks a run failed once its call has
-ended. It connects as the Modal worker role, from the same Modal secret the
-v2 coordinator and workers use. This application is not versioned with the
+ended. It also fails any run still running 24 hours after it started, longer
+than any Modal call of it can run, whatever Modal reports. It connects as
+the Modal worker role, from the same Modal secret the v2 coordinator and
+workers use. This application is not versioned with the
 .py bundle: one copy runs per Modal environment.
 
 Deploy it, once per Modal environment, from this project's directory:

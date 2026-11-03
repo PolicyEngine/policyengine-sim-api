@@ -3,7 +3,10 @@
 A coordinator or worker records the Modal call running each run. If that call
 ends without recording the run's outcome, for example because its container
 ran out of memory, the run stays running. The sweep asks Modal for the status
-of each recorded call and marks the run failed only once the call has ended.
+of each recorded call and marks the run failed once the call has ended. It
+also fails a run still running long after it started, longer than any Modal
+call of it can run, whatever Modal reports and with or without a recorded
+call, so a run Modal can't decide doesn't stay running for good.
 
 Modal restarts a pre-empted call under the same call ID and reports it
 pending meanwhile, so a pre-empted coordinator's report run is never failed.
@@ -44,8 +47,8 @@ ENDED_CALL_MESSAGE = (
 # a call Modal no longer describes, from keeping a run running for good.
 DEFAULT_MAXIMUM_AGE = timedelta(hours=24)
 EXCEEDED_AGE_MESSAGE = (
-    "run_exceeded_maximum_age: The run was still running 24 hours after it "
-    "was first claimed, longer than any Modal call of it can run."
+    "run_exceeded_maximum_age: The run was still running long after it "
+    "started, longer than any Modal call of it can run."
 )
 # Modal's input statuses (``modal.call_graph.InputStatus``) by name. A pending
 # input is running or waiting to run again; Modal reports an input pre-empted
@@ -78,7 +81,7 @@ class StuckRunStore(Protocol):
         """Return the runs of ``kind`` running since before a time."""
         ...
 
-    def fail_run_of_ended_call(
+    def fail_stuck_run(
         self, run: RunningRun, *, error_message: str, failed_at: datetime
     ) -> RunWrite:
         """Mark ``run`` failed while it is still running under its listed call."""
@@ -164,27 +167,28 @@ def sweep_stuck_runs(  # the store, then keyword-only seams and limits
     """Fail every listed run whose recorded Modal call has ended.
 
     Report runs are swept first, so a dead coordinator's simulation runs are
-    listed in the same sweep. Each call is asked about once. A run whose call
-    is running, or whose state is unknown, is left as it is, unless it has
-    been running longer than ``maximum_age``; so is one that finished or
-    moved to another call since it was listed, which makes two sweeps at
-    once safe.
+    listed in the same sweep. For each kind, runs older than ``maximum_age``
+    are failed first, before any Modal lookup can use up the scheduled
+    function's time. Each call is then asked about once. A run whose call is
+    running, or whose state is unknown, is left as it is; so is one that
+    finished or moved to another call since it was listed, which makes two
+    sweeps at once safe.
     """
     now = now or datetime.now(UTC)
     states: dict[str, CallState] = {}
     tally = _Tally()
     for kind in (RunKind.REPORT_RUN, RunKind.SIMULATION_RUN):
+        for run in store.list_running_runs(
+            kind, started_before=now - maximum_age, include_runs_without_call=True
+        ):
+            if store.fail_stuck_run(
+                run, error_message=EXCEEDED_AGE_MESSAGE, failed_at=now
+            ).changed:
+                tally.failed_for_age += 1
         for run in store.list_running_runs(kind, started_before=now - minimum_age):
             _sweep_run(
                 store, run, states=states, call_state=call_state, now=now, tally=tally
             )
-        for run in store.list_running_runs(
-            kind, started_before=now - maximum_age, include_runs_without_call=True
-        ):
-            if store.fail_run_of_ended_call(
-                run, error_message=EXCEEDED_AGE_MESSAGE, failed_at=now
-            ).changed:
-                tally.failed_for_age += 1
     return SweepSummary(**vars(tally))
 
 
@@ -214,7 +218,7 @@ def _sweep_run(  # noqa: PLR0913  # one run, the store, and the sweep's shared s
         tally.running += 1
     elif state is CallState.UNKNOWN:
         tally.unknown += 1
-    elif store.fail_run_of_ended_call(
+    elif store.fail_stuck_run(
         run, error_message=ENDED_CALL_MESSAGE, failed_at=now
     ).changed:
         tally.failed += 1

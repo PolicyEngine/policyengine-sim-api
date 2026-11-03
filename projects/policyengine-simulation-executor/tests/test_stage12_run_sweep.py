@@ -36,6 +36,7 @@ class FakeSweepStore:
         # Runs older than the maximum age, listed with or without a call.
         self.expired = list(expired)
         self.cutoffs = []
+        self.expired_cutoffs = []
         self.failed = []
         self.events = []
 
@@ -43,13 +44,14 @@ class FakeSweepStore:
         self, kind, *, started_before, include_runs_without_call=False
     ):
         if include_runs_without_call:
+            self.expired_cutoffs.append(started_before)
             self.events.append(f"list-expired:{kind.value}")
             return tuple(run for run in self.expired if run.kind is kind)
         self.cutoffs.append(started_before)
         self.events.append(f"list:{kind.value}")
         return tuple(run for run in self.runs if run.kind is kind)
 
-    def fail_run_of_ended_call(self, run, *, error_message, failed_at):
+    def fail_stuck_run(self, run, *, error_message, failed_at):
         self.failed.append((run, error_message, failed_at))
         self.events.append(f"fail:{run.kind.value}")
         return RunWrite(changed=True, status=RunStatus.FAILED)
@@ -105,12 +107,12 @@ def test_report_runs_are_swept_before_simulation_runs_are_listed() -> None:
     sweep_stuck_runs(store, call_state=lambda _: CallState.ENDED, now=NOW)
 
     assert store.events == [
+        "list-expired:report_run",
         "list:report_run",
         "fail:report_run",
-        "list-expired:report_run",
+        "list-expired:simulation_run",
         "list:simulation_run",
         "fail:simulation_run",
-        "list-expired:simulation_run",
     ]
 
 
@@ -150,8 +152,8 @@ def test_a_run_another_sweep_failed_first_is_not_counted_again() -> None:
     run = _run("fc-ended")
 
     class AlreadyFailedStore(FakeSweepStore):
-        def fail_run_of_ended_call(self, run, *, error_message, failed_at):
-            super().fail_run_of_ended_call(
+        def fail_stuck_run(self, run, *, error_message, failed_at):
+            super().fail_stuck_run(
                 run, error_message=error_message, failed_at=failed_at
             )
             return RunWrite(changed=False, status=RunStatus.FAILED)
@@ -287,3 +289,26 @@ def test_an_unrecognised_input_status_leaves_the_call_unknown() -> None:
         modal_call_state("fc-1", modal_module=_fake_modal(graph=graph))
         is CallState.UNKNOWN
     )
+
+
+def test_the_age_limit_is_checked_first_with_its_own_cutoff() -> None:
+    # Before any Modal lookup, so lookups that stall can't keep it from
+    # running within the scheduled function's time limit.
+    store = FakeSweepStore([_run("fc-1", RunKind.REPORT_RUN)])
+    asked = []
+
+    def call_state(call_id):
+        asked.append((call_id, list(store.events)))
+        return CallState.RUNNING
+
+    sweep_stuck_runs(
+        store,
+        call_state=call_state,
+        now=NOW,
+        minimum_age=timedelta(minutes=10),
+        maximum_age=timedelta(hours=24),
+    )
+
+    assert store.expired_cutoffs == [NOW - timedelta(hours=24)] * 2
+    assert store.cutoffs == [NOW - timedelta(minutes=10)] * 2
+    assert asked == [("fc-1", ["list-expired:report_run", "list:report_run"])]
