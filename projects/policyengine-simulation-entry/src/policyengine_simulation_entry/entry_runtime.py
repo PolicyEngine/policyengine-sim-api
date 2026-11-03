@@ -216,8 +216,8 @@ class SimulationDatabaseConnection(Protocol):
     The real implementation is ``SimulationDatabase``; tests inject fakes.
     """
 
-    async def check_connection(self) -> None:
-        """Raise unless a pooled connection answers a trivial query."""
+    async def missing_privileges(self) -> list[str]:
+        """Return each table privilege the service needs and its role lacks."""
         ...
 
     def dispose(self) -> None:

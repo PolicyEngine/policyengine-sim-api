@@ -1,0 +1,21 @@
+# Proof fixture: the grants with INSERT on simulation_runs left out, as when
+# a role was set up before the table existed.
+INSERT simulations
+SELECT simulations
+INSERT reports
+SELECT reports
+SELECT simulation_runs
+INSERT report_runs
+SELECT report_runs
+INSERT report_run_simulation_runs
+SELECT report_run_simulation_runs
+INSERT household_jobs
+SELECT household_jobs
+SELECT policies
+SELECT households
+SELECT tax_benefit_models
+SELECT tax_benefit_model_versions
+SELECT regions
+SELECT datasets
+SELECT parameters
+SELECT parameter_values

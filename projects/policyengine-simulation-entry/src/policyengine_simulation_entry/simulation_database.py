@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from policyengine_simulation_persistence import create_simulation_engine
-from sqlalchemy import select
+from policyengine_simulation_persistence import (
+    create_simulation_engine,
+    missing_table_privileges,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -27,13 +29,13 @@ class SimulationDatabase:
         """
         return cls(create_simulation_engine(database_url))
 
-    def _check_connection(self) -> None:
+    def _missing_privileges(self) -> list[str]:
         with self.engine.connect() as connection:
-            connection.execute(select(1))
+            return missing_table_privileges(connection)
 
-    async def check_connection(self) -> None:
-        """Raise unless a pooled connection answers a trivial query."""
-        await asyncio.to_thread(self._check_connection)
+    async def missing_privileges(self) -> list[str]:
+        """Return each table privilege the service needs and its role lacks."""
+        return await asyncio.to_thread(self._missing_privileges)
 
     def dispose(self) -> None:
         """Close every pooled connection."""

@@ -22,6 +22,10 @@ id = "stage12"
 title = "Stage 12 persistence"
 
 [[category]]
+id = "persistence"
+title = "Simulation service database"
+
+[[category]]
 id = "deployment"
 title = "Deployment pipeline"
 
@@ -132,6 +136,36 @@ bad_fixture = "rules/fixtures/sim.boundaries.sqlalchemy-and-alembic-only/bad_dat
 good_fixture = "rules/fixtures/sim.boundaries.sqlalchemy-and-alembic-only/good_database_store.py"
 project = "projects/policyengine-simulation-entry"
 test = "tests/test_database_access_boundaries.py::test_rule_proof_sqlalchemy_and_alembic_only"
+
+# --- Simulation service database ------------------------------------------
+
+[[rule]]
+id = "sim.persistence.missing-privileges-reported"
+category = "persistence"
+statement = "The simulation service's readiness check names every table privilege its role needs on the Public API's tables and lacks, as PostgreSQL reports it, and counts a table missing from the public schema as lacking all of them."
+rationale = "libs/policyengine-simulation-persistence/README.md#the-roles-privileges"
+scope = ["libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "libs/policyengine-simulation-persistence"
+nodes = [
+  "tests/test_access.py::test_a_role_with_every_required_privilege_misses_none",
+  "tests/test_access.py::test_each_missing_privilege_is_named",
+  "tests/test_access.py::test_a_missing_table_lacks_every_privilege",
+  "tests/test_access.py::test_only_the_public_schema_counts",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "simulation-database"
+invocation = "uv run --frozen pytest tests/ -v -m postgres"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.persistence.missing-privileges-reported/bad_grants.txt"
+good_fixture = "rules/fixtures/sim.persistence.missing-privileges-reported/good_grants.txt"
+project = "libs/policyengine-simulation-persistence"
+test = "tests/test_access.py::test_rule_proof_missing_privileges_reported"
 
 # --- Stage 12 persistence --------------------------------------------------
 

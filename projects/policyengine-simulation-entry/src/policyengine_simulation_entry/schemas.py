@@ -121,13 +121,16 @@ class SimulationDatabaseReadiness(BaseModel):
     """The simulation service's database, as the readiness check found it.
 
     ``reachable`` says whether a pooled connection answered within the check's
-    time limit. It doesn't change ``status``: no old-gateway or Stage 12 route
-    uses this database.
+    time limit. ``missing_privileges`` names each table privilege the service
+    needs and its role lacks, such as ``"INSERT on reports"``, or is null when
+    the database was not reached. Neither changes ``status``: no old-gateway or
+    Stage 12 route uses this database.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     reachable: bool
+    missing_privileges: tuple[str, ...] | None
 
 
 class SimulationEntrypointReadinessResponse(BaseModel):

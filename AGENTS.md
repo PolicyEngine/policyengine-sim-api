@@ -130,6 +130,10 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 - Checked: `sim.stage12.deployment-scope`, `sim.stage12.deployment-uses-api-schema`, `sim.stage12.no-migration-chain`, `sim.stage12.no-production-user-associations`, `sim.stage12.no-schema-ddl`, `sim.stage12.persistence-typed-dml-only`, `sim.stage12.production-lock-has-db-runtime`
 
+### Simulation service database
+
+- Checked: `sim.persistence.missing-privileges-reported`
+
 ### Deployment pipeline
 
 - Checked: `sim.deploy.container-context-minimal`, `sim.deploy.docker-images-build`, `sim.deploy.gcloud-without-terraform`, `sim.deploy.modal-image-smoke`, `sim.deploy.numerical-sentinel-gate`, `sim.deploy.permission-enforcement-wired`, `sim.deploy.promotion-order-explicit`, `sim.deploy.release-commit-deploys-once`, `sim.deploy.release-identity-smoke`, `sim.deploy.revision-tags-valid`, `sim.deploy.routing-publication-journaled`, `sim.deploy.shell-scripts-valid`, `sim.deploy.smoke-tests-strict`, `sim.deploy.staging-promotes-tested-revision`, `sim.deploy.traffic-changes-exact`, `sim.deploy.workflow-shell-safety`

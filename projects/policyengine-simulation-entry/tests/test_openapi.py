@@ -136,7 +136,7 @@ def test_local_area_breakdowns_may_list_the_withheld_areas_of_each_level():
         assert field not in breakdown["required"]
 
 
-def test_readiness_documents_whether_the_simulation_database_was_reached():
+def test_readiness_documents_the_simulation_database_check():
     spec = create_app().openapi()
     readiness = spec["paths"]["/ready"]["get"]["responses"]["200"]
     schema = readiness["content"]["application/json"]["schema"]
@@ -145,7 +145,7 @@ def test_readiness_documents_whether_the_simulation_database_was_reached():
     assert schema == {
         "$ref": "#/components/schemas/SimulationEntrypointReadinessResponse"
     }
-    assert set(database["properties"]) == {"reachable"}
+    assert set(database["properties"]) == {"reachable", "missing_privileges"}
 
 
 def test_route_table_is_frozen():

@@ -39,6 +39,12 @@ the other runtime secrets, and only the entrypoint's runtime service account
 may read it. A missing or invalid name, or a secret with no enabled version,
 stops the deploy before `gcloud run deploy` runs.
 
+`GET /ready` reports, under `simulation_database`, whether the entrypoint
+reached the database and which table privileges its role lacks
+(`missing_privileges`, such as `"INSERT on reports"`; the list is in
+`libs/policyengine-simulation-persistence`). The database does not change the
+readiness status, because no old-gateway or Stage 12 route uses it.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`

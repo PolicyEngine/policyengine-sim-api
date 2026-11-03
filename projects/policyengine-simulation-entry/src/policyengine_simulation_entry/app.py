@@ -470,21 +470,23 @@ def _register_simulation_routes(
 async def _simulation_database_readiness(
     database: SimulationDatabaseConnection,
 ) -> SimulationDatabaseReadiness:
-    """Report whether the simulation service reached its database."""
+    """Report whether the service reached its database, and what its role lacks."""
     try:
-        await asyncio.wait_for(
-            database.check_connection(),
+        missing_privileges = await asyncio.wait_for(
+            database.missing_privileges(),
             timeout=SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS,
         )
-    # Any failure to reach the database is reported, never raised: the
-    # old-gateway routes this check covers do not use it.
+    # Any failure to reach or read the database is reported, never raised:
+    # the old-gateway routes this check covers do not use it.
     except Exception as error:  # noqa: BLE001  # reported as unreachable
         logger.warning(
             "simulation_database_unreachable",
             extra={"error_type": type(error).__name__},
         )
-        return SimulationDatabaseReadiness(reachable=False)
-    return SimulationDatabaseReadiness(reachable=True)
+        return SimulationDatabaseReadiness(reachable=False, missing_privileges=None)
+    return SimulationDatabaseReadiness(
+        reachable=True, missing_privileges=tuple(missing_privileges)
+    )
 
 
 def _register_service_routes(app: FastAPI, entry: EntryRuntime) -> None:

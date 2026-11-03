@@ -9,6 +9,7 @@ import pytest
 from conftest import FakeBackend, make_settings
 from fastapi.testclient import TestClient
 from policyengine_simulation_entry import app as app_module
+from policyengine_simulation_entry import simulation_database as database_module
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.simulation_database import SimulationDatabase
 from sqlalchemy.exc import OperationalError
@@ -17,20 +18,22 @@ DATABASE_URL = "postgresql://simulation_service:secret@db.example:5432/postgres"
 
 
 class FakeSimulationDatabase:
-    """Answer the connection check, or fail the way an unreachable database does."""
+    """Name the privileges the role lacks, or fail as an unreachable database does."""
 
-    def __init__(self, *, failure=None, delay_seconds=0):
+    def __init__(self, *, missing_privileges=(), failure=None, delay_seconds=0):
+        self.missing = list(missing_privileges)
         self.failure = failure
         self.delay_seconds = delay_seconds
         self.checks = 0
         self.disposed = False
 
-    async def check_connection(self):
+    async def missing_privileges(self):
         self.checks += 1
         if self.delay_seconds:
             await asyncio.sleep(self.delay_seconds)
         if self.failure is not None:
             raise self.failure
+        return self.missing
 
     def dispose(self):
         self.disposed = True
@@ -47,7 +50,7 @@ def _client(backend, database):
     )
 
 
-def test_readiness_reports_that_the_database_was_reached():
+def test_readiness_reports_a_reached_database_with_every_privilege():
     database = FakeSimulationDatabase()
     with _client(FakeBackend(), database) as client:
         result = client.get("/ready")
@@ -55,9 +58,26 @@ def test_readiness_reports_that_the_database_was_reached():
     assert result.status_code == 200
     assert result.json() == {
         "status": "ready",
-        "simulation_database": {"reachable": True},
+        "simulation_database": {"reachable": True, "missing_privileges": []},
     }
     assert database.checks == 1
+
+
+def test_readiness_names_the_privileges_the_role_lacks():
+    database = FakeSimulationDatabase(
+        missing_privileges=["INSERT on reports", "SELECT on policies"]
+    )
+    with _client(FakeBackend(), database) as client:
+        result = client.get("/ready")
+
+    assert result.status_code == 200
+    assert result.json() == {
+        "status": "ready",
+        "simulation_database": {
+            "reachable": True,
+            "missing_privileges": ["INSERT on reports", "SELECT on policies"],
+        },
+    }
 
 
 def test_an_unreachable_database_does_not_change_old_gateway_readiness(caplog):
@@ -68,7 +88,7 @@ def test_an_unreachable_database_does_not_change_old_gateway_readiness(caplog):
     assert result.status_code == 200
     assert result.json() == {
         "status": "ready",
-        "simulation_database": {"reachable": False},
+        "simulation_database": {"reachable": False, "missing_privileges": None},
     }
     assert "simulation_database_unreachable" in caplog.text
     assert "secret" not in caplog.text
@@ -82,7 +102,7 @@ def test_readiness_waits_only_briefly_for_the_database(monkeypatch):
     with _client(FakeBackend(), slow_database) as client:
         database = client.get("/ready").json()["simulation_database"]
 
-    assert database == {"reachable": False}
+    assert database == {"reachable": False, "missing_privileges": None}
 
 
 def test_readiness_still_follows_the_old_gateway():
@@ -94,7 +114,7 @@ def test_readiness_still_follows_the_old_gateway():
     assert result.status_code == 503
     assert result.json() == {
         "status": "not_ready",
-        "simulation_database": {"reachable": True},
+        "simulation_database": {"reachable": True, "missing_privileges": []},
     }
 
 
@@ -139,20 +159,17 @@ def test_settings_build_the_database_only_when_it_is_configured(monkeypatch):
     assert built_urls == [DATABASE_URL]
 
 
-def test_the_database_checks_its_connection_off_the_event_loop():
-    statements = []
-    statement_threads = []
+def test_the_database_reads_the_missing_privileges_off_the_event_loop(monkeypatch):
+    connections = []
+    query_threads = []
 
     class FakeConnection:
         def __enter__(self):
+            connections.append(self)
             return self
 
         def __exit__(self, *_):
             return False
-
-        def execute(self, statement):
-            statements.append(str(statement))
-            statement_threads.append(threading.get_ident())
 
     class FakeEngine:
         disposed = False
@@ -163,18 +180,25 @@ def test_the_database_checks_its_connection_off_the_event_loop():
         def dispose(self):
             self.disposed = True
 
+    def missing_table_privileges(connection):
+        assert connection in connections
+        query_threads.append(threading.get_ident())
+        return ["INSERT on reports"]
+
+    monkeypatch.setattr(
+        database_module, "missing_table_privileges", missing_table_privileges
+    )
     engine = FakeEngine()
     database = SimulationDatabase(engine)
 
-    async def check_from_the_event_loop():
-        await database.check_connection()
-        return threading.get_ident()
+    async def read_from_the_event_loop():
+        return await database.missing_privileges(), threading.get_ident()
 
-    event_loop_thread = asyncio.run(check_from_the_event_loop())
+    missing, event_loop_thread = asyncio.run(read_from_the_event_loop())
     database.dispose()
 
-    assert statements == ["SELECT 1"]
-    assert statement_threads != [event_loop_thread]
+    assert missing == ["INSERT on reports"]
+    assert query_threads != [event_loop_thread]
     assert engine.disposed is True
 
 

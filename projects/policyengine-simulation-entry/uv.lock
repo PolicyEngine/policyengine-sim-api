@@ -980,6 +980,7 @@ requires-dist = [
     { name = "pyright", marker = "extra == 'build'", specifier = ">=1.1.401" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.1.1" },
+    { name = "pyyaml", marker = "extra == 'test'", specifier = ">=6.0.2" },
     { name = "sqlalchemy", specifier = ">=2,<3" },
 ]
 provides-extras = ["test", "build"]

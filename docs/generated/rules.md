@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 57 | 2 | 0 | 14 | 73 |
+| mechanical | 58 | 2 | 0 | 14 | 74 |
 | metric | 1 | 0 | 0 | 0 | 1 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 60 of 74 rules.
+**Blocking:** 61 of 75 rules.
 
 ## Gaps
 
@@ -134,6 +134,21 @@ flowchart LR
   e_pytest_libs_policyengine_stage12_persistence_tests_test_source_boundaries_py --> j_CI_pr_yml_test
   r_sim_stage12_production_lock_has_db_runtime --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_traffic_py
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_traffic_py --> j_CI_pr_yml_test
+```
+
+## Simulation service database
+
+| Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sim.persistence.missing-privileges-reported` | The simulation service's readiness check names every table privilege its role needs on the Public API's tables and lacks, as PostgreSQL reports it, and counts a table missing from the public schema as lacking all of them. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_access.py` | `pr.yml:simulation-database` | yes |
+
+```mermaid
+flowchart LR
+  r_sim_persistence_missing_privileges_reported("sim.persistence.missing-privileges-reported (enforced)")
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_access_py["pytest libs/policyengine-simulation-persistence/tests/test_access.py"]
+  j_CI_pr_yml_simulation_database["CI pr.yml:simulation-database"]
+  r_sim_persistence_missing_privileges_reported --> e_pytest_libs_policyengine_simulation_persistence_tests_test_access_py
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_access_py --> j_CI_pr_yml_simulation_database
 ```
 
 ## Deployment pipeline
