@@ -22,6 +22,23 @@ Credential values belong in the cloud secret store. They must not be committed
 to the repository or stored as plain GitHub variables. The deployment workflow
 receives only the configuration needed to reference those protected resources.
 
+## Simulation database
+
+The simulation service connects to the Postgres database that holds the
+Public API's tables, with its own login role. This repository has no schema
+or migration chain of its own: the Public API's migration chain creates and
+changes those tables, and the Public API's privilege manifest grants the
+role what it may do on them.
+
+The deploy step resolves the Secret Manager secret named by the
+`SIMULATION_DATABASE_URL_SECRET_NAME` environment variable to its newest
+enabled version and mounts that version as `SIMULATION_DATABASE_URL` on every
+deploy, whatever the Stage 12 setting. The deploy service account must be
+able to list the secret's versions (`gcloud secrets versions list`), as for
+the other runtime secrets, and only the entrypoint's runtime service account
+may read it. A missing or invalid name, or a secret with no enabled version,
+stops the deploy before `gcloud run deploy` runs.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`
