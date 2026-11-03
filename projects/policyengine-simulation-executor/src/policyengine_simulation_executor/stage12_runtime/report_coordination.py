@@ -72,6 +72,7 @@ from .output_planning import (
     resolve_report_output_plan,
     validate_output_frames,
 )
+from .report_run_recording import SimulationRunRecordingStore
 from .simulation import descriptor_from_record
 
 if TYPE_CHECKING:
@@ -639,10 +640,13 @@ class ReportCoordination:
         """Store the aggregate's result with the report run's success.
 
         A report run this call no longer holds is logged and left as it is.
-        A call that names no report run records nothing.
+        A call that names no report run records nothing. Both simulation runs
+        are given their child records' outcomes first, so a succeeded report
+        run never combines a simulation run still running.
         """
         if self.report_run is None:
             return
+        self.reconcile_simulation_runs()
         written = self.report_run.complete(
             aggregate["result"], country=self.report.baseline.geography.country
         )
@@ -652,6 +656,15 @@ class ReportCoordination:
                 self.report.evaluation_id,
                 self.report_run.run_ids.report_run_id,
                 written.status.value,
+            )
+
+    def reconcile_simulation_runs(self) -> None:
+        """Give each simulation run of the report its child record's outcome."""
+        if not isinstance(self.persistence, SimulationRunRecordingStore):
+            return
+        for simulation in (self.report.baseline, self.report.reform):
+            self.persistence.reconcile_simulation_run(
+                simulation.simulation_execution_id
             )
 
     def fail(self, parent: ComparisonReportRecord, error: Exception) -> None:
@@ -706,6 +719,11 @@ class ReportCoordination:
         # After the Stage 12 report, as on success: a call Modal restarts
         # between the two writes finds that report failed and runs it again.
         if self.report_run is not None:
+            persist_failure_record(
+                self.reconcile_simulation_runs,
+                runtime=self.runtime,
+                failure_scope="report_coordination",
+            )
             persist_failure_record(
                 partial(self.report_run.fail, detail),
                 runtime=self.runtime,

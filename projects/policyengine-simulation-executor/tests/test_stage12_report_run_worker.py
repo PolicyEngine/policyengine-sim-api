@@ -179,6 +179,27 @@ def test_a_simulation_run_another_report_recorded_keeps_its_output() -> None:
     assert child.output_uri == result["artifact"]["uri"]
 
 
+def test_a_lost_simulation_run_success_still_returns_the_workers_result() -> None:
+    # The child record already succeeded; the coordinator completes the run
+    # from it, so a failed second write must not fail the worker.
+    simulation = planned_simulation(SimulationRole.BASELINE)
+    store = _seeded_store(simulation)
+    report_runs = FakeReportRuns()
+
+    def dropped(*_args, **_kwargs):
+        msg = "the connection dropped"
+        raise ConnectionError(msg)
+
+    report_runs.complete_simulation_run = dropped
+
+    result = _run_worker(simulation, store, report_runs)
+
+    child = store.children[simulation.simulation_execution_id]
+    assert child.status is ComparisonRunLifecycleStatus.SUCCEEDED
+    assert child.output_uri == result["artifact"]["uri"]
+    assert report_runs.simulation_runs[BASELINE_RUN_ID].status is RunStatus.RUNNING
+
+
 def test_comparison_worker_records_no_simulation_run() -> None:
     simulation = planned_simulation(SimulationRole.BASELINE)
     store = _seeded_store(simulation)

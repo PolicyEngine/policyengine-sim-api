@@ -6,6 +6,7 @@ import pytest
 from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
+    SimulationRole,
 )
 from policyengine_simulation_executor.stage12_runtime import (
     coordination as coordination_module,
@@ -13,6 +14,7 @@ from policyengine_simulation_executor.stage12_runtime import (
 from policyengine_stage12_persistence import RunStatus
 from stage12_child_call_support import ConcurrentInvoker, InjectedChildFaults
 from stage12_fake_report_runs import (
+    BASELINE_RUN_ID,
     REFORM_RUN_ID,
     REPORT_RUN_ID,
     FakeReportRuns,
@@ -21,8 +23,10 @@ from stage12_fake_report_runs import (
 )
 from stage12_fake_stores import FakeArtifacts, FakeStore
 from stage12_runtime_support import (
+    child_record,
     coordinate_report,
     parent_record,
+    planned_simulation,
     report_execution_input,
 )
 
@@ -259,6 +263,77 @@ def test_a_stage12_report_another_call_finished_fails_the_report_run() -> None:
         "under another call."
     )
     assert invoker.events == []
+
+
+class LosingOneFailureWrite(FakeReportRuns):
+    """Lose the first write that fails a simulation run, as a dropped connection."""
+
+    def __init__(self):
+        super().__init__()
+        self.lost_failure_writes = 0
+
+    def fail_simulation_run(self, simulation_run_id, *, error_message, failed_at):
+        if not self.lost_failure_writes:
+            self.lost_failure_writes += 1
+            msg = "the connection dropped"
+            raise ConnectionError(msg)
+        return super().fail_simulation_run(
+            simulation_run_id, error_message=error_message, failed_at=failed_at
+        )
+
+
+def test_a_lost_simulation_run_failure_is_written_when_the_report_fails() -> None:
+    store = FakeStore()
+    report_runs = LosingOneFailureWrite()
+    artifacts = FakeArtifacts()
+    invoker = RecordingInvoker(
+        artifacts, faults=InjectedChildFaults(fail_role="reform")
+    )
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(store, report_runs, invoker, artifacts)
+
+    assert report_runs.lost_failure_writes == 1
+    reform = report_runs.simulation_runs[REFORM_RUN_ID]
+    assert reform.status is RunStatus.FAILED
+    assert reform.error_message.startswith("simulation_invocation_failed: ")
+
+
+def test_a_reused_succeeded_child_completes_its_simulation_run() -> None:
+    # A worker marked its child record succeeded, then stopped before it
+    # completed its simulation run; a later call reuses that child's output.
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    baseline = planned_simulation(SimulationRole.BASELINE)
+    descriptor = artifacts.add_simulation(baseline)
+    store.children[baseline.simulation_execution_id] = child_record(
+        baseline
+    ).model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
+            "output_uri": descriptor.artifact.uri,
+            "output_sha256": descriptor.artifact.content_sha256,
+            "output_schema_version": 1,
+            "row_identity_columns": descriptor.row_identity.identifier_columns,
+            "row_count": descriptor.row_identity.row_count,
+            "row_identity_sha256": descriptor.row_identity.identity_sha256,
+            "completed_at": child_record(baseline).created_at,
+        }
+    )
+    report_runs = FakeReportRuns()
+    report_runs.simulation_runs[BASELINE_RUN_ID].status = RunStatus.RUNNING
+    invoker = RecordingInvoker(artifacts)
+
+    _coordinate(store, report_runs, invoker, artifacts)
+
+    assert invoker.events == ["spawn:reform"]
+    run = report_runs.simulation_runs[BASELINE_RUN_ID]
+    assert run.status is RunStatus.SUCCEEDED
+    assert run.output_uri == descriptor.artifact.uri
+    # The simulation runs are recorded before the report run succeeds.
+    assert report_runs.events.index("complete_simulation_run") < (
+        report_runs.events.index("complete_report_run")
+    )
 
 
 def test_report_run_coordinator_names_its_aggregate_by_digest(monkeypatch) -> None:

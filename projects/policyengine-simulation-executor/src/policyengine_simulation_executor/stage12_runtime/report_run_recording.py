@@ -8,6 +8,7 @@ role, so the workers and the coordinator need no other change to record them.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -38,6 +39,9 @@ if TYPE_CHECKING:
     from .dependencies import ComparisonStore
     from .failures import Stage12FailureDetail
     from .report_run_access import ReportRunWriter
+
+
+logger = logging.getLogger(__name__)
 
 
 def us_district_codes() -> DistrictCodes:
@@ -201,7 +205,16 @@ class SimulationRunRecordingStore:
         if not replaced:
             return stored, replaced
         if record.status is ComparisonRunLifecycleStatus.SUCCEEDED:
-            self._complete(simulation_run_id, record, written_at)
+            # The child's result is recorded; if this second write is lost,
+            # the coordinator completes the run from the child's record.
+            try:
+                self._complete(simulation_run_id, record, written_at)
+            except Exception as error:  # noqa: BLE001  # a lost second write is completed again by the coordinator
+                logger.warning(
+                    "Could not complete simulation run %s (%s)",
+                    simulation_run_id,
+                    type(error).__name__,
+                )
         elif record.status is ComparisonRunLifecycleStatus.RUNNING:
             claimed = self._runs.claim_simulation_run(
                 simulation_run_id,
@@ -219,6 +232,29 @@ class SimulationRunRecordingStore:
                 failed_at=record.completed_at or written_at,
             )
         return stored, replaced
+
+    def reconcile_simulation_run(self, simulation_execution_id: UUID) -> None:
+        """Give a child's simulation run its finished Stage 12 record's outcome.
+
+        A worker or coordinator that lost its second write leaves the run
+        behind its record; each write here is conditional, so a run that
+        already has its outcome is left as it is. An unfinished child, or one
+        never created, changes nothing.
+        """
+        try:
+            record = self._store.get_simulation(simulation_execution_id)
+        except LookupError:
+            return
+        if record.status is ComparisonRunLifecycleStatus.SUCCEEDED:
+            self.complete_from_succeeded_child(record)
+        elif record.status is ComparisonRunLifecycleStatus.FAILED:
+            self._runs.fail_simulation_run(
+                self._run_ids.simulation_run_id(record.role),
+                error_message=run_error_message(
+                    record.error_code, record.error_summary
+                ),
+                failed_at=record.completed_at or datetime.now(UTC),
+            )
 
     def complete_from_succeeded_child(self, record: ComparisonSimulationRecord) -> None:
         """Complete a child's simulation run from its succeeded Stage 12 record."""
