@@ -262,6 +262,40 @@ def test_a_cancelled_coordinator_records_its_report_run_and_children_failed() ->
     )
 
 
+@pytest.mark.parametrize(
+    ("interruption", "expected_status"),
+    [
+        # Modal runs a pre-empted call again, which resumes the claim.
+        (KeyboardInterrupt, RunStatus.RUNNING),
+        # Modal never runs a cancelled call again.
+        (InputCancelledForTest, RunStatus.FAILED),
+    ],
+)
+def test_a_coordinator_stopped_while_claiming_its_report(
+    interruption, expected_status
+) -> None:
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+
+    def stopped(_record):
+        raise interruption
+
+    store.create_or_resolve_report = stopped
+
+    with pytest.raises(interruption):
+        _coordinate(
+            store,
+            report_runs,
+            RestartInvoker(FakeArtifacts()),
+            context=report_run_context(),
+        )
+
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is expected_status
+    if expected_status is RunStatus.FAILED:
+        assert run.error_message.startswith("report_cancelled: ")
+
+
 def test_a_preempted_comparison_run_behaves_as_before() -> None:
     store = FakeStore()
     report_runs = FakeReportRuns()

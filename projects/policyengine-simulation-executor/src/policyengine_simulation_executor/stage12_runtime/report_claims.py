@@ -42,7 +42,8 @@ def claim_report(
     status. A call Modal restarted after its Stage 12 report succeeded, but
     before its report run did, completes the report run from the stored
     aggregate and returns that it succeeded. Once this call holds the report
-    run, any error before the report starts fails the run, then propagates.
+    run, any error or cancellation before the report starts fails the run,
+    then propagates; a pre-emption doesn't, because Modal runs the call again.
     """
     report_run = coordination.report_run
     if report_run is None:
@@ -57,21 +58,29 @@ def claim_report(
         return None, _report_run_summary(report_run, claimed.status)
     try:
         return _claim_held_report(coordination, report_run, submitted=submitted)
-    except Exception as error:
+    except KeyboardInterrupt:
+        # Pre-emption: Modal runs the call again, and it resumes this claim.
+        raise
+    except BaseException as error:
         persist_failure_record(
-            partial(
-                report_run.fail,
-                Stage12FailureDetail(
-                    error_code="report_claim_failed",
-                    error_summary=(
-                        f"Claiming the Stage 12 report failed ({type(error).__name__})."
-                    ),
-                ),
-            ),
+            partial(report_run.fail, _claim_failure(error)),
             runtime=coordination.runtime,
             failure_scope="report_claim",
         )
         raise
+
+
+def _claim_failure(error: BaseException) -> Stage12FailureDetail:
+    """Describe an error, or Modal's cancellation, that stopped the claim."""
+    if not isinstance(error, Exception):
+        return Stage12FailureDetail(
+            error_code="report_cancelled",
+            error_summary="Modal cancelled the report's coordinator call.",
+        )
+    return Stage12FailureDetail(
+        error_code="report_claim_failed",
+        error_summary=f"Claiming the Stage 12 report failed ({type(error).__name__}).",
+    )
 
 
 def _claim_held_report(
