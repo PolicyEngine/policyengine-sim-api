@@ -187,7 +187,7 @@ def test_normalized_contract_matches_old_gateway():
         cloud_run_spec
     ) == normalized_compatibility_paths(gateway_spec)
     cloud_run_schemas = deepcopy(cloud_run_spec["components"]["schemas"])
-    # The entrypoint's readiness response adds its own database's revision.
+    # The entrypoint's readiness response adds the simulation database check.
     cloud_run_schemas.pop("SimulationEntrypointReadinessResponse")
     cloud_run_schemas.pop("SimulationDatabaseReadiness")
     cloud_run_schemas.pop("SimulationErrorResponse")

@@ -8,9 +8,10 @@ the variable those tests skip, unless ``SIMULATION_REQUIRE_DATABASE_TESTS=1``
 
 Tests marked ``public_api_schema`` need a database the Public API's own v2
 migration chain built, with the privileges its manifest declares granted
-(``.github/scripts/public-api-schema-reference.sh`` builds one). Its
-superuser URL is in ``PUBLIC_API_SCHEMA_DATABASE_URL``. Without it those
-tests skip, unless ``SIMULATION_REQUIRE_PUBLIC_API_SCHEMA=1``.
+(run its ``alembic -c alembic-v2.ini upgrade head`` and
+``scripts/reconcile_v2_privileges.py apply --create-missing-roles`` against
+it). Its superuser URL is in ``PUBLIC_API_SCHEMA_DATABASE_URL``. Without it
+those tests skip, unless ``SIMULATION_REQUIRE_PUBLIC_API_SCHEMA=1``.
 """
 
 from __future__ import annotations

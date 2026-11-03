@@ -39,6 +39,15 @@ the other runtime secrets, and only the entrypoint's runtime service account
 may read it. A missing or invalid name, or a secret with no enabled version,
 stops the deploy before `gcloud run deploy` runs.
 
+So before the first deploy that carries this connection, each environment
+needs, in order: the Public API's tables the service writes, migrated in that
+environment's database; the service's login role, with the grants the Public
+API's privilege manifest declares; the role's URL stored in Secret Manager,
+readable by the runtime service account; and the `beta` or `prod`
+`SIMULATION_DATABASE_URL_SECRET_NAME` variable naming it. Without the
+variable the deploy stops at once; without the tables, the role or its grants
+the candidate check below fails.
+
 `GET /ready` reports, under `simulation_database`, whether the entrypoint
 reached the database and which table privileges its role lacks
 (`missing_privileges`, such as `"INSERT on reports"`; the list is in
