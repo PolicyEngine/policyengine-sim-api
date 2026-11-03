@@ -157,6 +157,37 @@ def test_restarted_worker_completes_its_run_from_its_succeeded_stage12_record() 
     assert run.output_sha256 == "e" * 64
 
 
+def test_a_restarted_worker_returns_its_result_if_completing_its_run_fails() -> None:
+    simulation = planned_simulation(SimulationRole.BASELINE)
+    store = _seeded_store(simulation)
+    store.children[simulation.simulation_execution_id] = store.children[
+        simulation.simulation_execution_id
+    ].model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
+            "output_uri": "gs://private/earlier-attempt.parquet",
+            "output_sha256": "e" * 64,
+            "output_schema_version": 1,
+            "row_identity_columns": ("household.household_id",),
+            "row_count": 1,
+            "row_identity_sha256": "f" * 64,
+            "completed_at": child_record(simulation).created_at,
+        }
+    )
+    report_runs = FakeReportRuns()
+    report_runs.simulation_runs[BASELINE_RUN_ID].status = RunStatus.RUNNING
+
+    def dropped(*_args, **_kwargs):
+        msg = "the connection dropped"
+        raise ConnectionError(msg)
+
+    report_runs.complete_simulation_run = dropped
+
+    result = _run_worker(simulation, store, report_runs)
+
+    assert result["artifact"]["uri"] == "gs://private/earlier-attempt.parquet"
+
+
 def test_a_simulation_run_another_report_recorded_keeps_its_output() -> None:
     simulation = planned_simulation(SimulationRole.BASELINE)
     store = _seeded_store(simulation)

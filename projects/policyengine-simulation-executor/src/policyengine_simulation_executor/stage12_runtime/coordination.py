@@ -49,6 +49,11 @@ from .report_coordination import (
 from .report_run_access import report_run_store
 from .report_run_recording import ReportRunRecorder, SimulationRunRecordingStore
 
+CANCELLED_DETAIL = Stage12FailureDetail(
+    error_code="report_cancelled",
+    error_summary="Modal cancelled the report's coordinator call.",
+)
+
 __all__ = [
     "SIMULATION_CANCELLED_ERROR_CODE",
     "SIMULATION_POLL_BACKOFF_FACTOR",
@@ -131,7 +136,7 @@ def coordinate_report(
     # Persist a redacted cause for any coordinator, child-call, aggregation, or
     # artifact failure before returning a stable exception to Modal.
     except Exception as error:  # noqa: BLE001  # every failure is persisted before a stable exception returns to Modal
-        coordination.fail(parent, error)
+        _fail_unless_cancelled(coordination, parent, error)
         msg = "Stage 12 report coordination failed"
         raise RuntimeError(msg) from None
     except KeyboardInterrupt:
@@ -150,6 +155,24 @@ def coordinate_report(
         raise
 
 
+def _fail_unless_cancelled(
+    coordination: ReportCoordination,
+    parent: ComparisonReportRecord,
+    error: Exception,
+) -> None:
+    """Record ``error``; if Modal cancels the call meanwhile, still fail the run."""
+    try:
+        coordination.fail(parent, error)
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        if coordination.report_run is not None:
+            coordination.report_run.fail_quietly(
+                CANCELLED_DETAIL, runtime=coordination.runtime
+            )
+        raise
+
+
 def _record_cancellation(
     coordination: ReportCoordination, parent: ComparisonReportRecord
 ) -> None:
@@ -161,12 +184,4 @@ def _record_cancellation(
         store=coordination.persistence,
         detail=cancellation("the coordinator's call was cancelled"),
     )
-    coordination.fail(
-        parent,
-        Stage12ExecutionError(
-            Stage12FailureDetail(
-                error_code="report_cancelled",
-                error_summary="Modal cancelled the report's coordinator call.",
-            )
-        ),
-    )
+    coordination.fail(parent, Stage12ExecutionError(CANCELLED_DETAIL))

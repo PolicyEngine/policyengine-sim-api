@@ -667,6 +667,39 @@ class ReportCoordination:
                 simulation.simulation_execution_id
             )
 
+    def fail_running_children(self, detail: Stage12FailureDetail) -> None:
+        """Fail every child record of a report run that is still running.
+
+        A restarted call that fails before it starts a child again leaves
+        that child's record, and so its simulation run, running under the
+        call its pre-empted attempt cancelled. Each write is conditional on
+        the record still running, and is mirrored onto the simulation run.
+        """
+        if not isinstance(self.persistence, SimulationRunRecordingStore):
+            return
+        failed_at = datetime.now(UTC)
+        for simulation in (self.report.baseline, self.report.reform):
+            try:
+                record = self.persistence.get_simulation(
+                    simulation.simulation_execution_id
+                )
+            except LookupError:
+                continue
+            if record.status is not ComparisonRunLifecycleStatus.RUNNING:
+                continue
+            self.persistence.replace_simulation_if_status(
+                record.model_copy(
+                    update={
+                        "status": ComparisonRunLifecycleStatus.FAILED,
+                        "error_code": detail.error_code,
+                        "error_summary": detail.error_summary,
+                        "updated_at": failed_at,
+                        "completed_at": failed_at,
+                    }
+                ),
+                expected_status=ComparisonRunLifecycleStatus.RUNNING,
+            )
+
     def fail(self, parent: ComparisonReportRecord, error: Exception) -> None:
         """Record a failed run once, stop its unfinished children, fail the parent.
 
@@ -675,7 +708,10 @@ class ReportCoordination:
         peers. Any other failure is reported here, once, before any database
         write. If it occurred after a child started, such as a failed
         placeholder write or invocation attach, every started, unfinished child
-        is then stopped so none keeps running for a failed report.
+        is then stopped so none keeps running for a failed report. A call that
+        names a report run then fails the report's child records still
+        running, gives both simulation runs their records' outcomes, and fails
+        the report run, after the Stage 12 report.
         """
         if isinstance(error, Stage12ExecutionError):
             detail = error.detail
@@ -719,6 +755,14 @@ class ReportCoordination:
         # After the Stage 12 report, as on success: a call Modal restarts
         # between the two writes finds that report failed and runs it again.
         if self.report_run is not None:
+            persist_failure_record(
+                partial(
+                    self.fail_running_children,
+                    cancellation("the report failed"),
+                ),
+                runtime=self.runtime,
+                failure_scope="report_coordination",
+            )
             persist_failure_record(
                 self.reconcile_simulation_runs,
                 runtime=self.runtime,

@@ -14,7 +14,11 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
 )
 from policyengine_stage12_persistence import RunStatus
-from stage12_child_call_support import ConcurrentInvoker, TimeoutInvoker
+from stage12_child_call_support import (
+    ConcurrentInvoker,
+    InjectedChildFaults,
+    TimeoutInvoker,
+)
 from stage12_fake_report_runs import (
     REPORT_RUN_ID,
     FakeReportRuns,
@@ -294,6 +298,115 @@ def test_a_coordinator_stopped_while_claiming_its_report(
     assert run.status is expected_status
     if expected_status is RunStatus.FAILED:
         assert run.error_message.startswith("report_cancelled: ")
+
+
+class FailingRestartInvoker(RestartInvoker):
+    """Restore an earlier attempt's children; refuse to start the baseline again."""
+
+    def spawn(self, request):
+        if request.simulation["role"] == "baseline":
+            msg = "Modal refused the spawn"
+            raise ConnectionError(msg)
+        return super().spawn(request)
+
+
+class CancelledWhileRestoringInvoker(RestartInvoker):
+    """Receive Modal's cancellation while cancelling the earlier attempt's child."""
+
+    def restore(self, invocation_id):
+        raise InputCancelledForTest
+
+
+def _claimed_by_the_preempted_attempt(report_runs):
+    # In production the pre-empted attempt's workers claimed their runs.
+    for simulation_run in report_runs.simulation_runs.values():
+        simulation_run.status = RunStatus.RUNNING
+
+
+@pytest.mark.parametrize(
+    ("restart_invoker", "raised"),
+    [
+        (FailingRestartInvoker, RuntimeError),
+        (CancelledWhileRestoringInvoker, InputCancelledForTest),
+    ],
+)
+def test_a_restart_that_stops_before_restarting_its_children_fails_them(
+    restart_invoker, raised
+) -> None:
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+    _preempted_first_attempt(store, report_runs, context=report_run_context())
+    _claimed_by_the_preempted_attempt(report_runs)
+
+    with pytest.raises(raised):
+        _coordinate(
+            store,
+            report_runs,
+            restart_invoker(FakeArtifacts()),
+            context=report_run_context(),
+        )
+
+    assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.FAILED
+    assert all(
+        child.status is ComparisonRunLifecycleStatus.FAILED
+        for child in store.children.values()
+    )
+    assert all(
+        simulation_run.status is RunStatus.FAILED
+        for simulation_run in report_runs.simulation_runs.values()
+    )
+
+
+def test_a_cancellation_as_the_report_run_claim_commits_fails_the_run() -> None:
+    report_runs = FakeReportRuns()
+    claim = report_runs.claim_report_run
+
+    def cancelled_after_commit(*args, **kwargs):
+        claim(*args, **kwargs)
+        raise InputCancelledForTest
+
+    report_runs.claim_report_run = cancelled_after_commit
+
+    with pytest.raises(InputCancelledForTest):
+        _coordinate(
+            FakeStore(),
+            report_runs,
+            RestartInvoker(FakeArtifacts()),
+            context=report_run_context(),
+        )
+
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message.startswith("report_cancelled: ")
+
+
+def test_a_cancellation_while_recording_a_failure_still_fails_the_run() -> None:
+    store = FakeStore()
+    replace_report = store.replace_report
+
+    def cancelled_while_failing(record):
+        if record.status is ComparisonRunLifecycleStatus.FAILED:
+            raise InputCancelledForTest
+        return replace_report(record)
+
+    store.replace_report = cancelled_while_failing
+    report_runs = FakeReportRuns()
+    artifacts = FakeArtifacts()
+
+    with pytest.raises(InputCancelledForTest):
+        _coordinate(
+            store,
+            report_runs,
+            ConcurrentInvoker(
+                artifacts, faults=InjectedChildFaults(fail_role="reform")
+            ),
+            context=report_run_context(),
+            artifacts=artifacts,
+        )
+
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message.startswith("report_cancelled: ")
 
 
 def test_a_preempted_comparison_run_behaves_as_before() -> None:

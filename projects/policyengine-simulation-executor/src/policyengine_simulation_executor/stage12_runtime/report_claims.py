@@ -8,7 +8,6 @@ the call returns instead.
 
 from __future__ import annotations
 
-from functools import partial
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
@@ -18,7 +17,6 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from policyengine_stage12_persistence import RunStatus
 
-from .failure_recording import persist_failure_record
 from .failures import Stage12FailureDetail
 from .parent_claim import claim_parent
 
@@ -53,20 +51,19 @@ def claim_report(
             store=coordination.persistence,
         )
         return (parent, None) if should_execute else (None, _stage12_summary(parent))
-    claimed = report_run.claim()
-    if not claimed.changed:
-        return None, _report_run_summary(report_run, claimed.status)
     try:
+        claimed = report_run.claim()
+        if not claimed.changed:
+            return None, _report_run_summary(report_run, claimed.status)
         return _claim_held_report(coordination, report_run, submitted=submitted)
     except KeyboardInterrupt:
         # Pre-emption: Modal runs the call again, and it resumes this claim.
         raise
     except BaseException as error:
-        persist_failure_record(
-            partial(report_run.fail, _claim_failure(error)),
-            runtime=coordination.runtime,
-            failure_scope="report_claim",
-        )
+        # The claim may have committed before the error, as a cancellation
+        # during its commit; failing a run this call doesn't hold changes
+        # nothing.
+        report_run.fail_quietly(_claim_failure(error), runtime=coordination.runtime)
         raise
 
 

@@ -541,8 +541,16 @@ def run_single_simulation(
         if recording is not None:
             # An earlier attempt stopped between the child's and the run's
             # success; the run's completion is conditional, so this repeats
-            # nothing that was recorded.
-            recording.complete_from_succeeded_child(child)
+            # nothing that was recorded, and if it fails the coordinator
+            # completes the run from the child's record.
+            try:
+                recording.complete_from_succeeded_child(child)
+            except Exception as error:  # noqa: BLE001  # the coordinator completes the run again
+                logger.warning(
+                    "Could not complete the simulation run of %s (%s)",
+                    simulation.simulation_execution_id,
+                    type(error).__name__,
+                )
         return descriptor_from_record(child, simulation).model_dump(mode="json")
     running = _claim_simulation(persistence, child)
     cancellation_requested = _cancellation_check(persistence, simulation)

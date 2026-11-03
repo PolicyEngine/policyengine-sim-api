@@ -1,9 +1,13 @@
-"""Recording a report call's simulation runs beside its Stage 12 child records.
+"""Recording a report call's report run and simulation runs beside its Stage 12 records.
 
 A call that names a report run keeps the comparison path's Stage 12 records,
-which coordinate its workers. Every claim, success and failure of a child
-record is also written to that child's simulation run, as the Modal worker
-role, so the workers and the coordinator need no other change to record them.
+which coordinate its workers. ``SimulationRunRecordingStore`` mirrors every
+conditional claim, success and failure of a child record onto that child's
+simulation run, as the Modal worker role; ``ReportRunRecorder`` holds the
+coordinator's writes to the report run. A mirrored write can be lost, so
+before it completes or fails a report run the coordinator also gives both
+simulation runs their child records' outcomes, and a failed report fails the
+child records still running.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING
 
 from policyengine_simulation_contract.stage12_execution import (
@@ -22,11 +27,14 @@ from policyengine_stage12_persistence import (
     report_run_result,
 )
 
+from .failure_recording import persist_failure_record
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from typing import Any
     from uuid import UUID
 
+    from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.stage12_execution import (
         ComparisonReportPersistenceResult,
         ComparisonReportRecord,
@@ -96,6 +104,14 @@ class ReportRunRecorder:
                 country=country,
                 district_codes=us_district_codes() if country == "us" else None,
             ),
+        )
+
+    def fail_quietly(
+        self, detail: Stage12FailureDetail, *, runtime: ObservabilityRuntime | None
+    ) -> None:
+        """Fail the report run, logging rather than raising a failed write."""
+        persist_failure_record(
+            partial(self.fail, detail), runtime=runtime, failure_scope="report_run"
         )
 
     def fail(self, detail: Stage12FailureDetail) -> RunWrite:
