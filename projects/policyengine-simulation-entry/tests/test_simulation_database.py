@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
 
 import pytest
@@ -171,6 +172,12 @@ def test_the_database_reads_the_missing_privileges_off_the_event_loop(monkeypatc
         def __exit__(self, *_):
             return False
 
+        def begin(self):
+            return contextlib.nullcontext()
+
+        def execute(self, statement):
+            return None
+
     class FakeEngine:
         disposed = False
 
@@ -208,3 +215,62 @@ def test_a_malformed_database_url_never_builds_an_engine(database_url):
         SimulationDatabase.from_url(database_url)
 
     assert "secret" not in str(error.value)
+
+
+def test_the_readiness_query_is_bounded_on_the_server(monkeypatch):
+    """A stalled database can't hold a worker thread past the statement limit."""
+    executed = []
+
+    class FakeTransaction:
+        def __enter__(self):
+            executed.append("BEGIN")
+            return self
+
+        def __exit__(self, *_):
+            executed.append("END")
+            return False
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def begin(self):
+            return FakeTransaction()
+
+        def execute(self, statement):
+            compiled = statement.compile()
+            executed.append((str(compiled), dict(compiled.params)))
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    def missing_table_privileges(connection):
+        executed.append("privileges")
+        return []
+
+    monkeypatch.setattr(
+        database_module, "missing_table_privileges", missing_table_privileges
+    )
+
+    asyncio.run(SimulationDatabase(FakeEngine()).missing_privileges())
+
+    assert executed[0] == "BEGIN"
+    statement, parameters = executed[1]
+    assert "set_config" in statement
+    assert sorted(parameters.values(), key=str) == sorted(
+        [
+            "statement_timeout",
+            str(database_module.READINESS_STATEMENT_TIMEOUT_MILLISECONDS),
+            True,
+        ],
+        key=str,
+    )
+    assert executed[2:] == ["privileges", "END"]
+    assert (
+        database_module.READINESS_STATEMENT_TIMEOUT_MILLISECONDS
+        < app_module.SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS * 1000
+    )

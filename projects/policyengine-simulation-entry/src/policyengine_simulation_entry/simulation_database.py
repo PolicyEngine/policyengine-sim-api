@@ -9,9 +9,14 @@ from policyengine_simulation_persistence import (
     create_simulation_engine,
     missing_table_privileges,
 )
+from sqlalchemy import func, select
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
+
+# The readiness check stops waiting after three seconds, but it can't stop the
+# thread its query runs on, so the database ends the query sooner.
+READINESS_STATEMENT_TIMEOUT_MILLISECONDS = 2000
 
 
 class SimulationDatabase:
@@ -30,7 +35,18 @@ class SimulationDatabase:
         return cls(create_simulation_engine(database_url))
 
     def _missing_privileges(self) -> list[str]:
-        with self.engine.connect() as connection:
+        with self.engine.connect() as connection, connection.begin():
+            # Local to the transaction, so it works through Supabase's
+            # transaction pooler and never outlives this check.
+            connection.execute(
+                select(
+                    func.set_config(
+                        "statement_timeout",
+                        str(READINESS_STATEMENT_TIMEOUT_MILLISECONDS),
+                        True,  # noqa: FBT003  # set_config's is_local argument
+                    )
+                )
+            )
             return missing_table_privileges(connection)
 
     async def missing_privileges(self) -> list[str]:
