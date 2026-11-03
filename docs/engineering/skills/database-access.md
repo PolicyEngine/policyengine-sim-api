@@ -29,17 +29,21 @@ It builds on the Stage 12 rules:
 
 ## Who owns the schema
 
-- **Today**, policyengine-api's Alembic migrations own the only tables this
-  repository uses, the Stage 12 comparison tables
-  (`sim.stage12.no-migration-chain`). This repository's code reads and
-  writes their rows, and deployment validation compares their live schema
-  with its SQLAlchemy mappings; nothing here changes them.
-- **Once #847 merges**, this repository's own Alembic chain at `migrations/`
-  owns the `simulation` schema, and the Stage 12 tables stay with
-  policyengine-api.
+policyengine-api's Alembic migrations own every table this repository uses,
+and this repository has no migration chain of its own
+(`sim.stage12.no-migration-chain`):
 
-The rule holds either way: whichever chain owns a table, only that chain's
-migrations change it.
+- the Stage 12 comparison tables, whose live schema deployment validation
+  compares with the Stage 12 library's SQLAlchemy mappings;
+- the tables the simulation service writes (`simulations`, `reports`,
+  `simulation_runs`, `report_runs`, `report_run_simulation_runs` and
+  `household_jobs`), modelled in `libs/policyengine-simulation-persistence`.
+  The service connects as its own role, which policyengine-api's privilege
+  manifest grants.
+
+This repository's code reads and writes their rows; nothing here changes
+them. A change to one of those tables starts in policyengine-api, and the
+models here follow it.
 
 ## What the guard checks
 
