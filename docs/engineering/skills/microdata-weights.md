@@ -43,8 +43,9 @@ weights. Count entities with `_count_output_entities` instead.
   `simulation_output_common.py`, which holds `_count_output_entities`. Summing
   stripped values gives an unweighted sample total, the mirror image of #767.
   Within that module, only `_count_output_entities`, which counts entities,
-  may read them, directly in its body: a function defined inside it counts as
-  another function. The rule is enforced: a read anywhere else fails. The
+  may read them, in its own body: a `def` or `class` defined inside it counts
+  as another function, while a lambda or comprehension is part of its body.
+  The rule is enforced: a read anywhere else fails. The
   guard checks where a read is, not what it computes, so a read inside
   `_count_output_entities` must also only count entities.
 - `sim.microdata.builder-tests-use-weighted-frames`: the output-builder tests
@@ -75,7 +76,9 @@ simulation worker and the precompute determinism check).
 ## Handling a finding
 
 Fix each finding: count entities with `_count_output_entities`, and aggregate
-values through the weighted frame or the aggregators.
+values through the weighted frame or the aggregators. A read that counts
+entities in a function defined inside `_count_output_entities` moves into its
+own body.
 
 The rule is enforced with no baseline and no `[[rule.exception]]` entries, so
 nothing is tolerated. The last recorded exception,

@@ -11,6 +11,7 @@ function calls or containers.
 from __future__ import annotations
 
 import ast
+import textwrap
 import tomllib
 from dataclasses import dataclass, field
 from functools import cache
@@ -481,8 +482,9 @@ def test_weight_stripping_stays_in_the_designated_module() -> None:
     )
     assert review.reads_other_than_counting == [], (
         f"raw values read from a weighted frame in {WEIGHT_STRIPPING_MODULE.name}, "
-        f"in a function other than {ENTITY_COUNT_FUNCTION} (a function defined "
-        f"inside it counts as another). {STRIPPING_FIX}:\n"
+        f"in a function other than {ENTITY_COUNT_FUNCTION}. {STRIPPING_FIX}. A "
+        f"read in a function defined inside {ENTITY_COUNT_FUNCTION} that counts "
+        "entities moves into its own body:\n"
         + _described(review.reads_other_than_counting)
     )
 
@@ -511,6 +513,34 @@ def test_weight_stripping_review_allows_only_entity_counts() -> None:
 
     assert review.outside_designated_module == [outside_strip, outside_count]
     assert review.reads_other_than_counting == [module_strip, nested_strip]
+
+
+NESTED_COUNT_SOURCE = """
+def _count_output_entities(simulation, entity):
+    data = simulation.output_dataset.data.household
+    weight = f"{entity}_weight"
+
+    def total():
+        return np.asarray(data[weight]).sum()
+
+    lambda_total = (lambda: np.asarray(data[weight]))()
+    return total()
+"""
+
+
+def test_a_def_inside_the_counting_function_is_another_function() -> None:
+    """A nested def reports under its own name; a lambda stays in its function."""
+    walker = _MicrodataWalker("src/simulation_output_common.py")
+    walker.walk(ast.parse(textwrap.dedent(NESTED_COUNT_SOURCE)))
+
+    assert [
+        (finding.function, finding.source)
+        for finding in walker.findings
+        if finding.check == STRIPPING
+    ] == [
+        (f"{ENTITY_COUNT_FUNCTION}.total", "np.asarray(data[weight])"),
+        (ENTITY_COUNT_FUNCTION, "np.asarray(data[weight])"),
+    ]
 
 
 def test_weight_stripping_rule_records_no_exceptions() -> None:
