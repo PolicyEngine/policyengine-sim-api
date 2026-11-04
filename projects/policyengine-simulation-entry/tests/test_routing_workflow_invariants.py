@@ -811,6 +811,52 @@ def test_a_comment_naming_a_repository_script_is_not_a_call():
     assert list(_writing_steps({"steps": [{"run": script}]})) == []
 
 
+WRITER_SCRIPT = (
+    f"uv run python -m {REGISTRY_COMMAND} "
+    '--environment "${MODAL_ENVIRONMENT}" --apply-plan plan.json\n'
+)
+
+
+def _use_scripts(monkeypatch, directory: Path, scripts: dict[str, str]) -> None:
+    """Point discovery at ``directory``, holding the given script bodies."""
+    for name, body in scripts.items():
+        (directory / name).write_text(body)
+    monkeypatch.setitem(globals(), "SCRIPTS_DIRECTORY", directory)
+
+
+def test_writer_discovery_follows_a_script_called_through_its_directory(
+    monkeypatch, tmp_path
+):
+    _use_scripts(
+        monkeypatch,
+        tmp_path,
+        {
+            "wrapper.sh": (
+                'script_directory="$(cd "$(dirname "$0")" && pwd)"\n'
+                '"${script_directory}/writer.sh"\n'
+            ),
+            "writer.sh": WRITER_SCRIPT,
+        },
+    )
+    step = {"run": ".github/scripts/wrapper.sh"}
+    assert list(_writing_steps({"steps": [step]})) == [step]
+
+
+def test_writer_discovery_reads_a_script_that_names_itself_once(monkeypatch, tmp_path):
+    _use_scripts(
+        monkeypatch,
+        tmp_path,
+        {
+            "self-naming.sh": (
+                'target="${1?usage: .github/scripts/self-naming.sh <target>}"\n'
+                + WRITER_SCRIPT
+            ),
+        },
+    )
+    step = {"run": ".github/scripts/self-naming.sh beta"}
+    assert list(_writing_steps({"steps": [step]})) == [step]
+
+
 def test_the_reusable_deployments_routing_writers_are_its_journal_steps():
     jobs = _workflows()[".github/workflows/simulation-deploy.reusable.yml"]["jobs"]
     writers = {
