@@ -11,6 +11,7 @@ function calls or containers.
 from __future__ import annotations
 
 import ast
+import tomllib
 from collections import Counter
 from dataclasses import dataclass, field
 from functools import cache
@@ -533,6 +534,40 @@ def test_weight_stripping_review_ratchets_the_designated_module() -> None:
     assert review.outside_designated_module == [outside_strip]
     assert review.unrecorded_exceptions == [new_strip]
     assert review.stale_exceptions == [removed_entry]
+
+
+def test_weight_stripping_review_allows_only_entity_counts() -> None:
+    designated = "src/simulation_output_common.py"
+    entity_count = Finding(
+        STRIPPING, designated, 1, ENTITY_COUNT_FUNCTION, "np.asarray(data[weight])"
+    )
+    module_strip = Finding(
+        STRIPPING, designated, 2, "_unweighted_household_frame", "pd.DataFrame(frame)"
+    )
+    outside_strip = Finding(STRIPPING, "src/other.py", 4, "build", "frame.to_numpy()")
+
+    review = _review_weight_stripping(
+        [entity_count, module_strip, outside_strip], designated=designated
+    )
+
+    assert review.outside_designated_module == [outside_strip]
+    assert review.reads_other_than_counting == [module_strip]
+
+
+def test_weight_stripping_rule_records_no_exceptions() -> None:
+    """The rule is enforced: no read but counting entities can be recorded."""
+    registry = tomllib.loads(
+        (REPOSITORY_ROOT / "rules" / "registry.toml").read_text(encoding="utf-8")
+    )
+    rule = next(
+        rule
+        for rule in registry["rule"]
+        if rule["id"] == "sim.microdata.weight-stripping-confined"
+    )
+    assert rule["status"] == "enforced"
+    assert "baseline" not in rule
+    baselines = REPOSITORY_ROOT / "rules" / "baselines"
+    assert not (baselines / "sim-microdata-weight-stripping.txt").exists()
 
 
 def test_builder_tests_build_entity_frames_with_weights() -> None:
