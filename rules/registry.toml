@@ -522,6 +522,9 @@ project = "projects/policyengine-simulation-entry"
 nodes = [
   "tests/test_deployment_assets_promotion.py::test_deployed_stack_must_reproduce_the_numerical_sentinel",
   "tests/test_deployment_assets_release_gates.py::test_a_failing_sentinel_fails_its_step",
+  "tests/test_routing_and_sentinel_scripts.py::test_bundle_check_rejects_a_sentinel_of_another_bundle",
+  "tests/test_routing_and_sentinel_scripts.py::test_each_sentinel_check_step_checks_its_own_service",
+  "tests/test_routing_and_sentinel_scripts.py::test_service_check_fails_when_the_service_does_not_reproduce_it",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"

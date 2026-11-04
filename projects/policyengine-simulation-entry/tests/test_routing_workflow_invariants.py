@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import functools
 import itertools
 import re
 import shlex
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from test_deployment_assets_support import with_called_scripts
+from test_deployment_assets_support import called_scripts, with_called_scripts
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIRECTORY = REPOSITORY_ROOT / ".github" / "workflows"
@@ -271,11 +272,79 @@ def _step_shell(run: str) -> str:
 
     A step that runs a script under .github/scripts/ writes routing exactly
     when the script does, so discovery and the environment proof read the
-    script, and any script it names in turn, as part of the step. A name a
-    script builds from a variable cannot be read, so scripts that write
-    routing must name the scripts they call.
+    script, and any script it names in turn, as part of the step. A call
+    that cannot be read fails (see ``called_scripts``), and a script that
+    writes routing must run in the foreground, as inline commands must.
     """
-    return with_called_scripts(run, SCRIPTS_DIRECTORY)
+    return _checked_step_shell(run, SCRIPTS_DIRECTORY)
+
+
+@functools.cache
+def _checked_step_shell(run: str, scripts_directory: Path) -> str:
+    """Return ``_step_shell`` for one scripts directory, computed once."""
+    _assert_routing_scripts_run_in_the_foreground(run, set(), None)
+    return with_called_scripts(run, scripts_directory)
+
+
+@functools.cache
+def _routes(script: Path) -> bool:
+    """Whether a repository script, or one it names, refers to routing."""
+    text = with_called_scripts(script.read_text(), SCRIPTS_DIRECTORY)
+    return bool(ROUTING_LIBRARY_REFERENCE.search(_without_comments(text)))
+
+
+def _assert_routing_scripts_run_in_the_foreground(
+    text: str, read: set[str], current: str | None
+):
+    """Refuse a routing script run in the background, grouped or substituted.
+
+    A line that calls a script that refers to routing gets the inline
+    commands' checks: no command substitution, subshell, group or background
+    job, and at most one routing command in a pipeline. Each script's own
+    lines are checked once, and a script's mention of its own name, such as
+    in a usage message, is not a call.
+    """
+    for line in _without_comments(text).splitlines():
+        scripts = [
+            script
+            for script in called_scripts(line, SCRIPTS_DIRECTORY)
+            if script.name != current
+        ]
+        routing = [
+            occurrence
+            for script in scripts
+            if _routes(script)
+            for occurrence in re.findall(
+                rf"(?<![\w.-]){re.escape(script.name)}(?![\w.-])", line
+            )
+        ]
+        if routing:
+            assert "$(" not in line, (
+                f"Routing scripts must run in the foreground: {line}"
+            )
+            assert "`" not in line, (
+                f"Routing scripts must run in the foreground: {line}"
+            )
+            tokens = _shell_tokens(line)
+            assert not any(
+                token in {"{", "}"}
+                or (
+                    re.fullmatch(r"[;&|()]+", token)
+                    and token not in {";", "&&", "||", "|"}
+                )
+                for token in tokens
+            ), f"Routing scripts must run in the foreground without grouping: {line}"
+            if "|" in tokens:
+                assert len(routing) + len(REGISTRY_INVOCATION.findall(line)) <= 1, (
+                    "Routing pipeline commands can execute in parallel; "
+                    "use foreground sequential commands"
+                )
+        for script in scripts:
+            if script.name not in read:
+                read.add(script.name)
+                _assert_routing_scripts_run_in_the_foreground(
+                    script.read_text(), read, script.name
+                )
 
 
 def _command_writes(arguments: tuple[str, ...]) -> bool:
@@ -904,7 +973,8 @@ def test_a_python_helper_that_calls_routing_is_refused(monkeypatch, tmp_path):
         },
     )
     step = {"run": "python .github/scripts/apply_routing.py"}
-    with pytest.raises(AssertionError, match="Unsupported inline routing library"):
+    # Python is not shell, so its routing call fails the shell-form checks.
+    with pytest.raises(AssertionError, match=r"Unsupported|foreground"):
         list(_writing_steps({"steps": [step]}))
 
 
