@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.4.2] - 2026-11-04
+
+### Changed
+
+- The deployment workflow's routing publication steps and release-sentinel checks now run tested scripts under `.github/scripts/` instead of inline shell. Their inputs, outputs and exit statuses are unchanged.
+
+
 ## [0.4.1] - 2026-11-03
 
 ### Changed
