@@ -195,11 +195,57 @@ def job_section(workflow: str, job_name: str) -> str:
     return match.group("body")
 
 
+SCRIPTS_DIRECTORY = REPOSITORY_ROOT / ".github" / "scripts"
+# A call to a repository script, from the root or from a project directory.
+SCRIPT_CALL = re.compile(r"(?:\.\./)*\.github/scripts/([\w.-]+\.sh)\b")
+
+
+def step_shell(step: dict) -> str:
+    """Return a step's run: text followed by each repository script it calls.
+
+    A test that looks for a command in a step reads this, so it finds the
+    command whether the step runs it inline or through a script under
+    .github/scripts/.
+    """
+    run = step.get("run", "")
+    scripts = [SCRIPTS_DIRECTORY / name for name in SCRIPT_CALL.findall(run)]
+    return "\n".join([run, *(script.read_text(encoding="utf-8") for script in scripts)])
+
+
+def run_step(
+    step: dict,
+    *,
+    env: dict[str, str],
+    replacements: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run a step's run: text as GitHub Actions' bash shell does.
+
+    It runs with ``bash --noprofile --norc -eo pipefail`` from the step's
+    working directory, so a ``../../.github/scripts/`` call runs the real
+    script. ``replacements`` substitutes ``${{ }}`` expressions in the text.
+    """
+    script = step["run"]
+    for expression, value in (replacements or {}).items():
+        script = script.replace(expression, value)
+    return run_bash(
+        "--noprofile",
+        "--norc",
+        "-eo",
+        "pipefail",
+        "-c",
+        script,
+        check=False,
+        capture_output=True,
+        env=env,
+        cwd=REPOSITORY_ROOT / step.get("working-directory", "."),
+    )
+
+
 def sentinel_check_step(job: dict) -> dict:
     steps = [
         step
         for step in job["steps"]
-        if "src.modal.utils.release_sentinel check" in step.get("run", "")
+        if "src.modal.utils.release_sentinel check" in step_shell(step)
     ]
     assert len(steps) == 1
     return steps[0]

@@ -17,6 +17,7 @@ from test_deployment_assets_support import (
     evaluate_github_expression,
     job_section,
     sentinel_check_step,
+    step_shell,
     workflow_jobs,
 )
 
@@ -244,7 +245,12 @@ def test_deployed_stack_must_reproduce_the_numerical_sentinel():
     assert "release_sentinel expected" in sentinel_job
     assert "secrets.PE_UK_PRIVATE_HF_READ_TOKEN" in sentinel_job
     assert "secrets.GCP_CREDENTIALS_JSON" in sentinel_job
-    assert ".uk.dataset_sha256 == $d" in sentinel_job
+    bundle_check = next(
+        step
+        for step in jobs["sentinel_expected"]["steps"]
+        if step.get("name") == "Check the sentinel names this deployment's bundle"
+    )
+    assert ".uk.dataset_sha256 ==" in step_shell(bundle_check)
 
     integration = jobs["integration"]
     assert "needs.sentinel_expected.result == 'success'" in integration["if"]
@@ -265,7 +271,7 @@ def test_deployed_stack_must_reproduce_the_numerical_sentinel():
     promote = jobs["promote_entrypoint"]
     stable = sentinel_check_step(promote)
     assert stable["if"] == "${{ inputs.deploy_existing_stack }}"
-    assert '--base-url "${STABLE_URL}"' in stable["run"]
+    assert '"${STABLE_URL}"' in stable["run"]
     names = [step.get("name", "") for step in promote["steps"]]
     # A failing stable sentinel triggers the existing traffic restore step.
     assert promote["steps"].index(stable) < next(

@@ -13,6 +13,9 @@ import yaml
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIRECTORY = REPOSITORY_ROOT / ".github" / "workflows"
+SCRIPTS_DIRECTORY = REPOSITORY_ROOT / ".github" / "scripts"
+# A call to a repository script, from the root or from a project directory.
+SCRIPT_CALL = re.compile(r"(?:\.\./)*\.github/scripts/([\w.-]+\.sh)\b")
 REGISTRY_MODULE = (
     REPOSITORY_ROOT
     / "projects/policyengine-simulation-executor/src/modal/routing_publisher"
@@ -263,6 +266,22 @@ def _command_options(arguments: tuple[str, ...]) -> set[str]:
     return options
 
 
+def _step_shell(run: str) -> str:
+    """Return a run: text followed by every repository script it calls.
+
+    A step that runs a script under .github/scripts/ writes routing exactly
+    when the script does, so discovery and the environment proof read the
+    script, and any script it calls in turn, as part of the step.
+    """
+    texts = [run]
+    for line in _without_comments(run).splitlines():
+        for name in SCRIPT_CALL.findall(line):
+            script = SCRIPTS_DIRECTORY / name
+            assert script.is_file(), f"Missing repository script: {name}"
+            texts.append(_step_shell(script.read_text()))
+    return "\n".join(texts)
+
+
 def _command_writes(arguments: tuple[str, ...]) -> bool:
     options = _command_options(arguments)
     return bool(options & WRITING_OPTIONS) or not options & READ_ONLY_OPTIONS
@@ -270,7 +289,7 @@ def _command_writes(arguments: tuple[str, ...]) -> bool:
 
 def _writing_steps(job: dict):
     for step in job.get("steps", []):
-        for arguments in _routing_commands(step.get("run", "")):
+        for arguments in _routing_commands(_step_shell(step.get("run", ""))):
             if _command_writes(arguments):
                 yield step
 
@@ -388,8 +407,9 @@ def _writer_environment(workflow: dict, job: dict, step: dict, inputs: dict):
     assert not (
         environment.keys() & (PROTECTED_SHELL_ENVIRONMENT - {"MODAL_ENVIRONMENT"})
     ), "Workflow environment must not override the routing write guard"
-    commands = list(_routing_commands(step["run"]))
-    for line in re.sub(r"\\\n\s*", " ", step["run"]).splitlines():
+    shell = _step_shell(step["run"])
+    commands = list(_routing_commands(shell))
+    for line in re.sub(r"\\\n\s*", " ", shell).splitlines():
         if (
             not line.lstrip().startswith("#")
             and REGISTRY_INVOCATION.search(line)
@@ -745,6 +765,64 @@ def test_finalizer_reference_cannot_bypass_routing_cli_discovery():
 def test_argument_value_cannot_hide_a_default_writer():
     script = f"uv run python -m {REGISTRY_COMMAND} --app-name app--dry-run"
     assert list(_writing_steps({"steps": [{"run": script}]}))
+
+
+# --- Steps that run repository scripts --------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("script", "writes"),
+    [
+        ("routing-plan.sh", False),
+        ("routing-record-plan.sh", True),
+        ("routing-apply-plan.sh", True),
+        ("routing-finalize-publication.sh", True),
+    ],
+)
+def test_writer_discovery_reads_the_repository_script_a_step_runs(script, writes):
+    step = {"run": f"../../.github/scripts/{script}"}
+    assert bool(list(_writing_steps({"steps": [step]}))) == writes
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "routing-record-plan.sh",
+        "routing-apply-plan.sh",
+        "routing-finalize-publication.sh",
+    ],
+)
+def test_a_scripts_routing_write_uses_the_steps_proven_environment(script):
+    step = {
+        "env": {"MODAL_ENVIRONMENT": "staging"},
+        "run": f"../../.github/scripts/{script}",
+    }
+    assert _writer_environment({}, {}, step, {}) == {"staging"}
+
+
+def test_a_step_cannot_run_a_missing_repository_script():
+    step = {"run": ".github/scripts/missing-routing-writer.sh"}
+    with pytest.raises(AssertionError, match="Missing repository script"):
+        list(_writing_steps({"steps": [step]}))
+
+
+def test_a_comment_naming_a_repository_script_is_not_a_call():
+    script = "# .github/scripts/missing-routing-writer.sh\necho done\n"
+    assert list(_writing_steps({"steps": [{"run": script}]})) == []
+
+
+def test_the_reusable_deployments_routing_writers_are_its_journal_steps():
+    jobs = _workflows()[".github/workflows/simulation-deploy.reusable.yml"]["jobs"]
+    writers = {
+        (job_id, step["name"])
+        for job_id, job in jobs.items()
+        for step in _writing_steps(job)
+    }
+    assert writers == {
+        ("update_routing", "Record the unfinished routing publication"),
+        ("update_routing", "Publish the planned routing"),
+        ("finalize_routing", "Finalize the routing publication"),
+    }
 
 
 # --- Characterization: routing command discovery's argv and refusals ---------
