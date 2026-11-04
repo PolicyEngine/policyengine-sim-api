@@ -132,3 +132,9 @@ class TestCongressionalDistrictRegions:
     def test__rejects_district_and_place(self):
         assert should_build_districts("congressional_district/CA-01") is False
         assert should_build_districts("place/CA-12345") is False
+
+    def test__rejects_a_bare_state_code_as_stage12_aggregation_passes_it(self):
+        # The main runtime spells a state region state/xx before it gets here;
+        # Stage 12 aggregation passes the region as the request sent it.
+        assert should_build_districts("ut") is False
+        assert should_build_districts("UT") is False
