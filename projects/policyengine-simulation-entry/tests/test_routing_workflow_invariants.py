@@ -11,7 +11,10 @@ from pathlib import Path
 
 import pytest
 import yaml
-from test_deployment_assets_support import called_scripts, with_called_scripts
+from test_deployment_assets_support import (
+    called_scripts,
+    with_called_scripts,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIRECTORY = REPOSITORY_ROOT / ".github" / "workflows"
@@ -993,6 +996,63 @@ def test_discovery_refuses_a_script_call_it_cannot_read(
     _use_scripts(monkeypatch, tmp_path, {})
     with pytest.raises(AssertionError, match=message):
         list(_writing_steps({"steps": [{"run": run}]}))
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        "printf 'a\\nb\\n' | xargs -P2 -n1 .github/scripts/first.sh",
+        "parallel .github/scripts/first.sh ::: a b",
+        "bash -c '.github/scripts/first.sh & .github/scripts/second.sh'",
+        'writer=".github/scripts/first.sh"\n"${writer}" &\n"${writer}" &\nwait',
+    ],
+    ids=["xargs", "parallel", "bash-c", "variable"],
+)
+def test_routing_scripts_must_be_called_directly(monkeypatch, tmp_path, run):
+    """A command that runs the script for the step can run it in parallel."""
+    _use_scripts(
+        monkeypatch,
+        tmp_path,
+        {"first.sh": WRITER_SCRIPT, "second.sh": WRITER_SCRIPT},
+    )
+    with pytest.raises(AssertionError, match="called directly"):
+        _environment_for_script(run)
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        ".github/scripts/first.sh beta",
+        "bash .github/scripts/first.sh",
+        '"${script_directory}/first.sh" "${TARGET}"',
+    ],
+)
+def test_a_routing_script_may_be_run_by_path_or_by_bash(monkeypatch, tmp_path, run):
+    _use_scripts(monkeypatch, tmp_path, {"first.sh": WRITER_SCRIPT})
+    assert _environment_for_script(run) == {"staging"}
+
+
+def test_a_message_naming_a_script_is_not_a_missing_script(monkeypatch, tmp_path):
+    _use_scripts(monkeypatch, tmp_path, {"first.sh": "echo first\n"})
+    run = 'echo "Rerun .github/scripts/first.sh."'
+    assert list(_writing_steps({"steps": [{"run": run}]})) == []
+
+
+def test_comments_of_a_called_script_are_not_read_as_commands(tmp_path):
+    (tmp_path / "first.sh").write_text(
+        "# Runs src.modal.utils.release_sentinel check in another step.\necho one\n"
+    )
+    shell = with_called_scripts(".github/scripts/first.sh", tmp_path)
+    assert "echo one" in shell
+    assert "release_sentinel check" not in shell
+
+
+def test_the_scripts_directory_has_no_subdirectories():
+    """Discovery reads only files directly in .github/scripts/."""
+    assert [path for path in SCRIPTS_DIRECTORY.iterdir() if path.is_dir()] == [], (
+        "extend called_scripts in test_deployment_assets_support.py to read "
+        "scripts in subdirectories before adding one"
+    )
 
 
 def test_the_reusable_deployments_routing_writers_are_its_journal_steps():
