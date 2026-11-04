@@ -8,7 +8,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 57 | 2 | 0 | 14 | 73 |
+| mechanical | 58 | 1 | 0 | 14 | 73 |
 | metric | 1 | 0 | 0 | 0 | 1 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
@@ -65,7 +65,6 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 ### Ratcheted (existing violations still tolerated)
 
 - `sim.ci.multiline-run-is-script`: 13 remaining in `rules/baselines/ci-multiline-run.txt`
-- `sim.microdata.weight-stripping-confined`: 0 remaining in `rules/baselines/sim-microdata-weight-stripping.txt`
 
 ### Exceptions and review dates
 
@@ -286,7 +285,7 @@ flowchart LR
 | Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `sim.microdata.builder-tests-use-weighted-frames` | Output-builder tests build entity frames only through fixtures/weighted_frames.weighted_entity_frame, as MicroDataFrames with non-uniform weights, never as plain pd.DataFrames. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-executor/tests/test_microdata_weight_boundaries.py` | `pr.yml:test` | yes |
-| `sim.microdata.weight-stripping-confined` | Raw values are read from a weighted frame or column (np.asarray, np.array, .values, .to_numpy(), .tolist(), pd.DataFrame or pd.Series) only in simulation_output_common.py; there, counting entities is always allowed and every other read is a recorded exception whose list may only shrink. | mechanical | ratcheted | yes | pytest `projects/policyengine-simulation-executor/tests/test_microdata_weight_boundaries.py` | `pr.yml:test` | yes |
+| `sim.microdata.weight-stripping-confined` | Raw values are read from a weighted frame or column (np.asarray, np.array, .values, .to_numpy(), .tolist(), pd.DataFrame or pd.Series) only to count entities, in _count_output_entities in simulation_output_common.py. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-executor/tests/test_microdata_weight_boundaries.py` | `pr.yml:test` | yes |
 | `sim.microdata.weights-not-aggregated-as-values` | A weight column is never aggregated as a value: never the variable of a weighted aggregator (_sum_output_variable, _change_output_variable, Aggregate, ChangeAggregate) or frame[<weight>] followed by a weighted reduction; count entities with _count_output_entities. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-executor/tests/test_microdata_weight_boundaries.py` | `pr.yml:test` | yes |
 | `sim.microdata.weights-not-values` | Microdata columns are weights, values, labels or counts: weights are only summed plainly to count entities or passed as weights=, values are aggregated with their own entity's weights, labels only group or filter, and counts derive from weights. | mechanical | doc-only | no | nothing | — | — |
 
@@ -295,7 +294,7 @@ flowchart LR
   r_sim_microdata_builder_tests_use_weighted_frames("sim.microdata.builder-tests-use-weighted-frames (enforced)")
   e_pytest_projects_policyengine_simulation_executor_tests_test_microdata_weight_boundaries_py["pytest projects/policyengine-simulation-executor/tests/test_microdata_weight_boundaries.py"]
   j_CI_pr_yml_test["CI pr.yml:test"]
-  r_sim_microdata_weight_stripping_confined("sim.microdata.weight-stripping-confined (ratcheted)")
+  r_sim_microdata_weight_stripping_confined("sim.microdata.weight-stripping-confined (enforced)")
   r_sim_microdata_weights_not_aggregated_as_values("sim.microdata.weights-not-aggregated-as-values (enforced)")
   r_sim_microdata_weights_not_values("sim.microdata.weights-not-values (doc-only)")
   gap_unenforced>"not enforced"]

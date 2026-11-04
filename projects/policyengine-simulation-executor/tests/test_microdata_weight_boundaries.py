@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import ast
 import tomllib
-from collections import Counter
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
@@ -22,17 +21,14 @@ REPOSITORY_ROOT = PROJECT_ROOT.parents[1]
 SOURCE_ROOT = PROJECT_ROOT / "src"
 TESTS_ROOT = PROJECT_ROOT / "tests"
 FIXTURES_ROOT = REPOSITORY_ROOT / "rules" / "fixtures"
-WEIGHT_STRIPPING_BASELINE = (
-    REPOSITORY_ROOT / "rules" / "baselines" / "sim-microdata-weight-stripping.txt"
-)
 # The one module allowed to read raw values from weighted frames: it holds
 # _count_output_entities, the plain sum of an entity's weights from #767.
 WEIGHT_STRIPPING_MODULE = (
     SOURCE_ROOT / "policyengine_simulation_executor" / "simulation_output_common.py"
 )
-# Counting entities is the one permanent read there: a plain sum of the
-# weights, which weights-not-values allows. Every other read in the module is
-# a recorded exception, listed in the baseline, and that list may only shrink.
+# Counting entities is the one read allowed there: a plain sum of the
+# weights, which weights-not-values allows. Any other read fails, as any read
+# outside the module does.
 ENTITY_COUNT_FUNCTION = "_count_output_entities"
 # Output-builder tests, which build entity frames only through the shared
 # factory in fixtures/weighted_frames.py.
@@ -90,18 +86,13 @@ UNWEIGHTED_TEST_FRAME = "builder test frame built outside the weighted factory"
 
 @dataclass(frozen=True)
 class Finding:
-    """One place a check flags, with a line-independent baseline entry."""
+    """One place a check flags."""
 
     check: str
     path: str
     line: int
     function: str
     source: str
-
-    @property
-    def entry(self) -> str:
-        """Return the baseline entry: path, enclosing function and expression."""
-        return f"{self.path}::{self.function}::{self.source}"
 
     def __str__(self) -> str:
         """Describe the finding with its line, for assertion messages."""
@@ -429,15 +420,6 @@ def _fixture_sources(rule_id: str, fixture: str, check: str) -> list[str]:
     ]
 
 
-def _baseline_entries(path: Path) -> Counter[str]:
-    """Read a baseline file: one entry per line, skipping blanks and ``#`` comments."""
-    return Counter(
-        line.strip()
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    )
-
-
 def _described(findings: list[Finding]) -> str:
     return "\n".join(str(finding) for finding in findings)
 
@@ -453,36 +435,29 @@ def test_weights_are_never_aggregated_as_values() -> None:
 
 @dataclass(frozen=True)
 class StrippingReview:
-    """Weight-stripping findings, sorted by what the rule allows."""
+    """Weight-stripping findings, sorted by where they are."""
 
     outside_designated_module: list[Finding]
-    unrecorded_exceptions: list[Finding]
-    stale_exceptions: list[str]
+    reads_other_than_counting: list[Finding]
 
 
 def _review_weight_stripping(
-    findings: list[Finding], *, designated: str, recorded: Counter[str]
+    findings: list[Finding], *, designated: str
 ) -> StrippingReview:
-    """Sort stripping findings against the designated module and its exceptions.
+    """Sort stripping findings by whether they are in the designated module.
 
     Nothing outside the designated module may read raw values from weighted
-    frames. Inside it, counting entities is always allowed, and every other
-    read must be a recorded exception; the recorded list may only shrink.
+    frames, and inside it only counting entities may.
     """
-    exceptions = [
-        finding
-        for finding in findings
-        if finding.path == designated and finding.function != ENTITY_COUNT_FUNCTION
-    ]
-    found = Counter(finding.entry for finding in exceptions)
     return StrippingReview(
         outside_designated_module=[
             finding for finding in findings if finding.path != designated
         ],
-        unrecorded_exceptions=[
-            finding for finding in exceptions if finding.entry in found - recorded
+        reads_other_than_counting=[
+            finding
+            for finding in findings
+            if finding.path == designated and finding.function != ENTITY_COUNT_FUNCTION
         ],
-        stale_exceptions=sorted((recorded - found).elements()),
     )
 
 
@@ -491,7 +466,6 @@ def test_weight_stripping_stays_in_the_designated_module() -> None:
     review = _review_weight_stripping(
         _findings(_source_modules(), STRIPPING),
         designated=WEIGHT_STRIPPING_MODULE.relative_to(REPOSITORY_ROOT).as_posix(),
-        recorded=_baseline_entries(WEIGHT_STRIPPING_BASELINE),
     )
     assert review.outside_designated_module == [], (
         "raw values read from a weighted frame outside "
@@ -500,40 +474,12 @@ def test_weight_stripping_stays_in_the_designated_module() -> None:
         "reviewer to move the read into the designated module:\n"
         + _described(review.outside_designated_module)
     )
-    assert review.unrecorded_exceptions == [], (
+    assert review.reads_other_than_counting == [], (
         f"raw values read from a weighted frame in {WEIGHT_STRIPPING_MODULE.name} "
-        "for something other than counting entities. Each such read is a recorded "
-        f"exception in {WEIGHT_STRIPPING_BASELINE.name}, a list that may only "
-        "shrink; keep the weights instead:\n" + _described(review.unrecorded_exceptions)
+        f"outside {ENTITY_COUNT_FUNCTION}, for something other than counting "
+        "entities. Keep the weights instead:\n"
+        + _described(review.reads_other_than_counting)
     )
-    assert review.stale_exceptions == [], (
-        "these exceptions no longer apply; remove them from "
-        f"{WEIGHT_STRIPPING_BASELINE.name} and lower the rule's baseline count "
-        "in rules/registry.toml:\n" + "\n".join(review.stale_exceptions)
-    )
-
-
-def test_weight_stripping_review_ratchets_the_designated_module() -> None:
-    designated = "src/simulation_output_common.py"
-    entity_count = Finding(
-        STRIPPING, designated, 1, ENTITY_COUNT_FUNCTION, "np.asarray(data[weight])"
-    )
-    recorded_strip = Finding(
-        STRIPPING, designated, 2, "_unweighted_household_frame", "pd.DataFrame(frame)"
-    )
-    new_strip = Finding(STRIPPING, designated, 3, "_new_reader", "frame.values")
-    outside_strip = Finding(STRIPPING, "src/other.py", 4, "build", "frame.to_numpy()")
-    removed_entry = f"{designated}::_removed_reader::frame.tolist()"
-
-    review = _review_weight_stripping(
-        [entity_count, recorded_strip, new_strip, outside_strip],
-        designated=designated,
-        recorded=Counter([recorded_strip.entry, removed_entry]),
-    )
-
-    assert review.outside_designated_module == [outside_strip]
-    assert review.unrecorded_exceptions == [new_strip]
-    assert review.stale_exceptions == [removed_entry]
 
 
 def test_weight_stripping_review_allows_only_entity_counts() -> None:
