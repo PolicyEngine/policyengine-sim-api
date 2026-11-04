@@ -7,6 +7,7 @@ registry discovers.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -195,11 +196,133 @@ def job_section(workflow: str, job_name: str) -> str:
     return match.group("body")
 
 
+SCRIPTS_DIRECTORY = REPOSITORY_ROOT / ".github" / "scripts"
+# What follows .github/scripts/ in a path, from the root or a project directory.
+SCRIPT_REFERENCE = re.compile(r"\.github/scripts/([^\s\"'`;|&()<>{}]*)")
+# A script file name built from a variable, such as routing-${mode}.sh.
+VARIABLE_SCRIPT_NAME = re.compile(
+    r"(?:^|[\s/\"'=(])[^\s/\"'=()]*\$[^\s/\"'()]*\.(?:sh|bash|py)(?![\w.-])"
+)
+
+
+def called_scripts(line: str, scripts_directory: Path | None = None) -> list[Path]:
+    """Return the files in ``scripts_directory`` whose names a shell line holds.
+
+    A file counts when its whole name appears in the line, written as a path
+    or after a directory variable such as ``"${script_directory}/name.sh"``,
+    whatever its extension. A mention that is not a call, such as a name in a
+    message, also counts: reading too much is safe, reading too little is
+    not. A call the tests cannot read fails: a ``.github/scripts/`` path that
+    names no file directly in the directory, or a script name built from a
+    variable.
+    """
+    directory = scripts_directory or SCRIPTS_DIRECTORY
+    # Punctuation after a path, as at the end of a sentence, is not its name.
+    references = (
+        reference.rstrip(".,:") for reference in SCRIPT_REFERENCE.findall(line)
+    )
+    for reference in filter(None, references):
+        assert "$" not in reference, (
+            f"Cannot read a script whose name is built from a variable: {line}"
+        )
+        assert "/" not in reference, f"Missing repository script: {reference}"
+        assert (directory / reference).is_file(), (
+            f"Missing repository script: {reference}"
+        )
+    assert not VARIABLE_SCRIPT_NAME.search(line), (
+        f"Cannot read a script whose name is built from a variable: {line}"
+    )
+    # A whole name is a maximal run of name characters equal to a file name.
+    words = set(re.findall(r"[\w.-]+", line))
+    return [directory / name for name in sorted(words & _file_names(directory))]
+
+
+@functools.cache
+def _file_names(directory: Path) -> frozenset[str]:
+    """Return the names of the files directly in ``directory``, read once."""
+    return frozenset(path.name for path in directory.iterdir() if path.is_file())
+
+
+def with_called_scripts(text: str, scripts_directory: Path | None = None) -> str:
+    """Return shell text followed by every repository script it names, recursively.
+
+    ``called_scripts`` decides what a line names. Each script is read once, so
+    one that names itself does not recurse, and its comment lines are left
+    out, so a search of the result finds only commands.
+    """
+    return _with_called_scripts(text, scripts_directory or SCRIPTS_DIRECTORY)
+
+
+@functools.cache
+def _with_called_scripts(text: str, scripts_directory: Path) -> str:
+    """Return ``with_called_scripts`` for one scripts directory, computed once."""
+    texts = [text]
+    read: set[str] = set()
+    pending = [text]
+    while pending:
+        for line in pending.pop(0).splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            for script in called_scripts(line, scripts_directory):
+                if script.name in read:
+                    continue
+                read.add(script.name)
+                body = "\n".join(
+                    line
+                    for line in script.read_text(encoding="utf-8").splitlines()
+                    if not line.lstrip().startswith("#")
+                )
+                texts.append(body)
+                pending.append(body)
+    return "\n".join(texts)
+
+
+def step_shell(step: dict) -> str:
+    """Return a step's run: text followed by each repository script it calls.
+
+    A test that looks for a command in a step reads this, so it finds the
+    command whether the step runs it inline or through a script under
+    .github/scripts/.
+    """
+    return with_called_scripts(step.get("run", ""))
+
+
+def run_step(
+    step: dict,
+    *,
+    env: dict[str, str],
+    replacements: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run a step's run: text from its working directory, as a workflow step.
+
+    It runs with ``bash --noprofile --norc -eo pipefail``, the options GitHub
+    Actions uses for ``shell: bash``. A job without a ``shell`` runs with
+    ``bash -e``, without pipefail, so this is the stricter of the two. From the
+    working directory, a ``../../.github/scripts/`` call runs the real script.
+    ``replacements`` substitutes ``${{ }}`` expressions in the text.
+    """
+    script = step["run"]
+    for expression, value in (replacements or {}).items():
+        script = script.replace(expression, value)
+    return run_bash(
+        "--noprofile",
+        "--norc",
+        "-eo",
+        "pipefail",
+        "-c",
+        script,
+        check=False,
+        capture_output=True,
+        env=env,
+        cwd=REPOSITORY_ROOT / step.get("working-directory", "."),
+    )
+
+
 def sentinel_check_step(job: dict) -> dict:
     steps = [
         step
         for step in job["steps"]
-        if "src.modal.utils.release_sentinel check" in step.get("run", "")
+        if "src.modal.utils.release_sentinel check" in step_shell(step)
     ]
     assert len(steps) == 1
     return steps[0]

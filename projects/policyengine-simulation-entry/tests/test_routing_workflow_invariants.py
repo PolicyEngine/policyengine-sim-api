@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import functools
 import itertools
 import re
 import shlex
@@ -10,9 +11,15 @@ from pathlib import Path
 
 import pytest
 import yaml
+from test_deployment_assets_support import (
+    called_scripts,
+    with_called_scripts,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIRECTORY = REPOSITORY_ROOT / ".github" / "workflows"
+# Discovery reads the scripts here; tests point it at fake scripts.
+SCRIPTS_DIRECTORY = REPOSITORY_ROOT / ".github" / "scripts"
 REGISTRY_MODULE = (
     REPOSITORY_ROOT
     / "projects/policyengine-simulation-executor/src/modal/routing_publisher"
@@ -263,6 +270,107 @@ def _command_options(arguments: tuple[str, ...]) -> set[str]:
     return options
 
 
+def _step_shell(run: str) -> str:
+    """Return a run: text followed by every repository script it names.
+
+    A step that runs a script under .github/scripts/ writes routing exactly
+    when the script does, so discovery and the environment proof read the
+    script, and any script it names in turn, as part of the step. A call
+    that cannot be read fails (see ``called_scripts``), and a script that
+    writes routing must run in the foreground, as inline commands must.
+    """
+    return _checked_step_shell(run, SCRIPTS_DIRECTORY)
+
+
+@functools.cache
+def _checked_step_shell(run: str, scripts_directory: Path) -> str:
+    """Return ``_step_shell`` for one scripts directory, computed once."""
+    _assert_routing_scripts_run_in_the_foreground(run, set(), None)
+    return with_called_scripts(run, scripts_directory)
+
+
+@functools.cache
+def _routes(script: Path) -> bool:
+    """Whether a repository script, or one it names, refers to routing."""
+    text = with_called_scripts(script.read_text(), SCRIPTS_DIRECTORY)
+    return bool(ROUTING_LIBRARY_REFERENCE.search(_without_comments(text)))
+
+
+def _assert_routing_scripts_run_in_the_foreground(
+    text: str, read: set[str], current: str | None
+):
+    """Refuse a routing script run in the background, grouped or substituted.
+
+    A line that calls a script that refers to routing gets the inline
+    commands' checks: no command substitution, subshell, group or background
+    job, and at most one routing command in a pipeline. The script must also
+    be the command itself, run by its path or with ``bash``, never by another
+    command such as ``xargs -P`` or ``bash -c`` that could run it in parallel,
+    nor held in a variable. Each script's own lines are checked once, and a
+    script's mention of its own name, such as in a usage message, is not a
+    call.
+    """
+    for line in _without_comments(text).splitlines():
+        scripts = [
+            script
+            for script in called_scripts(line, SCRIPTS_DIRECTORY)
+            if script.name != current
+        ]
+        routing = [
+            occurrence
+            for script in scripts
+            if _routes(script)
+            for occurrence in re.findall(
+                rf"(?<![\w.-]){re.escape(script.name)}(?![\w.-])", line
+            )
+        ]
+        if routing:
+            assert "$(" not in line, (
+                f"Routing scripts must run in the foreground: {line}"
+            )
+            assert "`" not in line, (
+                f"Routing scripts must run in the foreground: {line}"
+            )
+            tokens = _shell_tokens(line)
+            assert not any(
+                token in {"{", "}"}
+                or (
+                    re.fullmatch(r"[;&|()]+", token)
+                    and token not in {";", "&&", "||", "|"}
+                )
+                for token in tokens
+            ), f"Routing scripts must run in the foreground without grouping: {line}"
+            if "|" in tokens:
+                assert len(routing) + len(REGISTRY_INVOCATION.findall(line)) <= 1, (
+                    "Routing pipeline commands can execute in parallel; "
+                    "use foreground sequential commands"
+                )
+            _assert_routing_scripts_called_directly(line, tokens, set(routing))
+        for script in scripts:
+            if script.name not in read:
+                read.add(script.name)
+                _assert_routing_scripts_run_in_the_foreground(
+                    script.read_text(), read, script.name
+                )
+
+
+def _assert_routing_scripts_called_directly(
+    line: str, tokens: list[str], routing_names: set[str]
+) -> None:
+    """Require each routing script on a line to be its command's command word."""
+    for key, group in itertools.groupby(
+        tokens, key=lambda token: token in {";", "&&", "||", "|"}
+    ):
+        if key:
+            continue
+        command = list(group)
+        for index, token in enumerate(command):
+            if routing_names & set(re.findall(r"[\w.-]+", token)):
+                message = f"Routing scripts must be called directly: {line}"
+                assert token.rsplit("/", 1)[-1] in routing_names, message
+                assert tuple(command[:index]) in {(), ("bash",)}, message
+
+
 def _command_writes(arguments: tuple[str, ...]) -> bool:
     options = _command_options(arguments)
     return bool(options & WRITING_OPTIONS) or not options & READ_ONLY_OPTIONS
@@ -270,7 +378,7 @@ def _command_writes(arguments: tuple[str, ...]) -> bool:
 
 def _writing_steps(job: dict):
     for step in job.get("steps", []):
-        for arguments in _routing_commands(step.get("run", "")):
+        for arguments in _routing_commands(_step_shell(step.get("run", ""))):
             if _command_writes(arguments):
                 yield step
 
@@ -388,8 +496,9 @@ def _writer_environment(workflow: dict, job: dict, step: dict, inputs: dict):
     assert not (
         environment.keys() & (PROTECTED_SHELL_ENVIRONMENT - {"MODAL_ENVIRONMENT"})
     ), "Workflow environment must not override the routing write guard"
-    commands = list(_routing_commands(step["run"]))
-    for line in re.sub(r"\\\n\s*", " ", step["run"]).splitlines():
+    shell = _step_shell(step["run"])
+    commands = list(_routing_commands(shell))
+    for line in re.sub(r"\\\n\s*", " ", shell).splitlines():
         if (
             not line.lstrip().startswith("#")
             and REGISTRY_INVOCATION.search(line)
@@ -745,6 +854,264 @@ def test_finalizer_reference_cannot_bypass_routing_cli_discovery():
 def test_argument_value_cannot_hide_a_default_writer():
     script = f"uv run python -m {REGISTRY_COMMAND} --app-name app--dry-run"
     assert list(_writing_steps({"steps": [{"run": script}]}))
+
+
+# --- Steps that run repository scripts --------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("script", "writes"),
+    [
+        ("routing-plan.sh", False),
+        ("routing-record-plan.sh", True),
+        ("routing-apply-plan.sh", True),
+        ("routing-finalize-publication.sh", True),
+    ],
+)
+def test_writer_discovery_reads_the_repository_script_a_step_runs(script, writes):
+    step = {"run": f"../../.github/scripts/{script}"}
+    assert bool(list(_writing_steps({"steps": [step]}))) == writes
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "routing-record-plan.sh",
+        "routing-apply-plan.sh",
+        "routing-finalize-publication.sh",
+    ],
+)
+def test_a_scripts_routing_write_uses_the_steps_proven_environment(script):
+    step = {
+        "env": {"MODAL_ENVIRONMENT": "staging"},
+        "run": f"../../.github/scripts/{script}",
+    }
+    assert _writer_environment({}, {}, step, {}) == {"staging"}
+
+
+def test_a_step_cannot_run_a_missing_repository_script():
+    step = {"run": ".github/scripts/missing-routing-writer.sh"}
+    with pytest.raises(AssertionError, match="Missing repository script"):
+        list(_writing_steps({"steps": [step]}))
+
+
+def test_a_comment_naming_a_repository_script_is_not_a_call():
+    script = "# .github/scripts/missing-routing-writer.sh\necho done\n"
+    assert list(_writing_steps({"steps": [{"run": script}]})) == []
+
+
+WRITER_SCRIPT = (
+    f"uv run python -m {REGISTRY_COMMAND} "
+    '--environment "${MODAL_ENVIRONMENT}" --apply-plan plan.json\n'
+)
+
+
+def _use_scripts(monkeypatch, directory: Path, scripts: dict[str, str]) -> None:
+    """Point discovery at ``directory``, holding the given script bodies."""
+    for name, body in scripts.items():
+        (directory / name).write_text(body)
+    monkeypatch.setitem(globals(), "SCRIPTS_DIRECTORY", directory)
+
+
+def test_writer_discovery_follows_a_script_called_through_its_directory(
+    monkeypatch, tmp_path
+):
+    _use_scripts(
+        monkeypatch,
+        tmp_path,
+        {
+            "wrapper.sh": (
+                'script_directory="$(cd "$(dirname "$0")" && pwd)"\n'
+                '"${script_directory}/writer.sh"\n'
+            ),
+            "writer.sh": WRITER_SCRIPT,
+        },
+    )
+    step = {"run": ".github/scripts/wrapper.sh"}
+    assert list(_writing_steps({"steps": [step]})) == [step]
+
+
+def test_writer_discovery_reads_a_script_that_names_itself_once(monkeypatch, tmp_path):
+    _use_scripts(
+        monkeypatch,
+        tmp_path,
+        {
+            "self-naming.sh": (
+                'target="${1?usage: .github/scripts/self-naming.sh <target>}"\n'
+                + WRITER_SCRIPT
+            ),
+        },
+    )
+    step = {"run": ".github/scripts/self-naming.sh beta"}
+    assert list(_writing_steps({"steps": [step]})) == [step]
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        ".github/scripts/first.sh | .github/scripts/second.sh",
+        ".github/scripts/first.sh &\n.github/scripts/second.sh\nwait",
+        "( .github/scripts/first.sh ) && .github/scripts/second.sh",
+        'published="$(.github/scripts/first.sh)"',
+    ],
+    ids=["pipeline", "background", "subshell", "substitution"],
+)
+def test_routing_scripts_must_run_in_the_foreground(monkeypatch, tmp_path, run):
+    _use_scripts(
+        monkeypatch,
+        tmp_path,
+        {"first.sh": WRITER_SCRIPT, "second.sh": WRITER_SCRIPT},
+    )
+    with pytest.raises(AssertionError, match=r"foreground|parallel"):
+        _environment_for_script(run)
+
+
+def test_routing_scripts_may_run_one_after_another(monkeypatch, tmp_path):
+    _use_scripts(
+        monkeypatch,
+        tmp_path,
+        {"first.sh": WRITER_SCRIPT, "second.sh": WRITER_SCRIPT},
+    )
+    run = ".github/scripts/first.sh && .github/scripts/second.sh"
+    assert _environment_for_script(run) == {"staging"}
+
+
+@pytest.mark.parametrize("name", ["apply.bash", "apply-routing"])
+def test_writer_discovery_follows_a_repository_script_of_any_name(
+    monkeypatch, tmp_path, name
+):
+    _use_scripts(monkeypatch, tmp_path, {name: WRITER_SCRIPT})
+    step = {"run": f".github/scripts/{name}"}
+    assert list(_writing_steps({"steps": [step]})) == [step]
+
+
+def test_a_python_helper_that_calls_routing_is_refused(monkeypatch, tmp_path):
+    _use_scripts(
+        monkeypatch,
+        tmp_path,
+        {
+            "apply_routing.py": (
+                "import subprocess\n"
+                f'subprocess.run(["uv", "run", "python", "-m", "{REGISTRY_COMMAND}"])\n'
+            )
+        },
+    )
+    step = {"run": "python .github/scripts/apply_routing.py"}
+    # Python is not shell, so the helper fails the routing script checks: run
+    # by python, it is not called directly, and its call is no shell form.
+    with pytest.raises(AssertionError, match=r"called directly|Unsupported|foreground"):
+        list(_writing_steps({"steps": [step]}))
+
+
+@pytest.mark.parametrize(
+    ("run", "message"),
+    [
+        (".github/scripts/routing/apply.sh", "Missing repository script"),
+        ('".github/scripts/${mode}.sh"', "built from a variable"),
+        ('"${script_directory}/routing-${mode}.sh"', "built from a variable"),
+    ],
+    ids=["subdirectory", "variable-path", "variable-name"],
+)
+def test_discovery_refuses_a_script_call_it_cannot_read(
+    monkeypatch, tmp_path, run, message
+):
+    _use_scripts(monkeypatch, tmp_path, {})
+    with pytest.raises(AssertionError, match=message):
+        list(_writing_steps({"steps": [{"run": run}]}))
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        "printf 'a\\nb\\n' | xargs -P2 -n1 .github/scripts/first.sh",
+        "parallel .github/scripts/first.sh ::: a b",
+        "bash -c '.github/scripts/first.sh & .github/scripts/second.sh'",
+        'writer=".github/scripts/first.sh"\n"${writer}" &\n"${writer}" &\nwait',
+    ],
+    ids=["xargs", "parallel", "bash-c", "variable"],
+)
+def test_routing_scripts_must_be_called_directly(monkeypatch, tmp_path, run):
+    """A command that runs the script for the step can run it in parallel."""
+    _use_scripts(
+        monkeypatch,
+        tmp_path,
+        {"first.sh": WRITER_SCRIPT, "second.sh": WRITER_SCRIPT},
+    )
+    with pytest.raises(AssertionError, match="called directly"):
+        _environment_for_script(run)
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        ".github/scripts/first.sh beta",
+        "bash .github/scripts/first.sh",
+        '"${script_directory}/first.sh" "${TARGET}"',
+    ],
+)
+def test_a_routing_script_may_be_run_by_path_or_by_bash(monkeypatch, tmp_path, run):
+    _use_scripts(monkeypatch, tmp_path, {"first.sh": WRITER_SCRIPT})
+    assert _environment_for_script(run) == {"staging"}
+
+
+def test_a_message_naming_a_script_is_not_a_missing_script(monkeypatch, tmp_path):
+    _use_scripts(monkeypatch, tmp_path, {"first.sh": "echo first\n"})
+    run = 'echo "Rerun .github/scripts/first.sh."'
+    assert list(_writing_steps({"steps": [{"run": run}]})) == []
+
+
+def test_comments_of_a_called_script_are_not_read_as_commands(tmp_path):
+    (tmp_path / "first.sh").write_text(
+        "# Runs src.modal.utils.release_sentinel check in another step.\necho one\n"
+    )
+    shell = with_called_scripts(".github/scripts/first.sh", tmp_path)
+    assert "echo one" in shell
+    assert "release_sentinel check" not in shell
+
+
+def test_the_scripts_directory_has_no_subdirectories():
+    """Discovery reads only files directly in .github/scripts/.
+
+    Python's ``__pycache__``, written when a test imports a helper there, holds
+    bytecode, not scripts.
+    """
+    subdirectories = [
+        path
+        for path in SCRIPTS_DIRECTORY.iterdir()
+        if path.is_dir() and path.name != "__pycache__"
+    ]
+    assert subdirectories == [], (
+        "extend called_scripts in test_deployment_assets_support.py to read "
+        "scripts in subdirectories before adding one"
+    )
+
+
+def test_a_bytecode_cache_is_not_a_scripts_subdirectory(monkeypatch, tmp_path):
+    """Importing a Python helper in .github/scripts/ writes __pycache__ there."""
+    _use_scripts(monkeypatch, tmp_path, {"first.sh": "echo first\n"})
+    (tmp_path / "__pycache__").mkdir()
+    test_the_scripts_directory_has_no_subdirectories()
+
+
+def test_a_scripts_subdirectory_must_be_read_first(monkeypatch, tmp_path):
+    _use_scripts(monkeypatch, tmp_path, {"first.sh": "echo first\n"})
+    (tmp_path / "lib").mkdir()
+    with pytest.raises(AssertionError, match="extend called_scripts"):
+        test_the_scripts_directory_has_no_subdirectories()
+
+
+def test_the_reusable_deployments_routing_writers_are_its_journal_steps():
+    jobs = _workflows()[".github/workflows/simulation-deploy.reusable.yml"]["jobs"]
+    writers = {
+        (job_id, step["name"])
+        for job_id, job in jobs.items()
+        for step in _writing_steps(job)
+    }
+    assert writers == {
+        ("update_routing", "Record the unfinished routing publication"),
+        ("update_routing", "Publish the planned routing"),
+        ("finalize_routing", "Finalize the routing publication"),
+    }
 
 
 # --- Characterization: routing command discovery's argv and refusals ---------
