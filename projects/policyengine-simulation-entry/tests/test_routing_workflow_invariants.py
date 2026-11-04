@@ -853,6 +853,78 @@ def test_writer_discovery_reads_a_script_that_names_itself_once(monkeypatch, tmp
     assert list(_writing_steps({"steps": [step]})) == [step]
 
 
+@pytest.mark.parametrize(
+    "run",
+    [
+        ".github/scripts/first.sh | .github/scripts/second.sh",
+        ".github/scripts/first.sh &\n.github/scripts/second.sh\nwait",
+        "( .github/scripts/first.sh ) && .github/scripts/second.sh",
+        'published="$(.github/scripts/first.sh)"',
+    ],
+    ids=["pipeline", "background", "subshell", "substitution"],
+)
+def test_routing_scripts_must_run_in_the_foreground(monkeypatch, tmp_path, run):
+    _use_scripts(
+        monkeypatch,
+        tmp_path,
+        {"first.sh": WRITER_SCRIPT, "second.sh": WRITER_SCRIPT},
+    )
+    with pytest.raises(AssertionError, match=r"foreground|parallel"):
+        _environment_for_script(run)
+
+
+def test_routing_scripts_may_run_one_after_another(monkeypatch, tmp_path):
+    _use_scripts(
+        monkeypatch,
+        tmp_path,
+        {"first.sh": WRITER_SCRIPT, "second.sh": WRITER_SCRIPT},
+    )
+    run = ".github/scripts/first.sh && .github/scripts/second.sh"
+    assert _environment_for_script(run) == {"staging"}
+
+
+@pytest.mark.parametrize("name", ["apply.bash", "apply-routing"])
+def test_writer_discovery_follows_a_repository_script_of_any_name(
+    monkeypatch, tmp_path, name
+):
+    _use_scripts(monkeypatch, tmp_path, {name: WRITER_SCRIPT})
+    step = {"run": f".github/scripts/{name}"}
+    assert list(_writing_steps({"steps": [step]})) == [step]
+
+
+def test_a_python_helper_that_calls_routing_is_refused(monkeypatch, tmp_path):
+    _use_scripts(
+        monkeypatch,
+        tmp_path,
+        {
+            "apply_routing.py": (
+                "import subprocess\n"
+                f'subprocess.run(["uv", "run", "python", "-m", "{REGISTRY_COMMAND}"])\n'
+            )
+        },
+    )
+    step = {"run": "python .github/scripts/apply_routing.py"}
+    with pytest.raises(AssertionError, match="Unsupported inline routing library"):
+        list(_writing_steps({"steps": [step]}))
+
+
+@pytest.mark.parametrize(
+    ("run", "message"),
+    [
+        (".github/scripts/routing/apply.sh", "Missing repository script"),
+        ('".github/scripts/${mode}.sh"', "built from a variable"),
+        ('"${script_directory}/routing-${mode}.sh"', "built from a variable"),
+    ],
+    ids=["subdirectory", "variable-path", "variable-name"],
+)
+def test_discovery_refuses_a_script_call_it_cannot_read(
+    monkeypatch, tmp_path, run, message
+):
+    _use_scripts(monkeypatch, tmp_path, {})
+    with pytest.raises(AssertionError, match=message):
+        list(_writing_steps({"steps": [{"run": run}]}))
+
+
 def test_the_reusable_deployments_routing_writers_are_its_journal_steps():
     jobs = _workflows()[".github/workflows/simulation-deploy.reusable.yml"]["jobs"]
     writers = {
