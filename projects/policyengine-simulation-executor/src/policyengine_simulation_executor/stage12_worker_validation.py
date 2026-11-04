@@ -122,8 +122,8 @@ def _check_uk_local_authority_resources() -> None:
     )
 
     resources = load_uk_local_authority_resources()
-    for boundary_version in resources.coordinates:
-        resources.metadata_for(boundary_version)
+    for boundary_version in resources.codes:
+        resources.names_for(boundary_version)
 
 
 def _check_uk_local_authority_dataset(dataset_path: str) -> None:

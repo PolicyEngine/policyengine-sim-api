@@ -23,8 +23,6 @@ from pydantic import ValidationError
 CONSTITUENCY = {
     "constituency_code": "E14001063",
     "constituency_name": "Aldershot",
-    "x": 56,
-    "y": -40,
     "average_household_income_change": -150.0,
     "relative_household_income_change": -0.0026,
     "population": 40_530.0,
@@ -37,8 +35,6 @@ CONSTITUENCY = {
 LOCAL_AUTHORITY = {
     "local_authority_code": "E06000063",
     "local_authority_name": "Cumberland",
-    "x": 4,
-    "y": 18,
     "average_household_income_change": -120.0,
     "relative_household_income_change": -0.002,
     "population": 120_000.0,
@@ -56,6 +52,14 @@ BREAKDOWN = {
     "data_version": "microcosm-uk-2024-25-dense-20261019T000432Z-ee5c2dbe",
     "constituency_impact": [CONSTITUENCY],
     "local_authority_impact": [LOCAL_AUTHORITY],
+    "constituency_withheld_codes": ["E14000530", "E14001172"],
+    "local_authority_withheld_codes": [],
+}
+# A result from an executor that does not report the withheld areas.
+BREAKDOWN_WITHOUT_WITHHELD_CODES = {
+    key: value
+    for key, value in BREAKDOWN.items()
+    if not key.endswith("_withheld_codes")
 }
 _ZERO = {"baseline": 0.0, "reform": 0.0}
 _AGE_POVERTY = {"child": _ZERO, "adult": _ZERO, "senior": _ZERO, "all": _ZERO}
@@ -113,6 +117,60 @@ def test_a_breakdown_result_carries_both_area_levels_and_their_provenance():
     assert output.kind == "local_areas"
     assert output.dataset == "microcosm_uk_2024_25_dense"
     assert output.model_dump(mode="json") == BREAKDOWN
+
+
+def test_a_breakdown_result_lists_the_withheld_areas_of_each_level():
+    output = LocalAreaBreakdownOutput.model_validate(BREAKDOWN)
+
+    assert output.constituency_withheld_codes == ["E14000530", "E14001172"]
+    # An empty list reports that disclosure control withheld no area.
+    assert output.local_authority_withheld_codes == []
+
+
+def test_a_breakdown_result_without_withheld_codes_still_validates():
+    output = LocalAreaBreakdownOutput.model_validate(BREAKDOWN_WITHOUT_WITHHELD_CODES)
+
+    # None means the result does not report which areas were withheld.
+    assert output.constituency_withheld_codes is None
+    assert output.local_authority_withheld_codes is None
+    response = JobStatusResponse(
+        status="complete", result=BREAKDOWN_WITHOUT_WITHHELD_CODES
+    )
+    assert isinstance(response.result, LocalAreaBreakdownOutput)
+
+
+def test_a_breakdown_result_without_withheld_codes_dumps_without_them():
+    # A gateway deployed before the fields existed forbids unknown keys, so a
+    # result that does not report them must leave the keys out, not send null.
+    output = LocalAreaBreakdownOutput.model_validate(BREAKDOWN_WITHOUT_WITHHELD_CODES)
+
+    assert output.model_dump(mode="json") == BREAKDOWN_WITHOUT_WITHHELD_CODES
+    assert "withheld_codes" not in output.model_dump_json()
+    response = JobStatusResponse(
+        status="complete", result=BREAKDOWN_WITHOUT_WITHHELD_CODES
+    )
+    assert response.model_dump(mode="json")["result"] == (
+        BREAKDOWN_WITHOUT_WITHHELD_CODES
+    )
+
+
+def test_a_breakdown_result_keeps_an_empty_withheld_list_in_its_dump():
+    # [] reports that no area was withheld, unlike a missing list.
+    output = LocalAreaBreakdownOutput.model_validate(
+        {**BREAKDOWN_WITHOUT_WITHHELD_CODES, "constituency_withheld_codes": []}
+    )
+
+    dumped = output.model_dump(mode="json")
+    assert dumped["constituency_withheld_codes"] == []
+    assert "local_authority_withheld_codes" not in dumped
+
+
+@pytest.mark.parametrize(
+    "field", ["constituency_withheld_codes", "local_authority_withheld_codes"]
+)
+def test_withheld_codes_are_a_list_of_area_codes(field):
+    with pytest.raises(ValidationError):
+        LocalAreaBreakdownOutput.model_validate({**BREAKDOWN, field: "E14000530"})
 
 
 def test_a_job_status_reads_a_breakdown_result_as_a_breakdown():
@@ -201,3 +259,43 @@ def test_each_area_level_reads_its_records_as_its_own_type():
     assert [type(record) for record in output.local_authority_impact] == [
         LocalAuthorityImpactRecord
     ]
+
+
+def test_a_national_result_reads_its_area_lists():
+    national = {
+        **NATIONAL,
+        "constituency_impact": [CONSTITUENCY],
+        "local_authority_impact": [LOCAL_AUTHORITY],
+    }
+
+    response = JobStatusResponse(status="complete", result=national)
+
+    assert isinstance(response.result, SingleYearMacroOutput)
+    assert response.model_dump(mode="json")["result"] == national
+
+
+# The contract has no x or y (each area's map position), so a result whose
+# records carry either is refused.
+@pytest.mark.parametrize(
+    "result",
+    [
+        pytest.param(
+            {**BREAKDOWN, "constituency_impact": [{**CONSTITUENCY, "x": 56, "y": -40}]},
+            id="breakdown-constituency",
+        ),
+        pytest.param(
+            {
+                **BREAKDOWN,
+                "local_authority_impact": [{**LOCAL_AUTHORITY, "x": 4, "y": 18}],
+            },
+            id="breakdown-local-authority",
+        ),
+        pytest.param(
+            {**NATIONAL, "constituency_impact": [{**CONSTITUENCY, "x": 56, "y": -40}]},
+            id="national-constituency",
+        ),
+    ],
+)
+def test_a_job_status_refuses_area_records_with_x_and_y(result):
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        JobStatusResponse(status="complete", result=result)

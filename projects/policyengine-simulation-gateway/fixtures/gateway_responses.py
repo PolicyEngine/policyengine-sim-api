@@ -13,8 +13,6 @@ LOCAL_AREA_BREAKDOWN_RESULT = {
         {
             "constituency_code": "E14001063",
             "constituency_name": "Aldershot",
-            "x": 56,
-            "y": -40,
             "average_household_income_change": -150.0,
             "relative_household_income_change": -0.0026,
             "population": 40530.0,

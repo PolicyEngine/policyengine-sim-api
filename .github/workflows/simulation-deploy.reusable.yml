@@ -425,24 +425,7 @@ jobs:
           POLICYENGINE_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}
           FORCE_LATEST: ${{ inputs.force_latest }}
           RELEASE_ENVIRONMENT: ${{ inputs.release_environment }}
-        run: |
-          mkdir -p "${RUNNER_TEMP}/routing-plan"
-          args=(
-            --app-name "${APP_NAME}"
-            --policyengine-version "${POLICYENGINE_VERSION}"
-            --us-version "${POLICYENGINE_US_VERSION}"
-            --uk-version "${POLICYENGINE_UK_VERSION}"
-            --environment "${MODAL_ENVIRONMENT}"
-            --plan-out "${RUNNER_TEMP}/routing-plan/plan.json"
-            --publication-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RELEASE_ENVIRONMENT}"
-          )
-          if [[ "${FORCE_LATEST}" == "true" ]]; then
-            args+=(--force-latest)
-          fi
-          uv run --frozen python -m src.modal.utils.update_version_registry "${args[@]}" \
-            | tee "${RUNNER_TEMP}/routing-plan.out"
-          grep -E '^(before_sha256|after_sha256|advances_latest)=' \
-            "${RUNNER_TEMP}/routing-plan.out" >> "$GITHUB_OUTPUT"
+        run: ../../.github/scripts/routing-plan.sh
 
       - name: Record the unfinished routing publication
         working-directory: projects/policyengine-simulation-executor
@@ -450,10 +433,7 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
-        run: |
-          uv run --frozen python -m src.modal.utils.update_version_registry \
-            --environment "${MODAL_ENVIRONMENT}" \
-            --record-plan "${RUNNER_TEMP}/routing-plan/plan.json"
+        run: ../../.github/scripts/routing-record-plan.sh
 
       - name: Keep the plan for a guarded restore
         uses: actions/upload-artifact@v4
@@ -469,10 +449,7 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
-        run: |
-          uv run --frozen python -m src.modal.utils.update_version_registry \
-            --environment "${MODAL_ENVIRONMENT}" \
-            --apply-plan "${RUNNER_TEMP}/routing-plan/plan.json"
+        run: ../../.github/scripts/routing-apply-plan.sh
 
   sentinel_expected:
     name: Compute the numerical release sentinel
@@ -510,14 +487,7 @@ jobs:
           EXPECTED_POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
           EXPECTED_UK_MODEL_VERSION: ${{ needs.prepare.outputs.uk_version }}
           EXPECTED_UK_DATASET_SHA256: ${{ needs.prepare.outputs.uk_dataset_sha256 }}
-        run: |
-          jq -e \
-            --arg p "${EXPECTED_POLICYENGINE_VERSION}" \
-            --arg m "${EXPECTED_UK_MODEL_VERSION}" \
-            --arg d "${EXPECTED_UK_DATASET_SHA256}" '
-              .policyengine_version == $p and .uk.model_version == $m
-              and .uk.dataset_sha256 == $d and (.cases | length) > 0
-            ' "${RUNNER_TEMP}/release-sentinel.json"
+        run: .github/scripts/release-sentinel-check-bundle.sh
 
       - name: Retain the sentinel for the deployed-stack checks
         uses: actions/upload-artifact@v4
@@ -781,11 +751,7 @@ jobs:
           SIMULATION_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
           SIMULATION_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
           SIMULATION_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
-        run: |
-          uv sync --frozen
-          uv run --frozen python -m src.modal.utils.release_sentinel check \
-            --base-url "${{ needs.deploy_entrypoint.outputs.candidate_url }}" \
-            --expected "${RUNNER_TEMP}/sentinel/release-sentinel.json"
+        run: ../../.github/scripts/release-sentinel-check-service.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}"
 
       - name: Generate API clients for complete integration tests
         if: ${{ inputs.run_full_integration }}
@@ -943,11 +909,7 @@ jobs:
           SIMULATION_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
           SIMULATION_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
           SIMULATION_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
-        run: |
-          uv sync --frozen
-          uv run --frozen python -m src.modal.utils.release_sentinel check \
-            --base-url "${STABLE_URL}" \
-            --expected "${RUNNER_TEMP}/sentinel/release-sentinel.json"
+        run: ../../.github/scripts/release-sentinel-check-service.sh "${STABLE_URL}"
 
       - name: Verify stable service authentication
         working-directory: projects/policyengine-simulation-entry
@@ -1031,14 +993,9 @@ jobs:
               needs.authenticated_test.result == 'success' &&
               (!inputs.promote_entrypoint || needs.promote_entrypoint.result == 'success')
             }}
-        run: |
-          # Caller workflows serialize this write with every other routing
-          # write in the simulation-deploy-main concurrency group.
-          uv run --frozen python -m src.modal.utils.update_version_registry \
-            --environment "${MODAL_ENVIRONMENT}" \
-            --finalize-publication --publication-run "${PUBLICATION_RUN}" \
-            --release-environment "${RELEASE_ENVIRONMENT}" \
-            --gates-passed "${GATES_PASSED}" --github-output "$GITHUB_OUTPUT"
+        # Caller workflows serialize this write with every other routing
+        # write in the simulation-deploy-main concurrency group.
+        run: ../../.github/scripts/routing-finalize-publication.sh
 
   deployment_ready:
     name: Require requested deployment to complete

@@ -88,8 +88,9 @@ with the live API-owned schema.
   psycopg 3 driver internally.
 - `STAGE12_ENABLED` is the only Stage 12 execution setting. Missing or `0`
   disables automatic runs and rejects new direct Stage 12 submissions. `1`
-  enables every supported newly accepted annual society-wide report and the
-  authenticated direct submission route. Any other value prevents service
+  enables every supported newly accepted annual society-wide report, except
+  US state requests (see "Initial flow" below), and the authenticated direct
+  submission route. Any other value prevents service
   startup. Changing the setting requires a Cloud Run deployment. There is no
   percentage, request-bucket, shared runtime-control document, or
   partial-dataset mode.
@@ -162,6 +163,21 @@ annual society-wide comparison inputs. The production request is forwarded
 unchanged. Only a newly accepted supported production job may create one
 corresponding comparison run; polls, cached results, and repeated submissions
 that resolve the same production job do not create another comparison.
+
+US state requests (a `state/*` region, in any case, or a bare two-letter code,
+which the runtime reads as a state) get no shadow comparison, even when the
+adapter supports them. The app will run every state for a nationwide report's
+congressional district view, so comparing them would start two simulations per
+state, and Stage 12 is being replaced, so state results are no longer compared
+with production. The entry logs
+`stage12_comparison_run_skipped` with reason `excluded_us_state_region`, and
+only for state requests the adapter would otherwise have compared. Knowing
+that needs the worker bundle, so the check runs after the v2 manifest is read:
+a state request whose manifest read fails or passes the five-second wait logs
+that failure instead, as any other request would. US
+national, congressional district and place requests, and every UK request
+the adapter supports, are still compared. The operator direct-submission
+route still accepts state regions.
 
 The Simulation Entrypoint, Modal report coordinator, and single-simulation
 functions use each environment's existing `policyengine_v2_runtime` PostgreSQL
@@ -255,21 +271,29 @@ configuration, an unknown code, or a dataset without a distinguishing code
 fails the Stage 12 run. Dataset names and release labels do not select a
 boundary version, and there is no fallback to the newest known configuration.
 
-The executor temporarily packages three display-only resources under its
-expandable `static_runtime_files/uk_local_authorities/` directory. The v2 Modal
-image copies that directory explicitly because Modal's Python-source layer does
-not include non-Python files by default:
+The executor temporarily packages three resources under its expandable
+`static_runtime_files/uk_local_authorities/` directory. The v2 Modal image
+copies that directory explicitly because Modal's Python-source layer does not
+include non-Python files by default:
 
-- one common `code,name` file containing the union of supported authority
-  codes;
-- one `code,x,y` file for the 374-authority LAD22 configuration; and
-- one `code,x,y` file for the 361-authority LAD23 configuration.
+- one common `code,name` file, `names.csv`, containing the union of supported
+  authority codes;
+- one `code` file, `codes_lad22.csv`, listing the 374-authority LAD22
+  configuration; and
+- one `code` file, `codes_lad23.csv`, listing the 361-authority LAD23
+  configuration.
+
+The two code lists replaced `coordinates_lad22.csv` and
+`coordinates_lad23.csv`, which also gave each authority an integer map
+position (`x` and `y`). Results no longer carry a map position, so the
+executor no longer ships one; the code lists keep exactly the codes those
+files listed.
 
 The Enhanced FRS geography is LAD22: its 2021 output areas are crosswalked to
 2022 local-authority boundaries. The output-area vintage does not make the
-local-authority boundary version LAD21. Names and coordinates are attached only
-after numeric local-authority impacts have been calculated; these resources
-never assign a household to an authority.
+local-authority boundary version LAD21. Names are attached only after numeric
+local-authority impacts have been calculated; these resources never assign a
+household to an authority.
 
 The detected boundary version is stored as typed metadata in both child Parquet
 artifacts. The coordinator requires baseline and reform to agree before it
@@ -277,9 +301,9 @@ enriches the aggregate output. Existing non-Stage-12 calculations continue to
 use the existing GCS lookup and are not changed by this path.
 
 This resource ownership is temporary. A future boundary version must add its
-codes to the common names file, add a distinct coordinate file, and register a
-typed detector definition. Longer term, display-coordinate rendering should
-move to the front end, and Stage 14 or later work should remove these temporary
+codes to the common names file, add a distinct code file, and register a typed
+detector definition. Results carry no map positions, which the app draws from
+its own layout files, and Stage 14 or later work should remove these temporary
 executor resources when the authoritative v2 report architecture supersedes
 Stage 12.
 
@@ -601,8 +625,9 @@ production submissions can request more than one coordinator invocation, but
 the deterministic evaluation identifier and database uniqueness constraint
 make them one logical Stage 12 run. A later
 coordinator that finds the run already active or complete exits without
-starting child simulations. Unsupported automatic inputs are logged with a
-bounded reason and are not persisted.
+starting child simulations. Unsupported automatic inputs, and US state
+requests (see "Initial flow"), are logged with a bounded reason and are not
+persisted.
 
 The report coordinator starts baseline and reform as independent Modal calls,
 observes both until they succeed, and derives the Stage 12 aggregate. It then restores the

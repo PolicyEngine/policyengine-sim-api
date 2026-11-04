@@ -122,6 +122,20 @@ def test_local_area_breakdowns_are_public():
     ]["properties"]["result"]["anyOf"]
 
 
+def test_local_area_breakdowns_may_list_the_withheld_areas_of_each_level():
+    breakdown = create_app().openapi()["components"]["schemas"][
+        "LocalAreaBreakdownOutput"
+    ]
+
+    for field in ("constituency_withheld_codes", "local_authority_withheld_codes"):
+        assert breakdown["properties"][field]["anyOf"] == [
+            {"type": "array", "items": {"type": "string"}},
+            {"type": "null"},
+        ]
+        # Optional, so results from executors that do not report them validate.
+        assert field not in breakdown["required"]
+
+
 def test_route_table_is_frozen():
     assert methods(cast("OpenAPIDocument", create_app().openapi())) == EXPECTED_ROUTES
 
