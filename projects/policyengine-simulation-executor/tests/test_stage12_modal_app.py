@@ -88,6 +88,15 @@ def _invoke(
             observability_context=_observability_context(),
         )
 
+    # The US and UK workers pass their own Modal call ID to the runtime, so the
+    # stand-in ``modal`` module needs one; a test that set its own keeps it.
+    if not hasattr(module.modal, "current_function_call_id"):
+        monkeypatch.setattr(
+            module.modal,
+            "current_function_call_id",
+            lambda: "call-1",
+            raising=False,
+        )
     monkeypatch.setattr(stage12_runtime, "run_single_simulation", implementation)
     return getattr(module, function_name)(
         {"role": "baseline"},
