@@ -545,6 +545,25 @@ MOVED_STEPS = {
 }
 
 
+def test_the_rollback_job_sets_every_variable_the_scripts_read():
+    """The scripts use set -u, so a variable the job stops setting fails them."""
+    assert workflow_jobs(ROLLBACK_WORKFLOW)["rollback"]["env"] == {
+        "TARGET": "${{ inputs.target }}",
+        "DEPLOY_RUN_ID": "${{ inputs.deploy_run_id }}",
+        "RESOLVE_PENDING_PUBLICATION": "${{ inputs.resolve_pending_publication }}",
+        "POLICYENGINE_VERSION": "${{ inputs.policyengine_version }}",
+        "EXPECTED_LATEST": "${{ inputs.expected_latest }}",
+        "ENTRYPOINT_REVISION": "${{ inputs.entrypoint_revision }}",
+        "MODAL_ENVIRONMENT": "${{ inputs.target == 'prod' && 'main' || 'staging' }}",
+        "SERVICE": (
+            "${{ inputs.target == 'prod' && 'policyengine-simulation-entry' "
+            "|| 'policyengine-simulation-entry-staging' }}"
+        ),
+        "REGION": "${{ vars.SIMULATION_ENTRYPOINT_GCP_REGION || 'us-central1' }}",
+        "PROJECT_ID": "${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}",
+    }
+
+
 @pytest.mark.parametrize("step_name", list(MOVED_STEPS))
 def test_each_moved_rollback_step_runs_its_script_with_unchanged_settings(
     step_name,

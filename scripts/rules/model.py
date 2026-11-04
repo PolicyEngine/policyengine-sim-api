@@ -141,8 +141,9 @@ class Agents:
 class CiScripts:
     """Where workflow scripts live, where their tests are, and their baselines.
 
-    A check whose rule is enforced with nothing tolerated has no baseline: its
-    key is left out of ``[ci_scripts]``, and every finding of it fails.
+    A check may leave its key out of ``[ci_scripts]``; every finding of it
+    then fails. A check whose rule is enforced lists no baseline or an empty
+    one, which validation checks.
     """
 
     workflows: str
