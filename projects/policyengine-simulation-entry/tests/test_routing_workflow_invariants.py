@@ -1070,8 +1070,17 @@ def test_comments_of_a_called_script_are_not_read_as_commands(tmp_path):
 
 
 def test_the_scripts_directory_has_no_subdirectories():
-    """Discovery reads only files directly in .github/scripts/."""
-    assert [path for path in SCRIPTS_DIRECTORY.iterdir() if path.is_dir()] == [], (
+    """Discovery reads only files directly in .github/scripts/.
+
+    Python's ``__pycache__``, written when a test imports a helper there, holds
+    bytecode, not scripts.
+    """
+    subdirectories = [
+        path
+        for path in SCRIPTS_DIRECTORY.iterdir()
+        if path.is_dir() and path.name != "__pycache__"
+    ]
+    assert subdirectories == [], (
         "extend called_scripts in test_deployment_assets_support.py to read "
         "scripts in subdirectories before adding one"
     )
