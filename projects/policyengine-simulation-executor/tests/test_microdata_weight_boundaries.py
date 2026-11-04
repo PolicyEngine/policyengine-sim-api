@@ -470,8 +470,8 @@ def test_weight_stripping_stays_in_the_designated_module() -> None:
     assert review.outside_designated_module == [], (
         "raw values read from a weighted frame outside "
         f"{WEIGHT_STRIPPING_MODULE.name}; an unweighted total of them is a sample "
-        "total, the mirror image of #767. Keep the weights, or decide with a "
-        "reviewer to move the read into the designated module:\n"
+        "total, the mirror image of #767. Keep the weights, and count entities "
+        f"with {ENTITY_COUNT_FUNCTION}:\n"
         + _described(review.outside_designated_module)
     )
     assert review.reads_other_than_counting == [], (
@@ -490,14 +490,22 @@ def test_weight_stripping_review_allows_only_entity_counts() -> None:
     module_strip = Finding(
         STRIPPING, designated, 2, "_unweighted_household_frame", "pd.DataFrame(frame)"
     )
+    nested_strip = Finding(
+        STRIPPING, designated, 3, f"{ENTITY_COUNT_FUNCTION}.inner", "frame.values"
+    )
     outside_strip = Finding(STRIPPING, "src/other.py", 4, "build", "frame.to_numpy()")
-
-    review = _review_weight_stripping(
-        [entity_count, module_strip, outside_strip], designated=designated
+    # A function with the counting function's name elsewhere is not it.
+    outside_count = Finding(
+        STRIPPING, "src/other.py", 5, ENTITY_COUNT_FUNCTION, "np.asarray(weights)"
     )
 
-    assert review.outside_designated_module == [outside_strip]
-    assert review.reads_other_than_counting == [module_strip]
+    review = _review_weight_stripping(
+        [entity_count, module_strip, nested_strip, outside_strip, outside_count],
+        designated=designated,
+    )
+
+    assert review.outside_designated_module == [outside_strip, outside_count]
+    assert review.reads_other_than_counting == [module_strip, nested_strip]
 
 
 def test_weight_stripping_rule_records_no_exceptions() -> None:

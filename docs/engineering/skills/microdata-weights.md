@@ -42,8 +42,10 @@ weights. Count entities with `_count_output_entities` instead.
   `.tolist()`, `pd.DataFrame(...)`, `pd.Series(...)`) only in
   `simulation_output_common.py`, which holds `_count_output_entities`. Summing
   stripped values gives an unweighted sample total, the mirror image of #767.
-  Within that module, counting entities in `_count_output_entities` is the
-  only read allowed. The rule is enforced: any other read fails.
+  Within that module, only `_count_output_entities`, which counts entities,
+  may read them. The rule is enforced: a read anywhere else fails. The guard
+  checks where a read is, not what it computes, so a read inside
+  `_count_output_entities` must also only count entities.
 - `sim.microdata.builder-tests-use-weighted-frames`: the output-builder tests
   (`tests/test_simulation_output_*.py`) build entity frames only through
   `fixtures/weighted_frames.weighted_entity_frame`, which returns a
@@ -78,10 +80,14 @@ The rule is enforced, so it records no exceptions. The last one,
 `_unweighted_household_frame`, went when the UK constituency and
 local-authority breakdowns moved to policyengine's disclosure-controlled
 geography output, which takes the simulations, and the empty baseline that
-listed exceptions was deleted. A strip that can't be fixed yet would need the
-rule ratcheted again, with a baseline and a `[rule.downgrade]` section naming
-a tracking issue (see [the rules registry skill](rules-registry.md)), decided
-with a reviewer in the PR.
+listed exceptions was deleted.
+
+A strip that can't be fixed yet would need the rule weakened again, and
+weakening a rule is a decision for a person, not an agent (see
+[the rules registry skill](rules-registry.md)). If a person decides to, the
+change makes the rule ratcheted with a baseline and a `[rule.downgrade]`
+section naming a tracking issue, restores the guard's reading of recorded
+exceptions, and replaces `test_weight_stripping_rule_records_no_exceptions`.
 
 The UK constituency and local-authority breakdowns are built only from the
 pair they are given: a constituency or local-authority run's own pair, or,
