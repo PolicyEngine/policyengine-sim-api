@@ -1077,6 +1077,20 @@ def test_the_scripts_directory_has_no_subdirectories():
     )
 
 
+def test_a_bytecode_cache_is_not_a_scripts_subdirectory(monkeypatch, tmp_path):
+    """Importing a Python helper in .github/scripts/ writes __pycache__ there."""
+    _use_scripts(monkeypatch, tmp_path, {"first.sh": "echo first\n"})
+    (tmp_path / "__pycache__").mkdir()
+    test_the_scripts_directory_has_no_subdirectories()
+
+
+def test_a_scripts_subdirectory_must_be_read_first(monkeypatch, tmp_path):
+    _use_scripts(monkeypatch, tmp_path, {"first.sh": "echo first\n"})
+    (tmp_path / "lib").mkdir()
+    with pytest.raises(AssertionError, match="extend called_scripts"):
+        test_the_scripts_directory_has_no_subdirectories()
+
+
 def test_the_reusable_deployments_routing_writers_are_its_journal_steps():
     jobs = _workflows()[".github/workflows/simulation-deploy.reusable.yml"]["jobs"]
     writers = {
