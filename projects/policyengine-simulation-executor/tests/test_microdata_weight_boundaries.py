@@ -30,6 +30,12 @@ WEIGHT_STRIPPING_MODULE = (
 # weights, which weights-not-values allows. Any other read fails, as any read
 # outside the module does.
 ENTITY_COUNT_FUNCTION = "_count_output_entities"
+# What a stripping finding should do instead, wherever it is.
+STRIPPING_FIX = (
+    f"Keep the weights: count entities with {ENTITY_COUNT_FUNCTION}, and "
+    "aggregate values through the weighted frame or the aggregators "
+    "(docs/engineering/skills/microdata-weights.md)"
+)
 # Output-builder tests, which build entity frames only through the shared
 # factory in fixtures/weighted_frames.py.
 BUILDER_TEST_PATTERN = "test_simulation_output_*.py"
@@ -470,14 +476,13 @@ def test_weight_stripping_stays_in_the_designated_module() -> None:
     assert review.outside_designated_module == [], (
         "raw values read from a weighted frame outside "
         f"{WEIGHT_STRIPPING_MODULE.name}; an unweighted total of them is a sample "
-        "total, the mirror image of #767. Keep the weights, and count entities "
-        f"with {ENTITY_COUNT_FUNCTION}:\n"
+        f"total, the mirror image of #767. {STRIPPING_FIX}:\n"
         + _described(review.outside_designated_module)
     )
     assert review.reads_other_than_counting == [], (
-        f"raw values read from a weighted frame in {WEIGHT_STRIPPING_MODULE.name} "
-        f"outside {ENTITY_COUNT_FUNCTION}, for something other than counting "
-        "entities. Keep the weights instead:\n"
+        f"raw values read from a weighted frame in {WEIGHT_STRIPPING_MODULE.name}, "
+        f"in a function other than {ENTITY_COUNT_FUNCTION} (a function defined "
+        f"inside it counts as another). {STRIPPING_FIX}:\n"
         + _described(review.reads_other_than_counting)
     )
 
@@ -509,7 +514,7 @@ def test_weight_stripping_review_allows_only_entity_counts() -> None:
 
 
 def test_weight_stripping_rule_records_no_exceptions() -> None:
-    """The rule is enforced: no read but counting entities can be recorded."""
+    """The rule is enforced with no baseline and no registry exceptions."""
     registry = tomllib.loads(
         (REPOSITORY_ROOT / "rules" / "registry.toml").read_text(encoding="utf-8")
     )
@@ -520,6 +525,7 @@ def test_weight_stripping_rule_records_no_exceptions() -> None:
     )
     assert rule["status"] == "enforced"
     assert "baseline" not in rule
+    assert "exception" not in rule
     baselines = REPOSITORY_ROOT / "rules" / "baselines"
     assert not (baselines / "sim-microdata-weight-stripping.txt").exists()
 

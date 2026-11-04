@@ -43,8 +43,9 @@ weights. Count entities with `_count_output_entities` instead.
   `simulation_output_common.py`, which holds `_count_output_entities`. Summing
   stripped values gives an unweighted sample total, the mirror image of #767.
   Within that module, only `_count_output_entities`, which counts entities,
-  may read them. The rule is enforced: a read anywhere else fails. The guard
-  checks where a read is, not what it computes, so a read inside
+  may read them, directly in its body: a function defined inside it counts as
+  another function. The rule is enforced: a read anywhere else fails. The
+  guard checks where a read is, not what it computes, so a read inside
   `_count_output_entities` must also only count entities.
 - `sim.microdata.builder-tests-use-weighted-frames`: the output-builder tests
   (`tests/test_simulation_output_*.py`) build entity frames only through
@@ -76,7 +77,8 @@ simulation worker and the precompute determinism check).
 Fix each finding: count entities with `_count_output_entities`, and aggregate
 values through the weighted frame or the aggregators.
 
-The rule is enforced, so it records no exceptions. The last one,
+The rule is enforced with no baseline and no `[[rule.exception]]` entries, so
+nothing is tolerated. The last recorded exception,
 `_unweighted_household_frame`, went when the UK constituency and
 local-authority breakdowns moved to policyengine's disclosure-controlled
 geography output, which takes the simulations, and the empty baseline that
@@ -86,8 +88,9 @@ A strip that can't be fixed yet would need the rule weakened again, and
 weakening a rule is a decision for a person, not an agent (see
 [the rules registry skill](rules-registry.md)). If a person decides to, the
 change makes the rule ratcheted with a baseline and a `[rule.downgrade]`
-section naming a tracking issue, restores the guard's reading of recorded
-exceptions, and replaces `test_weight_stripping_rule_records_no_exceptions`.
+section with a `reason` and a tracking `issue`, restores the guard's reading
+of recorded exceptions, and replaces
+`test_weight_stripping_rule_records_no_exceptions`.
 
 The UK constituency and local-authority breakdowns are built only from the
 pair they are given: a constituency or local-authority run's own pair, or,
