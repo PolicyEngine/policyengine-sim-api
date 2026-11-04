@@ -139,14 +139,18 @@ class Agents:
 
 @dataclass(frozen=True)
 class CiScripts:
-    """Where workflow scripts live, where their tests are, and their baselines."""
+    """Where workflow scripts live, where their tests are, and their baselines.
+
+    A check whose rule is enforced with nothing tolerated has no baseline: its
+    key is left out of ``[ci_scripts]``, and every finding of it fails.
+    """
 
     workflows: str
     scripts_dir: str
     test_globs: tuple[str, ...]
-    multiline_baseline: str
-    untested_baseline: str
-    shellcheck_baseline: str
+    multiline_baseline: str | None
+    untested_baseline: str | None
+    shellcheck_baseline: str | None
 
 
 @dataclass(frozen=True)

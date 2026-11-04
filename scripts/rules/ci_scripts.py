@@ -1,13 +1,14 @@
 """The ci-scripts quality guard: workflow logic lives in tested shell scripts.
 
-Three checks, each ratcheted against a baseline file listed in ``[ci_scripts]``:
+Three checks, each compared with the baseline file ``[ci_scripts]`` lists for it:
 
 1. A workflow ``run:`` block holds one line of code and no chained commands.
 2. Every shell script a workflow calls is referenced by at least one test.
 3. Every shell script in the scripts directory passes ``shellcheck``.
 
 Anything found that isn't in the baseline fails, and so does a baseline entry
-that no longer applies, so baselines only shrink.
+that no longer applies, so baselines only shrink. A check with no baseline
+listed, because its rule is enforced, fails on every finding.
 """
 
 from __future__ import annotations
@@ -121,7 +122,9 @@ def find(config: CiScripts, root: Path) -> Findings:
     return findings
 
 
-def _baseline(root: Path, path: str) -> set[str]:
+def _baseline(root: Path, path: str | None) -> set[str]:
+    if path is None:
+        return set()
     file = root / path
     if not file.is_file():
         return set()
@@ -132,9 +135,13 @@ def _baseline(root: Path, path: str) -> set[str]:
     }
 
 
-def _rule_for(registry: Registry, baseline: str, check: str) -> str | None:
+def _rule_for(registry: Registry, baseline: str | None, check: str) -> str | None:
     for rule in registry.rules:
-        if rule.baseline is not None and rule.baseline.file == baseline:
+        if (
+            baseline is not None
+            and rule.baseline is not None
+            and rule.baseline.file == baseline
+        ):
             return rule.id
     for rule in registry.rules:
         if rule.enforcer.get("name") == "ci-scripts" and rule.id.endswith(
@@ -211,7 +218,7 @@ def write_baselines(registry: Registry, findings: Findings, root: Path) -> None:
         (findings.untested, config.untested_baseline),
         (findings.shellcheck, config.shellcheck_baseline),
     ):
-        if found is None:
+        if found is None or path is None:
             continue
         lines = [
             "# Tolerated existing violations. This list may only shrink.",
