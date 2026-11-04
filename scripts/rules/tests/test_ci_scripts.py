@@ -14,6 +14,7 @@ from scripts.rules.ci_scripts import (
     multiline_runs,
     shellcheck_failures,
     untested_scripts,
+    write_baselines,
 )
 from scripts.rules.load import load_text
 from scripts.rules.model import CiScripts
@@ -207,6 +208,55 @@ class CompareTest(unittest.TestCase):
         self.assertTrue(
             messages[-1].startswith("[ex.ci.workflow-scripts-tested]"), messages
         )
+
+    def registry_without_a_multiline_baseline(self):
+        """Return the registry with the multi-line rule enforced and no baseline."""
+        registry, violations = load_text(
+            REGISTRY.replace(
+                'multiline_baseline = "rules/baselines/ci-multiline-run.txt"\n', ""
+            )
+            .replace("ex.ci.multiline", "ex.ci.multiline-run-is-script")
+            .replace('status = "ratcheted"', 'status = "enforced"')
+            .replace(
+                '[rule.baseline]\nfile = "rules/baselines/ci-multiline-run.txt"\n'
+                "count = 1\n",
+                "",
+            )
+        )
+        self.assertEqual(violations, [])
+        assert registry is not None
+        return registry
+
+    def test_a_check_without_a_baseline_fails_every_finding(self) -> None:
+        registry = self.registry_without_a_multiline_baseline()
+        self.assertIsNone(registry.ci_scripts.multiline_baseline)
+        findings = Findings(
+            multiline={"new :: job :: step"}, untested=set(), shellcheck=set()
+        )
+        messages = [str(v) for v in compare(registry, findings, self.root)]
+        # The baseline file in the repository is not read: its old entry is
+        # neither tolerated nor reported as no longer applying.
+        self.assertEqual(len(messages), 1, messages)
+        self.assertTrue(
+            messages[0].startswith(
+                "[ex.ci.multiline-run-is-script] ci-scripts: "
+                "multi-line run: block new :: job :: step"
+            ),
+            messages,
+        )
+
+    def test_writing_baselines_skips_a_check_without_one(self) -> None:
+        registry = self.registry_without_a_multiline_baseline()
+        findings = Findings(
+            multiline={"new :: job :: step"}, untested={"x.sh"}, shellcheck=set()
+        )
+        write_baselines(registry, findings, self.root)
+        baselines = self.root / "rules" / "baselines"
+        self.assertEqual(
+            (baselines / "ci-multiline-run.txt").read_text(),
+            "# tolerated\nold :: job :: step\n",
+        )
+        self.assertIn("x.sh", (baselines / "ci-untested-scripts.txt").read_text())
 
     def test_fixed_finding_must_leave_the_baseline(self) -> None:
         messages = self.messages(set())
