@@ -10,12 +10,12 @@ from pathlib import Path
 
 import pytest
 import yaml
+from test_deployment_assets_support import with_called_scripts
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIRECTORY = REPOSITORY_ROOT / ".github" / "workflows"
+# Discovery reads the scripts here; tests point it at fake scripts.
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / ".github" / "scripts"
-# A call to a repository script, from the root or from a project directory.
-SCRIPT_CALL = re.compile(r"(?:\.\./)*\.github/scripts/([\w.-]+\.sh)\b")
 REGISTRY_MODULE = (
     REPOSITORY_ROOT
     / "projects/policyengine-simulation-executor/src/modal/routing_publisher"
@@ -267,19 +267,15 @@ def _command_options(arguments: tuple[str, ...]) -> set[str]:
 
 
 def _step_shell(run: str) -> str:
-    """Return a run: text followed by every repository script it calls.
+    """Return a run: text followed by every repository script it names.
 
     A step that runs a script under .github/scripts/ writes routing exactly
     when the script does, so discovery and the environment proof read the
-    script, and any script it calls in turn, as part of the step.
+    script, and any script it names in turn, as part of the step. A name a
+    script builds from a variable cannot be read, so scripts that write
+    routing must name the scripts they call.
     """
-    texts = [run]
-    for line in _without_comments(run).splitlines():
-        for name in SCRIPT_CALL.findall(line):
-            script = SCRIPTS_DIRECTORY / name
-            assert script.is_file(), f"Missing repository script: {name}"
-            texts.append(_step_shell(script.read_text()))
-    return "\n".join(texts)
+    return with_called_scripts(run, SCRIPTS_DIRECTORY)
 
 
 def _command_writes(arguments: tuple[str, ...]) -> bool:

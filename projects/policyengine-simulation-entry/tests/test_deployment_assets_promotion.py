@@ -18,6 +18,7 @@ from test_deployment_assets_support import (
     job_section,
     sentinel_check_step,
     step_shell,
+    with_called_scripts,
     workflow_jobs,
 )
 
@@ -230,7 +231,11 @@ def test_stage12_only_deployment_cannot_redeploy_existing_modal_resources():
             "\n  integration:"
         )
     ]
-    assert "src.modal.utils.update_version_registry" not in stage12_section
+    # The Stage 12 jobs, and the repository scripts they run, never touch v1
+    # routing.
+    assert "src.modal.utils.update_version_registry" not in with_called_scripts(
+        stage12_section
+    )
     finalizer_job = job_section(reusable_workflow, "finalize_routing")
     assert "inputs.deploy_existing_stack &&" in finalizer_job
     sentinel_job = job_section(reusable_workflow, "sentinel_expected")

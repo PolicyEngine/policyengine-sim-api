@@ -196,8 +196,44 @@ def job_section(workflow: str, job_name: str) -> str:
 
 
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / ".github" / "scripts"
-# A call to a repository script, from the root or from a project directory.
-SCRIPT_CALL = re.compile(r"(?:\.\./)*\.github/scripts/([\w.-]+\.sh)\b")
+# A path to a repository script, from the root or from a project directory.
+SCRIPT_PATH = re.compile(r"(?:\.\./)*\.github/scripts/([\w.-]+\.sh)(?![\w.-])")
+# A shell script's file name, however its directory is written: a literal
+# path, or "${script_directory}/name.sh" inside a script.
+SCRIPT_NAME = re.compile(r"(?<![\w.-])([\w.-]+\.sh)(?![\w.-])")
+
+
+def with_called_scripts(text: str, scripts_directory: Path | None = None) -> str:
+    """Return shell text followed by every repository script it names, recursively.
+
+    A line names a script when it holds the file name of a script in
+    ``scripts_directory`` (.github/scripts/ by default), whether as a path or
+    after a directory variable such as ``"${script_directory}/name.sh"``. A
+    name built from a variable cannot be read and is not followed. Comment
+    lines are skipped, a ``.github/scripts/`` path that names no script fails,
+    and each script is read once, so one that names itself does not recurse.
+    """
+    directory = scripts_directory or SCRIPTS_DIRECTORY
+    texts = [text]
+    read: set[str] = set()
+    pending = [text]
+    while pending:
+        for line in pending.pop(0).splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            for name in SCRIPT_PATH.findall(line):
+                assert (directory / name).is_file(), (
+                    f"Missing repository script: {name}"
+                )
+            for name in SCRIPT_NAME.findall(line):
+                script = directory / name
+                if name in read or not script.is_file():
+                    continue
+                read.add(name)
+                body = script.read_text(encoding="utf-8")
+                texts.append(body)
+                pending.append(body)
+    return "\n".join(texts)
 
 
 def step_shell(step: dict) -> str:
@@ -207,9 +243,7 @@ def step_shell(step: dict) -> str:
     command whether the step runs it inline or through a script under
     .github/scripts/.
     """
-    run = step.get("run", "")
-    scripts = [SCRIPTS_DIRECTORY / name for name in SCRIPT_CALL.findall(run)]
-    return "\n".join([run, *(script.read_text(encoding="utf-8") for script in scripts)])
+    return with_called_scripts(step.get("run", ""))
 
 
 def run_step(
@@ -218,11 +252,13 @@ def run_step(
     env: dict[str, str],
     replacements: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a step's run: text as GitHub Actions' bash shell does.
+    """Run a step's run: text from its working directory, as a workflow step.
 
-    It runs with ``bash --noprofile --norc -eo pipefail`` from the step's
-    working directory, so a ``../../.github/scripts/`` call runs the real
-    script. ``replacements`` substitutes ``${{ }}`` expressions in the text.
+    It runs with ``bash --noprofile --norc -eo pipefail``, the options GitHub
+    Actions uses for ``shell: bash``. A job without a ``shell`` runs with
+    ``bash -e``, without pipefail, so this is the stricter of the two. From the
+    working directory, a ``../../.github/scripts/`` call runs the real script.
+    ``replacements`` substitutes ``${{ }}`` expressions in the text.
     """
     script = step["run"]
     for expression, value in (replacements or {}).items():
