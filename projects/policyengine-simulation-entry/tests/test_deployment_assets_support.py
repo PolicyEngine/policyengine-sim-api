@@ -198,7 +198,7 @@ def job_section(workflow: str, job_name: str) -> str:
 
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / ".github" / "scripts"
 # What follows .github/scripts/ in a path, from the root or a project directory.
-SCRIPT_REFERENCE = re.compile(r"\.github/scripts/([^\s\"'`;|&()<>]*)")
+SCRIPT_REFERENCE = re.compile(r"\.github/scripts/([^\s\"'`;|&()<>{}]*)")
 # A script file name built from a variable, such as routing-${mode}.sh.
 VARIABLE_SCRIPT_NAME = re.compile(
     r"(?:^|[\s/\"'=(])[^\s/\"'=()]*\$[^\s/\"'()]*\.(?:sh|bash|py)(?![\w.-])"
@@ -217,7 +217,11 @@ def called_scripts(line: str, scripts_directory: Path | None = None) -> list[Pat
     variable.
     """
     directory = scripts_directory or SCRIPTS_DIRECTORY
-    for reference in filter(None, SCRIPT_REFERENCE.findall(line)):
+    # Punctuation after a path, as at the end of a sentence, is not its name.
+    references = (
+        reference.rstrip(".,:") for reference in SCRIPT_REFERENCE.findall(line)
+    )
+    for reference in filter(None, references):
         assert "$" not in reference, (
             f"Cannot read a script whose name is built from a variable: {line}"
         )
@@ -239,13 +243,19 @@ def _file_names(directory: Path) -> frozenset[str]:
     return frozenset(path.name for path in directory.iterdir() if path.is_file())
 
 
-@functools.cache
 def with_called_scripts(text: str, scripts_directory: Path | None = None) -> str:
     """Return shell text followed by every repository script it names, recursively.
 
-    ``called_scripts`` decides what a line names. Comment lines are skipped,
-    and each script is read once, so one that names itself does not recurse.
+    ``called_scripts`` decides what a line names. Each script is read once, so
+    one that names itself does not recurse, and its comment lines are left
+    out, so a search of the result finds only commands.
     """
+    return _with_called_scripts(text, scripts_directory or SCRIPTS_DIRECTORY)
+
+
+@functools.cache
+def _with_called_scripts(text: str, scripts_directory: Path) -> str:
+    """Return ``with_called_scripts`` for one scripts directory, computed once."""
     texts = [text]
     read: set[str] = set()
     pending = [text]
@@ -257,7 +267,11 @@ def with_called_scripts(text: str, scripts_directory: Path | None = None) -> str
                 if script.name in read:
                     continue
                 read.add(script.name)
-                body = script.read_text(encoding="utf-8")
+                body = "\n".join(
+                    line
+                    for line in script.read_text(encoding="utf-8").splitlines()
+                    if not line.lstrip().startswith("#")
+                )
                 texts.append(body)
                 pending.append(body)
     return "\n".join(texts)

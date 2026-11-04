@@ -552,6 +552,9 @@ nodes = [
   "tests/test_deployment_assets_routing.py::test_failed_release_gate_cannot_report_a_successful_release",
   "tests/test_deployment_assets_routing.py::test_a_failing_routing_command_fails_its_step_and_job",
   "tests/test_deployment_assets_routing.py::test_routing_jobs_never_allow_command_failures",
+  "tests/test_routing_and_sentinel_scripts.py::test_routing_plan_writes_the_plan_and_records_its_digests",
+  "tests/test_routing_and_sentinel_scripts.py::test_record_and_publish_pass_the_kept_plan_to_the_publisher",
+  "tests/test_routing_and_sentinel_scripts.py::test_finalize_passes_the_gate_outcome_and_the_step_output_file",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"

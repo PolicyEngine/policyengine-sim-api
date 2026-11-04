@@ -303,9 +303,12 @@ def _assert_routing_scripts_run_in_the_foreground(
 
     A line that calls a script that refers to routing gets the inline
     commands' checks: no command substitution, subshell, group or background
-    job, and at most one routing command in a pipeline. Each script's own
-    lines are checked once, and a script's mention of its own name, such as
-    in a usage message, is not a call.
+    job, and at most one routing command in a pipeline. The script must also
+    be the command itself, run by its path or with ``bash``, never by another
+    command such as ``xargs -P`` or ``bash -c`` that could run it in parallel,
+    nor held in a variable. Each script's own lines are checked once, and a
+    script's mention of its own name, such as in a usage message, is not a
+    call.
     """
     for line in _without_comments(text).splitlines():
         scripts = [
@@ -342,12 +345,30 @@ def _assert_routing_scripts_run_in_the_foreground(
                     "Routing pipeline commands can execute in parallel; "
                     "use foreground sequential commands"
                 )
+            _assert_routing_scripts_called_directly(line, tokens, set(routing))
         for script in scripts:
             if script.name not in read:
                 read.add(script.name)
                 _assert_routing_scripts_run_in_the_foreground(
                     script.read_text(), read, script.name
                 )
+
+
+def _assert_routing_scripts_called_directly(
+    line: str, tokens: list[str], routing_names: set[str]
+) -> None:
+    """Require each routing script on a line to be its command's command word."""
+    for key, group in itertools.groupby(
+        tokens, key=lambda token: token in {";", "&&", "||", "|"}
+    ):
+        if key:
+            continue
+        command = list(group)
+        for index, token in enumerate(command):
+            if routing_names & set(re.findall(r"[\w.-]+", token)):
+                message = f"Routing scripts must be called directly: {line}"
+                assert token.rsplit("/", 1)[-1] in routing_names, message
+                assert tuple(command[:index]) in {(), ("bash",)}, message
 
 
 def _command_writes(arguments: tuple[str, ...]) -> bool:
@@ -976,8 +997,9 @@ def test_a_python_helper_that_calls_routing_is_refused(monkeypatch, tmp_path):
         },
     )
     step = {"run": "python .github/scripts/apply_routing.py"}
-    # Python is not shell, so its routing call fails the shell-form checks.
-    with pytest.raises(AssertionError, match=r"Unsupported|foreground"):
+    # Python is not shell, so the helper fails the routing script checks: run
+    # by python, it is not called directly, and its call is no shell form.
+    with pytest.raises(AssertionError, match=r"called directly|Unsupported|foreground"):
         list(_writing_steps({"steps": [step]}))
 
 
