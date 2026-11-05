@@ -142,7 +142,7 @@ test = "tests/test_database_access_boundaries.py::test_rule_proof_sqlalchemy_and
 [[rule]]
 id = "sim.persistence.missing-privileges-reported"
 category = "persistence"
-statement = "The simulation service's privilege check, whose result its readiness check reports and whose names it logs, names every table privilege its role needs on the Public API's tables and lacks, as PostgreSQL reports it, counts a table missing from the public schema as lacking all of them, and names a missing USAGE privilege on that schema."
+statement = "The simulation service's privilege check, which its readiness check uses, names every table privilege its role needs on the Public API's tables and lacks, as PostgreSQL reports it, counts a table missing from the public schema as lacking all of them, and names a missing USAGE privilege on that schema."
 rationale = "libs/policyengine-simulation-persistence/README.md#the-roles-privileges"
 scope = ["libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py"]
 tier = "mechanical"
