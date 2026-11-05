@@ -8,10 +8,16 @@ import threading
 import pytest
 from conftest import FakeBackend, make_settings
 from fastapi.testclient import TestClient
+from policyengine_observability import TelemetryLimits
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry import simulation_database as database_module
 from policyengine_simulation_entry.app import create_app
-from policyengine_simulation_entry.simulation_database import SimulationDatabase
+from policyengine_simulation_entry.simulation_database import (
+    MISSING_PRIVILEGES_LOG_EVENT,
+    SimulationDatabase,
+    SimulationDatabaseReadinessCheck,
+    missing_privilege_log_messages,
+)
 from sqlalchemy.exc import OperationalError
 
 DATABASE_URL = "postgresql://simulation_service:secret@db.example:5432/postgres"
@@ -50,6 +56,15 @@ def _client(backend, database):
     )
 
 
+def _log_messages(caplog):
+    """Each record's message, the only text the observability runtime keeps.
+
+    Its log handler drops a record's ``extra`` fields, so what an operator
+    needs has to be in the message itself.
+    """
+    return [record.getMessage() for record in caplog.records]
+
+
 def test_readiness_reports_a_reached_database_with_every_privilege():
     database = FakeSimulationDatabase()
     with _client(FakeBackend(), database) as client:
@@ -58,12 +73,15 @@ def test_readiness_reports_a_reached_database_with_every_privilege():
     assert result.status_code == 200
     assert result.json() == {
         "status": "ready",
-        "simulation_database": {"reachable": True, "missing_privileges": []},
+        "simulation_database": {"reachable": True, "has_required_privileges": True},
     }
     assert database.checks == 1
 
 
-def test_readiness_names_the_privileges_the_role_lacks():
+def test_readiness_says_only_that_privileges_are_missing_and_logs_their_names(
+    caplog,
+):
+    """The route is public, so the names go to the service's own log."""
     database = FakeSimulationDatabase(
         missing_privileges=["INSERT on reports", "SELECT on policies"]
     )
@@ -73,11 +91,45 @@ def test_readiness_names_the_privileges_the_role_lacks():
     assert result.status_code == 200
     assert result.json() == {
         "status": "ready",
-        "simulation_database": {
-            "reachable": True,
-            "missing_privileges": ["INSERT on reports", "SELECT on policies"],
-        },
+        "simulation_database": {"reachable": True, "has_required_privileges": False},
     }
+    assert "INSERT on reports" not in result.text
+    assert (
+        f"{MISSING_PRIVILEGES_LOG_EVENT}: INSERT on reports, SELECT on policies"
+        in _log_messages(caplog)
+    )
+
+
+def test_a_role_with_every_privilege_logs_nothing_about_privileges(caplog):
+    with _client(FakeBackend(), FakeSimulationDatabase()) as client:
+        client.get("/ready")
+
+    assert not any(
+        MISSING_PRIVILEGES_LOG_EVENT in message for message in _log_messages(caplog)
+    )
+
+
+def test_missing_privileges_are_logged_in_messages_the_log_keeps_whole():
+    """The observability runtime cuts a message at its string limit."""
+    missing = [f"INSERT on modelled_table_number_{number}" for number in range(80)]
+
+    messages = missing_privilege_log_messages(missing)
+
+    assert len(messages) > 1
+    assert all(
+        len(message) <= TelemetryLimits().max_string_length for message in messages
+    )
+    assert all(
+        message.startswith(f"{MISSING_PRIVILEGES_LOG_EVENT}: ") for message in messages
+    )
+    logged = [
+        name
+        for message in messages
+        for name in message.removeprefix(f"{MISSING_PRIVILEGES_LOG_EVENT}: ").split(
+            ", "
+        )
+    ]
+    assert logged == missing
 
 
 def test_an_unreachable_database_does_not_change_old_gateway_readiness(caplog):
@@ -88,9 +140,9 @@ def test_an_unreachable_database_does_not_change_old_gateway_readiness(caplog):
     assert result.status_code == 200
     assert result.json() == {
         "status": "ready",
-        "simulation_database": {"reachable": False, "missing_privileges": None},
+        "simulation_database": {"reachable": False, "has_required_privileges": None},
     }
-    assert "simulation_database_unreachable" in caplog.text
+    assert "simulation_database_unreachable: OperationalError" in _log_messages(caplog)
     assert "secret" not in caplog.text
 
 
@@ -102,7 +154,7 @@ def test_readiness_waits_only_briefly_for_the_database(monkeypatch):
     with _client(FakeBackend(), slow_database) as client:
         database = client.get("/ready").json()["simulation_database"]
 
-    assert database == {"reachable": False, "missing_privileges": None}
+    assert database == {"reachable": False, "has_required_privileges": None}
 
 
 def test_readiness_still_follows_the_old_gateway():
@@ -114,7 +166,7 @@ def test_readiness_still_follows_the_old_gateway():
     assert result.status_code == 503
     assert result.json() == {
         "status": "not_ready",
-        "simulation_database": {"reachable": True, "missing_privileges": []},
+        "simulation_database": {"reachable": True, "has_required_privileges": True},
     }
 
 
@@ -171,7 +223,9 @@ def test_a_malformed_database_url_stops_the_app_with_a_configuration_error():
     """The settings' check runs before the engine is built, as at startup."""
     from policyengine_simulation_entry.config import ConfigurationError
 
-    with pytest.raises(ConfigurationError, match="SIMULATION_DATABASE_URL") as error:
+    with pytest.raises(
+        ConfigurationError, match="SIMULATION_SERVICE_DATABASE_URL"
+    ) as error:
         create_app(
             settings=make_settings(
                 simulation_database_url="postgresql://db.example/postgres?password=secret"
@@ -310,5 +364,117 @@ def test_a_disposed_database_reports_every_later_check_as_failed(monkeypatch):
 
     assert result.json()["simulation_database"] == {
         "reachable": False,
-        "missing_privileges": None,
+        "has_required_privileges": None,
     }
+
+
+# --- Reusing a check ------------------------------------------------------
+
+
+class FakeClock:
+    """A monotonic clock the test moves by hand."""
+
+    def __init__(self):
+        self.seconds = 1000.0
+
+    def __call__(self):
+        return self.seconds
+
+
+def _readiness_check(database, clock):
+    return SimulationDatabaseReadinessCheck(database, timeout_seconds=1, clock=clock)
+
+
+def _check_readiness(check, times=1):
+    async def check_in_order():
+        return [await check.readiness() for _ in range(times)]
+
+    return asyncio.run(check_in_order())
+
+
+def test_the_check_is_reused_for_thirty_seconds_by_default():
+    assert database_module.READINESS_CACHE_SECONDS == 30
+
+
+def test_a_check_that_reached_the_database_is_reused_until_it_expires():
+    database = FakeSimulationDatabase()
+    clock = FakeClock()
+    check = _readiness_check(database, clock)
+
+    _check_readiness(check, times=3)
+    clock.seconds += database_module.READINESS_CACHE_SECONDS - 0.1
+    [reused] = _check_readiness(check)
+    assert database.checks == 1
+
+    clock.seconds += 0.1
+    [fresh] = _check_readiness(check)
+    assert database.checks == 2
+    assert reused == fresh
+
+
+def test_a_role_missing_privileges_is_reused_and_logged_once(caplog):
+    database = FakeSimulationDatabase(missing_privileges=["INSERT on reports"])
+    check = _readiness_check(database, FakeClock())
+
+    results = _check_readiness(check, times=3)
+
+    assert database.checks == 1
+    assert {result.has_required_privileges for result in results} == {False}
+    logged = [
+        message
+        for message in _log_messages(caplog)
+        if message.startswith(MISSING_PRIVILEGES_LOG_EVENT)
+    ]
+    assert logged == [f"{MISSING_PRIVILEGES_LOG_EVENT}: INSERT on reports"]
+
+
+@pytest.mark.parametrize("failure", [OperationalError("SELECT 1", {}, Exception())])
+def test_a_failed_check_is_not_reused(failure):
+    """A cold instance that reaches its database a moment later says so at once."""
+    database = FakeSimulationDatabase(failure=failure)
+    check = _readiness_check(database, FakeClock())
+
+    results = _check_readiness(check, times=2)
+
+    assert database.checks == 2
+    assert {result.reachable for result in results} == {False}
+
+
+def test_requests_that_arrive_during_a_check_share_it():
+    database = FakeSimulationDatabase(delay_seconds=0.05)
+    check = _readiness_check(database, FakeClock())
+
+    async def three_requests_at_once():
+        return await asyncio.gather(*(check.readiness() for _ in range(3)))
+
+    results = asyncio.run(three_requests_at_once())
+
+    assert database.checks == 1
+    assert len(set(results)) == 1
+
+
+def test_a_request_that_stops_waiting_leaves_the_shared_check_running():
+    database = FakeSimulationDatabase(delay_seconds=0.05)
+    check = _readiness_check(database, FakeClock())
+
+    async def one_request_cancelled():
+        cancelled = asyncio.ensure_future(check.readiness())
+        waiting = asyncio.ensure_future(check.readiness())
+        await asyncio.sleep(0)
+        cancelled.cancel()
+        return await waiting
+
+    result = asyncio.run(one_request_cancelled())
+
+    assert result.reachable is True
+    assert database.checks == 1
+
+
+def test_repeated_readiness_requests_check_the_database_once():
+    database = FakeSimulationDatabase()
+    with _client(FakeBackend(), database) as client:
+        first = client.get("/ready").json()
+        second = client.get("/ready").json()
+
+    assert first == second
+    assert database.checks == 1

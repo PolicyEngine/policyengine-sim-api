@@ -122,16 +122,17 @@ class SimulationDatabaseReadiness(BaseModel):
 
     ``reachable`` says whether the check succeeded within its time limit:
     false when the database wasn't reached, refused the role's login, or
-    didn't answer in time. ``missing_privileges`` names each table privilege
-    the service needs and its role lacks, such as ``"INSERT on reports"``, or
-    is null when the check failed. Neither changes ``status``: no old-gateway
-    or Stage 12 route uses this database.
+    didn't answer in time. ``has_required_privileges`` says whether the role
+    holds every privilege the service needs, or is null when the check failed.
+    The route is public, so it names neither the failure nor the missing
+    privileges; the service's log does. Neither changes ``status``: no
+    old-gateway or Stage 12 route uses this database.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     reachable: bool
-    missing_privileges: tuple[str, ...] | None
+    has_required_privileges: bool | None
 
 
 class SimulationEntrypointReadinessResponse(BaseModel):

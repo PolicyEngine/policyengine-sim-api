@@ -3,22 +3,68 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import TYPE_CHECKING
 
+from policyengine_observability import TelemetryLimits
 from policyengine_simulation_persistence import (
     create_simulation_engine,
     read_missing_table_privileges,
 )
 
+from policyengine_simulation_entry.schemas import SimulationDatabaseReadiness
+
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
     from sqlalchemy import Engine
+
+    from policyengine_simulation_entry.entry_runtime import (
+        SimulationDatabaseConnection,
+    )
+
+logger = logging.getLogger(__name__)
 
 # The readiness check stops waiting after three seconds; the database ends
 # each statement of the check that runs longer than this, once connected.
 READINESS_STATEMENT_TIMEOUT_MILLISECONDS = 2000
 READINESS_THREAD_NAME_PREFIX = "simulation-database-readiness"
+# How long a check that reached the database answers /ready, so repeated
+# requests to the public route don't each take a pooled connection.
+READINESS_CACHE_SECONDS = 30.0
+
+# The readiness route is public, so it only says whether the check failed or a
+# privilege is missing; these log messages say which. The observability
+# runtime's log handler keeps a record's message but not its ``extra`` fields,
+# so everything an operator needs is in the message.
+UNREACHABLE_LOG_EVENT = "simulation_database_unreachable"
+MISSING_PRIVILEGES_LOG_EVENT = "simulation_database_missing_privileges"
+# The runtime cuts a longer message; a long list is logged in several.
+LOG_MESSAGE_MAX_CHARACTERS = TelemetryLimits().max_string_length
+
+
+def missing_privilege_log_messages(missing_privileges: Sequence[str]) -> list[str]:
+    """Name every missing privilege, in order, in messages kept whole.
+
+    Each message is ``"simulation_database_missing_privileges: <name>, …"``
+    and no longer than ``LOG_MESSAGE_MAX_CHARACTERS``.
+    """
+    prefix = f"{MISSING_PRIVILEGES_LOG_EVENT}: "
+    messages: list[str] = []
+    names_in_message: list[str] = []
+    for name in missing_privileges:
+        longer = prefix + ", ".join([*names_in_message, name])
+        if names_in_message and len(longer) > LOG_MESSAGE_MAX_CHARACTERS:
+            messages.append(prefix + ", ".join(names_in_message))
+            names_in_message = [name]
+        else:
+            names_in_message.append(name)
+    if names_in_message:
+        messages.append(prefix + ", ".join(names_in_message))
+    return messages
 
 
 class SimulationDatabase:
@@ -62,3 +108,74 @@ class SimulationDatabase:
         """
         self.executor.shutdown(wait=False, cancel_futures=True)
         self.engine.dispose()
+
+
+class SimulationDatabaseReadinessCheck:
+    """Check the database for /ready, reusing a recent check.
+
+    A check that reached the database answers every request for
+    ``cache_seconds``, whether or not a privilege was missing, and logs what
+    is missing once. A failed check isn't reused: the next request checks
+    again, so a cold instance that reaches its database a moment later says
+    so at once. Requests that arrive while a check runs share it, and a
+    request that stops waiting leaves it running for the others.
+    """
+
+    def __init__(
+        self,
+        database: SimulationDatabaseConnection,
+        *,
+        timeout_seconds: float,
+        cache_seconds: float = READINESS_CACHE_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Check ``database``, waiting at most ``timeout_seconds`` each time."""
+        self.database = database
+        self.timeout_seconds = timeout_seconds
+        self.cache_seconds = cache_seconds
+        self.clock = clock
+        self._reusable: SimulationDatabaseReadiness | None = None
+        self._reusable_until = 0.0
+        self._running: asyncio.Task[SimulationDatabaseReadiness] | None = None
+
+    async def readiness(self) -> SimulationDatabaseReadiness:
+        """Return a recent check that reached the database, else check now."""
+        if self._reusable is not None and self.clock() < self._reusable_until:
+            return self._reusable
+        if self._running is None:
+            self._running = asyncio.ensure_future(self._check())
+        return await asyncio.shield(self._running)
+
+    async def _check(self) -> SimulationDatabaseReadiness:
+        try:
+            readiness = await self._check_once()
+        finally:
+            self._running = None
+        if readiness.reachable:
+            self._reusable = readiness
+            self._reusable_until = self.clock() + self.cache_seconds
+        return readiness
+
+    async def _check_once(self) -> SimulationDatabaseReadiness:
+        """Say whether the check succeeded and the role holds every privilege.
+
+        The route is public, so the result says only yes or no; the log names
+        the failure's type or each missing privilege.
+        """
+        try:
+            missing_privileges = await asyncio.wait_for(
+                self.database.missing_privileges(), timeout=self.timeout_seconds
+            )
+        # Any failure to reach or read the database is reported, never raised:
+        # the old-gateway routes this check covers do not use it.
+        except Exception as error:  # noqa: BLE001  # reported as unreachable
+            # The type only: a driver's message can echo connection details.
+            logger.warning("%s: %s", UNREACHABLE_LOG_EVENT, type(error).__name__)
+            return SimulationDatabaseReadiness(
+                reachable=False, has_required_privileges=None
+            )
+        for message in missing_privilege_log_messages(missing_privileges):
+            logger.warning("%s", message)
+        return SimulationDatabaseReadiness(
+            reachable=True, has_required_privileges=not missing_privileges
+        )

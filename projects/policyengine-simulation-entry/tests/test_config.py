@@ -302,18 +302,31 @@ def test_consistent_configuration_validates(overrides):
 def test_the_simulation_database_is_optional(monkeypatch):
     from policyengine_simulation_entry.config import Settings
 
-    monkeypatch.delenv("SIMULATION_DATABASE_URL", raising=False)
+    monkeypatch.delenv("SIMULATION_SERVICE_DATABASE_URL", raising=False)
     settings = Settings.from_env()
 
     assert settings.simulation_database_url == ""
     make_settings(simulation_database_url="").validate()
 
 
+def test_the_old_variable_name_no_longer_configures_the_database(monkeypatch):
+    """The setting was renamed; a value under the old name is ignored."""
+    from policyengine_simulation_entry.config import Settings
+
+    monkeypatch.delenv("SIMULATION_SERVICE_DATABASE_URL", raising=False)
+    monkeypatch.setenv(
+        "SIMULATION_DATABASE_URL",
+        "postgresql://simulation_service:secret@db.example:5432/postgres",
+    )
+
+    assert Settings.from_env().simulation_database_url == ""
+
+
 def test_the_simulation_database_url_is_read_from_the_environment(monkeypatch):
     from policyengine_simulation_entry.config import Settings
 
     monkeypatch.setenv(
-        "SIMULATION_DATABASE_URL",
+        "SIMULATION_SERVICE_DATABASE_URL",
         "postgresql://simulation_service:secret@db.example:5432/postgres",
     )
 
@@ -335,7 +348,9 @@ def test_the_simulation_database_url_is_read_from_the_environment(monkeypatch):
     ],
 )
 def test_the_simulation_database_url_must_be_canonical(database_url):
-    with pytest.raises(ConfigurationError, match="SIMULATION_DATABASE_URL") as error:
+    with pytest.raises(
+        ConfigurationError, match="SIMULATION_SERVICE_DATABASE_URL"
+    ) as error:
         make_settings(simulation_database_url=database_url).validate()
 
     assert "secret" not in str(error.value)

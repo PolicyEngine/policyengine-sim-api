@@ -65,12 +65,14 @@ from policyengine_simulation_entry.entry_runtime import (
     set_observability_header,
 )
 from policyengine_simulation_entry.schemas import (
-    SimulationDatabaseReadiness,
     SimulationEntrypointReadinessResponse,
     TemporaryStage12ReportResponse,
     TemporaryStage12SubmissionResponse,
 )
-from policyengine_simulation_entry.simulation_database import SimulationDatabase
+from policyengine_simulation_entry.simulation_database import (
+    SimulationDatabase,
+    SimulationDatabaseReadinessCheck,
+)
 from policyengine_simulation_entry.stage12_backend import (
     Stage12ComparisonBackend,
     TemporaryStage12DispatchFailed,
@@ -467,30 +469,16 @@ def _register_simulation_routes(
         )
 
 
-async def _simulation_database_readiness(
-    database: SimulationDatabaseConnection,
-) -> SimulationDatabaseReadiness:
-    """Report whether the database check succeeded, and what the role lacks."""
-    try:
-        missing_privileges = await asyncio.wait_for(
-            database.missing_privileges(),
-            timeout=SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS,
-        )
-    # Any failure to reach or read the database is reported, never raised:
-    # the old-gateway routes this check covers do not use it.
-    except Exception as error:  # noqa: BLE001  # reported as unreachable
-        logger.warning(
-            "simulation_database_unreachable",
-            extra={"error_type": type(error).__name__},
-        )
-        return SimulationDatabaseReadiness(reachable=False, missing_privileges=None)
-    return SimulationDatabaseReadiness(
-        reachable=True, missing_privileges=tuple(missing_privileges)
-    )
-
-
 def _register_service_routes(app: FastAPI, entry: EntryRuntime) -> None:
     """Add the public version, health, readiness and ping routes."""
+    database_readiness = (
+        None
+        if entry.database is None
+        else SimulationDatabaseReadinessCheck(
+            entry.database,
+            timeout_seconds=SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS,
+        )
+    )
 
     @app.get(
         "/versions",
@@ -526,7 +514,7 @@ def _register_service_routes(app: FastAPI, entry: EntryRuntime) -> None:
         backend_ready = await entry.backend.ready()
         status = "ready" if backend_ready else "not_ready"
         status_code = 200 if backend_ready else 503
-        if entry.database is None:
+        if database_readiness is None:
             # Without a configured database the response keeps its old shape.
             readiness = SimulationEntrypointReadinessResponse(status=status)
             return JSONResponse(
@@ -535,7 +523,7 @@ def _register_service_routes(app: FastAPI, entry: EntryRuntime) -> None:
             )
         readiness = SimulationEntrypointReadinessResponse(
             status=status,
-            simulation_database=await _simulation_database_readiness(entry.database),
+            simulation_database=await database_readiness.readiness(),
         )
         return JSONResponse(readiness.model_dump(mode="json"), status_code=status_code)
 

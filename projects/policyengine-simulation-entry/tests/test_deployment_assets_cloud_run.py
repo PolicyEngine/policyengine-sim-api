@@ -76,7 +76,7 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
     secrets_argument = arguments[arguments.index("--set-secrets") + 1]
     assert secrets_argument == (
         "OLD_GATEWAY_AUTH_CLIENT_SECRET=old-client-secret:3,"
-        "SIMULATION_DATABASE_URL=simulation-staging-service-database-url:3,"
+        "SIMULATION_SERVICE_DATABASE_URL=simulation-staging-service-database-url:3,"
         "MODAL_TOKEN_ID=modal-token-id:3,"
         "MODAL_TOKEN_SECRET=modal-token-secret:3,"
         "STAGE12_DATABASE_URL=stage12-staging-database-url:3"
@@ -88,7 +88,7 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
     "secret_name_variable",
     [
         "OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME",
-        "SIMULATION_DATABASE_URL_SECRET_NAME",
+        "SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME",
         "MODAL_TOKEN_ID_SECRET_NAME",
         "MODAL_TOKEN_SECRET_SECRET_NAME",
         "STAGE12_DATABASE_URL_SECRET_NAME",

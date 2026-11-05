@@ -515,7 +515,7 @@ def cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
         "STAGE12_DATABASE_URL_SECRET_NAME": "stage12-staging-database-url",
         "MODAL_TOKEN_ID_SECRET_NAME": "modal-token-id",
         "MODAL_TOKEN_SECRET_SECRET_NAME": "modal-token-secret",
-        "SIMULATION_DATABASE_URL_SECRET_NAME": (
+        "SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME": (
             "simulation-staging-service-database-url"
         ),
     }

@@ -9,7 +9,9 @@ license = {file = "../../LICENSE"}
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "psycopg[binary]>=3.2,<4",
-    "sqlalchemy>=2,<3",
+    # The minor version the Simulation Entrypoint's image ships; raise the cap
+    # when the entrypoint moves to 2.1.
+    "sqlalchemy>=2,<2.1",
 ]
 
 [project.optional-dependencies]

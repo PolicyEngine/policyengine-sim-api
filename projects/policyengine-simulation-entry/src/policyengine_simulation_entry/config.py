@@ -147,7 +147,7 @@ class Settings:
             stage12_database_url=os.getenv("STAGE12_DATABASE_URL", ""),
             stage12_artifact_bucket=os.getenv("STAGE12_ARTIFACT_BUCKET", ""),
             stage12_retention_days=int(os.getenv("STAGE12_RETENTION_DAYS", "30")),
-            simulation_database_url=os.getenv("SIMULATION_DATABASE_URL", ""),
+            simulation_database_url=os.getenv("SIMULATION_SERVICE_DATABASE_URL", ""),
         )
 
     @property
@@ -288,5 +288,5 @@ class Settings:
         try:
             normalized_database_url(self.simulation_database_url)
         except ValueError as error:
-            msg = f"SIMULATION_DATABASE_URL is invalid: {error}"
+            msg = f"SIMULATION_SERVICE_DATABASE_URL is invalid: {error}"
             raise ConfigurationError(msg) from None
