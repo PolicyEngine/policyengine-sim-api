@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 from policyengine_simulation_executor.stage12_runtime.run_sweep import (
+    DEFAULT_MAXIMUM_AGE,
     CallState,
     SweepSummary,
     modal_call_state,
@@ -17,9 +18,6 @@ from policyengine_simulation_executor.stage12_runtime.run_sweep import (
 from policyengine_stage12_persistence import ActiveRun, RunKind, RunStatus, RunWrite
 
 NOW = datetime(2026, 11, 4, 12, tzinfo=UTC)
-# The sweep lists runs older than its maximum age first, then runs older
-# than its minimum age; a cutoff before this one is the first listing's.
-MAXIMUM_AGE_CUTOFFS_BEFORE = NOW - timedelta(hours=1)
 
 
 class FakeInputStatus(Enum):
@@ -34,10 +32,12 @@ class FakeInputStatus(Enum):
 
 
 class FakeSweepStore:
-    def __init__(self, runs, *, expired=()):
+    def __init__(self, runs, *, expired=(), maximum_age=DEFAULT_MAXIMUM_AGE):
         self.runs = list(runs)
-        # Runs older than the maximum age, listed with or without a call.
+        # Runs older than the maximum age, which the sweep lists first, at
+        # exactly this cutoff; every other listing is for the minimum age.
         self.expired = list(expired)
+        self.maximum_age_cutoff = NOW - maximum_age
         self.cutoffs = []
         self.expired_cutoffs = []
         self.failed = []
@@ -46,7 +46,7 @@ class FakeSweepStore:
     def list_active_runs(self, kind, *, active_since_before):
         # As the real store, a run this fake failed is no longer listed.
         failed = {failed_run for failed_run, _, _ in self.failed}
-        if active_since_before < MAXIMUM_AGE_CUTOFFS_BEFORE:
+        if active_since_before == self.maximum_age_cutoff:
             self.expired_cutoffs.append(active_since_before)
             self.events.append(f"list-expired:{kind.value}")
             listed = self.expired
@@ -307,13 +307,17 @@ def test_a_run_past_the_maximum_age_is_failed_whatever_modal_reports() -> None:
     # pending, and no longer describes old calls; neither may keep a run
     # running for good, and nor may a run with no recorded call.
     reported_running = _run("fc-reported-running", RunKind.REPORT_RUN)
+    # A pending run counts from its creation; its call may still be queued.
+    still_queued = _run("fc-queued", RunKind.REPORT_RUN, RunStatus.PENDING)
     without_call = ActiveRun(
         kind=RunKind.REPORT_RUN,
         run_id=uuid4(),
         status=RunStatus.RUNNING,
         modal_call_id=None,
     )
-    store = FakeSweepStore([reported_running], expired=[reported_running, without_call])
+    store = FakeSweepStore(
+        [reported_running], expired=[reported_running, still_queued, without_call]
+    )
 
     summary = sweep_stuck_runs(
         store,
@@ -322,12 +326,16 @@ def test_a_run_past_the_maximum_age_is_failed_whatever_modal_reports() -> None:
         maximum_age=timedelta(hours=24),
     )
 
-    assert [run for run, _, _ in store.failed] == [reported_running, without_call]
+    assert [run for run, _, _ in store.failed] == [
+        reported_running,
+        still_queued,
+        without_call,
+    ]
     assert all(
         message.startswith("run_exceeded_maximum_age: ")
         for _, message, _ in store.failed
     )
-    assert summary.failed_for_age == 2
+    assert summary.failed_for_age == 3
     # Failed for its age first, it is no longer listed for a lookup.
     assert summary.running == 0
 

@@ -157,6 +157,39 @@ def test_a_pending_run_is_listed_from_its_creation(
     }
 
 
+def test_never_started_simulation_runs_are_listed_once_their_report_run_finished(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    # A coordinator that died before starting its children leaves them
+    # pending with no call; once its report run has failed, they are listed.
+    run_ids = seeded_run.run_ids
+    for simulation_run_id in (
+        run_ids.baseline_simulation_run_id,
+        run_ids.reform_simulation_run_id,
+    ):
+        _set_run(seeder, "simulation_runs", simulation_run_id, created_at=NOW)
+    _set_run(
+        seeder,
+        "report_runs",
+        run_ids.report_run_id,
+        status="failed",
+        completed_at=CUTOFF,
+    )
+
+    assert _listed_for(store, seeded_run) == {
+        ActiveRun(
+            kind=RunKind.SIMULATION_RUN,
+            run_id=simulation_run_id,
+            status=RunStatus.PENDING,
+            modal_call_id=None,
+        )
+        for simulation_run_id in (
+            run_ids.baseline_simulation_run_id,
+            run_ids.reform_simulation_run_id,
+        )
+    }
+
+
 def test_the_sweep_fails_a_run_once_while_its_ended_call_still_holds_it(
     store, seeder, seeded_run: SeededReportRun
 ) -> None:

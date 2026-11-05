@@ -1,13 +1,15 @@
 """The sweep that fails report runs and simulation runs nothing will finish.
 
-The simulation service records the Modal call it starts on a pending report
-run, and a coordinator or worker records the call running each run it claims.
-If that call ends without recording the run's outcome, for example because
-its container ran out of memory, the run stays pending or running. The sweep
-asks Modal for the status of each recorded call and marks the run failed once
-the call has ended. A pending run with no call recorded soon after its
-creation is failed without asking Modal: the simulation service stopped
-before starting its call, so nothing will run it. The sweep also fails a run
+A coordinator or worker records the Modal call running each run it claims,
+and the simulation service is to record the call it starts on a pending
+report run. If that call ends without recording the run's outcome, for
+example because its container ran out of memory, the run stays pending or
+running. The sweep asks Modal for the status of each recorded call and marks
+the run failed once the call has ended. A pending run with no call recorded
+soon after its creation is failed without asking Modal: usually the
+simulation service stopped before starting its call. If it started the call
+but failed to record it, that call's claim is refused once the run has
+failed, so it finishes nothing. The sweep also fails a run
 still unfinished long after it was created or started, longer than any Modal
 call of it can run, whatever Modal reports and with or without a recorded
 call, so a run Modal can't decide doesn't stay unfinished for good.
@@ -46,8 +48,7 @@ ENDED_CALL_MESSAGE = (
     "recording the run's outcome."
 )
 NOT_STARTED_MESSAGE = (
-    "run_not_started: The run stayed pending with no Modal call recorded, so "
-    "nothing was going to run it."
+    "run_not_started: The run stayed pending with no Modal call recorded for it."
 )
 # A run still unfinished this long after its first claim, or its creation if
 # it was never claimed, is failed whatever Modal reports, or with no call
@@ -85,7 +86,7 @@ class StuckRunStore(Protocol):
     def list_active_runs(
         self, kind: RunKind, *, active_since_before: datetime
     ) -> tuple[ActiveRun, ...]:
-        """Return the pending and running runs of ``kind`` active since a time."""
+        """Return the pending and running runs of ``kind`` older than a time."""
         ...
 
     def fail_stuck_run(

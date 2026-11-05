@@ -73,7 +73,7 @@ sweep_image = (
     secrets=[modal_worker_database_secret],
 )
 def sweep_stuck_runs() -> dict:
-    """Fail the runs whose Modal call ended; return how many were checked and why."""
+    """Fail the runs nothing will finish; return how many were judged and why."""
     from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the container, not at deploy time
         report_run_access,
         run_sweep,
