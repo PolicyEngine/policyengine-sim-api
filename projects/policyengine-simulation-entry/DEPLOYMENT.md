@@ -57,7 +57,10 @@ and whether its role holds every privilege the service needs
 `libs/policyengine-simulation-persistence`). The route is public, so it says
 only yes or no. The service's log says why: a `simulation_database_unreachable`
 message names the error's type, and `simulation_database_missing_privileges`
-messages name each privilege missing, such as `INSERT on reports`. The
+messages name each privilege missing, such as `INSERT on reports`. A check
+that reached the database answers every request for 30 seconds, so repeated
+requests don't each take a database connection; a failed check isn't reused,
+so the next request checks again. The
 database does not change the readiness status, because no old-gateway or
 Stage 12 route uses it. The candidate smoke check
 (`REQUIRE_SIMULATION_DATABASE_ACCESS=true`) requires the database reached with

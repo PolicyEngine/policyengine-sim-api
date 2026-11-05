@@ -15,6 +15,7 @@ from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.simulation_database import (
     MISSING_PRIVILEGES_LOG_EVENT,
     SimulationDatabase,
+    SimulationDatabaseReadinessCheck,
     missing_privilege_log_messages,
 )
 from sqlalchemy.exc import OperationalError
@@ -365,3 +366,115 @@ def test_a_disposed_database_reports_every_later_check_as_failed(monkeypatch):
         "reachable": False,
         "has_required_privileges": None,
     }
+
+
+# --- Reusing a check ------------------------------------------------------
+
+
+class FakeClock:
+    """A monotonic clock the test moves by hand."""
+
+    def __init__(self):
+        self.seconds = 1000.0
+
+    def __call__(self):
+        return self.seconds
+
+
+def _readiness_check(database, clock):
+    return SimulationDatabaseReadinessCheck(database, timeout_seconds=1, clock=clock)
+
+
+def _check_readiness(check, times=1):
+    async def check_in_order():
+        return [await check.readiness() for _ in range(times)]
+
+    return asyncio.run(check_in_order())
+
+
+def test_the_check_is_reused_for_thirty_seconds_by_default():
+    assert database_module.READINESS_CACHE_SECONDS == 30
+
+
+def test_a_check_that_reached_the_database_is_reused_until_it_expires():
+    database = FakeSimulationDatabase()
+    clock = FakeClock()
+    check = _readiness_check(database, clock)
+
+    _check_readiness(check, times=3)
+    clock.seconds += database_module.READINESS_CACHE_SECONDS - 0.1
+    [reused] = _check_readiness(check)
+    assert database.checks == 1
+
+    clock.seconds += 0.1
+    [fresh] = _check_readiness(check)
+    assert database.checks == 2
+    assert reused == fresh
+
+
+def test_a_role_missing_privileges_is_reused_and_logged_once(caplog):
+    database = FakeSimulationDatabase(missing_privileges=["INSERT on reports"])
+    check = _readiness_check(database, FakeClock())
+
+    results = _check_readiness(check, times=3)
+
+    assert database.checks == 1
+    assert {result.has_required_privileges for result in results} == {False}
+    logged = [
+        message
+        for message in _log_messages(caplog)
+        if message.startswith(MISSING_PRIVILEGES_LOG_EVENT)
+    ]
+    assert logged == [f"{MISSING_PRIVILEGES_LOG_EVENT}: INSERT on reports"]
+
+
+@pytest.mark.parametrize("failure", [OperationalError("SELECT 1", {}, Exception())])
+def test_a_failed_check_is_not_reused(failure):
+    """A cold instance that reaches its database a moment later says so at once."""
+    database = FakeSimulationDatabase(failure=failure)
+    check = _readiness_check(database, FakeClock())
+
+    results = _check_readiness(check, times=2)
+
+    assert database.checks == 2
+    assert {result.reachable for result in results} == {False}
+
+
+def test_requests_that_arrive_during_a_check_share_it():
+    database = FakeSimulationDatabase(delay_seconds=0.05)
+    check = _readiness_check(database, FakeClock())
+
+    async def three_requests_at_once():
+        return await asyncio.gather(*(check.readiness() for _ in range(3)))
+
+    results = asyncio.run(three_requests_at_once())
+
+    assert database.checks == 1
+    assert len(set(results)) == 1
+
+
+def test_a_request_that_stops_waiting_leaves_the_shared_check_running():
+    database = FakeSimulationDatabase(delay_seconds=0.05)
+    check = _readiness_check(database, FakeClock())
+
+    async def one_request_cancelled():
+        cancelled = asyncio.ensure_future(check.readiness())
+        waiting = asyncio.ensure_future(check.readiness())
+        await asyncio.sleep(0)
+        cancelled.cancel()
+        return await waiting
+
+    result = asyncio.run(one_request_cancelled())
+
+    assert result.reachable is True
+    assert database.checks == 1
+
+
+def test_repeated_readiness_requests_check_the_database_once():
+    database = FakeSimulationDatabase()
+    with _client(FakeBackend(), database) as client:
+        first = client.get("/ready").json()
+        second = client.get("/ready").json()
+
+    assert first == second
+    assert database.checks == 1

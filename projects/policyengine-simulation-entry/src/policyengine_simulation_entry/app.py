@@ -65,15 +65,13 @@ from policyengine_simulation_entry.entry_runtime import (
     set_observability_header,
 )
 from policyengine_simulation_entry.schemas import (
-    SimulationDatabaseReadiness,
     SimulationEntrypointReadinessResponse,
     TemporaryStage12ReportResponse,
     TemporaryStage12SubmissionResponse,
 )
 from policyengine_simulation_entry.simulation_database import (
-    UNREACHABLE_LOG_EVENT,
     SimulationDatabase,
-    missing_privilege_log_messages,
+    SimulationDatabaseReadinessCheck,
 )
 from policyengine_simulation_entry.stage12_backend import (
     Stage12ComparisonBackend,
@@ -471,36 +469,16 @@ def _register_simulation_routes(
         )
 
 
-async def _simulation_database_readiness(
-    database: SimulationDatabaseConnection,
-) -> SimulationDatabaseReadiness:
-    """Say whether the check succeeded and the role holds every privilege.
-
-    The route is public, so the response says only yes or no; the log names
-    the failure's type or each missing privilege.
-    """
-    try:
-        missing_privileges = await asyncio.wait_for(
-            database.missing_privileges(),
-            timeout=SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS,
-        )
-    # Any failure to reach or read the database is reported, never raised:
-    # the old-gateway routes this check covers do not use it.
-    except Exception as error:  # noqa: BLE001  # reported as unreachable
-        # The type only: a driver's message can echo connection details.
-        logger.warning("%s: %s", UNREACHABLE_LOG_EVENT, type(error).__name__)
-        return SimulationDatabaseReadiness(
-            reachable=False, has_required_privileges=None
-        )
-    for message in missing_privilege_log_messages(missing_privileges):
-        logger.warning("%s", message)
-    return SimulationDatabaseReadiness(
-        reachable=True, has_required_privileges=not missing_privileges
-    )
-
-
 def _register_service_routes(app: FastAPI, entry: EntryRuntime) -> None:
     """Add the public version, health, readiness and ping routes."""
+    database_readiness = (
+        None
+        if entry.database is None
+        else SimulationDatabaseReadinessCheck(
+            entry.database,
+            timeout_seconds=SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS,
+        )
+    )
 
     @app.get(
         "/versions",
@@ -536,7 +514,7 @@ def _register_service_routes(app: FastAPI, entry: EntryRuntime) -> None:
         backend_ready = await entry.backend.ready()
         status = "ready" if backend_ready else "not_ready"
         status_code = 200 if backend_ready else 503
-        if entry.database is None:
+        if database_readiness is None:
             # Without a configured database the response keeps its old shape.
             readiness = SimulationEntrypointReadinessResponse(status=status)
             return JSONResponse(
@@ -545,7 +523,7 @@ def _register_service_routes(app: FastAPI, entry: EntryRuntime) -> None:
             )
         readiness = SimulationEntrypointReadinessResponse(
             status=status,
-            simulation_database=await _simulation_database_readiness(entry.database),
+            simulation_database=await database_readiness.readiness(),
         )
         return JSONResponse(readiness.model_dump(mode="json"), status_code=status_code)
 
