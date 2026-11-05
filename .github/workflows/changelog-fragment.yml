@@ -1,0 +1,54 @@
+name: Changelog fragment
+
+# Rule sim.process.changelog-fragment: every pull request adds a changelog
+# fragment the release can read. See
+# docs/engineering/skills/github-prs.md#changelog-fragments.
+#
+# "Changelog fragment" is a required check on main, and a skipped job counts
+# as passing, so the check must run on every pull request. It is a separate
+# workflow from pr.yml, which runs only for pull requests into main and only
+# on the lowest unmerged pull request in a stack. This one has no branches or
+# paths filter and no condition on the job or its steps: every pull request
+# runs it, whatever branch it targets, including each one in a stack. Changing
+# a pull request's base branch is an "edited" event, so the check runs again
+# against the new base.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+# The check reads the base commit from the event payload and the history from
+# the checkout, so it needs only read access. Pull requests from forks get a
+# read-only token, which is enough.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check-changelog:
+    name: Changelog fragment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        # The check diffs the merged result against its merge base with the
+        # base branch, so it needs the base branch's history.
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+
+    - name: Require a changelog fragment
+      env:
+        # The tip of the pull request's own base branch: main, or in a stack
+        # the branch of the pull request below it, so each pull request in a
+        # stack adds its own fragment.
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: .github/scripts/check-changelog-fragment.sh
