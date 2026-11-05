@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.4.3] - 2026-11-05
+
+### Changed
+
+- Ran the `Changelog fragment` check from its own workflow on every pull request, whatever branch it targets and including each one in a stack, so the required check is never skipped; changing a pull request's base branch runs it again.
+
+
 ## [0.4.2] - 2026-11-04
 
 ### Changed
