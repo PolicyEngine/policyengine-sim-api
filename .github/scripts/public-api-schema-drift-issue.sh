@@ -41,6 +41,8 @@ Its log says which of these happened:
   \`libs/policyengine-simulation-persistence/public-api-commit\`, in one pull
   request.
 - The Public API's tables couldn't be built at that head.
+- A setup step failed, such as the database service, a checkout, or installing
+  Python, uv or the dependencies. Then re-run the workflow.
 
 While this issue is open, later failures are added to it as comments. Close
 it once the comparison passes again.

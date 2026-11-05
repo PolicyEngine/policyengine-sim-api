@@ -9,9 +9,13 @@ The comparison job keeps its read-only token.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 from test_public_api_schema_scripts import _fake_command, _run
+
+if TYPE_CHECKING:
+    import subprocess
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 DRIFT_WORKFLOW = (
@@ -29,12 +33,16 @@ RUN_ENVIRONMENT = {
     "GITHUB_RUN_ID": "123456",
 }
 RUN_URL = "https://github.com/PolicyEngine/policyengine-sim-api/actions/runs/123456"
-# Logs each call; prints the open issue's number for `issue list`; saves the
-# body an issue or comment reads from standard input; fails the named call.
+# Logs each call; for `issue list`, applies the script's own --jq filter to
+# the open issues as GitHub returns them, as gh does; saves the body an issue
+# or comment reads from standard input; fails the named call.
 FAKE_GH = """\
 if [ "${1} ${2}" = "${FAKE_GH_FAILING_CALL:-}" ]; then exit 1; fi
 case "${1} ${2}" in
-  "issue list") printf '%s\\n' "${FAKE_OPEN_ISSUE:-}" ;;
+  "issue list")
+    while [ "${1}" != "--jq" ]; do shift; done
+    jq -r "${2}" <<<"${FAKE_OPEN_ISSUES_JSON}"
+    ;;
   "issue create" | "issue comment") cat > "${FAKE_COMMAND_LOG}.body" ;;
 esac
 """
@@ -81,7 +89,9 @@ def test_the_reporting_job_runs_only_sims_script_with_the_workflow_token() -> No
     assert "policyengine-api" not in job_text
 
 
-def _report(tmp_path, **environment):
+def _report(
+    tmp_path: Path, **environment: str
+) -> tuple[subprocess.CompletedProcess[str], list[str], str | None]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     _fake_command(fake_bin, "gh", FAKE_GH)
@@ -91,12 +101,12 @@ def _report(tmp_path, **environment):
     return result, calls, body
 
 
-def _calls_starting(calls, prefix):
+def _calls_starting(calls: list[str], prefix: str) -> list[str]:
     return [call for call in calls if call.startswith(f"gh|{prefix}")]
 
 
 def test_a_first_failure_opens_an_issue_with_the_drift_label(tmp_path):
-    result, calls, body = _report(tmp_path, FAKE_OPEN_ISSUE="")
+    result, calls, body = _report(tmp_path, FAKE_OPEN_ISSUES_JSON="[]")
 
     assert result.returncode == 0, result.stderr
     [label] = _calls_starting(calls, "label create")
@@ -107,10 +117,14 @@ def test_a_first_failure_opens_an_issue_with_the_drift_label(tmp_path):
     assert _calls_starting(calls, "issue comment") == []
     assert RUN_URL in body
     assert "libs/policyengine-simulation-persistence/public-api-commit" in body
+    # Any failure of the comparison job reports, setup steps included.
+    assert "re-run" in body
 
 
 def test_a_later_failure_comments_on_the_open_issue(tmp_path):
-    result, calls, body = _report(tmp_path, FAKE_OPEN_ISSUE="42")
+    result, calls, body = _report(
+        tmp_path, FAKE_OPEN_ISSUES_JSON='[{"number": 42}, {"number": 7}]'
+    )
 
     assert result.returncode == 0, result.stderr
     [listed] = _calls_starting(calls, "issue list")
@@ -125,7 +139,7 @@ def test_a_later_failure_comments_on_the_open_issue(tmp_path):
 
 def test_a_failed_github_request_fails_the_job(tmp_path):
     result, calls, body = _report(
-        tmp_path, FAKE_OPEN_ISSUE="", FAKE_GH_FAILING_CALL="issue list"
+        tmp_path, FAKE_OPEN_ISSUES_JSON="[]", FAKE_GH_FAILING_CALL="issue list"
     )
 
     assert result.returncode != 0
