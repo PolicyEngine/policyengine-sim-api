@@ -62,10 +62,50 @@ class FakeSweepStore:
         return RunWrite(changed=True, status=RunStatus.FAILED)
 
 
-def _run(call_id, kind=RunKind.SIMULATION_RUN):
-    return ActiveRun(
-        kind=kind, run_id=uuid4(), status=RunStatus.RUNNING, modal_call_id=call_id
+def _run(call_id, kind=RunKind.SIMULATION_RUN, status=RunStatus.RUNNING):
+    return ActiveRun(kind=kind, run_id=uuid4(), status=status, modal_call_id=call_id)
+
+
+def test_a_pending_run_with_no_call_is_failed_without_asking_modal() -> None:
+    # The simulation service stopped between inserting the run and starting
+    # its call, so nothing will run it.
+    never_started = _run(None, RunKind.REPORT_RUN, RunStatus.PENDING)
+    # A running run with no call recorded is left to the maximum age.
+    running_without_call = _run(None)
+    store = FakeSweepStore([never_started, running_without_call])
+    asked = []
+
+    summary = sweep_stuck_runs(store, call_state=asked.append, now=NOW)
+
+    assert asked == []
+    assert [run for run, _, _ in store.failed] == [never_started]
+    (_, message, failed_at) = store.failed[0]
+    assert message.startswith("run_not_started: ")
+    assert failed_at == NOW
+    assert summary == SweepSummary(
+        checked=2,
+        failed=0,
+        running=0,
+        unknown=1,
+        left=0,
+        failed_for_age=0,
+        failed_without_call=1,
     )
+
+
+def test_a_pending_run_with_a_call_is_judged_by_its_call() -> None:
+    # The simulation service recorded the call it started; Modal may still
+    # be queueing it, or it may have ended without claiming the run.
+    queued = _run("fc-queued", RunKind.REPORT_RUN, RunStatus.PENDING)
+    ended = _run("fc-ended", RunKind.REPORT_RUN, RunStatus.PENDING)
+    store = FakeSweepStore([queued, ended])
+    states = {"fc-queued": CallState.RUNNING, "fc-ended": CallState.ENDED}
+
+    summary = sweep_stuck_runs(store, call_state=states.__getitem__, now=NOW)
+
+    assert [run for run, _, _ in store.failed] == [ended]
+    assert store.failed[0][1].startswith("modal_call_ended: ")
+    assert (summary.checked, summary.failed, summary.running) == (2, 1, 1)
 
 
 def test_only_runs_whose_call_ended_are_failed() -> None:

@@ -1,17 +1,22 @@
-"""The sweep that fails report runs and simulation runs whose Modal call ended.
+"""The sweep that fails report runs and simulation runs nothing will finish.
 
-A coordinator or worker records the Modal call running each run. If that call
-ends without recording the run's outcome, for example because its container
-ran out of memory, the run stays running. The sweep asks Modal for the status
-of each recorded call and marks the run failed once the call has ended. It
-also fails a run still running long after it started, longer than any Modal
+The simulation service records the Modal call it starts on a pending report
+run, and a coordinator or worker records the call running each run it claims.
+If that call ends without recording the run's outcome, for example because
+its container ran out of memory, the run stays pending or running. The sweep
+asks Modal for the status of each recorded call and marks the run failed once
+the call has ended. A pending run with no call recorded soon after its
+creation is failed without asking Modal: the simulation service stopped
+before starting its call, so nothing will run it. The sweep also fails a run
+still unfinished long after it was created or started, longer than any Modal
 call of it can run, whatever Modal reports and with or without a recorded
-call, so a run Modal can't decide doesn't stay running for good.
+call, so a run Modal can't decide doesn't stay unfinished for good.
 
 Modal restarts a pre-empted call under the same call ID and reports it
 pending meanwhile, so a pre-empted coordinator's report run is never failed.
-Its children are cancelled and started again under new calls, so the sweep
-judges a simulation run only once no report run combining it is running.
+Its children are cancelled and started again under new calls, and it starts
+them only once Modal runs it, so the sweep judges a simulation run only once
+no pending or running report run combines it.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from enum import StrEnum
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, Protocol
 
-from policyengine_stage12_persistence import RunKind
+from policyengine_stage12_persistence import RunKind, RunStatus
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,23 +37,29 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# A run must have been running at least this long, counted from its first
-# claim, before the sweep checks its call.
+# A run must have been unfinished at least this long, counted from its first
+# claim or, while it is pending, from its creation, before the sweep judges
+# it; a pending run with no call recorded by then is failed.
 DEFAULT_MINIMUM_AGE = timedelta(minutes=10)
 ENDED_CALL_MESSAGE = (
     "modal_call_ended: The Modal call recorded for this run ended without "
     "recording the run's outcome."
 )
-# A run still running this long after its first claim is failed whatever
-# Modal reports, or with no call recorded at all. No attempt of the v2
+NOT_STARTED_MESSAGE = (
+    "run_not_started: The run stayed pending with no Modal call recorded, so "
+    "nothing was going to run it."
+)
+# A run still unfinished this long after its first claim, or its creation if
+# it was never claimed, is failed whatever Modal reports, or with no call
+# recorded at all. No attempt of the v2
 # functions can run anywhere near this long (the coordinator's own time
 # limit is 90 minutes), however often Modal pre-empts and restarts it; it
 # stops Modal's pending status for an internal failure it won't retry, or
 # a call Modal no longer describes, from keeping a run running for good.
 DEFAULT_MAXIMUM_AGE = timedelta(hours=24)
 EXCEEDED_AGE_MESSAGE = (
-    "run_exceeded_maximum_age: The run was still running long after it "
-    "started, longer than any Modal call of it can run."
+    "run_exceeded_maximum_age: The run was still unfinished long after it "
+    "was created or started, longer than any Modal call of it can run."
 )
 # Modal's input statuses (``modal.call_graph.InputStatus``) by name. A pending
 # input is running or waiting to run again; Modal reports an input pre-empted
@@ -93,12 +104,15 @@ class StuckRunStore(Protocol):
 class SweepSummary:
     """What the sweep did with the runs it listed.
 
-    ``checked`` runs had their call asked about: ``failed`` because it ended,
-    or left because it is ``running`` or its state is ``unknown``.
+    ``checked`` runs were judged after the minimum age: ``failed`` because
+    their call ended, ``failed_without_call`` because they stayed pending with
+    no call recorded, or left because their call is ``running`` or its state
+    is ``unknown``, as is a running run with no call recorded.
     ``failed_for_age`` runs were failed for exceeding the maximum age. ``left``
     counts listed runs whose conditional failure changed nothing, because
-    they finished, moved to another call, or a running report run started
-    combining them after they were listed.
+    they were claimed, finished, moved to another call, had a call recorded,
+    or a pending or running report run started combining them after they
+    were listed.
     """
 
     checked: int
@@ -107,6 +121,7 @@ class SweepSummary:
     unknown: int
     left: int = 0
     failed_for_age: int = 0
+    failed_without_call: int = 0
 
 
 def modal_call_state(modal_call_id: str, *, modal_module: Any = None) -> CallState:  # noqa: ANN401  # the modal module, or a stand-in for it
@@ -157,6 +172,7 @@ class _Tally:
     unknown: int = 0
     left: int = 0
     failed_for_age: int = 0
+    failed_without_call: int = 0
 
 
 def sweep_stuck_runs(  # the store, then keyword-only seams and limits
@@ -167,15 +183,17 @@ def sweep_stuck_runs(  # the store, then keyword-only seams and limits
     minimum_age: timedelta = DEFAULT_MINIMUM_AGE,
     maximum_age: timedelta = DEFAULT_MAXIMUM_AGE,
 ) -> SweepSummary:
-    """Fail every listed run whose recorded Modal call has ended.
+    """Fail every listed run whose recorded Modal call has ended or was never started.
 
     Runs older than ``maximum_age`` are failed first, report runs then
     simulation runs, before any Modal lookup can use up the scheduled
-    function's time. Then each recorded call is asked about once, report
-    runs first, so a dead coordinator's simulation runs are listed in the
-    same sweep. A run whose call is running, or whose state is unknown, is
-    left as it is; so is one whose conditional failure changes nothing, which
-    makes two sweeps at once safe.
+    function's time. Then, report runs first, so a dead coordinator's
+    simulation runs are listed in the same sweep, each run older than
+    ``minimum_age`` is judged: a pending run with no call recorded is failed,
+    and each recorded call is asked about once. A run whose call is running,
+    or whose state is unknown, is left as it is, as is a running run with no
+    call recorded, until the maximum age; so is one whose conditional failure
+    changes nothing, which makes two sweeps at once safe.
     """
     now = now or datetime.now(UTC)
     states: dict[str, CallState] = {}
@@ -205,11 +223,22 @@ def _sweep_run(  # noqa: PLR0913  # one run, the store, and the sweep's shared s
     now: datetime,
     tally: _Tally,
 ) -> None:
-    """Fail ``run`` if its call has ended, asking about each call once."""
+    """Fail ``run`` if its call has ended or was never started.
+
+    Each call is asked about once.
+    """
     tally.checked += 1
     modal_call_id = run.modal_call_id
     if modal_call_id is None:
-        tally.unknown += 1
+        if run.status is not RunStatus.PENDING:
+            # Nothing to ask Modal about; the maximum age decides it.
+            tally.unknown += 1
+        elif store.fail_stuck_run(
+            run, error_message=NOT_STARTED_MESSAGE, failed_at=now
+        ).changed:
+            tally.failed_without_call += 1
+        else:
+            tally.left += 1
         return
     if modal_call_id not in states:
         try:

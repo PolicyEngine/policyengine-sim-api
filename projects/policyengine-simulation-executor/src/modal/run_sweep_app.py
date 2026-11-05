@@ -1,12 +1,14 @@
-"""A scheduled Modal function that fails runs left running after their call ended.
+"""A scheduled Modal function that fails runs nothing will finish.
 
 Every ten minutes it lists the Public API's report runs and simulation runs
-that have been running under a recorded Modal call for at least ten minutes,
-asks Modal for each call's status, and marks a run failed once its call has
-ended. It also fails any run still running 24 hours after it started, longer
-than any Modal call of it can run, whatever Modal reports. It connects as
-the Modal worker role, from the same Modal secret the v2 coordinator and
-workers use. This application is not versioned with the
+that have been pending or running for at least ten minutes, counted from
+their first claim or, while pending, from their creation. It asks Modal for
+the status of each recorded call and marks a run failed once its call has
+ended, and fails a pending run that has no call recorded, because nothing
+will run it. It also fails any run still unfinished 24 hours after it was
+created or started, longer than any Modal call of it can run, whatever Modal
+reports. It connects as the Modal worker role, from the same Modal secret the
+v2 coordinator and workers use. This application is not versioned with the
 .py bundle: one copy runs per Modal environment.
 
 Deploy it, once per Modal environment, from this project's directory:
