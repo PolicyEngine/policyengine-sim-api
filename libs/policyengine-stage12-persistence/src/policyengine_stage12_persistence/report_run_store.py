@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import and_, func, insert, or_, select, update
+from sqlalchemy import func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from policyengine_stage12_persistence.report_run_tables import (
@@ -121,23 +121,19 @@ class ReportRunStore:
     ) -> RunWrite:
         """Mark the report run running under ``modal_call_id``.
 
-        A pending run is claimed, and so is a running one that no other call
-        holds: the simulation service may mark it running before the call
-        starts, and Modal restarts a pre-empted call under the same call ID.
+        A pending or running run is claimed while it records no call or this
+        call: the simulation service records the call it starts while the run
+        is still pending, and Modal restarts a pre-empted call under the same
+        call ID. A run recording another call is that call's.
         """
         statement = (
             update(report_runs)
             .where(
                 report_runs.c.id == report_run_id,
+                report_runs.c.status.in_(ACTIVE_STATUSES),
                 or_(
-                    report_runs.c.status == RunStatus.PENDING.value,
-                    and_(
-                        report_runs.c.status == RunStatus.RUNNING.value,
-                        or_(
-                            report_runs.c.modal_call_id.is_(None),
-                            report_runs.c.modal_call_id == modal_call_id,
-                        ),
-                    ),
+                    report_runs.c.modal_call_id.is_(None),
+                    report_runs.c.modal_call_id == modal_call_id,
                 ),
             )
             .values(

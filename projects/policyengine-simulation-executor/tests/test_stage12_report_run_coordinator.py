@@ -152,6 +152,8 @@ def test_comparison_children_receive_the_context_they_received_before() -> None:
 @pytest.mark.parametrize(
     ("status", "modal_call_id"),
     [
+        # The simulation service recorded another call it started.
+        (RunStatus.PENDING, "fc-another-coordinator"),
         (RunStatus.RUNNING, "fc-another-coordinator"),
         (RunStatus.SUCCEEDED, COORDINATOR_CALL_ID),
         (RunStatus.FAILED, COORDINATOR_CALL_ID),

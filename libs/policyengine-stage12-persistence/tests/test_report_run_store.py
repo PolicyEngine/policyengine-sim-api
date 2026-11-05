@@ -75,6 +75,34 @@ def test_a_report_run_is_claimed_once_and_resumed_by_the_same_call(
     assert row["updated_at"] == LATER
 
 
+def test_a_pending_report_run_is_claimed_only_by_the_call_recorded_on_it(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    # The simulation service records the call it started while the run is
+    # still pending; no other call may take the run.
+    report_run_id = seeded_run.run_ids.report_run_id
+    report_runs = seeder.table("report_runs")
+    with seeder.engine.begin() as connection:
+        connection.execute(
+            report_runs.update()
+            .where(report_runs.c.id == report_run_id)
+            .values(modal_call_id="fc-coordinator")
+        )
+
+    other_call = store.claim_report_run(
+        report_run_id, modal_call_id="fc-other", claimed_at=NOW
+    )
+    recorded_call = store.claim_report_run(
+        report_run_id, modal_call_id="fc-coordinator", claimed_at=LATER
+    )
+
+    assert other_call == RunWrite(changed=False, status=RunStatus.PENDING)
+    assert recorded_call == RunWrite(changed=True, status=RunStatus.RUNNING)
+    row = seeder.row("report_runs", report_run_id)
+    assert row["modal_call_id"] == "fc-coordinator"
+    assert row["started_at"] == LATER
+
+
 def test_a_report_run_the_simulation_service_marked_running_is_claimed(
     store, seeder, seeded_run: SeededReportRun
 ) -> None:

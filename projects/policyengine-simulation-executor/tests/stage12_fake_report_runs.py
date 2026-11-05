@@ -69,10 +69,7 @@ class FakeReportRuns:
 
     def claim_report_run(self, report_run_id, *, modal_call_id, claimed_at):
         run = self._run(self.report_runs, report_run_id, "report run")
-        claimable = run.status is RunStatus.PENDING or (
-            run.status is RunStatus.RUNNING
-            and run.modal_call_id in {None, modal_call_id}
-        )
+        claimable = run.status in ACTIVE and run.modal_call_id in {None, modal_call_id}
         return self._apply(
             run,
             "claim_report_run",
