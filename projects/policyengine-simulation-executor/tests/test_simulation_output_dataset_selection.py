@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from policyengine.provenance import UnsupportedDatasetYearError
 from policyengine_simulation_executor.release_bundle import (
     BUNDLE_RECEIPT_FILENAME,
     get_country_release_bundle,
@@ -113,6 +114,64 @@ def test_load_dataset_delegates_default_selection_to_country_loader_with_receipt
         {
             "years": [2026],
             "data_folder": str(tmp_path),
+            "allow_unsupported_years": True,
+        }
+    ]
+
+
+@pytest.mark.parametrize("year", [2022, 2023])
+def test_load_dataset_lets_a_request_load_a_us_year_before_the_data_year(
+    year, tmp_path, monkeypatch
+):
+    """A request for US 2022 or 2023 loads, although .py refuses those years.
+
+    The fake loader has .py's keyword-only ``ensure_datasets`` arguments and,
+    like .py since 6.13.0, raises ``UnsupportedDatasetYearError`` for a year
+    before the 2024 data year unless the caller passes
+    ``allow_unsupported_years=True``.
+    """
+    monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path))
+    country = "us"
+    bundle = get_country_release_bundle(country)
+    supported_years = list(range(2024, 2036))
+    loaded_dataset = SimpleNamespace()
+    ensure_calls = []
+
+    def ensure_datasets(
+        *,
+        datasets=None,
+        years,
+        data_folder,
+        allow_unmanaged=False,
+        allow_unsupported_years=False,
+    ):
+        ensure_calls.append(
+            {
+                "years": years,
+                "data_folder": data_folder,
+                "allow_unsupported_years": allow_unsupported_years,
+            }
+        )
+        unsupported = [
+            requested for requested in years if requested not in supported_years
+        ]
+        if unsupported and not allow_unsupported_years:
+            raise UnsupportedDatasetYearError(
+                country, bundle.default_dataset, unsupported, supported_years
+            )
+        return {bundle.default_dataset: loaded_dataset}
+
+    loaded = _load_dataset(
+        {"country": country, "time_period": str(year)},
+        country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
+    )
+
+    assert loaded is loaded_dataset
+    assert ensure_calls == [
+        {
+            "years": [year],
+            "data_folder": str(tmp_path),
+            "allow_unsupported_years": True,
         }
     ]
 
@@ -193,6 +252,7 @@ def test_load_dataset_passes_region_dataset_name_to_managed_loader(
             "data_folder": _nondefault_data_folder(
                 "us", nondefault, bundle.dataset_uris[nondefault]
             ),
+            "allow_unsupported_years": True,
         }
     ]
 
@@ -231,6 +291,7 @@ def test_load_dataset_maps_region_bundle_uri_to_managed_name(
                 if use_default
                 else _nondefault_data_folder("us", name, bundle.dataset_uris[name])
             ),
+            "allow_unsupported_years": True,
         }
     ]
 
@@ -300,7 +361,12 @@ def test_load_dataset_reads_a_nondefault_dataset_from_the_folder_it_is_given(
     )
 
     assert ensure_calls == [
-        {"datasets": [nondefault], "years": [2026], "data_folder": state_folder}
+        {
+            "datasets": [nondefault],
+            "years": [2026],
+            "data_folder": state_folder,
+            "allow_unsupported_years": True,
+        }
     ]
 
 

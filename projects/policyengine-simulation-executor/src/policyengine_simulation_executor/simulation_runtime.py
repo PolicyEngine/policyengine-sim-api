@@ -244,7 +244,16 @@ def _load_dataset(
         )
 
     start = time.monotonic()
-    load_options = {"years": [year], "data_folder": data_folder}
+    # Temporary: .py refuses a year its source dataset doesn't support, such
+    # as US 2022 and 2023, but the Public API still offers those years for
+    # society-wide runs. The simulation service accepts every year the Public
+    # API offers until the Public API stops offering US 2022 and 2023 and
+    # refuses them with a 400; then this repository removes the opt-out.
+    load_options: dict[str, Any] = {
+        "years": [year],
+        "data_folder": data_folder,
+        "allow_unsupported_years": True,
+    }
     if not selection.is_default:
         load_options["datasets"] = [selection.name]
     datasets = country_module.ensure_datasets(**load_options)
