@@ -15,12 +15,18 @@ from test_deployment_assets_support import (
     job_section,
     routing_context,
     run_bash,
+    run_step,
+    step_shell,
     workflow_jobs,
 )
 
 
-def _run_routing_step_with_a_failing_command(tmp_path, step, failed_command, **env):
-    """Run the real body with Actions' shell and a failing CLI seam."""
+def _run_routing_step(tmp_path, step, failed_command="", **env):
+    """Run the step as Actions does, with a fake uv that can fail one command.
+
+    The step runs from its working directory, so a step that calls a script
+    under .github/scripts/ runs the real script.
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "uv").write_text(
@@ -41,15 +47,8 @@ def _run_routing_step_with_a_failing_command(tmp_path, step, failed_command, **e
     plan = runner_temp / "routing-plans" / "routing-plan-prod-1" / "plan.json"
     plan.parent.mkdir(parents=True)
     plan.write_text("{}")
-    result = run_bash(
-        "--noprofile",
-        "--norc",
-        "-eo",
-        "pipefail",
-        "-c",
-        step["run"],
-        check=False,
-        capture_output=True,
+    return run_step(
+        step,
         env={
             "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             "RUNNER_TEMP": str(runner_temp),
@@ -75,40 +74,47 @@ def _run_routing_step_with_a_failing_command(tmp_path, step, failed_command, **e
             **env,
         },
     )
-    assert result.returncode == 9, result.stderr
-    assert failed_command in (tmp_path / "uv-calls").read_text()
+
+
+DEPLOY = REUSABLE_DEPLOY_WORKFLOW
+ROLLBACK = ROLLBACK_WORKFLOW
+INSTALL = "Install routing publisher dependencies"
+RESTORE = "Restore Modal routing"
+RESOLVE = "Resolve the unfinished routing publication"
+PENDING = {"RESOLVE_PENDING_PUBLICATION": "true"}
 
 
 @pytest.mark.parametrize(
-    ("workflow", "job_name", "command", "env"),
+    ("location", "command", "env"),
     [
-        (REUSABLE_DEPLOY_WORKFLOW, "update_routing", "sync", {}),
-        (REUSABLE_DEPLOY_WORKFLOW, "finalize_routing", "sync", {}),
-        (ROLLBACK_WORKFLOW, "rollback", "sync", {}),
-        (REUSABLE_DEPLOY_WORKFLOW, "update_routing", "--plan-out", {}),
-        (REUSABLE_DEPLOY_WORKFLOW, "update_routing", "--record-plan", {}),
-        (REUSABLE_DEPLOY_WORKFLOW, "update_routing", "--apply-plan", {}),
-        (REUSABLE_DEPLOY_WORKFLOW, "finalize_routing", "--finalize-publication", {}),
+        ((DEPLOY, "update_routing", INSTALL), "sync", {}),
+        ((DEPLOY, "finalize_routing", INSTALL), "sync", {}),
+        ((ROLLBACK, "rollback", INSTALL), "sync", {}),
+        ((DEPLOY, "update_routing", "Plan the routing change"), "--plan-out", {}),
         (
-            ROLLBACK_WORKFLOW,
-            "rollback",
+            (DEPLOY, "update_routing", "Record the unfinished routing publication"),
+            "--record-plan",
+            {},
+        ),
+        ((DEPLOY, "update_routing", "Publish the planned routing"), "--apply-plan", {}),
+        (
+            (DEPLOY, "finalize_routing", "Finalize the routing publication"),
+            "--finalize-publication",
+            {},
+        ),
+        (
+            (ROLLBACK, "rollback", RESTORE),
             "--restore-plan",
             {"DEPLOY_RUN_ID": "744001"},
         ),
-        (ROLLBACK_WORKFLOW, "rollback", "--restore-latest", {}),
-        (ROLLBACK_WORKFLOW, "rollback", "--print-identity", {}),
+        ((ROLLBACK, "rollback", RESTORE), "--restore-latest", {}),
         (
-            ROLLBACK_WORKFLOW,
-            "rollback",
-            "--print-pending-plan",
-            {"RESOLVE_PENDING_PUBLICATION": "true"},
+            (ROLLBACK, "rollback", "Read the restored release identity"),
+            "--print-identity",
+            {},
         ),
-        (
-            ROLLBACK_WORKFLOW,
-            "rollback",
-            "--finalize-publication",
-            {"RESOLVE_PENDING_PUBLICATION": "true"},
-        ),
+        ((ROLLBACK, "rollback", RESOLVE), "--print-pending-plan", PENDING),
+        ((ROLLBACK, "rollback", RESOLVE), "--finalize-publication", PENDING),
     ],
     ids=[
         "publication-setup",
@@ -126,15 +132,20 @@ def _run_routing_step_with_a_failing_command(tmp_path, step, failed_command, **e
     ],
 )
 def test_a_failing_routing_command_fails_its_step_and_job(
-    tmp_path, workflow, job_name, command, env
+    tmp_path, location, command, env
 ):
+    """Each step runs as Actions does: inline, or by calling its script."""
+    workflow, job_name, step_name = location
     job = workflow_jobs(workflow)[job_name]
     assert "continue-on-error" not in job
     assert job["defaults"]["run"]["shell"] == "bash"
-    step = next(step for step in job["steps"] if command in step.get("run", ""))
+    step = next(step for step in job["steps"] if step.get("name") == step_name)
+    assert command in step_shell(step)
     assert "continue-on-error" not in step
     assert step.get("shell", "bash") == "bash"
-    _run_routing_step_with_a_failing_command(tmp_path, step, command, **env)
+    result = _run_routing_step(tmp_path, step, command, **env)
+    assert result.returncode == 9, result.stderr
+    assert command in (tmp_path / "uv-calls").read_text()
 
 
 @pytest.mark.parametrize(
@@ -153,23 +164,29 @@ def test_routing_jobs_never_allow_command_failures(workflow, job_name):
     for step in job["steps"]:
         assert "continue-on-error" not in step
         assert step.get("shell", "bash") == "bash"
-        body = step.get("run", "")
+        # The step's run: text and any repository script it calls.
+        body = step_shell(step)
         assert not re.search(r"\|\|\s*true\b", body)
         assert not re.search(r"\bset\s+\+e\b", body)
 
 
-def test_each_publication_is_named_by_its_run_attempt_and_environment():
+def test_each_publication_is_named_by_its_run_attempt_and_environment(tmp_path):
     routing = workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["update_routing"]
     plan = next(
         step
         for step in routing["steps"]
         if step.get("name") == "Plan the routing change"
     )
-    assert (
-        '--publication-id "${GITHUB_RUN_ID}-'
-        '${GITHUB_RUN_ATTEMPT}-${RELEASE_ENVIRONMENT}"' in plan["run"]
-    )
     assert plan["env"]["RELEASE_ENVIRONMENT"] == "${{ inputs.release_environment }}"
+
+    result = _run_routing_step(
+        tmp_path, plan, GITHUB_RUN_ID="744001", GITHUB_RUN_ATTEMPT="2"
+    )
+
+    assert result.returncode == 0, result.stderr
+    planner_call = (tmp_path / "uv-calls").read_text().split()
+    publication_id = planner_call[planner_call.index("--publication-id") + 1]
+    assert publication_id == "744001-2-prod"
 
 
 def test_publication_keeps_the_plan_but_finalization_reads_the_journal():
@@ -183,15 +200,15 @@ def test_publication_keeps_the_plan_but_finalization_reads_the_journal():
     assert "Record the plan artifact" not in names
     # The plan is kept before anything is published.
     assert plan < journal < keep < publish
-    assert "--record-plan" in routing["steps"][journal]["run"]
+    assert "--record-plan" in step_shell(routing["steps"][journal])
     keep_step = routing["steps"][keep]
     assert keep_step["uses"].startswith("actions/upload-artifact@")
     assert keep_step["with"]["if-no-files-found"] == "error"
     assert keep_step["with"]["name"] == (
         "routing-plan-${{ inputs.release_environment }}-${{ github.run_attempt }}"
     )
-    assert "--plan-out" in routing["steps"][plan]["run"]
-    assert "--apply-plan" in routing["steps"][publish]["run"]
+    assert "--plan-out" in step_shell(routing["steps"][plan])
+    assert "--apply-plan" in step_shell(routing["steps"][publish])
     assert routing["outputs"] == {
         "before_sha256": "${{ steps.plan.outputs.before_sha256 }}",
         "after_sha256": "${{ steps.plan.outputs.after_sha256 }}",
@@ -203,16 +220,17 @@ def test_publication_keeps_the_plan_but_finalization_reads_the_journal():
     finalize = next(
         step
         for step in finalizer["steps"]
-        if "--finalize-publication" in step.get("run", "")
+        if "--finalize-publication" in step_shell(step)
     )
+    finalize_shell = step_shell(finalize)
     assert not any(
         step.get("uses", "").startswith("actions/download-artifact@")
         for step in finalizer["steps"]
     )
-    assert '--publication-run "${PUBLICATION_RUN}"' in finalize["run"]
-    assert '--release-environment "${RELEASE_ENVIRONMENT}"' in finalize["run"]
-    assert '--gates-passed "${GATES_PASSED}"' in finalize["run"]
-    assert '--github-output "$GITHUB_OUTPUT"' in finalize["run"]
+    assert '--publication-run "${PUBLICATION_RUN}"' in finalize_shell
+    assert '--release-environment "${RELEASE_ENVIRONMENT}"' in finalize_shell
+    assert '--gates-passed "${GATES_PASSED}"' in finalize_shell
+    assert '--github-output "$GITHUB_OUTPUT"' in finalize_shell
     assert finalize["env"]["PUBLICATION_RUN"] == "${{ github.run_id }}"
     assert finalize["env"]["RELEASE_ENVIRONMENT"] == (
         "${{ inputs.release_environment }}"
