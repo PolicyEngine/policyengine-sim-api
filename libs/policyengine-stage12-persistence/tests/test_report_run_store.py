@@ -103,9 +103,11 @@ def test_a_pending_report_run_is_claimed_only_by_the_call_recorded_on_it(
     assert row["started_at"] == LATER
 
 
-def test_a_report_run_the_simulation_service_marked_running_is_claimed(
+def test_a_running_report_run_with_no_call_recorded_is_claimed(
     store, seeder, seeded_run: SeededReportRun
 ) -> None:
+    # Nothing now marks a report run running without recording its call, but
+    # a run left that way is still claimed, keeping its first start.
     report_run_id = seeded_run.run_ids.report_run_id
     report_runs = seeder.table("report_runs")
     with seeder.engine.begin() as connection:

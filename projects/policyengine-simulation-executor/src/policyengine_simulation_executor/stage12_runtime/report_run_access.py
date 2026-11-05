@@ -46,7 +46,7 @@ class ReportRunWriter(Protocol):
     def claim_report_run(
         self, report_run_id: UUID, *, modal_call_id: str, claimed_at: datetime
     ) -> RunWrite:
-        """Mark a pending report run, or one no other call holds, running."""
+        """Mark a pending or running report run that records no other call running."""
         ...
 
     def complete_report_run(
