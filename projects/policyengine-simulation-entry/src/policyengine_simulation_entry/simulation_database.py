@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import TYPE_CHECKING
 
-from policyengine_observability import TelemetryLimits
 from policyengine_simulation_persistence import (
     create_simulation_engine,
     read_missing_table_privileges,
@@ -42,22 +42,42 @@ READINESS_CACHE_SECONDS = 30.0
 # so everything an operator needs is in the message.
 UNREACHABLE_LOG_EVENT = "simulation_database_unreachable"
 MISSING_PRIVILEGES_LOG_EVENT = "simulation_database_missing_privileges"
-# The runtime cuts a longer message; a long list is logged in several.
-LOG_MESSAGE_MAX_CHARACTERS = TelemetryLimits().max_string_length
+# PostgreSQL's five-character error code, such as 28P01 for a refused password.
+_SQLSTATE = re.compile(r"[0-9A-Z]{5}")
 
 
-def missing_privilege_log_messages(missing_privileges: Sequence[str]) -> list[str]:
+def unreachable_log_message(error: BaseException) -> str:
+    """Name a failed check's error type, and the driver's error and its code.
+
+    Never the error's text, which can echo connection details. The SQLSTATE
+    code, when the database sent one, tells a refused login (``28P01``) from a
+    statement timeout (``57014``); a network failure has none.
+    """
+    message = f"{UNREACHABLE_LOG_EVENT}: {type(error).__name__}"
+    driver_error = getattr(error, "orig", None)
+    if driver_error is None:
+        return message
+    sqlstate = getattr(driver_error, "sqlstate", None)
+    if not isinstance(sqlstate, str) or not _SQLSTATE.fullmatch(sqlstate):
+        sqlstate = "none"
+    return f"{message} ({type(driver_error).__name__}, SQLSTATE {sqlstate})"
+
+
+def missing_privilege_log_messages(
+    missing_privileges: Sequence[str], *, max_characters: int
+) -> list[str]:
     """Name every missing privilege, in order, in messages kept whole.
 
     Each message is ``"simulation_database_missing_privileges: <name>, …"``
-    and no longer than ``LOG_MESSAGE_MAX_CHARACTERS``.
+    and no longer than ``max_characters``, the observability runtime's limit:
+    it cuts a longer message, so a long list is logged in several.
     """
     prefix = f"{MISSING_PRIVILEGES_LOG_EVENT}: "
     messages: list[str] = []
     names_in_message: list[str] = []
     for name in missing_privileges:
         longer = prefix + ", ".join([*names_in_message, name])
-        if names_in_message and len(longer) > LOG_MESSAGE_MAX_CHARACTERS:
+        if names_in_message and len(longer) > max_characters:
             messages.append(prefix + ", ".join(names_in_message))
             names_in_message = [name]
         else:
@@ -103,8 +123,10 @@ class SimulationDatabase:
     def dispose(self) -> None:
         """Stop the check's thread and close every pooled connection.
 
-        The thread doesn't restart, so a disposed database reports every later
-        check as failed; the app disposes of it once, at shutdown.
+        The thread doesn't restart, so every later check of a disposed database
+        fails, though ``/ready`` may still answer from a check that reached it
+        before, for up to ``READINESS_CACHE_SECONDS``. The app disposes of it
+        once, at shutdown.
         """
         self.executor.shutdown(wait=False, cancel_futures=True)
         self.engine.dispose()
@@ -126,12 +148,18 @@ class SimulationDatabaseReadinessCheck:
         database: SimulationDatabaseConnection,
         *,
         timeout_seconds: float,
+        log_message_max_characters: int,
         cache_seconds: float = READINESS_CACHE_SECONDS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        """Check ``database``, waiting at most ``timeout_seconds`` each time."""
+        """Check ``database``, waiting at most ``timeout_seconds`` each time.
+
+        ``log_message_max_characters`` is the limit of the observability
+        runtime the service logs through.
+        """
         self.database = database
         self.timeout_seconds = timeout_seconds
+        self.log_message_max_characters = log_message_max_characters
         self.cache_seconds = cache_seconds
         self.clock = clock
         self._reusable: SimulationDatabaseReadiness | None = None
@@ -169,12 +197,13 @@ class SimulationDatabaseReadinessCheck:
         # Any failure to reach or read the database is reported, never raised:
         # the old-gateway routes this check covers do not use it.
         except Exception as error:  # noqa: BLE001  # reported as unreachable
-            # The type only: a driver's message can echo connection details.
-            logger.warning("%s: %s", UNREACHABLE_LOG_EVENT, type(error).__name__)
+            logger.warning("%s", unreachable_log_message(error))
             return SimulationDatabaseReadiness(
                 reachable=False, has_required_privileges=None
             )
-        for message in missing_privilege_log_messages(missing_privileges):
+        for message in missing_privilege_log_messages(
+            missing_privileges, max_characters=self.log_message_max_characters
+        ):
             logger.warning("%s", message)
         return SimulationDatabaseReadiness(
             reachable=True, has_required_privileges=not missing_privileges

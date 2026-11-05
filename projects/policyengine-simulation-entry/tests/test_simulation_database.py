@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import threading
 
 import pytest
@@ -113,12 +114,10 @@ def test_missing_privileges_are_logged_in_messages_the_log_keeps_whole():
     """The observability runtime cuts a message at its string limit."""
     missing = [f"INSERT on modelled_table_number_{number}" for number in range(80)]
 
-    messages = missing_privilege_log_messages(missing)
+    messages = missing_privilege_log_messages(missing, max_characters=200)
 
     assert len(messages) > 1
-    assert all(
-        len(message) <= TelemetryLimits().max_string_length for message in messages
-    )
+    assert all(len(message) <= 200 for message in messages)
     assert all(
         message.startswith(f"{MISSING_PRIVILEGES_LOG_EVENT}: ") for message in messages
     )
@@ -142,8 +141,86 @@ def test_an_unreachable_database_does_not_change_old_gateway_readiness(caplog):
         "status": "ready",
         "simulation_database": {"reachable": False, "has_required_privileges": None},
     }
-    assert "simulation_database_unreachable: OperationalError" in _log_messages(caplog)
+    assert (
+        "simulation_database_unreachable: OperationalError (Exception, SQLSTATE none)"
+        in _log_messages(caplog)
+    )
     assert "secret" not in caplog.text
+
+
+class RefusedLogin(Exception):  # noqa: N818  # named as the driver's errors are
+    """A driver error carrying PostgreSQL's code, as psycopg's errors do."""
+
+    sqlstate = "28P01"
+
+
+def test_an_unreachable_database_logs_the_driver_error_and_its_code(caplog):
+    """The code tells a refused login from a timeout without the error's text."""
+    failure = OperationalError(
+        "SELECT 1", {}, RefusedLogin("password authentication failed: secret")
+    )
+    with _client(FakeBackend(), FakeSimulationDatabase(failure=failure)) as client:
+        client.get("/ready")
+
+    assert (
+        "simulation_database_unreachable: "
+        "OperationalError (RefusedLogin, SQLSTATE 28P01)" in _log_messages(caplog)
+    )
+    assert "secret" not in caplog.text
+
+
+def test_a_code_that_is_not_a_sqlstate_is_never_logged(caplog):
+    driver_error = RefusedLogin()
+    driver_error.sqlstate = "password=secret"
+    failure = OperationalError("SELECT 1", {}, driver_error)
+    with _client(FakeBackend(), FakeSimulationDatabase(failure=failure)) as client:
+        client.get("/ready")
+
+    assert (
+        "simulation_database_unreachable: "
+        "OperationalError (RefusedLogin, SQLSTATE none)" in _log_messages(caplog)
+    )
+    assert "secret" not in caplog.text
+
+
+def test_a_timed_out_check_logs_only_the_timeout(monkeypatch, caplog):
+    monkeypatch.setattr(
+        app_module, "SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS", 0.01
+    )
+    with _client(FakeBackend(), FakeSimulationDatabase(delay_seconds=1)) as client:
+        client.get("/ready")
+
+    assert "simulation_database_unreachable: TimeoutError" in _log_messages(caplog)
+
+
+def test_missing_privileges_are_split_at_the_services_own_log_limit(
+    monkeypatch, caplog
+):
+    """The limit comes from the runtime the service logs through."""
+    build_runtime = app_module.init_simulation_observability
+
+    def runtime_with_a_small_limit(*arguments, **keywords):
+        runtime = build_runtime(*arguments, **keywords)
+        runtime.config = dataclasses.replace(
+            runtime.config, limits=TelemetryLimits(max_string_length=200)
+        )
+        return runtime
+
+    monkeypatch.setattr(
+        app_module, "init_simulation_observability", runtime_with_a_small_limit
+    )
+    missing = [f"INSERT on modelled_table_number_{number}" for number in range(20)]
+    database = FakeSimulationDatabase(missing_privileges=missing)
+    with _client(FakeBackend(), database) as client:
+        client.get("/ready")
+
+    messages = [
+        message
+        for message in _log_messages(caplog)
+        if message.startswith(MISSING_PRIVILEGES_LOG_EVENT)
+    ]
+    assert len(messages) > 1
+    assert all(len(message) <= 200 for message in messages)
 
 
 def test_readiness_waits_only_briefly_for_the_database(monkeypatch):
@@ -382,7 +459,12 @@ class FakeClock:
 
 
 def _readiness_check(database, clock):
-    return SimulationDatabaseReadinessCheck(database, timeout_seconds=1, clock=clock)
+    return SimulationDatabaseReadinessCheck(
+        database,
+        timeout_seconds=1,
+        log_message_max_characters=TelemetryLimits().max_string_length,
+        clock=clock,
+    )
 
 
 def _check_readiness(check, times=1):

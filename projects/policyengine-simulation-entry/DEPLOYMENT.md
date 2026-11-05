@@ -56,7 +56,9 @@ and whether its role holds every privilege the service needs
 (`has_required_privileges`; null when the check failed; the list is in
 `libs/policyengine-simulation-persistence`). The route is public, so it says
 only yes or no. The service's log says why: a `simulation_database_unreachable`
-message names the error's type, and `simulation_database_missing_privileges`
+message names the error's type and the database driver's error with its
+SQLSTATE code, when the database sent one (`28P01` for a refused password,
+`57014` for a statement timeout), and `simulation_database_missing_privileges`
 messages name each privilege missing, such as `INSERT on reports`. A check
 that reached the database answers every request for 30 seconds, so repeated
 requests don't each take a database connection; a failed check isn't reused,

@@ -125,8 +125,10 @@ class SimulationDatabaseReadiness(BaseModel):
     didn't answer in time. ``has_required_privileges`` says whether the role
     holds every privilege the service needs, or is null when the check failed.
     The route is public, so it names neither the failure nor the missing
-    privileges; the service's log does. Neither changes ``status``: no
-    old-gateway or Stage 12 route uses this database.
+    privileges; the service's log does. A check that reached the database
+    answers for 30 seconds, so the answer may be that old; a failed check isn't
+    reused. Neither changes ``status``: no old-gateway or Stage 12 route uses
+    this database.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

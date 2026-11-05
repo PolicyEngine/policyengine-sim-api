@@ -477,6 +477,7 @@ def _register_service_routes(app: FastAPI, entry: EntryRuntime) -> None:
         else SimulationDatabaseReadinessCheck(
             entry.database,
             timeout_seconds=SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS,
+            log_message_max_characters=entry.runtime.config.limits.max_string_length,
         )
     )
 

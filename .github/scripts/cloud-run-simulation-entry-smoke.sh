@@ -174,7 +174,7 @@ if [ "${require_database_access}" = "true" ]; then
       "${base_url}" "$(jq -c '.simulation_database' <<<"${ready_body}")" >&2
     printf '%s %s %s\n' \
       "The revision's Cloud Run logs say why: look for" \
-      "simulation_database_unreachable (with the error's type) or" \
+      "simulation_database_unreachable (the error's type and SQLSTATE) or" \
       "simulation_database_missing_privileges (with each one missing)." >&2
     exit 1
   fi
