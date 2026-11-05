@@ -233,10 +233,19 @@ def _ci_scripts(c: _Collector, raw: object) -> CiScripts | None:
         workflows=c.string(None, raw, "workflows", where),
         scripts_dir=c.string(None, raw, "scripts_dir", where),
         test_globs=c.string_list(None, raw, "test_globs", where),
-        multiline_baseline=c.string(None, raw, "multiline_baseline", where),
-        untested_baseline=c.string(None, raw, "untested_baseline", where),
-        shellcheck_baseline=c.string(None, raw, "shellcheck_baseline", where),
+        multiline_baseline=_ci_baseline(c, raw, "multiline_baseline", where),
+        untested_baseline=_ci_baseline(c, raw, "untested_baseline", where),
+        shellcheck_baseline=_ci_baseline(c, raw, "shellcheck_baseline", where),
     )
+
+
+def _ci_baseline(
+    c: _Collector, raw: dict[str, Any], key: str, where: str
+) -> str | None:
+    """Read a ci-scripts baseline path; a check without one leaves the key out."""
+    if key not in raw:
+        return None
+    return c.string(None, raw, key, where)
 
 
 def _enforcer(

@@ -54,7 +54,7 @@ id = "process"
 title = "Process and repository hygiene"
 
 [discovery]
-workflows = [".github/workflows/pr.yml", ".github/workflows/pr-image-smoke.yml", ".github/workflows/pr-description.yml"]
+workflows = [".github/workflows/pr.yml", ".github/workflows/pr-image-smoke.yml", ".github/workflows/pr-description.yml", ".github/workflows/changelog-fragment.yml"]
 guard_test_globs = [
   "projects/*/tests/test_*boundar*.py",
   "libs/*/tests/test_*boundar*.py",
@@ -77,7 +77,6 @@ adapters = ["CLAUDE.md", ".github/copilot-instructions.md"]
 workflows = ".github/workflows/*.yml"
 scripts_dir = ".github/scripts"
 test_globs = ["projects/*/tests/**/test_*.py", "libs/*/tests/**/test_*.py"]
-multiline_baseline = "rules/baselines/ci-multiline-run.txt"
 untested_baseline = "rules/baselines/ci-untested-scripts.txt"
 shellcheck_baseline = "rules/baselines/ci-shellcheck.txt"
 
@@ -1430,7 +1429,7 @@ statement = "A GitHub Actions run: block holds one line of code and no chained c
 rationale = "docs/engineering/skills/ci-workflows.md#one-line-of-code-per-run-block"
 scope = [".github/workflows/*.yml"]
 tier = "mechanical"
-status = "ratcheted"
+status = "enforced"
 autofix = false
 [rule.enforcer]
 kind = "quality-guard"
@@ -1439,9 +1438,6 @@ name = "ci-scripts"
 workflow = ".github/workflows/pr.yml"
 job = "quality-guards"
 invocation = "run_quality_guards.py"
-[rule.baseline]
-file = "rules/baselines/ci-multiline-run.txt"
-count = 6
 [rule.proof]
 bad_fixture = "scripts/rules/tests/fixtures/ci_scripts/multiline_bad"
 good_fixture = "scripts/rules/tests/fixtures/ci_scripts/multiline_good"
@@ -1620,9 +1616,9 @@ invocation = "uv run --frozen pytest tests/"
 [[rule]]
 id = "sim.process.changelog-fragment"
 category = "process"
-statement = "Every pull request adds at least one changelog fragment: a non-empty file directly in changelog.d/, named <name>.<type>.md with a type towncrier.toml lists. Every file in changelog.d/ other than .gitkeep is such a fragment, and the release's version bump reads fragments by the same definition, so the check accepts exactly what the release builds."
+statement = "Every pull request adds at least one changelog fragment: a non-empty file directly in changelog.d/, named <name>.<type>.md with a type towncrier.toml lists. Every file in changelog.d/ other than .gitkeep is such a fragment, and the release's version bump reads fragments by the same definition, so the check accepts exactly what the release builds. The check runs in its own workflow on every pull request, with no branches or paths filter and no condition, so it is never skipped, and compares each pull request with its own base branch, so each pull request in a stack adds its own fragment."
 rationale = "docs/engineering/skills/github-prs.md#changelog-fragments"
-scope = [".github/workflows/pr.yml", ".github/scripts/check-changelog-fragment.sh", ".github/scripts/changelog_fragments.py", "towncrier.toml", "changelog.d/.gitkeep"]
+scope = [".github/workflows/changelog-fragment.yml", ".github/workflows/pr.yml", ".github/scripts/check-changelog-fragment.sh", ".github/scripts/changelog_fragments.py", "towncrier.toml", "changelog.d/.gitkeep"]
 tier = "mechanical"
 status = "enforced"
 autofix = false
@@ -1630,7 +1626,7 @@ autofix = false
 kind = "workflow-job"
 step = "Require a changelog fragment"
 [[rule.ci]]
-workflow = ".github/workflows/pr.yml"
+workflow = ".github/workflows/changelog-fragment.yml"
 job = "check-changelog"
 invocation = "check-changelog-fragment.sh"
 [rule.proof]

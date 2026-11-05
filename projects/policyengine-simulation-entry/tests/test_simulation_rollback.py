@@ -19,6 +19,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from test_deployment_assets_support import step_shell
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 ROLLBACK_WORKFLOW = (
@@ -27,6 +28,9 @@ ROLLBACK_WORKFLOW = (
 DEPLOY_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.yml"
 VALIDATOR = (
     REPOSITORY_ROOT / ".github" / "scripts" / "validate-simulation-rollback-inputs.sh"
+)
+RESTORE_ROUTING_SCRIPT = (
+    REPOSITORY_ROOT / ".github" / "scripts" / "rollback-restore-routing.sh"
 )
 
 
@@ -157,10 +161,11 @@ def _rollback_workflow() -> dict:
 
 
 def _step_index(steps, fragment):
+    """Return the first step whose shell (with its scripts) or uses: holds fragment."""
     return next(
         index
         for index, step in enumerate(steps)
-        if fragment in step.get("run", "") or fragment in step.get("uses", "")
+        if fragment in step_shell(step) or fragment in step.get("uses", "")
     )
 
 
@@ -195,15 +200,15 @@ def test_operator_recovery_prints_the_journal_then_restores_without_artifacts():
     assert validate < recover
     step = steps[recover]
     assert step["if"] == "${{ inputs.resolve_pending_publication }}"
-    assert step["run"].index("--print-pending-plan") < step["run"].index(
-        "--finalize-publication"
-    )
-    assert '--environment "${MODAL_ENVIRONMENT}"' in step["run"]
-    assert '--release-environment "${TARGET}"' in step["run"]
-    assert "--gates-passed false" in step["run"]
-    assert "--publication-run" not in step["run"]
-    assert "--restore-plan" not in step["run"]
-    assert "--restore-latest" not in step["run"]
+    # test_simulation_rollback_scripts.py runs the script and checks its calls.
+    shell = step_shell(step)
+    assert shell.index("--print-pending-plan") < shell.index("--finalize-publication")
+    assert '--environment "${MODAL_ENVIRONMENT}"' in shell
+    assert '--release-environment "${TARGET}"' in shell
+    assert "--gates-passed false" in shell
+    assert "--publication-run" not in shell
+    assert "--restore-plan" not in shell
+    assert "--restore-latest" not in shell
     # A first-ever failed release has no restored identity or Cloud Run
     # service. Recovering its journal still succeeds and unblocks publishing.
     for fragment in (
@@ -234,17 +239,12 @@ def test_rollback_verifies_the_whole_restored_identity():
     assert verify["env"]["EXPECTED_UK_DATASET_SHA256"] == (
         "${{ steps.identity.outputs.uk_dataset_sha256 || 'unrecorded' }}"
     )
-    # A version-mode rollback must have made that version latest.
+    # A version-mode rollback must have made that version latest;
+    # test_simulation_rollback_scripts.py runs the check.
     assert (
         '"${EXPECTED_POLICYENGINE_VERSION}" != "${POLICYENGINE_VERSION}"'
-        in verify["run"]
+        in step_shell(verify)
     )
-
-
-def _restore_script() -> str:
-    restore = _rollback_steps()[_step_index(_rollback_steps(), "--restore-plan")]
-    script = restore["run"].split("\nelse\n")[0].split("then\n", 1)[1]
-    return script.replace("uv run --frozen python", "printf '%s\\n'")
 
 
 def _inventory_job(*, job=None, step=None, conclusion="success", target="prod"):
@@ -266,7 +266,7 @@ def _fake_gh(
     kept: dict[int, int],
     inventory: dict[int, list[dict]] | None = None,
 ) -> None:
-    """Return API JSON and execute the workflow's real --jq filter with jq."""
+    """Return API JSON and execute the restore script's real --jq filter with jq."""
     payloads = {}
     for attempt in range(1, attempts + 1):
         jobs = [_inventory_job() for _ in range(kept.get(attempt, 0))]
@@ -324,11 +324,11 @@ def _run_restore(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _fake_gh(bin_dir, attempts, kept, inventory)
+    # The publisher's arguments, one per line, stand in for the restore.
+    (bin_dir / "uv").write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$@\"\n")
+    (bin_dir / "uv").chmod(0o755)
     return _run_bash(
-        "-eo",
-        "pipefail",
-        "-c",
-        _restore_script(),
+        RESTORE_ROUTING_SCRIPT,
         check=False,
         capture_output=True,
         env={
@@ -337,6 +337,8 @@ def _run_restore(
             "TARGET": "prod",
             "MODAL_ENVIRONMENT": "main",
             "DEPLOY_RUN_ID": "1",
+            "POLICYENGINE_VERSION": "",
+            "EXPECTED_LATEST": "",
             "GITHUB_REPOSITORY": "PolicyEngine/policyengine-sim-api",
         },
     )
@@ -394,7 +396,7 @@ def test_rollback_with_no_plan_at_all_fails(tmp_path):
 def test_inventory_jq_selects_only_successfully_kept_target_plans(
     tmp_path, ignored_job
 ):
-    """The workflow's job/step/conclusion jq selectors all run, not a stub."""
+    """The restore script's job/step/conclusion jq selectors all run, not a stub."""
     result = _run_restore(
         tmp_path,
         2,

@@ -1114,6 +1114,19 @@ def test_the_reusable_deployments_routing_writers_are_its_journal_steps():
     }
 
 
+def test_the_rollback_workflows_routing_writers_are_its_restore_steps():
+    jobs = _workflows()[".github/workflows/simulation-rollback.yml"]["jobs"]
+    writers = {
+        (job_id, step["name"])
+        for job_id, job in jobs.items()
+        for step in _writing_steps(job)
+    }
+    assert writers == {
+        ("rollback", "Restore Modal routing"),
+        ("rollback", "Resolve the unfinished routing publication"),
+    }
+
+
 # --- Characterization: routing command discovery's argv and refusals ---------
 
 

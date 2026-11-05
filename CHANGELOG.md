@@ -10,6 +10,24 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.5.0] - 2026-11-05
+
+### Changed
+
+- The manual rollback workflow's steps now run tested scripts under `.github/scripts/` instead of inline shell, with unchanged inputs, outputs and exit statuses. Rule `sim.ci.multiline-run-is-script` is now enforced with no baseline: any multi-line `run:` block in a workflow fails the quality-guards job.
+
+### Removed
+
+- US national, region-group and segmented national runs, and Stage 12 aggregation of a national report, no longer compute congressional district impacts: their `congressional_district_impact` is null, and the job-status response leaves it out. US state runs still list their own districts, from which nationwide reports now take each district; apps deployed for older policyengine.py versions are not rebuilt and still compute districts for national runs.
+
+
+## [0.4.3] - 2026-11-05
+
+### Changed
+
+- Ran the `Changelog fragment` check from its own workflow on every pull request, whatever branch it targets and including each one in a stack, so the required check is never skipped; changing a pull request's base branch runs it again.
+
+
 ## [0.4.2] - 2026-11-04
 
 ### Changed
