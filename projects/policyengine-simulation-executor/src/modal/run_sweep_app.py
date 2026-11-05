@@ -11,10 +11,9 @@ reports. It connects as the Modal worker role, from the same Modal secret the
 v2 coordinator and workers use. This application is not versioned with the
 .py bundle: one copy runs per Modal environment.
 
-Deploy it, once per Modal environment, from this project's directory:
-
-    uv run --frozen modal deploy --env=staging src/modal/run_sweep_app.py
-    uv run --frozen modal deploy --env=main src/modal/run_sweep_app.py
+The deployment workflow's executor job deploys it to each Modal environment,
+after the versioned executor (``simulation-deploy.reusable.yml``). Modal
+refuses the deployment until the Modal secret exists in that environment.
 """
 
 from __future__ import annotations

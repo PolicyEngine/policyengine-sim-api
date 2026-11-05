@@ -4,18 +4,53 @@ from __future__ import annotations
 
 import importlib
 import sys
+from pathlib import Path
 
+import yaml
 from fixtures.fake_modal import install_fake_modal
 from policyengine_simulation_executor.stage12_runtime import (
     report_run_access as report_run_access_module,
 )
 from policyengine_simulation_executor.stage12_runtime import run_sweep
 
+REUSABLE_DEPLOY_WORKFLOW = (
+    Path(__file__).resolve().parents[3]
+    / ".github"
+    / "workflows"
+    / "simulation-deploy.reusable.yml"
+)
+
 
 def _load(monkeypatch):
     install_fake_modal(monkeypatch)
     sys.modules.pop("src.modal.run_sweep_app", None)
     return importlib.import_module("src.modal.run_sweep_app")
+
+
+def test_the_executor_deployment_deploys_the_sweep_with_the_modal_tokens() -> None:
+    workflow = yaml.safe_load(REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["deploy_executor"]["steps"]
+    step_names = [step.get("name") for step in steps]
+    (sweep_step,) = [
+        step for step in steps if "src/modal/run_sweep_app.py" in step.get("run", "")
+    ]
+
+    assert sweep_step["run"] == (
+        'uv run --frozen modal deploy --env="${{ inputs.modal_environment }}" '
+        "src/modal/run_sweep_app.py"
+    )
+    assert (
+        sweep_step["working-directory"] == "projects/policyengine-simulation-executor"
+    )
+    # Only Modal's tokens: the database URL reaches the scheduled function from
+    # its Modal secret, which must exist before this step can deploy it.
+    assert sweep_step["env"] == {
+        "MODAL_TOKEN_ID": "${{ secrets.MODAL_TOKEN_ID }}",
+        "MODAL_TOKEN_SECRET": "${{ secrets.MODAL_TOKEN_SECRET }}",
+    }
+    assert step_names.index(sweep_step["name"]) > step_names.index(
+        "Deploy versioned Modal executor"
+    )
 
 
 def test_the_sweep_runs_every_ten_minutes_with_the_worker_database_secret(
