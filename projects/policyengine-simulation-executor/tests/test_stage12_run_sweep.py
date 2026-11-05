@@ -14,9 +14,12 @@ from policyengine_simulation_executor.stage12_runtime.run_sweep import (
     modal_call_state,
     sweep_stuck_runs,
 )
-from policyengine_stage12_persistence import RunKind, RunningRun, RunStatus, RunWrite
+from policyengine_stage12_persistence import ActiveRun, RunKind, RunStatus, RunWrite
 
 NOW = datetime(2026, 11, 4, 12, tzinfo=UTC)
+# The sweep lists runs older than its maximum age first, then runs older
+# than its minimum age; a cutoff before this one is the first listing's.
+MAXIMUM_AGE_CUTOFFS_BEFORE = NOW - timedelta(hours=1)
 
 
 class FakeInputStatus(Enum):
@@ -40,17 +43,15 @@ class FakeSweepStore:
         self.failed = []
         self.events = []
 
-    def list_running_runs(
-        self, kind, *, started_before, include_runs_without_call=False
-    ):
+    def list_active_runs(self, kind, *, active_since_before):
         # As the real store, a run this fake failed is no longer listed.
         failed = {failed_run for failed_run, _, _ in self.failed}
-        if include_runs_without_call:
-            self.expired_cutoffs.append(started_before)
+        if active_since_before < MAXIMUM_AGE_CUTOFFS_BEFORE:
+            self.expired_cutoffs.append(active_since_before)
             self.events.append(f"list-expired:{kind.value}")
             listed = self.expired
         else:
-            self.cutoffs.append(started_before)
+            self.cutoffs.append(active_since_before)
             self.events.append(f"list:{kind.value}")
             listed = self.runs
         return tuple(run for run in listed if run.kind is kind and run not in failed)
@@ -62,7 +63,9 @@ class FakeSweepStore:
 
 
 def _run(call_id, kind=RunKind.SIMULATION_RUN):
-    return RunningRun(kind=kind, run_id=uuid4(), modal_call_id=call_id)
+    return ActiveRun(
+        kind=kind, run_id=uuid4(), status=RunStatus.RUNNING, modal_call_id=call_id
+    )
 
 
 def test_only_runs_whose_call_ended_are_failed() -> None:
@@ -264,8 +267,11 @@ def test_a_run_past_the_maximum_age_is_failed_whatever_modal_reports() -> None:
     # pending, and no longer describes old calls; neither may keep a run
     # running for good, and nor may a run with no recorded call.
     reported_running = _run("fc-reported-running", RunKind.REPORT_RUN)
-    without_call = RunningRun(
-        kind=RunKind.REPORT_RUN, run_id=uuid4(), modal_call_id=None
+    without_call = ActiveRun(
+        kind=RunKind.REPORT_RUN,
+        run_id=uuid4(),
+        status=RunStatus.RUNNING,
+        modal_call_id=None,
     )
     store = FakeSweepStore([reported_running], expired=[reported_running, without_call])
 

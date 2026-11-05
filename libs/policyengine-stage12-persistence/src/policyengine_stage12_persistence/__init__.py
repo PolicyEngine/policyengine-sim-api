@@ -6,9 +6,9 @@ from policyengine_stage12_persistence.report_run_results import (
     report_run_result,
 )
 from policyengine_stage12_persistence.report_run_store import (
+    ActiveRun,
     ReportRunStore,
     RunKind,
-    RunningRun,
     RunStatus,
     RunWrite,
 )
@@ -24,6 +24,7 @@ from policyengine_stage12_persistence.validation import (
 )
 
 __all__ = [
+    "ActiveRun",
     "ConnectionOpener",
     "DistrictCodes",
     "ReportRunResult",
@@ -31,7 +32,6 @@ __all__ = [
     "RunKind",
     "RunStatus",
     "RunWrite",
-    "RunningRun",
     "Stage12PersistenceStore",
     "Stage12RuntimeAccessError",
     "create_stage12_engine",

@@ -62,14 +62,15 @@ RUN_TABLES = {RunKind.REPORT_RUN: report_runs, RunKind.SIMULATION_RUN: simulatio
 
 
 @dataclass(frozen=True)
-class RunningRun:
-    """A run recorded as running, and the Modal call recorded as running it.
+class ActiveRun:
+    """A pending or running run, and the Modal call recorded on it.
 
-    ``modal_call_id`` is None for a run marked running with no call recorded.
+    ``modal_call_id`` is None for a run with no call recorded.
     """
 
     kind: RunKind
     run_id: UUID
+    status: RunStatus
     modal_call_id: str | None
 
 
@@ -320,58 +321,62 @@ class ReportRunStore:
             simulation_runs, simulation_run_id, statement, "fail_simulation_run"
         )
 
-    def list_running_runs(
+    def list_active_runs(
         self,
         kind: RunKind,
         *,
-        started_before: datetime,
-        include_runs_without_call: bool = False,
-    ) -> tuple[RunningRun, ...]:
-        """Return the runs of ``kind`` running since before a time.
+        active_since_before: datetime,
+    ) -> tuple[ActiveRun, ...]:
+        """Return the pending and running runs of ``kind`` active since before a time.
 
-        Only runs with a recorded Modal call are returned, unless
-        ``include_runs_without_call``. Runs are oldest first; a run without a
-        recorded start counts from its last update. A simulation run is
-        listed only while no running report run names it as its baseline or
-        reform: that report run's coordinator records its children's
-        outcomes, and stops and starts them again when Modal restarts it, so
-        their calls are its to judge until it has finished.
+        A run counts from its first claim, or from its creation while it is
+        pending. Runs are oldest first, with or without a recorded Modal
+        call. A simulation run is listed only while no pending or running
+        report run names it as its baseline or reform: that report run's
+        coordinator starts its children's calls, records their outcomes, and
+        stops and starts them again when Modal restarts it, so they are its
+        to judge until it has finished.
         """
         table = RUN_TABLES[kind]
-        started = func.coalesce(table.c.started_at, table.c.updated_at)
+        active_since = func.coalesce(table.c.started_at, table.c.created_at)
         conditions = [
-            table.c.status == RunStatus.RUNNING.value,
-            started < started_before,
+            table.c.status.in_(ACTIVE_STATUSES),
+            active_since < active_since_before,
         ]
-        if not include_runs_without_call:
-            conditions.append(table.c.modal_call_id.is_not(None))
         if kind is RunKind.SIMULATION_RUN:
-            conditions.append(_no_running_report_run_names(table))
+            conditions.append(_no_active_report_run_names(table))
         statement = (
-            select(table.c.id, table.c.modal_call_id)
+            select(table.c.id, table.c.status, table.c.modal_call_id)
             .where(*conditions)
-            .order_by(started, table.c.id)
+            .order_by(active_since, table.c.id)
         )
-        with self._transaction("list_running_runs") as connection:
+        with self._transaction("list_active_runs") as connection:
             return tuple(
-                RunningRun(kind=kind, run_id=row.id, modal_call_id=row.modal_call_id)
+                ActiveRun(
+                    kind=kind,
+                    run_id=row.id,
+                    status=RunStatus(row.status),
+                    modal_call_id=row.modal_call_id,
+                )
                 for row in connection.execute(statement)
             )
 
     def fail_stuck_run(
         self,
-        run: RunningRun,
+        run: ActiveRun,
         *,
         error_message: str,
         failed_at: datetime,
     ) -> RunWrite:
         """Mark a stuck ``run`` failed, while it is as it was listed.
 
-        It must still be running under ``run.modal_call_id``, or with no call
-        if it was listed with none, and a simulation run must still have no
-        running report run naming it. A run that finished, moved to another
-        call, or that a running report run has named since it was listed, is
-        left as it is, so concurrent sweeps change it once.
+        It must still have its listed status and ``run.modal_call_id``, or no
+        call if it was listed with none, and a simulation run must still have
+        no pending or running report run naming it. A run that was claimed,
+        finished, or moved to another call, that the simulation service
+        recorded a call on, or that a pending or running report run has named
+        since it was listed, is left as it is, so concurrent sweeps change it
+        once.
         """
         table = RUN_TABLES[run.kind]
         same_call = (
@@ -383,10 +388,10 @@ class ReportRunStore:
             update(table)
             .where(
                 table.c.id == run.run_id,
-                table.c.status == RunStatus.RUNNING.value,
+                table.c.status == run.status.value,
                 same_call,
                 *(
-                    (_no_running_report_run_names(table),)
+                    (_no_active_report_run_names(table),)
                     if run.kind is RunKind.SIMULATION_RUN
                     else ()
                 ),
@@ -455,8 +460,8 @@ def _uniform_rows(rows: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
     return [dict.fromkeys(columns) | row for row in rows]
 
 
-def _no_running_report_run_names(table: Table) -> ColumnElement[bool]:
-    """Return the condition that no running report run names the run.
+def _no_active_report_run_names(table: Table) -> ColumnElement[bool]:
+    """Return the condition that no pending or running report run names the run.
 
     A report run names its simulation runs as its baseline and its reform.
     """
@@ -465,5 +470,5 @@ def _no_running_report_run_names(table: Table) -> ColumnElement[bool]:
             report_runs.c.baseline_simulation_run_id == table.c.id,
             report_runs.c.reform_simulation_run_id == table.c.id,
         ),
-        report_runs.c.status == RunStatus.RUNNING.value,
+        report_runs.c.status.in_(ACTIVE_STATUSES),
     )

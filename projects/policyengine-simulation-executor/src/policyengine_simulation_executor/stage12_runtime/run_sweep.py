@@ -28,7 +28,7 @@ from policyengine_stage12_persistence import RunKind
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from policyengine_stage12_persistence import RunningRun, RunWrite
+    from policyengine_stage12_persistence import ActiveRun, RunWrite
 
 logger = logging.getLogger(__name__)
 
@@ -71,24 +71,20 @@ class CallState(StrEnum):
 class StuckRunStore(Protocol):
     """The sweep's reads and writes; ``ReportRunStore`` implements them."""
 
-    def list_running_runs(
-        self,
-        kind: RunKind,
-        *,
-        started_before: datetime,
-        include_runs_without_call: bool = False,
-    ) -> tuple[RunningRun, ...]:
-        """Return the runs of ``kind`` running since before a time."""
+    def list_active_runs(
+        self, kind: RunKind, *, active_since_before: datetime
+    ) -> tuple[ActiveRun, ...]:
+        """Return the pending and running runs of ``kind`` active since a time."""
         ...
 
     def fail_stuck_run(
-        self, run: RunningRun, *, error_message: str, failed_at: datetime
+        self, run: ActiveRun, *, error_message: str, failed_at: datetime
     ) -> RunWrite:
         """Mark ``run`` failed while it is as it was listed.
 
-        It must still be running under its listed call, or with no call if it
-        was listed with none; a simulation run must still have no running
-        report run combining it.
+        It must still have its listed status and call, or no call if it was
+        listed with none; a simulation run must still have no pending or
+        running report run combining it.
         """
         ...
 
@@ -185,9 +181,7 @@ def sweep_stuck_runs(  # the store, then keyword-only seams and limits
     states: dict[str, CallState] = {}
     tally = _Tally()
     for kind in (RunKind.REPORT_RUN, RunKind.SIMULATION_RUN):
-        for run in store.list_running_runs(
-            kind, started_before=now - maximum_age, include_runs_without_call=True
-        ):
+        for run in store.list_active_runs(kind, active_since_before=now - maximum_age):
             if store.fail_stuck_run(
                 run, error_message=EXCEEDED_AGE_MESSAGE, failed_at=now
             ).changed:
@@ -195,7 +189,7 @@ def sweep_stuck_runs(  # the store, then keyword-only seams and limits
             else:
                 tally.left += 1
     for kind in (RunKind.REPORT_RUN, RunKind.SIMULATION_RUN):
-        for run in store.list_running_runs(kind, started_before=now - minimum_age):
+        for run in store.list_active_runs(kind, active_since_before=now - minimum_age):
             _sweep_run(
                 store, run, states=states, call_state=call_state, now=now, tally=tally
             )
@@ -204,7 +198,7 @@ def sweep_stuck_runs(  # the store, then keyword-only seams and limits
 
 def _sweep_run(  # noqa: PLR0913  # one run, the store, and the sweep's shared state
     store: StuckRunStore,
-    run: RunningRun,
+    run: ActiveRun,
     *,
     states: dict[str, CallState],
     call_state: Callable[[str], CallState],
