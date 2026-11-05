@@ -199,6 +199,51 @@ def test_builder_passes_resolved_region_to_congressional_district_output(monkeyp
     assert calls == [("us", baseline, reform, "state/ut")]
 
 
+@pytest.fixture
+def district_calculations(monkeypatch):
+    """Record each call to policyengine.py's district calculation, in its place."""
+    calculations = []
+
+    def record_district_calculation(baseline, reform):
+        calculations.append((baseline, reform))
+        return SimpleNamespace(district_results=[])
+
+    monkeypatch.setattr(
+        "policyengine.outputs.congressional_district_impact."
+        "compute_us_congressional_district_impacts",
+        record_district_calculation,
+    )
+    return calculations
+
+
+@pytest.mark.parametrize(
+    "region_code",
+    [None, "us", "region_group/state/hi+state/ia"],
+)
+def test_builder_skips_districts_for_national_and_region_group_runs(
+    district_calculations, region_code
+):
+    baseline, reform = macro_baseline_reform()
+    builder = make_output_builder(
+        "us", baseline, reform, BuilderOptions(resolved_region_code=region_code)
+    )
+
+    assert builder._build_congressional_district_impact() is None
+    assert district_calculations == []
+
+
+def test_builder_builds_districts_for_state_runs(district_calculations):
+    baseline, reform = macro_baseline_reform()
+    builder = make_output_builder(
+        "us", baseline, reform, BuilderOptions(resolved_region_code="state/ut")
+    )
+
+    assert builder._build_congressional_district_impact() == (
+        CongressionalDistrictImpactOutput(districts=[])
+    )
+    assert district_calculations == [(baseline, reform)]
+
+
 def test_builder_records_output_timings_without_real_calculation(monkeypatch):
     baseline = object()
     reform = object()
