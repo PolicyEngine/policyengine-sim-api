@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.5.2] - 2026-11-05
+
+### Changed
+
+- Updated policyengine.py from 6.12.0 to 6.12.1 in the simulation runtime.
+
+
 ## [0.5.1] - 2026-11-05
 
 ### Changed
