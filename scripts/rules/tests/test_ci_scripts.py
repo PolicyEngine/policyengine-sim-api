@@ -14,9 +14,12 @@ from scripts.rules.ci_scripts import (
     multiline_runs,
     shellcheck_failures,
     untested_scripts,
+    write_baselines,
 )
 from scripts.rules.load import load_text
 from scripts.rules.model import CiScripts
+from scripts.rules.tests.support import TODAY
+from scripts.rules.validate import validate
 from scripts.rules.workflows import chains_commands, code_lines, parse_jobs
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ci_scripts"
@@ -208,11 +211,119 @@ class CompareTest(unittest.TestCase):
             messages[-1].startswith("[ex.ci.workflow-scripts-tested]"), messages
         )
 
+    def registry_without_a_multiline_baseline(self):
+        """Return the registry with the multi-line rule enforced and no baseline."""
+        registry, violations = load_text(
+            REGISTRY.replace(
+                'multiline_baseline = "rules/baselines/ci-multiline-run.txt"\n', ""
+            )
+            .replace("ex.ci.multiline", "ex.ci.multiline-run-is-script")
+            .replace('status = "ratcheted"', 'status = "enforced"')
+            .replace(
+                '[rule.baseline]\nfile = "rules/baselines/ci-multiline-run.txt"\n'
+                "count = 1\n",
+                "",
+            )
+        )
+        self.assertEqual(violations, [])
+        assert registry is not None
+        return registry
+
+    def test_a_check_without_a_baseline_fails_every_finding(self) -> None:
+        registry = self.registry_without_a_multiline_baseline()
+        self.assertIsNone(registry.ci_scripts.multiline_baseline)
+        findings = Findings(
+            multiline={"new :: job :: step"}, untested=set(), shellcheck=set()
+        )
+        messages = [str(v) for v in compare(registry, findings, self.root)]
+        # The baseline file in the repository is not read: its old entry is
+        # neither tolerated nor reported as no longer applying.
+        self.assertEqual(len(messages), 1, messages)
+        self.assertTrue(
+            messages[0].startswith(
+                "[ex.ci.multiline-run-is-script] ci-scripts: "
+                "multi-line run: block new :: job :: step"
+            ),
+            messages,
+        )
+
+    def test_writing_baselines_skips_a_check_without_one(self) -> None:
+        registry = self.registry_without_a_multiline_baseline()
+        findings = Findings(
+            multiline={"new :: job :: step"}, untested={"x.sh"}, shellcheck=set()
+        )
+        write_baselines(registry, findings, self.root)
+        baselines = self.root / "rules" / "baselines"
+        self.assertEqual(
+            (baselines / "ci-multiline-run.txt").read_text(),
+            "# tolerated\nold :: job :: step\n",
+        )
+        self.assertIn("x.sh", (baselines / "ci-untested-scripts.txt").read_text())
+
     def test_fixed_finding_must_leave_the_baseline(self) -> None:
         messages = self.messages(set())
         self.assertIn(
             "baseline entry no longer applies: old :: job :: step", messages[0]
         )
+
+
+ENFORCED_REGISTRY = (
+    REGISTRY.replace("ex.ci.multiline", "ex.ci.multiline-run-is-script")
+    .replace('status = "ratcheted"', 'status = "enforced"')
+    .replace(
+        '[rule.baseline]\nfile = "rules/baselines/ci-multiline-run.txt"\ncount = 1\n',
+        "",
+    )
+)
+
+
+class EnforcedCheckBaselineTest(unittest.TestCase):
+    """A ci-scripts check whose rule is enforced may list only an empty baseline."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.baselines = self.root / "rules" / "baselines"
+        self.baselines.mkdir(parents=True)
+        for name in ("ci-untested-scripts.txt", "ci-shellcheck.txt"):
+            (self.baselines / name).write_text("# Tolerated.\n")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def baseline_messages(self, registry_text: str, multiline: str) -> list[str]:
+        (self.baselines / "ci-multiline-run.txt").write_text(multiline)
+        registry, violations = load_text(registry_text)
+        assert registry is not None and not violations, violations
+        return [
+            str(violation)
+            for violation in validate(registry, self.root, TODAY)
+            if "ci_scripts baseline" in str(violation)
+        ]
+
+    def test_an_enforced_check_cannot_tolerate_a_listed_entry(self) -> None:
+        messages = self.baseline_messages(
+            ENFORCED_REGISTRY, "# Tolerated.\nold :: job :: step\n"
+        )
+        self.assertEqual(len(messages), 1, messages)
+        self.assertIn("[ex.ci.multiline-run-is-script]", messages[0])
+        self.assertIn(
+            "ci_scripts baseline rules/baselines/ci-multiline-run.txt lists 1 "
+            "entry, but its rule is enforced",
+            messages[0],
+        )
+
+    def test_an_enforced_check_may_list_an_empty_baseline(self) -> None:
+        self.assertEqual(
+            self.baseline_messages(ENFORCED_REGISTRY, "# Tolerated.\n"), []
+        )
+
+    def test_a_ratcheted_check_may_list_entries(self) -> None:
+        messages = self.baseline_messages(
+            REGISTRY.replace("ex.ci.multiline", "ex.ci.multiline-run-is-script"),
+            "# Tolerated.\nold :: job :: step\n",
+        )
+        self.assertEqual(messages, [])
 
 
 if __name__ == "__main__":

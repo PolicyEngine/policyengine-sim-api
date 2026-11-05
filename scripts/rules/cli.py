@@ -42,7 +42,10 @@ def _ci_scripts_command(root: Path, *, write_baselines: bool) -> int:
     ci_scripts.write_baselines(
         registry, ci_scripts.find(registry.ci_scripts, root), root
     )
-    _report("wrote ci_scripts baselines; update the rules' baseline counts")
+    _report(
+        "wrote ci_scripts baselines; update the rules' baseline counts "
+        "(checks without a baseline in [ci_scripts] are not recorded)"
+    )
     return 0
 
 
