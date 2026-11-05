@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.5.1] - 2026-11-05
+
+### Changed
+
+- Rule `sim.microdata.weight-stripping-confined` is now enforced: a read of raw values from a weighted frame or column that the executor's tests find anywhere but the body of `_count_output_entities`, the function that counts entities, fails them, with no recorded exceptions. Its empty baseline, `rules/baselines/sim-microdata-weight-stripping.txt`, is deleted.
+
+
 ## [0.5.0] - 2026-11-05
 
 ### Changed
