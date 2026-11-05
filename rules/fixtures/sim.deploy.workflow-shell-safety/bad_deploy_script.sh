@@ -5,5 +5,5 @@ set -euo pipefail
 
 runtime_secrets=(
   "OLD_GATEWAY_AUTH_CLIENT_SECRET=$(resolve_secret_reference "${OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME}")"
-  "SIMULATION_DATABASE_URL=$(resolve_secret_reference "${SIMULATION_DATABASE_URL_SECRET_NAME}")"
+  "SIMULATION_SERVICE_DATABASE_URL=$(resolve_secret_reference "${SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME}")"
 )

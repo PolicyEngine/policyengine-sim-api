@@ -40,7 +40,7 @@ SERVICE_TEST_ROLE_PASSWORD = "simulation_service_test"
 PUBLIC_API_DATABASE_VARIABLE = "PUBLIC_API_SCHEMA_DATABASE_URL"
 REQUIRE_PUBLIC_API_VARIABLE = "SIMULATION_REQUIRE_PUBLIC_API_SCHEMA"
 # The role the Public API's privilege manifest manages for the simulation
-# service; the deployed SIMULATION_DATABASE_URL logs in as it.
+# service; the deployed SIMULATION_SERVICE_DATABASE_URL logs in as it.
 SERVICE_ROLE = "policyengine_v2_simulation_service"
 
 

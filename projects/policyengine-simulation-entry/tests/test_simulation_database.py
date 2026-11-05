@@ -171,7 +171,9 @@ def test_a_malformed_database_url_stops_the_app_with_a_configuration_error():
     """The settings' check runs before the engine is built, as at startup."""
     from policyengine_simulation_entry.config import ConfigurationError
 
-    with pytest.raises(ConfigurationError, match="SIMULATION_DATABASE_URL") as error:
+    with pytest.raises(
+        ConfigurationError, match="SIMULATION_SERVICE_DATABASE_URL"
+    ) as error:
         create_app(
             settings=make_settings(
                 simulation_database_url="postgresql://db.example/postgres?password=secret"

@@ -52,13 +52,13 @@ def test_the_entrypoint_receives_the_database_url_as_a_pinned_secret(
 
     assert result.returncode == 0, result.stderr
     assert (
-        "SIMULATION_DATABASE_URL=simulation-staging-service-database-url:3"
+        "SIMULATION_SERVICE_DATABASE_URL=simulation-staging-service-database-url:3"
         in _secrets_argument(environment).split(",")
     )
     runtime_environment = json.loads(
         Path(environment["GCLOUD_ENV_FILE_CAPTURE"]).read_text(encoding="utf-8")
     )
-    assert "SIMULATION_DATABASE_URL" not in runtime_environment
+    assert "SIMULATION_SERVICE_DATABASE_URL" not in runtime_environment
 
 
 @pytest.mark.parametrize(
@@ -69,11 +69,11 @@ def test_the_entrypoint_deploy_requires_a_valid_database_url_secret(
     tmp_path, secret_name
 ):
     result, environment = _run_deploy(
-        tmp_path, SIMULATION_DATABASE_URL_SECRET_NAME=secret_name
+        tmp_path, SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME=secret_name
     )
 
     assert result.returncode != 0
-    assert "SIMULATION_DATABASE_URL_SECRET_NAME" in result.stderr or (
+    assert "SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME" in result.stderr or (
         "Secret Manager reference" in result.stderr
     )
     assert not Path(environment["GCLOUD_ARGUMENTS_CAPTURE"]).exists()
@@ -87,8 +87,8 @@ def test_the_deploy_step_passes_the_database_url_secret_name():
         if step.get("name") == "Deploy Cloud Run entrypoint candidate"
     )
 
-    assert deploy_step["env"]["SIMULATION_DATABASE_URL_SECRET_NAME"] == (
-        "${{ vars.SIMULATION_DATABASE_URL_SECRET_NAME }}"
+    assert deploy_step["env"]["SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME"] == (
+        "${{ vars.SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME }}"
     )
 
 

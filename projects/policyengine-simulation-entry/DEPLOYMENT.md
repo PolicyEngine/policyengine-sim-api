@@ -31,9 +31,10 @@ changes those tables, and the Public API's privilege manifest grants the
 role what it may do on them.
 
 The deploy step resolves the Secret Manager secret named by the
-`SIMULATION_DATABASE_URL_SECRET_NAME` environment variable to its newest
-enabled version and mounts that version as `SIMULATION_DATABASE_URL` on every
-deploy, whatever the Stage 12 setting. The deploy service account must be
+`SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME` environment variable to its
+newest enabled version and mounts that version as
+`SIMULATION_SERVICE_DATABASE_URL` on every deploy, whatever the Stage 12
+setting. The deploy service account must be
 able to list the secret's versions (`gcloud secrets versions list`), as for
 the other runtime secrets, and only the entrypoint's runtime service account
 may read it. A missing or invalid name, or a secret with no enabled version,
@@ -44,7 +45,7 @@ needs, in order: the Public API's tables the service writes, migrated in that
 environment's database; the service's login role, with the grants the Public
 API's privilege manifest declares; the role's URL stored in Secret Manager,
 readable by the runtime service account; and the `beta` or `prod`
-`SIMULATION_DATABASE_URL_SECRET_NAME` variable naming it. Without the
+`SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME` variable naming it. Without the
 variable the deploy stops at once; without the tables, the role or its grants
 the candidate check below fails.
 
