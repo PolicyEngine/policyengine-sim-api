@@ -8,7 +8,9 @@ name: Public API schema drift
 # that the models and the pin need to follow, or that its tables can't be
 # built at that head; the log says which (rule
 # sim.persistence.models-match-public-api). The Public API's repository is
-# public, so the workflow reads no secret.
+# public, so the workflow reads no secret. When the comparison fails, a second
+# job opens an issue labelled public-api-schema-drift, or comments on the open
+# one, with the workflow's own token; only that job may write issues.
 
 on:
   schedule:
@@ -85,3 +87,25 @@ jobs:
     - name: Compare sim's table models with the Public API's tables
       working-directory: libs/policyengine-simulation-persistence
       run: uv run --frozen pytest tests/ -v -m public_api_schema
+
+  report-public-api-schema-drift:
+    name: Open or update the drift issue
+    needs: public-api-schema-drift
+    # Only a failed comparison: a passing or cancelled run reports nothing.
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    # It checks out sim alone, to run its script; it never checks out or runs
+    # the Public API's code.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Open or comment on the drift issue
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: .github/scripts/public-api-schema-drift-issue.sh

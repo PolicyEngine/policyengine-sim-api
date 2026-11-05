@@ -62,7 +62,10 @@ tests every Monday, and on demand, against the head of the Public API's
 `master`. It fails when the Public API has merged a change to a modelled
 table, or to the service role's grants, that the models and the pin haven't
 followed yet, and also when the Public API's tables can't be built at that
-head; its log says which.
+head; its log says which. When it fails, a second job opens an issue labelled
+`public-api-schema-drift`, or comments on the one already open, with the
+workflow's own token; the comparison job's token stays read-only. The pin
+still moves only in a pull request.
 
 To run the comparison locally, build the reference with the script (it
 needs an empty `policyengine_v2_alembic_test` database and a checkout of the
