@@ -8,10 +8,15 @@ import threading
 import pytest
 from conftest import FakeBackend, make_settings
 from fastapi.testclient import TestClient
+from policyengine_observability import TelemetryLimits
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry import simulation_database as database_module
 from policyengine_simulation_entry.app import create_app
-from policyengine_simulation_entry.simulation_database import SimulationDatabase
+from policyengine_simulation_entry.simulation_database import (
+    MISSING_PRIVILEGES_LOG_EVENT,
+    SimulationDatabase,
+    missing_privilege_log_messages,
+)
 from sqlalchemy.exc import OperationalError
 
 DATABASE_URL = "postgresql://simulation_service:secret@db.example:5432/postgres"
@@ -50,6 +55,15 @@ def _client(backend, database):
     )
 
 
+def _log_messages(caplog):
+    """Each record's message, the only text the observability runtime keeps.
+
+    Its log handler drops a record's ``extra`` fields, so what an operator
+    needs has to be in the message itself.
+    """
+    return [record.getMessage() for record in caplog.records]
+
+
 def test_readiness_reports_a_reached_database_with_every_privilege():
     database = FakeSimulationDatabase()
     with _client(FakeBackend(), database) as client:
@@ -58,12 +72,15 @@ def test_readiness_reports_a_reached_database_with_every_privilege():
     assert result.status_code == 200
     assert result.json() == {
         "status": "ready",
-        "simulation_database": {"reachable": True, "missing_privileges": []},
+        "simulation_database": {"reachable": True, "has_required_privileges": True},
     }
     assert database.checks == 1
 
 
-def test_readiness_names_the_privileges_the_role_lacks():
+def test_readiness_says_only_that_privileges_are_missing_and_logs_their_names(
+    caplog,
+):
+    """The route is public, so the names go to the service's own log."""
     database = FakeSimulationDatabase(
         missing_privileges=["INSERT on reports", "SELECT on policies"]
     )
@@ -73,11 +90,45 @@ def test_readiness_names_the_privileges_the_role_lacks():
     assert result.status_code == 200
     assert result.json() == {
         "status": "ready",
-        "simulation_database": {
-            "reachable": True,
-            "missing_privileges": ["INSERT on reports", "SELECT on policies"],
-        },
+        "simulation_database": {"reachable": True, "has_required_privileges": False},
     }
+    assert "INSERT on reports" not in result.text
+    assert (
+        f"{MISSING_PRIVILEGES_LOG_EVENT}: INSERT on reports, SELECT on policies"
+        in _log_messages(caplog)
+    )
+
+
+def test_a_role_with_every_privilege_logs_nothing_about_privileges(caplog):
+    with _client(FakeBackend(), FakeSimulationDatabase()) as client:
+        client.get("/ready")
+
+    assert not any(
+        MISSING_PRIVILEGES_LOG_EVENT in message for message in _log_messages(caplog)
+    )
+
+
+def test_missing_privileges_are_logged_in_messages_the_log_keeps_whole():
+    """The observability runtime cuts a message at its string limit."""
+    missing = [f"INSERT on modelled_table_number_{number}" for number in range(80)]
+
+    messages = missing_privilege_log_messages(missing)
+
+    assert len(messages) > 1
+    assert all(
+        len(message) <= TelemetryLimits().max_string_length for message in messages
+    )
+    assert all(
+        message.startswith(f"{MISSING_PRIVILEGES_LOG_EVENT}: ") for message in messages
+    )
+    logged = [
+        name
+        for message in messages
+        for name in message.removeprefix(f"{MISSING_PRIVILEGES_LOG_EVENT}: ").split(
+            ", "
+        )
+    ]
+    assert logged == missing
 
 
 def test_an_unreachable_database_does_not_change_old_gateway_readiness(caplog):
@@ -88,9 +139,9 @@ def test_an_unreachable_database_does_not_change_old_gateway_readiness(caplog):
     assert result.status_code == 200
     assert result.json() == {
         "status": "ready",
-        "simulation_database": {"reachable": False, "missing_privileges": None},
+        "simulation_database": {"reachable": False, "has_required_privileges": None},
     }
-    assert "simulation_database_unreachable" in caplog.text
+    assert "simulation_database_unreachable: OperationalError" in _log_messages(caplog)
     assert "secret" not in caplog.text
 
 
@@ -102,7 +153,7 @@ def test_readiness_waits_only_briefly_for_the_database(monkeypatch):
     with _client(FakeBackend(), slow_database) as client:
         database = client.get("/ready").json()["simulation_database"]
 
-    assert database == {"reachable": False, "missing_privileges": None}
+    assert database == {"reachable": False, "has_required_privileges": None}
 
 
 def test_readiness_still_follows_the_old_gateway():
@@ -114,7 +165,7 @@ def test_readiness_still_follows_the_old_gateway():
     assert result.status_code == 503
     assert result.json() == {
         "status": "not_ready",
-        "simulation_database": {"reachable": True, "missing_privileges": []},
+        "simulation_database": {"reachable": True, "has_required_privileges": True},
     }
 
 
@@ -312,5 +363,5 @@ def test_a_disposed_database_reports_every_later_check_as_failed(monkeypatch):
 
     assert result.json()["simulation_database"] == {
         "reachable": False,
-        "missing_privileges": None,
+        "has_required_privileges": None,
     }

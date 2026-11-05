@@ -52,13 +52,18 @@ the candidate check below fails.
 `GET /ready` reports, under `simulation_database`, whether the check of the
 database succeeded within three seconds (`reachable`; false when the
 database wasn't reached, refused the role's login, or didn't answer in time)
-and which table privileges its role lacks
-(`missing_privileges`, such as `"INSERT on reports"`; the list is in
-`libs/policyengine-simulation-persistence`). The database does not change the
-readiness status, because no old-gateway or Stage 12 route uses it. The
-candidate smoke check (`REQUIRE_SIMULATION_DATABASE_ACCESS=true`) requires the
-database reached with no privilege missing, which shows that the role's URL
-reached the revision and that the role holds its grants. While the check
+and whether its role holds every privilege the service needs
+(`has_required_privileges`; null when the check failed; the list is in
+`libs/policyengine-simulation-persistence`). The route is public, so it says
+only yes or no. The service's log says why: a `simulation_database_unreachable`
+message names the error's type, and `simulation_database_missing_privileges`
+messages name each privilege missing, such as `INSERT on reports`. The
+database does not change the readiness status, because no old-gateway or
+Stage 12 route uses it. The candidate smoke check
+(`REQUIRE_SIMULATION_DATABASE_ACCESS=true`) requires the database reached with
+every privilege held, which shows that the role's URL reached the revision and
+that the role holds its grants, and points to the revision's Cloud Run logs
+when it fails. While the check
 fails, as it does for a cold candidate that hasn't reached its database yet,
 it asks again, up to six requests in all; a database that answers with a
 privilege missing fails at once. The stable

@@ -26,10 +26,11 @@ previous_revision="${3:-}"
 # This is the identity the gateway reports from the routing registry; the
 # numerical release sentinel checks what the worker computes.
 # REQUIRE_SIMULATION_DATABASE_ACCESS=true (candidate checks only): /ready must
-# report the simulation service's database reached, with no table privilege
-# missing, which shows that the role's URL reached the revision and the role
-# holds its grants. Stable and rollback checks leave it unset, because an
-# older image may not use the database.
+# report the simulation service's database reached, with every privilege its
+# role needs held, which shows that the role's URL reached the revision and the
+# role holds its grants. /ready only says yes or no; the revision's Cloud Run
+# logs say why. Stable and rollback checks leave it unset, because an older
+# image may not use the database.
 require_database_access="${REQUIRE_SIMULATION_DATABASE_ACCESS:-}"
 expected_identity="${EXPECTED_IDENTITY:-none}"
 expected_policyengine_version="${EXPECTED_POLICYENGINE_VERSION:-}"
@@ -167,10 +168,14 @@ if [ "${require_database_access}" = "true" ]; then
   done
   if ! jq -e '
     .simulation_database.reachable == true
-    and .simulation_database.missing_privileges == []
+    and .simulation_database.has_required_privileges == true
   ' <<<"${ready_body}" >/dev/null; then
     printf '%s: the simulation service cannot use the simulation database: %s\n' \
       "${base_url}" "$(jq -c '.simulation_database' <<<"${ready_body}")" >&2
+    printf '%s %s %s\n' \
+      "The revision's Cloud Run logs say why: look for" \
+      "simulation_database_unreachable (with the error's type) or" \
+      "simulation_database_missing_privileges (with each one missing)." >&2
     exit 1
   fi
 fi

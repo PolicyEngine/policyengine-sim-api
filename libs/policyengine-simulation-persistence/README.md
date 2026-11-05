@@ -49,7 +49,7 @@ check in a transaction whose `statement_timeout` it sets with `set_config`,
 local to the transaction, so the database ends any statement of the check
 that runs too long;
 the Simulation Entrypoint's readiness check uses it, on a thread of its own,
-and reports the result.
+reports whether any privilege is missing, and logs the names.
 
 ## Tests
 

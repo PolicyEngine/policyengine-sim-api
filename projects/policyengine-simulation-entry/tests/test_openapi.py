@@ -145,7 +145,7 @@ def test_readiness_documents_the_simulation_database_check():
     assert schema == {
         "$ref": "#/components/schemas/SimulationEntrypointReadinessResponse"
     }
-    assert set(database["properties"]) == {"reachable", "missing_privileges"}
+    assert set(database["properties"]) == {"reachable", "has_required_privileges"}
 
 
 def test_route_table_is_frozen():

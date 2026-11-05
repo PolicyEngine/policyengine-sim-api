@@ -106,13 +106,15 @@ def test_the_candidate_smoke_requires_access_to_the_database():
     assert smoke["env"]["REQUIRE_SIMULATION_DATABASE_ACCESS"] == "true"
 
 
-def _ready_body(*, reachable=True, missing_privileges=()):
+def _ready_body(*, reachable=True, has_required_privileges=True):
     return json.dumps(
         {
             "status": "ready",
             "simulation_database": {
                 "reachable": reachable,
-                "missing_privileges": (list(missing_privileges) if reachable else None),
+                "has_required_privileges": (
+                    has_required_privileges if reachable else None
+                ),
             },
         }
     )
@@ -144,7 +146,7 @@ def test_the_smoke_accepts_a_reached_database_with_every_privilege(tmp_path):
     "ready_body",
     [
         _ready_body(reachable=False),
-        _ready_body(missing_privileges=["INSERT on simulation_runs"]),
+        _ready_body(has_required_privileges=False),
         json.dumps({"status": "ready"}),
     ],
     ids=["unreachable", "missing-privilege", "unconfigured"],
@@ -156,14 +158,19 @@ def test_the_smoke_rejects_a_database_the_service_cannot_use(tmp_path, ready_bod
     assert "simulation database" in result.stderr
 
 
-def test_the_smoke_names_the_missing_privileges(tmp_path):
-    result = _run_smoke(
-        tmp_path,
-        _ready_body(missing_privileges=["INSERT on simulation_runs"]),
-        require="true",
-    )
+@pytest.mark.parametrize(
+    "ready_body",
+    [_ready_body(reachable=False), _ready_body(has_required_privileges=False)],
+    ids=["unreachable", "missing-privilege"],
+)
+def test_the_smoke_points_to_the_cloud_run_logs_for_the_cause(tmp_path, ready_body):
+    """/ready only says yes or no; the service logs what is wrong."""
+    result = _run_smoke(tmp_path, ready_body, require="true")
 
-    assert "INSERT on simulation_runs" in result.stderr
+    assert result.returncode == 1
+    assert "Cloud Run logs" in result.stderr
+    assert "simulation_database_unreachable" in result.stderr
+    assert "simulation_database_missing_privileges" in result.stderr
 
 
 def _run_smoke_with_ready_bodies(tmp_path, bodies):
@@ -209,7 +216,7 @@ def test_the_smoke_stops_waiting_for_an_unreachable_database(tmp_path):
 def test_the_smoke_does_not_wait_for_privileges_the_role_lacks(tmp_path):
     result, ready_requests = _run_smoke_with_ready_bodies(
         tmp_path,
-        [_ready_body(missing_privileges=["SELECT on policies"]), _ready_body()],
+        [_ready_body(has_required_privileges=False), _ready_body()],
     )
 
     assert result.returncode == 1

@@ -7,18 +7,51 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import TYPE_CHECKING
 
+from policyengine_observability import TelemetryLimits
 from policyengine_simulation_persistence import (
     create_simulation_engine,
     read_missing_table_privileges,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from sqlalchemy import Engine
 
 # The readiness check stops waiting after three seconds; the database ends
 # each statement of the check that runs longer than this, once connected.
 READINESS_STATEMENT_TIMEOUT_MILLISECONDS = 2000
 READINESS_THREAD_NAME_PREFIX = "simulation-database-readiness"
+
+# The readiness route is public, so it only says whether the check failed or a
+# privilege is missing; these log messages say which. The observability
+# runtime's log handler keeps a record's message but not its ``extra`` fields,
+# so everything an operator needs is in the message.
+UNREACHABLE_LOG_EVENT = "simulation_database_unreachable"
+MISSING_PRIVILEGES_LOG_EVENT = "simulation_database_missing_privileges"
+# The runtime cuts a longer message; a long list is logged in several.
+LOG_MESSAGE_MAX_CHARACTERS = TelemetryLimits().max_string_length
+
+
+def missing_privilege_log_messages(missing_privileges: Sequence[str]) -> list[str]:
+    """Name every missing privilege, in order, in messages kept whole.
+
+    Each message is ``"simulation_database_missing_privileges: <name>, …"``
+    and no longer than ``LOG_MESSAGE_MAX_CHARACTERS``.
+    """
+    prefix = f"{MISSING_PRIVILEGES_LOG_EVENT}: "
+    messages: list[str] = []
+    names_in_message: list[str] = []
+    for name in missing_privileges:
+        longer = prefix + ", ".join([*names_in_message, name])
+        if names_in_message and len(longer) > LOG_MESSAGE_MAX_CHARACTERS:
+            messages.append(prefix + ", ".join(names_in_message))
+            names_in_message = [name]
+        else:
+            names_in_message.append(name)
+    if names_in_message:
+        messages.append(prefix + ", ".join(names_in_message))
+    return messages
 
 
 class SimulationDatabase:

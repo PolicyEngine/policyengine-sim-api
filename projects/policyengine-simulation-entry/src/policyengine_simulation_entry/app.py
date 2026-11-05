@@ -70,7 +70,11 @@ from policyengine_simulation_entry.schemas import (
     TemporaryStage12ReportResponse,
     TemporaryStage12SubmissionResponse,
 )
-from policyengine_simulation_entry.simulation_database import SimulationDatabase
+from policyengine_simulation_entry.simulation_database import (
+    UNREACHABLE_LOG_EVENT,
+    SimulationDatabase,
+    missing_privilege_log_messages,
+)
 from policyengine_simulation_entry.stage12_backend import (
     Stage12ComparisonBackend,
     TemporaryStage12DispatchFailed,
@@ -470,7 +474,11 @@ def _register_simulation_routes(
 async def _simulation_database_readiness(
     database: SimulationDatabaseConnection,
 ) -> SimulationDatabaseReadiness:
-    """Report whether the database check succeeded, and what the role lacks."""
+    """Say whether the check succeeded and the role holds every privilege.
+
+    The route is public, so the response says only yes or no; the log names
+    the failure's type or each missing privilege.
+    """
     try:
         missing_privileges = await asyncio.wait_for(
             database.missing_privileges(),
@@ -479,13 +487,15 @@ async def _simulation_database_readiness(
     # Any failure to reach or read the database is reported, never raised:
     # the old-gateway routes this check covers do not use it.
     except Exception as error:  # noqa: BLE001  # reported as unreachable
-        logger.warning(
-            "simulation_database_unreachable",
-            extra={"error_type": type(error).__name__},
+        # The type only: a driver's message can echo connection details.
+        logger.warning("%s: %s", UNREACHABLE_LOG_EVENT, type(error).__name__)
+        return SimulationDatabaseReadiness(
+            reachable=False, has_required_privileges=None
         )
-        return SimulationDatabaseReadiness(reachable=False, missing_privileges=None)
+    for message in missing_privilege_log_messages(missing_privileges):
+        logger.warning("%s", message)
     return SimulationDatabaseReadiness(
-        reachable=True, missing_privileges=tuple(missing_privileges)
+        reachable=True, has_required_privileges=not missing_privileges
     )
 
 
