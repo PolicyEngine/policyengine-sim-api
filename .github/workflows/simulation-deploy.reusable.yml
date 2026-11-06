@@ -386,9 +386,11 @@ jobs:
     # Adds the release's routes (its policyengine.py version and its US and UK
     # model versions, mapped to the deployed app) and its bundle manifest, so
     # the checks, which pin those versions, reach the release through the
-    # gateway. latest is left alone: publish_latest moves it after every
-    # check. No check is upstream of this job, so rerunning failed jobs never
-    # republishes the routes, and a failed check leaves them in place.
+    # gateway. latest is left alone (except in a routing state with no
+    # latest yet, the first publication, where this release becomes latest):
+    # publish_latest moves it after every check. No check is upstream of this
+    # job, so rerunning failed jobs never republishes the routes, and a failed
+    # check leaves them in place.
     if: ${{ inputs.deploy_existing_stack }}
     needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor]
     runs-on: ubuntu-latest
@@ -1064,6 +1066,20 @@ jobs:
           EXPECTED_UK_DATASET_SHA256: ${{ needs.prepare.outputs.uk_dataset_sha256 }}
           EXPECTED_LATEST: ${{ steps.plan.outputs.advances_latest == 'true' && 'true' || '' }}
         run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${VERIFY_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"
+
+      - name: Verify unpinned requests reach the release through the custom hostname
+        if: ${{ inputs.promote_entrypoint && vars.SIMULATION_ENTRYPOINT_CUSTOM_URL != '' }}
+        env:
+          CUSTOM_URL: ${{ vars.SIMULATION_ENTRYPOINT_CUSTOM_URL }}
+          TARGET_REVISION: ${{ needs.deploy_entrypoint.outputs.revision }}
+          PREVIOUS_REVISION: ${{ inputs.promote_entrypoint && needs.deploy_entrypoint.outputs.previous_revision || '' }}
+          EXPECTED_IDENTITY: required
+          EXPECTED_APP_NAME: ${{ needs.deploy_executor.outputs.app_name }}
+          EXPECTED_POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
+          EXPECTED_UK_MODEL_VERSION: ${{ needs.prepare.outputs.uk_version }}
+          EXPECTED_UK_DATASET_SHA256: ${{ needs.prepare.outputs.uk_dataset_sha256 }}
+          EXPECTED_LATEST: ${{ steps.plan.outputs.advances_latest == 'true' && 'true' || '' }}
+        run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${CUSTOM_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"
 
       - name: Complete the latest publication
         working-directory: projects/policyengine-simulation-executor

@@ -21,12 +21,12 @@ if TYPE_CHECKING:
 
 # --- Routing plans: publish exactly once, restore exactly what was replaced ---
 #
-# A deployment writes its plan (the routing state before and after publishing)
+# A deployment writes each plan (the routing state before and after publishing)
 # before it changes anything, keeps it as a workflow artifact, then applies
-# it. A failed release is undone by restoring the plan's "before" state, but
-# only while the live state is still the plan's "after" state: a restore never
-# overwrites a change made by anyone else, and a plan that was never applied
-# restores nothing.
+# it: a routes plan before its checks and a latest plan after them. A plan is
+# undone by restoring its "before" state, but only while the live state is
+# still its "after" state: a restore never overwrites a change made by anyone
+# else, and a plan that was never applied restores nothing.
 
 ROUTING_PLAN_SCHEMA = "policyengine-simulation.routing-plan/v1"
 

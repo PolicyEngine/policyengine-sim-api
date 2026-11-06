@@ -50,7 +50,12 @@ def record_routing_plan(*, environment: str, plan: dict) -> None:
 
 
 def complete_routing_plan(*, environment: str, plan: dict) -> None:
-    """Acknowledge the owning release only after all its gates have passed."""
+    """Mark the pending publication completed once its plan's state is live.
+
+    The deployment's routes job completes its routes plan right after
+    publishing it, before the checks; its latest job completes its latest
+    plan after checking that unpinned requests reach the release.
+    """
     require_serialized_routing_workflow()
     validate_routing_plan(plan)
     store = routing_store(environment, create_if_missing=False)

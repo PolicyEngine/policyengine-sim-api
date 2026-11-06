@@ -58,7 +58,9 @@ A deployment publishes routing twice (rule `sim.deploy.latest-moves-after-checks
 
 1. **Before its checks**, `update_routing` adds the release's routes (its
    policyengine.py version and its US and UK model versions, mapped to the
-   deployed app) and its bundle manifest, and leaves `latest` alone. The checks
+   deployed app) and its bundle manifest, and leaves `latest` alone (only the
+   first publication into an empty routing state makes the release latest,
+   since no earlier release exists to keep). The checks
    pin those versions, so they reach the release through the gateway, while
    unpinned requests still reach the previous release. Requests that pin one of
    the release's US or UK model versions without a policyengine.py version reach

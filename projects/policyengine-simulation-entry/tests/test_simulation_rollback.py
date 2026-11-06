@@ -248,10 +248,23 @@ def test_rollback_verifies_the_whole_restored_identity():
     )
 
 
-def _inventory_job(*, job=None, step=None, conclusion="success", target="prod"):
+def _inventory_job(
+    *,
+    job=None,
+    step=None,
+    conclusion="success",
+    target="prod",
+    started_at="2026-11-05T00:00:00Z",
+):
+    """Return a job as an attempt's job list shows it.
+
+    A rerun lists the jobs it carried over from the attempt before with
+    their original ``started_at`` and steps, and uploads nothing for them.
+    """
     return {
         "name": job
         or f"Complete {target} deployment / Publish routing after all services pass",
+        "started_at": started_at,
         "steps": [
             {
                 "name": step or "Keep the plan for a guarded restore",
@@ -270,7 +283,11 @@ def _fake_gh(
     """Return API JSON and execute the restore script's real --jq filter with jq."""
     payloads = {}
     for attempt in range(1, attempts + 1):
-        jobs = [_inventory_job() for _ in range(kept.get(attempt, 0))]
+        # Each attempt's routes job ran in that attempt, so its start differs.
+        jobs = [
+            _inventory_job(started_at=f"2026-11-05T{attempt:02d}:00:00Z")
+            for _ in range(kept.get(attempt, 0))
+        ]
         # These are real-looking jobs/steps which must never count as a kept
         # plan. Dropping any job, step, or success selector changes the result.
         jobs.extend(
@@ -377,6 +394,34 @@ def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
     ]
 
 
+ROUTES_STARTED = "2026-11-05T14:04:57Z"
+FIRST_LATEST_STARTED = "2026-11-05T14:40:00Z"
+SECOND_LATEST_STARTED = "2026-11-06T09:00:00Z"
+
+
+def _rerun_of_the_latest_job() -> dict[int, list[dict]]:
+    """Attempt 1 ran both jobs; attempt 2 reran only the latest job.
+
+    Attempt 2's job list still shows the routes job, carried over with
+    attempt 1's start time, as GitHub lists it (run 42040665530).
+    """
+    routes = _inventory_job(started_at=ROUTES_STARTED)
+    return {
+        1: [
+            routes,
+            _inventory_job(
+                job=LATEST_JOB, step=LATEST_KEEP_STEP, started_at=FIRST_LATEST_STARTED
+            ),
+        ],
+        2: [
+            routes,
+            _inventory_job(
+                job=LATEST_JOB, step=LATEST_KEEP_STEP, started_at=SECOND_LATEST_STARTED
+            ),
+        ],
+    }
+
+
 def test_rollback_passes_each_attempts_routes_then_latest_plan_oldest_first(
     tmp_path,
 ):
@@ -385,16 +430,12 @@ def test_rollback_passes_each_attempts_routes_then_latest_plan_oldest_first(
     Attempt 1 published the routes and moved latest, which a check put back;
     attempt 2 reran only the latest job and moved latest again.
     """
-    latest_kept = _inventory_job(job=LATEST_JOB, step=LATEST_KEEP_STEP)
     result = _run_restore(
         tmp_path,
         2,
-        {1: 1},
+        {},
         present=[_latest_plan(2), _routes_plan(1), _latest_plan(1)],
-        inventory={
-            1: [_inventory_job(), latest_kept],
-            2: [latest_kept],
-        },
+        inventory=_rerun_of_the_latest_job(),
     )
     assert result.returncode == 0, result.stderr
     passed = result.stdout.split("--restore-plan\n", 1)[1].split()
@@ -405,14 +446,26 @@ def test_rollback_passes_each_attempts_routes_then_latest_plan_oldest_first(
     ]
 
 
-def test_rollback_refuses_when_an_attempts_latest_plan_is_missing(tmp_path):
-    latest_kept = _inventory_job(job=LATEST_JOB, step=LATEST_KEEP_STEP)
+def test_rollback_needs_no_plan_from_a_job_a_rerun_carried_over(tmp_path):
+    """Attempt 2 lists attempt 1's routes job but uploaded no routes plan."""
     result = _run_restore(
         tmp_path,
         2,
-        {1: 1},
+        {},
+        present=[_routes_plan(1), _latest_plan(1), _latest_plan(2)],
+        inventory=_rerun_of_the_latest_job(),
+    )
+    assert result.returncode == 0, result.stderr
+    assert _routes_plan(2) not in result.stdout
+
+
+def test_rollback_refuses_when_an_attempts_latest_plan_is_missing(tmp_path):
+    result = _run_restore(
+        tmp_path,
+        2,
+        {},
         present=[_routes_plan(1), _latest_plan(1)],
-        inventory={1: [_inventory_job(), latest_kept], 2: [latest_kept]},
+        inventory=_rerun_of_the_latest_job(),
     )
     assert result.returncode == 1
     assert "Attempt 2 of run 1 kept a prod latest plan that cannot be found" in (

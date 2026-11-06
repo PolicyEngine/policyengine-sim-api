@@ -533,7 +533,7 @@ invocation = "uv run --frozen pytest tests/"
 [[rule]]
 id = "sim.deploy.routing-publication-journaled"
 category = "deployment"
-statement = "Each routing publication is named by its run, attempt and environment and journaled before it is applied; an always-running finalizer resolves it from the journal with the release-gate outcome, a release reports success only after that finalizer completes, and routing jobs never tolerate a failed command."
+statement = "Each routing publication is named by its run, attempt and environment and journaled before it is applied; the job that applies it completes it, an always-running finalizer resolves from the journal, with the release-gate outcome, any publication a job left unfinished, a release reports success only after that finalizer completes, and routing jobs never tolerate a failed command."
 rationale = "projects/policyengine-simulation-executor/README.md#routing-publication-and-rollback"
 scope = [".github/workflows/simulation-deploy.reusable.yml", ".github/workflows/simulation-rollback.yml", ".github/scripts/routing-*.sh"]
 tier = "mechanical"
@@ -563,7 +563,7 @@ invocation = "uv run --frozen pytest tests/"
 [[rule]]
 id = "sim.deploy.latest-moves-after-checks"
 category = "deployment"
-statement = "A deployment publishes its release's routes before its checks without moving latest, and moves latest only after every check and the Cloud Run promotion pass, then checks that unpinned requests reach the release and puts latest back if a later step fails; no check is upstream of the routes job, so rerunning failed jobs never republishes the routes."
+statement = "A deployment publishes its release's routes before its checks without moving latest (unless no release is latest yet), and moves latest only after every check and the Cloud Run promotion pass, then checks that unpinned requests reach the release and puts latest back if a later step fails; no check is upstream of the routes job, so rerunning failed jobs never republishes the routes."
 rationale = "projects/policyengine-simulation-executor/README.md#routing-publication-and-rollback"
 scope = [".github/workflows/simulation-deploy.reusable.yml", ".github/scripts/routing-*.sh"]
 tier = "mechanical"
@@ -582,6 +582,7 @@ nodes = [
   "tests/test_deployment_assets_latest.py::test_the_latest_check_expects_latest_only_when_the_release_advances_it",
   "tests/test_deployment_assets_latest.py::test_the_latest_check_reads_the_url_callers_use",
   "tests/test_deployment_assets_latest.py::test_the_checks_before_latest_moves_do_not_expect_latest",
+  "tests/test_deployment_assets_latest.py::test_the_latest_check_also_reads_a_configured_custom_hostname",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"

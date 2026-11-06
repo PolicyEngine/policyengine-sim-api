@@ -257,3 +257,41 @@ def test_the_checks_before_latest_moves_do_not_expect_latest():
     for step in smoke_steps:
         assert "EXPECTED_LATEST" not in step.get("env", {})
     assert "EXPECTED_LATEST" not in jobs["promote_entrypoint"]["env"]
+
+
+@pytest.mark.parametrize(
+    ("promote", "custom_url", "runs"),
+    [
+        (True, "https://simulation.example.org", True),
+        (True, "", False),
+        (False, "https://simulation.example.org", False),
+    ],
+    ids=["promoted-with-custom-hostname", "no-custom-hostname", "not-promoted"],
+)
+def test_the_latest_check_also_reads_a_configured_custom_hostname(
+    promote, custom_url, runs
+):
+    latest = _jobs()[LATEST_JOB]
+    verify = _step(latest, "Verify unpinned requests reach the release")
+    custom = _step(
+        latest, "Verify unpinned requests reach the release through the custom hostname"
+    )
+    context = routing_context(inputs__promote_entrypoint=promote)
+    context["vars"] = {"SIMULATION_ENTRYPOINT_CUSTOM_URL": custom_url}
+
+    names = [step.get("name") for step in latest["steps"]]
+    assert (
+        names.index(verify["name"])
+        < names.index(custom["name"])
+        < names.index("Complete the latest publication")
+    )
+    assert bool(evaluate_github_expression(custom["if"], context)) is runs
+    assert custom["env"]["CUSTOM_URL"] == "${{ vars.SIMULATION_ENTRYPOINT_CUSTOM_URL }}"
+    assert custom["run"] == (
+        f'.github/scripts/{SMOKE} "${{CUSTOM_URL}}" '
+        '"${TARGET_REVISION}" "${PREVIOUS_REVISION}"'
+    )
+    # The same identity and latest expectation as the stable URL's check.
+    assert {
+        key: value for key, value in custom["env"].items() if key != "CUSTOM_URL"
+    } == {key: value for key, value in verify["env"].items() if key != "VERIFY_URL"}

@@ -18,7 +18,8 @@ def routing_argument_parser() -> argparse.ArgumentParser:
             f"Writes require GitHub Actions in {CANONICAL_GITHUB_REPOSITORY}\n"
             "through one of these workflows:\n"
             + "\n".join(sorted(SERIALIZED_ROUTING_WORKFLOW_FILES))
-            + "\nRead-only, --dry-run and --plan-out modes are available locally."
+            + "\nRead-only views and the --dry-run, --plan-out and"
+            + "\n--plan-latest-out modes are available locally."
         ),
     )
     parser.add_argument(
