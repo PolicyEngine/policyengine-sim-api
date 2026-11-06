@@ -30,6 +30,9 @@ dependencies = [
     "google-cloud-storage>=2",
     # Imported directly by the UK private-data credential verifier.
     "huggingface-hub>=1,<2",
+    # Imported directly by the run-time dataset download retry, which reads
+    # the errors policyengine.py's downloads raise.
+    "requests>=2.32,<3",
     "pyarrow>=20,<24",
 ]
 

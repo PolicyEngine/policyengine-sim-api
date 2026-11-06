@@ -1909,6 +1909,7 @@ dependencies = [
     { name = "policyengine-stage12-persistence" },
     { name = "pyarrow" },
     { name = "pydantic-settings" },
+    { name = "requests" },
     { name = "tables" },
 ]
 
@@ -1963,6 +1964,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.25.3" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.1.1" },
+    { name = "requests", specifier = ">=2.32,<3" },
     { name = "tables", specifier = ">=3.10.2" },
 ]
 provides-extras = ["test", "build"]
