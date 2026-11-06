@@ -64,7 +64,8 @@ must match. `test_service_writes` creates a row in every modelled table as
 the service's role. Another test, outside the rule, requires the modelled
 tables' foreign keys to the Public API's users, policies, dynamics,
 households, datasets, regions and model catalog tables to be exactly the 20
-in `tests/public_api_keys.py`, so a change to them shows even if the models
+in `tests/public_api_keys.py`, by name and the table each names, so a key
+dropped, added, renamed or pointed at another table shows even if the models
 follow it. Last, the job requires the
 pinned commit to be on the Public API's `master` branch, so the models only
 ever describe a chain the Public API has merged.

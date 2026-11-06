@@ -109,6 +109,29 @@ def test_each_foreign_key_is_read_with_the_table_it_names() -> None:
     }
 
 
+def test_quoted_names_are_read_whole() -> None:
+    """A quoted name may hold a dot, a parenthesis or a doubled quote."""
+    schema = _simulation_runs(
+        constraints={
+            "fk_simulation_runs_owner": (
+                'FOREIGN KEY (owner_id) REFERENCES "Auth"."Users"(id)'
+            ),
+            "fk_simulation_runs_odd": (
+                'FOREIGN KEY (odd_id) REFERENCES "odd.name(1)"(id)'
+            ),
+            "fk_simulation_runs_quote": (
+                'FOREIGN KEY ("quote id") REFERENCES "say ""hi"""(id)'
+            ),
+        }
+    )
+
+    targets = foreign_key_targets(schema)
+
+    assert targets[("simulation_runs", "fk_simulation_runs_owner")] == "Auth.Users"
+    assert targets[("simulation_runs", "fk_simulation_runs_odd")] == "odd.name(1)"
+    assert targets[("simulation_runs", "fk_simulation_runs_quote")] == 'say "hi"'
+
+
 def test_a_foreign_key_whose_table_cannot_be_read_is_refused() -> None:
     """A key left uncounted would hide from a check of which keys exist."""
     schema = _simulation_runs(

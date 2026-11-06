@@ -33,8 +33,8 @@ if TYPE_CHECKING:
 ENUM_PREFIX = "enum "
 # An identifier as PostgreSQL writes it: quoted, with "" for a quote, or bare.
 _IDENTIFIER = r'"(?:[^"]|"")+"|[^\s".(]+'
-# The table a foreign key's definition names, qualified by its schema when
-# that schema isn't on the search path.
+# The table a foreign key's definition names. PostgreSQL qualifies it by its
+# schema whenever the bare name wouldn't find that table on the search path.
 _FOREIGN_KEY_TARGET = re.compile(
     rf"^FOREIGN KEY \(.+?\) REFERENCES (?:(?P<schema>{_IDENTIFIER})\.)?"
     rf"(?P<table>{_IDENTIFIER})\("
