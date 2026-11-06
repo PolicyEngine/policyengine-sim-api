@@ -533,7 +533,7 @@ invocation = "uv run --frozen pytest tests/"
 [[rule]]
 id = "sim.deploy.routing-publication-journaled"
 category = "deployment"
-statement = "Each routing publication is named by its run, attempt and environment and journaled before it is applied; the job that applies it completes it, an always-running finalizer resolves from the journal, with the release-gate outcome, any publication a job left unfinished, a release reports success only after that finalizer completes, and routing jobs never tolerate a failed command."
+statement = "Each routing publication is named by its run, attempt and environment and journaled before it is applied; the job that applies it completes it, an always-running finalizer resolves from the journal, with the outcome of the release checks, any publication a job left unfinished, a release reports success only after that finalizer completes, and routing jobs never tolerate a failed command."
 rationale = "projects/policyengine-simulation-executor/README.md#routing-publication-and-rollback"
 scope = [".github/workflows/simulation-deploy.reusable.yml", ".github/workflows/simulation-rollback.yml", ".github/scripts/routing-*.sh"]
 tier = "mechanical"

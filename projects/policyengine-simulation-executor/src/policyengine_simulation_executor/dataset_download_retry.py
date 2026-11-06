@@ -58,12 +58,13 @@ def is_transient_download_failure(error: requests.RequestException) -> bool:
 
     Transient: a connection error (including a read timeout while the body
     streams, which requests raises as a ConnectionError), a timeout before a
-    response, a body cut off mid-transfer, and a 5xx response. policyengine.py
-    raises ``DatasetMaterializationError``, not a requests error, for 401, 403
-    and 404 responses and for a SHA-256 mismatch, so those never reach this
-    check; any other 4xx response, including a 429 rate limit, is not
-    transient either. A TLS failure, certificate verification included, is a
-    ConnectionError, so it is retried like any other connection failure.
+    response, a response body truncated mid-transfer, and a 5xx response.
+    policyengine.py raises ``DatasetMaterializationError``, not a requests
+    error, for 401, 403 and 404 responses and for a SHA-256 mismatch, so
+    those never reach this check; any other 4xx response, including a 429
+    rate limit, is not transient either. A TLS failure, certificate
+    verification included, is a ConnectionError, so it is retried like any
+    other connection failure.
     """
     if isinstance(error, requests.HTTPError):
         response = error.response

@@ -362,7 +362,7 @@ def test_a_deployment_rollback_undoes_latest_and_then_the_routes(
     assert store.get("active") == before
 
 
-# --- The command line --------------------------------------------------------
+# --- The command-line interface ---------------------------------------------
 
 
 def _publishing_arguments(versions):

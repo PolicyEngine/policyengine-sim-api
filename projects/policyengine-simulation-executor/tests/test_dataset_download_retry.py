@@ -150,15 +150,17 @@ def test_a_read_timeout_while_streaming_is_retried_without_keeping_the_partial_f
 @pytest.mark.parametrize(
     "first_response",
     [
-        _FakeResponse(200, [requests.exceptions.ChunkedEncodingError("cut off")]),
+        _FakeResponse(
+            200, [requests.exceptions.ChunkedEncodingError("response ended early")]
+        ),
         _FakeResponse(500),
         _FakeResponse(502),
         _FakeResponse(503),
         _FakeResponse(504),
     ],
-    ids=["body-cut-off", "500", "502", "503", "504"],
+    ids=["body-truncated", "500", "502", "503", "504"],
 )
-def test_a_cut_off_body_or_server_error_is_retried(
+def test_a_truncated_body_or_server_error_is_retried(
     monkeypatch, tmp_path, first_response
 ):
     outcome = _download_with_responses(

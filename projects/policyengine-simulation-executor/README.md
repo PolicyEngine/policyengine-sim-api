@@ -84,8 +84,8 @@ finalizer without republishing the routes.
 
 Before uploading each plan, its job records the full plan as a pending
 publication in the routing store. The always-running `finalize_routing` job reads
-that journal after every release gate and `publish_latest`, and resolves a
-publication that a failed or cancelled job left pending: if all gates pass and
+that journal after every release check and `publish_latest`, and resolves a
+publication that a failed or cancelled job left pending: if all checks pass and
 live routing matches the planned state, it marks the publication completed;
 otherwise it restores the recorded previous state and marks it restored. When
 nothing is pending it reports the outcome this run last recorded. Finalization

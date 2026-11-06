@@ -54,11 +54,17 @@ def _load_failing_with(errors: list[Exception]):
     [
         requests.ConnectionError("Read timed out."),
         requests.exceptions.ReadTimeout("read timed out waiting for headers"),
-        requests.exceptions.ChunkedEncodingError("cut off"),
+        requests.exceptions.ChunkedEncodingError("response ended early"),
         _http_error(500),
         _http_error(503),
     ],
-    ids=["read-timeout-while-streaming", "read-timeout", "body-cut-off", "500", "503"],
+    ids=[
+        "read-timeout-while-streaming",
+        "read-timeout",
+        "body-truncated",
+        "500",
+        "503",
+    ],
 )
 def test_stage12_retries_a_transient_download_failure(transient_error) -> None:
     load, attempts = _load_failing_with([transient_error])
