@@ -37,7 +37,6 @@ _REQUIRED_DISTRICT_RESULT_KEYS = {
     "no_change_percentage",
     "population",
 }
-_AT_LARGE_DISTRICT_IDS = {"AK-01", "DC-01", "DE-01", "ND-01", "SD-01", "VT-01", "WY-01"}
 # From the generated client, so a stage added to the schema is accepted here.
 _JOB_STAGES = frozenset(stage.value for stage in JobStage)
 
@@ -241,12 +240,28 @@ def assert_congressional_district_results(
         )
 
     if expected_district_ids is not None:
-        district_ids = set(_district_ids(district_results))
-        missing = expected_district_ids - district_ids
-        assert not missing, (
-            f"Missing expected district IDs {sorted(missing)} "
-            f"from result IDs: {sorted(district_ids)}"
+        district_ids = _district_ids(district_results)
+        # Sorted lists, not sets, so a district listed twice fails too.
+        assert sorted(district_ids) == sorted(expected_district_ids), (
+            f"Expected district IDs {sorted(expected_district_ids)}, "
+            f"got {sorted(district_ids)}"
         )
+
+
+def assert_no_congressional_district_results(economy_result: object) -> None:
+    """Check a US national result has no congressional_district_impact.
+
+    Only state runs compute districts: nationwide reports take them from a
+    separate run of each state. The field is null in the run's output, and the
+    gateway's job-status response leaves null fields out, so a deployed result
+    has no such field.
+    """
+    economy_result = _as_mapping(economy_result, label="economy result")
+    district_impact = economy_result.get("congressional_district_impact")
+    assert district_impact is None, (
+        "Expected no congressional_district_impact in a US national result, "
+        f"got {district_impact!r}"
+    )
 
 
 _UK_AREA_RESULT_KEYS = ("constituency_impact", "local_authority_impact")
@@ -363,6 +378,74 @@ def test_result_assertions_accept_generated_client_objects() -> None:
 
     assert_economy_result_sections(result)
     assert_congressional_district_results(result, expected_district_prefix="UT-")
+
+
+def _state_result_with_districts(*district_ids: str) -> dict:
+    return {
+        "congressional_district_impact": {
+            "districts": [
+                {
+                    "district": district_id,
+                    "average_household_income_change": 0.0,
+                    "relative_household_income_change": 0.0,
+                    "winner_percentage": 0.0,
+                    "loser_percentage": 0.0,
+                    "no_change_percentage": 1.0,
+                    "population": 1.0,
+                }
+                for district_id in district_ids
+            ]
+        }
+    }
+
+
+def test_state_assertions_accept_an_at_large_state_with_its_one_district() -> None:
+    assert_congressional_district_results(
+        _state_result_with_districts("VT-01"),
+        expected_district_prefix="VT-",
+        expected_district_ids={"VT-01"},
+    )
+
+
+@pytest.mark.parametrize(
+    "district_ids",
+    [("VT-00",), ("VT-01", "VT-02"), ("VT-01", "VT-01")],
+    ids=["another-id", "an-extra-district", "a-repeated-district"],
+)
+def test_state_assertions_reject_other_district_ids(district_ids) -> None:
+    with pytest.raises(AssertionError, match="district IDs"):
+        assert_congressional_district_results(
+            _state_result_with_districts(*district_ids),
+            expected_district_prefix="VT-",
+            expected_district_ids={"VT-01"},
+        )
+
+
+def test_national_us_assertions_accept_a_result_without_districts() -> None:
+    assert_no_congressional_district_results(
+        _GeneratedClientObject({"budget": {}, "congressional_district_impact": None})
+    )
+    assert_no_congressional_district_results({"congressional_district_impact": None})
+    # The gateway's job-status response leaves null fields out, so a deployed
+    # national result has no district field at all.
+    assert_no_congressional_district_results({"budget": {}})
+    assert_no_congressional_district_results(_GeneratedClientObject({"budget": {}}))
+
+
+@pytest.mark.parametrize(
+    "district_impact",
+    [
+        {"districts": []},
+        {"districts": [{"district": "UT-01"}]},
+        _GeneratedClientObject({"districts": [{"district": "UT-01"}]}),
+    ],
+    ids=["no-districts-listed", "districts-listed", "generated-client-object"],
+)
+def test_national_us_assertions_reject_district_results(district_impact) -> None:
+    with pytest.raises(AssertionError, match="congressional_district_impact"):
+        assert_no_congressional_district_results(
+            {"congressional_district_impact": district_impact}
+        )
 
 
 _BREAKDOWN_CONSTITUENCY = {
@@ -680,9 +763,10 @@ def test_calculate_default_model(
 ):
     """A simulation on the default model version returns economic impact data.
 
-    Given a simulation request with default model version
+    Given a US national simulation request with default model version
     When the simulation is submitted and polled to completion
-    Then the result contains expected economic impact data.
+    Then the result contains expected economic impact data and no
+    congressional districts, which only state runs compute.
     """
     # Given
     request = SimulationRequest.from_dict(
@@ -716,10 +800,7 @@ def test_calculate_default_model(
 
     economy_result = result.result
     assert_economy_result_sections(economy_result)
-    assert_congressional_district_results(
-        economy_result,
-        expected_district_ids=_AT_LARGE_DISTRICT_IDS,
-    )
+    assert_no_congressional_district_results(economy_result)
 
 
 @pytest.mark.beta_only
@@ -786,16 +867,18 @@ def test_calculate_specific_model(
 ):
     """A simulation pinned to a specific US model version returns impact data.
 
-    Given a simulation request with a specific model version
+    Given a simulation request with a specific model version, for Vermont
     When the simulation is submitted and polled to completion
-    Then the result contains expected economic impact data.
+    Then the result contains expected economic impact data, and Vermont's one
+    at-large district: nationwide reports take each at-large district from its
+    state's own run, as here.
     """
     # Given
     request = SimulationRequest.from_dict(
         {
             "country": "us",
             "version": us_model_version,
-            "region": "state/ut",
+            "region": "state/vt",
             "scope": "macro",
             "reform": {
                 "gov.irs.credits.ctc.refundable.fully_refundable": {
@@ -830,7 +913,8 @@ def test_calculate_specific_model(
     assert_economy_result_sections(economy_result)
     assert_congressional_district_results(
         economy_result,
-        expected_district_prefix="UT-",
+        expected_district_prefix="VT-",
+        expected_district_ids={"VT-01"},
     )
 
 
