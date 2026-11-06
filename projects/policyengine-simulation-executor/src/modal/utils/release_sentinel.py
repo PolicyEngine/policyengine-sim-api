@@ -71,12 +71,14 @@ SENTINEL_CASES: tuple[dict[str, Any], ...] = (
 
 #: Job poll statuses that mean the job has not finished yet: poll again, until
 #: the polling deadline. 202 means the job is running and 429 asks for slower
-#: polling. The rest mean the stack cannot report on the job right now: the
+#: polling. The rest mean the stack cannot report on the job right now. The
 #: entrypoint answers 504 when its call to the gateway times out, as when a
 #: gateway container is preempted mid-request, and 503 when it cannot reach the
-#: gateway, and 502 comes from a proxy in front of either service, not from
-#: their code on this route. A failed job is 500 and an unknown one 404, and
-#: both stay final. Submitting is never retried.
+#: gateway or the gateway refuses its credentials; it also passes on any 502,
+#: 503 or 504 from the proxy in front of the gateway. Neither service's code
+#: answers 502 on this route. A failed job is 500, or 400 for a rejected SPM
+#: request, and an unknown one 404; these and any other status stay final.
+#: Submitting is never retried.
 _PENDING_JOB_STATUSES = frozenset(
     {
         HTTPStatus.ACCEPTED,
@@ -255,12 +257,17 @@ def access_token(environ: Mapping[str, str] = os.environ) -> str | None:
 
 
 def _retry_after(headers: Mapping[str, str], fallback: float) -> float:
+    """Return the ``Retry-After`` wait in seconds, or ``fallback`` without one.
+
+    A negative wait is none; one that is not a finite number is ignored.
+    """
     for key, value in headers.items():
         if key.lower() == "retry-after":
             try:
-                return max(0.0, float(value))
+                seconds = float(value)
             except ValueError:
                 return fallback
+            return max(0.0, seconds) if math.isfinite(seconds) else fallback
     return fallback
 
 
@@ -344,11 +351,17 @@ class _Deployment:
                 return _finished_job(label, job)
             if status not in _PENDING_JOB_STATUSES:
                 return _JobOutcome([f"{label}: job returned HTTP {status}: {job}"])
-            if self.polling.clock() >= deadline:
-                return _JobOutcome(
-                    [f"{label}: no result within {self.polling.timeout_seconds:.0f}s"]
+            now = self.polling.clock()
+            if now >= deadline:
+                problem = (
+                    f"{label}: no result within {self.polling.timeout_seconds:.0f}s"
                 )
-            self.polling.sleep(_retry_after(headers, self.polling.poll_seconds))
+                if status != HTTPStatus.ACCEPTED:
+                    problem += f"; the last poll returned HTTP {status}: {job}"
+                return _JobOutcome([problem])
+            # Never sleep past the deadline, whatever Retry-After asks.
+            wait = _retry_after(headers, self.polling.poll_seconds)
+            self.polling.sleep(min(wait, deadline - now))
 
 
 def _finished_job(label: str, job: Mapping[str, Any]) -> _JobOutcome:
