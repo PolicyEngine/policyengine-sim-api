@@ -36,15 +36,16 @@ _pg_namespace = table(
 _CREATE: Final = frozenset({"SELECT", "INSERT"})
 _READ: Final = frozenset({"SELECT"})
 
-# The service creates simulations, reports, their runs and household jobs, and
-# reads the policy, household and catalog rows a run needs.
+# The service creates simulations, reports, their runs, budget windows'
+# calculations and household jobs, and reads the policy, dynamic, household
+# and catalog rows a run needs.
 SERVICE_TABLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
     {
         "simulations": _CREATE,
         "reports": _CREATE,
         "simulation_runs": _CREATE,
         "report_runs": _CREATE,
-        "report_run_simulation_runs": _CREATE,
+        "budget_window_runs": _CREATE,
         "household_jobs": _CREATE,
         "policies": _READ,
         "households": _READ,
@@ -54,6 +55,7 @@ SERVICE_TABLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType
         "datasets": _READ,
         "parameters": _READ,
         "parameter_values": _READ,
+        "dynamics": _READ,
     }
 )
 

@@ -16,10 +16,12 @@ from uuid import uuid4
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
     Enum,
+    Float,
     ForeignKeyConstraint,
     Index,
     Integer,
@@ -32,12 +34,16 @@ from sqlalchemy import (
     Uuid,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 
 if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
 VERSION_LENGTH: Final = 128
+# A report's budget window covers at most this many years.
+MAX_BUDGET_WINDOW_YEARS: Final = 75
+LATEST_YEAR: Final = 2200
 MODAL_CALL_ID_LENGTH: Final = 255
 OUTPUT_URI_LENGTH: Final = 2048
 SHA256_LENGTH: Final = 64
@@ -60,7 +66,7 @@ class SimulationStatus(StrEnum):
 
 
 class ReportRunStatus(StrEnum):
-    """Lifecycle state of a report run."""
+    """Lifecycle state of a report run or a budget window's calculation."""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -69,18 +75,11 @@ class ReportRunStatus(StrEnum):
 
 
 class ReportRunTrigger(StrEnum):
-    """What started a report run."""
+    """What started a report run or a budget window's calculation."""
 
     INITIAL = "initial"
     MANUAL = "manual"
     SYSTEM = "system"
-
-
-class SimulationRole(StrEnum):
-    """The part a simulation run plays in a report run."""
-
-    BASELINE = "baseline"
-    REFORM = "reform"
 
 
 class HouseholdJobStatus(StrEnum):
@@ -131,7 +130,7 @@ def _terminal_completion(table_name: str) -> CheckConstraint:
 
 
 def _year_between(table_name: str, *, nullable: bool) -> CheckConstraint:
-    condition = "year BETWEEN 1900 AND 2200"
+    condition = f"year BETWEEN 1900 AND {LATEST_YEAR}"
     if nullable:
         condition = f"year IS NULL OR {condition}"
     return CheckConstraint(condition, name=f"ck_{table_name}_year")
@@ -202,6 +201,8 @@ reports = Table(
     Column("region_id", Uuid, nullable=True),
     Column("year", Integer, nullable=True),
     Column("inputs", JSON, nullable=False),
+    # The number of years from ``year`` an economy report's window covers.
+    Column("budget_window_size", Integer, nullable=True),
     PrimaryKeyConstraint("id", name="pk_reports"),
     ForeignKeyConstraint(
         ["baseline_simulation_id"],
@@ -215,6 +216,12 @@ reports = Table(
         name="fk_reports_reform_simulation_id_simulations",
         ondelete="SET NULL",
     ),
+    CheckConstraint(
+        "budget_window_size IS NULL OR (household_id IS NULL AND "
+        f"budget_window_size BETWEEN 1 AND {MAX_BUDGET_WINDOW_YEARS} AND "
+        f"year IS NOT NULL AND year + budget_window_size - 1 <= {LATEST_YEAR})",
+        name="ck_reports_budget_window_size",
+    ),
     _year_between("reports", nullable=True),
     Index("ix_reports_country_type_created_at", "country", "type", "created_at"),
     Index("ix_reports_tax_benefit_model_id", "tax_benefit_model_id"),
@@ -227,6 +234,8 @@ simulation_runs = Table(
     _timestamp("created_at", server_now=True),
     _timestamp("updated_at", server_now=True),
     Column("simulation_id", Uuid, nullable=False),
+    # The year it simulates; a budget window runs a simulation once per year.
+    Column("year", Integer, nullable=False),
     Column("tax_benefit_model_version_id", Uuid, nullable=False),
     Column("country_package_version", String(VERSION_LENGTH), nullable=False),
     Column("policyengine_version", String(VERSION_LENGTH), nullable=False),
@@ -260,9 +269,11 @@ simulation_runs = Table(
         name="ck_simulation_runs_output_sha256_length",
     ),
     _terminal_completion("simulation_runs"),
+    _year_between("simulation_runs", nullable=False),
     Index(
         "ix_simulation_runs_current_output",
         "simulation_id",
+        "year",
         "status",
         "country_package_version",
         "policyengine_version",
@@ -270,6 +281,51 @@ simulation_runs = Table(
         "id",
     ),
     Index("ix_simulation_runs_status_started_at", "status", "started_at"),
+)
+
+# One calculation of a report's budget window: a report run for each year.
+budget_window_runs = Table(
+    "budget_window_runs",
+    service_metadata,
+    _identifier(),
+    _timestamp("created_at", server_now=True),
+    _timestamp("updated_at", server_now=True),
+    Column("report_id", Uuid, nullable=False),
+    Column("tax_benefit_model_version_id", Uuid, nullable=False),
+    Column(
+        "trigger",
+        _enum_type(ReportRunTrigger, "v2_report_run_trigger"),
+        nullable=False,
+    ),
+    Column("recalculate", Boolean, nullable=False),
+    Column(
+        "status",
+        _enum_type(ReportRunStatus, "v2_report_run_status"),
+        nullable=False,
+    ),
+    Column("error_message", String, nullable=True),
+    _timestamp("started_at"),
+    _timestamp("completed_at"),
+    PrimaryKeyConstraint("id", name="pk_budget_window_runs"),
+    ForeignKeyConstraint(
+        ["report_id"],
+        [f"{TABLE_SCHEMA}.reports.id"],
+        name="fk_budget_window_runs_report_id_reports",
+        ondelete="CASCADE",
+    ),
+    # The target of report_runs' key, which keeps a year run to its window
+    # run's report.
+    UniqueConstraint("id", "report_id", name="uq_budget_window_runs_id_report"),
+    _terminal_completion("budget_window_runs"),
+    Index(
+        "ix_budget_window_runs_report_id_created_at",
+        "report_id",
+        "created_at",
+    ),
+    Index(
+        "ix_budget_window_runs_tax_benefit_model_version_id",
+        "tax_benefit_model_version_id",
+    ),
 )
 
 report_runs = Table(
@@ -296,7 +352,21 @@ report_runs = Table(
     _timestamp("completed_at"),
     Column("error_message", String, nullable=True),
     Column("markdown", Text, nullable=True),
+    # The pair it compares; a household report with only a baseline has no
+    # reform run.
+    Column("baseline_simulation_run_id", Uuid, nullable=False),
+    Column("reform_simulation_run_id", Uuid, nullable=True),
+    # Set on each year's run of a budget window, with that year.
+    Column("budget_window_run_id", Uuid, nullable=True),
+    Column("year", Integer, nullable=True),
     Column("modal_call_id", String(MODAL_CALL_ID_LENGTH), nullable=True),
+    # Cliff impact: all four values or none.
+    Column("baseline_cliff_gap", Float, nullable=True),
+    Column("baseline_cliff_share", Float, nullable=True),
+    Column("reform_cliff_gap", Float, nullable=True),
+    Column("reform_cliff_share", Float, nullable=True),
+    Column("spm_provenance", JSONB, nullable=True),
+    Column("data_version", String(VERSION_LENGTH), nullable=True),
     PrimaryKeyConstraint("id", name="pk_report_runs"),
     ForeignKeyConstraint(
         ["report_id"],
@@ -304,12 +374,51 @@ report_runs = Table(
         name="fk_report_runs_report_id_reports",
         ondelete="CASCADE",
     ),
+    ForeignKeyConstraint(
+        ["baseline_simulation_run_id"],
+        [f"{TABLE_SCHEMA}.simulation_runs.id"],
+        name="fk_report_runs_baseline_simulation_run_id_simulation_runs",
+        ondelete="RESTRICT",
+    ),
+    ForeignKeyConstraint(
+        ["reform_simulation_run_id"],
+        [f"{TABLE_SCHEMA}.simulation_runs.id"],
+        name="fk_report_runs_reform_simulation_run_id_simulation_runs",
+        ondelete="RESTRICT",
+    ),
+    # The window run belongs to the same report, and deleting it deletes its
+    # year runs.
+    ForeignKeyConstraint(
+        ["budget_window_run_id", "report_id"],
+        [
+            f"{TABLE_SCHEMA}.budget_window_runs.id",
+            f"{TABLE_SCHEMA}.budget_window_runs.report_id",
+        ],
+        name="fk_report_runs_budget_window_run_id_budget_window_runs",
+        ondelete="CASCADE",
+    ),
     UniqueConstraint(
         "report_id",
         "idempotency_key",
         name="uq_report_runs_report_idempotency_key",
     ),
+    UniqueConstraint(
+        "budget_window_run_id",
+        "year",
+        name="uq_report_runs_budget_window_run_id_year",
+    ),
+    CheckConstraint(
+        "budget_window_run_id IS NULL OR year IS NOT NULL",
+        name="ck_report_runs_budget_window_year",
+    ),
+    CheckConstraint(
+        "(baseline_cliff_gap IS NULL) = (baseline_cliff_share IS NULL) AND "
+        "(baseline_cliff_gap IS NULL) = (reform_cliff_gap IS NULL) AND "
+        "(baseline_cliff_gap IS NULL) = (reform_cliff_share IS NULL)",
+        name="ck_report_runs_cliff_impact_complete",
+    ),
     _terminal_completion("report_runs"),
+    _year_between("report_runs", nullable=True),
     Index(
         "ix_report_runs_current_output",
         "report_id",
@@ -320,39 +429,11 @@ report_runs = Table(
         "id",
     ),
     Index("ix_report_runs_status_started_at", "status", "started_at"),
-)
-
-report_run_simulation_runs = Table(
-    "report_run_simulation_runs",
-    service_metadata,
-    _identifier(),
-    _timestamp("created_at", server_now=True),
-    Column("report_run_id", Uuid, nullable=False),
-    Column("simulation_run_id", Uuid, nullable=False),
-    Column("role", _enum_type(SimulationRole, "v2_simulation_role"), nullable=False),
-    PrimaryKeyConstraint("id", name="pk_report_run_simulation_runs"),
-    ForeignKeyConstraint(
-        ["report_run_id"],
-        [f"{TABLE_SCHEMA}.report_runs.id"],
-        name="fk_report_run_simulation_runs_report_run_id_report_runs",
-        ondelete="CASCADE",
-    ),
-    ForeignKeyConstraint(
-        ["simulation_run_id"],
-        [f"{TABLE_SCHEMA}.simulation_runs.id"],
-        name="fk_report_run_simulation_runs_simulation_run_id_simulation_runs",
-        ondelete="RESTRICT",
-    ),
-    UniqueConstraint(
-        "report_run_id",
-        "role",
-        "simulation_run_id",
-        name="uq_report_run_simulation_runs_member",
-    ),
     Index(
-        "ix_report_run_simulation_runs_simulation_run_id",
-        "simulation_run_id",
+        "ix_report_runs_baseline_simulation_run_id",
+        "baseline_simulation_run_id",
     ),
+    Index("ix_report_runs_reform_simulation_run_id", "reform_simulation_run_id"),
 )
 
 household_jobs = Table(

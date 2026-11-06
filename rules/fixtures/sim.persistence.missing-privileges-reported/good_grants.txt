@@ -7,8 +7,8 @@ INSERT simulation_runs
 SELECT simulation_runs
 INSERT report_runs
 SELECT report_runs
-INSERT report_run_simulation_runs
-SELECT report_run_simulation_runs
+INSERT budget_window_runs
+SELECT budget_window_runs
 INSERT household_jobs
 SELECT household_jobs
 SELECT policies
@@ -19,3 +19,4 @@ SELECT regions
 SELECT datasets
 SELECT parameters
 SELECT parameter_values
+SELECT dynamics

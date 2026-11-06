@@ -116,20 +116,32 @@ def public_api_database_url() -> str:
 
 
 @contextmanager
-def connection_as_the_service(database_url: str) -> Iterator[Connection]:
-    """Yield a connection acting as the service's role, rolled back afterwards.
-
-    The manifest's roles may have no login in a test database, so the
-    superuser connects and takes the role for the transaction alone.
-    """
+def rolled_back_transaction(database_url: str) -> Iterator[Connection]:
+    """Yield the superuser's connection in a transaction rolled back afterwards."""
     engine = create_simulation_engine(database_url)
     try:
         with engine.connect() as connection:
             transaction = connection.begin()
             try:
-                connection.execute(text(f"SET LOCAL ROLE {SERVICE_ROLE}"))
                 yield connection
             finally:
                 transaction.rollback()
     finally:
         engine.dispose()
+
+
+def act_as_the_service(connection: Connection) -> None:
+    """Take the service's role for the rest of the connection's transaction.
+
+    The manifest's roles may have no login in a test database, so the
+    superuser connects and takes the role for the transaction alone.
+    """
+    connection.execute(text(f"SET LOCAL ROLE {SERVICE_ROLE}"))
+
+
+@contextmanager
+def connection_as_the_service(database_url: str) -> Iterator[Connection]:
+    """Yield a connection acting as the service's role, rolled back afterwards."""
+    with rolled_back_transaction(database_url) as connection:
+        act_as_the_service(connection)
+        yield connection

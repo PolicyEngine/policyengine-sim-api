@@ -21,7 +21,7 @@ URL, which holds a password.
 
 `tables.py` models, with SQLAlchemy Core, the six tables the service creates
 rows in: `simulations`, `reports`, `simulation_runs`, `report_runs`,
-`report_run_simulation_runs` and `household_jobs`, all in `service_metadata`,
+`budget_window_runs` and `household_jobs`, all in `service_metadata`,
 which names the `public` schema so writes reach those tables whatever the
 role's `search_path`.
 Each model matches the table the Public API's v2 migration chain builds:
@@ -32,13 +32,19 @@ between these tables, because another service writes the policy, household
 and catalog rows they name. Status and other enum columns use the `StrEnum`
 classes beside them and store each member's value.
 
+A report run names the two simulation runs it compares
+(`baseline_simulation_run_id`, and `reform_simulation_run_id`, empty for a
+household report with only a baseline). A report with a `budget_window_size`
+is calculated as a `budget_window_runs` row with one report run per year; each
+year's report run names that row and its year, and belongs to the same report.
+
 ## The role's privileges
 
 `SERVICE_TABLE_PRIVILEGES` lists the table privileges the service's role
 needs: `SELECT` and `INSERT` on the tables it creates rows in
 (`simulations`, `reports`, `simulation_runs`, `report_runs`,
-`report_run_simulation_runs` and `household_jobs`), and `SELECT` on the
-policy, household and catalog tables a run reads. The Public API's privilege
+`budget_window_runs` and `household_jobs`), and `SELECT` on the policy,
+dynamic, household and catalog tables a run reads. The Public API's privilege
 manifest grants them. `missing_table_privileges` returns each one the
 connected role lacks, as `"INSERT on reports"`; a table missing from the
 `public` schema lacks all of its privileges, and a role without the `USAGE`

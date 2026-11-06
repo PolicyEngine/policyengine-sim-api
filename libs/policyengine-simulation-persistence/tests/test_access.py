@@ -28,7 +28,7 @@ WRITTEN_TABLES = (
     "reports",
     "simulation_runs",
     "report_runs",
-    "report_run_simulation_runs",
+    "budget_window_runs",
     "household_jobs",
 )
 READ_TABLES = (
@@ -40,6 +40,7 @@ READ_TABLES = (
     "datasets",
     "parameters",
     "parameter_values",
+    "dynamics",
 )
 
 
