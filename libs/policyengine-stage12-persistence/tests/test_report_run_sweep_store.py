@@ -352,36 +352,49 @@ def _second_report_run(
                 trigger="manual",
                 country_package_version=first["country_package_version"],
                 policyengine_version=first["policyengine_version"],
-                **({"completed_at": CUTOFF} if status == "succeeded" else {}),
+                **(
+                    {"completed_at": CUTOFF}
+                    if status in {"succeeded", "failed"}
+                    else {}
+                ),
             )
         )
     return second_id
 
 
-def _finished_simulation_run(seeder, seeded_run: SeededReportRun):
-    """Insert a succeeded simulation run of the seeded baseline's simulation."""
+# What another simulation run of the seeded baseline's simulation copies.
+SIMULATION_RUN_DEFINITION = (
+    "simulation_id",
+    "year",
+    "tax_benefit_model_version_id",
+    "dataset_id",
+    "country_package_version",
+    "policyengine_version",
+)
+
+
+def _another_simulation_run(seeder, seeded_run: SeededReportRun, **state):
+    """Insert another simulation run of the seeded baseline's simulation."""
     baseline = seeder.row(
         "simulation_runs", seeded_run.run_ids.baseline_simulation_run_id
     )
     run_id = uuid4()
-    copied = {
-        name: value
-        for name, value in baseline.items()
-        if name not in {"id", "created_at", "updated_at"}
-    }
     with seeder.engine.begin() as connection:
         connection.execute(
             insert(seeder.table("simulation_runs")).values(
-                {
-                    **copied,
-                    "id": run_id,
-                    "status": "succeeded",
-                    "started_at": NOW,
-                    "completed_at": NOW,
-                }
+                id=run_id,
+                **{name: baseline[name] for name in SIMULATION_RUN_DEFINITION},
+                **state,
             )
         )
     return run_id
+
+
+def _finished_simulation_run(seeder, seeded_run: SeededReportRun):
+    """Insert a succeeded simulation run of the seeded baseline's simulation."""
+    return _another_simulation_run(
+        seeder, seeded_run, status="succeeded", started_at=NOW, completed_at=NOW
+    )
 
 
 def _simulation_run_listed(store, simulation_run_id):
@@ -565,3 +578,31 @@ def test_a_report_run_with_only_a_baseline_keeps_only_its_baseline_out(
 
     assert not _baseline_listed(store, seeded_run)
     assert _simulation_run_listed(store, run_ids.reform_simulation_run_id)
+
+
+def test_a_simulation_run_no_report_run_names_is_listed_and_failed(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    # A simulation run the simulation service starts on its own, with no
+    # report run naming it, is the sweep's to judge from the start.
+    unnamed_id = _another_simulation_run(
+        seeder,
+        seeded_run,
+        status="running",
+        modal_call_id="fc-unnamed",
+        started_at=NOW,
+    )
+    unnamed = ActiveRun(
+        kind=RunKind.SIMULATION_RUN,
+        run_id=unnamed_id,
+        status=RunStatus.RUNNING,
+        modal_call_id="fc-unnamed",
+    )
+
+    listed = _simulation_run_listed(store, unnamed_id)
+    failed = store.fail_stuck_run(
+        unnamed, error_message=ENDED_MESSAGE, failed_at=CUTOFF
+    )
+
+    assert listed
+    assert failed == RunWrite(changed=True, status=RunStatus.FAILED)

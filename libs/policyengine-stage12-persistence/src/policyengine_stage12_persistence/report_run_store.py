@@ -376,7 +376,9 @@ class ReportRunStore:
         finished, or moved to another call, that the simulation service
         recorded a call on, or that a pending or running report run has named
         since it was listed, is left as it is, so concurrent sweeps change it
-        once.
+        once. A report run naming it counts once its insert has committed,
+        before this update starts: the database doesn't make an insert in
+        progress wait for this update, or this update for it.
         """
         table = RUN_TABLES[run.kind]
         same_call = (
