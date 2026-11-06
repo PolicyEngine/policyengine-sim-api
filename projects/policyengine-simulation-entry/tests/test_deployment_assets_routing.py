@@ -11,9 +11,7 @@ from test_deployment_assets_support import (
     REPOSITORY_ROOT,
     REUSABLE_DEPLOY_WORKFLOW,
     ROLLBACK_WORKFLOW,
-    evaluate_github_expression,
     job_section,
-    routing_context,
     run_bash,
     run_step,
     step_shell,
@@ -44,9 +42,12 @@ def _run_routing_step(tmp_path, step, failed_command="", **env):
     (bin_dir / "gh").write_text("#!/usr/bin/env bash\nprintf '1\\n'\n")
     (bin_dir / "gh").chmod(0o755)
     runner_temp = tmp_path / "runner-temp"
-    plan = runner_temp / "routing-plans" / "routing-plan-prod-1" / "plan.json"
-    plan.parent.mkdir(parents=True)
-    plan.write_text("{}")
+    # The fake gh reports a kept plan for every job, so the attempt kept both
+    # its routes plan and its latest plan.
+    for artifact in ("routing-plan-prod-1", "routing-latest-plan-prod-1"):
+        plan = runner_temp / "routing-plans" / artifact / "plan.json"
+        plan.parent.mkdir(parents=True)
+        plan.write_text("{}")
     return run_step(
         step,
         env={
@@ -98,6 +99,33 @@ PENDING = {"RESOLVE_PENDING_PUBLICATION": "true"}
         ),
         ((DEPLOY, "update_routing", "Publish the planned routing"), "--apply-plan", {}),
         (
+            (DEPLOY, "update_routing", "Complete the routing publication"),
+            "--complete-plan",
+            {},
+        ),
+        ((DEPLOY, "publish_latest", INSTALL), "sync", {}),
+        (
+            (DEPLOY, "publish_latest", "Plan moving latest to the release"),
+            "--plan-latest-out",
+            {},
+        ),
+        (
+            (DEPLOY, "publish_latest", "Record the unfinished latest publication"),
+            "--record-plan",
+            {},
+        ),
+        ((DEPLOY, "publish_latest", "Move latest to the release"), "--apply-plan", {}),
+        (
+            (DEPLOY, "publish_latest", "Complete the latest publication"),
+            "--complete-plan",
+            {},
+        ),
+        (
+            (DEPLOY, "publish_latest", "Put latest back after a failed step"),
+            "--restore-plan",
+            {},
+        ),
+        (
             (DEPLOY, "finalize_routing", "Finalize the routing publication"),
             "--finalize-publication",
             {},
@@ -123,6 +151,13 @@ PENDING = {"RESOLVE_PENDING_PUBLICATION": "true"}
         "plan",
         "record",
         "apply",
+        "complete",
+        "latest-setup",
+        "latest-plan",
+        "latest-record",
+        "latest-apply",
+        "latest-complete",
+        "latest-restore",
         "finalize",
         "manual-restore-plans",
         "manual-restore-latest",
@@ -152,6 +187,7 @@ def test_a_failing_routing_command_fails_its_step_and_job(
     ("workflow", "job_name"),
     [
         (REUSABLE_DEPLOY_WORKFLOW, "update_routing"),
+        (REUSABLE_DEPLOY_WORKFLOW, "publish_latest"),
         (REUSABLE_DEPLOY_WORKFLOW, "finalize_routing"),
         (REUSABLE_DEPLOY_WORKFLOW, "deployment_ready"),
         (ROLLBACK_WORKFLOW, "rollback"),
@@ -171,22 +207,29 @@ def test_routing_jobs_never_allow_command_failures(workflow, job_name):
 
 
 def test_each_publication_is_named_by_its_run_attempt_and_environment(tmp_path):
-    routing = workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["update_routing"]
-    plan = next(
-        step
-        for step in routing["steps"]
-        if step.get("name") == "Plan the routing change"
-    )
-    assert plan["env"]["RELEASE_ENVIRONMENT"] == "${{ inputs.release_environment }}"
+    jobs = workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)
+    # The routes publication before the checks and the latest one after them.
+    for job_name, step_name in (
+        ("update_routing", "Plan the routing change"),
+        ("publish_latest", "Plan moving latest to the release"),
+    ):
+        plan = next(
+            step for step in jobs[job_name]["steps"] if step.get("name") == step_name
+        )
+        assert plan["env"]["RELEASE_ENVIRONMENT"] == (
+            "${{ inputs.release_environment }}"
+        )
+        step_directory = tmp_path / job_name
+        step_directory.mkdir()
 
-    result = _run_routing_step(
-        tmp_path, plan, GITHUB_RUN_ID="744001", GITHUB_RUN_ATTEMPT="2"
-    )
+        result = _run_routing_step(
+            step_directory, plan, GITHUB_RUN_ID="744001", GITHUB_RUN_ATTEMPT="2"
+        )
 
-    assert result.returncode == 0, result.stderr
-    planner_call = (tmp_path / "uv-calls").read_text().split()
-    publication_id = planner_call[planner_call.index("--publication-id") + 1]
-    assert publication_id == "744001-2-prod"
+        assert result.returncode == 0, result.stderr
+        planner_call = (step_directory / "uv-calls").read_text().split()
+        publication_id = planner_call[planner_call.index("--publication-id") + 1]
+        assert publication_id == "744001-2-prod"
 
 
 def test_publication_keeps_the_plan_but_finalization_reads_the_journal():
@@ -197,9 +240,12 @@ def test_publication_keeps_the_plan_but_finalization_reads_the_journal():
     journal = names.index("Record the unfinished routing publication")
     keep = names.index("Keep the plan for a guarded restore")
     publish = names.index("Publish the planned routing")
+    complete = names.index("Complete the routing publication")
     assert "Record the plan artifact" not in names
-    # The plan is kept before anything is published.
-    assert plan < journal < keep < publish
+    # The plan is kept before anything is published, and the routes
+    # publication completes itself: a failed check leaves the routes.
+    assert plan < journal < keep < publish < complete
+    assert "--complete-plan" in step_shell(routing["steps"][complete])
     assert "--record-plan" in step_shell(routing["steps"][journal])
     keep_step = routing["steps"][keep]
     assert keep_step["uses"].startswith("actions/upload-artifact@")
@@ -212,7 +258,6 @@ def test_publication_keeps_the_plan_but_finalization_reads_the_journal():
     assert routing["outputs"] == {
         "before_sha256": "${{ steps.plan.outputs.before_sha256 }}",
         "after_sha256": "${{ steps.plan.outputs.after_sha256 }}",
-        "advances_latest": "${{ steps.plan.outputs.advances_latest }}",
     }
 
     assert "revert_routing" not in jobs
@@ -257,6 +302,7 @@ def test_deployment_ready_requires_the_journal_finalizer_to_complete():
         "integration",
         "authenticated_test",
         "promote_entrypoint",
+        "publish_latest",
         "finalize_routing",
     } <= set(ready["needs"])
     finalizer = jobs["finalize_routing"]
@@ -265,6 +311,7 @@ def test_deployment_ready_requires_the_journal_finalizer_to_complete():
         "integration",
         "authenticated_test",
         "promote_entrypoint",
+        "publish_latest",
     } <= set(finalizer["needs"])
     gate = next(
         step for step in ready["steps"] if step.get("name") == "Check deployment result"
@@ -274,6 +321,7 @@ def test_deployment_ready_requires_the_journal_finalizer_to_complete():
         "${{ inputs.deploy_existing_stack }}"
     )
     assert gate["env"]["ROUTING_RESULT"] == "${{ needs.update_routing.result }}"
+    assert gate["env"]["LATEST_RESULT"] == "${{ needs.publish_latest.result }}"
     assert gate["env"]["FINALIZE_RESULT"] == "${{ needs.finalize_routing.result }}"
     assert gate["env"]["FINALIZE_OUTCOME"] == (
         "${{ needs.finalize_routing.outputs.outcome }}"
@@ -293,6 +341,7 @@ def test_deployment_ready_requires_the_journal_finalizer_to_complete():
         "AUTHENTICATED_TEST_RESULT",
         "PROMOTION_RESULT",
         "ROUTING_RESULT",
+        "LATEST_RESULT",
         "FINALIZE_RESULT",
         "FINALIZE_OUTCOME",
     ],
@@ -312,6 +361,7 @@ def test_failed_release_gate_cannot_report_a_successful_release(tmp_path, failed
         "PROMOTION_RESULT": "success",
         "EXISTING_STACK_REQUESTED": "true",
         "ROUTING_RESULT": "success",
+        "LATEST_RESULT": "success",
         "FINALIZE_RESULT": "success",
         "FINALIZE_OUTCOME": "completed",
     }
@@ -371,32 +421,9 @@ def test_release_success_requires_completed_finalization_for_published_routing(
             "PROMOTION_RESULT": "skipped",
             "EXISTING_STACK_REQUESTED": existing,
             "ROUTING_RESULT": "success" if existing == "true" else "skipped",
+            "LATEST_RESULT": "success" if existing == "true" else "skipped",
             "FINALIZE_RESULT": result,
             "FINALIZE_OUTCOME": outcome,
         },
     )
     assert (completed.returncode == 0) is passes, completed.stderr
-
-
-@pytest.mark.parametrize(
-    ("existing", "advances", "expected"),
-    [(True, "true", "true"), (True, "false", ""), (False, "true", ""), (True, "", "")],
-)
-def test_latest_is_expected_only_when_the_release_advances_it(
-    existing, advances, expected
-):
-    jobs = workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)
-    smoke_step = next(
-        step
-        for step in jobs["integration"]["steps"]
-        if "cloud-run-simulation-entry-smoke.sh" in step.get("run", "")
-    )
-    context = routing_context(
-        inputs__deploy_existing_stack=existing,
-        needs__update_routing__outputs__advances_latest=advances,
-    )
-    for environment in (smoke_step["env"], jobs["promote_entrypoint"]["env"]):
-        assert (
-            evaluate_github_expression(environment["EXPECTED_LATEST"], context)
-            == expected
-        )

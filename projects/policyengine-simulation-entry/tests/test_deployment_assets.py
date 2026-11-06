@@ -213,8 +213,10 @@ def _assert_beta_then_prod_release(
 
 def _assert_deployment_environment_settings(reusable_workflow: str) -> None:
     assert (
-        # Sentinel, restore and final routing acknowledgement use secrets too.
-        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 15
+        # Every job but stage12_v2_ready declares the release environment;
+        # the job that moves latest after the checks reads the prod
+        # environment's custom-hostname variable.
+        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 16
     )
     assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow

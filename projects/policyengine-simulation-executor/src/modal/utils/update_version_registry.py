@@ -21,6 +21,8 @@ from src.modal.routing_publisher.legacy import build_legacy_seed_routing_state
 from src.modal.routing_publisher.plans import (
     ROUTING_PLAN_SCHEMA,
     RoutingConflictError,
+    plan_latest_publication,
+    plan_routes_publication,
     plan_routing_publication,
     routing_state_digest,
     unfinished_publication,
@@ -47,8 +49,10 @@ from src.modal.routing_publisher.state import (
     LatestVersions,
     RouteMaps,
     RoutingState,
+    build_latest_routing_state,
     build_next_routing_state,
     build_restored_routing_state,
+    build_routes_routing_state,
     latest_release_identity,
     validate_routing_state,
 )
@@ -87,13 +91,17 @@ __all__ = [
     "RoutingState",
     "apply_routing_plan",
     "build_bundle_manifest_metadata",
+    "build_latest_routing_state",
     "build_legacy_seed_routing_state",
     "build_next_routing_state",
     "build_restored_routing_state",
+    "build_routes_routing_state",
     "complete_routing_plan",
     "finalize_routing_publication",
     "latest_release_identity",
     "main",
+    "plan_latest_publication",
+    "plan_routes_publication",
     "plan_routing_publication",
     "publish_routing_state",
     "read_latest_policyengine_version",
@@ -151,7 +159,7 @@ def _writes_routing(args: argparse.Namespace) -> bool:
         or args.restore_plan
         or args.restore_latest
         or args.seed_active_from_legacy
-        or not (args.plan_out or args.dry_run)
+        or not (args.plan_out or args.plan_latest_out or args.dry_run)
     )
 
 
@@ -291,14 +299,24 @@ def _deployed_app(args: argparse.Namespace) -> DeployedAppVersions:
 
 
 def _plan_command(args: argparse.Namespace, deployed: DeployedAppVersions) -> None:
-    plan = plan_routing_publication(
-        current_state=_active_state(args.environment),
-        deployed=deployed,
-        force_latest=args.force_latest,
-        publication_id=args.publication_id,
-    )
-    if args.plan_out:
-        with Path(args.plan_out).open("w") as handle:
+    """Write and report the routes plan, or with --plan-latest-out the latest plan."""
+    current_state = _active_state(args.environment)
+    if args.plan_latest_out:
+        plan = plan_latest_publication(
+            current_state=current_state,
+            deployed=deployed,
+            force_latest=args.force_latest,
+            publication_id=args.publication_id,
+        )
+    else:
+        plan = plan_routes_publication(
+            current_state=current_state,
+            deployed=deployed,
+            publication_id=args.publication_id,
+        )
+    plan_file = args.plan_latest_out or args.plan_out
+    if plan_file:
+        with Path(plan_file).open("w") as handle:
             json.dump(plan, handle, indent=2, sort_keys=True)
     _report(f"before_sha256={plan['before_sha256']}")
     _report(f"after_sha256={plan['after_sha256']}")
@@ -307,7 +325,13 @@ def _plan_command(args: argparse.Namespace, deployed: DeployedAppVersions) -> No
 
 def _publish_command(args: argparse.Namespace) -> None:
     deployed = _deployed_app(args)
-    if args.plan_out or args.dry_run:
+    if args.plan_out or args.plan_latest_out or args.dry_run:
+        if args.force_latest and not args.plan_latest_out:
+            msg = (
+                "--force-latest moves latest, which the routes plan never does; "
+                "pass it with --plan-latest-out"
+            )
+            raise _UsageError(msg)
         _plan_command(args, deployed)
         return
 

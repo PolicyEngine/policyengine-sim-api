@@ -7,7 +7,10 @@ from datetime import UTC, datetime
 from typing import Any, NotRequired, TypedDict
 
 from packaging.version import InvalidVersion, Version
-from src.modal.routing_publisher.bundles import build_bundle_manifest_metadata
+from src.modal.routing_publisher.bundles import (
+    BundleManifestMetadata,
+    build_bundle_manifest_metadata,
+)
 
 POLICYENGINE_VERSION_DICT_NAME = "simulation-api-policyengine-versions"
 US_VERSION_DICT_NAME = "simulation-api-us-versions"
@@ -268,48 +271,71 @@ class DeployedAppVersions:
     uk_version: str
 
 
-def build_next_routing_state(
-    *,
-    current_state: object,
-    deployed: DeployedAppVersions,
-    force_latest: bool = False,
-    now: str | None = None,
-) -> RoutingState:
-    """Return ``current_state`` with routes and the bundle manifest for a new app added.
+def _checked_bundle_manifest(deployed: DeployedAppVersions) -> BundleManifestMetadata:
+    """Return the installed bundle's manifest for ``deployed``.
 
-    ``latest`` advances only to a newer policyengine version, unless
-    ``force_latest`` (an intentional rollback). Raises ValueError when the US
-    or UK version differs from the installed bundle's model version.
-
-    A publish that adds a policyengine version's route records
-    ``published_at`` for it, and a change of ``latest.policyengine`` records
-    ``latest_since``; both take ``now`` (default: the current UTC time).
+    Raises ValueError when the US or UK version differs from the bundle's
+    model version.
     """
-    app_name = deployed.app_name
-    policyengine_version = deployed.policyengine_version
-    us_version = deployed.us_version
-    uk_version = deployed.uk_version
     manifest = build_bundle_manifest_metadata(
-        app_name=app_name,
-        policyengine_version=policyengine_version,
+        app_name=deployed.app_name,
+        policyengine_version=deployed.policyengine_version,
     )
     _assert_version_matches_manifest(
         requested_name="US version",
-        requested_version=us_version,
+        requested_version=deployed.us_version,
         manifest_version=manifest["us"]["model_version"],
     )
     _assert_version_matches_manifest(
         requested_name="UK version",
-        requested_version=uk_version,
+        requested_version=deployed.uk_version,
         manifest_version=manifest["uk"]["model_version"],
     )
+    return manifest
+
+
+def _route_latest_to(
+    state: RoutingState, deployed: DeployedAppVersions, *, timestamp: str
+) -> None:
+    """Point ``latest`` at ``deployed``, recording ``latest_since`` if it changed."""
+    previous_latest = state["latest"].get("policyengine")
+    state["latest"] = {
+        "policyengine": deployed.policyengine_version,
+        "us": deployed.us_version,
+        "uk": deployed.uk_version,
+    }
+    if previous_latest != deployed.policyengine_version:
+        state["latest_since"] = timestamp
+
+
+def build_routes_routing_state(
+    *,
+    current_state: object,
+    deployed: DeployedAppVersions,
+    now: str | None = None,
+) -> RoutingState:
+    """Return ``current_state`` with a deployed app's routes and bundle manifest added.
+
+    The release's policyengine.py version and its US and UK model versions
+    all route to the deployed app, so requests that pin them reach it.
+    ``latest`` is left as it is, so unpinned requests reach the same release
+    as before, unless no policyengine.py version is latest yet (the first
+    publication), when this release becomes latest. Raises ValueError when
+    the US or UK version differs from the installed bundle's model version.
+
+    A publish that adds a policyengine version's route records
+    ``published_at`` for it (``now``, default: the current UTC time).
+    """
+    app_name = deployed.app_name
+    policyengine_version = deployed.policyengine_version
+    manifest = _checked_bundle_manifest(deployed)
 
     state = coerce_routing_state(current_state)
     newly_routed = policyengine_version not in state["routes"]["policyengine"]
     state["generation"] = f"{policyengine_version}:{app_name}"
     state["routes"]["policyengine"][policyengine_version] = app_name
-    state["routes"]["us"][us_version] = app_name
-    state["routes"]["uk"][uk_version] = app_name
+    state["routes"]["us"][deployed.us_version] = app_name
+    state["routes"]["uk"][deployed.uk_version] = app_name
     state["bundles"][policyengine_version] = manifest
     timestamp = now or utc_now()
     # Dates are recorded only when this publish is the event: a route that did
@@ -317,25 +343,86 @@ def build_next_routing_state(
     # has no date for what it already routes, rather than a later, wrong one.
     if newly_routed:
         state.setdefault("published_at", {})[policyengine_version] = timestamp
-
-    previous_latest = state["latest"].get("policyengine")
-    should_advance = (
-        is_newer_version(policyengine_version, previous_latest) or force_latest
-    )
-    if should_advance:
-        state["latest"] = {
-            "policyengine": policyengine_version,
-            "us": us_version,
-            "uk": uk_version,
-        }
-        if previous_latest != policyengine_version:
-            state["latest_since"] = timestamp
+    if "policyengine" not in state["latest"]:
+        _route_latest_to(state, deployed, timestamp=timestamp)
 
     validate_routing_state(
         state,
         required_policyengine_manifests=(policyengine_version,),
     )
     return state
+
+
+def _require_release_routed(state: RoutingState, deployed: DeployedAppVersions) -> None:
+    """Refuse unless the release's routes and bundle manifest name its app."""
+    app_name = deployed.app_name
+    policyengine_version = deployed.policyengine_version
+    manifest = state["bundles"].get(policyengine_version)
+    routed = (
+        state["routes"]["policyengine"].get(policyengine_version) == app_name
+        and state["routes"]["us"].get(deployed.us_version) == app_name
+        and state["routes"]["uk"].get(deployed.uk_version) == app_name
+        and isinstance(manifest, dict)
+        and manifest.get("app_name") == app_name
+    )
+    if not routed:
+        msg = (
+            f"policyengine {policyengine_version!r}'s routes are not published "
+            f"to app {app_name!r}; publish them before routing latest to it"
+        )
+        raise ValueError(msg)
+
+
+def build_latest_routing_state(
+    *,
+    current_state: object,
+    deployed: DeployedAppVersions,
+    force_latest: bool = False,
+    now: str | None = None,
+) -> RoutingState:
+    """Return ``current_state`` with ``latest`` moved to a release already routed.
+
+    ``latest`` moves only to a newer policyengine version, unless
+    ``force_latest`` (an intentional rollback); routes and bundle manifests
+    are left as they are. Raises ValueError unless the release's routes and
+    bundle manifest (see :func:`build_routes_routing_state`) name its app.
+
+    A change of ``latest.policyengine`` records ``latest_since`` (``now``,
+    default: the current UTC time).
+    """
+    state = coerce_routing_state(current_state)
+    _require_release_routed(state, deployed)
+    previous_latest = state["latest"].get("policyengine")
+    if is_newer_version(deployed.policyengine_version, previous_latest) or force_latest:
+        _route_latest_to(state, deployed, timestamp=now or utc_now())
+    validate_routing_state(
+        state,
+        required_policyengine_manifests=(deployed.policyengine_version,),
+    )
+    return state
+
+
+def build_next_routing_state(
+    *,
+    current_state: object,
+    deployed: DeployedAppVersions,
+    force_latest: bool = False,
+    now: str | None = None,
+) -> RoutingState:
+    """Return ``current_state`` with a new app's routes added and ``latest`` moved.
+
+    The routes and ``latest`` in one state: :func:`build_routes_routing_state`
+    then :func:`build_latest_routing_state`, at the same time ``now``.
+    """
+    timestamp = now or utc_now()
+    return build_latest_routing_state(
+        current_state=build_routes_routing_state(
+            current_state=current_state, deployed=deployed, now=timestamp
+        ),
+        deployed=deployed,
+        force_latest=force_latest,
+        now=timestamp,
+    )
 
 
 def build_restored_routing_state(

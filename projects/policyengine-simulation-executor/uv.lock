@@ -1909,6 +1909,7 @@ dependencies = [
     { name = "policyengine-stage12-persistence" },
     { name = "pyarrow" },
     { name = "pydantic-settings" },
+    { name = "requests" },
     { name = "tables" },
 ]
 
@@ -1937,6 +1938,7 @@ modal-simulation-image = [
     { name = "policyengine-observability", extra = ["fastapi", "google", "otlp-grpc"] },
     { name = "psycopg", extra = ["binary"] },
     { name = "pyarrow" },
+    { name = "requests" },
     { name = "sqlalchemy" },
     { name = "tables" },
 ]
@@ -1963,6 +1965,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.25.3" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.1.1" },
+    { name = "requests", specifier = ">=2.32,<3" },
     { name = "tables", specifier = ">=3.10.2" },
 ]
 provides-extras = ["test", "build"]
@@ -1977,6 +1980,7 @@ modal-simulation-image = [
     { name = "policyengine-observability", extras = ["fastapi", "google", "otlp-grpc"], specifier = ">=3.0.4,<4" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
     { name = "pyarrow", specifier = ">=20,<24" },
+    { name = "requests", specifier = ">=2.32,<3" },
     { name = "sqlalchemy", specifier = ">=2,<3" },
     { name = "tables", specifier = ">=3.10.2" },
 ]

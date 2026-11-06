@@ -26,8 +26,11 @@ if TYPE_CHECKING:
 
 EXECUTOR_DIRECTORY = REPOSITORY_ROOT / "projects" / "policyengine-simulation-executor"
 ROUTING_PLAN = "routing-plan.sh"
+ROUTING_PLAN_LATEST = "routing-plan-latest.sh"
 ROUTING_RECORD_PLAN = "routing-record-plan.sh"
 ROUTING_APPLY_PLAN = "routing-apply-plan.sh"
+ROUTING_COMPLETE_PLAN = "routing-complete-plan.sh"
+ROUTING_RESTORE_PLAN = "routing-restore-plan.sh"
 ROUTING_FINALIZE = "routing-finalize-publication.sh"
 SENTINEL_BUNDLE_CHECK = "release-sentinel-check-bundle.sh"
 SENTINEL_SERVICE_CHECK = "release-sentinel-check-service.sh"
@@ -105,11 +108,11 @@ def _github_output(tmp_path: Path) -> str:
 # --- update_routing: Plan the routing change --------------------------------
 
 
-def _plan(fakes: FakeCommands, tmp_path: Path, **env: str):
+def _plan(fakes: FakeCommands, tmp_path: Path, script: str = ROUTING_PLAN, **env: str):
     return _run(
         fakes,
         tmp_path,
-        ROUTING_PLAN,
+        script,
         **{
             "APP_NAME": "simulation-6.3.0",
             "POLICYENGINE_VERSION": "6.3.0",
@@ -123,7 +126,7 @@ def _plan(fakes: FakeCommands, tmp_path: Path, **env: str):
     )
 
 
-def _plan_command(runner_temp: Path) -> list[str]:
+def _plan_command(runner_temp: Path, plan_option: str = "--plan-out") -> list[str]:
     return [
         *REGISTRY_COMMAND,
         "--app-name",
@@ -136,7 +139,7 @@ def _plan_command(runner_temp: Path) -> list[str]:
         "2.126.8",
         "--environment",
         "main",
-        "--plan-out",
+        plan_option,
         f"{runner_temp}/routing-plan/plan.json",
         "--publication-id",
         "744001-2-prod",
@@ -168,20 +171,56 @@ def test_routing_plan_appends_to_the_step_outputs(fakes, tmp_path):
     assert _github_output(tmp_path) == "earlier=kept\n" + PLANNER_OUTPUTS
 
 
+def test_routing_plan_never_forces_latest(fakes, tmp_path):
+    # The routes plan leaves latest; the latest plan after the checks moves it.
+    result = _plan(fakes, tmp_path, FORCE_LATEST="true")
+
+    assert result.returncode == 0, result.stderr
+    assert fakes.calls() == [_plan_command(tmp_path / "runner-temp")]
+
+
+def test_latest_plan_writes_the_plan_and_records_its_digests(fakes, tmp_path):
+    runner_temp = tmp_path / "runner-temp"
+
+    result = _plan(fakes, tmp_path, ROUTING_PLAN_LATEST)
+
+    assert result.returncode == 0, result.stderr
+    assert fakes.calls() == [_plan_command(runner_temp, "--plan-latest-out")]
+    assert (runner_temp / "routing-plan").is_dir()
+    assert result.stdout == PLANNER_STDOUT
+    assert (runner_temp / "routing-plan.out").read_text() == PLANNER_STDOUT
+    assert _github_output(tmp_path) == PLANNER_OUTPUTS
+
+
 @pytest.mark.parametrize(
     ("force_latest", "forced"),
     [("true", True), ("false", False), ("", False), ("True", False)],
 )
-def test_routing_plan_forces_latest_only_when_requested(
+def test_latest_plan_forces_latest_only_when_requested(
     fakes, tmp_path, force_latest, forced
 ):
-    result = _plan(fakes, tmp_path, FORCE_LATEST=force_latest)
+    result = _plan(fakes, tmp_path, ROUTING_PLAN_LATEST, FORCE_LATEST=force_latest)
 
     assert result.returncode == 0, result.stderr
-    expected = _plan_command(tmp_path / "runner-temp")
+    expected = _plan_command(tmp_path / "runner-temp", "--plan-latest-out")
     if forced:
         expected.append("--force-latest")
     assert fakes.calls() == [expected]
+
+
+@pytest.mark.parametrize(
+    ("fake_uv", "status"),
+    [
+        ({"FAKE_UV_FAILING_SUBCOMMAND": "run"}, 9),
+        ({"FAKE_UV_STDOUT": "Planned nothing\n"}, 1),
+    ],
+    ids=["planner-failed", "no-digests"],
+)
+def test_latest_plan_fails_without_a_plan(fakes, tmp_path, fake_uv, status):
+    result = _plan(fakes, tmp_path, ROUTING_PLAN_LATEST, **fake_uv)
+
+    assert result.returncode == status
+    assert _github_output(tmp_path) == ""
 
 
 def test_routing_plan_fails_when_the_planner_fails(fakes, tmp_path):
@@ -203,7 +242,12 @@ def test_routing_plan_fails_when_the_planner_reports_no_digests(fakes, tmp_path)
 
 @pytest.mark.parametrize(
     ("script", "option"),
-    [(ROUTING_RECORD_PLAN, "--record-plan"), (ROUTING_APPLY_PLAN, "--apply-plan")],
+    [
+        (ROUTING_RECORD_PLAN, "--record-plan"),
+        (ROUTING_APPLY_PLAN, "--apply-plan"),
+        (ROUTING_COMPLETE_PLAN, "--complete-plan"),
+        (ROUTING_RESTORE_PLAN, "--restore-plan"),
+    ],
 )
 def test_record_and_publish_pass_the_kept_plan_to_the_publisher(
     fakes, tmp_path, script, option
@@ -222,7 +266,15 @@ def test_record_and_publish_pass_the_kept_plan_to_the_publisher(
     ]
 
 
-@pytest.mark.parametrize("script", [ROUTING_RECORD_PLAN, ROUTING_APPLY_PLAN])
+@pytest.mark.parametrize(
+    "script",
+    [
+        ROUTING_RECORD_PLAN,
+        ROUTING_APPLY_PLAN,
+        ROUTING_COMPLETE_PLAN,
+        ROUTING_RESTORE_PLAN,
+    ],
+)
 def test_record_and_publish_fail_when_the_publisher_fails(fakes, tmp_path, script):
     result = _run(fakes, tmp_path, script, FAKE_UV_FAILING_SUBCOMMAND="run")
 
@@ -418,7 +470,6 @@ MOVED_STEPS = {
             "POLICYENGINE_VERSION": "${{ needs.prepare.outputs.policyengine_version }}",
             "POLICYENGINE_US_VERSION": "${{ needs.prepare.outputs.us_version }}",
             "POLICYENGINE_UK_VERSION": "${{ needs.prepare.outputs.uk_version }}",
-            "FORCE_LATEST": "${{ inputs.force_latest }}",
             "RELEASE_ENVIRONMENT": "${{ inputs.release_environment }}",
         },
         "run": f"../../.github/scripts/{ROUTING_PLAN}",
@@ -476,7 +527,8 @@ MOVED_STEPS = {
                 "  needs.integration.result == 'success' &&\n"
                 "  needs.authenticated_test.result == 'success' &&\n"
                 "  (!inputs.promote_entrypoint || "
-                "needs.promote_entrypoint.result == 'success')\n"
+                "needs.promote_entrypoint.result == 'success') &&\n"
+                "  needs.publish_latest.result == 'success'\n"
                 "}}"
             ),
         },
@@ -511,6 +563,8 @@ def test_the_routing_jobs_keep_reading_the_scripts_outputs():
     assert jobs["update_routing"]["outputs"] == {
         "before_sha256": "${{ steps.plan.outputs.before_sha256 }}",
         "after_sha256": "${{ steps.plan.outputs.after_sha256 }}",
+    }
+    assert jobs["publish_latest"]["outputs"] == {
         "advances_latest": "${{ steps.plan.outputs.advances_latest }}",
     }
     assert jobs["finalize_routing"]["outputs"] == {

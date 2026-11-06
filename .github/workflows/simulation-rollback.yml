@@ -9,10 +9,12 @@ name: Roll back Simulation API
 # - resolve_pending_publication: print and restore the unfinished publication
 #   from the durable routing journal, even when no artifact was uploaded.
 # - deploy_run_id: restore exactly the routing state that deployment replaced,
-#   from the plans it kept as artifacts (one per run attempt). Each attempt's
-#   change is undone only while the live state is what that attempt
-#   published, so it never overwrites a later release; the failed release's
-#   routes go too.
+#   from the plans it kept as artifacts: the routes plan and the latest plan
+#   of each attempt whose routes job or latest job ran. A plan GitHub no longer lists
+#   (its job reran later) may be missing only when the plans around it show
+#   its change undone. Each change is undone only while the live
+#   state is what it published, so it never overwrites a later release; the
+#   failed release's routes go too.
 # - policyengine_version: point latest at that published release. Other
 #   releases, including the failed one, stay pinnable.
 
@@ -103,7 +105,9 @@ jobs:
         with:
           run-id: ${{ inputs.deploy_run_id }}
           github-token: ${{ github.token }}
-          pattern: routing-plan-${{ inputs.target }}-*
+          # Each attempt's routes plan (routing-plan-*) and latest plan
+          # (routing-latest-plan-*).
+          pattern: routing-*plan-${{ inputs.target }}-*
           path: ${{ runner.temp }}/routing-plans
 
       - name: Restore Modal routing
