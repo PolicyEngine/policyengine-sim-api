@@ -107,11 +107,15 @@ class ReportRunStore:
         if named is None:
             msg = f"report run {run_ids.report_run_id} does not exist"
             raise LookupError(msg)
-        if tuple(named) != (
-            run_ids.baseline_simulation_run_id,
-            run_ids.reform_simulation_run_id,
+        if (
+            named.baseline_simulation_run_id != run_ids.baseline_simulation_run_id
+            or named.reform_simulation_run_id != run_ids.reform_simulation_run_id
         ):
-            msg = "the report run names other simulation runs than its call"
+            msg = (
+                f"report run {run_ids.report_run_id} names other simulation runs "
+                f"than its call: baseline {named.baseline_simulation_run_id} and "
+                f"reform {named.reform_simulation_run_id}"
+            )
             raise ValueError(msg)
 
     def claim_report_run(

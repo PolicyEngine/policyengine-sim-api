@@ -12,7 +12,8 @@ revisions and live schema. This package never changes a schema.
   the two labour supply tables included. The v2 Modal coordinator and workers
   write them as the Modal worker role (`policyengine_v2_modal_worker`), for a
   call that names a report run. The mappings declare only the columns those
-  writes touch, and each `UPDATE` sets only columns the role may update.
+  statements read or write, and each `UPDATE` sets only columns the role may
+  update.
   Every status write is one `UPDATE` conditional on the run's status; a
   report run's completion sets its own result columns and inserts its result
   rows in the same transaction.

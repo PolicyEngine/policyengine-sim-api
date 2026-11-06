@@ -17,7 +17,7 @@ from policyengine_stage12_persistence import (
     RunWrite,
 )
 from report_run_database import NOW, SeededReportRun, worker_database_url
-from sqlalchemy import func, insert, select
+from sqlalchemy import column, func, insert, select, table, update
 from sqlalchemy.exc import ProgrammingError
 
 LATER = NOW + timedelta(minutes=5)
@@ -48,6 +48,40 @@ def test_the_modal_worker_role_cannot_create_a_report_run(store, seeded_run) -> 
     ):
         connection.execute(
             insert(report_runs).values(id=uuid4(), status="pending", updated_at=NOW)
+        )
+
+
+@pytest.mark.parametrize(
+    ("table_name", "column_name", "value"),
+    [
+        # What a run is: its simulation runs, its year.
+        ("report_runs", "baseline_simulation_run_id", "reform"),
+        ("simulation_runs", "year", 2027),
+        # A report run's markdown is not the worker's to write.
+        ("report_runs", "markdown", "# Edited"),
+    ],
+)
+def test_the_modal_worker_role_may_update_only_a_runs_state_and_results(
+    store, seeded_run: SeededReportRun, table_name, column_name, value
+) -> None:
+    run_ids = seeded_run.run_ids
+    row_id = (
+        run_ids.report_run_id
+        if table_name == "report_runs"
+        else run_ids.baseline_simulation_run_id
+    )
+    if value == "reform":
+        value = run_ids.reform_simulation_run_id
+    run_table = table(table_name, column("id"), column(column_name), schema="public")
+
+    with (
+        pytest.raises(ProgrammingError, match="permission denied"),
+        store.engine.begin() as connection,
+    ):
+        connection.execute(
+            update(run_table)
+            .where(run_table.c.id == row_id)
+            .values({column_name: value})
         )
 
 

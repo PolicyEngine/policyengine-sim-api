@@ -89,10 +89,11 @@ class ReportRunRecorder:
         )
 
     def complete(self, economy_output: Mapping[str, Any], *, country: str) -> RunWrite:
-        """Mark the report run succeeded with its economy output as result rows.
+        """Mark the report run succeeded, storing its economy output.
 
-        The rows are written in the same transaction, only while this call
-        holds the run. An output that cannot be stored raises ValueError.
+        The output's columns of the report run are set in the same update,
+        and its result rows written in the same transaction, only while this
+        call holds the run. An output that cannot be stored raises ValueError.
         """
         return self.writer.complete_report_run(
             self.run_ids,

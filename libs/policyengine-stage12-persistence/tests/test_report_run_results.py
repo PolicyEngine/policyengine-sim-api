@@ -25,7 +25,7 @@ from policyengine_stage12_persistence import (
 )
 from policyengine_stage12_persistence.report_run_results import ResultRows
 from report_run_database import NOW, SeededReportRun, worker_database_url
-from sqlalchemy import insert
+from sqlalchemy import insert, select
 from sqlalchemy.exc import IntegrityError
 
 LATER = NOW + timedelta(minutes=5)
@@ -335,8 +335,16 @@ def test_an_output_without_labour_supply_or_cliff_impact_stores_neither(
         assert seeder.rows(table_name, report_run_id=report_run_id) == []
     report_run = seeder.row("report_runs", report_run_id)
     assert {report_run[column] for column in CLIFF_COLUMNS} == {None}
-    assert report_run["spm_provenance"] is None
     assert report_run["data_version"] == output["data_version"]
+    # No receipt is SQL NULL, not JSON null, which reads back as None too.
+    report_runs = seeder.table("report_runs")
+    with seeder.engine.connect() as connection:
+        receipt_is_null = connection.execute(
+            select(report_runs.c.spm_provenance.is_(None)).where(
+                report_runs.c.id == report_run_id
+            )
+        ).scalar_one()
+    assert receipt_is_null
 
 
 def test_the_uk_output_uses_its_own_poverty_types_and_wealth_deciles(

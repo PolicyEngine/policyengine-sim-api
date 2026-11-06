@@ -1,8 +1,9 @@
 """SQLAlchemy mappings of the Public API's run tables that report calls update.
 
 ``policyengine-api`` owns these tables and every schema migration. The
-mappings declare only the columns the Modal worker role reads or writes, so
-the coordinator and workers can issue typed DML; runtime code never emits DDL.
+mappings declare only the columns the coordinator and workers read or write
+as the Modal worker role, so they can issue typed DML; runtime code never
+emits DDL.
 """
 
 from __future__ import annotations

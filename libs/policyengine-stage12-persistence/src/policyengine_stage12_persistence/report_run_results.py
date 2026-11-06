@@ -240,6 +240,14 @@ INTRA_DECILE_COLUMNS = {
     "Gain less than 5%": "gain_less_than_5pct",
     "Gain more than 5%": "gain_more_than_5pct",
 }
+# The report run's columns for the baseline's and reform's cliff impact; all
+# four are set or all four null.
+CLIFF_COLUMNS = (
+    "baseline_cliff_gap",
+    "baseline_cliff_share",
+    "reform_cliff_gap",
+    "reform_cliff_share",
+)
 DISCLOSURE_FIELDS = (
     "disclosure_tier",
     "average_household_income_change_lower",
@@ -294,8 +302,9 @@ def report_run_result(
     country: str,
     district_codes: DistrictCodes | None = None,
 ) -> ReportRunResult:
-    """Validate a single-year economy output and return the rows it is stored as.
+    """Validate a single-year economy output and return what it is stored as.
 
+    That is the report run's own result columns and the result tables' rows.
     Raises ValueError for an output that is not a single-year economy result,
     a country without poverty types, or a congressional district whose state
     ``district_codes`` doesn't name.
@@ -309,18 +318,18 @@ def report_run_result(
         "baseline_simulation_run_id": run_ids.baseline_simulation_run_id,
         "reform_simulation_run_id": run_ids.reform_simulation_run_id,
     }
-    report_run_id = {"report_run_id": run_ids.report_run_id}
+    report_run_key = {"report_run_id": run_ids.report_run_id}
     return ReportRunResult(
         report_run_columns=_report_run_columns(economy),
         rows=(
             ResultRows(
                 labor_supply_responses,
-                _labor_supply_rows(economy, report_run_id),
+                _labor_supply_rows(economy, report_run_key),
                 shared_by_reports=False,
             ),
             ResultRows(
                 labor_supply_decile_responses,
-                _labor_supply_decile_rows(economy, report_run_id),
+                _labor_supply_decile_rows(economy, report_run_key),
                 shared_by_reports=False,
             ),
             ResultRows(
@@ -380,17 +389,22 @@ def _report_run_columns(economy: SingleYearMacroOutput) -> dict[str, Any]:
     The four cliff columns are all null when the output has no cliff impact.
     """
     cliffs = economy.cliff_impact
+    cliff_columns: dict[str, float | None]
+    if cliffs is None:
+        cliff_columns = dict.fromkeys(CLIFF_COLUMNS)
+    else:
+        cliff_columns = {
+            "baseline_cliff_gap": cliffs.baseline.cliff_gap,
+            "baseline_cliff_share": cliffs.baseline.cliff_share,
+            "reform_cliff_gap": cliffs.reform.cliff_gap,
+            "reform_cliff_share": cliffs.reform.cliff_share,
+        }
     receipts = economy.spm_provenance
     return {
-        "baseline_cliff_gap": None if cliffs is None else cliffs.baseline.cliff_gap,
-        "baseline_cliff_share": (
-            None if cliffs is None else cliffs.baseline.cliff_share
+        **cliff_columns,
+        "spm_provenance": (
+            None if receipts is None else receipts.model_dump(mode="json")
         ),
-        "reform_cliff_gap": None if cliffs is None else cliffs.reform.cliff_gap,
-        "reform_cliff_share": None if cliffs is None else cliffs.reform.cliff_share,
-        "spm_provenance": None
-        if receipts is None
-        else receipts.model_dump(mode="json"),
         "data_version": economy.data_version,
     }
 
