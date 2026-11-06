@@ -72,12 +72,13 @@ SENTINEL_CASES: tuple[dict[str, Any], ...] = (
 #: Job poll statuses that mean the job has not finished yet: poll again, until
 #: the polling deadline. 202 means the job is running and 429 asks for slower
 #: polling. The rest mean the stack cannot report on the job right now. The
-#: entrypoint answers 504 when its call to the gateway times out, as when a
-#: gateway container is preempted mid-request, and 503 when it cannot reach the
-#: gateway or the gateway refuses its credentials; it also passes on any 502,
-#: 503 or 504 from the proxy in front of the gateway. Neither service's code
-#: answers 502 on this route. A failed job is 500, or 400 for a rejected SPM
-#: request, and an unknown one 404; these and any other status stay final.
+#: entrypoint answers 504 when its call to the gateway times out on reading, as
+#: when a gateway container is preempted mid-request, and 503 when it cannot
+#: connect to the gateway or get or use its credentials for it; it also passes
+#: on any 502, 503 or 504 from the proxy in front of the gateway. Neither
+#: service's code answers 502 on this route. A failed job is 500, or 400 for a
+#: rejected SPM request, and an unknown one 404; these and any other status
+#: stay final, including a 500 the gateway gives for its own unhandled error.
 #: Submitting is never retried.
 _PENDING_JOB_STATUSES = frozenset(
     {
