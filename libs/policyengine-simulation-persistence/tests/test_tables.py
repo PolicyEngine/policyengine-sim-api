@@ -63,7 +63,7 @@ def test_the_models_declare_every_key_to_the_public_apis_own_tables() -> None:
     """The Public API writes the rows these keys name; PostgreSQL checks them."""
     service_tables = set(service_metadata.tables.values())
     keys_to_public_api_tables = {
-        str(constraint.name): _key(constraint)
+        (table.name, str(constraint.name)): _key(constraint)
         for table in service_tables
         for constraint in table.foreign_key_constraints
         if constraint.referred_table not in service_tables
