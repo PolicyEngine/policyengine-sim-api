@@ -6,7 +6,9 @@ the copy on its own.
 
 from __future__ import annotations
 
+import tomllib
 from contextlib import nullcontext
+from pathlib import Path
 
 import pytest
 import requests
@@ -183,3 +185,15 @@ def test_stage12_worker_retries_a_dataset_download_that_timed_out(
     assert len(loads) == 2  # one failed attempt, one success
     assert loads[0] == loads[1]
     assert len(waits) == 1
+
+
+def test_the_stage12_images_install_requests_for_the_retry() -> None:
+    # The Stage 12 images install only this group, and the retry imports
+    # requests.
+    project = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert "requests>=2.32,<3" in project["dependency-groups"]["modal-simulation-image"]

@@ -1938,6 +1938,7 @@ modal-simulation-image = [
     { name = "policyengine-observability", extra = ["fastapi", "google", "otlp-grpc"] },
     { name = "psycopg", extra = ["binary"] },
     { name = "pyarrow" },
+    { name = "requests" },
     { name = "sqlalchemy" },
     { name = "tables" },
 ]
@@ -1979,6 +1980,7 @@ modal-simulation-image = [
     { name = "policyengine-observability", extras = ["fastapi", "google", "otlp-grpc"], specifier = ">=3.0.4,<4" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
     { name = "pyarrow", specifier = ">=20,<24" },
+    { name = "requests", specifier = ">=2.32,<3" },
     { name = "sqlalchemy", specifier = ">=2,<3" },
     { name = "tables", specifier = ">=3.10.2" },
 ]

@@ -6,6 +6,7 @@ retry is checked against the errors policyengine.py actually raises.
 """
 
 import hashlib
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -462,3 +463,54 @@ def test_the_annual_runtime_retries_its_dataset_load(monkeypatch):
     assert len(load_calls) == 2
     assert load_calls[0] == load_calls[1]
     assert len(recorded.waits) == 1
+
+
+def test_the_modal_images_install_requests_for_the_retry():
+    # The images install only this group, and the retry imports requests.
+    project = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert "requests>=2.32,<3" in project["dependency-groups"]["modal-simulation-image"]
+
+
+def test_policyengine_passes_a_download_error_to_the_retry_unwrapped(
+    monkeypatch, tmp_path
+):
+    """Drive the real UK ensure_datasets: its download error must reach the retry.
+
+    Every request fails with the read timeout of release run 42040665530,
+    so all three attempts reach Hugging Face before the error propagates. A
+    policyengine.py that wrapped the error would stop the retry at once.
+    """
+    from policyengine_simulation_executor.release_bundle import (
+        get_country_release_bundle,
+    )
+
+    requested = []
+
+    def timed_out(url, **_kwargs):
+        requested.append(url)
+        msg = "HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out."
+        raise requests.ConnectionError(msg)
+
+    monkeypatch.setattr(dataset_materialization.requests, "get", timed_out)
+    monkeypatch.setattr(
+        dataset_download_retry, "DEFAULT_RETRY_TIMING", _RecordedTiming().timing()
+    )
+    bundle = get_country_release_bundle("uk")
+    name = next(name for name in bundle.dataset_uris if name != bundle.default_dataset)
+    selection = DatasetSelection(name, bundle.dataset_uris[name], is_default=False)
+
+    with pytest.raises(requests.ConnectionError, match="Read timed out"):
+        _load_dataset_retrying_downloads(
+            {"country": "uk", "time_period": 2026},
+            selection=selection,
+            data_folder=str(tmp_path),
+        )
+
+    assert len(requested) == MAXIMUM_LOAD_ATTEMPTS
+    assert len(set(requested)) == 1
+    assert sorted(path.name for path in tmp_path.rglob("*") if path.is_file()) == []
