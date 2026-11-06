@@ -592,17 +592,25 @@ def test_a_simulation_run_no_report_run_names_is_listed_and_failed(
         modal_call_id="fc-unnamed",
         started_at=NOW,
     )
-    unnamed = ActiveRun(
-        kind=RunKind.SIMULATION_RUN,
-        run_id=unnamed_id,
-        status=RunStatus.RUNNING,
-        modal_call_id="fc-unnamed",
-    )
 
-    listed = _simulation_run_listed(store, unnamed_id)
-    failed = store.fail_stuck_run(
-        unnamed, error_message=ENDED_MESSAGE, failed_at=CUTOFF
-    )
+    listed = [
+        run
+        for run in store.list_active_runs(
+            RunKind.SIMULATION_RUN, active_since_before=CUTOFF
+        )
+        if run.run_id == unnamed_id
+    ]
+    failed = [
+        store.fail_stuck_run(run, error_message=ENDED_MESSAGE, failed_at=CUTOFF)
+        for run in listed
+    ]
 
-    assert listed
-    assert failed == RunWrite(changed=True, status=RunStatus.FAILED)
+    assert listed == [
+        ActiveRun(
+            kind=RunKind.SIMULATION_RUN,
+            run_id=unnamed_id,
+            status=RunStatus.RUNNING,
+            modal_call_id="fc-unnamed",
+        )
+    ]
+    assert failed == [RunWrite(changed=True, status=RunStatus.FAILED)]

@@ -11,9 +11,10 @@ revisions and live schema. This package never changes a schema.
   SPM receipts and data version, `simulation_runs`, and the result tables,
   the two labour supply tables included. The v2 Modal coordinator and workers
   write them as the Modal worker role (`policyengine_v2_modal_worker`), for a
-  call that names a report run. The mappings declare only the columns the
-  coordinator's and workers' statements read or write, and each `UPDATE`
-  sets only columns the role may update. Every status write is one `UPDATE`
+  call that names a report run, and the scheduled stuck-run sweep fails the
+  runs nothing will finish, as the same role. The mappings declare only the
+  columns those statements read or write, and each `UPDATE` sets only
+  columns the role may update. Every status write is one `UPDATE`
   conditional on the run's status; a report run's completion sets its own
   result columns and inserts its result rows in the same transaction.
 
