@@ -29,14 +29,22 @@ It builds on the Stage 12 rules:
 
 ## Who owns the schema
 
-- **Today**, policyengine-api's Alembic migrations own the only tables this
-  repository uses, the Stage 12 comparison tables
-  (`sim.stage12.no-migration-chain`). This repository's code reads and
-  writes their rows, and deployment validation compares their live schema
-  with its SQLAlchemy mappings; nothing here changes them.
+- **Today**, policyengine-api's Alembic migrations own every table this
+  repository uses (`sim.stage12.no-migration-chain`), and nothing here
+  changes them. There are two sets:
+  - The Stage 12 comparison tables. This repository's code reads and writes
+    their rows, and deployment validation compares their live schema with
+    its SQLAlchemy mappings.
+  - The run tables in the `public` schema, which the v2 Modal coordinator
+    and workers write as the Modal worker role: `report_runs`,
+    `simulation_runs` and the result tables. Their mappings in
+    `policyengine_stage12_persistence.report_run_tables` and
+    `report_run_results` declare only the columns the coordinator's and
+    workers' statements read or write; deployment validation doesn't
+    compare them with the live schema.
 - **Once #847 merges**, this repository's own Alembic chain at `migrations/`
-  owns the `simulation` schema, and the Stage 12 tables stay with
-  policyengine-api.
+  owns the `simulation` schema, and the Stage 12 tables and the run tables
+  stay with policyengine-api.
 
 The rule holds either way: whichever chain owns a table, only that chain's
 migrations change it.

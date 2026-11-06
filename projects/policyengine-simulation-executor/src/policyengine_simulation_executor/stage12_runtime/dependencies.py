@@ -177,6 +177,12 @@ def runtime_store(
     )
 
 
-def artifact_store() -> Stage12ArtifactStore:
-    """Build the store for ``STAGE12_ARTIFACT_BUCKET``; ValueError if it is unset."""
-    return Stage12ArtifactStore(os.environ.get("STAGE12_ARTIFACT_BUCKET", ""))
+def artifact_store(*, content_addressed: bool = False) -> Stage12ArtifactStore:
+    """Build the store for ``STAGE12_ARTIFACT_BUCKET``; ValueError if it is unset.
+
+    A ``content_addressed`` store names each artifact's digest in its key.
+    """
+    return Stage12ArtifactStore(
+        os.environ.get("STAGE12_ARTIFACT_BUCKET", ""),
+        content_addressed=content_addressed,
+    )

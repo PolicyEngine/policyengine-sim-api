@@ -57,6 +57,8 @@ from .failures import (
 )
 from .output_planning import apply_output_plan, validate_output_frames
 from .partition import should_segment_simulation
+from .report_run_access import report_run_store
+from .report_run_recording import SimulationRunRecordingStore
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
@@ -73,6 +75,8 @@ if TYPE_CHECKING:
         DatasetSelection,
         RegionResolution,
     )
+
+    from .report_run_access import ReportRunWriter
 
 logger = logging.getLogger(__name__)
 
@@ -473,7 +477,8 @@ class SimulationWorkerDependencies:
 
     The defaults are the Stage 12 database store, the private artifact bucket,
     the standard country-package calculation, the deployed region-group
-    segment runner and no telemetry runtime.
+    segment runner, no telemetry runtime, and the report run store, which only
+    a call that names a report run uses.
     """
 
     store: ComparisonStore | None = None
@@ -490,6 +495,7 @@ class SimulationWorkerDependencies:
         | None
     ) = None
     runtime: ObservabilityRuntime | None = None
+    report_runs: ReportRunWriter | None = None
 
 
 def run_single_simulation(
@@ -498,12 +504,16 @@ def run_single_simulation(
     *,
     required_country: CountryId,
     dependencies: SimulationWorkerDependencies | None = None,
+    modal_call_id: str | None = None,
 ) -> dict[str, Any]:
     """Calculate one planned simulation, store its artifact, and return its descriptor.
 
     A child already marked succeeded returns its stored descriptor without
     recalculating. A failure after the run is marked running marks it FAILED
-    and raises a ``RuntimeError`` that carries no calculation detail.
+    and raises a ``RuntimeError`` that carries no calculation detail. A call
+    whose context names a report run also records its simulation run's
+    claim, output file and failure under ``modal_call_id``, and names its
+    artifacts by their digest, so a call Modal restarts can store them again.
     """
     dependencies = dependencies or SimulationWorkerDependencies()
     runtime = dependencies.runtime
@@ -511,9 +521,36 @@ def run_single_simulation(
     context = Stage12InvocationContext.model_validate(context_payload)
     _require_context(simulation, context, required_country=required_country)
     persistence = dependencies.store or runtime_store(runtime)
-    artifact_storage = dependencies.artifacts or artifact_store()
+    recording = None
+    if context.report_run is not None:
+        if modal_call_id is None:
+            msg = "a report run's worker needs its Modal call ID"
+            raise ValueError(msg)
+        recording = SimulationRunRecordingStore(
+            persistence,
+            dependencies.report_runs or report_run_store(runtime),
+            context.report_run,
+            modal_call_id=modal_call_id,
+        )
+        persistence = recording
+    artifact_storage = dependencies.artifacts or artifact_store(
+        content_addressed=context.report_run is not None
+    )
     child = persistence.get_simulation(simulation.simulation_execution_id)
     if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
+        if recording is not None:
+            # An earlier attempt stopped between the child's and the run's
+            # success; the run's completion is conditional, so this repeats
+            # nothing that was recorded, and if it fails the coordinator
+            # completes the run from the child's record.
+            try:
+                recording.complete_from_succeeded_child(child)
+            except Exception as error:  # noqa: BLE001  # the coordinator completes the run again
+                logger.warning(
+                    "Could not complete the simulation run of %s (%s)",
+                    simulation.simulation_execution_id,
+                    type(error).__name__,
+                )
         return descriptor_from_record(child, simulation).model_dump(mode="json")
     running = _claim_simulation(persistence, child)
     cancellation_requested = _cancellation_check(persistence, simulation)
