@@ -315,8 +315,22 @@ def test_two_sweeps_at_once_fail_each_run_exactly_once(
     assert seeder.row("simulation_runs", reform_id)["status"] == "failed"
 
 
-def _second_report_run(seeder, seeded_run: SeededReportRun, status):
-    """Insert another report run of the same report, naming the same two runs."""
+_SAME_RUN = object()
+
+
+def _second_report_run(
+    seeder,
+    seeded_run: SeededReportRun,
+    status,
+    *,
+    baseline_simulation_run_id=_SAME_RUN,
+    reform_simulation_run_id=_SAME_RUN,
+):
+    """Insert another report run of the same report.
+
+    It names the first report run's simulation runs unless given others; a
+    null reform run is a report with only a baseline.
+    """
     first = seeder.row("report_runs", seeded_run.run_ids.report_run_id)
     second_id = uuid4()
     with seeder.engine.begin() as connection:
@@ -324,8 +338,16 @@ def _second_report_run(seeder, seeded_run: SeededReportRun, status):
             insert(seeder.table("report_runs")).values(
                 id=second_id,
                 report_id=first["report_id"],
-                baseline_simulation_run_id=first["baseline_simulation_run_id"],
-                reform_simulation_run_id=first["reform_simulation_run_id"],
+                baseline_simulation_run_id=(
+                    first["baseline_simulation_run_id"]
+                    if baseline_simulation_run_id is _SAME_RUN
+                    else baseline_simulation_run_id
+                ),
+                reform_simulation_run_id=(
+                    first["reform_simulation_run_id"]
+                    if reform_simulation_run_id is _SAME_RUN
+                    else reform_simulation_run_id
+                ),
                 status=status,
                 trigger="manual",
                 country_package_version=first["country_package_version"],
@@ -334,6 +356,32 @@ def _second_report_run(seeder, seeded_run: SeededReportRun, status):
             )
         )
     return second_id
+
+
+def _finished_simulation_run(seeder, seeded_run: SeededReportRun):
+    """Insert a succeeded simulation run of the seeded baseline's simulation."""
+    baseline = seeder.row(
+        "simulation_runs", seeded_run.run_ids.baseline_simulation_run_id
+    )
+    run_id = uuid4()
+    copied = {
+        name: value
+        for name, value in baseline.items()
+        if name not in {"id", "created_at", "updated_at"}
+    }
+    with seeder.engine.begin() as connection:
+        connection.execute(
+            insert(seeder.table("simulation_runs")).values(
+                {
+                    **copied,
+                    "id": run_id,
+                    "status": "succeeded",
+                    "started_at": NOW,
+                    "completed_at": NOW,
+                }
+            )
+        )
+    return run_id
 
 
 def _simulation_run_listed(store, simulation_run_id):
@@ -449,3 +497,71 @@ def test_a_simulation_run_a_report_run_now_names_is_not_failed(
     )
 
     assert write == RunWrite(changed=False, status=RunStatus.RUNNING)
+
+
+@pytest.mark.parametrize("second_status", ["pending", "running"])
+def test_a_reform_run_a_report_run_now_names_is_not_failed(
+    store, seeder, seeded_run: SeededReportRun, second_status
+) -> None:
+    run_ids = seeded_run.run_ids
+    _set_run(
+        seeder,
+        "simulation_runs",
+        run_ids.reform_simulation_run_id,
+        status="running",
+        modal_call_id="fc-reform",
+        started_at=NOW,
+    )
+    _set_run(
+        seeder,
+        "report_runs",
+        run_ids.report_run_id,
+        status="failed",
+        completed_at=CUTOFF,
+    )
+    (reform_run,) = [
+        run
+        for run in store.list_active_runs(
+            RunKind.SIMULATION_RUN, active_since_before=CUTOFF
+        )
+        if run.run_id == run_ids.reform_simulation_run_id
+    ]
+    # After the listing, another report run names it, as its reform only.
+    _second_report_run(
+        seeder,
+        seeded_run,
+        second_status,
+        baseline_simulation_run_id=_finished_simulation_run(seeder, seeded_run),
+    )
+
+    write = store.fail_stuck_run(
+        reform_run, error_message=ENDED_MESSAGE, failed_at=CUTOFF
+    )
+
+    assert write == RunWrite(changed=False, status=RunStatus.RUNNING)
+
+
+def test_a_report_run_with_only_a_baseline_keeps_only_its_baseline_out(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    run_ids = seeded_run.run_ids
+    _running(seeder, seeded_run)
+    _set_run(
+        seeder,
+        "simulation_runs",
+        run_ids.reform_simulation_run_id,
+        status="running",
+        modal_call_id="fc-reform",
+        started_at=NOW,
+    )
+    _set_run(
+        seeder,
+        "report_runs",
+        run_ids.report_run_id,
+        status="failed",
+        completed_at=CUTOFF,
+    )
+    _second_report_run(seeder, seeded_run, "running", reform_simulation_run_id=None)
+
+    assert not _baseline_listed(store, seeded_run)
+    assert _simulation_run_listed(store, run_ids.reform_simulation_run_id)
