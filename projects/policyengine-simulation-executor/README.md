@@ -58,9 +58,10 @@ A deployment publishes routing twice (rule `sim.deploy.latest-moves-after-checks
 
 1. **Before its checks**, `update_routing` adds the release's routes (its
    policyengine.py version and its US and UK model versions, mapped to the
-   deployed app) and its bundle manifest, and leaves `latest` alone (only the
-   first publication into an empty routing state makes the release latest,
-   since no earlier release exists to keep). The checks
+   deployed app) and its bundle manifest, and leaves `latest` alone (only a
+   publication into a routing state with no latest policyengine.py version,
+   the first one, makes the release latest, since no earlier release exists to
+   keep). The checks
    pin those versions, so they reach the release through the gateway, while
    unpinned requests still reach the previous release. Requests that pin one of
    the release's US or UK model versions without a policyengine.py version reach
@@ -104,7 +105,11 @@ For a completed release, use `deploy_run_id=<original GitHub run ID>` with `targ
 to restore its saved artifact plans (each attempt's routes plan,
 `routing-plan-<target>-<attempt>`, and latest plan,
 `routing-latest-plan-<target>-<attempt>`), or
-`policyengine_version=<published version>` to move latest to that release. Leave `resolve_pending_publication=false` in both
+`policyengine_version=<published version>` to move latest to that release.
+GitHub stops listing an attempt's artifact once the job that uploaded it
+reruns; the restore accepts such a missing plan only when the plans published
+before and after it show its change undone, and otherwise refuses rather than
+stopping short. Leave `resolve_pending_publication=false` in both
 modes. Read-only `--print-pending-plan --environment staging|main` also displays the
 durable plan without changing routing.
 

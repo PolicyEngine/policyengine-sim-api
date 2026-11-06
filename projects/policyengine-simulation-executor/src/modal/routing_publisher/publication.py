@@ -96,11 +96,13 @@ def apply_routing_plan(*, environment: str, plan: dict) -> None:
 
 
 def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
-    """Undo a deployment's plans (one per run attempt): ``restored`` or ``unchanged``.
+    """Undo a deployment's plans, given oldest first: ``restored`` or ``unchanged``.
 
-    Repeatedly restores the starting state of a plan whose published state is
-    live, newest attempt first, skipping plans that changed nothing, until no
-    plan's published state is live. ``unchanged`` means the live state is a
+    A deployment run keeps a routes plan and, once its latest job runs, a
+    latest plan in each attempt. Repeatedly restores the starting state of a
+    plan whose published state is live (the one given last, if several are),
+    skipping plans that changed nothing, until no plan's published state is
+    live. ``unchanged`` means the live state is a
     starting state no plan replaced (nothing was applied, or it was already
     undone). Any other live state is a conflict and nothing is changed.
     """
@@ -125,7 +127,7 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
 
 
 def _restore_live_plans(store: "modal.Dict", plans: list[dict]) -> str:
-    """Restore each live plan's starting state, newest attempt first.
+    """Restore each live plan's starting state, the one given last first.
 
     Returns ``restored``, or ``unchanged`` when the live state is a starting
     state no plan replaced; any other live state is a conflict.

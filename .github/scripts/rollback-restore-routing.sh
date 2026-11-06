@@ -3,7 +3,7 @@
 # changes from the plans it kept, or point latest at a published release.
 # With DEPLOY_RUN_ID, every plan that run's attempts kept (not the jobs a rerun
 # carried over) must be under $RUNNER_TEMP/routing-plans, downloaded by the
-# workflow: each attempt's
+# workflow, unless the plans around it show its change undone: each attempt's
 # routes plan (routing-plan-<target>-<attempt>, kept by the routes job before
 # the checks) and latest plan (routing-latest-plan-<target>-<attempt>, kept by
 # the latest job after them). The plans are passed oldest first: by attempt,
@@ -14,7 +14,7 @@
 # Required env vars: TARGET, DEPLOY_RUN_ID, POLICYENGINE_VERSION,
 # EXPECTED_LATEST, MODAL_ENVIRONMENT, GH_TOKEN (read by gh), and the runner's
 # GITHUB_REPOSITORY and RUNNER_TEMP. The Modal client reads MODAL_TOKEN_ID and
-# MODAL_TOKEN_SECRET.
+# MODAL_TOKEN_SECRET. Reads plan digests with jq.
 
 set -euo pipefail
 
@@ -23,37 +23,78 @@ if [[ -n "${DEPLOY_RUN_ID}" ]]; then
   # without one would stop short of what the run replaced and still look
   # complete.
   attempts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}" --jq .run_attempt)"
-  for kind in routing latest; do
-    if [[ "${kind}" == "routing" ]]; then
-      job="Publish routing after all services pass"
-      step="Keep the plan for a guarded restore"
-      prefix="routing-plan-${TARGET}"
-    else
-      job="Move latest to the release after every check"
-      step="Keep the latest plan for a guarded restore"
-      prefix="routing-latest-plan-${TARGET}"
-    fi
-    # A rerun lists each job it carried over from the attempt before, with
-    # that job's start time and steps, but uploads nothing for it. A job kept
-    # a plan in this attempt only if it started at a time the attempt before
-    # does not list.
-    previous_starts=""
-    for attempt in $(seq 1 "${attempts}"); do
+  # The plans the run's jobs kept, in the order they were published: by
+  # attempt, and the routes plan before the latest plan within an attempt.
+  # A rerun lists each job it carried over from the attempt before, with
+  # that job's start time and steps, but uploads nothing for it, so a job
+  # kept a plan in an attempt only if it started at a time the attempt
+  # before does not list.
+  kept_plans=()
+  previous_routing_starts=""
+  previous_latest_starts=""
+  for attempt in $(seq 1 "${attempts}"); do
+    for kind in routing latest; do
+      if [[ "${kind}" == "routing" ]]; then
+        job="Publish routing after all services pass"
+        step="Keep the plan for a guarded restore"
+        artifact="routing-plan-${TARGET}-${attempt}"
+        previous_starts="${previous_routing_starts}"
+      else
+        job="Move latest to the release after every check"
+        step="Keep the latest plan for a guarded restore"
+        artifact="routing-latest-plan-${TARGET}-${attempt}"
+        previous_starts="${previous_latest_starts}"
+      fi
       starts="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}/attempts/${attempt}/jobs" \
         --jq ".jobs[] | select(.name == \"Complete ${TARGET} deployment / ${job}\") | select(any(.steps[]; .name == \"${step}\" and .conclusion == \"success\")) | .started_at" \
         | sort -u)"
-      kept=false
       while IFS= read -r start; do
         if [[ -n "${start}" ]] && ! grep -qxF -- "${start}" <<<"${previous_starts}"; then
-          kept=true
+          kept_plans+=("${artifact}")
+          break
         fi
       done <<<"${starts}"
-      if [[ "${kept}" == "true" && ! -f "${RUNNER_TEMP}/routing-plans/${prefix}-${attempt}/plan.json" ]]; then
-        echo "Attempt ${attempt} of run ${DEPLOY_RUN_ID} kept a ${TARGET} ${kind} plan that cannot be found; if its publication is pending, rerun this workflow with target=${TARGET} and resolve_pending_publication=true, leaving other inputs blank." >&2
-        exit 1
+      if [[ "${kind}" == "routing" ]]; then
+        previous_routing_starts="${starts}"
+      else
+        previous_latest_starts="${starts}"
       fi
-      previous_starts="${starts}"
     done
+  done
+  # GitHub stops listing an attempt's artifact once the job that uploaded it
+  # reruns. A kept plan may be missing only when the nearest downloaded plans
+  # published before and after it show its change undone: the later plan
+  # replaced exactly the state the earlier one published. Each published
+  # state is unique, so the missing plan's state cannot be live. Restoring
+  # without any other missing plan would stop short of what the run replaced
+  # and still look complete.
+  for ((index = 0; index < ${#kept_plans[@]}; index++)); do
+    artifact="${kept_plans[index]}"
+    if [[ -f "${RUNNER_TEMP}/routing-plans/${artifact}/plan.json" ]]; then
+      continue
+    fi
+    earlier_after=""
+    for ((other = index - 1; other >= 0; other--)); do
+      plan="${RUNNER_TEMP}/routing-plans/${kept_plans[other]}/plan.json"
+      if [[ -f "${plan}" ]]; then
+        earlier_after="$(jq -r '.after_sha256 // ""' "${plan}")"
+        break
+      fi
+    done
+    later_before=""
+    for ((other = index + 1; other < ${#kept_plans[@]}; other++)); do
+      plan="${RUNNER_TEMP}/routing-plans/${kept_plans[other]}/plan.json"
+      if [[ -f "${plan}" ]]; then
+        later_before="$(jq -r '.before_sha256 // ""' "${plan}")"
+        break
+      fi
+    done
+    if [[ "${earlier_after}" =~ ^[0-9a-f]{64}$ && "${later_before}" == "${earlier_after}" ]]; then
+      continue
+    fi
+    if [[ "${artifact}" == routing-latest-plan-* ]]; then kind=latest; else kind=routing; fi
+    echo "Attempt ${artifact##*-} of run ${DEPLOY_RUN_ID} kept a ${TARGET} ${kind} plan that cannot be found; if its publication is pending, rerun this workflow with target=${TARGET} and resolve_pending_publication=true, leaving other inputs blank." >&2
+    exit 1
   done
   # Passed oldest first. The restore undoes every change that is still
   # live, newest first, and skips plans that changed nothing.

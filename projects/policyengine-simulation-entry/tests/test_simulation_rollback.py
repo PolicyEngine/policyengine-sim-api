@@ -13,6 +13,7 @@ Invariants:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -342,16 +343,23 @@ def _run_restore(
     tmp_path: Path,
     attempts: int,
     kept: dict,
-    present: list[str],
+    present: list[str] | dict[str, dict],
     inventory: dict[int, list[dict]] | None = None,
 ):
-    """Run the restore with the named plan artifacts downloaded."""
+    """Run the restore with the named plan artifacts downloaded.
+
+    ``present`` names the downloaded artifacts, or maps each to its plan's
+    digests (``before_sha256`` and ``after_sha256``).
+    """
     runner_temp = tmp_path / "runner-temp-with-dashes"
     (runner_temp / "routing-plans").mkdir(parents=True)
-    for artifact in present:
+    plans = (
+        present if isinstance(present, dict) else {artifact: {} for artifact in present}
+    )
+    for artifact, digests in plans.items():
         directory = runner_temp / "routing-plans" / artifact
         directory.mkdir(parents=True)
-        (directory / "plan.json").write_text("{}")
+        (directory / "plan.json").write_text(json.dumps(digests))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _fake_gh(bin_dir, attempts, kept, inventory)
@@ -457,6 +465,57 @@ def test_rollback_needs_no_plan_from_a_job_a_rerun_carried_over(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert _routes_plan(2) not in result.stdout
+
+
+def _plan_digests(before: str, after: str) -> dict:
+    return {"before_sha256": before * 64, "after_sha256": after * 64}
+
+
+def test_rollback_needs_no_plan_whose_change_a_later_plan_shows_undone(tmp_path):
+    """GitHub stops listing an attempt's artifact once its job reruns.
+
+    Attempt 1's latest plan (a to b) was put back after its check failed, so
+    attempt 2's latest plan replaced the routes plan's state again (a to c):
+    nothing attempt 1's latest plan published can still be live.
+    """
+    result = _run_restore(
+        tmp_path,
+        2,
+        {},
+        present={
+            _routes_plan(1): _plan_digests("0", "a"),
+            _latest_plan(2): _plan_digests("a", "c"),
+        },
+        inventory=_rerun_of_the_latest_job(),
+    )
+    assert result.returncode == 0, result.stderr
+    passed = result.stdout.split("--restore-plan\n", 1)[1].split()
+    assert [Path(path).parent.name for path in passed] == [
+        _routes_plan(1),
+        _latest_plan(2),
+    ]
+
+
+@pytest.mark.parametrize(
+    "present",
+    [
+        # Attempt 2's plan replaced attempt 1's latest state, still live under it.
+        {
+            _routes_plan(1): _plan_digests("0", "a"),
+            _latest_plan(2): _plan_digests("b", "c"),
+        },
+        # No earlier plan shows what attempt 1's latest plan replaced.
+        {_latest_plan(2): _plan_digests("a", "c")},
+    ],
+    ids=["missing-change-still-live", "no-earlier-plan"],
+)
+def test_rollback_refuses_a_missing_plan_whose_change_may_be_live(tmp_path, present):
+    result = _run_restore(
+        tmp_path, 2, {}, present=present, inventory=_rerun_of_the_latest_job()
+    )
+    assert result.returncode == 1
+    assert "kept a prod" in result.stderr
+    assert "--restore-plan" not in result.stdout
 
 
 def test_rollback_refuses_when_an_attempts_latest_plan_is_missing(tmp_path):

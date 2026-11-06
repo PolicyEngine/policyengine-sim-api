@@ -116,7 +116,10 @@ def routing_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--complete-plan",
         metavar="FILE",
-        help="Complete a recorded publication after all release gates pass.",
+        help=(
+            "Complete a recorded publication once its plan's state is live: the "
+            "routes plan after publishing it, the latest plan after its check."
+        ),
     )
     parser.add_argument(
         "--finalize-publication",
@@ -147,8 +150,9 @@ def routing_argument_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         nargs="+",
         help=(
-            "Undo a deployment's plans (one per run attempt): restore each "
-            "starting state while the live state is what that plan published."
+            "Undo a deployment's plans, given oldest first (each attempt's "
+            "routes plan, then its latest plan): restore each starting state "
+            "while the live state is what that plan published."
         ),
     )
     parser.add_argument(
