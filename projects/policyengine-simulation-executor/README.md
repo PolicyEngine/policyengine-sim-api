@@ -28,8 +28,12 @@ in the project dependencies and `modal-simulation-image`, then run `uv lock`.
 The automated updater changes only those wrapper requirements; it reads the
 wrapper's release manifest to verify and report the selected component and data
 versions. Other image dependencies belong in `modal-simulation-image`. PRs
-touching image inputs run an in-image import smoke (`src/modal/smoke_app.py` via
-`.github/workflows/pr-image-smoke.yml`). Note that any change to the
+touching image inputs run in-image import smokes through
+`.github/workflows/pr-image-smoke.yml`: `src/modal/smoke_app.py` for the v1
+worker image, and `src/modal/v2_image_smoke.py` for every v2 image (the report
+coordinator, the country simulation workers, the US one without its Stage 12
+cache layer, and the household functions, where it also calculates a
+household). Note that any change to the
 group or lock invalidates the image layer cache, including the artifact
 fetch layer below.
 

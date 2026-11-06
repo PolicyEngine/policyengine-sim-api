@@ -7,6 +7,9 @@ import json
 from pathlib import Path
 
 import modal
+from policyengine_simulation_contract.household_execution import (
+    household_callable_name,
+)
 from policyengine_simulation_contract.stage12_manifest import (
     V1_ROUTING_STATE_NAME,
     V2_VERSION_MANIFEST_NAME,
@@ -24,8 +27,11 @@ from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 def build_worker(validation_payload: object) -> V2WorkerVersion:
     """Build the installed bundle's v2 worker entry from a validation record.
 
-    Raises ValueError if the record is invalid or the entry carries a
-    credential-like key.
+    Every bundle country has a single-simulation worker, so each is recorded
+    as economy-capable. A country's household function is recorded when the
+    record shows that it calculated the validation household. Raises
+    ValueError if the record is invalid or the entry carries a credential-like
+    key.
     """
     resolved = load_stage12_bundle()
     validation = V2WorkerValidation.model_validate(validation_payload)
@@ -35,7 +41,13 @@ def build_worker(validation_payload: object) -> V2WorkerVersion:
         countries=tuple(
             V2CountryWorker(
                 country=country.country,
-                single_simulation_callable=(f"run_single_simulation_{country.country}"),
+                economy_capable=True,
+                single_simulation_callable=f"run_single_simulation_{country.country}",
+                household_callable=(
+                    household_callable_name(country.country)
+                    if country.country in validation.household_validation_invocation_ids
+                    else None
+                ),
             )
             for country in resolved.bundle.countries
         ),
