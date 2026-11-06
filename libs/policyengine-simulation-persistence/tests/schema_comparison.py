@@ -12,7 +12,8 @@ with PostgreSQL's definition, and its other indexes by name with their
 definition; and the values of each enum its columns use.
 ``schema_differences`` lists every way the models' tables differ from the
 real ones. Tables the models leave out are not compared.
-``foreign_key_targets`` reads which table each foreign key names.
+``foreign_key_targets`` reads which table each foreign key names, and
+``foreign_keys_to`` keeps the keys that name the given tables.
 """
 
 from __future__ import annotations
@@ -316,3 +317,19 @@ def foreign_key_targets(schema: SchemaShape) -> dict[tuple[str, str], str]:
                 named_table = f"{_unquoted(target['schema'])}.{named_table}"
             targets[(table_name, constraint_name)] = named_table
     return targets
+
+
+def foreign_keys_to(
+    schema: SchemaShape, table_names: Collection[str]
+) -> dict[tuple[str, str], str]:
+    """Return each foreign key that names one of these tables, and the table.
+
+    Keys are told apart by their own table and their name, which is unique
+    only within that table. A table PostgreSQL wrote with its schema, as
+    ``auth.users``, isn't the bare ``users``.
+    """
+    return {
+        table_and_name: named_table
+        for table_and_name, named_table in foreign_key_targets(schema).items()
+        if named_table in table_names
+    }

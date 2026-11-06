@@ -21,7 +21,7 @@ from policyengine_simulation_persistence import referenced_metadata, service_met
 from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
 from schema_comparison import (
     describe_tables,
-    foreign_key_targets,
+    foreign_keys_to,
     schema_differences,
     schema_from_json,
 )
@@ -102,8 +102,8 @@ def test_the_public_api_keeps_its_keys_from_the_services_tables(
 ) -> None:
     """The keys from the service's tables to the Public API's own are the 20 expected.
 
-    Each is compared by its name and the table it names; the comparison with
-    the models checks the rest of its definition.
+    Each is compared by its table, its name and the table it names; the
+    comparison with the models checks the rest of its definition.
 
     The Public API's own tables are those ``referenced_metadata`` models: users,
     policies, dynamics, households, datasets, regions and the model catalog.
@@ -117,13 +117,7 @@ def test_the_public_api_keeps_its_keys_from_the_services_tables(
     finally:
         real_engine.dispose()
 
-    keys_to_public_api_tables = {
-        constraint_name: named_table
-        for (_, constraint_name), named_table in foreign_key_targets(real).items()
-        if named_table in public_api_tables
-    }
-
-    assert keys_to_public_api_tables == {
-        constraint_name: named_columns.partition("(")[0]
-        for constraint_name, (_, named_columns, _) in KEYS_TO_PUBLIC_API_TABLES.items()
+    assert foreign_keys_to(real, public_api_tables) == {
+        table_and_name: named_columns.partition("(")[0]
+        for table_and_name, (_, named_columns, _) in KEYS_TO_PUBLIC_API_TABLES.items()
     }

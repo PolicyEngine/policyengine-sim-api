@@ -15,6 +15,7 @@ from schema_comparison import (
     TableShape,
     describe_tables,
     foreign_key_targets,
+    foreign_keys_to,
     schema_differences,
     schema_from_json,
     schema_to_json,
@@ -130,6 +131,36 @@ def test_quoted_names_are_read_whole() -> None:
     assert targets[("simulation_runs", "fk_simulation_runs_owner")] == "Auth.Users"
     assert targets[("simulation_runs", "fk_simulation_runs_odd")] == "odd.name(1)"
     assert targets[("simulation_runs", "fk_simulation_runs_quote")] == 'say "hi"'
+
+
+def test_keys_to_the_given_tables_are_found_on_every_table() -> None:
+    """A key's name is unique only within its table, so each is kept by both."""
+    simulation_runs = _simulation_runs(
+        constraints={
+            "fk_policy": "FOREIGN KEY (policy_id) REFERENCES policies(id)",
+            "fk_user": "FOREIGN KEY (user_id) REFERENCES auth.users(id)",
+        }
+    )
+    household_jobs = TableShape(
+        columns={"id": ColumnShape("uuid", nullable=False, default=None)},
+        constraints={
+            "pk_household_jobs": "PRIMARY KEY (id)",
+            "fk_policy": (
+                "FOREIGN KEY (policy_id) REFERENCES policies(id) ON DELETE SET NULL"
+            ),
+        },
+        indexes={},
+    )
+    schema = SchemaShape(
+        tables={**simulation_runs.tables, "household_jobs": household_jobs},
+        enums=simulation_runs.enums,
+    )
+
+    # auth.users is another schema's table, and simulations isn't asked for.
+    assert foreign_keys_to(schema, {"policies", "users"}) == {
+        ("simulation_runs", "fk_policy"): "policies",
+        ("household_jobs", "fk_policy"): "policies",
+    }
 
 
 def test_a_foreign_key_whose_table_cannot_be_read_is_refused() -> None:
