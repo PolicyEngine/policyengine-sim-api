@@ -6,7 +6,8 @@ login role that holds no privilege on it until the test grants one. Without
 the variable those tests skip, unless ``SIMULATION_REQUIRE_DATABASE_TESTS=1``
 (set in CI), where they fail instead.
 
-Tests marked ``public_api_schema`` need a database the Public API's own v2
+Tests marked ``public_api_schema`` run in the Public API schema jobs; those
+that use ``public_api_database_url`` need a database the Public API's own v2
 migration chain built, with the privileges its manifest declares granted
 (run its ``alembic -c alembic-v2.ini upgrade head`` and
 ``scripts/reconcile_v2_privileges.py apply --create-missing-roles`` against

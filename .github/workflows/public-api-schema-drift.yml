@@ -1,0 +1,111 @@
+name: Public API schema drift
+
+# Compares sim's table models with the tables the Public API's v2 migration
+# chain builds at the head of its default branch, every Monday and on demand.
+# Pull requests compare them at the pinned commit instead (the PR workflow's
+# public-api-schema job). A failure here means the Public API has merged a
+# change to a table the simulation service writes, or to its role's grants,
+# that the models and the pin need to follow, or that its tables can't be
+# built at that head; the log says which (rule
+# sim.persistence.models-match-public-api). The Public API's repository is
+# public, so the workflow reads no secret. When the comparison fails, a second
+# job opens an issue labelled public-api-schema-drift, or comments on the open
+# one, with the workflow's own token; only that job may write issues.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-api-schema-drift:
+    name: Compare the models with the Public API's default branch
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: simulation_ci
+          # The Public API's disposable migration mode accepts only this
+          # database; the server's postgres database holds the models' tables.
+          POSTGRES_DB: policyengine_v2_alembic_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      SIMULATION_TEST_DATABASE_URL: postgresql://postgres:simulation_ci@127.0.0.1:5432/postgres
+      PUBLIC_API_SCHEMA_DATABASE_URL: postgresql://postgres:simulation_ci@127.0.0.1:5432/policyengine_v2_alembic_test
+      # A missing server or Public API database fails the tests instead of
+      # skipping them.
+      SIMULATION_REQUIRE_DATABASE_TESTS: "1"
+      SIMULATION_REQUIRE_PUBLIC_API_SCHEMA: "1"
+
+    steps:
+    # Neither checkout keeps the job's token, since the job runs the Public
+    # API's code.
+    - uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Check out the Public API's default branch
+      uses: actions/checkout@v6
+      with:
+        repository: PolicyEngine/policyengine-api
+        ref: master
+        path: public-api
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        # 3.12 for the Public API's lock, as its own CI uses; 3.13 for sim's.
+        python-version: |
+          3.12
+          3.13
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v8.1.0
+      with:
+        version: "0.13.6"
+        enable-cache: true
+
+    - name: Build the Public API's tables at its default branch
+      run: .github/scripts/public-api-schema-reference.sh public-api
+
+    - name: Install dependencies
+      working-directory: libs/policyengine-simulation-persistence
+      run: uv sync --extra test --frozen
+
+    - name: Compare sim's table models with the Public API's tables
+      working-directory: libs/policyengine-simulation-persistence
+      run: uv run --frozen pytest tests/ -v -m public_api_schema
+
+  report-public-api-schema-drift:
+    name: Open or update the drift issue
+    needs: public-api-schema-drift
+    # Only a failed comparison: a passing or cancelled run reports nothing.
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    # It checks out sim alone, to run its script; it never checks out or runs
+    # the Public API's code.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Open or comment on the drift issue
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: .github/scripts/public-api-schema-drift-issue.sh
