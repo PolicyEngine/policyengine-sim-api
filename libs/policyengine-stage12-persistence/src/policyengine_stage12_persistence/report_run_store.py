@@ -2,9 +2,9 @@
 
 Every status write is one ``UPDATE`` conditional on the run's expected
 status, so a call that Modal restarts after pre-emption, or a second writer,
-changes nothing that is already final. A report run's completion also inserts
-its result rows, in the same transaction and only when its update changed
-the run.
+changes nothing that is already final. A report run's completion sets its own
+result columns in the same update, and inserts its result rows in the same
+transaction, only when its update changed the run.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from sqlalchemy import func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from policyengine_stage12_persistence.report_run_tables import (
-    report_run_simulation_runs,
     report_runs,
     simulation_runs,
 )
@@ -94,22 +93,25 @@ class ReportRunStore:
             yield connection
 
     def require_simulation_runs(self, run_ids: ReportRunIds) -> None:
-        """Raise ValueError unless the report run combines both simulation runs."""
+        """Check the report run names the call's baseline and reform simulation runs.
+
+        Raises LookupError when the report run does not exist, and ValueError
+        when it names other simulation runs.
+        """
         statement = select(
-            report_run_simulation_runs.c.role,
-            report_run_simulation_runs.c.simulation_run_id,
-        ).where(report_run_simulation_runs.c.report_run_id == run_ids.report_run_id)
+            report_runs.c.baseline_simulation_run_id,
+            report_runs.c.reform_simulation_run_id,
+        ).where(report_runs.c.id == run_ids.report_run_id)
         with self._transaction("require_simulation_runs") as connection:
-            members = {
-                (row.role, row.simulation_run_id)
-                for row in connection.execute(statement)
-            }
-        expected = {
-            ("baseline", run_ids.baseline_simulation_run_id),
-            ("reform", run_ids.reform_simulation_run_id),
-        }
-        if not expected <= members:
-            msg = "the report run does not combine the simulation runs its call names"
+            named = connection.execute(statement).one_or_none()
+        if named is None:
+            msg = f"report run {run_ids.report_run_id} does not exist"
+            raise LookupError(msg)
+        if tuple(named) != (
+            run_ids.baseline_simulation_run_id,
+            run_ids.reform_simulation_run_id,
+        ):
+            msg = "the report run names other simulation runs than its call"
             raise ValueError(msg)
 
     def claim_report_run(
@@ -155,11 +157,12 @@ class ReportRunStore:
     ) -> RunWrite:
         """Mark the report run succeeded while ``modal_call_id`` holds it running.
 
-        ``result``'s rows are inserted in the same transaction, only when the
-        status changed, so a repeated completion stores nothing twice and a
-        failed insert leaves the run running. A row of a simulation run that
-        already has one for the same measure, from a report run sharing that
-        simulation run, keeps the stored row.
+        The same update sets ``result``'s columns of the report run, and its
+        rows are inserted in the same transaction, only when the status
+        changed, so a repeated completion stores nothing twice and a failed
+        insert leaves the run running without them. A row of a simulation run
+        that already has one for the same measure, from a report run sharing
+        that simulation run, keeps the stored row.
         """
         statement = (
             update(report_runs)
@@ -173,6 +176,7 @@ class ReportRunStore:
                 error_message=None,
                 completed_at=completed_at,
                 updated_at=completed_at,
+                **({} if result is None else result.report_run_columns),
             )
         )
         return self._write(

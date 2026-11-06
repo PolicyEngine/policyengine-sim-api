@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
 
@@ -45,6 +47,13 @@ POVERTY_PARTS = {
     "race": "poverty_by_race",
 }
 POVERTY_PART_NAMES = ("poverty", "poverty_by_gender", "poverty_by_race")
+CLIFF_COLUMNS = (
+    "baseline_cliff_gap",
+    "baseline_cliff_share",
+    "reform_cliff_gap",
+    "reform_cliff_share",
+)
+LABOR_SUPPLY_TABLES = ("labor_supply_responses", "labor_supply_decile_responses")
 
 
 @pytest.fixture
@@ -152,6 +161,66 @@ def _rebuilt_poverty(seeder, run_ids, poverty_types):
     return {name: parts.get(name) for name in POVERTY_PART_NAMES}
 
 
+def _rebuilt_cliff_impact(report_run):
+    """Rebuild today's cliff impact from the report run's four columns."""
+    if report_run["baseline_cliff_gap"] is None:
+        return None
+    return {
+        side: {
+            "cliff_gap": report_run[f"{side}_cliff_gap"],
+            "cliff_share": report_run[f"{side}_cliff_share"],
+        }
+        for side in ("baseline", "reform")
+    }
+
+
+def _rebuilt_labor_supply(seeder, report_run_id):
+    """Rebuild today's labour supply response from its two tables' rows.
+
+    A decile .py reports no relative response for has null relative columns.
+    """
+    responses = seeder.rows("labor_supply_responses", report_run_id=report_run_id)
+    if not responses:
+        return None
+    (response,) = responses
+    deciles = seeder.rows("labor_supply_decile_responses", report_run_id=report_run_id)
+
+    def by_decile(column):
+        return {
+            str(row["decile"]): row[column]
+            for row in deciles
+            if row[column] is not None
+        }
+
+    return {
+        "substitution_lsr": response["substitution_effect_earnings_change"],
+        "income_lsr": response["income_effect_earnings_change"],
+        "relative_lsr": {
+            "income": response["relative_income_effect"],
+            "substitution": response["relative_substitution_effect"],
+        },
+        "total_change": response["total_earnings_change"],
+        "revenue_change": response["revenue_change"],
+        "decile": {
+            "average": {
+                "income": by_decile("average_income_effect"),
+                "substitution": by_decile("average_substitution_effect"),
+            },
+            "relative": {
+                "income": by_decile("relative_income_effect"),
+                "substitution": by_decile("relative_substitution_effect"),
+            },
+        },
+        "hours": {
+            "baseline": response["baseline_weekly_hours"],
+            "reform": response["reform_weekly_hours"],
+            "change": response["weekly_hours_change"],
+            "income_effect": response["weekly_hours_income_effect"],
+            "substitution_effect": response["weekly_hours_substitution_effect"],
+        },
+    }
+
+
 def _rebuilt_deciles(rows):
     """Rebuild today's decile part; .py's relative change is a percentage."""
     return {
@@ -216,16 +285,58 @@ def test_a_report_run_stores_its_economy_output_as_rows(
             output["inequality"]["top_10_pct_share"][side],
             output["inequality"]["top_1_pct_share"][side],
         )
-    # The parts with no result table are kept whole for the compared pair.
-    (comparison,) = seeder.rows(
-        "report_run_comparisons", report_run_id=run_ids.report_run_id
-    )
+    # The cliff impact is four of the report run's own columns.
+    report_run = seeder.row("report_runs", run_ids.report_run_id)
+    assert _rebuilt_cliff_impact(report_run) == output["cliff_impact"]
+    assert report_run["data_version"] == output["data_version"]
     assert (
-        comparison["baseline_simulation_run_id"],
-        comparison["reform_simulation_run_id"],
-    ) == (run_ids.baseline_simulation_run_id, run_ids.reform_simulation_run_id)
-    assert comparison["labor_supply_result"] == output["labor_supply_response"]
-    assert comparison["cliff_impact_result"] == output["cliff_impact"]
+        _rebuilt_labor_supply(seeder, run_ids.report_run_id)
+        == (output["labor_supply_response"])
+    )
+
+
+def test_the_labour_supply_response_is_one_row_and_a_row_per_decile(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    report_run_id = seeded_run.run_ids.report_run_id
+
+    _complete(store, seeded_run)
+
+    assert len(seeder.rows("labor_supply_responses", report_run_id=report_run_id)) == 1
+    deciles = {
+        row["decile"]: row
+        for row in seeder.rows(
+            "labor_supply_decile_responses", report_run_id=report_run_id
+        )
+    }
+    assert sorted(deciles) == [0, 1, 2]
+    # .py reports no relative response for decile 0.
+    assert (
+        deciles[0]["average_income_effect"],
+        deciles[0]["average_substitution_effect"],
+        deciles[0]["relative_income_effect"],
+        deciles[0]["relative_substitution_effect"],
+    ) == (-0.05, 0.1, None, None)
+
+
+def test_an_output_without_labour_supply_or_cliff_impact_stores_neither(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    report_run_id = seeded_run.run_ids.report_run_id
+    output = deepcopy(US_ECONOMY_OUTPUT)
+    output["labor_supply_response"] = None
+    output["cliff_impact"] = None
+
+    assert _complete(store, seeded_run, output=output) == RunWrite(
+        changed=True, status=RunStatus.SUCCEEDED
+    )
+
+    for table_name in LABOR_SUPPLY_TABLES:
+        assert seeder.rows(table_name, report_run_id=report_run_id) == []
+    report_run = seeder.row("report_runs", report_run_id)
+    assert {report_run[column] for column in CLIFF_COLUMNS} == {None}
+    assert report_run["spm_provenance"] is None
+    assert report_run["data_version"] == output["data_version"]
 
 
 def test_the_uk_output_uses_its_own_poverty_types_and_wealth_deciles(
@@ -293,8 +404,16 @@ def test_a_repeated_completion_stores_no_second_result(
     assert len(seeder.rows("budget_summary", report_run_id=run_ids.report_run_id)) == 5
     assert len(seeder.rows("decile_impacts", report_run_id=run_ids.report_run_id)) == 2
     assert (
-        len(seeder.rows("report_run_comparisons", report_run_id=run_ids.report_run_id))
+        len(seeder.rows("labor_supply_responses", report_run_id=run_ids.report_run_id))
         == 1
+    )
+    assert (
+        len(
+            seeder.rows(
+                "labor_supply_decile_responses", report_run_id=run_ids.report_run_id
+            )
+        )
+        == 3
     )
 
 
@@ -313,7 +432,8 @@ def test_a_result_that_cannot_be_stored_leaves_the_report_run_running(
         rows=(*budget.rows, {**budget.rows[0], "id": uuid4()}),
         shared_by_reports=False,
     )
-    broken = result.__class__(
+    broken = replace(
+        result,
         rows=(*[rows for rows in result.rows if rows is not budget], duplicated),
     )
 
@@ -324,8 +444,11 @@ def test_a_result_that_cannot_be_stored_leaves_the_report_run_running(
 
     report_run = seeder.row("report_runs", run_ids.report_run_id)
     assert report_run["status"] == "running"
+    # The report run's own result columns roll back with its success.
+    assert {report_run[column] for column in CLIFF_COLUMNS} == {None}
+    assert report_run["data_version"] is None
     for table_name in (
-        "report_run_comparisons",
+        *LABOR_SUPPLY_TABLES,
         "decile_impacts",
         "budget_summary",
         "intra_decile_impacts",
@@ -420,9 +543,10 @@ def test_the_detailed_budget_districts_and_receipts_are_stored_losslessly(
     )
     # Census GEOIDs: an at-large district is numbered 00.
     assert {row["district_geoid"] for row in districts} == {101, 107, 200, 612}
-    (comparison,) = seeder.rows("report_run_comparisons", report_run_id=report_run_id)
-    assert comparison["spm_provenance"] == output["spm_provenance"]
-    assert comparison["data_version"] == output["data_version"]
+    # The SPM receipts are the report run's own JSON column.
+    report_run = seeder.row("report_runs", report_run_id)
+    assert report_run["spm_provenance"] == output["spm_provenance"]
+    assert report_run["data_version"] == output["data_version"]
 
 
 def test_the_uk_area_impacts_are_stored_with_their_disclosure_fields(

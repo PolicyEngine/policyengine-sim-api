@@ -23,8 +23,8 @@ from sqlalchemy import Connection, Engine, MetaData, Table, delete, insert, sele
 
 WORKER_URL_ENV = "REPORT_RUN_TEST_DATABASE_URL"
 SEED_URL_ENV = "REPORT_RUN_TEST_SEED_DATABASE_URL"
-# The catalog rows are needed only while simulations and reports keep their
-# foreign keys to the catalog; without those keys they are harmless.
+# The foreign keys between the Public API's tables and the simulation API's
+# stay, so every catalog row a seeded run names exists.
 SEEDED_TABLES = (
     "tax_benefit_models",
     "tax_benefit_model_versions",
@@ -33,8 +33,8 @@ SEEDED_TABLES = (
     "reports",
     "report_runs",
     "simulation_runs",
-    "report_run_simulation_runs",
-    "report_run_comparisons",
+    "labor_supply_responses",
+    "labor_supply_decile_responses",
     "budget_summary",
     "decile_impacts",
     "intra_decile_impacts",
@@ -113,22 +113,32 @@ class ReportRunSeeder:
                     inputs={},
                 )
             )
+            for run_id, simulation_id in (
+                (run_ids.baseline_simulation_run_id, simulation_ids[0]),
+                (run_ids.reform_simulation_run_id, simulation_ids[1]),
+            ):
+                connection.execute(
+                    insert(self.table("simulation_runs")).values(
+                        id=run_id,
+                        simulation_id=simulation_id,
+                        year=2026,
+                        tax_benefit_model_version_id=version_id,
+                        dataset_id=dataset_id,
+                        status="pending",
+                        **VERSIONS,
+                    )
+                )
             connection.execute(
                 insert(self.table("report_runs")).values(
                     id=run_ids.report_run_id,
                     report_id=report_id,
+                    baseline_simulation_run_id=run_ids.baseline_simulation_run_id,
+                    reform_simulation_run_id=run_ids.reform_simulation_run_id,
                     status="pending",
                     trigger="initial",
                     **VERSIONS,
                 )
             )
-            for run_id, simulation_id, role in (
-                (run_ids.baseline_simulation_run_id, simulation_ids[0], "baseline"),
-                (run_ids.reform_simulation_run_id, simulation_ids[1], "reform"),
-            ):
-                self._insert_simulation_run(
-                    connection, run_ids.report_run_id, run_id, simulation_id, role
-                )
         return SeededReportRun(
             run_ids=run_ids, simulation_ids=simulation_ids, model_id=model_id
         )
@@ -157,37 +167,6 @@ class ReportRunSeeder:
                 year=2026,
                 is_output_dataset=False,
                 tax_benefit_model_version_id=version_id,
-            )
-        )
-
-    def _insert_simulation_run(
-        self,
-        connection: Connection,
-        report_run_id: UUID,
-        simulation_run_id: UUID,
-        simulation_id: UUID,
-        role: str,
-    ) -> None:
-        version_id = connection.execute(
-            select(self.table("simulations").c.tax_benefit_model_version_id).where(
-                self.table("simulations").c.id == simulation_id
-            )
-        ).scalar_one()
-        connection.execute(
-            insert(self.table("simulation_runs")).values(
-                id=simulation_run_id,
-                simulation_id=simulation_id,
-                tax_benefit_model_version_id=version_id,
-                status="pending",
-                **VERSIONS,
-            )
-        )
-        connection.execute(
-            insert(self.table("report_run_simulation_runs")).values(
-                id=uuid4(),
-                report_run_id=report_run_id,
-                simulation_run_id=simulation_run_id,
-                role=role,
             )
         )
 

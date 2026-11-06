@@ -80,7 +80,7 @@ class ReportRunRecorder:
     modal_call_id: str
 
     def claim(self) -> RunWrite:
-        """Check the run combines the call's simulation runs, then claim it."""
+        """Check the run names the call's simulation runs, then claim it."""
         self.writer.require_simulation_runs(self.run_ids)
         return self.writer.claim_report_run(
             self.run_ids.report_run_id,

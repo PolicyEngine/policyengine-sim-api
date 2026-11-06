@@ -54,17 +54,18 @@ class FakeReportRuns:
     def __init__(self, events: list[str] | None = None) -> None:
         self.report_runs = {REPORT_RUN_ID: FakeRun()}
         self.simulation_runs = {BASELINE_RUN_ID: FakeRun(), REFORM_RUN_ID: FakeRun()}
-        self.links = {("baseline", BASELINE_RUN_ID), ("reform", REFORM_RUN_ID)}
+        # Each report run's baseline and reform simulation runs.
+        self.simulation_run_pairs = {REPORT_RUN_ID: (BASELINE_RUN_ID, REFORM_RUN_ID)}
         # Shared with other fakes when a test checks the order of writes.
         self.events = events if events is not None else []
 
     def require_simulation_runs(self, run_ids: ReportRunIds) -> None:
-        expected = {
-            ("baseline", run_ids.baseline_simulation_run_id),
-            ("reform", run_ids.reform_simulation_run_id),
-        }
-        if not expected <= self.links:
-            msg = "the report run does not combine the simulation runs its call names"
+        if run_ids.report_run_id not in self.simulation_run_pairs:
+            msg = f"report run {run_ids.report_run_id} does not exist"
+            raise LookupError(msg)
+        named = (run_ids.baseline_simulation_run_id, run_ids.reform_simulation_run_id)
+        if self.simulation_run_pairs[run_ids.report_run_id] != named:
+            msg = "the report run names other simulation runs than its call"
             raise ValueError(msg)
 
     def claim_report_run(self, report_run_id, *, modal_call_id, claimed_at):

@@ -2,11 +2,10 @@
 
 The output is the single-year economy result Stage 12's coordinator builds,
 in the format API v1 and v3 read today. Each part with a lossless place in a
-result table becomes rows: per-report parts keyed by the report run and its
-two simulation runs, poverty and inequality keyed by each simulation run. The
-labour supply response, cliff impact and SPM receipts, which no result table
-holds, are stored whole with the data version, in one ``report_run_comparisons``
-row for the report run and its two simulation runs.
+result table becomes rows: per-report parts keyed by the report run, with its
+two simulation runs where the table names them, and poverty and inequality
+keyed by each simulation run. The cliff impact, SPM receipts and data version
+are columns of the report run itself, which its completion sets.
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from uuid import uuid4
 
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
-from sqlalchemy import JSON, Boolean, Column, Float, Integer, String, Table
+from sqlalchemy import Boolean, Column, Float, Integer, String, Table
 from sqlalchemy.dialects.postgresql import ENUM, UUID
 
 from policyengine_stage12_persistence.report_run_tables import metadata
@@ -57,14 +56,38 @@ def _simulation_run_keys() -> tuple[Column[Any], ...]:
     )
 
 
-report_run_comparisons = Table(
-    "report_run_comparisons",
+labor_supply_responses = Table(
+    "labor_supply_responses",
     metadata,
-    *_report_run_keys(),
-    Column("labor_supply_result", JSON(none_as_null=True)),
-    Column("cliff_impact_result", JSON(none_as_null=True)),
-    Column("spm_provenance", JSON(none_as_null=True)),
-    Column("data_version", String(128)),
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("report_run_id", UUID(as_uuid=True), nullable=False),
+    *(
+        Column(name, Float, nullable=False)
+        for name in (
+            "income_effect_earnings_change",
+            "substitution_effect_earnings_change",
+            "total_earnings_change",
+            "revenue_change",
+            "relative_income_effect",
+            "relative_substitution_effect",
+            "baseline_weekly_hours",
+            "reform_weekly_hours",
+            "weekly_hours_change",
+            "weekly_hours_income_effect",
+            "weekly_hours_substitution_effect",
+        )
+    ),
+)
+labor_supply_decile_responses = Table(
+    "labor_supply_decile_responses",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("report_run_id", UUID(as_uuid=True), nullable=False),
+    Column("decile", Integer, nullable=False),
+    Column("average_income_effect", Float),
+    Column("average_substitution_effect", Float),
+    Column("relative_income_effect", Float),
+    Column("relative_substitution_effect", Float),
 )
 program_statistics = Table(
     "program_statistics",
@@ -254,8 +277,13 @@ class ResultRows:
 
 @dataclass(frozen=True)
 class ReportRunResult:
-    """Everything a report run's economy output is stored as."""
+    """Everything a report run's economy output is stored as.
 
+    ``report_run_columns`` are the report run's own result columns, which
+    its completion sets; ``rows`` go in the result tables.
+    """
+
+    report_run_columns: Mapping[str, Any]
     rows: tuple[ResultRows, ...]
 
 
@@ -281,18 +309,20 @@ def report_run_result(
         "baseline_simulation_run_id": run_ids.baseline_simulation_run_id,
         "reform_simulation_run_id": run_ids.reform_simulation_run_id,
     }
-    dumped = economy.model_dump(mode="json")
-    comparison = {
-        "id": uuid4(),
-        **report_keys,
-        "labor_supply_result": dumped["labor_supply_response"],
-        "cliff_impact_result": dumped["cliff_impact"],
-        "spm_provenance": dumped["spm_provenance"],
-        "data_version": economy.data_version,
-    }
+    report_run_id = {"report_run_id": run_ids.report_run_id}
     return ReportRunResult(
+        report_run_columns=_report_run_columns(economy),
         rows=(
-            ResultRows(report_run_comparisons, (comparison,), shared_by_reports=False),
+            ResultRows(
+                labor_supply_responses,
+                _labor_supply_rows(economy, report_run_id),
+                shared_by_reports=False,
+            ),
+            ResultRows(
+                labor_supply_decile_responses,
+                _labor_supply_decile_rows(economy, report_run_id),
+                shared_by_reports=False,
+            ),
             ResultRows(
                 budget_summary,
                 _budget_rows(economy, report_keys, country),
@@ -341,6 +371,84 @@ def report_run_result(
                 shared_by_reports=False,
             ),
         ),
+    )
+
+
+def _report_run_columns(economy: SingleYearMacroOutput) -> dict[str, Any]:
+    """Return the cliff impact, SPM receipts and data version, as report run columns.
+
+    The four cliff columns are all null when the output has no cliff impact.
+    """
+    cliffs = economy.cliff_impact
+    receipts = economy.spm_provenance
+    return {
+        "baseline_cliff_gap": None if cliffs is None else cliffs.baseline.cliff_gap,
+        "baseline_cliff_share": (
+            None if cliffs is None else cliffs.baseline.cliff_share
+        ),
+        "reform_cliff_gap": None if cliffs is None else cliffs.reform.cliff_gap,
+        "reform_cliff_share": None if cliffs is None else cliffs.reform.cliff_share,
+        "spm_provenance": None
+        if receipts is None
+        else receipts.model_dump(mode="json"),
+        "data_version": economy.data_version,
+    }
+
+
+def _labor_supply_rows(
+    economy: SingleYearMacroOutput, keys: Mapping[str, Any]
+) -> tuple[dict[str, Any], ...]:
+    """Return the labour supply response's one row, or none without a response."""
+    response = economy.labor_supply_response
+    if response is None:
+        return ()
+    hours = response.hours
+    return (
+        {
+            "id": uuid4(),
+            **keys,
+            "income_effect_earnings_change": response.income_lsr,
+            "substitution_effect_earnings_change": response.substitution_lsr,
+            "total_earnings_change": response.total_change,
+            "revenue_change": response.revenue_change,
+            "relative_income_effect": response.relative_lsr.income,
+            "relative_substitution_effect": response.relative_lsr.substitution,
+            "baseline_weekly_hours": hours.baseline,
+            "reform_weekly_hours": hours.reform,
+            "weekly_hours_change": hours.change,
+            "weekly_hours_income_effect": hours.income_effect,
+            "weekly_hours_substitution_effect": hours.substitution_effect,
+        },
+    )
+
+
+def _labor_supply_decile_rows(
+    economy: SingleYearMacroOutput, keys: Mapping[str, Any]
+) -> tuple[dict[str, Any], ...]:
+    """Return one row per decile the labour supply response names.
+
+    .py reports averages for every decile it groups households in, and
+    relative responses only for deciles above zero, so a decile without one
+    has a null value.
+    """
+    response = economy.labor_supply_response
+    if response is None:
+        return ()
+    values = {
+        "average_income_effect": response.decile.average.income,
+        "average_substitution_effect": response.decile.average.substitution,
+        "relative_income_effect": response.decile.relative.income,
+        "relative_substitution_effect": response.decile.relative.substitution,
+    }
+    deciles = sorted({decile for by_decile in values.values() for decile in by_decile})
+    return tuple(
+        {
+            "id": uuid4(),
+            **keys,
+            "decile": decile,
+            **{column: by_decile.get(decile) for column, by_decile in values.items()},
+        }
+        for decile in deciles
     )
 
 

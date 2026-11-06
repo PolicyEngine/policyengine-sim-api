@@ -40,7 +40,11 @@ class ReportRunWriter(Protocol):
     """
 
     def require_simulation_runs(self, run_ids: ReportRunIds) -> None:
-        """Raise ValueError unless the report run combines both simulation runs."""
+        """Raise unless the report run names the call's two simulation runs.
+
+        LookupError when the report run does not exist; ValueError when it
+        names other simulation runs.
+        """
         ...
 
     def claim_report_run(

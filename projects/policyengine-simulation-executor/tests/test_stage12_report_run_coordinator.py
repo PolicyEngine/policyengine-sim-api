@@ -120,12 +120,24 @@ def test_coordinator_completes_its_report_run_with_the_economy_output_as_rows() 
     assert budget["household_tax"]["report_run_id"] == REPORT_RUN_ID
     # The shared report is a US one, so its poverty rows use the SPM types.
     assert {row["poverty_type"] for row in rows["poverty"]} == {"spm", "spm_deep"}
-    (comparison,) = rows["report_run_comparisons"]
-    assert comparison["report_run_id"] == REPORT_RUN_ID
+    # The report run's own columns: the output has no cliff impact or SPM
+    # receipt, so only the data version is set.
+    assert result.report_run_columns == {
+        "baseline_cliff_gap": None,
+        "baseline_cliff_share": None,
+        "reform_cliff_gap": None,
+        "reform_cliff_share": None,
+        "spm_provenance": None,
+        "data_version": CURRENT_SINGLE_YEAR_MACRO_RESULT["data_version"],
+    }
+    (labor_supply,) = rows["labor_supply_responses"]
+    assert labor_supply["report_run_id"] == REPORT_RUN_ID
     assert (
-        comparison["labor_supply_result"]
-        == (CURRENT_SINGLE_YEAR_MACRO_RESULT["labor_supply_response"])
+        labor_supply["total_earnings_change"]
+        == (CURRENT_SINGLE_YEAR_MACRO_RESULT["labor_supply_response"]["total_change"])
     )
+    # The output reports no labour supply response by decile.
+    assert rows["labor_supply_decile_responses"] == ()
     # Alabama's first district, by .py's state FIPS codes.
     (district,) = rows["congressional_district_impacts"]
     assert (district["state_fips"], district["district_number"]) == (1, 1)
@@ -181,14 +193,14 @@ def test_a_report_run_that_cannot_be_claimed_starts_nothing(
     assert run.writes == ["claim_report_run"]
 
 
-def test_a_report_run_must_combine_the_simulation_runs_its_call_names() -> None:
+def test_a_report_run_must_name_the_simulation_runs_its_call_names() -> None:
     store = FakeStore()
     report_runs = FakeReportRuns()
-    report_runs.links = {("baseline", REFORM_RUN_ID)}
+    report_runs.simulation_run_pairs[REPORT_RUN_ID] = (REFORM_RUN_ID, BASELINE_RUN_ID)
     artifacts = FakeArtifacts()
     invoker = RecordingInvoker(artifacts)
 
-    with pytest.raises(ValueError, match="does not combine"):
+    with pytest.raises(ValueError, match="names other simulation runs"):
         _coordinate(store, report_runs, invoker, artifacts)
 
     assert invoker.events == []

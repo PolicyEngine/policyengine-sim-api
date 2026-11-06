@@ -258,18 +258,32 @@ def test_a_pending_or_running_simulation_run_can_fail_but_not_resume(
     assert row["output_uri"] is None
 
 
-def test_a_report_run_must_combine_the_simulation_runs_its_call_names(
+def test_a_report_run_must_name_the_simulation_runs_its_call_names(
     store, seeded_run: SeededReportRun
 ) -> None:
-    store.require_simulation_runs(seeded_run.run_ids)
+    run_ids = seeded_run.run_ids
+    store.require_simulation_runs(run_ids)
 
     swapped = ReportRunIds(
-        report_run_id=seeded_run.run_ids.report_run_id,
-        baseline_simulation_run_id=seeded_run.run_ids.reform_simulation_run_id,
-        reform_simulation_run_id=seeded_run.run_ids.baseline_simulation_run_id,
+        report_run_id=run_ids.report_run_id,
+        baseline_simulation_run_id=run_ids.reform_simulation_run_id,
+        reform_simulation_run_id=run_ids.baseline_simulation_run_id,
     )
-    with pytest.raises(ValueError, match="does not combine"):
-        store.require_simulation_runs(swapped)
+    another_reform = ReportRunIds(
+        report_run_id=run_ids.report_run_id,
+        baseline_simulation_run_id=run_ids.baseline_simulation_run_id,
+        reform_simulation_run_id=uuid4(),
+    )
+    for named_runs in (swapped, another_reform):
+        with pytest.raises(ValueError, match="names other simulation runs"):
+            store.require_simulation_runs(named_runs)
+    missing = ReportRunIds(
+        report_run_id=uuid4(),
+        baseline_simulation_run_id=run_ids.baseline_simulation_run_id,
+        reform_simulation_run_id=run_ids.reform_simulation_run_id,
+    )
+    with pytest.raises(LookupError, match="report run"):
+        store.require_simulation_runs(missing)
 
 
 def test_a_missing_run_raises_lookup_error(store, seeded_run) -> None:

@@ -97,9 +97,17 @@ US_ECONOMY_OUTPUT: dict[str, Any] = {
         "relative_lsr": {"income": -0.01, "substitution": 0.02},
         "total_change": 1.0,
         "revenue_change": 3.0,
+        # .py reports averages for every decile it groups households in, and
+        # relative responses only for deciles above zero.
         "decile": {
-            "average": {"income": {"1": -0.1}, "substitution": {"1": 0.2}},
-            "relative": {"income": {"1": -0.001}, "substitution": {"1": 0.002}},
+            "average": {
+                "income": {"0": -0.05, "1": -0.1, "2": -0.2},
+                "substitution": {"0": 0.1, "1": 0.2, "2": 0.3},
+            },
+            "relative": {
+                "income": {"1": -0.001, "2": -0.002},
+                "substitution": {"1": 0.002, "2": 0.003},
+            },
         },
         "hours": {
             "baseline": 100.0,

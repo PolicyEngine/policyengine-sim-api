@@ -7,11 +7,10 @@ the coordinator and workers can issue typed DML; runtime code never emits DDL.
 
 from __future__ import annotations
 
-from sqlalchemy import Column, DateTime, MetaData, String, Table
-from sqlalchemy.dialects.postgresql import ENUM, UUID
+from sqlalchemy import Column, DateTime, Float, MetaData, String, Table
+from sqlalchemy.dialects.postgresql import ENUM, JSONB, UUID
 
 RUN_STATUS_VALUES = ("pending", "running", "succeeded", "failed")
-SIMULATION_ROLE_VALUES = ("baseline", "reform")
 
 report_run_status_type = ENUM(
     *RUN_STATUS_VALUES,
@@ -23,24 +22,30 @@ simulation_run_status_type = ENUM(
     name="v2_simulation_status",
     create_type=False,
 )
-simulation_role_type = ENUM(
-    *SIMULATION_ROLE_VALUES,
-    name="v2_simulation_role",
-    create_type=False,
-)
 
 metadata = MetaData(schema="public")
 
+# A report run compares one pair of simulation runs; a report with only a
+# baseline has no reform run. The cliff impact, SPM receipts and data version
+# are the report run's own results.
 report_runs = Table(
     "report_runs",
     metadata,
     Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("baseline_simulation_run_id", UUID(as_uuid=True), nullable=False),
+    Column("reform_simulation_run_id", UUID(as_uuid=True)),
     Column("status", report_run_status_type, nullable=False),
     Column("modal_call_id", String(255)),
     Column("error_message", String),
     Column("started_at", DateTime(timezone=True)),
     Column("completed_at", DateTime(timezone=True)),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("baseline_cliff_gap", Float),
+    Column("baseline_cliff_share", Float),
+    Column("reform_cliff_gap", Float),
+    Column("reform_cliff_share", Float),
+    Column("spm_provenance", JSONB(none_as_null=True)),
+    Column("data_version", String(128)),
 )
 
 simulation_runs = Table(
@@ -55,13 +60,4 @@ simulation_runs = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("output_uri", String(2048)),
     Column("output_sha256", String(64)),
-)
-
-report_run_simulation_runs = Table(
-    "report_run_simulation_runs",
-    metadata,
-    Column("id", UUID(as_uuid=True), primary_key=True),
-    Column("report_run_id", UUID(as_uuid=True), nullable=False),
-    Column("simulation_run_id", UUID(as_uuid=True), nullable=False),
-    Column("role", simulation_role_type, nullable=False),
 )
