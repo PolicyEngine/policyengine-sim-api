@@ -97,7 +97,20 @@ def test_the_modal_worker_role_may_update_only_a_runs_state_and_results(
     run_ids = seeded_run.run_ids
     table_name, column_name = forbidden.table_name, forbidden.column_name
     row_id, value = forbidden.row_id_of(run_ids), forbidden.value_of(run_ids)
-    run_table = table(table_name, column("id"), column(column_name), schema="public")
+    run_table = table(
+        table_name,
+        column("id"),
+        column("updated_at"),
+        column(column_name),
+        schema="public",
+    )
+    # The same update of a column the role may update succeeds, so the
+    # refusal below is of the column itself, not of the row it selects.
+    with store.engine.begin() as connection:
+        allowed = connection.execute(
+            update(run_table).where(run_table.c.id == row_id).values(updated_at=LATER)
+        )
+    assert allowed.rowcount == 1
 
     with (
         pytest.raises(ProgrammingError, match="permission denied"),
