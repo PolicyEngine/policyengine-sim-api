@@ -483,7 +483,11 @@ def test_check_waits_for_a_pending_job_as_retry_after_says(status, headers, slep
 
 # What the entrypoint answers when its call to the gateway times out, as when
 # Modal preempted the prod gateway container during run 42081132198.
-GATEWAY_TIMEOUT = (504, {}, {"detail": "Simulation backend timed out."})
+GATEWAY_TIMEOUT = (
+    504,
+    {"Retry-After": "10"},
+    {"detail": "Simulation backend timed out."},
+)
 RUNNING = (202, {}, {"status": "running"})
 
 
@@ -506,18 +510,60 @@ def test_check_gives_up_on_gateway_errors_once_the_deadline_has_passed():
         api, timeout_seconds=250, poll_seconds=5, clock=lambda: next(ticks)
     )
 
-    assert problems == [f"{LABEL}: no result within 250s"]
-    assert sleeps == [5, 5]
+    # The last answer is named, so a stack that kept failing is told apart
+    # from a job that kept running.
+    assert problems == [
+        f"{LABEL}: no result within 250s; the last poll returned HTTP 504: "
+        "{'detail': 'Simulation backend timed out.'}"
+    ]
+    assert sleeps == [10, 5]
     assert len(api.calls) == 4
+
+
+def test_check_keeps_polling_through_a_proxy_error_page():
+    api = ScriptedAPI(SUBMITTED, (502, {}, "<html>502 Bad Gateway</html>"), COMPLETE)
+
+    problems, sleeps = _check_scripted(api, poll_seconds=10)
+
+    assert problems == []
+    assert sleeps == [10]
+
+
+def test_check_sleeps_no_longer_than_the_time_left():
+    ticks = iter([0, 10, 260])
+    long_wait = (
+        504,
+        {"Retry-After": "3600"},
+        {"detail": "Simulation backend timed out."},
+    )
+    api = ScriptedAPI(SUBMITTED, long_wait, long_wait)
+
+    problems, sleeps = _check_scripted(
+        api, timeout_seconds=250, poll_seconds=5, clock=lambda: next(ticks)
+    )
+
+    assert sleeps == [240]
+    assert problems[0].startswith(f"{LABEL}: no result within 250s")
+
+
+@pytest.mark.parametrize("value", ["inf", "nan", "-inf"])
+def test_check_ignores_a_retry_after_that_is_not_finite(value):
+    api = ScriptedAPI(SUBMITTED, (504, {"Retry-After": value}, None), COMPLETE)
+
+    problems, sleeps = _check_scripted(api, poll_seconds=7)
+
+    assert problems == []
+    assert sleeps == [7]
 
 
 @pytest.mark.parametrize(
     "response",
     [
         (500, {}, {"status": "failed", "error": "Simulation failed"}),
+        (400, {}, {"status": "failed", "error": "Invalid SPM request"}),
         (404, {}, {"detail": "Job not found: fc-1"}),
     ],
-    ids=["failed", "not-found"],
+    ids=["failed", "failed-spm-request", "not-found"],
 )
 def test_check_fails_at_once_on_a_failed_or_unknown_job(response):
     api = ScriptedAPI(SUBMITTED, response)
