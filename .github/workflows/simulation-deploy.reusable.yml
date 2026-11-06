@@ -377,6 +377,17 @@ jobs:
           POLICYENGINE_OTEL_GOOGLE_AUDIENCE: ${{ vars.OBSERVABILITY_OTLP_GOOGLE_AUDIENCE }}
         run: uv run --frozen modal deploy --env="${{ inputs.modal_environment }}" src/modal/app.py
 
+      # The scheduled sweep that fails report runs and simulation runs nothing
+      # will finish. Its database URL comes from the Modal secret
+      # policyengine-modal-worker-database, so this step fails until an
+      # operator has created that secret in the Modal environment.
+      - name: Deploy the stuck-run sweep
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: uv run --frozen modal deploy --env="${{ inputs.modal_environment }}" src/modal/run_sweep_app.py
+
       - name: Run executor unit tests
         working-directory: projects/policyengine-simulation-executor
         run: uv run --frozen pytest tests/ -v

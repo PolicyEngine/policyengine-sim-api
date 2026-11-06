@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, insert, or_, select, update
+from sqlalchemy import exists, func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from policyengine_stage12_persistence.report_run_tables import (
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from policyengine_simulation_contract.stage12_execution import ReportRunIds
-    from sqlalchemy import Engine, Table, Update
+    from sqlalchemy import ColumnElement, Engine, Table, Update
     from sqlalchemy.engine import Connection
 
     from policyengine_stage12_persistence.report_run_results import ReportRunResult
@@ -49,6 +49,29 @@ class RunStatus(StrEnum):
 
 
 ACTIVE_STATUSES = (RunStatus.PENDING.value, RunStatus.RUNNING.value)
+
+
+class RunKind(StrEnum):
+    """Which run table a run is in."""
+
+    REPORT_RUN = "report_run"
+    SIMULATION_RUN = "simulation_run"
+
+
+RUN_TABLES = {RunKind.REPORT_RUN: report_runs, RunKind.SIMULATION_RUN: simulation_runs}
+
+
+@dataclass(frozen=True)
+class ActiveRun:
+    """A pending or running run, and the Modal call recorded on it.
+
+    ``modal_call_id`` is None for a run with no call recorded.
+    """
+
+    kind: RunKind
+    run_id: UUID
+    status: RunStatus
+    modal_call_id: str | None
 
 
 @dataclass(frozen=True)
@@ -298,6 +321,92 @@ class ReportRunStore:
             simulation_runs, simulation_run_id, statement, "fail_simulation_run"
         )
 
+    def list_active_runs(
+        self,
+        kind: RunKind,
+        *,
+        active_since_before: datetime,
+    ) -> tuple[ActiveRun, ...]:
+        """Return the pending and running runs of ``kind`` active since before a time.
+
+        A run counts from its first claim, or from its creation while it is
+        pending. Runs are oldest first, with or without a recorded Modal
+        call. A simulation run is listed only while no pending or running
+        report run names it as its baseline or reform: that report run's
+        coordinator starts its children's calls, records their outcomes, and
+        stops and starts them again when Modal restarts it, so they are its
+        to judge until it has finished.
+        """
+        table = RUN_TABLES[kind]
+        active_since = func.coalesce(table.c.started_at, table.c.created_at)
+        conditions = [
+            table.c.status.in_(ACTIVE_STATUSES),
+            active_since < active_since_before,
+        ]
+        if kind is RunKind.SIMULATION_RUN:
+            conditions.append(_no_active_report_run_names(table))
+        statement = (
+            select(table.c.id, table.c.status, table.c.modal_call_id)
+            .where(*conditions)
+            .order_by(active_since, table.c.id)
+        )
+        with self._transaction("list_active_runs") as connection:
+            return tuple(
+                ActiveRun(
+                    kind=kind,
+                    run_id=row.id,
+                    status=RunStatus(row.status),
+                    modal_call_id=row.modal_call_id,
+                )
+                for row in connection.execute(statement)
+            )
+
+    def fail_stuck_run(
+        self,
+        run: ActiveRun,
+        *,
+        error_message: str,
+        failed_at: datetime,
+    ) -> RunWrite:
+        """Mark a stuck ``run`` failed, while it is as it was listed.
+
+        It must still have its listed status and ``run.modal_call_id``, or no
+        call if it was listed with none, and a simulation run must still have
+        no pending or running report run naming it. A run that was claimed,
+        finished, or moved to another call, that the simulation service
+        recorded a call on, or that a pending or running report run has named
+        since it was listed, is left as it is, so concurrent sweeps change it
+        once. A report run naming it counts once its insert has committed,
+        before this update starts: the database doesn't make an insert in
+        progress wait for this update, or this update for it.
+        """
+        table = RUN_TABLES[run.kind]
+        same_call = (
+            table.c.modal_call_id.is_(None)
+            if run.modal_call_id is None
+            else table.c.modal_call_id == run.modal_call_id
+        )
+        statement = (
+            update(table)
+            .where(
+                table.c.id == run.run_id,
+                table.c.status == run.status.value,
+                same_call,
+                *(
+                    (_no_active_report_run_names(table),)
+                    if run.kind is RunKind.SIMULATION_RUN
+                    else ()
+                ),
+            )
+            .values(
+                status=RunStatus.FAILED.value,
+                error_message=error_message,
+                completed_at=failed_at,
+                updated_at=failed_at,
+            )
+        )
+        return self._write(table, run.run_id, statement, "fail_stuck_run")
+
     def _write(
         self,
         table: Table,
@@ -351,3 +460,17 @@ def _uniform_rows(rows: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
     """Give every row the same columns, unset ones null, for one batched insert."""
     columns = {name for row in rows for name in row}
     return [dict.fromkeys(columns) | row for row in rows]
+
+
+def _no_active_report_run_names(table: Table) -> ColumnElement[bool]:
+    """Return the condition that no pending or running report run names the run.
+
+    A report run names its simulation runs as its baseline and its reform.
+    """
+    return ~exists().where(
+        or_(
+            report_runs.c.baseline_simulation_run_id == table.c.id,
+            report_runs.c.reform_simulation_run_id == table.c.id,
+        ),
+        report_runs.c.status.in_(ACTIVE_STATUSES),
+    )
