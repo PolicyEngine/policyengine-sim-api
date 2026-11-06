@@ -7,7 +7,8 @@ created, connected as the Modal worker role (see ``report_run_database``).
 from __future__ import annotations
 
 from datetime import timedelta
-from uuid import uuid4
+from typing import TYPE_CHECKING, NamedTuple
+from uuid import UUID, uuid4
 
 import pytest
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
@@ -19,6 +20,9 @@ from policyengine_stage12_persistence import (
 from report_run_database import NOW, SeededReportRun, worker_database_url
 from sqlalchemy import column, func, insert, select, table, update
 from sqlalchemy.exc import ProgrammingError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 LATER = NOW + timedelta(minutes=5)
 
@@ -51,27 +55,48 @@ def test_the_modal_worker_role_cannot_create_a_report_run(store, seeded_run) -> 
         )
 
 
+class ForbiddenUpdate(NamedTuple):
+    """An update of a run column the Modal worker role may not update."""
+
+    table_name: str
+    row_id_of: Callable[[ReportRunIds], UUID]
+    column_name: str
+    value_of: Callable[[ReportRunIds], object]
+
+
+FORBIDDEN_UPDATES = {
+    # What a run is: its simulation runs, its year.
+    "report-run-baseline-run": ForbiddenUpdate(
+        "report_runs",
+        lambda run_ids: run_ids.report_run_id,
+        "baseline_simulation_run_id",
+        lambda run_ids: run_ids.reform_simulation_run_id,
+    ),
+    "simulation-run-year": ForbiddenUpdate(
+        "simulation_runs",
+        lambda run_ids: run_ids.baseline_simulation_run_id,
+        "year",
+        lambda _run_ids: 2027,
+    ),
+    # A report run's markdown is not the worker's to write.
+    "report-run-markdown": ForbiddenUpdate(
+        "report_runs",
+        lambda run_ids: run_ids.report_run_id,
+        "markdown",
+        lambda _run_ids: "# Edited",
+    ),
+}
+
+
 @pytest.mark.parametrize(
-    ("table_name", "column_name", "value"),
-    [
-        # What a run is: its simulation runs, its year.
-        ("report_runs", "baseline_simulation_run_id", "reform"),
-        ("simulation_runs", "year", 2027),
-        # A report run's markdown is not the worker's to write.
-        ("report_runs", "markdown", "# Edited"),
-    ],
+    "forbidden", list(FORBIDDEN_UPDATES.values()), ids=list(FORBIDDEN_UPDATES)
 )
 def test_the_modal_worker_role_may_update_only_a_runs_state_and_results(
-    store, seeded_run: SeededReportRun, table_name, column_name, value
+    store, seeded_run: SeededReportRun, forbidden: ForbiddenUpdate
 ) -> None:
     run_ids = seeded_run.run_ids
-    row_id = (
-        run_ids.report_run_id
-        if table_name == "report_runs"
-        else run_ids.baseline_simulation_run_id
-    )
-    if value == "reform":
-        value = run_ids.reform_simulation_run_id
+    table_name, column_name = forbidden.table_name, forbidden.column_name
+    row_id, value = forbidden.row_id_of(run_ids), forbidden.value_of(run_ids)
     run_table = table(table_name, column("id"), column(column_name), schema="public")
 
     with (

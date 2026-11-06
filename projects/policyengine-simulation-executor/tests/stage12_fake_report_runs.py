@@ -63,9 +63,18 @@ class FakeReportRuns:
         if run_ids.report_run_id not in self.simulation_run_pairs:
             msg = f"report run {run_ids.report_run_id} does not exist"
             raise LookupError(msg)
-        named = (run_ids.baseline_simulation_run_id, run_ids.reform_simulation_run_id)
-        if self.simulation_run_pairs[run_ids.report_run_id] != named:
-            msg = "the report run names other simulation runs than its call"
+        baseline_run_id, reform_run_id = self.simulation_run_pairs[
+            run_ids.report_run_id
+        ]
+        if (baseline_run_id, reform_run_id) != (
+            run_ids.baseline_simulation_run_id,
+            run_ids.reform_simulation_run_id,
+        ):
+            msg = (
+                f"report run {run_ids.report_run_id} names other simulation runs "
+                f"than its call: baseline {baseline_run_id} and "
+                f"reform {reform_run_id}"
+            )
             raise ValueError(msg)
 
     def claim_report_run(self, report_run_id, *, modal_call_id, claimed_at):
