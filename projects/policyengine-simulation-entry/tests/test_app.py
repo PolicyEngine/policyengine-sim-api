@@ -789,6 +789,40 @@ def test_job_status_records_structured_backend_telemetry(
     assert attributes["job_id"] == "fc-123"
 
 
+def test_event_recorded_while_a_route_runs_carries_the_matched_route(
+    capsys: pytest.CaptureFixture[str],
+):
+    backend = FakeBackend()
+    backend.responses[("GET", "/jobs/fc-123")] = response(202, {"status": "running"})
+    # The runtime keeps the standard output it finds when it is built, so the
+    # app is built after capsys replaces it.
+    app = create_app(
+        settings=make_settings(), backend=backend, auth_dependency=lambda: None
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        capsys.readouterr()
+        job_response = test_client.get("/jobs/fc-123")
+        captured_output = capsys.readouterr().out
+
+    assert job_response.status_code == 202
+    routes_by_event_name: dict[object, list[object]] = {}
+    for output_line in captured_output.splitlines():
+        try:
+            record = json.loads(output_line)
+        except json.JSONDecodeError:
+            continue
+        routes_by_event_name.setdefault(record.get("event.name"), []).append(
+            record.get("http.route")
+        )
+    assert routes_by_event_name["simulation_entry_backend_response"] == [
+        "/jobs/{job_id}"
+    ]
+    assert routes_by_event_name["request.completed"] == ["/jobs/{job_id}"]
+
+
 def test_budget_window_routes_use_original_batch_id(client, backend):
     backend.responses[("POST", "/simulate/economy/budget-window")] = response(
         202,
