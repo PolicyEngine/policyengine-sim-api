@@ -27,10 +27,19 @@ role's `search_path`.
 Each model matches the table the Public API's v2 migration chain builds:
 every column with its type, nullability and server default, and every
 constraint and index under the chain's name. The models only describe the
-tables; runtime code never creates or changes them. Their foreign keys stay
-between these tables, because another service writes the policy, household
-and catalog rows they name. Status and other enum columns use the `StrEnum`
-classes beside them and store each member's value.
+tables; runtime code never creates or changes them. Status and other enum
+columns use the `StrEnum` classes beside them and store each member's value.
+
+Each service writes only its own tables, and the foreign keys between them
+stay: 20 keys name rows the Public API writes in its users, policies,
+dynamics, households, datasets, regions and model catalog tables. PostgreSQL
+checks each of them on insert, as the referenced table's owner, so the
+service's role needs no privilege on those tables for it, and a row naming
+one that doesn't exist fails with SQLSTATE `23503`. Those tables are modelled
+in `referenced_metadata` by their `id` alone, the column every key names, so
+SQLAlchemy can declare the keys; nothing reads or writes through them. A
+database that builds the models' tables, as the tests do, creates
+`referenced_metadata`'s tables first.
 
 A report run names the two simulation runs it compares
 (`baseline_simulation_run_id`, and `reform_simulation_run_id`, empty for a

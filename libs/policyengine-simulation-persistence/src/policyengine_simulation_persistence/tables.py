@@ -3,9 +3,15 @@
 The Public API's v2 migration chain creates and changes these tables; this
 module only describes them, so the service can write typed rows. Each table
 matches what the chain builds, column for column, with its constraints and
-indexes under the same names. Foreign keys stay between these tables: the
-policy, household and catalog rows they name are written by another service,
-so no foreign key checks them, and the code that writes these rows must.
+indexes under the same names, its foreign keys included.
+
+Some keys name rows of the Public API's own tables, which the Public API
+writes: users, policies, dynamics, households, datasets, regions and the model
+catalog. PostgreSQL checks each of those keys when a row is inserted, as the
+referenced table's owner, so the service's role needs no privilege for it,
+and a row naming one that doesn't exist fails with SQLSTATE 23503. Those
+tables are modelled in ``referenced_metadata`` by their ``id`` alone, the
+column every key names, so SQLAlchemy can declare the keys.
 """
 
 from __future__ import annotations
@@ -140,6 +146,45 @@ def _year_between(table_name: str, *, nullable: bool) -> CheckConstraint:
 # role's search_path.
 TABLE_SCHEMA: Final = "public"
 service_metadata = MetaData(schema=TABLE_SCHEMA)
+# The Public API's own tables that the service's rows name, each by its id
+# alone. They aren't models of those tables: nothing reads or writes them here.
+referenced_metadata = MetaData(schema=TABLE_SCHEMA)
+_PUBLIC_API_TABLES: Final = {
+    table_name: Table(
+        table_name,
+        referenced_metadata,
+        Column("id", Uuid, nullable=False),
+        PrimaryKeyConstraint("id", name=f"pk_{table_name}"),
+    )
+    for table_name in (
+        "datasets",
+        "dynamics",
+        "households",
+        "policies",
+        "regions",
+        "tax_benefit_model_versions",
+        "tax_benefit_models",
+        "users",
+    )
+}
+
+
+def _public_api_key(
+    column_name: str, table_name: str, *, ondelete: str, name: str
+) -> ForeignKeyConstraint:
+    """Declare that ``column_name`` names a row of the Public API's ``table_name``.
+
+    ``name`` is the key's name in the Public API's chain, which shortens a
+    name past PostgreSQL's 63 characters and ends it in four characters of
+    its hash.
+    """
+    return ForeignKeyConstraint(
+        [column_name],
+        [_PUBLIC_API_TABLES[table_name].c.id],
+        name=name,
+        ondelete=ondelete,
+    )
+
 
 simulations = Table(
     "simulations",
@@ -163,6 +208,42 @@ simulations = Table(
     Column("filter_strategy", String(64), nullable=True),
     Column("year", Integer, nullable=True),
     PrimaryKeyConstraint("id", name="pk_simulations"),
+    _public_api_key(
+        "dataset_id",
+        "datasets",
+        ondelete="RESTRICT",
+        name="fk_simulations_dataset_id_datasets",
+    ),
+    _public_api_key(
+        "household_id",
+        "households",
+        ondelete="RESTRICT",
+        name="fk_simulations_household_id_households",
+    ),
+    _public_api_key(
+        "policy_id",
+        "policies",
+        ondelete="SET NULL",
+        name="fk_simulations_policy_id_policies",
+    ),
+    _public_api_key(
+        "dynamic_id",
+        "dynamics",
+        ondelete="SET NULL",
+        name="fk_simulations_dynamic_id_dynamics",
+    ),
+    _public_api_key(
+        "tax_benefit_model_version_id",
+        "tax_benefit_model_versions",
+        ondelete="RESTRICT",
+        name="fk_simulations_tax_benefit_model_version_id_tax_benefit_84f8",
+    ),
+    _public_api_key(
+        "region_id",
+        "regions",
+        ondelete="SET NULL",
+        name="fk_simulations_region_id_regions",
+    ),
     CheckConstraint(
         "(filter_field IS NULL) = (filter_value IS NULL)",
         name="ck_simulations_filter_pair",
@@ -204,6 +285,39 @@ reports = Table(
     # The number of years from ``year`` an economy report's window covers.
     Column("budget_window_size", Integer, nullable=True),
     PrimaryKeyConstraint("id", name="pk_reports"),
+    _public_api_key(
+        "user_id", "users", ondelete="SET NULL", name="fk_reports_user_id_users"
+    ),
+    _public_api_key(
+        "tax_benefit_model_id",
+        "tax_benefit_models",
+        ondelete="RESTRICT",
+        name="fk_reports_tax_benefit_model_id_tax_benefit_models",
+    ),
+    _public_api_key(
+        "policy_id",
+        "policies",
+        ondelete="SET NULL",
+        name="fk_reports_policy_id_policies",
+    ),
+    _public_api_key(
+        "household_id",
+        "households",
+        ondelete="RESTRICT",
+        name="fk_reports_household_id_households",
+    ),
+    _public_api_key(
+        "dataset_id",
+        "datasets",
+        ondelete="SET NULL",
+        name="fk_reports_dataset_id_datasets",
+    ),
+    _public_api_key(
+        "region_id",
+        "regions",
+        ondelete="SET NULL",
+        name="fk_reports_region_id_regions",
+    ),
     ForeignKeyConstraint(
         ["baseline_simulation_id"],
         [f"{TABLE_SCHEMA}.simulations.id"],
@@ -225,6 +339,8 @@ reports = Table(
     _year_between("reports", nullable=True),
     Index("ix_reports_country_type_created_at", "country", "type", "created_at"),
     Index("ix_reports_tax_benefit_model_id", "tax_benefit_model_id"),
+    # Deleting a user sets its reports' user_id to null.
+    Index("ix_reports_user_id", "user_id"),
 )
 
 simulation_runs = Table(
@@ -254,6 +370,24 @@ simulation_runs = Table(
     Column("output_uri", String(OUTPUT_URI_LENGTH), nullable=True),
     Column("output_sha256", String(SHA256_LENGTH), nullable=True),
     PrimaryKeyConstraint("id", name="pk_simulation_runs"),
+    _public_api_key(
+        "tax_benefit_model_version_id",
+        "tax_benefit_model_versions",
+        ondelete="RESTRICT",
+        name="fk_simulation_runs_tax_benefit_model_version_id_tax_ben_1a94",
+    ),
+    _public_api_key(
+        "dataset_id",
+        "datasets",
+        ondelete="RESTRICT",
+        name="fk_simulation_runs_dataset_id_datasets",
+    ),
+    _public_api_key(
+        "region_id",
+        "regions",
+        ondelete="SET NULL",
+        name="fk_simulation_runs_region_id_regions",
+    ),
     ForeignKeyConstraint(
         ["simulation_id"],
         [f"{TABLE_SCHEMA}.simulations.id"],
@@ -281,6 +415,10 @@ simulation_runs = Table(
         "id",
     ),
     Index("ix_simulation_runs_status_started_at", "status", "started_at"),
+    Index(
+        "ix_simulation_runs_tax_benefit_model_version_id",
+        "tax_benefit_model_version_id",
+    ),
 )
 
 # One calculation of a report's budget window: a report run for each year.
@@ -307,6 +445,12 @@ budget_window_runs = Table(
     _timestamp("started_at"),
     _timestamp("completed_at"),
     PrimaryKeyConstraint("id", name="pk_budget_window_runs"),
+    _public_api_key(
+        "tax_benefit_model_version_id",
+        "tax_benefit_model_versions",
+        ondelete="RESTRICT",
+        name="fk_budget_window_runs_tax_benefit_model_version_id_tax__5106",
+    ),
     ForeignKeyConstraint(
         ["report_id"],
         [f"{TABLE_SCHEMA}.reports.id"],
@@ -462,8 +606,36 @@ household_jobs = Table(
     Column("policyengine_version", String(VERSION_LENGTH), nullable=False),
     Column("modal_call_id", String(MODAL_CALL_ID_LENGTH), nullable=True),
     PrimaryKeyConstraint("id", name="pk_household_jobs"),
+    _public_api_key(
+        "household_id",
+        "households",
+        ondelete="RESTRICT",
+        name="fk_household_jobs_household_id_households",
+    ),
+    _public_api_key(
+        "policy_id",
+        "policies",
+        ondelete="SET NULL",
+        name="fk_household_jobs_policy_id_policies",
+    ),
+    _public_api_key(
+        "dynamic_id",
+        "dynamics",
+        ondelete="SET NULL",
+        name="fk_household_jobs_dynamic_id_dynamics",
+    ),
+    _public_api_key(
+        "tax_benefit_model_version_id",
+        "tax_benefit_model_versions",
+        ondelete="RESTRICT",
+        name="fk_household_jobs_tax_benefit_model_version_id_tax_bene_82b2",
+    ),
     _terminal_completion("household_jobs"),
     _year_between("household_jobs", nullable=False),
     Index("ix_household_jobs_household_id", "household_id"),
     Index("ix_household_jobs_status_created_at", "status", "created_at"),
+    Index(
+        "ix_household_jobs_tax_benefit_model_version_id",
+        "tax_benefit_model_version_id",
+    ),
 )

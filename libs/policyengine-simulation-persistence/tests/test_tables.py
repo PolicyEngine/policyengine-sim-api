@@ -5,24 +5,30 @@ from __future__ import annotations
 from policyengine_simulation_persistence import (
     SERVICE_TABLE_PRIVILEGES,
     SimulationStatus,
+    household_jobs,
+    referenced_metadata,
     report_runs,
     reports,
     service_metadata,
     simulation_runs,
 )
 from policyengine_simulation_persistence import tables as tables_module
-from sqlalchemy import Enum, Table, UniqueConstraint
+from sqlalchemy import Enum, ForeignKeyConstraint, Table, UniqueConstraint
+
+
+def _key(constraint: ForeignKeyConstraint) -> tuple[tuple[str, ...], str, str]:
+    """Return a foreign key's columns, the columns it names, and its delete rule."""
+    named_columns = ", ".join(element.column.name for element in constraint.elements)
+    return (
+        tuple(constraint.column_keys),
+        f"{constraint.referred_table.name}({named_columns})",
+        str(constraint.ondelete),
+    )
 
 
 def _foreign_keys(table: Table) -> dict[str, tuple[tuple[str, ...], str, str]]:
-    """Return each foreign key by name: its columns, the key it names, its rule."""
     return {
-        str(constraint.name): (
-            tuple(constraint.column_keys),
-            f"{constraint.referred_table.name}"
-            f"({', '.join(element.column.name for element in constraint.elements)})",
-            str(constraint.ondelete),
-        )
+        str(constraint.name): _key(constraint)
         for constraint in table.foreign_key_constraints
     }
 
@@ -52,13 +58,145 @@ def test_the_models_describe_every_table_the_service_creates_rows_in() -> None:
     )
 
 
-def test_foreign_keys_stay_between_the_services_own_tables() -> None:
-    """Another service writes the policy, household and catalog rows."""
-    for table in service_metadata.tables.values():
-        for foreign_key in table.foreign_keys:
-            assert foreign_key.column.table in service_metadata.tables.values(), (
-                f"{table.name}.{foreign_key.parent.name}"
-            )
+# Every key from the service's tables to the Public API's own, as the Public
+# API's chain names it: a name past PostgreSQL's 63 characters is shortened
+# and ends in four characters of its hash.
+KEYS_TO_PUBLIC_API_TABLES = {
+    "fk_simulations_dataset_id_datasets": (
+        ("dataset_id",),
+        "datasets(id)",
+        "RESTRICT",
+    ),
+    "fk_simulations_household_id_households": (
+        ("household_id",),
+        "households(id)",
+        "RESTRICT",
+    ),
+    "fk_simulations_policy_id_policies": (
+        ("policy_id",),
+        "policies(id)",
+        "SET NULL",
+    ),
+    "fk_simulations_dynamic_id_dynamics": (
+        ("dynamic_id",),
+        "dynamics(id)",
+        "SET NULL",
+    ),
+    "fk_simulations_tax_benefit_model_version_id_tax_benefit_84f8": (
+        ("tax_benefit_model_version_id",),
+        "tax_benefit_model_versions(id)",
+        "RESTRICT",
+    ),
+    "fk_simulations_region_id_regions": (
+        ("region_id",),
+        "regions(id)",
+        "SET NULL",
+    ),
+    "fk_reports_user_id_users": (("user_id",), "users(id)", "SET NULL"),
+    "fk_reports_tax_benefit_model_id_tax_benefit_models": (
+        ("tax_benefit_model_id",),
+        "tax_benefit_models(id)",
+        "RESTRICT",
+    ),
+    "fk_reports_policy_id_policies": (("policy_id",), "policies(id)", "SET NULL"),
+    "fk_reports_household_id_households": (
+        ("household_id",),
+        "households(id)",
+        "RESTRICT",
+    ),
+    "fk_reports_dataset_id_datasets": (("dataset_id",), "datasets(id)", "SET NULL"),
+    "fk_reports_region_id_regions": (("region_id",), "regions(id)", "SET NULL"),
+    "fk_simulation_runs_tax_benefit_model_version_id_tax_ben_1a94": (
+        ("tax_benefit_model_version_id",),
+        "tax_benefit_model_versions(id)",
+        "RESTRICT",
+    ),
+    "fk_simulation_runs_dataset_id_datasets": (
+        ("dataset_id",),
+        "datasets(id)",
+        "RESTRICT",
+    ),
+    "fk_simulation_runs_region_id_regions": (
+        ("region_id",),
+        "regions(id)",
+        "SET NULL",
+    ),
+    "fk_household_jobs_household_id_households": (
+        ("household_id",),
+        "households(id)",
+        "RESTRICT",
+    ),
+    "fk_household_jobs_policy_id_policies": (
+        ("policy_id",),
+        "policies(id)",
+        "SET NULL",
+    ),
+    "fk_household_jobs_dynamic_id_dynamics": (
+        ("dynamic_id",),
+        "dynamics(id)",
+        "SET NULL",
+    ),
+    "fk_household_jobs_tax_benefit_model_version_id_tax_bene_82b2": (
+        ("tax_benefit_model_version_id",),
+        "tax_benefit_model_versions(id)",
+        "RESTRICT",
+    ),
+    "fk_budget_window_runs_tax_benefit_model_version_id_tax__5106": (
+        ("tax_benefit_model_version_id",),
+        "tax_benefit_model_versions(id)",
+        "RESTRICT",
+    ),
+}
+
+
+def test_the_models_declare_every_key_to_the_public_apis_own_tables() -> None:
+    """The Public API writes the rows these keys name; PostgreSQL checks them."""
+    service_tables = set(service_metadata.tables.values())
+    keys_to_public_api_tables = {
+        str(constraint.name): _key(constraint)
+        for table in service_tables
+        for constraint in table.foreign_key_constraints
+        if constraint.referred_table not in service_tables
+    }
+
+    assert keys_to_public_api_tables == KEYS_TO_PUBLIC_API_TABLES
+    assert len(KEYS_TO_PUBLIC_API_TABLES) == 20
+
+
+def test_the_public_apis_tables_are_modelled_by_their_id_alone() -> None:
+    """Enough for SQLAlchemy to declare each key, and nothing to read or write."""
+    named_tables = {
+        constraint.referred_table
+        for table in service_metadata.tables.values()
+        for constraint in table.foreign_key_constraints
+        if constraint.referred_table.metadata is referenced_metadata
+    }
+
+    assert {table.name for table in named_tables} == {
+        "datasets",
+        "dynamics",
+        "households",
+        "policies",
+        "regions",
+        "tax_benefit_model_versions",
+        "tax_benefit_models",
+        "users",
+    }
+    assert set(referenced_metadata.tables.values()) == named_tables
+    for table in named_tables:
+        assert [column.name for column in table.columns] == ["id"], table.name
+        assert table.schema == "public", table.name
+
+
+def test_the_columns_the_public_apis_deletes_search_are_indexed() -> None:
+    """Deleting a user or model version searches these columns for its rows."""
+    assert _indexed_columns(reports, "ix_reports_user_id") == ("user_id",)
+    assert _indexed_columns(
+        simulation_runs, "ix_simulation_runs_tax_benefit_model_version_id"
+    ) == ("tax_benefit_model_version_id",)
+    assert _indexed_columns(
+        household_jobs, "ix_household_jobs_tax_benefit_model_version_id"
+    ) == ("tax_benefit_model_version_id",)
 
 
 def test_every_table_names_the_public_schema() -> None:
