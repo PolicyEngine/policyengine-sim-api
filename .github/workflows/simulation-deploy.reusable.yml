@@ -388,9 +388,9 @@ jobs:
     # the checks, which pin those versions, reach the release through the
     # gateway. latest is left alone (except in a routing state with no
     # latest yet, the first publication, where this release becomes latest):
-    # publish_latest moves it after every check. No check is upstream of this
-    # job, so rerunning failed jobs never republishes the routes, and a failed
-    # check leaves them in place.
+    # publish_latest moves it after every check. No job that runs after this
+    # one is upstream of it, so rerunning jobs that failed after it never
+    # republishes the routes, and a failed check leaves them in place.
     if: ${{ inputs.deploy_existing_stack }}
     needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor]
     runs-on: ubuntu-latest

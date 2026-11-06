@@ -98,8 +98,9 @@ def apply_routing_plan(*, environment: str, plan: dict) -> None:
 def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
     """Undo a deployment's plans, given oldest first: ``restored`` or ``unchanged``.
 
-    A deployment run keeps a routes plan and, once its latest job runs, a
-    latest plan in each attempt. Repeatedly restores the starting state of a
+    A deployment run keeps a routes plan in each attempt whose routes job
+    runs (a rerun carries over one that succeeded), and a latest plan in each
+    attempt whose latest job runs. Repeatedly restores the starting state of a
     plan whose published state is live (the one given last, if several are),
     skipping plans that changed nothing, until no plan's published state is
     live. ``unchanged`` means the live state is a

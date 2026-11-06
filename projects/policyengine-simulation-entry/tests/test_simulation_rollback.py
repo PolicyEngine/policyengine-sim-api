@@ -504,10 +504,13 @@ def test_rollback_needs_no_plan_whose_change_a_later_plan_shows_undone(tmp_path)
             _routes_plan(1): _plan_digests("0", "a"),
             _latest_plan(2): _plan_digests("b", "c"),
         },
-        # No earlier plan shows what attempt 1's latest plan replaced.
+        # Attempt 1's routes plan is missing, and no earlier plan shows what
+        # it replaced.
         {_latest_plan(2): _plan_digests("a", "c")},
+        # The plan after the missing one records no digests to compare.
+        {_routes_plan(1): _plan_digests("0", "a"), _latest_plan(2): {}},
     ],
-    ids=["missing-change-still-live", "no-earlier-plan"],
+    ids=["missing-change-still-live", "first-plan-missing", "no-digests"],
 )
 def test_rollback_refuses_a_missing_plan_whose_change_may_be_live(tmp_path, present):
     result = _run_restore(
@@ -518,7 +521,13 @@ def test_rollback_refuses_a_missing_plan_whose_change_may_be_live(tmp_path, pres
     assert "--restore-plan" not in result.stdout
 
 
-def test_rollback_refuses_when_an_attempts_latest_plan_is_missing(tmp_path):
+def test_rollback_leaves_out_a_missing_plan_published_after_every_other(tmp_path):
+    """No downloaded plan was published after attempt 2's latest plan.
+
+    Restoring the others is still exact: if attempt 2's change (or anything
+    built on it) is live, the live state matches no downloaded plan and the
+    restore refuses as a conflict, changing nothing.
+    """
     result = _run_restore(
         tmp_path,
         2,
@@ -526,11 +535,68 @@ def test_rollback_refuses_when_an_attempts_latest_plan_is_missing(tmp_path):
         present=[_routes_plan(1), _latest_plan(1)],
         inventory=_rerun_of_the_latest_job(),
     )
-    assert result.returncode == 1
-    assert "Attempt 2 of run 1 kept a prod latest plan that cannot be found" in (
-        result.stderr
+    assert result.returncode == 0, result.stderr
+    passed = result.stdout.split("--restore-plan\n", 1)[1].split()
+    assert [Path(path).parent.name for path in passed] == [
+        _routes_plan(1),
+        _latest_plan(1),
+    ]
+
+
+def test_rollback_needs_no_plans_whose_changes_a_later_plan_shows_undone(tmp_path):
+    """Attempts 1 and 2 each moved latest and put it back; attempt 3 kept its."""
+    routes = _inventory_job(started_at=ROUTES_STARTED)
+    inventory = {
+        attempt: [
+            routes,
+            _inventory_job(
+                job=LATEST_JOB,
+                step=LATEST_KEEP_STEP,
+                started_at=f"2026-11-06T0{attempt}:00:00Z",
+            ),
+        ]
+        for attempt in (1, 2, 3)
+    }
+    result = _run_restore(
+        tmp_path,
+        3,
+        {},
+        present={
+            _routes_plan(1): _plan_digests("0", "a"),
+            _latest_plan(3): _plan_digests("a", "d"),
+        },
+        inventory=inventory,
     )
-    assert "--restore-plan" not in result.stdout
+    assert result.returncode == 0, result.stderr
+    passed = result.stdout.split("--restore-plan\n", 1)[1].split()
+    assert [Path(path).parent.name for path in passed] == [
+        _routes_plan(1),
+        _latest_plan(3),
+    ]
+
+
+def test_rollback_reads_the_job_and_step_names_the_deploy_workflows_use():
+    """A renamed job or step would hide every kept plan from the rollback."""
+    import yaml
+
+    workflows = REPOSITORY_ROOT / ".github" / "workflows"
+    reusable = yaml.safe_load(
+        (workflows / "simulation-deploy.reusable.yml").read_text(encoding="utf-8")
+    )["jobs"]
+    deploy = yaml.safe_load(DEPLOY_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    script = RESTORE_ROUTING_SCRIPT.read_text(encoding="utf-8")
+
+    for target in ("beta", "prod"):
+        assert deploy[target]["name"] == f"Complete {target} deployment"
+    assert "Complete ${TARGET} deployment / ${job}" in script
+    for job_id, step_name in (
+        ("update_routing", "Keep the plan for a guarded restore"),
+        ("publish_latest", "Keep the latest plan for a guarded restore"),
+    ):
+        job = reusable[job_id]
+        assert f'job="{job["name"]}"' in script
+        assert f'step="{step_name}"' in script
+        assert any(step.get("name") == step_name for step in job["steps"])
 
 
 def test_rollback_refuses_when_an_attempts_plan_is_missing(tmp_path):

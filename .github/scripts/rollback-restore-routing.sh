@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Restore the target's Modal routing: undo a deployment run's routing
 # changes from the plans it kept, or point latest at a published release.
-# With DEPLOY_RUN_ID, every plan that run's attempts kept (not the jobs a rerun
-# carried over) must be under $RUNNER_TEMP/routing-plans, downloaded by the
-# workflow, unless the plans around it show its change undone: each attempt's
-# routes plan (routing-plan-<target>-<attempt>, kept by the routes job before
-# the checks) and latest plan (routing-latest-plan-<target>-<attempt>, kept by
-# the latest job after them). The plans are passed oldest first: by attempt,
-# and the routes plan before the latest plan within an attempt. Without it,
-# latest is restored to POLICYENGINE_VERSION, refusing unless latest is
-# currently EXPECTED_LATEST when that is given.
+# With DEPLOY_RUN_ID, the workflow downloads the plans that run kept into
+# $RUNNER_TEMP/routing-plans: an attempt's routes plan
+# (routing-plan-<target>-<attempt>, kept by the routes job before the checks)
+# and its latest plan (routing-latest-plan-<target>-<attempt>, kept by the
+# latest job after them), for each attempt whose job ran rather than being
+# carried over by a rerun. A missing plan is refused unless restoring without
+# it is still exact (see below). The plans are passed oldest first: by
+# attempt, and the routes plan before the latest plan within an attempt.
+# Without DEPLOY_RUN_ID, latest is restored to POLICYENGINE_VERSION, refusing
+# unless latest is currently EXPECTED_LATEST when that is given.
 # Run from projects/policyengine-simulation-executor.
 # Required env vars: TARGET, DEPLOY_RUN_ID, POLICYENGINE_VERSION,
 # EXPECTED_LATEST, MODAL_ENVIRONMENT, GH_TOKEN (read by gh), and the runner's
@@ -62,12 +63,16 @@ if [[ -n "${DEPLOY_RUN_ID}" ]]; then
     done
   done
   # GitHub stops listing an attempt's artifact once the job that uploaded it
-  # reruns. A kept plan may be missing only when the nearest downloaded plans
-  # published before and after it show its change undone: the later plan
-  # replaced exactly the state the earlier one published. Each published
-  # state is unique, so the missing plan's state cannot be live. Restoring
-  # without any other missing plan would stop short of what the run replaced
-  # and still look complete.
+  # reruns. A kept plan may be missing only when restoring the downloaded
+  # plans without it is still exact:
+  # - no downloaded plan was published after it: if its change, or anything
+  #   built on it, is live, the live state matches no downloaded plan and the
+  #   restore refuses as a conflict, changing nothing; or
+  # - the nearest downloaded plans published before and after it show its
+  #   change undone: the later plan replaced exactly the state the earlier
+  #   one published, and each published state is unique.
+  # Without any other missing plan, the restore could stop short of what the
+  # run replaced and still look complete, so the rollback refuses.
   for ((index = 0; index < ${#kept_plans[@]}; index++)); do
     artifact="${kept_plans[index]}"
     if [[ -f "${RUNNER_TEMP}/routing-plans/${artifact}/plan.json" ]]; then
@@ -81,19 +86,24 @@ if [[ -n "${DEPLOY_RUN_ID}" ]]; then
         break
       fi
     done
+    later_found=false
     later_before=""
     for ((other = index + 1; other < ${#kept_plans[@]}; other++)); do
       plan="${RUNNER_TEMP}/routing-plans/${kept_plans[other]}/plan.json"
       if [[ -f "${plan}" ]]; then
+        later_found=true
         later_before="$(jq -r '.before_sha256 // ""' "${plan}")"
         break
       fi
     done
+    if [[ "${later_found}" == "false" ]]; then
+      continue
+    fi
     if [[ "${earlier_after}" =~ ^[0-9a-f]{64}$ && "${later_before}" == "${earlier_after}" ]]; then
       continue
     fi
     if [[ "${artifact}" == routing-latest-plan-* ]]; then kind=latest; else kind=routing; fi
-    echo "Attempt ${artifact##*-} of run ${DEPLOY_RUN_ID} kept a ${TARGET} ${kind} plan that cannot be found; if its publication is pending, rerun this workflow with target=${TARGET} and resolve_pending_publication=true, leaving other inputs blank." >&2
+    echo "Attempt ${artifact##*-} of run ${DEPLOY_RUN_ID} kept a ${TARGET} ${kind} plan that cannot be found, and the plans around it do not show its change undone. If its publication is pending, rerun this workflow with target=${TARGET} and resolve_pending_publication=true, leaving other inputs blank; otherwise roll latest back with policyengine_version." >&2
     exit 1
   done
   # Passed oldest first. The restore undoes every change that is still

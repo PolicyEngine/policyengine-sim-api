@@ -61,22 +61,26 @@ A deployment publishes routing twice (rule `sim.deploy.latest-moves-after-checks
    deployed app) and its bundle manifest, and leaves `latest` alone (only a
    publication into a routing state with no latest policyengine.py version,
    the first one, makes the release latest, since no earlier release exists to
-   keep). The checks
-   pin those versions, so they reach the release through the gateway, while
-   unpinned requests still reach the previous release. Requests that pin one of
-   the release's US or UK model versions without a policyengine.py version reach
-   the release from this point. The job completes its own publication, so a
-   failed check leaves the routes in place.
+   keep). The checks pin those versions, so they reach the release through
+   the gateway, while unpinned requests still reach the previous release.
+   Requests that pin one of the release's US or UK model versions without a
+   policyengine.py version reach the release from this point, including a model
+   version it shares with the previous release. The job completes its own
+   publication, so a failed check leaves the routes in place, and those
+   requests keep reaching the failed release until a rerun succeeds or a
+   rollback with `deploy_run_id` removes its routes.
 2. **After every check and the Cloud Run promotion**, `publish_latest` moves
    `latest` to the release when it is newer (or with `force_latest`), checks
-   with the entrypoint smoke that unpinned requests reach it, and completes its
-   publication. If a step after recording fails, it restores the state it
-   replaced. It journals a new state even when `latest` stays, so each attempt
-   that reaches it replaces an earlier attempt's outcome.
+   with the entrypoint smoke that the release is routed and, when it is now
+   latest, that unpinned requests reach it, and completes its publication. If
+   a step after recording fails, it restores the state it replaced; the Cloud
+   Run promotion, which ran before it, stays. It journals a new state even
+   when `latest` stays, so each attempt that reaches it replaces an earlier
+   attempt's outcome.
 
-No check is upstream of `update_routing`, so "Re-run failed jobs" reruns the
-failed checks, `publish_latest` and the finalizer without republishing the
-routes.
+No job that runs after `update_routing` is upstream of it, so "Re-run failed
+jobs" after a failed check reruns the failed checks, `publish_latest` and the
+finalizer without republishing the routes.
 
 Before uploading each plan, its job records the full plan as a pending
 publication in the routing store. The always-running `finalize_routing` job reads

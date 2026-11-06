@@ -563,7 +563,7 @@ invocation = "uv run --frozen pytest tests/"
 [[rule]]
 id = "sim.deploy.latest-moves-after-checks"
 category = "deployment"
-statement = "A deployment publishes its release's routes before its checks without moving latest (unless no release is latest yet), and moves latest only after every check and the Cloud Run promotion pass, then checks that unpinned requests reach the release and puts latest back if a later step fails; no check is upstream of the routes job, so rerunning failed jobs never republishes the routes."
+statement = "A deployment publishes its release's routes before its checks without moving latest (unless no release is latest yet), and moves latest only after every check and the Cloud Run promotion pass, then checks that unpinned requests reach the release and puts latest back if a later step fails; no job that runs after the routes job is upstream of it, so rerunning jobs that failed after it never republishes the routes."
 rationale = "projects/policyengine-simulation-executor/README.md#routing-publication-and-rollback"
 scope = [".github/workflows/simulation-deploy.reusable.yml", ".github/scripts/routing-*.sh"]
 tier = "mechanical"
