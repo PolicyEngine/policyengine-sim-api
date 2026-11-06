@@ -249,17 +249,22 @@ def test_a_missing_column_lacks_its_privilege(disposable_database):
     ]
 
 
-@pytest.mark.postgres
-def test_only_the_public_schema_counts(disposable_database):
+def _put_a_decoy_schema_first(database):
+    """Create schema ``decoy``, usable by the role and first on its search_path."""
     _grant(
-        disposable_database,
+        database,
         [
             "CREATE SCHEMA decoy",
             f"GRANT USAGE ON SCHEMA decoy TO {SERVICE_TEST_ROLE}",
             f"ALTER ROLE {SERVICE_TEST_ROLE} IN DATABASE "
-            f'"{disposable_database.name}" SET search_path = decoy, public',
+            f'"{database.name}" SET search_path = decoy, public',
         ],
     )
+
+
+@pytest.mark.postgres
+def test_only_the_public_schema_counts(disposable_database):
+    _put_a_decoy_schema_first(disposable_database)
     _create_tables(disposable_database, SERVICE_TABLE_PRIVILEGES)
     _create_tables(disposable_database, ["reports"], schema="decoy")
     _grant_every_required_privilege(
@@ -278,15 +283,7 @@ def test_only_the_public_schema_counts(disposable_database):
 @pytest.mark.postgres
 def test_only_the_public_schemas_columns_count(disposable_database):
     """A column grant on a table of the same name in another schema doesn't count."""
-    _grant(
-        disposable_database,
-        [
-            "CREATE SCHEMA decoy",
-            f"GRANT USAGE ON SCHEMA decoy TO {SERVICE_TEST_ROLE}",
-            f"ALTER ROLE {SERVICE_TEST_ROLE} IN DATABASE "
-            f'"{disposable_database.name}" SET search_path = decoy, public',
-        ],
-    )
+    _put_a_decoy_schema_first(disposable_database)
     _create_tables(disposable_database, SERVICE_TABLE_PRIVILEGES)
     _create_tables(disposable_database, ["report_runs"], schema="decoy")
     _grant_every_required_privilege(
