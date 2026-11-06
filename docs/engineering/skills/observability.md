@@ -80,10 +80,21 @@ appropriate `StagePlan` and call `plan.name(Stage.VALUE)`. Do not add span name
 string literals in services or workers.
 
 Open a span with `runtime.span(plan.name(Stage.VALUE))`, and an operation with
-`runtime.operation(...)`. policyengine-observability 3.0.4 types both scopes
-correctly: their `__exit__` and `__aexit__` return `Literal[False]`, so Pyright
-knows an exception raised in the block propagates; see
+`runtime.operation(...)`. policyengine-observability 3.0.4 and later type both
+scopes correctly: their `__exit__` and `__aexit__` return `Literal[False]`, so
+Pyright knows an exception raised in the block propagates; see
 `docs/engineering/skills/type-checking.md`.
+
+In every app instrumented with `init_simulation_observability` (the gateway,
+the entrypoint and the executor's local FastAPI app), every record written
+while a FastAPI endpoint runs, from `record_exception`, `event` or `log`,
+carries the endpoint's route template as `http.route`, such as
+`/jobs/{job_id}`, as the request's `request.completed` record does.
+policyengine-observability 3.0.5 and later read the route when each record is
+written; 3.0.4 wrote `<unmatched>` on every record written before the request
+ended, because its middleware begins the request before FastAPI matches the
+route. A record written before routing, such as one from a middleware, and a
+request that matches no route still carry `<unmatched>`.
 
 When adding a run configuration or runtime stage:
 
