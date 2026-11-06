@@ -110,7 +110,7 @@ class SimulationDatabase:
         return cls(create_simulation_engine(database_url))
 
     async def missing_privileges(self) -> list[str]:
-        """Return each table privilege the service needs and its role lacks."""
+        """Return each table and column privilege the service needs and lacks."""
         return await asyncio.get_running_loop().run_in_executor(
             self.executor,
             partial(

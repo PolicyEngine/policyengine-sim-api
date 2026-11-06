@@ -53,12 +53,24 @@ year's report run names that row and its year, and belongs to the same report.
 needs: `SELECT` and `INSERT` on the tables it creates rows in
 (`simulations`, `reports`, `simulation_runs`, `report_runs`,
 `budget_window_runs` and `household_jobs`), and `SELECT` on the policy,
-dynamic, household and catalog tables a run reads. The Public API's privilege
-manifest grants them. `missing_table_privileges` returns each one the
-connected role lacks, as `"INSERT on reports"`; a table missing from the
-`public` schema lacks all of its privileges, and a role without the `USAGE`
-privilege on that schema is told so first (`"USAGE on schema public"`), since
-it can use none of its table grants. Tables are found through PostgreSQL's
+dynamic, household and catalog tables a run reads. `SERVICE_UPDATABLE_COLUMNS`
+lists the columns it may `UPDATE` on `simulation_runs`, `report_runs` and
+`household_jobs`: `status`, `modal_call_id`, `error_message`, `completed_at`
+and `updated_at`, to record a Modal call's ID once Modal accepts the call, or
+to fail the run when Modal refuses it. The role holds `UPDATE` on those
+columns only, never on a whole table, so the database refuses any other change
+to a run. The Public API's privilege manifest grants them all.
+
+`missing_table_privileges` returns each one the connected role lacks, ordered
+by table, as `"INSERT on reports"` or `"UPDATE (modal_call_id) on
+report_runs"`; it asks PostgreSQL with `has_table_privilege` and
+`has_column_privilege`. A table missing from the `public` schema lacks all of
+its privileges, a missing column lacks its own, and a role without the
+`USAGE` privilege on that schema is told so first (`"USAGE on schema
+public"`), since it can use none of its grants. The check doesn't look for
+privileges the role holds beyond these: `UPDATE` on a whole table satisfies
+each column's check, and the Public API's own privilege verification fails
+when the role holds it. Tables and columns are found through PostgreSQL's
 catalog, which needs no privilege. `read_missing_table_privileges` runs that
 check in a transaction whose `statement_timeout` it sets with `set_config`,
 local to the transaction, so the database ends any statement of the check

@@ -2,6 +2,7 @@
 
 from policyengine_simulation_persistence.access import (
     SERVICE_TABLE_PRIVILEGES,
+    SERVICE_UPDATABLE_COLUMNS,
     missing_table_privileges,
     read_missing_table_privileges,
 )
@@ -27,6 +28,7 @@ from policyengine_simulation_persistence.tables import (
 
 __all__ = [
     "SERVICE_TABLE_PRIVILEGES",
+    "SERVICE_UPDATABLE_COLUMNS",
     "HouseholdJobStatus",
     "ReportRunStatus",
     "ReportRunTrigger",
