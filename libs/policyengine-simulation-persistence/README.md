@@ -55,10 +55,13 @@ Rule `sim.persistence.models-match-public-api`. The PR workflow's
 grants the privileges its manifest declares
 (`.github/scripts/public-api-schema-reference.sh`), then runs the tests
 marked `public_api_schema`. `test_public_api_schema` builds the models' tables
-from `service_metadata` in a disposable database and compares both through
-PostgreSQL's catalog (`tests/schema_comparison.py`): every column's type,
-nullability and default, every constraint and index by name and definition,
-and every enum's values must match. `test_service_writes` creates a row in
+from `service_metadata` in a disposable database, after the Public API's
+tables their keys name (`referenced_metadata`, by `id` alone), and compares
+the models' tables with the Public API's through PostgreSQL's catalog
+(`tests/schema_comparison.py`): every column's type, nullability and default,
+every constraint and index by name and definition, and every enum's values
+must match. It also requires the Public API's tables to keep their 20 foreign
+keys to the Public API's own tables. `test_service_writes` creates a row in
 every modelled table as the service's role. Last, the job requires the
 pinned commit to be on the Public API's `master` branch, so the models only
 ever describe a chain the Public API has merged.

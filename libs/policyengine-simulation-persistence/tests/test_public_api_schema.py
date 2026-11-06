@@ -3,8 +3,10 @@
 Rule sim.persistence.models-match-public-api. ``PUBLIC_API_SCHEMA_DATABASE_URL``
 names a database the Public API's v2 migration chain built at the pinned
 commit (the ``public-api-schema`` job builds it). The models' own tables are
-built from ``service_metadata`` in a disposable database, and both are read
-through the same catalog queries. Without the Public API's database the
+built from ``service_metadata`` in a disposable database, after the Public
+API's tables their keys name, which ``referenced_metadata`` models by their
+``id`` alone, and both databases are read through the same catalog queries.
+Only the models' own tables are compared. Without the Public API's database the
 comparison skips, unless ``SIMULATION_REQUIRE_PUBLIC_API_SCHEMA=1`` (set in
 that job), where it fails instead.
 """
@@ -12,10 +14,11 @@ that job), where it fails instead.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
-from policyengine_simulation_persistence import service_metadata
+from policyengine_simulation_persistence import referenced_metadata, service_metadata
 from schema_comparison import describe_tables, schema_differences, schema_from_json
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
@@ -28,6 +31,10 @@ PROOF_FIXTURES = (
     / "fixtures"
     / "sim.persistence.models-match-public-api"
 )
+# The table a foreign key's PostgreSQL definition names.
+_REFERENCED_TABLE = re.compile(r"^FOREIGN KEY \(.*\) REFERENCES (\w+)\(")
+# Each service writes only its own tables, and the keys between them stay.
+KEYS_TO_PUBLIC_API_TABLES = 20
 
 
 def _engine(database_url: str):
@@ -44,7 +51,9 @@ def test_the_models_match_the_public_api_tables(
     models_engine = _engine(disposable_database.superuser_url)
     real_engine = _engine(public_api_database_url)
     try:
-        # Tests may build the models' tables; runtime code never does.
+        # Tests may build the models' tables; runtime code never does. The
+        # tables their keys name come first.
+        referenced_metadata.create_all(models_engine)
         service_metadata.create_all(models_engine)
         with models_engine.connect() as connection:
             models = describe_tables(connection, table_names)
@@ -66,8 +75,10 @@ def test_the_models_match_the_public_api_tables(
 def test_rule_proof_models_match_public_api() -> None:
     """Proof for rule sim.persistence.models-match-public-api.
 
-    ``public_api_schema.json`` describes ``simulation_runs`` as the Public
-    API's chain builds it. The bad models copy ``status`` as
+    ``public_api_schema.json`` describes ``simulation_runs`` as an earlier
+    commit of the Public API's chain built it, before the table gained
+    ``year`` and its keys to the Public API's own tables; the proof needs only
+    a fixed description. The bad models copy ``status`` as
     ``character varying(32)``, where the Public API's column is the enum
     ``v2_simulation_status``, and leave out ``modal_call_id``, which a later
     revision added.
@@ -82,3 +93,30 @@ def test_rule_proof_models_match_public_api() -> None:
         "simulation_runs.modal_call_id: the model has no such column",
     ]
     assert schema_differences(good, real) == []
+
+
+@pytest.mark.public_api_schema
+def test_the_public_api_keeps_its_keys_from_the_services_tables(
+    public_api_database_url,
+) -> None:
+    """The Public API's tables name 20 rows of its own, which the models declare."""
+    table_names = [table.name for table in service_metadata.tables.values()]
+    public_api_tables = {table.name for table in referenced_metadata.tables.values()}
+    real_engine = _engine(public_api_database_url)
+    try:
+        with real_engine.connect() as connection:
+            real = describe_tables(connection, table_names)
+    finally:
+        real_engine.dispose()
+
+    keys_to_public_api_tables = sorted(
+        f"{table_name}.{constraint_name}"
+        for table_name, table in real.tables.items()
+        for constraint_name, definition in table.constraints.items()
+        if (key := _REFERENCED_TABLE.match(definition))
+        and key.group(1) in public_api_tables
+    )
+
+    assert len(keys_to_public_api_tables) == KEYS_TO_PUBLIC_API_TABLES, (
+        keys_to_public_api_tables
+    )

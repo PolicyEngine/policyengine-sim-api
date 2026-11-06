@@ -172,7 +172,7 @@ test = "tests/test_access.py::test_rule_proof_missing_privileges_reported"
 [[rule]]
 id = "sim.persistence.models-match-public-api"
 category = "persistence"
-statement = "Sim's models of the Public API's tables match the tables the Public API's v2 migration chain builds at the pinned Public API commit, which is on the Public API's default branch: every column's type, nullability and default, every constraint and index by name and definition, and every enum's values; and the simulation service's role, with the privileges the Public API's manifest declares, writes every modelled table."
+statement = "Sim's models of the Public API's tables match the tables the Public API's v2 migration chain builds at the pinned Public API commit, which is on the Public API's default branch: every column's type, nullability and default, every constraint and index by name and definition, and every enum's values; the Public API's tables keep their 20 foreign keys to the Public API's own tables; and the simulation service's role, with the privileges the Public API's manifest declares, writes every modelled table."
 rationale = "libs/policyengine-simulation-persistence/README.md#checking-the-models-against-the-public-api"
 scope = [
   "libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py",
@@ -189,6 +189,7 @@ kind = "pytest"
 project = "libs/policyengine-simulation-persistence"
 nodes = [
   "tests/test_public_api_schema.py::test_the_models_match_the_public_api_tables",
+  "tests/test_public_api_schema.py::test_the_public_api_keeps_its_keys_from_the_services_tables",
   "tests/test_service_writes.py::test_the_service_role_holds_every_privilege_the_service_needs",
   "tests/test_service_writes.py::test_the_service_role_creates_and_reads_a_row_in_every_table_it_writes",
 ]
