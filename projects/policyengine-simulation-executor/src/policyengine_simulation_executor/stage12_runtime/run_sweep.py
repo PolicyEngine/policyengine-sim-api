@@ -18,7 +18,7 @@ Modal restarts a pre-empted call under the same call ID and reports it
 pending meanwhile, so a pre-empted coordinator's report run is never failed.
 Its children are cancelled and started again under new calls, and it starts
 them only once Modal runs it, so the sweep judges a simulation run only once
-no pending or running report run combines it.
+no pending or running report run names it as its baseline or reform.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ class StuckRunStore(Protocol):
 
         It must still have its listed status and call, or no call if it was
         listed with none; a simulation run must still have no pending or
-        running report run combining it.
+        running report run naming it.
         """
         ...
 
@@ -112,8 +112,7 @@ class SweepSummary:
     ``failed_for_age`` runs were failed for exceeding the maximum age. ``left``
     counts listed runs whose conditional failure changed nothing, because
     they were claimed, finished, moved to another call, had a call recorded,
-    or a pending or running report run started combining them after they
-    were listed.
+    or a pending or running report run named them after they were listed.
     """
 
     checked: int

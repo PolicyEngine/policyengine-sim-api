@@ -144,7 +144,7 @@ def test_the_sweep_lists_runs_older_than_its_minimum_age() -> None:
 
 
 def test_report_runs_are_swept_before_simulation_runs_are_listed() -> None:
-    # A simulation run is listed only once no report run combining it is
+    # A simulation run is listed only once no report run naming it is
     # running, so failing a dead coordinator's report run first lets the same
     # sweep reach its children.
     report_run = _run("fc-coordinator", RunKind.REPORT_RUN)

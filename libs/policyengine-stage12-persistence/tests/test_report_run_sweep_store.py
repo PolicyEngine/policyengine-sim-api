@@ -336,14 +336,17 @@ def _second_report_run(seeder, seeded_run: SeededReportRun, status):
     return second_id
 
 
-def _baseline_listed(store, seeded_run):
-    baseline_id = seeded_run.run_ids.baseline_simulation_run_id
+def _simulation_run_listed(store, simulation_run_id):
     return any(
-        run.run_id == baseline_id
+        run.run_id == simulation_run_id
         for run in store.list_active_runs(
             RunKind.SIMULATION_RUN, active_since_before=CUTOFF
         )
     )
+
+
+def _baseline_listed(store, seeded_run):
+    return _simulation_run_listed(store, seeded_run.run_ids.baseline_simulation_run_id)
 
 
 def test_a_simulation_run_is_listed_unless_a_pending_or_running_report_run_names_it(
@@ -371,6 +374,35 @@ def test_a_simulation_run_is_listed_unless_a_pending_or_running_report_run_names
 
     _set_run(seeder, "report_runs", second, status="succeeded", completed_at=CUTOFF)
     assert _baseline_listed(store, seeded_run)
+
+
+def test_a_report_run_keeps_its_reform_run_out_of_the_sweep_until_it_finishes(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    report_run_id = seeded_run.run_ids.report_run_id
+    reform_id = seeded_run.run_ids.reform_simulation_run_id
+    _set_run(
+        seeder,
+        "report_runs",
+        report_run_id,
+        status="running",
+        modal_call_id="fc-coordinator",
+        started_at=NOW,
+    )
+    _set_run(
+        seeder,
+        "simulation_runs",
+        reform_id,
+        status="running",
+        modal_call_id="fc-reform",
+        started_at=NOW,
+    )
+    # The running report run names it as its reform, so its coordinator
+    # judges the run.
+    assert not _simulation_run_listed(store, reform_id)
+
+    _set_run(seeder, "report_runs", report_run_id, status="failed", completed_at=CUTOFF)
+    assert _simulation_run_listed(store, reform_id)
 
 
 def test_a_run_with_no_call_is_listed_and_failed_while_it_still_has_none(
