@@ -157,6 +157,7 @@ nodes = [
   "tests/test_access.py::test_each_missing_column_privilege_is_named",
   "tests/test_access.py::test_a_missing_column_lacks_its_privilege",
   "tests/test_access.py::test_only_the_public_schema_counts",
+  "tests/test_access.py::test_only_the_public_schemas_columns_count",
   "tests/test_access.py::test_a_role_without_usage_on_the_schema_is_told_so",
 ]
 [[rule.ci]]
