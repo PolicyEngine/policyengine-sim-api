@@ -41,7 +41,8 @@ workflows share the repository-wide `simulation-deploy-main` concurrency group
 with `cancel-in-progress: false`, which serializes publication and restoration.
 The routing CLI and library check the GitHub Actions repository and caller workflow
 before writing. Run the deployment or rollback workflow to change routing; local
-read-only queries, `--dry-run`, and `--plan-out` remain available.
+read-only queries, `--dry-run`, `--plan-out`, and `--plan-latest-out` remain
+available.
 
 Before changing live routing, each publication keeps its plan as an artifact,
 including a unique publication ID and the complete state it replaces. Recovery
@@ -53,14 +54,38 @@ Routing writes and recovery use no lease or lock expiry wait.
 For a same-version redeploy that replaced a Modal app in place, redeploy the
 previous commit to recover its code; restoring routing alone cannot recover it.
 
-Before uploading a deployment plan, the workflow records the full plan as a pending
+A deployment publishes routing twice (rule `sim.deploy.latest-moves-after-checks`):
+
+1. **Before its checks**, `update_routing` adds the release's routes (its
+   policyengine.py version and its US and UK model versions, mapped to the
+   deployed app) and its bundle manifest, and leaves `latest` alone. The checks
+   pin those versions, so they reach the release through the gateway, while
+   unpinned requests still reach the previous release. Requests that pin one of
+   the release's US or UK model versions without a policyengine.py version reach
+   the release from this point. The job completes its own publication, so a
+   failed check leaves the routes in place.
+2. **After every check and the Cloud Run promotion**, `publish_latest` moves
+   `latest` to the release when it is newer (or with `force_latest`), checks
+   with the entrypoint smoke that unpinned requests reach it, and completes its
+   publication. If a step after recording fails, it restores the state it
+   replaced. It journals a new state even when `latest` stays, so each attempt
+   that reaches it replaces an earlier attempt's outcome.
+
+No check is upstream of `update_routing`, so "Re-run failed jobs" reruns the
+failed checks, `publish_latest` and the finalizer without republishing the
+routes.
+
+Before uploading each plan, its job records the full plan as a pending
 publication in the routing store. The always-running `finalize_routing` job reads
-that journal after every release gate: if all gates pass and live routing matches
-the planned state, it marks the publication completed; otherwise it restores the
-recorded previous state and marks it restored. Finalization uses the deployment
-run ID and release environment, so failed-job reruns can finish an earlier attempt.
-Artifact upload failure does not prevent recovery. `deployment_ready` requires a
-successful finalizer with outcome `completed` before reporting the release green.
+that journal after every release gate and `publish_latest`, and resolves a
+publication that a failed or cancelled job left pending: if all gates pass and
+live routing matches the planned state, it marks the publication completed;
+otherwise it restores the recorded previous state and marks it restored. When
+nothing is pending it reports the outcome this run last recorded. Finalization
+uses the deployment run ID and release environment, so failed-job reruns can
+finish an earlier attempt. Artifact upload failure does not prevent recovery.
+`deployment_ready` requires `publish_latest` to succeed and a successful
+finalizer with outcome `completed` before reporting the release green.
 
 Until completion or restoration, new routing writes refuse to proceed. If the
 finalizer's runner is lost, run `simulation-rollback.yml` with `target=beta` or
@@ -74,8 +99,10 @@ previous nor planned state, recovery fails and leaves the record pending for an
 operator to investigate. A finalizer for another deployment run cannot modify it.
 
 For a completed release, use `deploy_run_id=<original GitHub run ID>` with `target`
-to restore its saved artifact plans, or `policyengine_version=<published version>`
-to move latest to that release. Leave `resolve_pending_publication=false` in both
+to restore its saved artifact plans (each attempt's routes plan,
+`routing-plan-<target>-<attempt>`, and latest plan,
+`routing-latest-plan-<target>-<attempt>`), or
+`policyengine_version=<published version>` to move latest to that release. Leave `resolve_pending_publication=false` in both
 modes. Read-only `--print-pending-plan --environment staging|main` also displays the
 durable plan without changing routing.
 

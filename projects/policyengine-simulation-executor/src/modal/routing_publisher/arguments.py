@@ -80,15 +80,26 @@ def routing_argument_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help=(
-            "With publishing arguments: print a routing plan's digests; change nothing."
+            "With publishing arguments: print the digests of the plan that "
+            "--plan-out writes; change nothing."
         ),
     )
     parser.add_argument(
         "--plan-out",
         metavar="FILE",
         help=(
-            "With the publishing arguments: write the routing plan (state "
-            "before and after) to FILE and print its digests; change nothing."
+            "With the publishing arguments: write the plan (state before and "
+            "after) that adds the release's routes and bundle manifest, leaving "
+            "latest, to FILE and print its digests; change nothing."
+        ),
+    )
+    parser.add_argument(
+        "--plan-latest-out",
+        metavar="FILE",
+        help=(
+            "With the publishing arguments: write the plan that moves latest to "
+            "the release, whose routes must already be published, to FILE and "
+            "print its digests; change nothing."
         ),
     )
     parser.add_argument(
@@ -141,7 +152,10 @@ def routing_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--publication-id",
-        help="With --plan-out or --dry-run: a unique publication id (default random).",
+        help=(
+            "With --plan-out, --plan-latest-out or --dry-run: a unique "
+            "publication id (default random)."
+        ),
     )
     parser.add_argument(
         "--restore-latest",

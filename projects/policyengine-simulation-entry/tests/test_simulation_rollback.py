@@ -181,7 +181,8 @@ def test_rollback_validates_first_and_verifies_last():
     assert validate < traffic < verify
     download = steps[_step_index(steps, "actions/download-artifact@")]
     assert download["with"]["run-id"] == "${{ inputs.deploy_run_id }}"
-    assert download["with"]["pattern"] == "routing-plan-${{ inputs.target }}-*"
+    # Each attempt keeps a routes plan and, once latest moved, a latest plan.
+    assert download["with"]["pattern"] == "routing-*plan-${{ inputs.target }}-*"
     assert validate < steps.index(download) < restore
 
 
@@ -308,17 +309,30 @@ sys.exit(result.returncode)
     (bin_dir / "gh").chmod(0o755)
 
 
+def _routes_plan(attempt: int) -> str:
+    return f"routing-plan-prod-{attempt}"
+
+
+def _latest_plan(attempt: int) -> str:
+    return f"routing-latest-plan-prod-{attempt}"
+
+
+LATEST_JOB = "Complete prod deployment / Move latest to the release after every check"
+LATEST_KEEP_STEP = "Keep the latest plan for a guarded restore"
+
+
 def _run_restore(
     tmp_path: Path,
     attempts: int,
     kept: dict,
-    present: list[int],
+    present: list[str],
     inventory: dict[int, list[dict]] | None = None,
 ):
+    """Run the restore with the named plan artifacts downloaded."""
     runner_temp = tmp_path / "runner-temp-with-dashes"
     (runner_temp / "routing-plans").mkdir(parents=True)
-    for attempt in present:
-        directory = runner_temp / "routing-plans" / f"routing-plan-prod-{attempt}"
+    for artifact in present:
+        directory = runner_temp / "routing-plans" / artifact
         directory.mkdir(parents=True)
         (directory / "plan.json").write_text("{}")
     bin_dir = tmp_path / "bin"
@@ -347,7 +361,12 @@ def _run_restore(
 def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
     """#744 review: a later attempt must not hide an earlier publication."""
     attempts = [1, 10, 2, 9]
-    result = _run_restore(tmp_path, 10, dict.fromkeys(attempts, 1), present=attempts)
+    result = _run_restore(
+        tmp_path,
+        10,
+        dict.fromkeys(attempts, 1),
+        present=[_routes_plan(attempt) for attempt in attempts],
+    )
     assert result.returncode == 0, result.stderr
     passed = result.stdout.split("--restore-plan\n", 1)[1].split()
     assert [Path(path).parent.name for path in passed] == [
@@ -358,9 +377,53 @@ def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
     ]
 
 
+def test_rollback_passes_each_attempts_routes_then_latest_plan_oldest_first(
+    tmp_path,
+):
+    """A rerun's latest plan is restored after the earlier attempt's plans.
+
+    Attempt 1 published the routes and moved latest, which a check put back;
+    attempt 2 reran only the latest job and moved latest again.
+    """
+    latest_kept = _inventory_job(job=LATEST_JOB, step=LATEST_KEEP_STEP)
+    result = _run_restore(
+        tmp_path,
+        2,
+        {1: 1},
+        present=[_latest_plan(2), _routes_plan(1), _latest_plan(1)],
+        inventory={
+            1: [_inventory_job(), latest_kept],
+            2: [latest_kept],
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    passed = result.stdout.split("--restore-plan\n", 1)[1].split()
+    assert [Path(path).parent.name for path in passed] == [
+        _routes_plan(1),
+        _latest_plan(1),
+        _latest_plan(2),
+    ]
+
+
+def test_rollback_refuses_when_an_attempts_latest_plan_is_missing(tmp_path):
+    latest_kept = _inventory_job(job=LATEST_JOB, step=LATEST_KEEP_STEP)
+    result = _run_restore(
+        tmp_path,
+        2,
+        {1: 1},
+        present=[_routes_plan(1), _latest_plan(1)],
+        inventory={1: [_inventory_job(), latest_kept], 2: [latest_kept]},
+    )
+    assert result.returncode == 1
+    assert "Attempt 2 of run 1 kept a prod latest plan that cannot be found" in (
+        result.stderr
+    )
+    assert "--restore-plan" not in result.stdout
+
+
 def test_rollback_refuses_when_an_attempts_plan_is_missing(tmp_path):
     """#744 review: attempt 1 published but its plan is gone; attempt 2's is not."""
-    result = _run_restore(tmp_path, 2, {1: 1, 2: 1}, present=[2])
+    result = _run_restore(tmp_path, 2, {1: 1, 2: 1}, present=[_routes_plan(2)])
     assert result.returncode == 1
     assert "Attempt 1 of run 1 kept a prod routing plan that cannot be found" in (
         result.stderr
@@ -369,7 +432,7 @@ def test_rollback_refuses_when_an_attempts_plan_is_missing(tmp_path):
 
 
 def test_rollback_ignores_attempts_that_kept_no_plan(tmp_path):
-    result = _run_restore(tmp_path, 2, {1: 0, 2: 1}, present=[2])
+    result = _run_restore(tmp_path, 2, {1: 0, 2: 1}, present=[_routes_plan(2)])
     assert result.returncode == 0, result.stderr
     assert "routing-plan-prod-2/plan.json" in result.stdout
 
@@ -401,7 +464,7 @@ def test_inventory_jq_selects_only_successfully_kept_target_plans(
         tmp_path,
         2,
         {2: 1},
-        present=[2],
+        present=[_routes_plan(2)],
         inventory={1: [ignored_job]},
     )
     assert result.returncode == 0, result.stderr
