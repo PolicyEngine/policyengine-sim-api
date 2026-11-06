@@ -94,11 +94,12 @@ same-repository draft PR.
 - PR CI runs simulation unit tests, the persistence tests that need
   PostgreSQL, the comparison of the persistence models with the Public API's
   tables at a pinned commit, Ruff format and lint checks, Pyright for every
-  package, quality
-  guards (including the rules registry), the changelog fragment check, Docker
-  build, and local integration tests. A separate
-  `PR description` job checks that every open PR's description starts with
-  `Fixes #ISSUE_NUMBER` for an open issue in this repository.
+  package, quality guards (including the rules registry), Docker build, and
+  local integration tests. Two jobs run separately, each from its own
+  workflow, on every PR, stacked ones included: `PR description` checks that
+  every open PR's description starts with `Fixes #ISSUE_NUMBER` for an open
+  issue in this repository, and `Changelog fragment` checks that the PR adds a
+  changelog fragment relative to its own base branch.
 - Every PR adds a changelog fragment, `changelog.d/<name>.<type>.md`, and never
   edits `CHANGELOG.md` to describe a change (rule
   `sim.process.changelog-fragment`). A merge to `main` doesn't deploy itself:

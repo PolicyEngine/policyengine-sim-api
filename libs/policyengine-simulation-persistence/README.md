@@ -21,16 +21,31 @@ URL, which holds a password.
 
 `tables.py` models, with SQLAlchemy Core, the six tables the service creates
 rows in: `simulations`, `reports`, `simulation_runs`, `report_runs`,
-`report_run_simulation_runs` and `household_jobs`, all in `service_metadata`,
+`budget_window_runs` and `household_jobs`, all in `service_metadata`,
 which names the `public` schema so writes reach those tables whatever the
 role's `search_path`.
 Each model matches the table the Public API's v2 migration chain builds:
 every column with its type, nullability and server default, and every
 constraint and index under the chain's name. The models only describe the
-tables; runtime code never creates or changes them. Their foreign keys stay
-between these tables, because another service writes the policy, household
-and catalog rows they name. Status and other enum columns use the `StrEnum`
-classes beside them and store each member's value.
+tables; runtime code never creates or changes them. Status and other enum
+columns use the `StrEnum` classes beside them and store each member's value.
+
+Each service writes only its own tables, and the foreign keys between them
+stay: 20 keys name rows the Public API writes in its users, policies,
+dynamics, households, datasets, regions and model catalog tables. PostgreSQL
+checks each of them on insert, as the referenced table's owner, so the
+service's role needs no privilege on those tables for it, and a row naming
+one that doesn't exist fails with SQLSTATE `23503`. Those tables are modelled
+in `referenced_metadata` by their `id` alone, the column every key names, so
+SQLAlchemy can declare the keys; nothing reads or writes through them. A
+database that builds the models' tables, as the tests do, creates
+`referenced_metadata`'s tables first.
+
+A report run names the two simulation runs it compares
+(`baseline_simulation_run_id`, and `reform_simulation_run_id`, empty for a
+household report with only a baseline). A report with a `budget_window_size`
+is calculated as a `budget_window_runs` row with one report run per year; each
+year's report run names that row and its year, and belongs to the same report.
 
 ## Checking the models against the Public API
 
@@ -82,13 +97,25 @@ uv run pytest tests/ -m public_api_schema
 `SERVICE_TABLE_PRIVILEGES` lists the table privileges the service's role
 needs: `SELECT` and `INSERT` on the tables it creates rows in
 (`simulations`, `reports`, `simulation_runs`, `report_runs`,
-`report_run_simulation_runs` and `household_jobs`), and `SELECT` on the
-policy, household and catalog tables a run reads. The Public API's privilege
-manifest grants them. `missing_table_privileges` returns each one the
-connected role lacks, as `"INSERT on reports"`; a table missing from the
-`public` schema lacks all of its privileges, and a role without the `USAGE`
-privilege on that schema is told so first (`"USAGE on schema public"`), since
-it can use none of its table grants. Tables are found through PostgreSQL's
+`budget_window_runs` and `household_jobs`), and `SELECT` on the policy,
+dynamic, household and catalog tables a run reads. `SERVICE_UPDATABLE_COLUMNS`
+lists the columns it may `UPDATE` on `simulation_runs`, `report_runs` and
+`household_jobs`: `status`, `modal_call_id`, `error_message`, `completed_at`
+and `updated_at`, to record a Modal call's ID once Modal accepts the call, or
+to fail the run when Modal refuses it. The role holds `UPDATE` on those
+columns only, never on a whole table, so the database refuses any other change
+to a run. The Public API's privilege manifest grants them all.
+
+`missing_table_privileges` returns each one the connected role lacks, ordered
+by table, as `"INSERT on reports"` or `"UPDATE (modal_call_id) on
+report_runs"`; it asks PostgreSQL with `has_table_privilege` and
+`has_column_privilege`. A table missing from the `public` schema lacks all of
+its privileges, a missing column lacks its own, and a role without the
+`USAGE` privilege on that schema is told so first (`"USAGE on schema
+public"`), since it can use none of its grants. The check doesn't look for
+privileges the role holds beyond these: `UPDATE` on a whole table satisfies
+each column's check, and the Public API's own privilege verification fails
+when the role holds it. Tables and columns are found through PostgreSQL's
 catalog, which needs no privilege. `read_missing_table_privileges` runs that
 check in a transaction whose `statement_timeout` it sets with `set_config`,
 local to the transaction, so the database ends any statement of the check

@@ -49,14 +49,19 @@ human instead.
 In a stack of pull requests, only the lowest unmerged one runs the full PR
 workflow (`.github/workflows/pr.yml`) and the Modal image smoke. The ones above
 it run only the `CI complete` job, which fails and says so, and the
-`PR description` job, which every open pull request runs. A stack therefore
-uses one set of runners instead of one per layer.
+`PR description` and `Changelog fragment` jobs, which run on every pull
+request from their own workflows. A stack therefore uses one set of runners
+instead of one per layer.
 
-- **`CI complete` is the required check.** It needs every other job in
-  `pr.yml`. On a pull request that isn't stacked, or is the lowest unmerged
-  one, it passes only when every job passed. Skipped jobs would otherwise
-  count as passing, so a stack can only merge bottom-up, and nothing merges
-  untested.
+- **`CI complete` is the required check for `pr.yml`.** It needs every other
+  job in `pr.yml`. On a pull request that isn't stacked, or is the lowest
+  unmerged one, it passes only when every job passed. Skipped jobs would
+  otherwise count as passing, so a stack can only merge bottom-up, and
+  nothing merges untested.
+- **`PR description` and `Changelog fragment` are required too.** Each runs
+  in its own workflow (`pr-description.yml`, `changelog-fragment.yml`) with
+  no branches or paths filter and no stack condition, so neither is ever
+  skipped, and `CI complete` doesn't need them.
 - **When the pull request below merges,** GitHub rebases the next one onto
   the trunk, and that push starts its full run. If no run starts, push again
   (`gh stack rebase`, then `gh stack push`), or close and reopen the pull
@@ -66,7 +71,10 @@ uses one set of runners instead of one per layer.
   the job has no `needs` of its own, also give it the same stack condition as
   the other jobs.
   `projects/policyengine-simulation-executor/tests/test_ci_complete_gate.py`
-  checks both.
+  checks both. A check that every pull request must pass on its own, stacked
+  or not, doesn't belong in `pr.yml`: give it its own workflow, like
+  `pr-description.yml` and `changelog-fragment.yml`, and make it a required
+  check.
 
 ## The `Fixes` Line
 
@@ -141,10 +149,14 @@ echo "Required a changelog fragment on every pull request." > changelog.d/978.ad
 
 ### What the check rejects
 
-The `Changelog fragment` job in `pr.yml` runs
-`.github/scripts/check-changelog-fragment.sh` on the merged result. It fails
-unless the pull request itself adds a fragment, relative to its base, and
-every file in `changelog.d/` other than `.gitkeep` is one. These fail:
+The `Changelog fragment` job, in `.github/workflows/changelog-fragment.yml`,
+runs `.github/scripts/check-changelog-fragment.sh` on the merged result of
+every pull request, whatever branch it targets, whenever it is opened,
+reopened or edited and on every push. Changing a pull request's base branch
+is an edit, so the check runs again against the new base. The job has no
+condition, so it is never skipped. It fails unless the pull request itself
+adds a fragment, relative to its base, and every file in `changelog.d/` other
+than `.gitkeep` is one. These fail:
 
 - a pull request that adds no fragment, even while `main` has pending
   fragments from other pull requests, and one that only edits a pending
@@ -170,8 +182,10 @@ make changelog-draft   # the section the next release would add
 Both need Python 3.11 or later as `python3`; `make changelog-draft` also needs
 uv, to run Towncrier from `.github/towncrier/uv.lock`.
 
-In a stack, the check runs with the rest of CI on the lowest unmerged pull
-request only. Each pull request in the stack still adds its own fragment.
+In a stack, every pull request runs the check, not only the lowest unmerged
+one. Each is compared with its own base branch, the branch of the pull request
+below it, whose fragment is already there and doesn't count, so each pull
+request in the stack adds its own fragment.
 Automated pull requests add one too: the daily dependency update adds
 `changelog.d/update-dependencies.changed.md`, and the policyengine.py update
 adds `changelog.d/update-policyengine-<version>.changed.md`.

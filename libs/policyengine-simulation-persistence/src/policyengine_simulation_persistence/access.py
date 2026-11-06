@@ -11,7 +11,17 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
-from sqlalchemy import String, and_, column, false, func, select, table, values
+from sqlalchemy import (
+    String,
+    Subquery,
+    and_,
+    column,
+    false,
+    func,
+    select,
+    table,
+    values,
+)
 
 from policyengine_simulation_persistence.tables import TABLE_SCHEMA
 
@@ -33,18 +43,27 @@ _pg_class = table(
 _pg_namespace = table(
     "pg_namespace", column("oid"), column("nspname"), schema="pg_catalog"
 )
+_pg_attribute = table(
+    "pg_attribute",
+    column("attrelid"),
+    column("attname"),
+    column("attnum"),
+    column("attisdropped"),
+    schema="pg_catalog",
+)
 _CREATE: Final = frozenset({"SELECT", "INSERT"})
 _READ: Final = frozenset({"SELECT"})
 
-# The service creates simulations, reports, their runs and household jobs, and
-# reads the policy, household and catalog rows a run needs.
+# The service creates simulations, reports, their runs, budget windows'
+# calculations and household jobs, and reads the policy, dynamic, household
+# and catalog rows a run needs.
 SERVICE_TABLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
     {
         "simulations": _CREATE,
         "reports": _CREATE,
         "simulation_runs": _CREATE,
         "report_runs": _CREATE,
-        "report_run_simulation_runs": _CREATE,
+        "budget_window_runs": _CREATE,
         "household_jobs": _CREATE,
         "policies": _READ,
         "households": _READ,
@@ -54,18 +73,43 @@ SERVICE_TABLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType
         "datasets": _READ,
         "parameters": _READ,
         "parameter_values": _READ,
+        "dynamics": _READ,
+    }
+)
+# The run state the service records for a run whose Modal call it starts: the
+# call's ID once Modal accepts the call, or the failure when Modal refuses it.
+_CALL_START: Final = frozenset(
+    {"status", "modal_call_id", "error_message", "completed_at", "updated_at"}
+)
+# The columns the service's role may UPDATE, by table. It holds UPDATE on
+# these columns alone, never on a whole table, so the database refuses any
+# other change to a run.
+SERVICE_UPDATABLE_COLUMNS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
+    {
+        "simulation_runs": _CALL_START,
+        "report_runs": _CALL_START,
+        "household_jobs": _CALL_START,
     }
 )
 
 
-def missing_table_privileges(connection: Connection) -> list[str]:
-    """Return each required privilege the connected role lacks, ordered by table.
+def _public_tables() -> Subquery:
+    """Select the oid and name of each table in the ``public`` schema."""
+    return (
+        select(_pg_class.c.oid, _pg_class.c.relname)
+        .join(_pg_namespace, _pg_namespace.c.oid == _pg_class.c.relnamespace)
+        .where(
+            and_(
+                _pg_namespace.c.nspname == TABLE_SCHEMA,
+                _pg_class.c.relkind.in_(["r", "p"]),
+            )
+        )
+        .subquery("public_tables")
+    )
 
-    Each is named as ``"<PRIVILEGE> on <table>"``. A table missing from the
-    ``public`` schema lacks every privilege the service needs on it. A role
-    without the USAGE privilege on that schema can't use any table grant, so
-    ``"USAGE on schema public"`` comes first.
-    """
+
+def _missing_table_grants(connection: Connection) -> list[tuple[str, str, str]]:
+    """Return ``(table, privilege, "")`` for each table privilege the role lacks."""
     required = values(
         column("table_name", String),
         column("privilege", String),
@@ -77,17 +121,7 @@ def missing_table_privileges(connection: Connection) -> list[str]:
             for privilege in sorted(privileges)
         ]
     )
-    public_tables = (
-        select(_pg_class.c.oid, _pg_class.c.relname)
-        .join(_pg_namespace, _pg_namespace.c.oid == _pg_class.c.relnamespace)
-        .where(
-            and_(
-                _pg_namespace.c.nspname == TABLE_SCHEMA,
-                _pg_class.c.relkind.in_(["r", "p"]),
-            )
-        )
-        .subquery("public_tables")
-    )
+    public_tables = _public_tables()
     # A missing table joins to a null oid, and has_table_privilege returns
     # null for a null table, so a missing table counts as not granted.
     granted = func.coalesce(
@@ -102,9 +136,72 @@ def missing_table_privileges(connection: Connection) -> list[str]:
             )
         )
         .where(~granted)
-        .order_by(required.c.table_name, required.c.privilege)
     )
-    missing = [f"{privilege} on {table_name}" for table_name, privilege in rows]
+    return [(table_name, privilege, "") for table_name, privilege in rows]
+
+
+def _missing_column_grants(connection: Connection) -> list[tuple[str, str, str]]:
+    """Return ``(table, "UPDATE", column)`` for each column the role can't update."""
+    required = values(
+        column("table_name", String),
+        column("column_name", String),
+        name="required_column_updates",
+    ).data(
+        [
+            (table_name, column_name)
+            for table_name, column_names in SERVICE_UPDATABLE_COLUMNS.items()
+            for column_name in sorted(column_names)
+        ]
+    )
+    public_tables = _public_tables()
+    # A missing table or column joins to a null column number, which
+    # has_column_privilege answers with null, so it counts as not granted.
+    # Asked by number, not name: by name, a missing column raises an error.
+    granted = func.coalesce(
+        func.has_column_privilege(
+            public_tables.c.oid, _pg_attribute.c.attnum, "UPDATE"
+        ),
+        false(),
+    )
+    rows = connection.execute(
+        select(required.c.table_name, required.c.column_name)
+        .select_from(
+            required.outerjoin(
+                public_tables, public_tables.c.relname == required.c.table_name
+            ).outerjoin(
+                _pg_attribute,
+                and_(
+                    _pg_attribute.c.attrelid == public_tables.c.oid,
+                    _pg_attribute.c.attname == required.c.column_name,
+                    _pg_attribute.c.attnum > 0,
+                    _pg_attribute.c.attisdropped.is_(false()),
+                ),
+            )
+        )
+        .where(~granted)
+    )
+    return [(table_name, "UPDATE", column_name) for table_name, column_name in rows]
+
+
+def missing_table_privileges(connection: Connection) -> list[str]:
+    """Return each required privilege the connected role lacks, ordered by table.
+
+    A table privilege is named as ``"<PRIVILEGE> on <table>"`` and a column
+    privilege as ``"UPDATE (<column>) on <table>"``. A table missing from the
+    ``public`` schema lacks every privilege the service needs on it, and a
+    missing column lacks its own. A role without the USAGE privilege on that
+    schema can't use any of its grants, so ``"USAGE on schema public"`` comes
+    first.
+    """
+    missing_grants = sorted(
+        [*_missing_table_grants(connection), *_missing_column_grants(connection)]
+    )
+    missing = [
+        f"{privilege} ({column_name}) on {table_name}"
+        if column_name
+        else f"{privilege} on {table_name}"
+        for table_name, privilege, column_name in missing_grants
+    ]
     schema_usage = connection.execute(
         select(func.has_schema_privilege(TABLE_SCHEMA, "USAGE"))
     ).scalar_one()

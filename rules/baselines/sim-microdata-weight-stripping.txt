@@ -1,6 +1,0 @@
-# Tolerated existing violations. This list may only shrink.
-#
-# Rule sim.microdata.weight-stripping-confined. Each entry is
-# <module>::<function>::<expression>: a read of raw values from a weighted
-# frame in simulation_output_common.py for something other than counting
-# entities. Reads anywhere else fail outright.

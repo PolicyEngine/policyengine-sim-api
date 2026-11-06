@@ -2,6 +2,7 @@
 
 from policyengine_simulation_persistence.access import (
     SERVICE_TABLE_PRIVILEGES,
+    SERVICE_UPDATABLE_COLUMNS,
     missing_table_privileges,
     read_missing_table_privileges,
 )
@@ -13,11 +14,11 @@ from policyengine_simulation_persistence.tables import (
     HouseholdJobStatus,
     ReportRunStatus,
     ReportRunTrigger,
-    SimulationRole,
     SimulationStatus,
     SimulationType,
+    budget_window_runs,
     household_jobs,
-    report_run_simulation_runs,
+    referenced_metadata,
     report_runs,
     reports,
     service_metadata,
@@ -27,18 +28,19 @@ from policyengine_simulation_persistence.tables import (
 
 __all__ = [
     "SERVICE_TABLE_PRIVILEGES",
+    "SERVICE_UPDATABLE_COLUMNS",
     "HouseholdJobStatus",
     "ReportRunStatus",
     "ReportRunTrigger",
-    "SimulationRole",
     "SimulationStatus",
     "SimulationType",
+    "budget_window_runs",
     "create_simulation_engine",
     "household_jobs",
     "missing_table_privileges",
     "normalized_database_url",
     "read_missing_table_privileges",
-    "report_run_simulation_runs",
+    "referenced_metadata",
     "report_runs",
     "reports",
     "service_metadata",

@@ -217,7 +217,7 @@ class SimulationDatabaseConnection(Protocol):
     """
 
     async def missing_privileges(self) -> list[str]:
-        """Return each table privilege the service needs and its role lacks."""
+        """Return each table and column privilege the service needs and lacks."""
         ...
 
     def dispose(self) -> None:

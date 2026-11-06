@@ -179,7 +179,14 @@ class TestModalExtractVersions:
         assert "force_latest:" in deploy_workflow
         assert "force_latest: ${{ inputs.force_latest || false }}" in deploy_workflow
         assert "force_latest:" in reusable_workflow
-        assert "args+=(--force-latest)" in reusable_workflow
+        # The plan step passes the input to routing-plan.sh, which adds
+        # --force-latest when it is true; test_routing_and_sentinel_scripts.py
+        # in the entrypoint project runs the script.
+        assert "FORCE_LATEST: ${{ inputs.force_latest }}" in reusable_workflow
+        assert "run: ../../.github/scripts/routing-plan.sh" in reusable_workflow
+        assert "args+=(--force-latest)" in (SCRIPTS_DIR / "routing-plan.sh").read_text(
+            encoding="utf-8"
+        )
         assert reusable_workflow.index("deploy_executor:") < reusable_workflow.index(
             "update_routing:"
         )

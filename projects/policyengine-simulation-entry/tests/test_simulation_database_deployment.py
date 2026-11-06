@@ -2,7 +2,7 @@
 
 The entrypoint receives its role's URL as a pinned Cloud Run secret on every
 deploy, whatever the Stage 12 setting, and the candidate smoke requires it to
-reach the database with every table privilege its role needs.
+reach the database with every table and column privilege its role needs.
 """
 
 from __future__ import annotations
