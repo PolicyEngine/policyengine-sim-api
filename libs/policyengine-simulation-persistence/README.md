@@ -37,8 +37,8 @@ checks each of them on insert, as the referenced table's owner, so the
 service's role needs no privilege on those tables for it, and a row naming
 one that doesn't exist fails with SQLSTATE `23503`. Those tables are modelled
 in `referenced_metadata` by their `id` alone, the column every key names, so
-SQLAlchemy can declare the keys; nothing reads or writes through them. A
-database that builds the models' tables, as the tests do, creates
+SQLAlchemy can declare the keys; nothing reads or writes through them. Code
+that builds the models' tables in a test database creates
 `referenced_metadata`'s tables first.
 
 A report run names the two simulation runs it compares

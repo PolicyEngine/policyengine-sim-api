@@ -275,6 +275,33 @@ def test_only_the_public_schema_counts(disposable_database):
     ]
 
 
+@pytest.mark.postgres
+def test_only_the_public_schemas_columns_count(disposable_database):
+    """A column grant on a table of the same name in another schema doesn't count."""
+    _grant(
+        disposable_database,
+        [
+            "CREATE SCHEMA decoy",
+            f"GRANT USAGE ON SCHEMA decoy TO {SERVICE_TEST_ROLE}",
+            f"ALTER ROLE {SERVICE_TEST_ROLE} IN DATABASE "
+            f'"{disposable_database.name}" SET search_path = decoy, public',
+        ],
+    )
+    _create_tables(disposable_database, SERVICE_TABLE_PRIVILEGES)
+    _create_tables(disposable_database, ["report_runs"], schema="decoy")
+    _grant_every_required_privilege(
+        disposable_database, except_for={("UPDATE", "report_runs", "modal_call_id")}
+    )
+    _grant(
+        disposable_database,
+        [f"GRANT UPDATE (modal_call_id) ON decoy.report_runs TO {SERVICE_TEST_ROLE}"],
+    )
+
+    assert _missing_privileges_as_the_service(disposable_database) == [
+        "UPDATE (modal_call_id) on report_runs",
+    ]
+
+
 def _granted_privileges(fixture: Path) -> list[tuple[str, ...]]:
     """Read ``<PRIVILEGE> <table> [<column>]`` lines, skipping comments."""
     lines = fixture.read_text(encoding="utf-8").splitlines()
