@@ -69,9 +69,22 @@ SENTINEL_CASES: tuple[dict[str, Any], ...] = (
     },
 )
 
-#: Job poll statuses that mean the job has not finished yet: poll again.
+#: Job poll statuses that mean the job has not finished yet: poll again, until
+#: the polling deadline. 202 means the job is running and 429 asks for slower
+#: polling. The rest mean the stack cannot report on the job right now: the
+#: entrypoint answers 504 when its call to the gateway times out, as when a
+#: gateway container is preempted mid-request, and 503 when it cannot reach the
+#: gateway, and 502 comes from a proxy in front of either service, not from
+#: their code on this route. A failed job is 500 and an unknown one 404, and
+#: both stay final. Submitting is never retried.
 _PENDING_JOB_STATUSES = frozenset(
-    {HTTPStatus.ACCEPTED, HTTPStatus.TOO_MANY_REQUESTS, HTTPStatus.SERVICE_UNAVAILABLE}
+    {
+        HTTPStatus.ACCEPTED,
+        HTTPStatus.TOO_MANY_REQUESTS,
+        HTTPStatus.BAD_GATEWAY,
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        HTTPStatus.GATEWAY_TIMEOUT,
+    }
 )
 
 _AUTH_VARS = (
