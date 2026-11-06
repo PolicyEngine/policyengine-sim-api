@@ -12,11 +12,13 @@ with PostgreSQL's definition, and its other indexes by name with their
 definition; and the values of each enum its columns use.
 ``schema_differences`` lists every way the models' tables differ from the
 real ones. Tables the models leave out are not compared.
+``foreign_key_targets`` reads which table each foreign key names.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
@@ -29,6 +31,14 @@ if TYPE_CHECKING:
     from sqlalchemy import Connection
 
 ENUM_PREFIX = "enum "
+# An identifier as PostgreSQL writes it: quoted, with "" for a quote, or bare.
+_IDENTIFIER = r'"(?:[^"]|"")+"|[^\s".(]+'
+# The table a foreign key's definition names, qualified by its schema when
+# that schema isn't on the search path.
+_FOREIGN_KEY_TARGET = re.compile(
+    rf"^FOREIGN KEY \(.+?\) REFERENCES (?:(?P<schema>{_IDENTIFIER})\.)?"
+    rf"(?P<table>{_IDENTIFIER})\("
+)
 
 _COLUMNS = text(
     "SELECT c.relname AS table_name, a.attname AS column_name, "
@@ -275,3 +285,34 @@ def schema_from_json(path: Path) -> SchemaShape:
         },
         enums={name: tuple(values) for name, values in payload["enums"].items()},
     )
+
+
+def _unquoted(identifier: str) -> str:
+    if identifier.startswith('"'):
+        return identifier[1:-1].replace('""', '"')
+    return identifier
+
+
+def foreign_key_targets(schema: SchemaShape) -> dict[tuple[str, str], str]:
+    """Return the table each foreign key names, by its table and constraint name.
+
+    The table is unquoted, and keeps its schema when PostgreSQL wrote one, as
+    ``auth.users``. Raise ValueError for a foreign key whose definition names
+    no table this can read, so no key goes uncounted.
+    """
+    targets: dict[tuple[str, str], str] = {}
+    for table_name, table in schema.tables.items():
+        for constraint_name, definition in table.constraints.items():
+            if not definition.startswith("FOREIGN KEY "):
+                continue
+            target = _FOREIGN_KEY_TARGET.match(definition)
+            if target is None:
+                message = (
+                    f"{table_name}.{constraint_name}: no table read from {definition!r}"
+                )
+                raise ValueError(message)
+            named_table = _unquoted(target["table"])
+            if target["schema"] is not None:
+                named_table = f"{_unquoted(target['schema'])}.{named_table}"
+            targets[(table_name, constraint_name)] = named_table
+    return targets

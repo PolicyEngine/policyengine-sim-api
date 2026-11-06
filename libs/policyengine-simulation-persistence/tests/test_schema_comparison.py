@@ -14,6 +14,7 @@ from schema_comparison import (
     SchemaShape,
     TableShape,
     describe_tables,
+    foreign_key_targets,
     schema_differences,
     schema_from_json,
     schema_to_json,
@@ -74,6 +75,48 @@ def _simulation_runs(**changes) -> SchemaShape:
         },
         enums=enums,
     )
+
+
+def test_each_foreign_key_is_read_with_the_table_it_names() -> None:
+    """PostgreSQL qualifies a table outside the search path and quotes odd names."""
+    schema = _simulation_runs(
+        constraints={
+            "fk_simulation_runs_dataset_id_datasets": (
+                "FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE RESTRICT"
+            ),
+            "fk_simulation_runs_user_id_users": (
+                "FOREIGN KEY (user_id) REFERENCES auth.users(id)"
+            ),
+            "fk_simulation_runs_owner_id_owners": (
+                'FOREIGN KEY (owner_id) REFERENCES "Owners"(id) ON DELETE SET NULL'
+            ),
+            "fk_simulation_runs_window": (
+                "FOREIGN KEY (window_id, simulation_id) REFERENCES "
+                "budget_window_runs(id, report_id) ON DELETE CASCADE"
+            ),
+            "ck_simulation_runs_year": "CHECK (((year >= 1900) AND (year <= 2200)))",
+        }
+    )
+
+    assert foreign_key_targets(schema) == {
+        ("simulation_runs", "fk_simulation_runs_simulation_id_simulations"): (
+            "simulations"
+        ),
+        ("simulation_runs", "fk_simulation_runs_dataset_id_datasets"): "datasets",
+        ("simulation_runs", "fk_simulation_runs_user_id_users"): "auth.users",
+        ("simulation_runs", "fk_simulation_runs_owner_id_owners"): "Owners",
+        ("simulation_runs", "fk_simulation_runs_window"): "budget_window_runs",
+    }
+
+
+def test_a_foreign_key_whose_table_cannot_be_read_is_refused() -> None:
+    """A key left uncounted would hide from a check of which keys exist."""
+    schema = _simulation_runs(
+        constraints={"fk_simulation_runs_unreadable": "FOREIGN KEY (x) REFERENCES"}
+    )
+
+    with pytest.raises(ValueError, match="fk_simulation_runs_unreadable"):
+        foreign_key_targets(schema)
 
 
 def test_identical_tables_have_no_differences() -> None:

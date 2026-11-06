@@ -60,9 +60,12 @@ tables their keys name (`referenced_metadata`, by `id` alone), and compares
 the models' tables with the Public API's through PostgreSQL's catalog
 (`tests/schema_comparison.py`): every column's type, nullability and default,
 every constraint and index by name and definition, and every enum's values
-must match. It also requires the Public API's tables to keep their 20 foreign
-keys to the Public API's own tables. `test_service_writes` creates a row in
-every modelled table as the service's role. Last, the job requires the
+must match. `test_service_writes` creates a row in every modelled table as
+the service's role. Another test, outside the rule, requires the modelled
+tables' foreign keys to the Public API's users, policies, dynamics,
+households, datasets, regions and model catalog tables to be exactly the 20
+in `tests/public_api_keys.py`, so a change to them shows even if the models
+follow it. Last, the job requires the
 pinned commit to be on the Public API's `master` branch, so the models only
 ever describe a chain the Public API has merged.
 

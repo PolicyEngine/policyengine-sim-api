@@ -14,12 +14,17 @@ that job), where it fails instead.
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 
 import pytest
 from policyengine_simulation_persistence import referenced_metadata, service_metadata
-from schema_comparison import describe_tables, schema_differences, schema_from_json
+from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
+from schema_comparison import (
+    describe_tables,
+    foreign_key_targets,
+    schema_differences,
+    schema_from_json,
+)
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 
@@ -31,10 +36,6 @@ PROOF_FIXTURES = (
     / "fixtures"
     / "sim.persistence.models-match-public-api"
 )
-# The table a foreign key's PostgreSQL definition names.
-_REFERENCED_TABLE = re.compile(r"^FOREIGN KEY \(.*\) REFERENCES (\w+)\(")
-# Each service writes only its own tables, and the keys between them stay.
-KEYS_TO_PUBLIC_API_TABLES = 20
 
 
 def _engine(database_url: str):
@@ -99,7 +100,11 @@ def test_rule_proof_models_match_public_api() -> None:
 def test_the_public_api_keeps_its_keys_from_the_services_tables(
     public_api_database_url,
 ) -> None:
-    """The Public API's tables name 20 rows of its own, which the models declare."""
+    """The keys from the service's tables to the Public API's own are the 20 expected.
+
+    The Public API's own tables are those ``referenced_metadata`` models: users,
+    policies, dynamics, households, datasets, regions and the model catalog.
+    """
     table_names = [table.name for table in service_metadata.tables.values()]
     public_api_tables = {table.name for table in referenced_metadata.tables.values()}
     real_engine = _engine(public_api_database_url)
@@ -109,14 +114,10 @@ def test_the_public_api_keeps_its_keys_from_the_services_tables(
     finally:
         real_engine.dispose()
 
-    keys_to_public_api_tables = sorted(
-        f"{table_name}.{constraint_name}"
-        for table_name, table in real.tables.items()
-        for constraint_name, definition in table.constraints.items()
-        if (key := _REFERENCED_TABLE.match(definition))
-        and key.group(1) in public_api_tables
-    )
+    keys_to_public_api_tables = {
+        constraint_name
+        for (_, constraint_name), named_table in foreign_key_targets(real).items()
+        if named_table in public_api_tables
+    }
 
-    assert len(keys_to_public_api_tables) == KEYS_TO_PUBLIC_API_TABLES, (
-        keys_to_public_api_tables
-    )
+    assert keys_to_public_api_tables == set(KEYS_TO_PUBLIC_API_TABLES)
