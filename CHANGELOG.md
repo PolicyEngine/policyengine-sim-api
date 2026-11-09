@@ -10,6 +10,20 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.6.2] - 2026-11-09
+
+### Fixed
+
+- A deployment no longer treats a Stage 12 v2 manifest that Modal expired as an empty one. A scheduled workflow reads every key of the manifest once a day in `staging` and `main`, so Modal's expiry of a Dict entry after 7 days without a read or write no longer removes it, and fails when it is missing. A deployment's worker publication now refuses a missing manifest before its checks, instead of making its unchecked worker the default and leaving out every earlier worker; an operator starts a new or lost manifest with `update_v2_version_manifest --first-publication`, which refuses a manifest that exists.
+
+
+## [0.6.1] - 2026-11-09
+
+### Changed
+
+- A deployment that publishes Stage 12 now adds its v2 worker before its checks without moving the v2 manifest's default version, and moves the default to the new worker only after every check and the Cloud Run promotion pass, writing back the manifest it replaced if a later step fails or the run is cancelled. So Stage 12 reports reach a new release's worker only after that environment's checks pass, except the first worker in an empty manifest and a redeploy of the same version, whose worker is replaced in place.
+
+
 ## [0.6.0] - 2026-11-09
 
 ### Added

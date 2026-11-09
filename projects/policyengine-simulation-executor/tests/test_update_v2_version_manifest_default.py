@@ -43,8 +43,10 @@ class FakeStore:
         # Keys whose writes are accepted but not stored.
         self.lost_keys: set[str] = set()
         self.opened_with_create_if_missing: list[bool] = []
+        self.reads: list[str] = []
 
     def get(self, key: str, default: object = None) -> object:
+        self.reads.append(key)
         return self.values.get(key, default)
 
     def __setitem__(self, key: str, value: object) -> None:
@@ -64,9 +66,17 @@ class FakeStore:
         return all(self.values.get(key) == copy for key, copy in copies.items())
 
 
-@pytest.fixture
-def store(monkeypatch) -> FakeStore:
-    fake = FakeStore()
+class ModalNotFoundError(Exception):
+    """Stands in for ``modal.exception.NotFoundError``.
+
+    Under pytest, ``modal`` resolves to this project's ``src/modal``, so the
+    tests give the publisher a stand-in ``modal`` with this error class.
+    """
+
+
+def install_fake_store(monkeypatch, fake: FakeStore | None = None) -> FakeStore:
+    """Make the publisher open ``fake`` (a new FakeStore by default) as the Dict."""
+    fake = FakeStore() if fake is None else fake
 
     def from_name(name, *, environment_name, create_if_missing):
         del name, environment_name
@@ -74,9 +84,19 @@ def store(monkeypatch) -> FakeStore:
         return fake
 
     monkeypatch.setattr(
-        publisher, "modal", SimpleNamespace(Dict=SimpleNamespace(from_name=from_name))
+        publisher,
+        "modal",
+        SimpleNamespace(
+            Dict=SimpleNamespace(from_name=from_name),
+            exception=SimpleNamespace(NotFoundError=ModalNotFoundError),
+        ),
     )
     return fake
+
+
+@pytest.fixture
+def store(monkeypatch) -> FakeStore:
+    return install_fake_store(monkeypatch)
 
 
 def _installed_worker() -> V2WorkerVersion:
@@ -556,12 +576,16 @@ def test_checking_or_restoring_never_creates_a_manifest_dict(
     assert store.opened_with_create_if_missing == [False, False]
 
 
-def test_only_a_worker_publication_creates_the_manifest_dict(
+def test_a_deployment_publishes_into_the_existing_dict_without_creating_one(
     monkeypatch, tmp_path, store
 ):
+    # A deployment publishes only into an existing manifest (see
+    # test_update_v2_version_manifest_expiry); only an operator's first
+    # publication creates the Dict.
+    _with_older_default(store)
     validation_file = tmp_path / "validation.json"
     validation_file.write_text(_validation().model_dump_json())
 
     _run(monkeypatch, "--validation-file", str(validation_file), "--keep-default")
 
-    assert store.opened_with_create_if_missing == [True]
+    assert store.opened_with_create_if_missing == [False]

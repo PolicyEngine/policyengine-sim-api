@@ -692,7 +692,8 @@ jobs:
       # worker: publish_stage12_v2_default moves the default after every
       # check. No check that runs after this publication is upstream of this
       # job, so rerunning jobs that failed after it never republishes the
-      # worker.
+      # worker. It refuses a missing manifest, which it can't tell apart from
+      # one Modal expired; an operator starts that with --first-publication.
       - name: Publish only the separate v2 manifest
         working-directory: projects/policyengine-simulation-executor
         env:
