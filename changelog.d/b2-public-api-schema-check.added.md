@@ -1,1 +1,0 @@
-CI checks sim's models of the tables the simulation service writes against the tables the Public API's migration chain builds at a pinned Public API commit, and that the service's role can write them; a weekly run compares them with the Public API's default branch, and opens an issue, or comments on the open one, when that comparison fails.
