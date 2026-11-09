@@ -23,6 +23,7 @@ jobs:
   refresh:
     name: Read the Stage 12 v2 manifest in ${{ matrix.modal_environment }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

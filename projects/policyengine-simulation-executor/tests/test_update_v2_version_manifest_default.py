@@ -563,16 +563,16 @@ def test_checking_or_restoring_never_creates_a_manifest_dict(
     assert store.opened_with_create_if_missing == [False, False]
 
 
-def test_only_a_worker_publication_creates_the_manifest_dict(
+def test_a_deployment_publishes_into_the_existing_dict_without_creating_one(
     monkeypatch, tmp_path, store
 ):
     # A deployment publishes only into an existing manifest (see
-    # test_update_v2_version_manifest_expiry); the Dict is still opened so
-    # that an operator's first publication creates it.
+    # test_update_v2_version_manifest_expiry); only an operator's first
+    # publication creates the Dict.
     _with_older_default(store)
     validation_file = tmp_path / "validation.json"
     validation_file.write_text(_validation().model_dump_json())
 
     _run(monkeypatch, "--validation-file", str(validation_file), "--keep-default")
 
-    assert store.opened_with_create_if_missing == [True]
+    assert store.opened_with_create_if_missing == [False]

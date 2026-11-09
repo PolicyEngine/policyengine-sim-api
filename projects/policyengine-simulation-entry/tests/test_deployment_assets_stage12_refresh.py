@@ -111,6 +111,11 @@ def test_the_read_step_runs_the_refresh_with_modal_access_only():
         "MODAL_ENVIRONMENT": "${{ matrix.modal_environment }}",
     }
     assert "continue-on-error" not in refresh
+    # Nothing skips the read, on a schedule or otherwise.
+    assert "if" not in refresh
+    assert "if" not in _refresh_job()
+    # A hung Modal call ends well before the next day's run.
+    assert 0 < _refresh_job()["timeout-minutes"] <= 30
 
 
 def test_the_refresh_shares_nothing_with_v1_routing():

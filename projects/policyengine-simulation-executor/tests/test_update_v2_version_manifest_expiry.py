@@ -12,9 +12,7 @@ from __future__ import annotations
 
 import pytest
 from policyengine_simulation_contract.stage12_manifest import (
-    ACTIVE_MANIFEST_KEY,
-    PRE_CACHE_MANIFEST_KEY,
-    REGION_DATASETS_MANIFEST_KEY,
+    V2_MANIFEST_KEYS,
     manifest_digest,
     read_v2_manifest,
 )
@@ -27,12 +25,6 @@ from test_update_v2_version_manifest_default import (
     _with_both_workers,
     install_fake_store,
 )
-
-MANIFEST_KEYS = {
-    REGION_DATASETS_MANIFEST_KEY,
-    ACTIVE_MANIFEST_KEY,
-    PRE_CACHE_MANIFEST_KEY,
-}
 
 
 @pytest.fixture
@@ -57,18 +49,66 @@ def test_a_deployment_refuses_to_publish_into_a_missing_manifest(
             "--keep-default",
         )
 
-    assert "--validation-file without --keep-default" in str(refusal.value)
+    assert "--first-publication" in str(refusal.value)
     assert manifest_store.values == {}
+    # A refused deployment leaves no empty Dict behind.
+    assert manifest_store.opened_with_create_if_missing == [False]
 
 
-def test_an_operator_publishes_the_first_worker_without_keep_default(
+def test_an_operator_starts_a_missing_manifest_with_its_first_worker(
     monkeypatch, tmp_path, manifest_store: FakeStore
 ):
-    _run(monkeypatch, "--validation-file", str(_validation_file(tmp_path)))
+    _run(
+        monkeypatch,
+        "--validation-file",
+        str(_validation_file(tmp_path)),
+        "--first-publication",
+    )
 
     manifest = read_v2_manifest(manifest_store)
     assert manifest is not None
     assert manifest.default_version == _installed_version()
+    assert set(manifest.versions) == {_installed_version()}
+    assert manifest_store.opened_with_create_if_missing == [True]
+
+
+def test_a_first_publication_refuses_an_existing_manifest(
+    monkeypatch, tmp_path, manifest_store: FakeStore
+):
+    # It would otherwise move the default to its worker before any check.
+    _with_both_workers(manifest_store)
+    before = dict(manifest_store.values)
+    writes = manifest_store.writes
+
+    with pytest.raises(ValueError, match="a v2 manifest exists"):
+        _run(
+            monkeypatch,
+            "--validation-file",
+            str(_validation_file(tmp_path)),
+            "--first-publication",
+        )
+
+    assert manifest_store.writes == writes
+    assert manifest_store.values == before
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("--first-publication",),
+        ("--validation-file", "v.json", "--first-publication", "--keep-default"),
+        ("--validation-file", "v.json", "--first-publication", "--force-default"),
+    ],
+    ids=["without-validation", "with-keep-default", "with-force-default"],
+)
+def test_a_first_publication_takes_only_a_validation_file(
+    monkeypatch, manifest_store: FakeStore, arguments
+):
+    with pytest.raises(SystemExit) as refusal:
+        _run(monkeypatch, *arguments)
+
+    assert refusal.value.code == 2
+    assert manifest_store.opened_with_create_if_missing == []
 
 
 def test_refresh_reads_every_key_and_writes_nothing(
@@ -81,7 +121,7 @@ def test_refresh_reads_every_key_and_writes_nothing(
 
     _run(monkeypatch, "--refresh")
 
-    assert set(manifest_store.reads) >= MANIFEST_KEYS
+    assert set(manifest_store.reads) >= set(V2_MANIFEST_KEYS)
     assert manifest_store.writes == writes
     assert capsys.readouterr().out.splitlines()[-1] == (
         f"v2 manifest read: default {OLDER}, sha256 {manifest_digest(manifest)}"

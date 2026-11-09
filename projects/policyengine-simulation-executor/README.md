@@ -180,18 +180,41 @@ off in beta, so without other reads a week with no deployment would let all
 three keys expire. The scheduled workflow `stage12-v2-manifest-refresh.yml`
 (rule `sim.deploy.stage12-manifest-read-daily`) reads every key once a day in
 each Modal environment a deployment publishes the manifest to (`staging` and
-`main`), with `update_v2_version_manifest --refresh`. It fails when there is no
-manifest. A missing manifest, never published or expired, looks the same to a
+`main`), with `update_v2_version_manifest --refresh`, and fails when there is
+no manifest. GitHub notifies only whoever last changed a scheduled workflow's
+schedule of a failed run, and disables schedules in a public repository after
+60 days without activity; either way, a deployment then refuses the missing
+manifest as described next.
+
+A missing manifest, never published or expired, looks the same to a
 deployment, and publishing into it would make the release's worker the default
-before the checks and leave out every earlier worker, so the deployment's
-worker publication refuses it, before the checks. An operator who has
-confirmed the manifest is missing downloads that deployment's
-`stage12-worker-validation-<environment>` artifact and, from
-`projects/policyengine-simulation-executor` at the release commit after
-`uv sync --frozen`, publishes the first worker with
-`uv run --frozen python -m src.modal.utils.update_v2_version_manifest
---environment <modal environment> --validation-file <validation.json>` (without
-`--keep-default`), which makes it the default, then reruns the failed jobs.
+before the checks and leave out every earlier worker. So the deployment's
+worker publication refuses it, before the checks, and opens the Dict without
+creating it (where the Dict itself does not exist, Modal reports it not
+found). To recover, an operator, with the deployment's Modal credentials (the
+repository secrets `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`), from
+`projects/policyengine-simulation-executor`:
+
+1. Confirms the manifest is missing: `uv run --frozen python -m
+   src.modal.utils.update_v2_version_manifest --environment <modal environment>
+   --refresh` reports "there is no v2 manifest" (any other error is not a
+   missing manifest).
+2. Starts the manifest with the worker Stage 12 served before the failed
+   deployment, so that the failed deployment's own default move still waits
+   for its checks: from the commit of the last deployment that succeeded in
+   that environment, after `uv sync --frozen`, with that deployment's
+   `stage12-worker-validation-<release environment>` artifact, runs `uv run
+   --frozen python -m src.modal.utils.update_v2_version_manifest --environment
+   <modal environment> --validation-file <validation.json>
+   --first-publication`. If the failed deployment keeps that policyengine.py
+   version, its worker app has already replaced that one in place, so use the
+   failed deployment's commit and artifact instead. In a new Modal environment
+   there is no earlier worker, and the failed deployment's own worker starts
+   the manifest. `--first-publication` refuses a manifest that exists.
+3. Reruns the failed jobs.
+
+Earlier workers' entries are not restored, so a request that pins one of them
+through `STAGE12_V2_WORKER_VERSION` fails until it is published again.
 
 The plan is kept as the `stage12-v2-default-plan-<environment>-<attempt>`
 artifact whenever the move step ran, including a move that stopped part-way;
