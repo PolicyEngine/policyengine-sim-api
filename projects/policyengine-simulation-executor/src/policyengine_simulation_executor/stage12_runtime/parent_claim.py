@@ -124,8 +124,14 @@ def claim_parent(
     submitted: ComparisonReportRecord,
     coordinator_invocation_id: str,
     store: ComparisonStore,
+    resume_own_claim: bool = False,
 ) -> tuple[ComparisonReportRecord, bool]:
-    """Create the parent in Modal or claim a retry; reject duplicate execution."""
+    """Create the parent in Modal or claim a retry; reject duplicate execution.
+
+    With ``resume_own_claim``, a running parent that this coordinator call
+    claimed before is resumed: Modal runs a pre-empted call again under the
+    same call ID.
+    """
     coordinating_at = datetime.now(UTC)
     candidate = submitted.model_copy(
         update={
@@ -146,6 +152,12 @@ def claim_parent(
     if parent.evaluation_id != submitted.evaluation_id:
         msg = "existing comparison identity has a different report identifier"
         raise ValueError(msg)
+    if (
+        resume_own_claim
+        and parent.status is ComparisonRunLifecycleStatus.RUNNING
+        and parent.coordinator_invocation_id == coordinator_invocation_id
+    ):
+        return parent, True
     if parent.status in {
         ComparisonRunLifecycleStatus.RUNNING,
         ComparisonRunLifecycleStatus.SUCCEEDED,

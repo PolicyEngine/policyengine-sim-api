@@ -10,6 +10,20 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.7.0] - 2026-11-09
+
+### Added
+
+- The v2 Modal report coordinator and its US and UK simulation workers can record a report's run in the Public API's run tables: when a call names a report run and its baseline and reform simulation runs, they write those runs' status, output file and economy results with the Modal worker role's credentials, from the Modal secret `policyengine-modal-worker-database`. The report run is marked succeeded in the same transaction as its result rows. On pre-emption the coordinator of such a call cancels its child calls and resumes when Modal restarts it. Comparison runs behave as before.
+
+
+## [0.6.2] - 2026-11-09
+
+### Fixed
+
+- A deployment no longer treats a Stage 12 v2 manifest that Modal expired as an empty one. A scheduled workflow reads every key of the manifest once a day in `staging` and `main`, so Modal's expiry of a Dict entry after 7 days without a read or write no longer removes it, and fails when it is missing. A deployment's worker publication now refuses a missing manifest before its checks, instead of making its unchecked worker the default and leaving out every earlier worker; an operator starts a new or lost manifest with `update_v2_version_manifest --first-publication`, which refuses a manifest that exists.
+
+
 ## [0.6.1] - 2026-11-09
 
 ### Changed

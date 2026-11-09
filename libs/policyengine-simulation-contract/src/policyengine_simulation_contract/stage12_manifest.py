@@ -30,6 +30,12 @@ ACTIVE_MANIFEST_KEY = "active-with-cache"
 # they keep reading this key, which holds the same manifest without them or
 # region datasets.
 PRE_CACHE_MANIFEST_KEY = "active"
+# Every reader's key, in the order a write writes them (newest reader first).
+V2_MANIFEST_KEYS = (
+    REGION_DATASETS_MANIFEST_KEY,
+    ACTIVE_MANIFEST_KEY,
+    PRE_CACHE_MANIFEST_KEY,
+)
 V2_APPLICATION_PREFIX = "policyengine-simulation-v2-py"
 V1_APPLICATION_PREFIX = "policyengine-simulation-py"
 _MAX_MODAL_APPLICATION_NAME_LENGTH = 64
@@ -328,7 +334,9 @@ def add_v2_worker(*, current: object, worker: V2WorkerVersion) -> V2VersionManif
     The default version stays as it is, so requests that pin no version keep
     reaching the same worker; only the first worker (``current`` is None)
     becomes the default. A deployment adds its worker this way before its
-    checks and moves the default (:func:`move_v2_default`) after them.
+    checks, only into an existing manifest, and moves the default
+    (:func:`move_v2_default`) after them; an operator starts a missing
+    manifest with its first worker.
     """
     if current is None:
         versions: dict[str, V2WorkerVersion] = {}

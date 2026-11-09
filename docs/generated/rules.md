@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 62 | 0 | 0 | 14 | 76 |
+| mechanical | 64 | 0 | 0 | 14 | 78 |
 | metric | 1 | 0 | 0 | 0 | 1 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 63 of 77 rules.
+**Blocking:** 65 of 79 rules.
 
 ## Gaps
 
@@ -53,6 +53,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.deploy.shell-scripts-valid`
 - `sim.deploy.smoke-tests-strict`
 - `sim.deploy.stage12-default-moves-after-checks`
+- `sim.deploy.stage12-manifest-read-daily`
 - `sim.deploy.traffic-changes-exact`
 - `sim.process.rules-registry`
 - `sim.stage12.deployment-scope`
@@ -180,6 +181,7 @@ flowchart LR
 | `sim.deploy.shell-scripts-valid` | Deployment shell scripts have valid shell syntax. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.smoke-tests-strict` | Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge; the candidate smoke also requires the simulation service to reach its database with every table and column privilege its role needs. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`, `projects/policyengine-simulation-entry/tests/test_simulation_database_deployment.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.stage12-default-moves-after-checks` | A deployment that publishes Stage 12 adds its v2 worker before its checks without moving the v2 manifest's default version, and moves the default only after every check and the Cloud Run promotion pass, then checks that a reader resolves it and writes back the manifest it replaced if a later step fails or the run is cancelled; this mechanism shares no code with the v1 routing jobs. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py`, `projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py`, `projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py`, `projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py` | `pr.yml:test` | **unproven** |
+| `sim.deploy.stage12-manifest-read-daily` | A scheduled workflow, separate from the v1 routing jobs, reads every key of the Stage 12 v2 manifest once a day in each Modal environment a deployment publishes it to, so Modal's expiry of a Dict entry after 7 days without a read or write never removes it, and fails when the manifest is missing; a deployment's worker publication refuses a missing manifest instead of treating it as empty. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py`, `projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_refresh.py`, `projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py`, `projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_expiry.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.staging-promotes-tested-revision` | Every staging deployment passes promote_entrypoint: ${{ github.ref == 'refs/heads/main' }}, so a run from main moves the staging service's stable Cloud Run traffic to the entrypoint revision that passed the staging tests, and an accidental manual run from another branch neither moves that traffic nor deletes older revisions. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_promotion.py` | `pr.yml:test` | yes |
 | `sim.deploy.traffic-changes-exact` | Traffic changes target an exact, validated revision, are reversible, and refuse to run over an intervening promotion. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_traffic.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.workflow-shell-safety` | Cloud Run deployment never interpolates GitHub expressions into shell, escapes environment values, pins secret versions, stops before deploying when any runtime secret cannot be resolved, and resolves the Stage 12 secrets through the Stage 12 block's own wrapper. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_cloud_run.py` | `pr.yml:test` | yes |
@@ -219,6 +221,8 @@ flowchart LR
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py__projects_policyengine_simulation_entry_tests_test_simulation_database_deployment_py["pytest projects/policyengine-simulation-entry/tests/test_deployment_assets.py, projects/policyengine-simulation-entry/tests/test_simulation_database_deployment.py"]
   r_sim_deploy_stage12_default_moves_after_checks("sim.deploy.stage12-default-moves-after-checks (enforced)")
   e_pytest_libs_policyengine_simulation_contract_tests_test_stage12_manifest_default_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_stage12_default_py__projects_policyengine_simulation_entry_tests_test_stage12_default_scripts_py__projects_policyengine_simulation_executor_tests_test_update_v2_version_manifest_default_py["pytest libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py, projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py, projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py, projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py"]
+  r_sim_deploy_stage12_manifest_read_daily("sim.deploy.stage12-manifest-read-daily (enforced)")
+  e_pytest_libs_policyengine_simulation_contract_tests_test_stage12_manifest_default_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_stage12_refresh_py__projects_policyengine_simulation_executor_tests_test_update_v2_version_manifest_default_py__projects_policyengine_simulation_executor_tests_test_update_v2_version_manifest_expiry_py["pytest libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py, projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_refresh.py, projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py, projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_expiry.py"]
   r_sim_deploy_staging_promotes_tested_revision("sim.deploy.staging-promotes-tested-revision (enforced)")
   r_sim_deploy_traffic_changes_exact("sim.deploy.traffic-changes-exact (enforced)")
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_traffic_py["pytest projects/policyengine-simulation-entry/tests/test_deployment_assets_traffic.py"]
@@ -252,6 +256,8 @@ flowchart LR
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py__projects_policyengine_simulation_entry_tests_test_simulation_database_deployment_py --> j_CI_pr_yml_test
   r_sim_deploy_stage12_default_moves_after_checks --> e_pytest_libs_policyengine_simulation_contract_tests_test_stage12_manifest_default_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_stage12_default_py__projects_policyengine_simulation_entry_tests_test_stage12_default_scripts_py__projects_policyengine_simulation_executor_tests_test_update_v2_version_manifest_default_py
   e_pytest_libs_policyengine_simulation_contract_tests_test_stage12_manifest_default_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_stage12_default_py__projects_policyengine_simulation_entry_tests_test_stage12_default_scripts_py__projects_policyengine_simulation_executor_tests_test_update_v2_version_manifest_default_py --> j_CI_pr_yml_test
+  r_sim_deploy_stage12_manifest_read_daily --> e_pytest_libs_policyengine_simulation_contract_tests_test_stage12_manifest_default_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_stage12_refresh_py__projects_policyengine_simulation_executor_tests_test_update_v2_version_manifest_default_py__projects_policyengine_simulation_executor_tests_test_update_v2_version_manifest_expiry_py
+  e_pytest_libs_policyengine_simulation_contract_tests_test_stage12_manifest_default_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_stage12_refresh_py__projects_policyengine_simulation_executor_tests_test_update_v2_version_manifest_default_py__projects_policyengine_simulation_executor_tests_test_update_v2_version_manifest_expiry_py --> j_CI_pr_yml_test
   r_sim_deploy_staging_promotes_tested_revision --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_promotion_py
   r_sim_deploy_traffic_changes_exact --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_traffic_py
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_traffic_py --> j_CI_pr_yml_test
