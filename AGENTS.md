@@ -91,9 +91,11 @@ same-repository draft PR.
 
 - The simulation service lives in `projects/policyengine-simulation-executor`.
 - API integration tests live in `projects/policyengine-apis-integ`.
-- PR CI runs simulation unit tests, Ruff format and lint checks, Pyright for
-  every package, quality guards (including the rules registry), Docker build,
-  and local integration tests. Two jobs run separately, each from its own
+- PR CI runs simulation unit tests, the persistence tests that need
+  PostgreSQL, the comparison of the persistence models with the Public API's
+  tables at a pinned commit, Ruff format and lint checks, Pyright for every
+  package, quality guards (including the rules registry), Docker build, and
+  local integration tests. Two jobs run separately, each from its own
   workflow, on every PR, stacked ones included: `PR description` checks that
   every open PR's description starts with `Fixes #ISSUE_NUMBER` for an open
   issue in this repository, and `Changelog fragment` checks that the PR adds a
@@ -132,9 +134,13 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 - Checked: `sim.stage12.deployment-scope`, `sim.stage12.deployment-uses-api-schema`, `sim.stage12.no-migration-chain`, `sim.stage12.no-production-user-associations`, `sim.stage12.no-schema-ddl`, `sim.stage12.persistence-typed-dml-only`, `sim.stage12.production-lock-has-db-runtime`
 
+### Simulation service database
+
+- Checked: `sim.persistence.missing-privileges-reported`, `sim.persistence.models-match-public-api`
+
 ### Deployment pipeline
 
-- Checked: `sim.deploy.container-context-minimal`, `sim.deploy.docker-images-build`, `sim.deploy.gcloud-without-terraform`, `sim.deploy.latest-moves-after-checks`, `sim.deploy.modal-image-smoke`, `sim.deploy.numerical-sentinel-gate`, `sim.deploy.permission-enforcement-wired`, `sim.deploy.promotion-order-explicit`, `sim.deploy.release-commit-deploys-once`, `sim.deploy.release-identity-smoke`, `sim.deploy.revision-tags-valid`, `sim.deploy.routing-publication-journaled`, `sim.deploy.shell-scripts-valid`, `sim.deploy.smoke-tests-strict`, `sim.deploy.staging-promotes-tested-revision`, `sim.deploy.traffic-changes-exact`, `sim.deploy.workflow-shell-safety`
+- Checked: `sim.deploy.container-context-minimal`, `sim.deploy.docker-images-build`, `sim.deploy.gcloud-without-terraform`, `sim.deploy.latest-moves-after-checks`, `sim.deploy.modal-image-smoke`, `sim.deploy.numerical-sentinel-gate`, `sim.deploy.permission-enforcement-wired`, `sim.deploy.promotion-order-explicit`, `sim.deploy.release-commit-deploys-once`, `sim.deploy.release-identity-smoke`, `sim.deploy.revision-tags-valid`, `sim.deploy.routing-publication-journaled`, `sim.deploy.shell-scripts-valid`, `sim.deploy.smoke-tests-strict`, `sim.deploy.stage12-default-moves-after-checks`, `sim.deploy.staging-promotes-tested-revision`, `sim.deploy.traffic-changes-exact`, `sim.deploy.workflow-shell-safety`
 - `sim.deploy.image-smoke-covers-every-image-lib`: The image smoke path filter includes every library mounted into a Modal image, so a change to any of them runs the smoke. (doc-only, not checked: follow it yourself)
 
 ### API contracts and integration

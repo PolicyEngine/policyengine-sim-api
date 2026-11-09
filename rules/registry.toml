@@ -22,6 +22,10 @@ id = "stage12"
 title = "Stage 12 persistence"
 
 [[category]]
+id = "persistence"
+title = "Simulation service database"
+
+[[category]]
 id = "deployment"
 title = "Deployment pipeline"
 
@@ -131,6 +135,77 @@ bad_fixture = "rules/fixtures/sim.boundaries.sqlalchemy-and-alembic-only/bad_dat
 good_fixture = "rules/fixtures/sim.boundaries.sqlalchemy-and-alembic-only/good_database_store.py"
 project = "projects/policyengine-simulation-entry"
 test = "tests/test_database_access_boundaries.py::test_rule_proof_sqlalchemy_and_alembic_only"
+
+# --- Simulation service database ------------------------------------------
+
+[[rule]]
+id = "sim.persistence.missing-privileges-reported"
+category = "persistence"
+statement = "The simulation service's privilege check, which its readiness check uses, names every table privilege and every column UPDATE privilege its role needs on the Public API's tables and lacks, as PostgreSQL reports it, counts a table missing from the public schema as lacking all of them and a missing column as lacking its own, and names a missing USAGE privilege on that schema."
+rationale = "libs/policyengine-simulation-persistence/README.md#the-roles-privileges"
+scope = ["libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "libs/policyengine-simulation-persistence"
+nodes = [
+  "tests/test_access.py::test_a_role_with_every_required_privilege_misses_none",
+  "tests/test_access.py::test_each_missing_privilege_is_named",
+  "tests/test_access.py::test_a_missing_table_lacks_every_privilege",
+  "tests/test_access.py::test_each_missing_column_privilege_is_named",
+  "tests/test_access.py::test_a_missing_column_lacks_its_privilege",
+  "tests/test_access.py::test_only_the_public_schema_counts",
+  "tests/test_access.py::test_only_the_public_schemas_columns_count",
+  "tests/test_access.py::test_a_role_without_usage_on_the_schema_is_told_so",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "simulation-database"
+invocation = "uv run --frozen pytest tests/ -v -m postgres"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.persistence.missing-privileges-reported/bad_grants.txt"
+good_fixture = "rules/fixtures/sim.persistence.missing-privileges-reported/good_grants.txt"
+project = "libs/policyengine-simulation-persistence"
+test = "tests/test_access.py::test_rule_proof_missing_privileges_reported"
+
+[[rule]]
+id = "sim.persistence.models-match-public-api"
+category = "persistence"
+statement = "Sim's models of the Public API's tables match the tables the Public API's v2 migration chain builds at the pinned Public API commit, which is on the Public API's default branch: every column's type, nullability and default, every constraint and index by name and definition, and every enum's values; and the simulation service's role, with the privileges the Public API's manifest declares, writes every modelled table."
+rationale = "libs/policyengine-simulation-persistence/README.md#checking-the-models-against-the-public-api"
+scope = [
+  "libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py",
+  "libs/policyengine-simulation-persistence/public-api-commit",
+  ".github/scripts/public-api-schema-commit.sh",
+  ".github/scripts/public-api-schema-reference.sh",
+  ".github/scripts/public-api-commit-on-default-branch.sh",
+]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "libs/policyengine-simulation-persistence"
+nodes = [
+  "tests/test_public_api_schema.py::test_the_models_match_the_public_api_tables",
+  "tests/test_service_writes.py::test_the_service_role_holds_every_privilege_the_service_needs",
+  "tests/test_service_writes.py::test_the_service_role_creates_and_reads_a_row_in_every_table_it_writes",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "public-api-schema"
+invocation = "uv run --frozen pytest tests/ -v -m public_api_schema"
+[[rule.ci]]
+workflow = ".github/workflows/public-api-schema-drift.yml"
+job = "public-api-schema-drift"
+invocation = "uv run --frozen pytest tests/ -v -m public_api_schema"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.persistence.models-match-public-api/bad_models.json"
+good_fixture = "rules/fixtures/sim.persistence.models-match-public-api/good_models.json"
+project = "libs/policyengine-simulation-persistence"
+test = "tests/test_public_api_schema.py::test_rule_proof_models_match_public_api"
 
 # --- Stage 12 persistence --------------------------------------------------
 
@@ -316,9 +391,9 @@ invocation = "uv run --frozen pytest tests/"
 [[rule]]
 id = "sim.deploy.workflow-shell-safety"
 category = "deployment"
-statement = "Cloud Run deployment never interpolates GitHub expressions into shell, escapes environment values, and pins secret versions."
+statement = "Cloud Run deployment never interpolates GitHub expressions into shell, escapes environment values, pins secret versions, stops before deploying when any runtime secret cannot be resolved, and resolves the Stage 12 secrets through the Stage 12 block's own wrapper."
 rationale = "docs/operations"
-scope = [".github/workflows/*.yml"]
+scope = [".github/workflows/*.yml", ".github/scripts/deploy-cloud-run-simulation-entry.sh"]
 tier = "mechanical"
 status = "enforced"
 autofix = false
@@ -328,11 +403,20 @@ project = "projects/policyengine-simulation-entry"
 nodes = [
   "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_does_not_interpolate_github_values_in_shell",
   "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_escapes_environment_and_pins_secret_versions",
+  "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_stops_when_a_runtime_secret_cannot_be_resolved",
+  "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_resolves_each_secret_in_its_own_assignment",
+  "tests/test_deployment_assets_cloud_run.py::test_an_assignment_that_opens_with_a_resolved_secret_is_still_found",
+  "tests/test_deployment_assets_cloud_run.py::test_stage12_secrets_are_resolved_by_the_stage12_block_alone",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
 invocation = "uv run --frozen pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.deploy.workflow-shell-safety/bad_deploy_script.sh"
+good_fixture = "rules/fixtures/sim.deploy.workflow-shell-safety/good_deploy_script.sh"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_deployment_assets_cloud_run.py::test_rule_proof_workflow_shell_safety"
 
 [[rule]]
 id = "sim.deploy.revision-tags-valid"
@@ -404,7 +488,7 @@ test = "tests/test_deployment_assets_promotion.py::test_rule_proof_staging_promo
 [[rule]]
 id = "sim.deploy.smoke-tests-strict"
 category = "deployment"
-statement = "Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge."
+statement = "Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge; the candidate smoke also requires the simulation service to reach its database with every table and column privilege its role needs."
 rationale = "docs/operations"
 scope = [".github/scripts/*.sh"]
 tier = "mechanical"
@@ -418,6 +502,9 @@ nodes = [
   "tests/test_deployment_assets.py::test_stable_smoke_rejects_an_unexpected_revision_without_retrying",
   "tests/test_deployment_assets.py::test_stable_smoke_retries_the_previous_revision_until_target_is_served",
   "tests/test_deployment_assets.py::test_stable_smoke_fails_when_the_previous_revision_does_not_converge",
+  "tests/test_simulation_database_deployment.py::test_the_candidate_smoke_requires_access_to_the_database",
+  "tests/test_simulation_database_deployment.py::test_the_smoke_rejects_a_database_the_service_cannot_use",
+  "tests/test_simulation_database_deployment.py::test_the_smoke_does_not_wait_for_privileges_the_role_lacks",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
@@ -590,6 +677,62 @@ job = "test"
 invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
+id = "sim.deploy.stage12-default-moves-after-checks"
+category = "deployment"
+statement = "A deployment that publishes Stage 12 adds its v2 worker before its checks without moving the v2 manifest's default version, and moves the default only after every check and the Cloud Run promotion pass, then checks that a reader resolves it and writes back the manifest it replaced if a later step fails or the run is cancelled; this mechanism shares no code with the v1 routing jobs."
+rationale = "projects/policyengine-simulation-executor/README.md#stage-12-v2-default-version"
+scope = [".github/workflows/simulation-deploy.reusable.yml", ".github/scripts/stage12-v2-default-*.sh", "projects/policyengine-simulation-executor/src/modal/utils/update_v2_version_manifest.py", "libs/policyengine-simulation-contract/src/policyengine_simulation_contract/stage12_manifest.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+nodes = [
+  "libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py::test_adding_a_newer_worker_keeps_the_default",
+  "libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py::test_the_first_worker_becomes_the_default",
+  "libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py::test_moving_the_default_to_a_newer_added_worker",
+  "libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py::test_the_default_moves_to_an_older_worker_only_when_forced",
+  "libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py::test_the_default_cannot_move_to_a_worker_that_was_not_added",
+  "libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py::test_writing_a_manifest_writes_each_readers_key_and_reads_back",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_the_worker_is_published_before_the_checks_without_moving_the_default",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_the_default_moves_only_after_every_check_and_the_promotion",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_the_default_job_runs_only_when_everything_before_it_passed",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_the_default_job_moves_keeps_checks_and_restores_in_order",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_the_stage12_default_shares_nothing_with_v1_routing",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_the_deployment_reports_success_only_after_the_stage12_default_moved",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_each_default_step_gets_the_modal_access_its_script_reads",
+  "projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py::test_move_plans_the_release_and_summarises_it",
+  "projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py::test_move_fails_without_a_completed_move",
+  "projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py::test_verify_and_restore_pass_the_kept_plan_to_the_publisher",
+  "projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py::test_verify_and_restore_fail_when_the_publisher_fails",
+  "projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py::test_restore_without_a_plan_has_nothing_to_restore",
+  "projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py::test_ready_requires_the_default_job_exactly_when_stage12_was_requested",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_keep_default_adds_the_worker_and_leaves_the_default",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_default_plans_moves_and_reports_it",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_default_keeps_a_newer_default",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_refuses_a_manifest_whose_copies_differ",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_verify_refuses_a_manifest_changed_since_the_move",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_verify_checks_the_copy_older_readers_read",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_restore_puts_the_default_back_only_while_the_move_is_live",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_restore_refuses_a_manifest_another_publish_changed",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_restore_recovers_from_a_move_that_stopped_part_way",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_a_restore_that_stopped_part_way_can_be_run_again",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_restore_refuses_another_manifest_under_any_one_key",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_a_plan_whose_manifests_were_altered_is_refused",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_rewrites_an_expired_older_key",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_restore_rewrites_an_expired_older_key",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_verify_accepts_an_expired_older_key",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_refuses_a_manifest_without_its_newest_key",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_refuses_a_write_that_reads_back_differently",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_refuses_a_manifest_changed_after_it_was_planned",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_checking_or_restoring_never_creates_a_manifest_dict",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
+
+[[rule]]
 id = "sim.deploy.release-commit-deploys-once"
 category = "deployment"
 statement = "A merge to main deploys only through the release commit the versioning job in simulation-deploy.yml pushes with the GitHub App token: every other push to main runs only that job, the release commit runs only the deploy jobs and never another release, a manual dispatch deploys without a release, and client publication follows only the release commit's run, so each merge deploys once and nothing loops."
@@ -625,9 +768,9 @@ test = "tests/test_release_workflow.py::test_rule_proof_release_commit_deploys_o
 [[rule]]
 id = "sim.deploy.container-context-minimal"
 category = "deployment"
-statement = "Container builds exclude local environments and unrelated projects, and the entrypoint container builds for the requested target platform."
+statement = "Container builds exclude local environments and unrelated projects but include every local library the entrypoint installs, and the entrypoint container builds for the requested target platform."
 rationale = "docs/operations"
-scope = ["projects/policyengine-simulation-entry/Dockerfile"]
+scope = ["projects/policyengine-simulation-entry/Dockerfile", "projects/policyengine-simulation-entry/Dockerfile.dockerignore"]
 tier = "mechanical"
 status = "enforced"
 autofix = false
@@ -636,12 +779,18 @@ kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
   "tests/test_deployment_assets_traffic.py::test_container_context_excludes_local_environments_and_unrelated_projects",
+  "tests/test_deployment_assets_traffic.py::test_container_context_includes_every_local_library_the_entrypoint_installs",
   "tests/test_deployment_assets_cloud_run.py::test_entrypoint_container_uses_requested_target_platform",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
 invocation = "uv run --frozen pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.deploy.container-context-minimal/bad.dockerignore"
+good_fixture = "rules/fixtures/sim.deploy.container-context-minimal/good.dockerignore"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_deployment_assets_traffic.py::test_rule_proof_container_context_minimal"
 
 [[rule]]
 id = "sim.deploy.docker-images-build"
@@ -1158,11 +1307,12 @@ invocation = "unittest discover -s scripts/rules/tests"
 [[rule]]
 id = "sim.quality.pyright-libraries-and-entry"
 category = "quality"
-statement = "The contract, observability, Stage 12 persistence and fastapi libraries and the simulation entry have no Pyright errors, checked with the pinned Pyright version in each package's own locked environment."
+statement = "The contract, observability, simulation persistence, Stage 12 persistence and fastapi libraries and the simulation entry have no Pyright errors, checked with the pinned Pyright version in each package's own locked environment."
 rationale = "docs/engineering/skills/type-checking.md#rules"
 scope = [
   "libs/policyengine-simulation-contract/src/**/*.py",
   "libs/policyengine-simulation-observability/src/**/*.py",
+  "libs/policyengine-simulation-persistence/src/**/*.py",
   "libs/policyengine-stage12-persistence/src/**/*.py",
   "libs/policyengine-fastapi/src/**/*.py",
   "projects/policyengine-simulation-entry/src/**/*.py",
@@ -1175,6 +1325,7 @@ kind = "pyright"
 projects = [
   "libs/policyengine-simulation-contract",
   "libs/policyengine-simulation-observability",
+  "libs/policyengine-simulation-persistence",
   "libs/policyengine-stage12-persistence",
   "libs/policyengine-fastapi",
   "projects/policyengine-simulation-entry",

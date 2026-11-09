@@ -22,6 +22,60 @@ Credential values belong in the cloud secret store. They must not be committed
 to the repository or stored as plain GitHub variables. The deployment workflow
 receives only the configuration needed to reference those protected resources.
 
+## Simulation database
+
+The simulation service connects to the Postgres database that holds the
+Public API's tables, with its own login role. This repository has no schema
+or migration chain of its own: the Public API's migration chain creates and
+changes those tables, and the Public API's privilege manifest grants the
+role what it may do on them.
+
+The deploy step resolves the Secret Manager secret named by the
+`SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME` environment variable to its
+newest enabled version and mounts that version as
+`SIMULATION_SERVICE_DATABASE_URL` on every deploy, whatever the Stage 12
+setting. The deploy service account must be
+able to list the secret's versions (`gcloud secrets versions list`), as for
+the other runtime secrets, and only the entrypoint's runtime service account
+may read it. A missing or invalid name, or a secret with no enabled version,
+stops the deploy before `gcloud run deploy` runs.
+
+So before the first deploy that carries this connection, each environment
+needs, in order: the Public API's tables the service writes, migrated in that
+environment's database; the service's login role, with the grants the Public
+API's privilege manifest declares; the role's URL stored in Secret Manager,
+readable by the runtime service account; and the `beta` or `prod`
+`SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME` variable naming it. Without the
+variable the deploy stops at once; without the tables, the role or its grants
+the candidate check below fails.
+
+`GET /ready` reports, under `simulation_database`, whether the check of the
+database succeeded within three seconds (`reachable`; false when the
+database wasn't reached, refused the role's login, or didn't answer in time)
+and whether its role holds every privilege the service needs
+(`has_required_privileges`; null when the check failed; the list is in
+`libs/policyengine-simulation-persistence`). The route is public, so it says
+only yes or no. The service's log says why: a `simulation_database_unreachable`
+message names the error's type and the database driver's error with its
+SQLSTATE code, when the database sent one (`28P01` for a refused password,
+`57014` for a statement timeout), and `simulation_database_missing_privileges`
+messages name each privilege missing, such as `INSERT on reports` or
+`UPDATE (modal_call_id) on report_runs`. A check
+that reached the database answers every request for 30 seconds, so repeated
+requests don't each take a database connection; a failed check isn't reused,
+so the next request checks again. The
+database does not change the readiness status, because no old-gateway or
+Stage 12 route uses it. The candidate smoke check
+(`REQUIRE_SIMULATION_DATABASE_ACCESS=true`) requires the database reached with
+every privilege held, which shows that the role's URL reached the revision and
+that the role holds its grants, and points to the revision's Cloud Run logs
+when it fails. While the check
+fails, as it does for a cold candidate that hasn't reached its database yet,
+it asks again, up to six requests in all; a database that answers with a
+privilege missing fails at once. The stable
+and rollback checks don't require it, because an older image may not use the
+database.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`

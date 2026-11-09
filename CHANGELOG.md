@@ -10,6 +10,21 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.6.1] - 2026-11-09
+
+### Changed
+
+- A deployment that publishes Stage 12 now adds its v2 worker before its checks without moving the v2 manifest's default version, and moves the default to the new worker only after every check and the Cloud Run promotion pass, writing back the manifest it replaced if a later step fails or the run is cancelled. So Stage 12 reports reach a new release's worker only after that environment's checks pass, except the first worker in an empty manifest and a redeploy of the same version, whose worker is replaced in place.
+
+
+## [0.6.0] - 2026-11-09
+
+### Added
+
+- CI checks sim's models of the tables the simulation service writes against the tables the Public API's migration chain builds at a pinned Public API commit, and that the service's role can write them; a weekly run compares them with the Public API's default branch, and opens an issue, or comments on the open one, when that comparison fails.
+- The Simulation Entrypoint connects to the Public API's database with its own role, mounted as `SIMULATION_SERVICE_DATABASE_URL` on every deploy, and models the tables it writes there (simulations, reports, their runs, budget window calculations and household jobs), with their foreign keys to the Public API's own tables. `GET /ready` reports whether it reached the database and whether its role holds every privilege it needs, the service logs any it lacks, a check that reached the database is reused for 30 seconds, and the candidate check requires them all. Every runtime secret is now resolved in its own assignment, so one that cannot be resolved stops the deploy.
+
+
 ## [0.5.5] - 2026-11-09
 
 ### Changed

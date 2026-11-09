@@ -29,17 +29,21 @@ It builds on the Stage 12 rules:
 
 ## Who owns the schema
 
-- **Today**, policyengine-api's Alembic migrations own the only tables this
-  repository uses, the Stage 12 comparison tables
-  (`sim.stage12.no-migration-chain`). This repository's code reads and
-  writes their rows, and deployment validation compares their live schema
-  with its SQLAlchemy mappings; nothing here changes them.
-- **Once #847 merges**, this repository's own Alembic chain at `migrations/`
-  owns the `simulation` schema, and the Stage 12 tables stay with
-  policyengine-api.
+policyengine-api's Alembic migrations own every table this repository uses,
+and this repository has no migration chain of its own
+(`sim.stage12.no-migration-chain`):
 
-The rule holds either way: whichever chain owns a table, only that chain's
-migrations change it.
+- the Stage 12 comparison tables, whose live schema deployment validation
+  compares with the Stage 12 library's SQLAlchemy mappings;
+- the tables the simulation service writes (`simulations`, `reports`,
+  `simulation_runs`, `report_runs`, `budget_window_runs` and
+  `household_jobs`), modelled in `libs/policyengine-simulation-persistence`.
+  The service connects as its own role, which policyengine-api's privilege
+  manifest grants.
+
+This repository's code reads and writes their rows; nothing here changes
+them. A change to one of those tables starts in policyengine-api, and the
+models here follow it.
 
 ## What the guard checks
 
@@ -69,9 +73,11 @@ but still connect through SQLAlchemy.
 
 The guard reads source, not types. It misses imports through `importlib` or
 `__import__`, a table reached through some other local variable, and SQL text
-assembled from separate literals. It doesn't read shell scripts or SQL files;
-today no shell script calls a database client, and the repository has no SQL
-files.
+assembled from separate literals. It doesn't read shell scripts or SQL files.
+The one shell script that reaches a database,
+`.github/scripts/public-api-schema-reference.sh`, runs the Public API's own
+migration and privilege commands against a disposable CI database for
+`sim.persistence.models-match-public-api`; the repository has no SQL files.
 
 ## Out of scope
 
