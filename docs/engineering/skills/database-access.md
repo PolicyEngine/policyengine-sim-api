@@ -34,12 +34,18 @@ and this repository has no migration chain of its own
 (`sim.stage12.no-migration-chain`):
 
 - the Stage 12 comparison tables, whose live schema deployment validation
-  compares with the Stage 12 library's SQLAlchemy mappings;
+  compares with the Stage 12 library's SQLAlchemy mappings.
 - the tables the simulation service writes (`simulations`, `reports`,
   `simulation_runs`, `report_runs`, `budget_window_runs` and
   `household_jobs`), modelled in `libs/policyengine-simulation-persistence`.
   The service connects as its own role, which policyengine-api's privilege
   manifest grants.
+- the run tables the v2 Modal coordinator and workers write as the Modal
+  worker role: `report_runs`, `simulation_runs` and the result tables. Their
+  mappings in `policyengine_stage12_persistence.report_run_tables` and
+  `report_run_results`, separate from the simulation service's models,
+  declare only the columns the coordinator's and workers' statements read or
+  write; deployment validation doesn't compare them with the live schema.
 
 This repository's code reads and writes their rows; nothing here changes
 them. A change to one of those tables starts in policyengine-api, and the

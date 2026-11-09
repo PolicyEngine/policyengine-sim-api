@@ -111,7 +111,9 @@ class Stage12SegmentRunner:
         A segment whose result cannot be read twice in a row raises
         ``Stage12ExecutionError``, and a requested cancellation raises
         ``Stage12CancellationError``. Either way, every started segment is
-        cancelled first.
+        cancelled first. So it is when Modal pre-empts or cancels this worker,
+        which it signals with a ``BaseException`` that is not an ``Exception``
+        and which is then re-raised: Modal does not cancel spawned calls.
         """
         groups = self._groups()
         segments = build_segment_inputs(self.simulation, groups=groups)
@@ -130,15 +132,23 @@ class Stage12SegmentRunner:
                         segment.model_dump(mode="python"),
                         observability_context=self.runtime.capture_context(),
                     )
-                handles.append((segment.segment_index, call))
-        except Exception:
+                    # Kept inside the span, so an interruption as it closes
+                    # still finds the call to cancel.
+                    handles.append((segment.segment_index, call))
+        except BaseException:
             self._cancel_all(handles)
             raise
 
-        with self.runtime.span(
-            STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_WAIT)
-        ):
-            payloads = self._collect(handles)
+        try:
+            with self.runtime.span(
+                STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_WAIT)
+            ):
+                payloads = self._collect(handles)
+        except BaseException as interruption:
+            # Collection cancels the segments itself where a failure needs it.
+            if not isinstance(interruption, Exception):
+                self._cancel_all(handles)
+            raise
         with self.runtime.span(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_MERGE)
         ):
