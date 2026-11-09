@@ -27,14 +27,36 @@ def _load(monkeypatch):
     return importlib.import_module("src.modal.run_sweep_app")
 
 
-def test_the_executor_deployment_deploys_the_sweep_with_the_modal_tokens() -> None:
-    workflow = yaml.safe_load(REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["deploy_executor"]["steps"]
-    step_names = [step.get("name") for step in steps]
-    (sweep_step,) = [
-        step for step in steps if "src/modal/run_sweep_app.py" in step.get("run", "")
+def _sweep_deploy_steps(job: dict) -> list[dict]:
+    return [
+        step
+        for step in job["steps"]
+        if "src/modal/run_sweep_app.py" in step.get("run", "")
     ]
 
+
+def test_the_sweep_deploys_with_the_stage12_default_after_every_check() -> None:
+    """The unversioned sweep deploys only once the release has passed its checks.
+
+    It deploys in the job that moves the Stage 12 v2 default, which runs after
+    the integration and authenticated tests and the Cloud Run promotion, in a
+    main deployment and in a Stage 12-only one. A failed sweep deploy fails
+    that job, whose last step then puts the previous default back.
+    """
+    workflow = yaml.safe_load(REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    publish_job = jobs["publish_stage12_v2_default"]
+    step_names = [step.get("name") for step in publish_job["steps"]]
+    (sweep_step,) = _sweep_deploy_steps(publish_job)
+
+    assert all(
+        not _sweep_deploy_steps(job)
+        for name, job in jobs.items()
+        if name != "publish_stage12_v2_default"
+    )
+    assert {"integration", "authenticated_test", "promote_entrypoint"} <= set(
+        publish_job["needs"]
+    )
     assert sweep_step["run"] == (
         'uv run --frozen modal deploy --env="${{ inputs.modal_environment }}" '
         "src/modal/run_sweep_app.py"
@@ -48,8 +70,12 @@ def test_the_executor_deployment_deploys_the_sweep_with_the_modal_tokens() -> No
         "MODAL_TOKEN_ID": "${{ secrets.MODAL_TOKEN_ID }}",
         "MODAL_TOKEN_SECRET": "${{ secrets.MODAL_TOKEN_SECRET }}",
     }
-    assert step_names.index(sweep_step["name"]) > step_names.index(
-        "Deploy versioned Modal executor"
+    # No condition of its own: it runs only while every earlier step passed.
+    assert "if" not in sweep_step
+    sweep_position = step_names.index(sweep_step["name"])
+    assert sweep_position > step_names.index("Verify a reader resolves the v2 default")
+    assert sweep_position < step_names.index(
+        "Put the v2 default back after a failed or cancelled step"
     )
 
 
