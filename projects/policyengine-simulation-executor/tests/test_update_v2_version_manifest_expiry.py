@@ -16,6 +16,7 @@ from policyengine_simulation_contract.stage12_manifest import (
     manifest_digest,
     read_v2_manifest,
 )
+from pydantic import ValidationError
 from test_update_v2_version_manifest import _validation
 from test_update_v2_version_manifest_default import (
     OLDER,
@@ -204,3 +205,55 @@ def test_a_missing_dict_is_reported_as_a_missing_manifest(monkeypatch, tmp_path,
 
     if mode == "deployment":
         assert "--first-publication" in str(refusal.value)
+    else:
+        # Modal's own message is kept, to tell this apart from a lookup in a
+        # misspelled Modal environment.
+        assert "Dict 'simulation-api-v2-version-manifest' not found" in str(
+            refusal.value
+        )
+
+
+class UnreachableModal(FakeStore):
+    """A Modal outage, or any other error that is not a missing Dict."""
+
+    def get(self, key: str, default: object = None) -> object:
+        del key, default
+        msg = "Modal is unavailable"
+        raise ConnectionError(msg)
+
+
+@pytest.mark.parametrize("mode", ["refresh", "deployment"])
+def test_another_modal_error_is_not_reported_as_a_missing_manifest(
+    monkeypatch, tmp_path, mode
+):
+    install_fake_store(monkeypatch, UnreachableModal())
+    arguments = {
+        "refresh": ("--refresh",),
+        "deployment": (
+            "--validation-file",
+            str(_validation_file(tmp_path)),
+            "--keep-default",
+        ),
+    }[mode]
+
+    with pytest.raises(ConnectionError, match="Modal is unavailable"):
+        _run(monkeypatch, *arguments)
+
+
+@pytest.mark.parametrize("mode", ["refresh", "deployment"])
+def test_an_invalid_stored_manifest_is_not_reported_as_a_missing_manifest(
+    monkeypatch, tmp_path, manifest_store: FakeStore, mode
+):
+    manifest_store.values[V2_MANIFEST_KEYS[0]] = {"not": "a manifest"}
+    arguments = {
+        "refresh": ("--refresh",),
+        "deployment": (
+            "--validation-file",
+            str(_validation_file(tmp_path)),
+            "--keep-default",
+        ),
+    }[mode]
+
+    # The stored value's validation error, not "there is no v2 manifest".
+    with pytest.raises(ValidationError):
+        _run(monkeypatch, *arguments)

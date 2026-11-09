@@ -73,7 +73,7 @@ V2_DEFAULT_PLAN_SCHEMA = "policyengine-simulation.v2-default-plan/v1"
 # Modal expires a Dict entry after 7 days without a read or write, so a
 # manifest that was published and then expired looks exactly like one that
 # was never published.
-MISSING_MANIFEST = (
+MISSING_MANIFEST_MESSAGE = (
     "there is no v2 manifest in this Modal environment: it was never "
     "published, or Modal expired it after 7 days without a read or write"
 )
@@ -131,7 +131,7 @@ def _publish_worker(
         # Publishing into it would make the release's worker the default
         # before the checks, and the entries of any earlier workers are gone.
         msg = (
-            f"{MISSING_MANIFEST}. A deployment does not publish into a missing "
+            f"{MISSING_MANIFEST_MESSAGE}. A deployment does not publish into a missing "
             "manifest, because its worker would become the default before its "
             "checks; an operator starts it with --first-publication (see the "
             "executor README)"
@@ -163,11 +163,12 @@ def _refresh(store: V2ManifestStore) -> V2VersionManifest:
     try:
         for key in V2_MANIFEST_KEYS:
             store.get(key)
-    except modal.exception.NotFoundError:
-        raise ValueError(MISSING_MANIFEST) from None
+    except modal.exception.NotFoundError as error:
+        msg = f"{MISSING_MANIFEST_MESSAGE} (Modal: {error})"
+        raise ValueError(msg) from error
     manifest = read_v2_manifest(store)
     if manifest is None:
-        raise ValueError(MISSING_MANIFEST)
+        raise ValueError(MISSING_MANIFEST_MESSAGE)
     return manifest
 
 

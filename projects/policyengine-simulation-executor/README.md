@@ -190,7 +190,9 @@ A missing manifest, never published or expired, looks the same to a
 deployment, and publishing into it would make the release's worker the default
 before the checks and leave out every earlier worker. So the deployment's
 worker publication refuses it, before the checks, and opens the Dict without
-creating it. To recover, an operator, with Modal credentials for the workspace
+creating it. The integration tests need that publication, so the refusal holds
+up the whole beta deployment, and prod after it, even where Stage 12 is off,
+until the manifest is recovered. To recover, an operator, with Modal credentials for the workspace
 (their own token; the deployment uses the repository secrets `MODAL_TOKEN_ID`
 and `MODAL_TOKEN_SECRET`), from `projects/policyengine-simulation-executor`,
 while no deployment is running:
@@ -203,8 +205,12 @@ while no deployment is running:
    failed deployment, so that the failed deployment's own default move still
    waits for its checks. That worker is the `default_version` of the `after`
    manifest in the newest `stage12-v2-default-plan-<release environment>-<attempt>`
-   artifact (kept 30 days; past that, the last deployment whose "Move the
-   Stage 12 v2 default to the release after every check" job succeeded). Use
+   artifact, or of its `before` manifest if that run's restore step reported
+   "restored" (kept 30 days; past that, the last deployment whose "Move the
+   Stage 12 v2 default to the release after every check" job succeeded). The
+   worker's `validation.validation_invocation_id` and `validated_at` in that
+   manifest identify the deployment that published it, where several kept
+   the same policyengine.py version. Use
    the release environment that deploys to the Modal environment being
    recovered: `beta` for `staging`, `prod` for `main`. From the commit of the
    deployment that published that worker, after `uv sync --frozen`, with that
@@ -218,9 +224,7 @@ while no deployment is running:
    in place, so use the failed deployment's commit and artifact instead. In a
    new Modal environment there is no earlier worker, and the failed
    deployment's own worker starts the manifest. `--first-publication` refuses
-   a manifest that exists. A deployment that overlaps it either refuses the
-   missing manifest or adds its worker to the one just started, keeping that
-   default.
+   a manifest that exists.
 3. Reruns the failed jobs.
 
 Earlier workers' entries are not restored, so a request that pins one of them
@@ -246,9 +250,11 @@ the region datasets of every worker already in the manifest; after one that
 wrote the two newest, the failed release stays the default until that
 deployment's own move. No workflow
 restores an earlier default after a completed deploy, and the deployment's
-`force_latest` input does not move the v2 default. Only a worker publication
-creates the manifest Dict, so a move, check or restore against a Modal
-environment without one fails instead of creating an empty Dict there.
+`force_latest` input does not move the v2 default. Only an operator's
+publication (`--first-publication`, or `--validation-file` alone) creates the
+manifest Dict, so a deployment's publication, a move, check, restore or refresh
+against a Modal environment without one fails instead of creating an empty Dict
+there.
 
 If the runner is lost after the move starts writing and before the plan is
 uploaded, no plan is kept and no restore runs. The default then stays on the
