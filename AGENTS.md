@@ -91,13 +91,14 @@ same-repository draft PR.
 
 - The simulation service lives in `projects/policyengine-simulation-executor`.
 - API integration tests live in `projects/policyengine-apis-integ`.
-- PR CI runs simulation unit tests, Ruff format and lint checks, Pyright for
-  every package, quality guards (including the rules registry), Docker build,
-  and local integration tests. Two jobs run separately, each from its own
-  workflow, on every PR, stacked ones included: `PR description` checks that
-  every open PR's description starts with `Fixes #ISSUE_NUMBER` for an open
-  issue in this repository, and `Changelog fragment` checks that the PR adds a
-  changelog fragment relative to its own base branch.
+- PR CI runs simulation unit tests, the persistence tests that need
+  PostgreSQL, Ruff format and lint checks, Pyright for every package, quality
+  guards (including the rules registry), Docker build, and local integration
+  tests. Two jobs run separately, each from its own workflow, on every PR,
+  stacked ones included: `PR description` checks that every open PR's
+  description starts with `Fixes #ISSUE_NUMBER` for an open issue in this
+  repository, and `Changelog fragment` checks that the PR adds a changelog
+  fragment relative to its own base branch.
 - Every PR adds a changelog fragment, `changelog.d/<name>.<type>.md`, and never
   edits `CHANGELOG.md` to describe a change (rule
   `sim.process.changelog-fragment`). A merge to `main` doesn't deploy itself:
@@ -131,6 +132,10 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 ### Stage 12 persistence
 
 - Checked: `sim.stage12.deployment-scope`, `sim.stage12.deployment-uses-api-schema`, `sim.stage12.no-migration-chain`, `sim.stage12.no-production-user-associations`, `sim.stage12.no-schema-ddl`, `sim.stage12.persistence-typed-dml-only`, `sim.stage12.production-lock-has-db-runtime`
+
+### Simulation service database
+
+- Checked: `sim.persistence.missing-privileges-reported`
 
 ### Deployment pipeline
 
