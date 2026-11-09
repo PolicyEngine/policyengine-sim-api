@@ -1,7 +1,9 @@
-"""The PR job that runs the persistence tests needing PostgreSQL.
+"""The PR job that runs the persistence tests marked ``postgres``.
 
 Those tests skip without a server, so the ``Test`` job never runs them; the
 ``Simulation database`` job gives them one and makes a missing server fail.
+The tests that also need the Public API's tables are marked
+``public_api_schema`` instead, and run in the Public API schema jobs.
 """
 
 from __future__ import annotations
