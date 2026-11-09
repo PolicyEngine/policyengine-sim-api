@@ -677,6 +677,62 @@ job = "test"
 invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
+id = "sim.deploy.stage12-default-moves-after-checks"
+category = "deployment"
+statement = "A deployment that publishes Stage 12 adds its v2 worker before its checks without moving the v2 manifest's default version, and moves the default only after every check and the Cloud Run promotion pass, then checks that a reader resolves it and writes back the manifest it replaced if a later step fails or the run is cancelled; this mechanism shares no code with the v1 routing jobs."
+rationale = "projects/policyengine-simulation-executor/README.md#stage-12-v2-default-version"
+scope = [".github/workflows/simulation-deploy.reusable.yml", ".github/scripts/stage12-v2-default-*.sh", "projects/policyengine-simulation-executor/src/modal/utils/update_v2_version_manifest.py", "libs/policyengine-simulation-contract/src/policyengine_simulation_contract/stage12_manifest.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+nodes = [
+  "libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py::test_adding_a_newer_worker_keeps_the_default",
+  "libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py::test_the_first_worker_becomes_the_default",
+  "libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py::test_moving_the_default_to_a_newer_added_worker",
+  "libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py::test_the_default_moves_to_an_older_worker_only_when_forced",
+  "libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py::test_the_default_cannot_move_to_a_worker_that_was_not_added",
+  "libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py::test_writing_a_manifest_writes_each_readers_key_and_reads_back",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_the_worker_is_published_before_the_checks_without_moving_the_default",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_the_default_moves_only_after_every_check_and_the_promotion",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_the_default_job_runs_only_when_everything_before_it_passed",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_the_default_job_moves_keeps_checks_and_restores_in_order",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_the_stage12_default_shares_nothing_with_v1_routing",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_the_deployment_reports_success_only_after_the_stage12_default_moved",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py::test_each_default_step_gets_the_modal_access_its_script_reads",
+  "projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py::test_move_plans_the_release_and_summarises_it",
+  "projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py::test_move_fails_without_a_completed_move",
+  "projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py::test_verify_and_restore_pass_the_kept_plan_to_the_publisher",
+  "projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py::test_verify_and_restore_fail_when_the_publisher_fails",
+  "projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py::test_restore_without_a_plan_has_nothing_to_restore",
+  "projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py::test_ready_requires_the_default_job_exactly_when_stage12_was_requested",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_keep_default_adds_the_worker_and_leaves_the_default",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_default_plans_moves_and_reports_it",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_default_keeps_a_newer_default",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_refuses_a_manifest_whose_copies_differ",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_verify_refuses_a_manifest_changed_since_the_move",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_verify_checks_the_copy_older_readers_read",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_restore_puts_the_default_back_only_while_the_move_is_live",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_restore_refuses_a_manifest_another_publish_changed",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_restore_recovers_from_a_move_that_stopped_part_way",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_a_restore_that_stopped_part_way_can_be_run_again",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_restore_refuses_another_manifest_under_any_one_key",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_a_plan_whose_manifests_were_altered_is_refused",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_rewrites_an_expired_older_key",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_restore_rewrites_an_expired_older_key",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_verify_accepts_an_expired_older_key",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_refuses_a_manifest_without_its_newest_key",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_refuses_a_write_that_reads_back_differently",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_move_refuses_a_manifest_changed_after_it_was_planned",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_checking_or_restoring_never_creates_a_manifest_dict",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
+
+[[rule]]
 id = "sim.deploy.release-commit-deploys-once"
 category = "deployment"
 statement = "A merge to main deploys only through the release commit the versioning job in simulation-deploy.yml pushes with the GitHub App token: every other push to main runs only that job, the release commit runs only the deploy jobs and never another release, a manual dispatch deploys without a release, and client publication follows only the release commit's run, so each merge deploys once and nothing loops."

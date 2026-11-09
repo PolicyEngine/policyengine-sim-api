@@ -124,6 +124,91 @@ stopping short. Leave `resolve_pending_publication=false` in both
 modes. Read-only `--print-pending-plan --environment staging|main` also displays the
 durable plan without changing routing.
 
+## Stage 12 v2 default version
+
+Stage 12 keeps its own manifest of deployed v2 workers, in the separate
+`simulation-api-v2-version-manifest` Modal Dict, and the Simulation Entrypoint
+resolves each Stage 12 report through the manifest's `default_version` unless
+`STAGE12_V2_WORKER_VERSION` pins one. A deployment that publishes Stage 12
+changes the manifest twice (rule `sim.deploy.stage12-default-moves-after-checks`),
+with its own mechanism, separate from the v1 routing jobs above:
+
+1. **Before its checks**, `publish_stage12_v2_manifest` adds the release's
+   worker with `update_v2_version_manifest --keep-default`, leaving the
+   default version as it is (the first worker becomes the default). Stage 12
+   reports keep reaching the previous worker. No check that runs after this
+   publication is upstream of this job, so "Re-run failed jobs" after a failed
+   check or default move never republishes the worker.
+2. **After every check and the Cloud Run promotion**,
+   `publish_stage12_v2_default` moves the default to the release's worker
+   when it is newer (`--move-default`), keeping a plan of the manifest before
+   and after; checks, from the runner, that every key holds what it wrote and
+   that a `V2ManifestLoader` (the reader the entrypoint uses) resolves the
+   plan's default (`--verify-plan`); and, if a later step
+   fails or the run is cancelled, writes back the manifest it replaced, only
+   while the stored manifest is still what it wrote (`--restore-plan`).
+   `deployment_ready` requires this job to succeed whenever Stage 12 was
+   requested. This job does not wait for the v1 `publish_latest` job, so the
+   Stage 12 default can move even when v1 `latest` does not; `deployment_ready`
+   then fails the deployment.
+
+The v2 worker's Modal app is named after the policyengine.py version alone, so
+a deployment that does not change that version redeploys the current worker's
+app in place, before the checks; the ordering above applies to a deployment
+that changes it.
+
+The manifest is three keys, one copy for each generation of reader, written
+one after another, so a write that stops part-way leaves some keys on the
+previous manifest. The move refuses to start unless all three hold the same
+manifest, the check reads all three, and the restore recognises a part-way
+write of either the move or an earlier restore and writes the starting
+manifest back to every key. Modal expires a Dict entry after 7 days without a
+read or write, and current readers read the oldest key only when neither newer
+key exists, so it can expire between deployments. A write never deletes a key,
+so the move, check and restore accept a missing older key; a move or restore
+that writes the manifest writes it again, and otherwise the next deployment's
+worker publication does. The newest key is required. A move that leaves the
+default where it is writes nothing, so the manifest's digest, which Stage 12
+report identities include, stays the same. A release with a newer worker
+changes the digest twice, at the worker publication and at the move, so Stage
+12 reports created between the two get identities with the intermediate
+digest. If no Stage 12 request and no
+deployment touches the manifest for 7 days, all three keys expire, and the
+next deployment's worker publication cannot tell that from an empty manifest:
+it makes its worker the default before the checks and drops the earlier
+workers.
+
+The plan is kept as the `stage12-v2-default-plan-<environment>-<attempt>`
+artifact whenever the move step ran, including a move that stopped part-way;
+`<environment>` is the GitHub release environment, and `beta` deploys to the
+Modal environment `staging`, `prod` to `main`. The move step adds the
+manifest's digests before and after the move, and whether requests that pin no
+v2 version now reach the release's worker, to the run's summary page.
+If the restore step itself fails, an operator downloads that attempt's artifact
+and, from `projects/policyengine-simulation-executor`, runs
+`uv run --frozen python -m src.modal.utils.update_v2_version_manifest
+--environment <modal environment> --restore-plan <plan.json>` with Modal
+credentials for the workspace (the deployment uses the repository secrets
+`MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`). Do this before rerunning the job or
+deploying again. A rerun's move refuses keys that hold different manifests, and
+its own restore has no plan from the earlier attempt. The next deployment's
+worker publication reads the manifest the way a reader does and rewrites every
+key from that copy. After a move that wrote only the newest key, that drops
+the region datasets of every worker already in the manifest; after one that
+wrote the two newest, the failed release stays the default until that
+deployment's own move. No workflow
+restores an earlier default after a completed deploy, and the deployment's
+`force_latest` input does not move the v2 default. Only a worker publication
+creates the manifest Dict, so a move, check or restore against a Modal
+environment without one fails instead of creating an empty Dict there.
+
+If the runner is lost after the move starts writing and before the plan is
+uploaded, no plan is kept and no restore runs. The default then stays on the
+release, which passed every check, and the deployment fails. "Re-run failed
+jobs" finds the default already on the release, writes nothing and succeeds,
+unless the write stopped part-way: then the rerun's move refuses the keys, and
+an operator repairs them by hand.
+
 ## Baseline artifact pipeline (precompute → store → image fetch)
 
 The precompute app fills a content-addressed GCS store with single-year US

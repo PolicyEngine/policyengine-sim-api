@@ -687,12 +687,18 @@ jobs:
           name: stage12-worker-validation-${{ inputs.release_environment }}
           path: ${{ runner.temp }}/stage12-worker-validation
 
+      # Adds the release's worker before the checks and leaves the manifest's
+      # default version alone, so Stage 12 reports keep reaching the previous
+      # worker: publish_stage12_v2_default moves the default after every
+      # check. No check that runs after this publication is upstream of this
+      # job, so rerunning jobs that failed after it never republishes the
+      # worker.
       - name: Publish only the separate v2 manifest
         working-directory: projects/policyengine-simulation-executor
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: uv run --frozen python -m src.modal.utils.update_v2_version_manifest --environment "${{ inputs.modal_environment }}" --manifest-name simulation-api-v2-version-manifest --validation-file "${RUNNER_TEMP}/stage12-worker-validation/stage12-worker-validation.json"
+        run: uv run --frozen python -m src.modal.utils.update_v2_version_manifest --environment "${{ inputs.modal_environment }}" --manifest-name simulation-api-v2-version-manifest --validation-file "${RUNNER_TEMP}/stage12-worker-validation/stage12-worker-validation.json" --keep-default
 
   stage12_v2_ready:
     name: Require requested Stage 12 v2 deployment to succeed
@@ -1103,6 +1109,92 @@ jobs:
           MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
         run: ../../.github/scripts/routing-restore-plan.sh
 
+  publish_stage12_v2_default:
+    name: Move the Stage 12 v2 default to the release after every check
+    # Stage 12's own mechanism, separate from the v1 routing jobs. Runs after
+    # every check and the Cloud Run promotion, in a main deployment and in a
+    # Stage 12-only one. Moves the v2 manifest's default version to the
+    # release's worker when it is newer, checks that a reader resolves it, and
+    # writes back the manifest it replaced if a later step fails or the run
+    # is cancelled.
+    if: >-
+      ${{
+        !cancelled() &&
+        inputs.deploy_stage12_v2 &&
+        needs.publish_stage12_v2_manifest.result == 'success' &&
+        needs.integration.result == 'success' &&
+        needs.authenticated_test.result == 'success' &&
+        (!inputs.promote_entrypoint || needs.promote_entrypoint.result == 'success')
+      }}
+    needs:
+      [
+        prepare,
+        publish_stage12_v2_manifest,
+        integration,
+        authenticated_test,
+        promote_entrypoint,
+      ]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    environment: ${{ inputs.release_environment }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.13.6"
+
+      - name: Install Stage 12 manifest publisher dependencies
+        working-directory: projects/policyengine-simulation-executor
+        run: uv sync --frozen
+
+      - name: Move the v2 default to the release
+        id: move
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
+          POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
+        run: ../../.github/scripts/stage12-v2-default-move.sh
+
+      # Kept whenever the move ran, including a move that stopped part-way,
+      # so an operator still has the plan if the restore step fails too. A
+      # move that failed before planning wrote nothing and kept no plan.
+      - name: Keep the v2 default plan
+        if: ${{ always() && steps.move.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage12-v2-default-plan-${{ inputs.release_environment }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/stage12-v2-default/plan.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Verify a reader resolves the v2 default
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
+        run: ../../.github/scripts/stage12-v2-default-verify.sh
+
+      # Writes back the manifest the move replaced, only while the stored
+      # manifest is what the move wrote.
+      - name: Put the v2 default back after a failed or cancelled step
+        if: ${{ (failure() || cancelled()) && steps.move.outcome != 'skipped' }}
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
+        run: ../../.github/scripts/stage12-v2-default-restore.sh
+
   finalize_routing:
     name: Finalize the Modal routing publication
     # Finish the durable journal after every gate, including failed uploads
@@ -1161,7 +1253,7 @@ jobs:
     # The reporter only reads job results. Journal completion happens before
     # it, so a failure or cancellation here cannot strand a publication.
     if: ${{ !cancelled() }}
-    needs: [deploy_entrypoint, update_routing, integration, authenticated_test, promote_entrypoint, publish_latest, finalize_routing]
+    needs: [deploy_entrypoint, update_routing, integration, authenticated_test, promote_entrypoint, publish_latest, finalize_routing, publish_stage12_v2_default]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -1183,6 +1275,12 @@ jobs:
           FINALIZE_RESULT: ${{ needs.finalize_routing.result }}
           FINALIZE_OUTCOME: ${{ needs.finalize_routing.outputs.outcome }}
         run: .github/scripts/simulation-deployment-ready.sh
+
+      - name: Check the Stage 12 v2 default result
+        env:
+          REQUESTED: ${{ inputs.deploy_stage12_v2 }}
+          DEFAULT_RESULT: ${{ needs.publish_stage12_v2_default.result }}
+        run: .github/scripts/stage12-v2-default-ready.sh
 
   cleanup_entrypoint_revisions:
     name: Remove superseded Cloud Run revisions
