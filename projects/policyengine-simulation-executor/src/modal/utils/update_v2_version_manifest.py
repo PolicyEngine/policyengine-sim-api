@@ -3,8 +3,10 @@
 A deployment publishes its worker with ``--keep-default`` before its checks,
 leaving the manifest's default version alone, then moves the default with
 ``--move-default`` after them, checks it with ``--verify-plan``, and restores
-it with ``--restore-plan`` if a later step fails. This is Stage 12's own
-mechanism; the v1 routing publisher is separate.
+it with ``--restore-plan`` if a later step fails. A scheduled workflow runs
+``--refresh`` daily, which reads every key so that Modal does not expire the
+manifest. This is Stage 12's own mechanism; the v1 routing publisher is
+separate.
 """
 
 from __future__ import annotations
@@ -15,6 +17,8 @@ from pathlib import Path
 
 import modal
 from policyengine_simulation_contract.stage12_manifest import (
+    ACTIVE_MANIFEST_KEY,
+    PRE_CACHE_MANIFEST_KEY,
     REGION_DATASETS_MANIFEST_KEY,
     V1_ROUTING_STATE_NAME,
     V2_VERSION_MANIFEST_NAME,
@@ -67,6 +71,14 @@ def build_worker(validation_payload: object) -> V2WorkerVersion:
 
 V2_DEFAULT_PLAN_SCHEMA = "policyengine-simulation.v2-default-plan/v1"
 
+# Modal expires a Dict entry after 7 days without a read or write, so a
+# manifest that was published and then expired looks exactly like one that
+# was never published.
+MISSING_MANIFEST = (
+    "there is no v2 manifest in this Modal environment: it was never "
+    "published, or Modal expired it after 7 days without a read or write"
+)
+
 
 def _manifest_json(manifest: V2VersionManifest) -> dict[str, object]:
     return manifest.model_dump(mode="json")
@@ -101,8 +113,37 @@ def _publish_worker(
         return publish_v2_manifest(
             store=store, worker=worker, force_default=force_default
         )
-    manifest = add_v2_worker(current=read_v2_manifest(store), worker=worker)
+    current = read_v2_manifest(store)
+    if current is None:
+        # Publishing into it would make the release's worker the default
+        # before the checks, and the entries of any earlier workers are gone.
+        msg = (
+            f"{MISSING_MANIFEST}. A deployment does not publish into a missing "
+            "manifest, because its worker would become the default before its "
+            "checks; an operator publishes the first worker with "
+            "--validation-file without --keep-default"
+        )
+        raise ValueError(msg)
+    manifest = add_v2_worker(current=current, worker=worker)
     write_v2_manifest(store=store, manifest=manifest)
+    return manifest
+
+
+def _refresh(store: V2ManifestStore) -> V2VersionManifest:
+    """Read every reader's key and return the manifest.
+
+    Reading an entry keeps Modal from expiring it. Raises ValueError when
+    there is no manifest, or the stored one is invalid.
+    """
+    for key in (
+        REGION_DATASETS_MANIFEST_KEY,
+        ACTIVE_MANIFEST_KEY,
+        PRE_CACHE_MANIFEST_KEY,
+    ):
+        store.get(key)
+    manifest = read_v2_manifest(store)
+    if manifest is None:
+        raise ValueError(MISSING_MANIFEST)
     return manifest
 
 
@@ -283,6 +324,11 @@ def _argument_parser() -> argparse.ArgumentParser:
         help="Refuse unless the stored manifest is what this default plan wrote",
     )
     modes.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Read every key of the manifest, so that Modal does not expire it",
+    )
+    modes.add_argument(
         "--restore-plan",
         metavar="FILE",
         type=Path,
@@ -346,6 +392,12 @@ def main() -> None:
         print(f"release_is_default={'true' if plan['release_is_default'] else 'false'}")
     elif args.verify_plan is not None:
         print(f"v2 default version: {_verify_plan(store, args.verify_plan)}")
+    elif args.refresh:
+        manifest = _refresh(store)
+        print(
+            f"v2 manifest read: default {manifest.default_version}, "
+            f"sha256 {manifest_digest(manifest)}"
+        )
     else:
         print(f"v2 default restore: {_restore_plan(store, args.restore_plan)}")
 

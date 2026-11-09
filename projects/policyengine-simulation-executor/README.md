@@ -135,7 +135,8 @@ with its own mechanism, separate from the v1 routing jobs above:
 
 1. **Before its checks**, `publish_stage12_v2_manifest` adds the release's
    worker with `update_v2_version_manifest --keep-default`, leaving the
-   default version as it is (the first worker becomes the default). Stage 12
+   default version as it is. It refuses a manifest that is missing (see
+   below). Stage 12
    reports keep reaching the previous worker. No check that runs after this
    publication is upstream of this job, so "Re-run failed jobs" after a failed
    check or default move never republishes the worker.
@@ -172,11 +173,25 @@ default where it is writes nothing, so the manifest's digest, which Stage 12
 report identities include, stays the same. A release with a newer worker
 changes the digest twice, at the worker publication and at the move, so Stage
 12 reports created between the two get identities with the intermediate
-digest. If no Stage 12 request and no
-deployment touches the manifest for 7 days, all three keys expire, and the
-next deployment's worker publication cannot tell that from an empty manifest:
-it makes its worker the default before the checks and drops the earlier
-workers.
+digest.
+
+The entrypoint reads the manifest only for a Stage 12 request, and Stage 12 is
+off in beta, so without other reads a week with no deployment would let all
+three keys expire. The scheduled workflow `stage12-v2-manifest-refresh.yml`
+(rule `sim.deploy.stage12-manifest-read-daily`) reads every key once a day in
+each Modal environment a deployment publishes the manifest to (`staging` and
+`main`), with `update_v2_version_manifest --refresh`. It fails when there is no
+manifest. A missing manifest, never published or expired, looks the same to a
+deployment, and publishing into it would make the release's worker the default
+before the checks and leave out every earlier worker, so the deployment's
+worker publication refuses it, before the checks. An operator who has
+confirmed the manifest is missing downloads that deployment's
+`stage12-worker-validation-<environment>` artifact and, from
+`projects/policyengine-simulation-executor` at the release commit after
+`uv sync --frozen`, publishes the first worker with
+`uv run --frozen python -m src.modal.utils.update_v2_version_manifest
+--environment <modal environment> --validation-file <validation.json>` (without
+`--keep-default`), which makes it the default, then reruns the failed jobs.
 
 The plan is kept as the `stage12-v2-default-plan-<environment>-<attempt>`
 artifact whenever the move step ran, including a move that stopped part-way;

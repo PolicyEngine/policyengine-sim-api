@@ -43,8 +43,10 @@ class FakeStore:
         # Keys whose writes are accepted but not stored.
         self.lost_keys: set[str] = set()
         self.opened_with_create_if_missing: list[bool] = []
+        self.reads: list[str] = []
 
     def get(self, key: str, default: object = None) -> object:
+        self.reads.append(key)
         return self.values.get(key, default)
 
     def __setitem__(self, key: str, value: object) -> None:
@@ -64,8 +66,8 @@ class FakeStore:
         return all(self.values.get(key) == copy for key, copy in copies.items())
 
 
-@pytest.fixture
-def store(monkeypatch) -> FakeStore:
+def install_fake_store(monkeypatch) -> FakeStore:
+    """Make the publisher open a new FakeStore as the manifest Dict, and return it."""
     fake = FakeStore()
 
     def from_name(name, *, environment_name, create_if_missing):
@@ -77,6 +79,11 @@ def store(monkeypatch) -> FakeStore:
         publisher, "modal", SimpleNamespace(Dict=SimpleNamespace(from_name=from_name))
     )
     return fake
+
+
+@pytest.fixture
+def store(monkeypatch) -> FakeStore:
+    return install_fake_store(monkeypatch)
 
 
 def _installed_worker() -> V2WorkerVersion:
@@ -559,6 +566,10 @@ def test_checking_or_restoring_never_creates_a_manifest_dict(
 def test_only_a_worker_publication_creates_the_manifest_dict(
     monkeypatch, tmp_path, store
 ):
+    # A deployment publishes only into an existing manifest (see
+    # test_update_v2_version_manifest_expiry); the Dict is still opened so
+    # that an operator's first publication creates it.
+    _with_older_default(store)
     validation_file = tmp_path / "validation.json"
     validation_file.write_text(_validation().model_dump_json())
 
