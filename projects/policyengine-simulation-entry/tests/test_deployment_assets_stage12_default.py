@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 from test_deployment_assets_support import (
+    REPOSITORY_ROOT,
     REUSABLE_DEPLOY_WORKFLOW,
     evaluate_github_expression,
     routing_context,
@@ -175,6 +176,16 @@ def test_the_default_job_moves_keeps_checks_and_restores_in_order():
     # that failed before planning wrote nothing and kept no plan.
     assert keep["if"] == "${{ always() && steps.move.outcome != 'skipped' }}"
     assert keep["with"]["if-no-files-found"] == "ignore"
+    # The file the move script writes and the verify and restore scripts read.
+    assert keep["with"]["path"] == "${{ runner.temp }}/stage12-v2-default/plan.json"
+    for script in ("move", "verify", "restore"):
+        assert '"${RUNNER_TEMP}/stage12-v2-default' in (
+            REPOSITORY_ROOT / ".github" / "scripts" / f"stage12-v2-default-{script}.sh"
+        ).read_text(encoding="utf-8")
+    # A failed step fails the job, which runs the restore and fails the
+    # deployment.
+    assert "continue-on-error" not in default
+    assert not [step for step in default["steps"] if "continue-on-error" in step]
     verify = _step(default, "Verify a reader resolves the v2 default")
     assert "--verify-plan" in step_shell(verify)
     restore = _step(default, "Put the v2 default back after a failed or cancelled step")

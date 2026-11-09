@@ -59,6 +59,7 @@ def _run(fakes: FakeCommands, tmp_path: Path, script: str, **env: str):
             **{
                 "RUNNER_TEMP": str(tmp_path / "runner-temp"),
                 "GITHUB_OUTPUT": str(tmp_path / "github-output"),
+                "GITHUB_STEP_SUMMARY": str(tmp_path / "step-summary"),
                 "MODAL_ENVIRONMENT": "main",
                 "POLICYENGINE_VERSION": "6.13.0",
                 **env,
@@ -77,7 +78,12 @@ def _github_output(tmp_path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
-def test_move_plans_the_release_and_records_its_outputs(fakes, tmp_path):
+def _step_summary(tmp_path: Path) -> str:
+    path = tmp_path / "step-summary"
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def test_move_plans_the_release_and_summarises_it(fakes, tmp_path):
     result = _run(fakes, tmp_path, MOVE, FAKE_UV_STDOUT=MOVER_STDOUT)
 
     assert result.returncode == 0, result.stderr
@@ -91,7 +97,12 @@ def test_move_plans_the_release_and_records_its_outputs(fakes, tmp_path):
         ]
     ]
     assert _plan_file(tmp_path).parent.is_dir()
-    assert _github_output(tmp_path) == MOVER_STDOUT
+    # Shown on the run's page, including whether requests that pin no v2
+    # version now reach the release's worker; no later step reads them.
+    assert _step_summary(tmp_path) == (
+        "### Stage 12 v2 default move\n\n```\n" + MOVER_STDOUT + "```\n"
+    )
+    assert _github_output(tmp_path) == ""
 
 
 @pytest.mark.parametrize(
@@ -103,7 +114,7 @@ def test_move_fails_without_a_completed_move(fakes, tmp_path, fake_uv):
     result = _run(fakes, tmp_path, MOVE, **fake_uv)
 
     assert result.returncode != 0
-    assert _github_output(tmp_path) == ""
+    assert _step_summary(tmp_path) == ""
 
 
 @pytest.mark.parametrize(

@@ -42,6 +42,7 @@ class FakeStore:
         self.writes_until_failure: int | None = None
         # Keys whose writes are accepted but not stored.
         self.lost_keys: set[str] = set()
+        self.opened_with_create_if_missing: list[bool] = []
 
     def get(self, key: str, default: object = None) -> object:
         return self.values.get(key, default)
@@ -68,7 +69,8 @@ def store(monkeypatch) -> FakeStore:
     fake = FakeStore()
 
     def from_name(name, *, environment_name, create_if_missing):
-        del name, environment_name, create_if_missing
+        del name, environment_name
+        fake.opened_with_create_if_missing.append(create_if_missing)
         return fake
 
     monkeypatch.setattr(
@@ -538,3 +540,28 @@ def test_force_default_publishes_the_worker_as_the_default_even_when_older(
     expected = {"installed": _installed_version(), "newer": newer}[default_after]
     assert manifest.default_version == expected
     assert set(manifest.versions) == {newer, _installed_version()}
+
+
+@pytest.mark.parametrize("mode", ["--verify-plan", "--restore-plan"])
+def test_checking_or_restoring_never_creates_a_manifest_dict(
+    monkeypatch, tmp_path, store, mode
+):
+    # An operator who names the wrong Modal environment gets an error, not a
+    # new, empty Dict in that environment.
+    _with_both_workers(store)
+    _move(monkeypatch, tmp_path, _installed_version())
+
+    _run(monkeypatch, mode, str(tmp_path / "plan.json"))
+
+    assert store.opened_with_create_if_missing == [False, False]
+
+
+def test_only_a_worker_publication_creates_the_manifest_dict(
+    monkeypatch, tmp_path, store
+):
+    validation_file = tmp_path / "validation.json"
+    validation_file.write_text(_validation().model_dump_json())
+
+    _run(monkeypatch, "--validation-file", str(validation_file), "--keep-default")
+
+    assert store.opened_with_create_if_missing == [True]

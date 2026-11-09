@@ -169,14 +169,21 @@ so the move, check and restore accept a missing older key; a move or restore
 that writes the manifest writes it again, and otherwise the next deployment's
 worker publication does. The newest key is required. A move that leaves the
 default where it is writes nothing, so the manifest's digest, which Stage 12
-report identities include, stays the same. If no Stage 12 request and no
+report identities include, stays the same. A release with a newer worker
+changes the digest twice, at the worker publication and at the move, so Stage
+12 reports created between the two get identities with the intermediate
+digest. If no Stage 12 request and no
 deployment touches the manifest for 7 days, all three keys expire, and the
 next deployment's worker publication cannot tell that from an empty manifest:
 it makes its worker the default before the checks and drops the earlier
 workers.
 
 The plan is kept as the `stage12-v2-default-plan-<environment>-<attempt>`
-artifact whenever the move step ran, including a move that stopped part-way.
+artifact whenever the move step ran, including a move that stopped part-way;
+`<environment>` is the GitHub release environment, and `beta` deploys to the
+Modal environment `staging`, `prod` to `main`. The move step adds the
+manifest's digests before and after the move, and whether requests that pin no
+v2 version now reach the release's worker, to the run's summary page.
 If the restore step itself fails, an operator downloads that attempt's artifact
 and, from `projects/policyengine-simulation-executor`, runs
 `uv run --frozen python -m src.modal.utils.update_v2_version_manifest
@@ -191,7 +198,16 @@ the region datasets of every worker already in the manifest; after one that
 wrote the two newest, the failed release stays the default until that
 deployment's own move. No workflow
 restores an earlier default after a completed deploy, and the deployment's
-`force_latest` input does not move the v2 default.
+`force_latest` input does not move the v2 default. Only a worker publication
+creates the manifest Dict, so a move, check or restore against a Modal
+environment without one fails instead of creating an empty Dict there.
+
+If the runner is lost after the move starts writing and before the plan is
+uploaded, no plan is kept and no restore runs. The default then stays on the
+release, which passed every check, and the deployment fails. "Re-run failed
+jobs" finds the default already on the release, writes nothing and succeeds,
+unless the write stopped part-way: then the rerun's move refuses the keys, and
+an operator repairs them by hand.
 
 ## Baseline artifact pipeline (precompute → store → image fetch)
 

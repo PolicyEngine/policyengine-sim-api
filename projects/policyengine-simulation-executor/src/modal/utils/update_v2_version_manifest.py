@@ -323,10 +323,13 @@ def main() -> None:
         v1_name=V1_ROUTING_STATE_NAME,
         v2_name=args.manifest_name,
     )
+    # Only a worker publication creates the Dict. Moving, checking or
+    # restoring a default in a Modal environment that has no manifest is an
+    # error, not a new, empty Dict there.
     store = modal.Dict.from_name(
         args.manifest_name,
         environment_name=args.environment,
-        create_if_missing=True,
+        create_if_missing=args.validation_file is not None,
     )
     if args.validation_file is not None:
         manifest = _publish_worker(
