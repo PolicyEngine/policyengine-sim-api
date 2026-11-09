@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 61 | 0 | 0 | 14 | 75 |
+| mechanical | 62 | 0 | 0 | 14 | 76 |
 | metric | 1 | 0 | 0 | 0 | 1 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 62 of 76 rules.
+**Blocking:** 63 of 77 rules.
 
 ## Gaps
 
@@ -42,7 +42,6 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.contracts.clients-publish-deployed-commit`
 - `sim.contracts.full-integration-beta-only`
 - `sim.contracts.gateway-openapi-golden`
-- `sim.deploy.container-context-minimal`
 - `sim.deploy.gcloud-without-terraform`
 - `sim.deploy.latest-moves-after-checks`
 - `sim.deploy.numerical-sentinel-gate`
@@ -55,7 +54,6 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.deploy.smoke-tests-strict`
 - `sim.deploy.stage12-default-moves-after-checks`
 - `sim.deploy.traffic-changes-exact`
-- `sim.deploy.workflow-shell-safety`
 - `sim.process.rules-registry`
 - `sim.stage12.deployment-scope`
 - `sim.stage12.deployment-uses-api-schema`
@@ -139,11 +137,26 @@ flowchart LR
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_traffic_py --> j_CI_pr_yml_test
 ```
 
+## Simulation service database
+
+| Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sim.persistence.missing-privileges-reported` | The simulation service's privilege check, which its readiness check uses, names every table privilege and every column UPDATE privilege its role needs on the Public API's tables and lacks, as PostgreSQL reports it, counts a table missing from the public schema as lacking all of them and a missing column as lacking its own, and names a missing USAGE privilege on that schema. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_access.py` | `pr.yml:simulation-database` | yes |
+
+```mermaid
+flowchart LR
+  r_sim_persistence_missing_privileges_reported("sim.persistence.missing-privileges-reported (enforced)")
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_access_py["pytest libs/policyengine-simulation-persistence/tests/test_access.py"]
+  j_CI_pr_yml_simulation_database["CI pr.yml:simulation-database"]
+  r_sim_persistence_missing_privileges_reported --> e_pytest_libs_policyengine_simulation_persistence_tests_test_access_py
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_access_py --> j_CI_pr_yml_simulation_database
+```
+
 ## Deployment pipeline
 
 | Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `sim.deploy.container-context-minimal` | Container builds exclude local environments and unrelated projects, and the entrypoint container builds for the requested target platform. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_cloud_run.py`, `projects/policyengine-simulation-entry/tests/test_deployment_assets_traffic.py` | `pr.yml:test` | **unproven** |
+| `sim.deploy.container-context-minimal` | Container builds exclude local environments and unrelated projects but include every local library the entrypoint installs, and the entrypoint container builds for the requested target platform. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_cloud_run.py`, `projects/policyengine-simulation-entry/tests/test_deployment_assets_traffic.py` | `pr.yml:test` | yes |
 | `sim.deploy.docker-images-build` | The simulation entry and executor Docker images build. | mechanical | enforced | yes | CI job `docker-build` | `pr.yml:docker-build` | — |
 | `sim.deploy.gcloud-without-terraform` | Deployment uses the gcloud-based workflow, not Terraform. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.image-smoke-covers-every-image-lib` | The image smoke path filter includes every library mounted into a Modal image, so a change to any of them runs the smoke. | mechanical | doc-only | no | nothing | — | — |
@@ -157,11 +170,11 @@ flowchart LR
 | `sim.deploy.revision-tags-valid` | Cloud Run revision tags are valid on a workflow's first run and fit the existing service names. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_cloud_run.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.routing-publication-journaled` | Each routing publication is named by its run, attempt and environment and journaled before it is applied; the job that applies it completes it, an always-running finalizer resolves from the journal, with the outcome of the release checks, any publication a job left unfinished, a release reports success only after that finalizer completes, and routing jobs never tolerate a failed command. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_release_gates.py`, `projects/policyengine-simulation-entry/tests/test_deployment_assets_routing.py`, `projects/policyengine-simulation-entry/tests/test_routing_and_sentinel_scripts.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.shell-scripts-valid` | Deployment shell scripts have valid shell syntax. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
-| `sim.deploy.smoke-tests-strict` | Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
+| `sim.deploy.smoke-tests-strict` | Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge; the candidate smoke also requires the simulation service to reach its database with every table and column privilege its role needs. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`, `projects/policyengine-simulation-entry/tests/test_simulation_database_deployment.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.stage12-default-moves-after-checks` | A deployment that publishes Stage 12 adds its v2 worker before its checks without moving the v2 manifest's default version, and moves the default only after every check and the Cloud Run promotion pass, then checks that a reader resolves it and writes back the manifest it replaced if a later step fails or the run is cancelled; this mechanism shares no code with the v1 routing jobs. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py`, `projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py`, `projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py`, `projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.staging-promotes-tested-revision` | Every staging deployment passes promote_entrypoint: ${{ github.ref == 'refs/heads/main' }}, so a run from main moves the staging service's stable Cloud Run traffic to the entrypoint revision that passed the staging tests, and an accidental manual run from another branch neither moves that traffic nor deletes older revisions. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_promotion.py` | `pr.yml:test` | yes |
 | `sim.deploy.traffic-changes-exact` | Traffic changes target an exact, validated revision, are reversible, and refuse to run over an intervening promotion. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_traffic.py` | `pr.yml:test` | **unproven** |
-| `sim.deploy.workflow-shell-safety` | Cloud Run deployment never interpolates GitHub expressions into shell, escapes environment values, and pins secret versions. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_cloud_run.py` | `pr.yml:test` | **unproven** |
+| `sim.deploy.workflow-shell-safety` | Cloud Run deployment never interpolates GitHub expressions into shell, escapes environment values, pins secret versions, stops before deploying when any runtime secret cannot be resolved, and resolves the Stage 12 secrets through the Stage 12 block's own wrapper. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_cloud_run.py` | `pr.yml:test` | yes |
 
 ```mermaid
 flowchart LR
@@ -195,6 +208,7 @@ flowchart LR
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_release_gates_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_routing_py__projects_policyengine_simulation_entry_tests_test_routing_and_sentinel_scripts_py["pytest projects/policyengine-simulation-entry/tests/test_deployment_assets_release_gates.py, projects/policyengine-simulation-entry/tests/test_deployment_assets_routing.py, projects/policyengine-simulation-entry/tests/test_routing_and_sentinel_scripts.py"]
   r_sim_deploy_shell_scripts_valid("sim.deploy.shell-scripts-valid (enforced)")
   r_sim_deploy_smoke_tests_strict("sim.deploy.smoke-tests-strict (enforced)")
+  e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py__projects_policyengine_simulation_entry_tests_test_simulation_database_deployment_py["pytest projects/policyengine-simulation-entry/tests/test_deployment_assets.py, projects/policyengine-simulation-entry/tests/test_simulation_database_deployment.py"]
   r_sim_deploy_stage12_default_moves_after_checks("sim.deploy.stage12-default-moves-after-checks (enforced)")
   e_pytest_libs_policyengine_simulation_contract_tests_test_stage12_manifest_default_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_stage12_default_py__projects_policyengine_simulation_entry_tests_test_stage12_default_scripts_py__projects_policyengine_simulation_executor_tests_test_update_v2_version_manifest_default_py["pytest libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py, projects/policyengine-simulation-entry/tests/test_deployment_assets_stage12_default.py, projects/policyengine-simulation-entry/tests/test_stage12_default_scripts.py, projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py"]
   r_sim_deploy_staging_promotes_tested_revision("sim.deploy.staging-promotes-tested-revision (enforced)")
@@ -226,7 +240,8 @@ flowchart LR
   r_sim_deploy_routing_publication_journaled --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_release_gates_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_routing_py__projects_policyengine_simulation_entry_tests_test_routing_and_sentinel_scripts_py
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_release_gates_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_routing_py__projects_policyengine_simulation_entry_tests_test_routing_and_sentinel_scripts_py --> j_CI_pr_yml_test
   r_sim_deploy_shell_scripts_valid --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
-  r_sim_deploy_smoke_tests_strict --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
+  r_sim_deploy_smoke_tests_strict --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py__projects_policyengine_simulation_entry_tests_test_simulation_database_deployment_py
+  e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py__projects_policyengine_simulation_entry_tests_test_simulation_database_deployment_py --> j_CI_pr_yml_test
   r_sim_deploy_stage12_default_moves_after_checks --> e_pytest_libs_policyengine_simulation_contract_tests_test_stage12_manifest_default_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_stage12_default_py__projects_policyengine_simulation_entry_tests_test_stage12_default_scripts_py__projects_policyengine_simulation_executor_tests_test_update_v2_version_manifest_default_py
   e_pytest_libs_policyengine_simulation_contract_tests_test_stage12_manifest_default_py__projects_policyengine_simulation_entry_tests_test_deployment_assets_stage12_default_py__projects_policyengine_simulation_entry_tests_test_stage12_default_scripts_py__projects_policyengine_simulation_executor_tests_test_update_v2_version_manifest_default_py --> j_CI_pr_yml_test
   r_sim_deploy_staging_promotes_tested_revision --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_promotion_py
@@ -329,7 +344,7 @@ flowchart LR
 | `sim.quality.pyright-apis-integ` | The generated-client integration-test project, apis-integ, has no Pyright errors, checked with the pinned Pyright version in the project's own locked environment. | mechanical | enforced | yes | pyright in `projects/policyengine-apis-integ` | `pr.yml:pyright` | yes |
 | `sim.quality.pyright-executor` | The simulation executor has no Pyright errors, checked with the pinned Pyright version in the executor's own locked environment. | mechanical | enforced | yes | pyright in `projects/policyengine-simulation-executor` | `pr.yml:pyright` | yes |
 | `sim.quality.pyright-gateway` | The simulation gateway has no Pyright errors, checked with the pinned Pyright version in the gateway's own locked environment. | mechanical | enforced | yes | pyright in `projects/policyengine-simulation-gateway` | `pr.yml:pyright` | yes |
-| `sim.quality.pyright-libraries-and-entry` | The contract, observability, Stage 12 persistence and fastapi libraries and the simulation entry have no Pyright errors, checked with the pinned Pyright version in each package's own locked environment. | mechanical | enforced | yes | pyright in `libs/policyengine-simulation-contract`, `libs/policyengine-simulation-observability`, `libs/policyengine-stage12-persistence`, `libs/policyengine-fastapi`, `projects/policyengine-simulation-entry` | `pr.yml:pyright` | yes |
+| `sim.quality.pyright-libraries-and-entry` | The contract, observability, simulation persistence, Stage 12 persistence and fastapi libraries and the simulation entry have no Pyright errors, checked with the pinned Pyright version in each package's own locked environment. | mechanical | enforced | yes | pyright in `libs/policyengine-simulation-contract`, `libs/policyengine-simulation-observability`, `libs/policyengine-simulation-persistence`, `libs/policyengine-stage12-persistence`, `libs/policyengine-fastapi`, `projects/policyengine-simulation-entry` | `pr.yml:pyright` | yes |
 | `sim.quality.python-file-length` | No tracked Python file has more than 800 lines, or more than 1,500 lines if it is test code: a file under a tests or fixtures directory, or a conftest.py. | metric | enforced | yes | quality guard `file-length` | `pr.yml:quality-guards` | yes |
 | `sim.quality.ruff-format-src` | Source code under projects/*/src and libs/*/src is formatted with ruff format. | mechanical | enforced | yes | ruff format | `pr.yml:lint` | — |
 | `sim.quality.ruff-format-tests` | Test code is formatted with ruff format too; CI currently checks only src directories. | mechanical | doc-only | no | nothing | — | — |
@@ -362,7 +377,7 @@ flowchart LR
   r_sim_quality_pyright_gateway("sim.quality.pyright-gateway (enforced)")
   e_pyright_in_projects_policyengine_simulation_gateway["pyright in projects/policyengine-simulation-gateway"]
   r_sim_quality_pyright_libraries_and_entry("sim.quality.pyright-libraries-and-entry (enforced)")
-  e_pyright_in_libs_policyengine_simulation_contract__libs_policyengine_simulation_observability__libs_policyengine_stage12_persistence__libs_policyengine_fastapi__projects_policyengine_simulation_entry["pyright in libs/policyengine-simulation-contract, libs/policyengine-simulation-observability, libs/policyengine-stage12-persistence, libs/policyengine-fastapi, projects/policyengine-simulation-entry"]
+  e_pyright_in_libs_policyengine_simulation_contract__libs_policyengine_simulation_observability__libs_policyengine_simulation_persistence__libs_policyengine_stage12_persistence__libs_policyengine_fastapi__projects_policyengine_simulation_entry["pyright in libs/policyengine-simulation-contract, libs/policyengine-simulation-observability, libs/policyengine-simulation-persistence, libs/policyengine-stage12-persistence, libs/policyengine-fastapi, projects/policyengine-simulation-entry"]
   r_sim_quality_python_file_length("sim.quality.python-file-length (enforced)")
   e_quality_guard_file_length["quality guard file-length"]
   r_sim_quality_ruff_format_src("sim.quality.ruff-format-src (enforced)")
@@ -396,8 +411,8 @@ flowchart LR
   e_pyright_in_projects_policyengine_simulation_executor --> j_CI_pr_yml_pyright
   r_sim_quality_pyright_gateway --> e_pyright_in_projects_policyengine_simulation_gateway
   e_pyright_in_projects_policyengine_simulation_gateway --> j_CI_pr_yml_pyright
-  r_sim_quality_pyright_libraries_and_entry --> e_pyright_in_libs_policyengine_simulation_contract__libs_policyengine_simulation_observability__libs_policyengine_stage12_persistence__libs_policyengine_fastapi__projects_policyengine_simulation_entry
-  e_pyright_in_libs_policyengine_simulation_contract__libs_policyengine_simulation_observability__libs_policyengine_stage12_persistence__libs_policyengine_fastapi__projects_policyengine_simulation_entry --> j_CI_pr_yml_pyright
+  r_sim_quality_pyright_libraries_and_entry --> e_pyright_in_libs_policyengine_simulation_contract__libs_policyengine_simulation_observability__libs_policyengine_simulation_persistence__libs_policyengine_stage12_persistence__libs_policyengine_fastapi__projects_policyengine_simulation_entry
+  e_pyright_in_libs_policyengine_simulation_contract__libs_policyengine_simulation_observability__libs_policyengine_simulation_persistence__libs_policyengine_stage12_persistence__libs_policyengine_fastapi__projects_policyengine_simulation_entry --> j_CI_pr_yml_pyright
   r_sim_quality_python_file_length --> e_quality_guard_file_length
   e_quality_guard_file_length --> j_CI_pr_yml_quality_guards
   r_sim_quality_ruff_format_src --> e_ruff_format

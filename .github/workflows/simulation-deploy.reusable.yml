@@ -241,6 +241,7 @@ jobs:
           OLD_GATEWAY_AUTH_AUDIENCE_VALUE: ${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}
           OLD_GATEWAY_AUTH_CLIENT_ID_VALUE: ${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}
           OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME: ${{ vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME }}
+          SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME: ${{ vars.SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME }}
           STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}
           STAGE12_ARTIFACT_BUCKET_VALUE: ${{ vars.STAGE12_ARTIFACT_BUCKET }}
           STAGE12_DATABASE_URL_SECRET_NAME: ${{ vars.STAGE12_DATABASE_URL_SECRET_NAME }}
@@ -753,6 +754,8 @@ jobs:
           EXPECTED_POLICYENGINE_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.policyengine_version || '' }}
           EXPECTED_UK_MODEL_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_version || '' }}
           EXPECTED_UK_DATASET_SHA256: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_dataset_sha256 || '' }}
+          # The candidate reaches its database, and its role holds its grants.
+          REQUIRE_SIMULATION_DATABASE_ACCESS: "true"
         run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.deploy_entrypoint.outputs.revision }}"
 
       - name: Download the numerical release sentinel

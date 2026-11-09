@@ -6,6 +6,7 @@ import os
 import textwrap
 
 import tomllib
+from deployment_rule_checks import libraries_missing_from_context
 from test_deployment_assets_support import (
     DOCKERIGNORE,
     GITIGNORE,
@@ -169,6 +170,40 @@ def test_container_context_excludes_local_environments_and_unrelated_projects():
     )
     assert ignore_rules.index("**/.venv") > ignore_rules.index(
         "!libs/policyengine-simulation-contract/**"
+    )
+
+
+def test_container_context_includes_every_local_library_the_entrypoint_installs():
+    entry_project = REPOSITORY_ROOT / "projects" / "policyengine-simulation-entry"
+    pyproject = (entry_project / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert "path = " in pyproject
+    assert (
+        libraries_missing_from_context(
+            pyproject, DOCKERIGNORE.read_text(encoding="utf-8")
+        )
+        == []
+    )
+
+
+def test_rule_proof_container_context_minimal():
+    """Proof for rule sim.deploy.container-context-minimal (rules/registry.toml)."""
+    fixtures = (
+        REPOSITORY_ROOT
+        / "rules"
+        / "fixtures"
+        / ("sim.deploy.container-context-minimal")
+    )
+    pyproject = (fixtures / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert libraries_missing_from_context(
+        pyproject, (fixtures / "bad.dockerignore").read_text(encoding="utf-8")
+    ) == ["fixture-persistence"]
+    assert (
+        libraries_missing_from_context(
+            pyproject, (fixtures / "good.dockerignore").read_text(encoding="utf-8")
+        )
+        == []
     )
 
 

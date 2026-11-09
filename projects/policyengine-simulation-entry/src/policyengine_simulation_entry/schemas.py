@@ -115,3 +115,32 @@ class TemporaryStage12ReportResponse(BaseModel):
 
     report: ComparisonReportRecord
     simulations: tuple[ComparisonSimulationRecord, ...]
+
+
+class SimulationDatabaseReadiness(BaseModel):
+    """The simulation service's database, as the readiness check found it.
+
+    ``reachable`` says whether the check succeeded within its time limit:
+    false when the database wasn't reached, refused the role's login, or
+    didn't answer in time. ``has_required_privileges`` says whether the role
+    holds every privilege the service needs, or is null when the check failed.
+    The route is public, so it names neither the failure nor the missing
+    privileges; the service's log does. A check that reached the database
+    answers for 30 seconds, so the answer may be that old; a failed check isn't
+    reused. Neither changes ``status``: no old-gateway or Stage 12 route uses
+    this database.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    reachable: bool
+    has_required_privileges: bool | None
+
+
+class SimulationEntrypointReadinessResponse(BaseModel):
+    """Old-gateway readiness, plus the database check when one is configured."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["ready", "not_ready"]
+    simulation_database: SimulationDatabaseReadiness | None = None
