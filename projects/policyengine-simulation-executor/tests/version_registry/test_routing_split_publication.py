@@ -9,6 +9,7 @@ once every check has passed.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from registry_test_support import (
@@ -18,6 +19,7 @@ from registry_test_support import (
     run_registry_main,
     versioned_app_name,
 )
+from src.modal.routing_publisher import state as routing_state
 from src.modal.utils import update_version_registry as registry
 
 OLD = ("6.0.0", "1.1.0", "2.1.0")
@@ -67,16 +69,194 @@ def test_routes_state_adds_the_releases_routes_and_leaves_latest(monkeypatch):
     assert state["routes"]["policyengine"][OLD[0]] == versioned_app_name(OLD[0])
 
 
-def test_routes_state_routes_unpinned_requests_to_the_first_release(monkeypatch):
-    # With no routing yet there is no earlier release for latest to keep.
+@pytest.mark.parametrize(
+    "empty",
+    [lambda: None, dict, routing_state.empty_routing_state],
+    ids=["missing", "empty", "empty-skeleton"],
+)
+def test_routes_state_routes_unpinned_requests_to_the_first_release(monkeypatch, empty):
+    # With no routing yet there is no earlier release in the state to keep.
     _install(monkeypatch, NEW)
 
     state = registry.build_routes_routing_state(
-        current_state=None, deployed=_deployed(NEW), now="2026-11-06T12:00:00Z"
+        current_state=empty(), deployed=_deployed(NEW), now="2026-11-06T12:00:00Z"
     )
 
     assert state["latest"] == {"policyengine": NEW[0], "us": NEW[1], "uk": NEW[2]}
     assert state["latest_since"] == "2026-11-06T12:00:00Z"
+
+
+def _stored_state(latest: dict, *, policyengine_routes: bool = True) -> dict:
+    """Return a stored state with 6.0.0's routes and the given latest."""
+    legacy = routing_state.coerce_routing_state(None)
+    if policyengine_routes:
+        legacy["routes"]["policyengine"]["6.0.0"] = versioned_app_name("6.0.0")
+    legacy["routes"]["us"]["1.0.0"] = versioned_app_name("6.0.0")
+    legacy["routes"]["uk"]["2.1.0"] = versioned_app_name("6.0.0")
+    legacy["latest"] = latest
+    return legacy
+
+
+LEGACY_APP = "policyengine-simulation-us1-0-0-uk2-1-0"
+
+
+def _model_version_latest_state() -> dict:
+    """Seed a state from legacy Dicts that route by model version only."""
+    return registry.build_legacy_seed_routing_state(
+        policyengine_versions={},
+        us_versions={"latest": "1.0.0", "1.0.0": LEGACY_APP},
+        uk_versions={"latest": "2.1.0", "2.1.0": LEGACY_APP},
+    )
+
+
+def _with_manifest_of_another_app() -> dict:
+    state = _stored_state({"policyengine": "6.0.0", "us": "1.0.0", "uk": "2.1.0"})
+    state["bundles"]["6.0.0"] = {"policyengine_version": "6.0.0", "app_name": "other"}
+    return state
+
+
+def _complete_state() -> dict:
+    return _stored_state({"policyengine": "6.0.0", "us": "1.0.0", "uk": "2.1.0"})
+
+
+def _with_us_route(version: str, app: object) -> dict:
+    state = _complete_state()
+    state["routes"]["us"][version] = app
+    return state
+
+
+def _with_manifest(version: str, manifest: object) -> dict:
+    state = _complete_state()
+    state["bundles"][version] = manifest
+    return state
+
+
+def _with_routes_but_no_latest() -> dict:
+    return _stored_state({})
+
+
+# Stored values the routes step refuses: each is invalid, its latest does
+# not name a routed policyengine.py, US and UK version, or it is not an empty
+# state although it reads back as one.
+INCOMPLETE_OR_INVALID = {
+    "latest-without-model-versions": lambda: _stored_state({"policyengine": "6.0.0"}),
+    "latest-without-a-uk-version": lambda: _stored_state(
+        {"policyengine": "6.0.0", "us": "1.0.0"}
+    ),
+    "latest-without-a-policyengine-route": lambda: _stored_state(
+        {"policyengine": "5.0.0", "us": "1.0.0", "uk": "2.1.0"},
+        policyengine_routes=False,
+    ),
+    "latest-of-model-versions-only": _model_version_latest_state,
+    "empty-latest-version": lambda: _stored_state(
+        {"policyengine": "", "us": "1.0.0", "uk": "2.1.0"}
+    ),
+    "manifest-of-another-app": _with_manifest_of_another_app,
+    "routes-without-latest": _with_routes_but_no_latest,
+    "manifest-without-routes": lambda: {
+        **routing_state.empty_routing_state(),
+        "bundles": {"6.0.0": {"policyengine_version": "6.0.0", "app_name": "x"}},
+    },
+    # Values that read back as an empty state but are not one.
+    "not-a-mapping": lambda: "not a routing state",
+    "dates-only": lambda: {
+        "published_at": {"6.0.0": "2026-11-01T00:00:00Z"},
+        "latest_since": "2026-11-01T00:00:00Z",
+    },
+    "fields-of-the-wrong-type": lambda: {
+        "schema_version": 2,
+        "latest": "6.0.0",
+        "routes": [],
+        "bundles": "none",
+    },
+    # Complete states that read back differently: coercion would drop or
+    # rewrite what makes them invalid.
+    "another-schema-version": lambda: {**_complete_state(), "schema_version": 2},
+    "a-route-that-is-not-an-app-name": lambda: _with_us_route("9.9.9", 5),
+    "a-manifest-that-is-not-a-mapping": lambda: _with_manifest("6.0.0", "broken"),
+    "a-field-routing-states-do-not-have": lambda: {**_complete_state(), "extra": 1},
+}
+
+# The combined publication accepts these, as before the split.
+COMBINED_ACCEPTS = (
+    "latest-without-model-versions",
+    "latest-without-a-uk-version",
+    "latest-without-a-policyengine-route",
+    "latest-of-model-versions-only",
+    "routes-without-latest",
+)
+
+
+@pytest.mark.parametrize(
+    "stored", INCOMPLETE_OR_INVALID.values(), ids=INCOMPLETE_OR_INVALID
+)
+def test_the_routes_plan_refuses_a_stored_state_that_is_not_complete_and_valid(
+    monkeypatch, stored
+):
+    # The planner raises, so the deploy has no plan to record or publish; an
+    # operator repairs the stored state before deploying again.
+    _install(monkeypatch, NEW)
+
+    with pytest.raises(ValueError, match="is not complete and valid"):
+        registry.plan_routes_publication(
+            current_state=stored(), deployed=_deployed(NEW)
+        )
+
+
+@pytest.mark.parametrize("case", COMBINED_ACCEPTS)
+def test_the_combined_publication_still_accepts_what_the_routes_step_refuses(
+    monkeypatch, case
+):
+    _install(monkeypatch, NEW)
+
+    state = registry.build_next_routing_state(
+        current_state=INCOMPLETE_OR_INVALID[case](), deployed=_deployed(NEW)
+    )
+
+    assert state["latest"] == {"policyengine": NEW[0], "us": NEW[1], "uk": NEW[2]}
+
+
+def test_the_routes_plan_refuses_rerouting_the_latest_version_to_the_release(
+    monkeypatch,
+):
+    # latest is complete and names the release's version, whose stored route
+    # names another app: publishing the release's route would send unpinned
+    # requests to the release before its checks.
+    stored = _stored_state({"policyengine": NEW[0], "us": "1.0.0", "uk": "2.1.0"})
+    stored["routes"]["policyengine"][NEW[0]] = "another-app"
+    _install(monkeypatch, NEW)
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(f"latest.policyengine is {NEW[0]!r}, routed to 'another-app'"),
+    ):
+        registry.plan_routes_publication(current_state=stored, deployed=_deployed(NEW))
+
+
+def test_routes_state_republishes_the_latest_release_to_its_own_app(monkeypatch):
+    # A redeploy of the latest policyengine.py version routes to the same
+    # app name, so unpinned requests reach the app they reached before.
+    current = published_routing_state(monkeypatch, None, *NEW)
+    _install(monkeypatch, NEW)
+
+    routed = registry.build_routes_routing_state(
+        current_state=current, deployed=_deployed(NEW)
+    )
+
+    assert routed["latest"] == current["latest"]
+    assert routed["routes"]["policyengine"][NEW[0]] == versioned_app_name(NEW[0])
+
+
+def test_the_combined_publication_stores_an_explicit_time_as_given(monkeypatch):
+    _install(monkeypatch, NEW)
+    now = "2026-11-06T13:00:00+01:00"
+
+    state = registry.build_next_routing_state(
+        current_state=None, deployed=_deployed(NEW), now=now
+    )
+
+    assert state["published_at"][NEW[0]] == now
+    assert state["latest_since"] == now
 
 
 def test_latest_state_moves_latest_to_a_newer_routed_release(monkeypatch):
@@ -440,3 +620,81 @@ def test_cli_refuses_to_plan_latest_for_a_release_without_routes(
             str(tmp_path / "latest.json"),
         )
     assert not (tmp_path / "latest.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        (lambda state: state.pop("bundles"), "missing bundles"),
+        (lambda state: state.update(extra=1), "dropped when read: extra"),
+        (
+            lambda state: state.update(published_at={}),
+            "dropped when read: published_at",
+        ),
+        (
+            lambda state: state.update(latest_since="2026-11-06T13:00:00+01:00"),
+            "rewritten when read: latest_since",
+        ),
+        (
+            lambda state: state.update(schema_version=2),
+            "rewritten when read: schema_version",
+        ),
+    ],
+    ids=["missing", "extra", "empty-dates", "offset-time", "schema-version"],
+)
+def test_the_routes_plan_names_the_fields_that_do_not_read_back(
+    monkeypatch, change, reason
+):
+    stored = _complete_state()
+    change(stored)
+    _install(monkeypatch, NEW)
+
+    with pytest.raises(ValueError, match=re.escape(f"({reason})")):
+        registry.plan_routes_publication(current_state=stored, deployed=_deployed(NEW))
+
+
+def test_the_routes_plan_names_a_stored_value_that_is_not_a_mapping(monkeypatch):
+    _install(monkeypatch, NEW)
+
+    with pytest.raises(ValueError, match=re.escape("(it is a str, not a mapping)")):
+        registry.plan_routes_publication(
+            current_state="not a routing state", deployed=_deployed(NEW)
+        )
+
+
+def _restored_state(monkeypatch) -> dict:
+    newer = published_routing_state(monkeypatch, None, *OLD)
+    newer = published_routing_state(monkeypatch, newer, *NEW)
+    return registry.build_restored_routing_state(
+        current_state=newer, policyengine_version=OLD[0]
+    )
+
+
+def _latest_plan_state(monkeypatch) -> dict:
+    before = _old_release_state(monkeypatch)
+    _install(monkeypatch, OLD, NEW)
+    routes = registry.plan_routes_publication(
+        current_state=before, deployed=_deployed(NEW), publication_id="74401-1-beta"
+    )
+    return registry.plan_latest_publication(
+        current_state=routes["after"],
+        deployed=_deployed(NEW),
+        publication_id="74401-1-beta",
+    )["after"]
+
+
+@pytest.mark.parametrize(
+    "written",
+    [_restored_state, _latest_plan_state],
+    ids=["restored-latest", "latest-plan"],
+)
+def test_the_routes_plan_accepts_states_the_publisher_writes(monkeypatch, written):
+    stored = json.loads(json.dumps(written(monkeypatch)))
+    release = ("6.2.0", "1.3.0", "2.3.0")
+    _install(monkeypatch, OLD, NEW, release)
+
+    plan = registry.plan_routes_publication(
+        current_state=stored, deployed=_deployed(release)
+    )
+
+    assert plan["after"]["latest"] == stored["latest"]

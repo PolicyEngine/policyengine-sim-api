@@ -58,17 +58,24 @@ A deployment publishes routing twice (rule `sim.deploy.latest-moves-after-checks
 
 1. **Before its checks**, `update_routing` adds the release's routes (its
    policyengine.py version and its US and UK model versions, mapped to the
-   deployed app) and its bundle manifest, and leaves `latest` alone (only a
-   publication into a routing state with no latest policyengine.py version,
-   the first one, makes the release latest, since no earlier release exists to
-   keep). The checks pin those versions, so they reach the release through
-   the gateway, while unpinned requests still reach the previous release.
-   Requests that pin one of the release's US or UK model versions without a
-   policyengine.py version reach the release from this point, including a model
-   version it shares with the previous release. The job completes its own
-   publication, so a failed check leaves the routes in place, and those
-   requests keep reaching the failed release until a rerun succeeds or a
-   rollback with `deploy_run_id` removes its routes.
+   deployed app) and its bundle manifest, and leaves `latest` alone. The
+   checks pin those versions, so they reach the release through the gateway,
+   while unpinned requests still reach the previous release. Requests that
+   pin one of the release's US or UK model versions without a policyengine.py
+   version reach the release from this point, including a model version it
+   shares with the previous release. The job completes its own publication,
+   so a failed check leaves the routes in place, and those requests keep
+   reaching the failed release until a rerun succeeds or a rollback with
+   `deploy_run_id` removes its routes.
+
+   The job publishes only into a stored routing state that is already valid
+   with a complete `latest` (a routed policyengine.py, US and UK version), or
+   into a missing or empty one: the first publication, which makes the
+   release latest (if the gateway was resolving through the legacy version
+   Dicts, those requests move to the release at this step). Before
+   publishing anything, it refuses any other stored state, which an operator
+   must repair, and refuses to reroute `latest`'s policyengine.py version to
+   the release when that version's stored route names another app.
 2. **After every check and the Cloud Run promotion**, `publish_latest` moves
    `latest` to the release when it is newer (or with `force_latest`), checks
    with the entrypoint smoke that the release is routed and, when it is now
