@@ -10,6 +10,85 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.6.0] - 2026-11-09
+
+### Added
+
+- CI checks sim's models of the tables the simulation service writes against the tables the Public API's migration chain builds at a pinned Public API commit, and that the service's role can write them; a weekly run compares them with the Public API's default branch, and opens an issue, or comments on the open one, when that comparison fails.
+- The Simulation Entrypoint connects to the Public API's database with its own role, mounted as `SIMULATION_SERVICE_DATABASE_URL` on every deploy, and models the tables it writes there (simulations, reports, their runs, budget window calculations and household jobs), with their foreign keys to the Public API's own tables. `GET /ready` reports whether it reached the database and whether its role holds every privilege it needs, the service logs any it lacks, a check that reached the database is reused for 30 seconds, and the candidate check requires them all. Every runtime secret is now resolved in its own assignment, so one that cannot be resolved stops the deploy.
+
+
+## [0.5.5] - 2026-11-09
+
+### Changed
+
+- A deployment now publishes its release's routes before its checks without moving `latest`, and moves `latest` to the release only after every check and the Cloud Run promotion pass, then checks that unpinned requests reach it and puts `latest` back if that check fails. Unpinned requests in staging and production move to a new policyengine.py version only after that environment's checks pass, and rerunning only a deployment's failed jobs now completes it without republishing its routes.
+
+### Fixed
+
+- Retried a simulation's run-time dataset download up to twice (three attempts in all), with a jittered wait that doubles, when Hugging Face's connection failed, timed out, ended the response early or answered with a 5xx status, so one CDN timeout no longer fails a run. Rejected credentials (401, 403), a missing dataset (404), other 4xx responses and a SHA-256 mismatch are never retried.
+
+
+## [0.5.4] - 2026-11-06
+
+### Changed
+
+- Updated policyengine.py from 6.12.1 to 6.16.0 in the simulation runtime.
+
+
+## [0.5.3] - 2026-11-06
+
+### Fixed
+
+- The release sentinel check keeps polling a job through HTTP 502 and 504, as it already did for 503, until its 30-minute deadline. A gateway container restart while the check is polling, which the entrypoint reports as 504 (or passes on from the gateway's proxy as 502), no longer fails a release. If the deadline passes, the check names the last status it got, and it never waits past the deadline whatever `Retry-After` asks.
+
+
+## [0.5.2] - 2026-11-05
+
+### Changed
+
+- Updated policyengine.py from 6.12.0 to 6.12.1 in the simulation runtime.
+
+
+## [0.5.1] - 2026-11-05
+
+### Changed
+
+- Rule `sim.microdata.weight-stripping-confined` is now enforced: a read of raw values from a weighted frame or column that the executor's tests find anywhere but the body of `_count_output_entities`, the function that counts entities, fails them, with no recorded exceptions. Its empty baseline, `rules/baselines/sim-microdata-weight-stripping.txt`, is deleted.
+
+
+## [0.5.0] - 2026-11-05
+
+### Changed
+
+- The manual rollback workflow's steps now run tested scripts under `.github/scripts/` instead of inline shell, with unchanged inputs, outputs and exit statuses. Rule `sim.ci.multiline-run-is-script` is now enforced with no baseline: any multi-line `run:` block in a workflow fails the quality-guards job.
+
+### Removed
+
+- US national, region-group and segmented national runs, and Stage 12 aggregation of a national report, no longer compute congressional district impacts: their `congressional_district_impact` is null, and the job-status response leaves it out. US state runs still list their own districts, from which nationwide reports now take each district; apps deployed for older policyengine.py versions are not rebuilt and still compute districts for national runs.
+
+
+## [0.4.3] - 2026-11-05
+
+### Changed
+
+- Ran the `Changelog fragment` check from its own workflow on every pull request, whatever branch it targets and including each one in a stack, so the required check is never skipped; changing a pull request's base branch runs it again.
+
+
+## [0.4.2] - 2026-11-04
+
+### Changed
+
+- The deployment workflow's routing publication steps and release-sentinel checks now run tested scripts under `.github/scripts/` instead of inline shell. Their inputs, outputs and exit statuses are unchanged.
+
+
+## [0.4.1] - 2026-11-03
+
+### Changed
+
+- Withdrew the unreleased refusal of simulation years the model cannot project its dataset to (#970), until the Public API and the app refuse those years first.
+
+
 ## [0.4.0] - 2026-11-03
 
 ### Added

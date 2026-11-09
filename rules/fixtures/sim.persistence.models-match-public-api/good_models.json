@@ -1,0 +1,112 @@
+{
+  "enums": {
+    "v2_simulation_status": [
+      "pending",
+      "running",
+      "succeeded",
+      "failed"
+    ]
+  },
+  "tables": {
+    "simulation_runs": {
+      "columns": {
+        "completed_at": {
+          "column_type": "timestamp with time zone",
+          "default": null,
+          "nullable": true
+        },
+        "country_package_version": {
+          "column_type": "character varying(128)",
+          "default": null,
+          "nullable": false
+        },
+        "created_at": {
+          "column_type": "timestamp with time zone",
+          "default": "now()",
+          "nullable": false
+        },
+        "dataset_id": {
+          "column_type": "uuid",
+          "default": null,
+          "nullable": true
+        },
+        "error_message": {
+          "column_type": "character varying",
+          "default": null,
+          "nullable": true
+        },
+        "household_result": {
+          "column_type": "json",
+          "default": null,
+          "nullable": true
+        },
+        "id": {
+          "column_type": "uuid",
+          "default": null,
+          "nullable": false
+        },
+        "modal_call_id": {
+          "column_type": "character varying(255)",
+          "default": null,
+          "nullable": true
+        },
+        "output_sha256": {
+          "column_type": "character varying(64)",
+          "default": null,
+          "nullable": true
+        },
+        "output_uri": {
+          "column_type": "character varying(2048)",
+          "default": null,
+          "nullable": true
+        },
+        "policyengine_version": {
+          "column_type": "character varying(128)",
+          "default": null,
+          "nullable": false
+        },
+        "region_id": {
+          "column_type": "uuid",
+          "default": null,
+          "nullable": true
+        },
+        "simulation_id": {
+          "column_type": "uuid",
+          "default": null,
+          "nullable": false
+        },
+        "started_at": {
+          "column_type": "timestamp with time zone",
+          "default": null,
+          "nullable": true
+        },
+        "status": {
+          "column_type": "enum v2_simulation_status",
+          "default": null,
+          "nullable": false
+        },
+        "tax_benefit_model_version_id": {
+          "column_type": "uuid",
+          "default": null,
+          "nullable": false
+        },
+        "updated_at": {
+          "column_type": "timestamp with time zone",
+          "default": "now()",
+          "nullable": false
+        }
+      },
+      "constraints": {
+        "ck_simulation_runs_output_pair": "CHECK (((output_uri IS NULL) = (output_sha256 IS NULL)))",
+        "ck_simulation_runs_output_sha256_length": "CHECK (((output_sha256 IS NULL) OR (length((output_sha256)::text) = 64)))",
+        "ck_simulation_runs_terminal_completion": "CHECK (((status <> ALL (ARRAY['succeeded'::v2_simulation_status, 'failed'::v2_simulation_status])) OR (completed_at IS NOT NULL)))",
+        "fk_simulation_runs_simulation_id_simulations": "FOREIGN KEY (simulation_id) REFERENCES simulations(id) ON DELETE CASCADE",
+        "pk_simulation_runs": "PRIMARY KEY (id)"
+      },
+      "indexes": {
+        "ix_simulation_runs_current_output": "CREATE INDEX ix_simulation_runs_current_output ON public.simulation_runs USING btree (simulation_id, status, country_package_version, policyengine_version, completed_at, id)",
+        "ix_simulation_runs_status_started_at": "CREATE INDEX ix_simulation_runs_status_started_at ON public.simulation_runs USING btree (status, started_at)"
+      }
+    }
+  }
+}

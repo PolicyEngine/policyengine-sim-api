@@ -1,0 +1,123 @@
+"""Sim's table models match the tables the Public API's migration chain builds.
+
+Rule sim.persistence.models-match-public-api. ``PUBLIC_API_SCHEMA_DATABASE_URL``
+names a database the Public API's v2 migration chain built at the pinned
+commit (the ``public-api-schema`` job builds it). The models' own tables are
+built from ``service_metadata`` in a disposable database, after the Public
+API's tables their keys name, which ``referenced_metadata`` models by their
+``id`` alone, and both databases are read through the same catalog queries.
+Only the models' own tables are compared. Without the Public API's database the
+comparison skips, unless ``SIMULATION_REQUIRE_PUBLIC_API_SCHEMA=1`` (set in
+that job), where it fails instead.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+from policyengine_simulation_persistence import referenced_metadata, service_metadata
+from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
+from schema_comparison import (
+    describe_tables,
+    foreign_keys_to,
+    schema_differences,
+    schema_from_json,
+)
+from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
+
+# The reference script sets it on GitHub Actions: the Public API commit built.
+COMMIT_VARIABLE = "PUBLIC_API_SCHEMA_COMMIT"
+PROOF_FIXTURES = (
+    Path(__file__).resolve().parents[3]
+    / "rules"
+    / "fixtures"
+    / "sim.persistence.models-match-public-api"
+)
+
+
+def _engine(database_url: str):
+    return create_engine(make_url(database_url).set(drivername="postgresql+psycopg"))
+
+
+# Not marked postgres: the Simulation database job, which selects that
+# marker, has no Public API database, so the test could only skip there.
+@pytest.mark.public_api_schema
+def test_the_models_match_the_public_api_tables(
+    disposable_database, public_api_database_url
+) -> None:
+    table_names = [table.name for table in service_metadata.tables.values()]
+    models_engine = _engine(disposable_database.superuser_url)
+    real_engine = _engine(public_api_database_url)
+    try:
+        # Tests may build the models' tables; runtime code never does. The
+        # tables their keys name come first.
+        referenced_metadata.create_all(models_engine)
+        service_metadata.create_all(models_engine)
+        with models_engine.connect() as connection:
+            models = describe_tables(connection, table_names)
+        with real_engine.connect() as connection:
+            real = describe_tables(connection, table_names)
+    finally:
+        models_engine.dispose()
+        real_engine.dispose()
+
+    assert set(models.tables) == set(table_names)
+    compared_with = os.environ.get(COMMIT_VARIABLE) or "an unrecorded commit"
+    assert schema_differences(models, real) == [], (
+        f"compared with the Public API at {compared_with}"
+    )
+
+
+# Marked so the rule's own CI jobs, which select public_api_schema, collect it.
+@pytest.mark.public_api_schema
+def test_rule_proof_models_match_public_api() -> None:
+    """Proof for rule sim.persistence.models-match-public-api.
+
+    ``public_api_schema.json`` describes ``simulation_runs`` as an earlier
+    commit of the Public API's chain built it, before the table gained
+    ``year`` and its keys to the Public API's own tables; the proof needs only
+    a fixed description. The bad models copy ``status`` as
+    ``character varying(32)``, where the Public API's column is the enum
+    ``v2_simulation_status``, and leave out ``modal_call_id``, which a later
+    revision added.
+    """
+    real = schema_from_json(PROOF_FIXTURES / "public_api_schema.json")
+    bad = schema_from_json(PROOF_FIXTURES / "bad_models.json")
+    good = schema_from_json(PROOF_FIXTURES / "good_models.json")
+
+    assert schema_differences(bad, real) == [
+        "simulation_runs.status: the model is character varying(32), the Public "
+        "API's is enum v2_simulation_status",
+        "simulation_runs.modal_call_id: the model has no such column",
+    ]
+    assert schema_differences(good, real) == []
+
+
+@pytest.mark.public_api_schema
+def test_the_public_api_keeps_its_keys_from_the_services_tables(
+    public_api_database_url,
+) -> None:
+    """The keys from the service's tables to the Public API's own are the 20 expected.
+
+    Each is compared by its table, its name and the table it names; the
+    comparison with the models checks the rest of its definition.
+
+    The Public API's own tables are those ``referenced_metadata`` models: users,
+    policies, dynamics, households, datasets, regions and the model catalog.
+    """
+    table_names = [table.name for table in service_metadata.tables.values()]
+    public_api_tables = {table.name for table in referenced_metadata.tables.values()}
+    real_engine = _engine(public_api_database_url)
+    try:
+        with real_engine.connect() as connection:
+            real = describe_tables(connection, table_names)
+    finally:
+        real_engine.dispose()
+
+    assert foreign_keys_to(real, public_api_tables) == {
+        table_and_name: named_columns.partition("(")[0]
+        for table_and_name, (_, named_columns, _) in KEYS_TO_PUBLIC_API_TABLES.items()
+    }

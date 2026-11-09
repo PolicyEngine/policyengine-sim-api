@@ -12,9 +12,10 @@ from test_deployment_assets_support import (
     VERSIONS_BODY,
     evaluate_github_expression,
     routing_context,
-    run_bash,
     run_identity_smoke,
+    run_step,
     sentinel_check_step,
+    step_shell,
     workflow_jobs,
 )
 
@@ -104,6 +105,17 @@ def test_the_expression_evaluator_refuses_what_it_cannot_read(expression):
         ({"needs__promote_entrypoint__result": "failure"}, True, "false"),
         # Publication then a failure inside update_routing itself (#744 H2).
         ({"needs__update_routing__result": "failure"}, True, "false"),
+        # latest failed to move or its check failed: its publication restores.
+        ({"needs__publish_latest__result": "failure"}, True, "false"),
+        # A check failed, so latest never moved; the routes stay completed.
+        (
+            {
+                "needs__integration__result": "failure",
+                "needs__publish_latest__result": "skipped",
+            },
+            True,
+            "false",
+        ),
         (
             {
                 "inputs__promote_entrypoint": False,
@@ -200,6 +212,8 @@ def test_the_expression_evaluator_refuses_what_it_cannot_read(expression):
         "authenticated",
         "promotion",
         "routing-job",
+        "latest-job",
+        "latest-skipped-after-a-failed-check",
         "no-promotion",
         "missing-outputs",
         "runner-lost-all-outputs",
@@ -219,7 +233,7 @@ def test_finalizer_always_resolves_a_publication_with_the_release_gate_outcome(
     step = next(
         step
         for step in finalizer["steps"]
-        if "--finalize-publication" in step.get("run", "")
+        if "--finalize-publication" in step_shell(step)
     )
     context = routing_context(**overrides)
     assert (
@@ -243,26 +257,19 @@ def test_a_failing_sentinel_fails_its_step(tmp_path, job):
         "exit 0\n"
     )
     (bin_dir / "uv").chmod(0o755)
-    script = step["run"].replace(
-        "${{ needs.deploy_entrypoint.outputs.candidate_url }}", "https://candidate"
-    )
-    result = run_bash(
-        # GitHub runs `run` blocks with bash -e -o pipefail.
-        "--noprofile",
-        "--norc",
-        "-eo",
-        "pipefail",
-        "-c",
-        script,
-        check=False,
-        capture_output=True,
+    # The step runs from its working directory, so it runs the real script.
+    result = run_step(
+        step,
+        replacements={
+            "${{ needs.deploy_entrypoint.outputs.candidate_url }}": "https://candidate"
+        },
         env={
             "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             "RUNNER_TEMP": str(tmp_path),
             "STABLE_URL": "https://stable",
         },
     )
-    assert result.returncode == 9
+    assert result.returncode == 9, result.stderr
 
 
 def test_stage12_only_promotion_runs_whatever_the_skipped_stack_jobs():

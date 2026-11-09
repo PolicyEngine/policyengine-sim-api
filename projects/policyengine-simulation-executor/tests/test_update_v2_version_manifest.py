@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 import pytest
@@ -47,9 +48,9 @@ def test_publisher_rejects_validation_for_another_application() -> None:
 
 
 def test_deployment_workflow_keeps_v2_optional_and_separate() -> None:
+    repository_root = publisher.Path(__file__).resolve().parents[3]
     workflow = (
-        publisher.Path(__file__).resolve().parents[3]
-        / ".github/workflows/simulation-deploy.reusable.yml"
+        repository_root / ".github/workflows/simulation-deploy.reusable.yml"
     ).read_text(encoding="utf-8")
 
     assert "deploy_stage12_v2:" in workflow
@@ -65,6 +66,12 @@ def test_deployment_workflow_keeps_v2_optional_and_separate() -> None:
     # the file) restores v1 routing only for existing-stack deployments.
     stage12_jobs = v2_section[: v2_section.index("\n  integration:")]
     assert "src.modal.utils.update_version_registry" not in stage12_jobs
+    # Nor do the repository scripts those jobs run.
+    called_scripts = re.findall(r"\.github/scripts/([\w.-]+\.sh)", stage12_jobs)
+    assert called_scripts
+    for name in called_scripts:
+        script = (repository_root / ".github/scripts" / name).read_text()
+        assert "update_version_registry" not in script, name
     deploy_section = v2_section[: v2_section.index("\n  publish_stage12_v2_manifest:")]
     for declaration in (
         "OBSERVABILITY_SERVICE_NAMESPACE: ${{ vars.OBSERVABILITY_SERVICE_NAMESPACE }}",

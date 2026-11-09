@@ -13,12 +13,14 @@ Invariants:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 from pathlib import Path
 
 import pytest
+from test_deployment_assets_support import step_shell
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 ROLLBACK_WORKFLOW = (
@@ -27,6 +29,9 @@ ROLLBACK_WORKFLOW = (
 DEPLOY_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.yml"
 VALIDATOR = (
     REPOSITORY_ROOT / ".github" / "scripts" / "validate-simulation-rollback-inputs.sh"
+)
+RESTORE_ROUTING_SCRIPT = (
+    REPOSITORY_ROOT / ".github" / "scripts" / "rollback-restore-routing.sh"
 )
 
 
@@ -157,10 +162,11 @@ def _rollback_workflow() -> dict:
 
 
 def _step_index(steps, fragment):
+    """Return the first step whose shell (with its scripts) or uses: holds fragment."""
     return next(
         index
         for index, step in enumerate(steps)
-        if fragment in step.get("run", "") or fragment in step.get("uses", "")
+        if fragment in step_shell(step) or fragment in step.get("uses", "")
     )
 
 
@@ -176,7 +182,8 @@ def test_rollback_validates_first_and_verifies_last():
     assert validate < traffic < verify
     download = steps[_step_index(steps, "actions/download-artifact@")]
     assert download["with"]["run-id"] == "${{ inputs.deploy_run_id }}"
-    assert download["with"]["pattern"] == "routing-plan-${{ inputs.target }}-*"
+    # Each attempt keeps a routes plan and, once latest moved, a latest plan.
+    assert download["with"]["pattern"] == "routing-*plan-${{ inputs.target }}-*"
     assert validate < steps.index(download) < restore
 
 
@@ -195,15 +202,15 @@ def test_operator_recovery_prints_the_journal_then_restores_without_artifacts():
     assert validate < recover
     step = steps[recover]
     assert step["if"] == "${{ inputs.resolve_pending_publication }}"
-    assert step["run"].index("--print-pending-plan") < step["run"].index(
-        "--finalize-publication"
-    )
-    assert '--environment "${MODAL_ENVIRONMENT}"' in step["run"]
-    assert '--release-environment "${TARGET}"' in step["run"]
-    assert "--gates-passed false" in step["run"]
-    assert "--publication-run" not in step["run"]
-    assert "--restore-plan" not in step["run"]
-    assert "--restore-latest" not in step["run"]
+    # test_simulation_rollback_scripts.py runs the script and checks its calls.
+    shell = step_shell(step)
+    assert shell.index("--print-pending-plan") < shell.index("--finalize-publication")
+    assert '--environment "${MODAL_ENVIRONMENT}"' in shell
+    assert '--release-environment "${TARGET}"' in shell
+    assert "--gates-passed false" in shell
+    assert "--publication-run" not in shell
+    assert "--restore-plan" not in shell
+    assert "--restore-latest" not in shell
     # A first-ever failed release has no restored identity or Cloud Run
     # service. Recovering its journal still succeeds and unblocks publishing.
     for fragment in (
@@ -234,23 +241,31 @@ def test_rollback_verifies_the_whole_restored_identity():
     assert verify["env"]["EXPECTED_UK_DATASET_SHA256"] == (
         "${{ steps.identity.outputs.uk_dataset_sha256 || 'unrecorded' }}"
     )
-    # A version-mode rollback must have made that version latest.
+    # A version-mode rollback must have made that version latest;
+    # test_simulation_rollback_scripts.py runs the check.
     assert (
         '"${EXPECTED_POLICYENGINE_VERSION}" != "${POLICYENGINE_VERSION}"'
-        in verify["run"]
+        in step_shell(verify)
     )
 
 
-def _restore_script() -> str:
-    restore = _rollback_steps()[_step_index(_rollback_steps(), "--restore-plan")]
-    script = restore["run"].split("\nelse\n")[0].split("then\n", 1)[1]
-    return script.replace("uv run --frozen python", "printf '%s\\n'")
+def _inventory_job(
+    *,
+    job=None,
+    step=None,
+    conclusion="success",
+    target="prod",
+    started_at="2026-11-05T00:00:00Z",
+):
+    """Return a job as an attempt's job list shows it.
 
-
-def _inventory_job(*, job=None, step=None, conclusion="success", target="prod"):
+    A rerun lists the jobs it carried over from the attempt before with
+    their original ``started_at`` and steps, and uploads nothing for them.
+    """
     return {
         "name": job
         or f"Complete {target} deployment / Publish routing after all services pass",
+        "started_at": started_at,
         "steps": [
             {
                 "name": step or "Keep the plan for a guarded restore",
@@ -266,10 +281,14 @@ def _fake_gh(
     kept: dict[int, int],
     inventory: dict[int, list[dict]] | None = None,
 ) -> None:
-    """Return API JSON and execute the workflow's real --jq filter with jq."""
+    """Return API JSON and execute the restore script's real --jq filter with jq."""
     payloads = {}
     for attempt in range(1, attempts + 1):
-        jobs = [_inventory_job() for _ in range(kept.get(attempt, 0))]
+        # Each attempt's routes job ran in that attempt, so its start differs.
+        jobs = [
+            _inventory_job(started_at=f"2026-11-05T{attempt:02d}:00:00Z")
+            for _ in range(kept.get(attempt, 0))
+        ]
         # These are real-looking jobs/steps which must never count as a kept
         # plan. Dropping any job, step, or success selector changes the result.
         jobs.extend(
@@ -308,27 +327,47 @@ sys.exit(result.returncode)
     (bin_dir / "gh").chmod(0o755)
 
 
+def _routes_plan(attempt: int) -> str:
+    return f"routing-plan-prod-{attempt}"
+
+
+def _latest_plan(attempt: int) -> str:
+    return f"routing-latest-plan-prod-{attempt}"
+
+
+LATEST_JOB = "Complete prod deployment / Move latest to the release after every check"
+LATEST_KEEP_STEP = "Keep the latest plan for a guarded restore"
+
+
 def _run_restore(
     tmp_path: Path,
     attempts: int,
     kept: dict,
-    present: list[int],
+    present: list[str] | dict[str, dict],
     inventory: dict[int, list[dict]] | None = None,
 ):
+    """Run the restore with the named plan artifacts downloaded.
+
+    ``present`` names the downloaded artifacts, or maps each to its plan's
+    digests (``before_sha256`` and ``after_sha256``).
+    """
     runner_temp = tmp_path / "runner-temp-with-dashes"
     (runner_temp / "routing-plans").mkdir(parents=True)
-    for attempt in present:
-        directory = runner_temp / "routing-plans" / f"routing-plan-prod-{attempt}"
+    plans = (
+        present if isinstance(present, dict) else {artifact: {} for artifact in present}
+    )
+    for artifact, digests in plans.items():
+        directory = runner_temp / "routing-plans" / artifact
         directory.mkdir(parents=True)
-        (directory / "plan.json").write_text("{}")
+        (directory / "plan.json").write_text(json.dumps(digests))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _fake_gh(bin_dir, attempts, kept, inventory)
+    # The publisher's arguments, one per line, stand in for the restore.
+    (bin_dir / "uv").write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$@\"\n")
+    (bin_dir / "uv").chmod(0o755)
     return _run_bash(
-        "-eo",
-        "pipefail",
-        "-c",
-        _restore_script(),
+        RESTORE_ROUTING_SCRIPT,
         check=False,
         capture_output=True,
         env={
@@ -337,6 +376,8 @@ def _run_restore(
             "TARGET": "prod",
             "MODAL_ENVIRONMENT": "main",
             "DEPLOY_RUN_ID": "1",
+            "POLICYENGINE_VERSION": "",
+            "EXPECTED_LATEST": "",
             "GITHUB_REPOSITORY": "PolicyEngine/policyengine-sim-api",
         },
     )
@@ -345,7 +386,12 @@ def _run_restore(
 def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
     """#744 review: a later attempt must not hide an earlier publication."""
     attempts = [1, 10, 2, 9]
-    result = _run_restore(tmp_path, 10, dict.fromkeys(attempts, 1), present=attempts)
+    result = _run_restore(
+        tmp_path,
+        10,
+        dict.fromkeys(attempts, 1),
+        present=[_routes_plan(attempt) for attempt in attempts],
+    )
     assert result.returncode == 0, result.stderr
     passed = result.stdout.split("--restore-plan\n", 1)[1].split()
     assert [Path(path).parent.name for path in passed] == [
@@ -356,9 +402,206 @@ def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
     ]
 
 
+ROUTES_STARTED = "2026-11-05T14:04:57Z"
+FIRST_LATEST_STARTED = "2026-11-05T14:40:00Z"
+SECOND_LATEST_STARTED = "2026-11-06T09:00:00Z"
+
+
+def _rerun_of_the_latest_job() -> dict[int, list[dict]]:
+    """Attempt 1 ran both jobs; attempt 2 reran only the latest job.
+
+    Attempt 2's job list still shows the routes job, carried over with
+    attempt 1's start time, as GitHub lists it (run 42040665530).
+    """
+    routes = _inventory_job(started_at=ROUTES_STARTED)
+    return {
+        1: [
+            routes,
+            _inventory_job(
+                job=LATEST_JOB, step=LATEST_KEEP_STEP, started_at=FIRST_LATEST_STARTED
+            ),
+        ],
+        2: [
+            routes,
+            _inventory_job(
+                job=LATEST_JOB, step=LATEST_KEEP_STEP, started_at=SECOND_LATEST_STARTED
+            ),
+        ],
+    }
+
+
+def test_rollback_passes_each_attempts_routes_then_latest_plan_oldest_first(
+    tmp_path,
+):
+    """A rerun's latest plan is restored after the earlier attempt's plans.
+
+    Attempt 1 published the routes and moved latest, which a check put back;
+    attempt 2 reran only the latest job and moved latest again.
+    """
+    result = _run_restore(
+        tmp_path,
+        2,
+        {},
+        present=[_latest_plan(2), _routes_plan(1), _latest_plan(1)],
+        inventory=_rerun_of_the_latest_job(),
+    )
+    assert result.returncode == 0, result.stderr
+    passed = result.stdout.split("--restore-plan\n", 1)[1].split()
+    assert [Path(path).parent.name for path in passed] == [
+        _routes_plan(1),
+        _latest_plan(1),
+        _latest_plan(2),
+    ]
+
+
+def test_rollback_needs_no_plan_from_a_job_a_rerun_carried_over(tmp_path):
+    """Attempt 2 lists attempt 1's routes job but uploaded no routes plan."""
+    result = _run_restore(
+        tmp_path,
+        2,
+        {},
+        present=[_routes_plan(1), _latest_plan(1), _latest_plan(2)],
+        inventory=_rerun_of_the_latest_job(),
+    )
+    assert result.returncode == 0, result.stderr
+    assert _routes_plan(2) not in result.stdout
+
+
+def _plan_digests(before: str, after: str) -> dict:
+    return {"before_sha256": before * 64, "after_sha256": after * 64}
+
+
+def test_rollback_needs_no_plan_whose_change_a_later_plan_shows_undone(tmp_path):
+    """GitHub stops listing an attempt's artifact once its job reruns.
+
+    Attempt 1's latest plan (a to b) was put back after its check failed, so
+    attempt 2's latest plan replaced the routes plan's state again (a to c):
+    nothing attempt 1's latest plan published can still be live.
+    """
+    result = _run_restore(
+        tmp_path,
+        2,
+        {},
+        present={
+            _routes_plan(1): _plan_digests("0", "a"),
+            _latest_plan(2): _plan_digests("a", "c"),
+        },
+        inventory=_rerun_of_the_latest_job(),
+    )
+    assert result.returncode == 0, result.stderr
+    passed = result.stdout.split("--restore-plan\n", 1)[1].split()
+    assert [Path(path).parent.name for path in passed] == [
+        _routes_plan(1),
+        _latest_plan(2),
+    ]
+
+
+@pytest.mark.parametrize(
+    "present",
+    [
+        # Attempt 2's plan replaced attempt 1's latest state, still live under it.
+        {
+            _routes_plan(1): _plan_digests("0", "a"),
+            _latest_plan(2): _plan_digests("b", "c"),
+        },
+        # Attempt 1's routes plan is missing, and no earlier plan shows what
+        # it replaced.
+        {_latest_plan(2): _plan_digests("a", "c")},
+        # The plan after the missing one records no digests to compare.
+        {_routes_plan(1): _plan_digests("0", "a"), _latest_plan(2): {}},
+    ],
+    ids=["missing-change-still-live", "first-plan-missing", "no-digests"],
+)
+def test_rollback_refuses_a_missing_plan_whose_change_may_be_live(tmp_path, present):
+    result = _run_restore(
+        tmp_path, 2, {}, present=present, inventory=_rerun_of_the_latest_job()
+    )
+    assert result.returncode == 1
+    assert "kept a prod" in result.stderr
+    assert "--restore-plan" not in result.stdout
+
+
+def test_rollback_leaves_out_a_missing_plan_published_after_every_other(tmp_path):
+    """No downloaded plan was published after attempt 2's latest plan.
+
+    Restoring the others is still exact: if attempt 2's change (or anything
+    built on it) is live, the live state matches no downloaded plan and the
+    restore refuses as a conflict, changing nothing.
+    """
+    result = _run_restore(
+        tmp_path,
+        2,
+        {},
+        present=[_routes_plan(1), _latest_plan(1)],
+        inventory=_rerun_of_the_latest_job(),
+    )
+    assert result.returncode == 0, result.stderr
+    passed = result.stdout.split("--restore-plan\n", 1)[1].split()
+    assert [Path(path).parent.name for path in passed] == [
+        _routes_plan(1),
+        _latest_plan(1),
+    ]
+
+
+def test_rollback_needs_no_plans_whose_changes_a_later_plan_shows_undone(tmp_path):
+    """Attempts 1 and 2 each moved latest and put it back; attempt 3 kept its."""
+    routes = _inventory_job(started_at=ROUTES_STARTED)
+    inventory = {
+        attempt: [
+            routes,
+            _inventory_job(
+                job=LATEST_JOB,
+                step=LATEST_KEEP_STEP,
+                started_at=f"2026-11-06T0{attempt}:00:00Z",
+            ),
+        ]
+        for attempt in (1, 2, 3)
+    }
+    result = _run_restore(
+        tmp_path,
+        3,
+        {},
+        present={
+            _routes_plan(1): _plan_digests("0", "a"),
+            _latest_plan(3): _plan_digests("a", "d"),
+        },
+        inventory=inventory,
+    )
+    assert result.returncode == 0, result.stderr
+    passed = result.stdout.split("--restore-plan\n", 1)[1].split()
+    assert [Path(path).parent.name for path in passed] == [
+        _routes_plan(1),
+        _latest_plan(3),
+    ]
+
+
+def test_rollback_reads_the_job_and_step_names_the_deploy_workflows_use():
+    """A renamed job or step would hide every kept plan from the rollback."""
+    import yaml
+
+    workflows = REPOSITORY_ROOT / ".github" / "workflows"
+    reusable = yaml.safe_load(
+        (workflows / "simulation-deploy.reusable.yml").read_text(encoding="utf-8")
+    )["jobs"]
+    deploy = yaml.safe_load(DEPLOY_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    script = RESTORE_ROUTING_SCRIPT.read_text(encoding="utf-8")
+
+    for target in ("beta", "prod"):
+        assert deploy[target]["name"] == f"Complete {target} deployment"
+    assert "Complete ${TARGET} deployment / ${job}" in script
+    for job_id, step_name in (
+        ("update_routing", "Keep the plan for a guarded restore"),
+        ("publish_latest", "Keep the latest plan for a guarded restore"),
+    ):
+        job = reusable[job_id]
+        assert f'job="{job["name"]}"' in script
+        assert f'step="{step_name}"' in script
+        assert any(step.get("name") == step_name for step in job["steps"])
+
+
 def test_rollback_refuses_when_an_attempts_plan_is_missing(tmp_path):
     """#744 review: attempt 1 published but its plan is gone; attempt 2's is not."""
-    result = _run_restore(tmp_path, 2, {1: 1, 2: 1}, present=[2])
+    result = _run_restore(tmp_path, 2, {1: 1, 2: 1}, present=[_routes_plan(2)])
     assert result.returncode == 1
     assert "Attempt 1 of run 1 kept a prod routing plan that cannot be found" in (
         result.stderr
@@ -367,7 +610,7 @@ def test_rollback_refuses_when_an_attempts_plan_is_missing(tmp_path):
 
 
 def test_rollback_ignores_attempts_that_kept_no_plan(tmp_path):
-    result = _run_restore(tmp_path, 2, {1: 0, 2: 1}, present=[2])
+    result = _run_restore(tmp_path, 2, {1: 0, 2: 1}, present=[_routes_plan(2)])
     assert result.returncode == 0, result.stderr
     assert "routing-plan-prod-2/plan.json" in result.stdout
 
@@ -394,12 +637,12 @@ def test_rollback_with_no_plan_at_all_fails(tmp_path):
 def test_inventory_jq_selects_only_successfully_kept_target_plans(
     tmp_path, ignored_job
 ):
-    """The workflow's job/step/conclusion jq selectors all run, not a stub."""
+    """The restore script's job/step/conclusion jq selectors all run, not a stub."""
     result = _run_restore(
         tmp_path,
         2,
         {2: 1},
-        present=[2],
+        present=[_routes_plan(2)],
         inventory={1: [ignored_job]},
     )
     assert result.returncode == 0, result.stderr

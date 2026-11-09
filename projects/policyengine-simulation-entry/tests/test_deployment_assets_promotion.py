@@ -17,6 +17,8 @@ from test_deployment_assets_support import (
     evaluate_github_expression,
     job_section,
     sentinel_check_step,
+    step_shell,
+    with_called_scripts,
     workflow_jobs,
 )
 
@@ -70,7 +72,6 @@ def test_full_stack_promotion_order_is_explicit():
         "deploy_executor",
         "authenticated_test",
         "sentinel_expected",
-        "update_routing",
     } <= promote_needs
     assert (
         'cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}" '
@@ -229,9 +230,15 @@ def test_stage12_only_deployment_cannot_redeploy_existing_modal_resources():
             "\n  integration:"
         )
     ]
-    assert "src.modal.utils.update_version_registry" not in stage12_section
-    finalizer_job = job_section(reusable_workflow, "finalize_routing")
-    assert "inputs.deploy_existing_stack &&" in finalizer_job
+    # The Stage 12 jobs, and the repository scripts they run, never touch v1
+    # routing.
+    assert "src.modal.utils.update_version_registry" not in with_called_scripts(
+        stage12_section
+    )
+    for job_name in ("finalize_routing", "publish_latest"):
+        assert "inputs.deploy_existing_stack &&" in job_section(
+            reusable_workflow, job_name
+        )
     sentinel_job = job_section(reusable_workflow, "sentinel_expected")
     assert "if: ${{ inputs.deploy_existing_stack }}" in sentinel_job
 
@@ -244,7 +251,12 @@ def test_deployed_stack_must_reproduce_the_numerical_sentinel():
     assert "release_sentinel expected" in sentinel_job
     assert "secrets.PE_UK_PRIVATE_HF_READ_TOKEN" in sentinel_job
     assert "secrets.GCP_CREDENTIALS_JSON" in sentinel_job
-    assert ".uk.dataset_sha256 == $d" in sentinel_job
+    bundle_check = next(
+        step
+        for step in jobs["sentinel_expected"]["steps"]
+        if step.get("name") == "Check the sentinel names this deployment's bundle"
+    )
+    assert ".uk.dataset_sha256 ==" in step_shell(bundle_check)
 
     integration = jobs["integration"]
     assert "needs.sentinel_expected.result == 'success'" in integration["if"]
@@ -265,7 +277,7 @@ def test_deployed_stack_must_reproduce_the_numerical_sentinel():
     promote = jobs["promote_entrypoint"]
     stable = sentinel_check_step(promote)
     assert stable["if"] == "${{ inputs.deploy_existing_stack }}"
-    assert '--base-url "${STABLE_URL}"' in stable["run"]
+    assert '"${STABLE_URL}"' in stable["run"]
     names = [step.get("name", "") for step in promote["steps"]]
     # A failing stable sentinel triggers the existing traffic restore step.
     assert promote["steps"].index(stable) < next(

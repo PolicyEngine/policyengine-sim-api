@@ -1,0 +1,4 @@
+# Proof fixture: the context leaves out one library the project installs.
+libs/*
+!libs/fixture-contract/
+!libs/fixture-contract/**
