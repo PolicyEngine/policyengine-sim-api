@@ -449,6 +449,42 @@ def test_stage12_functions_raise_the_application_error_from_the_real_operation_s
         _invoke(monkeypatch, module, function_name, fail)
 
 
+@pytest.mark.parametrize(
+    "function_name",
+    [
+        "run_single_simulation_us",
+        "run_single_simulation_uk",
+        "run_single_simulation_segment_us",
+        "coordinate_report",
+    ],
+)
+def test_stage12_functions_record_a_preemption_at_warning(
+    monkeypatch,
+    recorded_observability_runtime,
+    function_name,
+) -> None:
+    # Modal preempts a container by raising KeyboardInterrupt in the running
+    # function, then runs the same input again in a new container.
+    runtime, written_records = recorded_observability_runtime
+    module = _load(monkeypatch)
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+
+    def preempted(*_, **__):
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        _invoke(monkeypatch, module, function_name, preempted)
+
+    [completion] = [
+        record
+        for record in written_records
+        if record.get("event.name") == "operation.completed"
+    ]
+    assert completion["severity"] == "WARNING"
+    assert completion["outcome"] == "interrupted"
+    assert [record for record in written_records if record["severity"] == "ERROR"] == []
+
+
 def test_external_package_values_are_assertions_only(monkeypatch) -> None:
     install_fake_modal(monkeypatch)
     monkeypatch.setenv("STAGE12_EXPECT_US_VERSION", "not-the-bundled-version")

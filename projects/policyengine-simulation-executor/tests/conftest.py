@@ -73,6 +73,55 @@ def real_observability_runtime(monkeypatch):
     runtime.shutdown()
 
 
+@pytest.fixture
+def recorded_observability_runtime():
+    """Build an observability runtime that keeps every record it writes.
+
+    Yields the runtime and the list its structured records are appended to,
+    in the order they were written. OpenTelemetry is disabled and nothing is
+    exported.
+    """
+    from policyengine_observability import (
+        CustomLogDestination,
+        DeploymentIdentity,
+        LoggingConfig,
+        ObservabilityConfig,
+        OTelConfig,
+        ServiceIdentity,
+        configure,
+    )
+
+    written_records: list[dict] = []
+
+    class ListRecordWriter:
+        def write(self, record: dict) -> None:
+            written_records.append(record)
+
+    runtime = configure(
+        ObservabilityConfig(
+            service=ServiceIdentity(
+                name="policyengine-simulation-executor-test",
+                namespace="policyengine.test",
+                version="test",
+                role="test",
+            ),
+            deployment=DeploymentIdentity(environment="test", platform="local"),
+            logging=LoggingConfig(
+                destinations=(
+                    CustomLogDestination(
+                        name="test-records",
+                        writer_factory=ListRecordWriter,
+                        delivery="inline",
+                    ),
+                ),
+            ),
+            otel=OTelConfig(enabled=False),
+        )
+    )
+    yield runtime, written_records
+    runtime.shutdown()
+
+
 @pytest.fixture(autouse=True)
 def _forget_spm_runtime_caches():
     """Keep the SPM runtime memoization out of every other test's way.
