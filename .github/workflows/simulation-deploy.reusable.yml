@@ -690,8 +690,9 @@ jobs:
       # Adds the release's worker before the checks and leaves the manifest's
       # default version alone, so Stage 12 reports keep reaching the previous
       # worker: publish_stage12_v2_default moves the default after every
-      # check. No check is upstream of this job, so rerunning jobs that failed
-      # after it never republishes the worker.
+      # check. No check that runs after this publication is upstream of this
+      # job, so rerunning jobs that failed after it never republishes the
+      # worker.
       - name: Publish only the separate v2 manifest
         working-directory: projects/policyengine-simulation-executor
         env:
