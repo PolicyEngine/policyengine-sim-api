@@ -15,6 +15,7 @@ from pathlib import Path
 
 import modal
 from policyengine_simulation_contract.stage12_manifest import (
+    REGION_DATASETS_MANIFEST_KEY,
     V1_ROUTING_STATE_NAME,
     V2_VERSION_MANIFEST_NAME,
     V2CountryWorker,
@@ -94,10 +95,30 @@ def _publish_worker(
     return manifest
 
 
+def _key_holds(store: V2ManifestStore, key: str, copies: tuple[object, ...]) -> bool:
+    """Return whether ``key`` holds one of ``copies``, or is an older key that expired.
+
+    Modal expires a Dict entry after 7 days without a read or write, and
+    current readers read the oldest key only when neither newer key exists,
+    so it can expire between deployments. A write never deletes a key, so a
+    missing older key is never one a part-way write left behind, and the next
+    write restores it. The newest key, which current readers read first, is
+    required.
+    """
+    value = store.get(key)
+    if value is None and key != REGION_DATASETS_MANIFEST_KEY:
+        return True
+    return value in copies
+
+
 def _holds(store: V2ManifestStore, manifest: V2VersionManifest) -> bool:
-    """Return whether every reader's key holds its copy of ``manifest``."""
+    """Return whether every reader's key holds its copy of ``manifest``.
+
+    An older key that expired counts as holding it (see :func:`_key_holds`).
+    """
     return all(
-        store.get(key) == copy for key, copy in v2_manifest_copies(manifest).items()
+        _key_holds(store, key, (copy,))
+        for key, copy in v2_manifest_copies(manifest).items()
     )
 
 
@@ -106,12 +127,13 @@ def _holds_each_key_of_either(
 ) -> bool:
     """Return whether each key holds its copy of ``before`` or of ``after``.
 
-    A write that stopped part-way leaves some keys on each.
+    A write that stopped part-way leaves some keys on each. An older key that
+    expired counts as holding either (see :func:`_key_holds`).
     """
     before_copies = v2_manifest_copies(before)
     after_copies = v2_manifest_copies(after)
     return all(
-        store.get(key) in (copy, after_copies[key])
+        _key_holds(store, key, (copy, after_copies[key]))
         for key, copy in before_copies.items()
     )
 
@@ -149,7 +171,9 @@ def _move_default(store: V2ManifestStore, version: str, plan_file: Path) -> dict
         "after": _manifest_json(after),
         "before_sha256": manifest_digest(before),
         "after_sha256": manifest_digest(after),
-        "advances_default": after.default_version == version,
+        # Whether, after the move, requests that pin no v2 version reach the
+        # release's worker (also when the default already was the release).
+        "release_is_default": after.default_version == version,
     }
     plan_file.write_text(json.dumps(plan, indent=2, sort_keys=True), encoding="utf-8")
     if after == before:
@@ -311,7 +335,7 @@ def main() -> None:
         plan = _move_default(store, args.move_default, args.plan_out)
         print(f"before_sha256={plan['before_sha256']}")
         print(f"after_sha256={plan['after_sha256']}")
-        print(f"advances_default={'true' if plan['advances_default'] else 'false'}")
+        print(f"release_is_default={'true' if plan['release_is_default'] else 'false'}")
     elif args.verify_plan is not None:
         print(f"v2 default version: {_verify_plan(store, args.verify_plan)}")
     else:

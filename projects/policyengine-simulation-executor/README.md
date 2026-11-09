@@ -136,8 +136,9 @@ with its own mechanism, separate from the v1 routing jobs above:
 1. **Before its checks**, `publish_stage12_v2_manifest` adds the release's
    worker with `update_v2_version_manifest --keep-default`, leaving the
    default version as it is (the first worker becomes the default). Stage 12
-   reports keep reaching the previous worker. No check is upstream of this job,
-   so "Re-run failed jobs" after a failed check never republishes the worker.
+   reports keep reaching the previous worker. No check that runs after this
+   publication is upstream of this job, so "Re-run failed jobs" after a failed
+   check or default move never republishes the worker.
 2. **After every check and the Cloud Run promotion**,
    `publish_stage12_v2_default` moves the default to the release's worker
    when it is newer (`--move-default`), keeping a plan of the manifest before
@@ -146,23 +147,40 @@ with its own mechanism, separate from the v1 routing jobs above:
    fails or the run is cancelled, writes back the manifest it replaced, only
    while the stored manifest is still what it wrote (`--restore-plan`).
    `deployment_ready` requires this job to succeed whenever Stage 12 was
-   requested.
+   requested. This job does not wait for the v1 `publish_latest` job, so the
+   Stage 12 default can move even when v1 `latest` does not; `deployment_ready`
+   then fails the deployment.
 
 The manifest is three keys, one copy for each generation of reader, written
 one after another, so a write that stops part-way leaves some keys on the
 previous manifest. The move refuses to start unless all three hold the same
 manifest, the check reads all three, and the restore recognises a part-way
 write of either the move or an earlier restore and writes the starting
-manifest back to every key. A move that leaves the default where it is writes
-nothing, so the manifest's digest, which Stage 12 report identities include,
-stays the same.
+manifest back to every key. Modal expires a Dict entry after 7 days without a
+read or write, and current readers read the oldest key only when neither newer
+key exists, so it can expire between deployments. A write never deletes a key,
+so the move, check and restore accept a missing older key (the move and restore
+write it again); the newest key is required. A move that leaves the default
+where it is writes nothing, so the manifest's digest, which Stage 12 report
+identities include, stays the same.
 
 The plan is kept as the `stage12-v2-default-plan-<environment>-<attempt>`
-artifact. If the restore step itself fails, an operator can download that
-artifact and run `update_v2_version_manifest --environment <modal environment>
---restore-plan <plan.json>` with that environment's Modal credentials. No
-workflow restores an earlier default after a completed deploy, and the
-deployment's `force_latest` input does not move the v2 default.
+artifact whenever the move step ran, including a move that stopped part-way.
+If the restore step itself fails, an operator downloads that attempt's artifact
+and, from `projects/policyengine-simulation-executor`, runs
+`uv run --frozen python -m src.modal.utils.update_v2_version_manifest
+--environment <modal environment> --restore-plan <plan.json>` with Modal
+credentials for the workspace (the deployment uses the repository secrets
+`MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`). Do this before rerunning the job or
+deploying again. A rerun's move refuses keys that hold different manifests, and
+its own restore has no plan from the earlier attempt. The next deployment's
+worker publication reads the manifest the way a reader does and rewrites every
+key from that copy. After a move that wrote only the newest key, that drops
+the region datasets of every worker already in the manifest; after one that
+wrote the two newest, the failed
+release stays the default until that deployment's own move. No workflow
+restores an earlier default after a completed deploy, and the deployment's
+`force_latest` input does not move the v2 default.
 
 ## Baseline artifact pipeline (precompute → store → image fetch)
 

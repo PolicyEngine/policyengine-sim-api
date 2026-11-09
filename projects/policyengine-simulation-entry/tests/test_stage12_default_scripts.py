@@ -41,7 +41,7 @@ fi
 MOVER_STDOUT = (
     "before_sha256=" + "a" * 64 + "\n"
     "after_sha256=" + "b" * 64 + "\n"
-    "advances_default=true\n"
+    "release_is_default=true\n"
 )
 
 
@@ -132,12 +132,15 @@ def test_verify_and_restore_fail_when_the_publisher_fails(fakes, tmp_path, scrip
 
 
 def test_restore_without_a_plan_has_nothing_to_restore(fakes, tmp_path):
-    # The move failed before it kept a plan, so it wrote nothing.
+    # This attempt's move failed before it kept a plan, so this attempt wrote
+    # nothing. An earlier attempt's move may have, and its plan is that
+    # attempt's artifact.
     result = _run(fakes, tmp_path, RESTORE)
 
     assert result.returncode == 0, result.stderr
     assert fakes.calls() == []
-    assert "nothing to restore" in result.stdout
+    assert "This attempt's move kept no v2 default plan" in result.stdout
+    assert "stage12-v2-default-plan" in result.stdout
 
 
 @pytest.mark.parametrize(

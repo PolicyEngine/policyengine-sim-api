@@ -14,7 +14,9 @@ from types import SimpleNamespace
 
 import pytest
 from policyengine_simulation_contract.stage12_manifest import (
+    ACTIVE_MANIFEST_KEY,
     PRE_CACHE_MANIFEST_KEY,
+    REGION_DATASETS_MANIFEST_KEY,
     V2ManifestLoader,
     V2VersionManifest,
     V2WorkerVersion,
@@ -144,13 +146,13 @@ def test_move_default_plans_moves_and_reports_it(monkeypatch, tmp_path, store, c
     assert plan["version"] == _installed_version()
     assert plan["before"]["default_version"] == OLDER
     assert plan["after"]["default_version"] == _installed_version()
-    assert plan["advances_default"] is True
+    assert plan["release_is_default"] is True
     assert plan["before"] == json.loads(before.model_dump_json())
     assert V2ManifestLoader(store).resolve()[0] == _installed_version()
     assert capsys.readouterr().out.splitlines()[-3:] == [
         f"before_sha256={plan['before_sha256']}",
         f"after_sha256={plan['after_sha256']}",
-        "advances_default=true",
+        "release_is_default=true",
     ]
 
 
@@ -169,7 +171,7 @@ def test_move_default_keeps_a_newer_default(monkeypatch, tmp_path, store):
 
     plan = _move(monkeypatch, tmp_path, OLDER)
 
-    assert plan["advances_default"] is False
+    assert plan["release_is_default"] is False
     assert plan["before"] == plan["after"]
     assert store.writes == writes
     assert read_v2_manifest(store).default_version == _installed_version()
@@ -273,7 +275,7 @@ def test_the_plan_is_kept_before_the_manifest_is_written(monkeypatch, tmp_path, 
     with pytest.raises(RuntimeError, match="write failed"):
         _move(monkeypatch, tmp_path, _installed_version())
 
-    assert json.loads((tmp_path / "plan.json").read_text())["advances_default"]
+    assert json.loads((tmp_path / "plan.json").read_text())["release_is_default"]
 
 
 @pytest.mark.parametrize("completed_writes", [1, 2], ids=["one-key", "two-keys"])
@@ -348,3 +350,98 @@ def test_force_default_is_refused_outside_a_worker_publication(
 
     assert refusal.value.code == 2
     assert store.values == {}
+
+
+# Modal expires a Dict entry after 7 days without a read or write, and current
+# readers never read the oldest key, so a delayed rerun or an operator's
+# restore can find an older key missing. A write never deletes a key.
+OLDER_KEYS = pytest.mark.parametrize(
+    "expired_key",
+    [ACTIVE_MANIFEST_KEY, PRE_CACHE_MANIFEST_KEY],
+    ids=["active-with-cache", "active"],
+)
+
+
+@OLDER_KEYS
+def test_move_rewrites_an_expired_older_key(monkeypatch, tmp_path, store, expired_key):
+    _with_both_workers(store)
+    del store.values[expired_key]
+
+    plan = _move(monkeypatch, tmp_path, _installed_version())
+
+    assert store.holds(plan["after"])
+
+
+@OLDER_KEYS
+def test_restore_rewrites_an_expired_older_key(
+    monkeypatch, tmp_path, store, capsys, expired_key
+):
+    _with_both_workers(store)
+    plan = _move(monkeypatch, tmp_path, _installed_version())
+    del store.values[expired_key]
+
+    _run(monkeypatch, "--restore-plan", str(tmp_path / "plan.json"))
+
+    assert "v2 default restore: restored" in capsys.readouterr().out
+    assert store.holds(plan["before"])
+
+
+@OLDER_KEYS
+def test_verify_accepts_an_expired_older_key(
+    monkeypatch, tmp_path, store, capsys, expired_key
+):
+    _with_both_workers(store)
+    _move(monkeypatch, tmp_path, _installed_version())
+    del store.values[expired_key]
+
+    _run(monkeypatch, "--verify-plan", str(tmp_path / "plan.json"))
+
+    assert f"v2 default version: {_installed_version()}" in capsys.readouterr().out
+
+
+def test_move_refuses_a_manifest_without_its_newest_key(monkeypatch, tmp_path, store):
+    # Current readers read the newest key, so it is required.
+    _with_both_workers(store)
+    del store.values[REGION_DATASETS_MANIFEST_KEY]
+    writes = store.writes
+
+    with pytest.raises(ValueError, match="copies of the v2 manifest differ"):
+        _move(monkeypatch, tmp_path, _installed_version())
+    assert store.writes == writes
+
+
+def test_restore_refuses_another_manifest_under_any_one_key(
+    monkeypatch, tmp_path, store
+):
+    _with_both_workers(store)
+    plan = _move(monkeypatch, tmp_path, _installed_version())
+    other = add_v2_worker(current=None, worker=_older_worker())
+    store.values[ACTIVE_MANIFEST_KEY] = v2_manifest_copies(other)[ACTIVE_MANIFEST_KEY]
+    writes = store.writes
+
+    with pytest.raises(ValueError, match="nothing was restored"):
+        _run(monkeypatch, "--restore-plan", str(tmp_path / "plan.json"))
+    assert store.writes == writes
+    assert (
+        store.values[REGION_DATASETS_MANIFEST_KEY]
+        == (
+            v2_manifest_copies(V2VersionManifest.model_validate(plan["after"]))[
+                REGION_DATASETS_MANIFEST_KEY
+            ]
+        )
+    )
+
+
+@pytest.mark.parametrize("mode", ["--verify-plan", "--restore-plan"])
+def test_a_plan_whose_manifests_were_altered_is_refused(
+    monkeypatch, tmp_path, store, mode
+):
+    _with_both_workers(store)
+    plan = _move(monkeypatch, tmp_path, _installed_version())
+    altered = dict(plan, after=plan["before"])
+    (tmp_path / "plan.json").write_text(json.dumps(altered))
+    writes = store.writes
+
+    with pytest.raises(ValueError, match="do not match its digests"):
+        _run(monkeypatch, mode, str(tmp_path / "plan.json"))
+    assert store.writes == writes

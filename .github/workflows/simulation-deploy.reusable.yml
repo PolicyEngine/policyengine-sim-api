@@ -1135,9 +1135,6 @@ jobs:
       run:
         shell: bash
     environment: ${{ inputs.release_environment }}
-    outputs:
-      # Whether requests that pin no v2 version reach this release's worker.
-      advances_default: ${{ steps.move.outputs.advances_default }}
     steps:
       - uses: actions/checkout@v6
 
@@ -1163,12 +1160,16 @@ jobs:
           POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
         run: ../../.github/scripts/stage12-v2-default-move.sh
 
+      # Kept whenever the move ran, including a move that stopped part-way,
+      # so an operator still has the plan if the restore step fails too. A
+      # move that failed before planning wrote nothing and kept no plan.
       - name: Keep the v2 default plan
+        if: ${{ always() && steps.move.outcome != 'skipped' }}
         uses: actions/upload-artifact@v4
         with:
           name: stage12-v2-default-plan-${{ inputs.release_environment }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/stage12-v2-default/plan.json
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 30
 
       - name: Verify a reader resolves the v2 default

@@ -170,7 +170,11 @@ def test_the_default_job_moves_keeps_checks_and_restores_in_order():
         "stage12-v2-default-plan-${{ inputs.release_environment }}-"
         "${{ github.run_attempt }}"
     )
-    assert keep["with"]["if-no-files-found"] == "error"
+    # Kept whenever the move ran, including a move that stopped part-way, so
+    # an operator still has the plan if the restore step fails too. A move
+    # that failed before planning wrote nothing and kept no plan.
+    assert keep["if"] == "${{ always() && steps.move.outcome != 'skipped' }}"
+    assert keep["with"]["if-no-files-found"] == "ignore"
     verify = _step(default, "Verify a reader resolves the v2 default")
     assert "--verify-plan" in step_shell(verify)
     restore = _step(default, "Put the v2 default back after a failed or cancelled step")
