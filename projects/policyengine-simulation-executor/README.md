@@ -142,14 +142,20 @@ with its own mechanism, separate from the v1 routing jobs above:
 2. **After every check and the Cloud Run promotion**,
    `publish_stage12_v2_default` moves the default to the release's worker
    when it is newer (`--move-default`), keeping a plan of the manifest before
-   and after; checks that the stored manifest is what it wrote and that a
-   reader resolves the plan's default (`--verify-plan`); and, if a later step
+   and after; checks, from the runner, that every key holds what it wrote and
+   that a `V2ManifestLoader` (the reader the entrypoint uses) resolves the
+   plan's default (`--verify-plan`); and, if a later step
    fails or the run is cancelled, writes back the manifest it replaced, only
    while the stored manifest is still what it wrote (`--restore-plan`).
    `deployment_ready` requires this job to succeed whenever Stage 12 was
    requested. This job does not wait for the v1 `publish_latest` job, so the
    Stage 12 default can move even when v1 `latest` does not; `deployment_ready`
    then fails the deployment.
+
+The v2 worker's Modal app is named after the policyengine.py version alone, so
+a deployment that does not change that version redeploys the current worker's
+app in place, before the checks; the ordering above applies to a deployment
+that changes it.
 
 The manifest is three keys, one copy for each generation of reader, written
 one after another, so a write that stops part-way leaves some keys on the
@@ -159,10 +165,15 @@ write of either the move or an earlier restore and writes the starting
 manifest back to every key. Modal expires a Dict entry after 7 days without a
 read or write, and current readers read the oldest key only when neither newer
 key exists, so it can expire between deployments. A write never deletes a key,
-so the move, check and restore accept a missing older key (the move and restore
-write it again); the newest key is required. A move that leaves the default
-where it is writes nothing, so the manifest's digest, which Stage 12 report
-identities include, stays the same.
+so the move, check and restore accept a missing older key; a move or restore
+that writes the manifest writes it again, and otherwise the next deployment's
+worker publication does. The newest key is required. A move that leaves the
+default where it is writes nothing, so the manifest's digest, which Stage 12
+report identities include, stays the same. If no Stage 12 request and no
+deployment touches the manifest for 7 days, all three keys expire, and the
+next deployment's worker publication cannot tell that from an empty manifest:
+it makes its worker the default before the checks and drops the earlier
+workers.
 
 The plan is kept as the `stage12-v2-default-plan-<environment>-<attempt>`
 artifact whenever the move step ran, including a move that stopped part-way.
@@ -177,8 +188,8 @@ its own restore has no plan from the earlier attempt. The next deployment's
 worker publication reads the manifest the way a reader does and rewrites every
 key from that copy. After a move that wrote only the newest key, that drops
 the region datasets of every worker already in the manifest; after one that
-wrote the two newest, the failed
-release stays the default until that deployment's own move. No workflow
+wrote the two newest, the failed release stays the default until that
+deployment's own move. No workflow
 restores an earlier default after a completed deploy, and the deployment's
 `force_latest` input does not move the v2 default.
 

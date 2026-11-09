@@ -40,6 +40,8 @@ class FakeStore:
         self.values: dict[str, object] = {}
         self.writes = 0
         self.writes_until_failure: int | None = None
+        # Keys whose writes are accepted but not stored.
+        self.lost_keys: set[str] = set()
 
     def get(self, key: str, default: object = None) -> object:
         return self.values.get(key, default)
@@ -52,6 +54,8 @@ class FakeStore:
         if self.writes_until_failure is not None:
             self.writes_until_failure -= 1
         self.writes += 1
+        if key in self.lost_keys:
+            return
         self.values[key] = json.loads(json.dumps(value))
 
     def holds(self, manifest: object) -> bool:
@@ -81,14 +85,18 @@ def _installed_version() -> str:
     return _installed_worker().bundle.policyengine_version
 
 
-def _older_worker() -> V2WorkerVersion:
+def _worker_at(version: str) -> V2WorkerVersion:
     payload = _installed_worker().model_dump(mode="json")
-    name = v2_application_name(OLDER)
+    name = v2_application_name(version)
     payload["application_name"] = name
     payload["validation"]["application_name"] = name
-    payload["bundle"]["policyengine_version"] = OLDER
-    payload["bundle"]["policyengine_requirement"] = f"policyengine=={OLDER}"
+    payload["bundle"]["policyengine_version"] = version
+    payload["bundle"]["policyengine_requirement"] = f"policyengine=={version}"
     return V2WorkerVersion.model_validate(payload)
+
+
+def _older_worker() -> V2WorkerVersion:
+    return _worker_at(OLDER)
 
 
 def _with_older_default(store: FakeStore) -> None:
@@ -445,3 +453,88 @@ def test_a_plan_whose_manifests_were_altered_is_refused(
     with pytest.raises(ValueError, match="do not match its digests"):
         _run(monkeypatch, mode, str(tmp_path / "plan.json"))
     assert store.writes == writes
+
+
+def test_move_refuses_a_write_that_reads_back_differently(monkeypatch, tmp_path, store):
+    _with_both_workers(store)
+    store.lost_keys = {ACTIVE_MANIFEST_KEY}
+
+    with pytest.raises(ValueError, match="reads back differently"):
+        _move(monkeypatch, tmp_path, _installed_version())
+
+
+def test_move_refuses_a_manifest_changed_after_it_was_planned(
+    monkeypatch, tmp_path, store
+):
+    _with_both_workers(store)
+    other = add_v2_worker(current=None, worker=_older_worker())
+    plan_default_move = publisher.move_v2_default
+
+    def move_then_publish_elsewhere(**arguments):
+        moved = plan_default_move(**arguments)
+        write_v2_manifest(store=store, manifest=other)
+        return moved
+
+    monkeypatch.setattr(publisher, "move_v2_default", move_then_publish_elsewhere)
+    writes = store.writes
+
+    with pytest.raises(ValueError, match="changed after the default move was planned"):
+        _move(monkeypatch, tmp_path, _installed_version())
+    assert store.writes == writes + len(v2_manifest_copies(other))
+    assert store.holds(other.model_dump(mode="json"))
+
+
+def test_force_and_keep_default_are_refused_before_the_store_is_opened(
+    monkeypatch, tmp_path
+):
+    def refuse_to_open(name, *, environment_name, create_if_missing):
+        del name, environment_name, create_if_missing
+        msg = "the store was opened"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(
+        publisher,
+        "modal",
+        SimpleNamespace(Dict=SimpleNamespace(from_name=refuse_to_open)),
+    )
+    validation_file = tmp_path / "validation.json"
+    validation_file.write_text(_validation().model_dump_json())
+
+    with pytest.raises(SystemExit) as refusal:
+        _run(
+            monkeypatch,
+            "--validation-file",
+            str(validation_file),
+            "--keep-default",
+            "--force-default",
+        )
+
+    assert refusal.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("force", "default_after"),
+    [(True, "installed"), (False, "newer")],
+    ids=["forced", "not-forced"],
+)
+def test_force_default_publishes_the_worker_as_the_default_even_when_older(
+    monkeypatch, tmp_path, store, force, default_after
+):
+    newer = "99.0.0"
+    write_v2_manifest(
+        store=store, manifest=add_v2_worker(current=None, worker=_worker_at(newer))
+    )
+    validation_file = tmp_path / "validation.json"
+    validation_file.write_text(_validation().model_dump_json())
+
+    _run(
+        monkeypatch,
+        "--validation-file",
+        str(validation_file),
+        *(["--force-default"] if force else []),
+    )
+
+    manifest = read_v2_manifest(store)
+    expected = {"installed": _installed_version(), "newer": newer}[default_after]
+    assert manifest.default_version == expected
+    assert set(manifest.versions) == {newer, _installed_version()}

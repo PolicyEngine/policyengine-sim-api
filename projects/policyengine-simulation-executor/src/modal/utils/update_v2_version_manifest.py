@@ -84,12 +84,23 @@ def _print_manifest(manifest: V2VersionManifest) -> None:
 
 
 def _publish_worker(
-    store: V2ManifestStore, validation_file: Path, *, keep_default: bool
+    store: V2ManifestStore,
+    validation_file: Path,
+    *,
+    keep_default: bool,
+    force_default: bool,
 ) -> V2VersionManifest:
-    """Add the validated worker; ``keep_default`` leaves the default version."""
+    """Add the validated worker.
+
+    ``keep_default`` leaves the default version; otherwise the default moves
+    as :func:`publish_v2_manifest` moves it, to an older worker only with
+    ``force_default``.
+    """
     worker = build_worker(json.loads(validation_file.read_text(encoding="utf-8")))
     if not keep_default:
-        return publish_v2_manifest(store=store, worker=worker)
+        return publish_v2_manifest(
+            store=store, worker=worker, force_default=force_default
+        )
     manifest = add_v2_worker(current=read_v2_manifest(store), worker=worker)
     write_v2_manifest(store=store, manifest=manifest)
     return manifest
@@ -305,6 +316,8 @@ def main() -> None:
         parser.error("--move-default and --plan-out go together")
     if args.force_default and args.validation_file is None:
         parser.error("--force-default applies only with --validation-file")
+    if args.force_default and args.keep_default:
+        parser.error("--force-default moves the default; --keep-default keeps it")
 
     assert_separate_manifest_names(
         v1_name=V1_ROUTING_STATE_NAME,
@@ -316,20 +329,12 @@ def main() -> None:
         create_if_missing=True,
     )
     if args.validation_file is not None:
-        if args.force_default and args.keep_default:
-            parser.error("--force-default moves the default; --keep-default keeps it")
-        if args.force_default:
-            manifest = publish_v2_manifest(
-                store=store,
-                worker=build_worker(
-                    json.loads(args.validation_file.read_text(encoding="utf-8"))
-                ),
-                force_default=True,
-            )
-        else:
-            manifest = _publish_worker(
-                store, args.validation_file, keep_default=args.keep_default
-            )
+        manifest = _publish_worker(
+            store,
+            args.validation_file,
+            keep_default=args.keep_default,
+            force_default=args.force_default,
+        )
         _print_manifest(manifest)
     elif args.move_default is not None:
         plan = _move_default(store, args.move_default, args.plan_out)
