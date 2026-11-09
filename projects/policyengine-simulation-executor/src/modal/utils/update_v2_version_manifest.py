@@ -126,7 +126,7 @@ def _publish_worker(
         return publish_v2_manifest(
             store=store, worker=worker, force_default=force_default
         )
-    current = read_v2_manifest(store)
+    current = _read_existing_manifest(store)
     if current is None:
         # Publishing into it would make the release's worker the default
         # before the checks, and the entries of any earlier workers are gone.
@@ -142,14 +142,29 @@ def _publish_worker(
     return manifest
 
 
+def _read_existing_manifest(store: V2ManifestStore) -> V2VersionManifest | None:
+    """Return the stored manifest, or None when it or its whole Dict is missing.
+
+    A Dict opened without ``create_if_missing`` that does not exist, as in a
+    new Modal environment, raises Modal's NotFoundError on its first read.
+    """
+    try:
+        return read_v2_manifest(store)
+    except modal.exception.NotFoundError:
+        return None
+
+
 def _refresh(store: V2ManifestStore) -> V2VersionManifest:
     """Read every reader's key and return the manifest.
 
     Reading an entry keeps Modal from expiring it. Raises ValueError when
-    there is no manifest, or the stored one is invalid.
+    there is no manifest (or no Dict), or the stored one is invalid.
     """
-    for key in V2_MANIFEST_KEYS:
-        store.get(key)
+    try:
+        for key in V2_MANIFEST_KEYS:
+            store.get(key)
+    except modal.exception.NotFoundError:
+        raise ValueError(MISSING_MANIFEST) from None
     manifest = read_v2_manifest(store)
     if manifest is None:
         raise ValueError(MISSING_MANIFEST)

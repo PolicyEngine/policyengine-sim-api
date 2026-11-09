@@ -20,6 +20,7 @@ from test_update_v2_version_manifest import _validation
 from test_update_v2_version_manifest_default import (
     OLDER,
     FakeStore,
+    ModalNotFoundError,
     _installed_version,
     _run,
     _with_both_workers,
@@ -70,6 +71,16 @@ def test_an_operator_starts_a_missing_manifest_with_its_first_worker(
     assert manifest.default_version == _installed_version()
     assert set(manifest.versions) == {_installed_version()}
     assert manifest_store.opened_with_create_if_missing == [True]
+    # Only the first: a second start finds the manifest and writes nothing.
+    writes = manifest_store.writes
+    with pytest.raises(ValueError, match="a v2 manifest exists"):
+        _run(
+            monkeypatch,
+            "--validation-file",
+            str(_validation_file(tmp_path)),
+            "--first-publication",
+        )
+    assert manifest_store.writes == writes
 
 
 def test_a_first_publication_refuses_an_existing_manifest(
@@ -163,3 +174,33 @@ def test_refresh_takes_no_other_option(
 
     assert refusal.value.code == 2
     assert manifest_store.reads == []
+
+
+class MissingDict(FakeStore):
+    """A Modal environment with no manifest Dict at all, such as a new one."""
+
+    def get(self, key: str, default: object = None) -> object:
+        del key, default
+        msg = "Dict 'simulation-api-v2-version-manifest' not found"
+        raise ModalNotFoundError(msg)
+
+
+@pytest.mark.parametrize("mode", ["refresh", "deployment"])
+def test_a_missing_dict_is_reported_as_a_missing_manifest(monkeypatch, tmp_path, mode):
+    # The operator's first recovery step looks for this message, and the
+    # deployment's refusal names the way to start the manifest.
+    install_fake_store(monkeypatch, MissingDict())
+    arguments = {
+        "refresh": ("--refresh",),
+        "deployment": (
+            "--validation-file",
+            str(_validation_file(tmp_path)),
+            "--keep-default",
+        ),
+    }[mode]
+
+    with pytest.raises(ValueError, match="there is no v2 manifest") as refusal:
+        _run(monkeypatch, *arguments)
+
+    if mode == "deployment":
+        assert "--first-publication" in str(refusal.value)

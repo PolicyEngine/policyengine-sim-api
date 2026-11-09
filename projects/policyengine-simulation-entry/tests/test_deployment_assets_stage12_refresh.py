@@ -17,6 +17,7 @@ import yaml
 from test_deployment_assets_support import (
     DEPLOY_WORKFLOW,
     REPOSITORY_ROOT,
+    REUSABLE_DEPLOY_WORKFLOW,
     WORKFLOWS_DIRECTORY,
     step_shell,
 )
@@ -49,13 +50,21 @@ def _refresh_job() -> dict:
 
 
 def _deployed_modal_environments() -> set[str]:
+    """Return the Modal environments the deploy workflow's callers publish to."""
     environments = set()
-    for caller in (DEPLOY_WORKFLOW, STAGE12_DEPLOY_WORKFLOW):
-        jobs = yaml.safe_load(caller.read_text(encoding="utf-8"))["jobs"]
+    callers = []
+    for workflow_path in sorted(WORKFLOWS_DIRECTORY.glob("*.yml")):
+        jobs = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))["jobs"]
         for job in jobs.values():
+            if not str(job.get("uses", "")).endswith(REUSABLE_DEPLOY_WORKFLOW.name):
+                continue
+            callers.append(workflow_path.name)
             arguments = job.get("with") or {}
             if arguments.get("deploy_stage12_v2"):
                 environments.add(arguments["modal_environment"])
+    # The scan must find the known callers, so that a renamed reusable
+    # workflow cannot make it pass by finding nothing.
+    assert {DEPLOY_WORKFLOW.name, STAGE12_DEPLOY_WORKFLOW.name} <= set(callers)
     return environments
 
 
@@ -114,6 +123,7 @@ def test_the_read_step_runs_the_refresh_with_modal_access_only():
     # Nothing skips the read, on a schedule or otherwise.
     assert "if" not in refresh
     assert "if" not in _refresh_job()
+    assert "continue-on-error" not in _refresh_job()
     # A hung Modal call ends well before the next day's run.
     assert 0 < _refresh_job()["timeout-minutes"] <= 30
 

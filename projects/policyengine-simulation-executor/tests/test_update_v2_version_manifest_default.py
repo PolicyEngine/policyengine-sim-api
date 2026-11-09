@@ -66,9 +66,17 @@ class FakeStore:
         return all(self.values.get(key) == copy for key, copy in copies.items())
 
 
-def install_fake_store(monkeypatch) -> FakeStore:
-    """Make the publisher open a new FakeStore as the manifest Dict, and return it."""
-    fake = FakeStore()
+class ModalNotFoundError(Exception):
+    """Stands in for ``modal.exception.NotFoundError``.
+
+    Under pytest, ``modal`` resolves to this project's ``src/modal``, so the
+    tests give the publisher a stand-in ``modal`` with this error class.
+    """
+
+
+def install_fake_store(monkeypatch, fake: FakeStore | None = None) -> FakeStore:
+    """Make the publisher open ``fake`` (a new FakeStore by default) as the Dict."""
+    fake = FakeStore() if fake is None else fake
 
     def from_name(name, *, environment_name, create_if_missing):
         del name, environment_name
@@ -76,7 +84,12 @@ def install_fake_store(monkeypatch) -> FakeStore:
         return fake
 
     monkeypatch.setattr(
-        publisher, "modal", SimpleNamespace(Dict=SimpleNamespace(from_name=from_name))
+        publisher,
+        "modal",
+        SimpleNamespace(
+            Dict=SimpleNamespace(from_name=from_name),
+            exception=SimpleNamespace(NotFoundError=ModalNotFoundError),
+        ),
     )
     return fake
 

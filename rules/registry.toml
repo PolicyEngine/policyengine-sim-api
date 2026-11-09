@@ -758,6 +758,7 @@ nodes = [
   "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_expiry.py::test_refresh_fails_without_a_manifest",
   "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_expiry.py::test_refresh_never_creates_the_manifest_dict",
   "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_expiry.py::test_refresh_takes_no_other_option",
+  "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_expiry.py::test_a_missing_dict_is_reported_as_a_missing_manifest",
   "libs/policyengine-simulation-contract/tests/test_stage12_manifest_default.py::test_the_manifest_keys_are_the_keys_a_write_writes_in_order",
   "projects/policyengine-simulation-executor/tests/test_update_v2_version_manifest_default.py::test_a_deployment_publishes_into_the_existing_dict_without_creating_one",
 ]
