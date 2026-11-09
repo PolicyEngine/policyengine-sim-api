@@ -30,7 +30,7 @@ def _load(monkeypatch):
 def _sweep_deploy_steps(job: dict) -> list[dict]:
     return [
         step
-        for step in job["steps"]
+        for step in job.get("steps", [])
         if "src/modal/run_sweep_app.py" in step.get("run", "")
     ]
 
@@ -39,9 +39,10 @@ def test_the_sweep_deploys_with_the_stage12_default_after_every_check() -> None:
     """The unversioned sweep deploys only once the release has passed its checks.
 
     It deploys in the job that moves the Stage 12 v2 default, which runs after
-    the integration and authenticated tests and the Cloud Run promotion, in a
-    main deployment and in a Stage 12-only one. A failed sweep deploy fails
-    that job, whose last step then puts the previous default back.
+    the integration and authenticated tests and the Cloud Run promotion, and
+    only from ``main``: a dispatch from another branch, which may be behind
+    ``main``, leaves the environment's sweep as it is. A failed sweep deploy
+    fails that job, whose last step then puts the previous default back.
     """
     workflow = yaml.safe_load(REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
@@ -70,8 +71,9 @@ def test_the_sweep_deploys_with_the_stage12_default_after_every_check() -> None:
         "MODAL_TOKEN_ID": "${{ secrets.MODAL_TOKEN_ID }}",
         "MODAL_TOKEN_SECRET": "${{ secrets.MODAL_TOKEN_SECRET }}",
     }
-    # No condition of its own: it runs only while every earlier step passed.
-    assert "if" not in sweep_step
+    # Only from main. With no status function in it, the condition also
+    # requires every earlier step to have passed (an implicit success()).
+    assert sweep_step["if"] == "${{ github.ref == 'refs/heads/main' }}"
     sweep_position = step_names.index(sweep_step["name"])
     assert sweep_position > step_names.index("Verify a reader resolves the v2 default")
     assert sweep_position < step_names.index(
