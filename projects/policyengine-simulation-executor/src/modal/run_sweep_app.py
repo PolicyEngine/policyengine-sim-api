@@ -12,8 +12,9 @@ v2 coordinator and workers use. This application is not versioned with the
 .py bundle: one copy runs per Modal environment.
 
 Each deployment from ``main`` deploys it to its Modal environment after
-every check, in ``publish_stage12_v2_default`` after the Stage 12 v2
-default moves (``simulation-deploy.reusable.yml``); if this deploy fails,
+every check, in ``publish_stage12_v2_default``, once that job has moved the
+Stage 12 v2 default (when the release is newer) and checked that a reader
+resolves it (``simulation-deploy.reusable.yml``); if this deploy fails,
 that job puts the previous default back. Modal refuses the deployment
 while the Modal secret is missing from that environment.
 """
