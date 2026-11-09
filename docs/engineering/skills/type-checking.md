@@ -178,9 +178,10 @@ section is still in the registry fails the guard on every pull request.
   them correctly: their `__exit__` and `__aexit__` return `Literal[False]`, so
   Pyright knows they never suppress an exception and doesn't report a variable
   the block assigns as possibly unbound after it. Every package that depends
-  on policyengine-observability requires 3.0.7 or later, and
+  on policyengine-observability requires 3.0.7 or later, which also records
+  a preemption at WARNING (see `observability.md`), and
   `libs/policyengine-simulation-observability/tests/test_scope_exit_typing.py`
-  fails if an older release is installed.
+  fails if a release older than 3.0.4 is installed.
 - Before reading a simulation's output frames, narrow
   `<simulation>.output_dataset.data` with the `EntityFrames` protocol in
   `policyengine_simulation_executor.output_frames`, and keep reading through

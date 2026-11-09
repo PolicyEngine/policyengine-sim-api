@@ -78,8 +78,10 @@ def recorded_observability_runtime():
     """Build an observability runtime that keeps every record it writes.
 
     Yields the runtime and the list its structured records are appended to,
-    in the order they were written. OpenTelemetry is disabled and nothing is
-    exported.
+    in the order they were written. Like the deployed workers' runtime, it
+    also records standard-library log records, so a test sees an ERROR
+    record from ``logging`` too; ``runtime.shutdown()`` removes that handler.
+    OpenTelemetry is disabled and nothing is exported.
     """
     from policyengine_observability import (
         CustomLogDestination,
@@ -114,6 +116,7 @@ def recorded_observability_runtime():
                         delivery="inline",
                     ),
                 ),
+                capture_standard_library=True,
             ),
             otel=OTelConfig(enabled=False),
         )

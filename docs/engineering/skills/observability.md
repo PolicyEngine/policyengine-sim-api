@@ -126,10 +126,12 @@ up over attempts, and `job_attempts` counts them.
 
 Modal delivers a preemption to the running function as `KeyboardInterrupt`,
 then runs the same input again. policyengine-observability 3.0.7 and later
-record an operation, request or span that ends in `KeyboardInterrupt` with
-the outcome `interrupted` at WARNING, leave it out of the error count metric,
-and let the exception propagate unchanged, so a preempted attempt doesn't
-reach the daily telemetry error report. Let `KeyboardInterrupt` leave the
+record an operation or request that ends in `KeyboardInterrupt` with the
+outcome `interrupted` at WARNING and leave it out of the error count metric;
+a span that ends in it keeps an unset status and gets the attribute
+`policyengine.outcome` set to `interrupted`. The exception propagates
+unchanged, so a preempted attempt doesn't reach the daily telemetry error
+report. Let `KeyboardInterrupt` leave the
 operation block as it is: code that catches it and raises another exception
 instead reports the attempt as a failure at ERROR. `except Exception` doesn't
 catch it.
