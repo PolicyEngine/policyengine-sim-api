@@ -10,6 +10,24 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.5.5] - 2026-11-09
+
+### Changed
+
+- A deployment now publishes its release's routes before its checks without moving `latest`, and moves `latest` to the release only after every check and the Cloud Run promotion pass, then checks that unpinned requests reach it and puts `latest` back if that check fails. Unpinned requests in staging and production move to a new policyengine.py version only after that environment's checks pass, and rerunning only a deployment's failed jobs now completes it without republishing its routes.
+
+### Fixed
+
+- Retried a simulation's run-time dataset download up to twice (three attempts in all), with a jittered wait that doubles, when Hugging Face's connection failed, timed out, ended the response early or answered with a 5xx status, so one CDN timeout no longer fails a run. Rejected credentials (401, 403), a missing dataset (404), other 4xx responses and a SHA-256 mismatch are never retried.
+
+
+## [0.5.4] - 2026-11-06
+
+### Changed
+
+- Updated policyengine.py from 6.12.1 to 6.16.0 in the simulation runtime.
+
+
 ## [0.5.3] - 2026-11-06
 
 ### Fixed

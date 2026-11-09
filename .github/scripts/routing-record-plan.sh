@@ -4,7 +4,8 @@
 # Run from projects/policyengine-simulation-executor.
 # Required env vars: MODAL_ENVIRONMENT, and the runner's RUNNER_TEMP. The
 # Modal client reads MODAL_TOKEN_ID and MODAL_TOKEN_SECRET.
-# Reads: $RUNNER_TEMP/routing-plan/plan.json, written by routing-plan.sh.
+# Reads: $RUNNER_TEMP/routing-plan/plan.json, written by routing-plan.sh or
+# routing-plan-latest.sh.
 
 set -euo pipefail
 

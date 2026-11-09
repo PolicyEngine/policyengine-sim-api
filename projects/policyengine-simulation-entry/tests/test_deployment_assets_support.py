@@ -501,12 +501,15 @@ def routing_context(**overrides):
                 "outputs": {
                     "before_sha256": "a" * 64,
                     "after_sha256": "b" * 64,
-                    "advances_latest": "true",
                 },
             },
             "integration": {"result": "success"},
             "authenticated_test": {"result": "success"},
             "promote_entrypoint": {"result": "success"},
+            "publish_latest": {
+                "result": "success",
+                "outputs": {"advances_latest": "true"},
+            },
         },
     }
     for path, value in overrides.items():
