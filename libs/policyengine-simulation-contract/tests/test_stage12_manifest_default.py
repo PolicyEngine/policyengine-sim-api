@@ -11,6 +11,7 @@ from policyengine_simulation_contract.stage12_manifest import (
     ACTIVE_MANIFEST_KEY,
     PRE_CACHE_MANIFEST_KEY,
     REGION_DATASETS_MANIFEST_KEY,
+    V2_MANIFEST_KEYS,
     V2ManifestLoader,
     add_v2_worker,
     move_v2_default,
@@ -101,3 +102,9 @@ def test_writing_a_manifest_writes_each_readers_key_and_reads_back():
 
 def test_an_empty_store_has_no_manifest():
     assert read_v2_manifest(FakeStore()) is None
+
+
+def test_the_manifest_keys_are_the_keys_a_write_writes_in_order():
+    manifest = add_v2_worker(current=None, worker=_worker(NEW))
+
+    assert tuple(v2_manifest_copies(manifest)) == V2_MANIFEST_KEYS

@@ -3,8 +3,10 @@
 A deployment publishes its worker with ``--keep-default`` before its checks,
 leaving the manifest's default version alone, then moves the default with
 ``--move-default`` after them, checks it with ``--verify-plan``, and restores
-it with ``--restore-plan`` if a later step fails. This is Stage 12's own
-mechanism; the v1 routing publisher is separate.
+it with ``--restore-plan`` if a later step fails. A scheduled workflow runs
+``--refresh`` daily, which reads every key so that Modal does not expire the
+manifest. This is Stage 12's own mechanism; the v1 routing publisher is
+separate.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import modal
 from policyengine_simulation_contract.stage12_manifest import (
     REGION_DATASETS_MANIFEST_KEY,
     V1_ROUTING_STATE_NAME,
+    V2_MANIFEST_KEYS,
     V2_VERSION_MANIFEST_NAME,
     V2CountryWorker,
     V2ManifestLoader,
@@ -67,6 +70,14 @@ def build_worker(validation_payload: object) -> V2WorkerVersion:
 
 V2_DEFAULT_PLAN_SCHEMA = "policyengine-simulation.v2-default-plan/v1"
 
+# Modal expires a Dict entry after 7 days without a read or write, so a
+# manifest that was published and then expired looks exactly like one that
+# was never published.
+MISSING_MANIFEST_MESSAGE = (
+    "there is no v2 manifest in this Modal environment: it was never "
+    "published, or Modal expired it after 7 days without a read or write"
+)
+
 
 def _manifest_json(manifest: V2VersionManifest) -> dict[str, object]:
     return manifest.model_dump(mode="json")
@@ -89,20 +100,75 @@ def _publish_worker(
     *,
     keep_default: bool,
     force_default: bool,
+    first_publication: bool = False,
 ) -> V2VersionManifest:
     """Add the validated worker.
 
-    ``keep_default`` leaves the default version; otherwise the default moves
+    ``keep_default`` leaves the default version and refuses a missing
+    manifest; ``first_publication`` starts a missing manifest with the worker
+    as its default and refuses an existing one; otherwise the default moves
     as :func:`publish_v2_manifest` moves it, to an older worker only with
     ``force_default``.
     """
     worker = build_worker(json.loads(validation_file.read_text(encoding="utf-8")))
+    if first_publication:
+        if read_v2_manifest(store) is not None:
+            msg = (
+                "a v2 manifest exists in this Modal environment; "
+                "--first-publication only starts a missing one, and would "
+                "otherwise move the default before any check"
+            )
+            raise ValueError(msg)
+        manifest = add_v2_worker(current=None, worker=worker)
+        write_v2_manifest(store=store, manifest=manifest)
+        return manifest
     if not keep_default:
         return publish_v2_manifest(
             store=store, worker=worker, force_default=force_default
         )
-    manifest = add_v2_worker(current=read_v2_manifest(store), worker=worker)
+    current = _read_existing_manifest(store)
+    if current is None:
+        # Publishing into it would make the release's worker the default
+        # before the checks, and the entries of any earlier workers are gone.
+        msg = (
+            f"{MISSING_MANIFEST_MESSAGE}. A deployment does not publish into a missing "
+            "manifest, because its worker would become the default before its "
+            "checks; an operator starts it with --first-publication (see the "
+            "executor README)"
+        )
+        raise ValueError(msg)
+    manifest = add_v2_worker(current=current, worker=worker)
     write_v2_manifest(store=store, manifest=manifest)
+    return manifest
+
+
+def _read_existing_manifest(store: V2ManifestStore) -> V2VersionManifest | None:
+    """Return the stored manifest, or None when it or its whole Dict is missing.
+
+    A Dict opened without ``create_if_missing`` that does not exist, as in a
+    new Modal environment, raises Modal's NotFoundError on its first read.
+    """
+    try:
+        return read_v2_manifest(store)
+    except modal.exception.NotFoundError:
+        return None
+
+
+def _refresh(store: V2ManifestStore) -> V2VersionManifest:
+    """Read every reader's key and return the manifest.
+
+    Reading an entry keeps Modal from expiring it. Raises ValueError when
+    there is no manifest (or no Dict), or the stored one is invalid.
+    """
+    try:
+        for key in V2_MANIFEST_KEYS:
+            store.get(key)
+    except modal.exception.NotFoundError as error:
+        msg = f"{MISSING_MANIFEST_MESSAGE} (Modal: {error})"
+        raise ValueError(msg) from error
+    manifest = read_v2_manifest(store)
+    if manifest is None:
+        raise ValueError(MISSING_MANIFEST_MESSAGE)
     return manifest
 
 
@@ -283,6 +349,11 @@ def _argument_parser() -> argparse.ArgumentParser:
         help="Refuse unless the stored manifest is what this default plan wrote",
     )
     modes.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Read every key of the manifest, so that Modal does not expire it",
+    )
+    modes.add_argument(
         "--restore-plan",
         metavar="FILE",
         type=Path,
@@ -294,6 +365,14 @@ def _argument_parser() -> argparse.ArgumentParser:
         help="With --validation-file: leave the default version as it is",
     )
     parser.add_argument("--force-default", action="store_true")
+    parser.add_argument(
+        "--first-publication",
+        action="store_true",
+        help=(
+            "With --validation-file: start a missing manifest with this worker "
+            "as its default, refusing an existing one"
+        ),
+    )
     parser.add_argument(
         "--plan-out",
         metavar="FILE",
@@ -318,18 +397,26 @@ def main() -> None:
         parser.error("--force-default applies only with --validation-file")
     if args.force_default and args.keep_default:
         parser.error("--force-default moves the default; --keep-default keeps it")
+    if args.first_publication and (
+        args.validation_file is None or args.keep_default or args.force_default
+    ):
+        parser.error(
+            "--first-publication takes --validation-file alone, "
+            "without --keep-default or --force-default"
+        )
 
     assert_separate_manifest_names(
         v1_name=V1_ROUTING_STATE_NAME,
         v2_name=args.manifest_name,
     )
-    # Only a worker publication creates the Dict. Moving, checking or
-    # restoring a default in a Modal environment that has no manifest is an
-    # error, not a new, empty Dict there.
+    # Only an operator's publication creates the Dict. A deployment's
+    # publication (--keep-default), a move, a check, a restore or a refresh
+    # in a Modal environment that has no manifest is an error, not a new,
+    # empty Dict there.
     store = modal.Dict.from_name(
         args.manifest_name,
         environment_name=args.environment,
-        create_if_missing=args.validation_file is not None,
+        create_if_missing=args.validation_file is not None and not args.keep_default,
     )
     if args.validation_file is not None:
         manifest = _publish_worker(
@@ -337,6 +424,7 @@ def main() -> None:
             args.validation_file,
             keep_default=args.keep_default,
             force_default=args.force_default,
+            first_publication=args.first_publication,
         )
         _print_manifest(manifest)
     elif args.move_default is not None:
@@ -346,6 +434,12 @@ def main() -> None:
         print(f"release_is_default={'true' if plan['release_is_default'] else 'false'}")
     elif args.verify_plan is not None:
         print(f"v2 default version: {_verify_plan(store, args.verify_plan)}")
+    elif args.refresh:
+        manifest = _refresh(store)
+        print(
+            f"v2 manifest read: default {manifest.default_version}, "
+            f"sha256 {manifest_digest(manifest)}"
+        )
     else:
         print(f"v2 default restore: {_restore_plan(store, args.restore_plan)}")
 
