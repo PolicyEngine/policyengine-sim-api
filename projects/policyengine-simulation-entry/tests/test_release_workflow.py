@@ -12,9 +12,9 @@ commit's run, which is the one that deployed.
 The workflow tests evaluate each job's ``if`` with the GitHub Actions
 expression reader in test_deployment_assets_support, following ``needs``, so
 they test what the conditions decide rather than their text.
-commit-release.sh runs against a real local remote. The last tests check
-that pr.yml runs the changelog fragment check (rule
-sim.process.changelog-fragment) on every pull request CI runs on.
+commit-release.sh runs against a real local remote. The changelog fragment
+check's workflow (rule sim.process.changelog-fragment) is tested in
+test_changelog_fragment_check.py.
 """
 
 from __future__ import annotations
@@ -38,7 +38,6 @@ if TYPE_CHECKING:
 
 DEPLOY_WORKFLOW = WORKFLOWS_DIR / "simulation-deploy.yml"
 PUBLISH_WORKFLOW = WORKFLOWS_DIR / "publish-clients.yml"
-PR_WORKFLOW = WORKFLOWS_DIR / "pr.yml"
 REUSABLE_DEPLOY = "./.github/workflows/simulation-deploy.reusable.yml"
 BUILD_CHANGELOG = ".github/scripts/build-changelog.sh"
 COMMIT_RELEASE = ".github/scripts/commit-release.sh"
@@ -57,10 +56,6 @@ MERGE_MESSAGES = {
     # GitHub adds the pull request number to a squash merge's title.
     "squash merge titled like the release": f"{RELEASE_MESSAGE} (#982)",
 }
-FULL_CI_CONDITION = (
-    "${{ !github.event.pull_request.stack || "
-    "github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref }}"
-)
 # A release commit must never start another; more pushes than this is a loop.
 MAX_PUSHES_PER_MERGE = 5
 
@@ -485,35 +480,3 @@ def test_commit_release_requires_the_message(tmp_path):
 
     assert result.returncode != 0
     assert "RELEASE_COMMIT_MESSAGE is required" in result.stderr
-
-
-# --- pr.yml ---------------------------------------------------------------------
-
-
-def test_every_full_ci_run_checks_the_changelog_fragment():
-    jobs = _workflow(PR_WORKFLOW)["jobs"]
-    job = jobs["check-changelog"]
-
-    assert job["if"] == FULL_CI_CONDITION
-    assert "needs" not in job
-    assert "check-changelog" in jobs["ci-complete"]["needs"]
-    assert job["permissions"] == {"contents": "read"}
-
-
-def test_the_fragment_check_compares_the_merged_result_with_its_base():
-    steps = _workflow(PR_WORKFLOW)["jobs"]["check-changelog"]["steps"]
-    checkout, python, check = steps
-
-    assert checkout["uses"] == "actions/checkout@v6"
-    # The merge base needs the base branch's history.
-    assert checkout["with"] == {"fetch-depth": 0}
-    assert python == {
-        "name": "Set up Python",
-        "uses": "actions/setup-python@v6",
-        "with": {"python-version": "3.13"},
-    }
-    assert check == {
-        "name": "Require a changelog fragment",
-        "env": {"BASE_SHA": "${{ github.event.pull_request.base.sha }}"},
-        "run": ".github/scripts/check-changelog-fragment.sh",
-    }

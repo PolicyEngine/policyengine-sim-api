@@ -43,7 +43,7 @@ def require_serialized_routing_workflow() -> None:
         "Routing writes require GitHub Actions in "
         f"{CANONICAL_GITHUB_REPOSITORY} through {workflows}. "
         "Use those workflows, whose simulation-deploy-main concurrency group "
-        "serializes routing writes. Read-only, --dry-run and --plan-out modes "
-        "are available locally."
+        "serializes routing writes. Read-only views and the --dry-run, "
+        "--plan-out and --plan-latest-out modes are available locally."
     )
     raise RuntimeError(msg)

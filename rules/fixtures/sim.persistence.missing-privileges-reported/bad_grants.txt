@@ -1,0 +1,37 @@
+# Proof fixture: the grants with INSERT on simulation_runs left out, as when
+# a role was set up before the table existed, and UPDATE on
+# report_runs.modal_call_id, as when a column was added after the grants.
+INSERT simulations
+SELECT simulations
+INSERT reports
+SELECT reports
+SELECT simulation_runs
+INSERT report_runs
+SELECT report_runs
+INSERT budget_window_runs
+SELECT budget_window_runs
+INSERT household_jobs
+SELECT household_jobs
+SELECT policies
+SELECT households
+SELECT tax_benefit_models
+SELECT tax_benefit_model_versions
+SELECT regions
+SELECT datasets
+SELECT parameters
+SELECT parameter_values
+SELECT dynamics
+UPDATE simulation_runs completed_at
+UPDATE simulation_runs error_message
+UPDATE simulation_runs modal_call_id
+UPDATE simulation_runs status
+UPDATE simulation_runs updated_at
+UPDATE report_runs completed_at
+UPDATE report_runs error_message
+UPDATE report_runs status
+UPDATE report_runs updated_at
+UPDATE household_jobs completed_at
+UPDATE household_jobs error_message
+UPDATE household_jobs modal_call_id
+UPDATE household_jobs status
+UPDATE household_jobs updated_at

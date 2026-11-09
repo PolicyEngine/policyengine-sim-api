@@ -41,6 +41,7 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 )
 
 from .cached_simulation import Stage12CachedSimulation, qualifying_cache_identity
+from .dataset_download_retry import load_with_download_retry
 from .dependencies import ComparisonStore, artifact_store, runtime_store
 from .failure_causes import (
     StageProgress,
@@ -318,17 +319,21 @@ def calculate_simulation_frames(
             )
         _require_loaded_dataset_matches_provenance(simulation, dataset_selection)
         with stage_span(Stage.DATASET_LOAD):
-            dataset = _load_dataset(
-                params,
-                selection=dataset_selection,
-                country_module=country_module,
-                data_folder=state_datasets.baked_state_data_folder(
-                    country=country,
+            dataset = load_with_download_retry(
+                partial(
+                    _load_dataset,
+                    params,
                     selection=dataset_selection,
-                    state_code=region.state_code,
-                    year=simulation.year,
-                    data_folder=resolve_data_folder(),
+                    country_module=country_module,
+                    data_folder=state_datasets.baked_state_data_folder(
+                        country=country,
+                        selection=dataset_selection,
+                        state_code=region.state_code,
+                        year=simulation.year,
+                        data_folder=resolve_data_folder(),
+                    ),
                 ),
+                dataset_name=dataset_selection.name,
             )
         uk_local_authority_metadata = detect_uk_run_dataset_metadata(
             country,

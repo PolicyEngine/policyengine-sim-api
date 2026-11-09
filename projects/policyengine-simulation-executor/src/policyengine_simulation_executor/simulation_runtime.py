@@ -12,6 +12,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from functools import partial
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +23,9 @@ from policyengine_simulation_observability.stages import ANNUAL_IMPACT_STAGES, S
 from policyengine_simulation_observability.telemetry import split_internal_payload
 
 from policyengine_simulation_executor import state_datasets
+from policyengine_simulation_executor.dataset_download_retry import (
+    load_with_download_retry,
+)
 from policyengine_simulation_executor.gcp_credentials import setup_gcp_credentials
 from policyengine_simulation_executor.job_progress import (
     NULL_JOB_PROGRESS,
@@ -258,6 +262,30 @@ def _load_dataset(
     return next(iter(datasets.values()))
 
 
+def _load_dataset_retrying_downloads(
+    params: dict[str, Any],
+    *,
+    selection: DatasetSelection,
+    country_module: ModuleType | None = None,
+    data_folder: str | None = None,
+) -> Dataset:
+    """Load the selected dataset as ``_load_dataset`` does, retrying a failed download.
+
+    Only a transient download failure is retried; see
+    ``dataset_download_retry``.
+    """
+    return load_with_download_retry(
+        partial(
+            _load_dataset,
+            params,
+            selection=selection,
+            country_module=country_module,
+            data_folder=data_folder,
+        ),
+        dataset_name=selection.name,
+    )
+
+
 def _build_simulation(
     params: dict[str, Any],
     *,
@@ -364,7 +392,7 @@ def _uk_area_simulations(
     with runtime.span(
         ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD), attributes=area_role
     ):
-        dataset = _load_dataset(
+        dataset = _load_dataset_retrying_downloads(
             params, selection=selection, country_module=country_module
         )
     local_authority_metadata = detect_uk_area_dataset_metadata(
@@ -516,7 +544,7 @@ def _run_simulation_impl_core(
                     else state_datasets.ON_DEMAND_DATASET_SOURCE
                 )
             )
-        dataset = _load_dataset(
+        dataset = _load_dataset_retrying_downloads(
             simulation_params,
             selection=dataset_selection,
             country_module=country_module,

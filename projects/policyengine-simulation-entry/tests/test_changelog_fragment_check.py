@@ -3,9 +3,12 @@
 Rule sim.process.changelog-fragment: a pull request adds at least one
 non-empty file directly in changelog.d/, named ``<name>.<type>.md`` with a type
 from towncrier.toml, and every file in changelog.d/ is such a fragment, because
-those are the only files the release reads. Each test builds a repository with
-a base commit and a pull request commit, and runs
-.github/scripts/check-changelog-fragment.sh there, as the workflow does.
+those are the only files the release reads. Each test of the script builds a
+repository with a base commit and a pull request commit, and runs
+.github/scripts/check-changelog-fragment.sh there, as the workflow does. The
+last tests check that changelog-fragment.yml runs it on every pull request,
+with nothing that could skip it, because a skipped required check counts as
+passing.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ import shutil
 from typing import TYPE_CHECKING
 
 import pytest
+import yaml
 from changelog_release_support import (
     FRAGMENT_TYPES,
     GIT_ENVIRONMENT,
@@ -23,13 +27,17 @@ from changelog_release_support import (
     make_repository,
     write_files,
 )
-from workflow_script_support import REPOSITORY_ROOT, run_script
+from workflow_script_support import REPOSITORY_ROOT, WORKFLOWS_DIR, run_script
 
 if TYPE_CHECKING:
     import subprocess
     from pathlib import Path
 
 CHECK_SCRIPT = "check-changelog-fragment.sh"
+CHECK_WORKFLOW = WORKFLOWS_DIR / "changelog-fragment.yml"
+CHECK_JOB = "check-changelog"
+# The name of the required check on main, which is the job's name.
+CHECK_NAME = "Changelog fragment"
 PROOF_FIXTURES = (
     REPOSITORY_ROOT / "rules" / "fixtures" / "sim.process.changelog-fragment"
 )
@@ -312,6 +320,48 @@ def test_a_fragment_another_pull_request_merged_first_does_not_count(tmp_path):
     assert _errors(result)[0].startswith(NO_FRAGMENT_ADDED)
 
 
+def _merge_onto_the_pull_request_below(root: Path, upper_files: dict[str, str]) -> str:
+    """Stack a pull request on a lower one that adds a fragment, and merge it.
+
+    The upper pull request targets the lower one's branch, so the workflow
+    passes that branch's head as BASE_SHA. Return that head. HEAD is the upper
+    pull request merged into it, like GitHub's pull request merge ref.
+    """
+    lower_head = _open_pull_request(
+        root, {"changelog.d/981.fixed.md": "Fixed the lower pull request.\n"}
+    )
+    git(root, "checkout", "--quiet", "-b", "upper-pull-request")
+    write_files(root, upper_files)
+    commit_all(root, "Upper pull request")
+    git(root, "checkout", "--quiet", "--detach", lower_head)
+    git(root, "merge", "--quiet", "--no-ff", "--message", "Merge", "upper-pull-request")
+    return lower_head
+
+
+def test_in_a_stack_the_fragment_of_the_pull_request_below_does_not_count(tmp_path):
+    root = make_repository(tmp_path)
+    lower_head = _merge_onto_the_pull_request_below(root, {"src/app.py": "pass\n"})
+
+    result = _check(root, lower_head)
+
+    assert result.returncode == 1
+    assert _errors(result)[0].startswith(NO_FRAGMENT_ADDED)
+
+
+def test_in_a_stack_each_pull_request_adds_its_own_fragment(tmp_path):
+    root = make_repository(tmp_path)
+    lower_head = _merge_onto_the_pull_request_below(
+        root, {"changelog.d/982.added.md": FRAGMENT_TEXT}
+    )
+
+    result = _check(root, lower_head)
+
+    assert result.returncode == 0, result.stdout
+    assert (
+        "This pull request adds 1 changelog fragment: changelog.d/982.added.md (added)."
+    ) in result.stdout
+
+
 def test_requires_the_base_revision(tmp_path):
     root = make_repository(tmp_path)
     environment = dict(GIT_ENVIRONMENT)
@@ -331,6 +381,94 @@ def test_fails_when_the_base_revision_is_not_in_the_checkout(tmp_path):
 
     assert result.returncode != 0
     assert "Could not find the merge base" in result.stdout
+
+
+# --- The workflow job -----------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def check_workflow() -> dict:
+    return yaml.safe_load(CHECK_WORKFLOW.read_text(encoding="utf-8"))
+
+
+def test_the_check_runs_on_every_event_that_can_change_its_result(check_workflow):
+    """Changing a pull request's base branch is an "edited" event."""
+    # PyYAML reads the key "on" as True.
+    triggers = check_workflow.get("on", check_workflow.get(True))
+
+    # No branches or paths filter: every pull request is checked, whatever it
+    # targets and whatever it changes.
+    assert triggers == {
+        "pull_request": {"types": ["opened", "edited", "reopened", "synchronize"]}
+    }
+
+
+def test_the_check_is_never_skipped(check_workflow):
+    """A skipped job counts as passing, so nothing may skip this one.
+
+    Unlike pr.yml's jobs, it has no stack condition and needs no job, so every
+    pull request in a stack runs it, and no step may skip or fail quietly.
+    """
+    assert list(check_workflow["jobs"]) == [CHECK_JOB]
+    job = check_workflow["jobs"][CHECK_JOB]
+
+    assert job["name"] == CHECK_NAME
+    assert "if" not in job
+    assert "needs" not in job
+    assert "continue-on-error" not in job
+    for step in job["steps"]:
+        assert "if" not in step, step
+        assert "continue-on-error" not in step, step
+
+
+def test_the_check_can_only_read(check_workflow):
+    assert check_workflow["permissions"] == {"contents": "read"}
+    assert "permissions" not in check_workflow["jobs"][CHECK_JOB]
+
+
+def test_a_newer_event_for_the_pull_request_cancels_its_running_check(
+    check_workflow,
+):
+    assert check_workflow["concurrency"] == {
+        "group": "${{ github.workflow }}-${{ github.event.pull_request.number }}",
+        "cancel-in-progress": True,
+    }
+
+
+def test_the_check_compares_the_merged_result_with_its_own_base(check_workflow):
+    checkout, python, check = check_workflow["jobs"][CHECK_JOB]["steps"]
+
+    assert checkout["uses"] == "actions/checkout@v6"
+    # The merge base needs the base branch's history.
+    assert checkout["with"] == {"fetch-depth": 0}
+    assert python == {
+        "name": "Set up Python",
+        "uses": "actions/setup-python@v6",
+        "with": {"python-version": "3.13"},
+    }
+    # The head of the pull request's own base branch: main, or in a stack the
+    # branch of the pull request below.
+    assert check == {
+        "name": "Require a changelog fragment",
+        "env": {"BASE_SHA": "${{ github.event.pull_request.base.sha }}"},
+        "run": f".github/scripts/{CHECK_SCRIPT}",
+    }
+
+
+def test_only_the_changelog_fragment_workflow_runs_the_check():
+    """pr.yml no longer runs it, so CI complete doesn't wait for it."""
+    jobs_running_the_check = []
+    for workflow_path in sorted(WORKFLOWS_DIR.glob("*.yml")):
+        workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+        for job_id, job in (workflow.get("jobs") or {}).items():
+            if job.get("name") == CHECK_NAME or CHECK_SCRIPT in str(job.get("steps")):
+                jobs_running_the_check.append(f"{workflow_path.name}:{job_id}")
+    pull_request_jobs = yaml.safe_load(
+        (WORKFLOWS_DIR / "pr.yml").read_text(encoding="utf-8")
+    )["jobs"]
+
+    assert jobs_running_the_check == [f"{CHECK_WORKFLOW.name}:{CHECK_JOB}"]
+    assert CHECK_JOB not in pull_request_jobs["ci-complete"]["needs"]
 
 
 # --- Proof --------------------------------------------------------------------

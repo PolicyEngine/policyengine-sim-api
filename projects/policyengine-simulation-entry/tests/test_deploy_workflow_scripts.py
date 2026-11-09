@@ -495,6 +495,7 @@ def test_deploy_workflow_checks_deployment_results_with_the_tested_script():
         "PROMOTION_RESULT: ${{ needs.promote_entrypoint.result }}",
         "EXISTING_STACK_REQUESTED: ${{ inputs.deploy_existing_stack }}",
         "ROUTING_RESULT: ${{ needs.update_routing.result }}",
+        "LATEST_RESULT: ${{ needs.publish_latest.result }}",
         "FINALIZE_RESULT: ${{ needs.finalize_routing.result }}",
         "FINALIZE_OUTCOME: ${{ needs.finalize_routing.outputs.outcome }}",
         f"run: .github/scripts/{DEPLOYMENT_READY}\n",
@@ -529,6 +530,7 @@ def test_deployment_ready_rejects_unexpected_skipped_phases(
             PROMOTION_RESULT=promotion,
             EXISTING_STACK_REQUESTED="false",
             ROUTING_RESULT="skipped",
+            LATEST_RESULT="skipped",
             FINALIZE_RESULT="skipped",
             FINALIZE_OUTCOME="",
         ),
@@ -538,19 +540,25 @@ def test_deployment_ready_rejects_unexpected_skipped_phases(
 
 
 @pytest.mark.parametrize(
-    ("routing", "finalize", "outcome", "passes"),
+    ("results", "outcome", "passes"),
     [
-        ("success", "success", "completed", True),
-        ("success", "success", "restored", False),
-        ("success", "failure", "completed", False),
-        ("success", "skipped", "", False),
-        ("skipped", "success", "completed", False),
-        ("failure", "success", "completed", False),
+        (("success", "success", "success"), "completed", True),
+        (("success", "success", "success"), "restored", False),
+        (("success", "success", "failure"), "completed", False),
+        (("success", "success", "skipped"), "", False),
+        (("skipped", "success", "success"), "completed", False),
+        (("failure", "success", "success"), "completed", False),
+        # latest must have moved after the checks, or been checked in place.
+        (("success", "failure", "success"), "restored", False),
+        (("success", "skipped", "success"), "completed", False),
+        (("success", "cancelled", "success"), "restored", False),
     ],
 )
 def test_deployment_ready_requires_a_completed_routing_publication(
-    fakes, routing, finalize, outcome, passes
+    fakes, results, outcome, passes
 ):
+    """``results`` are the routing, latest and finalize job results."""
+    routing, latest, finalize = results
     result = run_script(
         DEPLOYMENT_READY,
         env=fakes.env(
@@ -561,6 +569,7 @@ def test_deployment_ready_requires_a_completed_routing_publication(
             PROMOTION_RESULT="success",
             EXISTING_STACK_REQUESTED="true",
             ROUTING_RESULT=routing,
+            LATEST_RESULT=latest,
             FINALIZE_RESULT=finalize,
             FINALIZE_OUTCOME=outcome,
         ),

@@ -41,15 +41,19 @@ at least one failure path.
 Examples: `projects/policyengine-simulation-executor/tests/test_modal_scripts.py`
 and `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`.
 
-## Enforcement and baselines
+## Enforcement
 
 The `ci-scripts` quality guard (`python scripts/run_quality_guards.py`, or
-`python -m scripts.rules ci-scripts`) checks all three rules above. Existing
-violations are listed in `rules/baselines/ci-*.txt`. Anything new fails, and so
-does a baseline entry that no longer applies, so each list only shrinks. When
-you convert an existing multi-line block into a script, or add a missing test,
-remove its baseline entry and lower the rule's `baseline.count` in
-`rules/registry.toml`.
+`python -m scripts.rules ci-scripts`) checks all three rules above, in the
+`quality-guards` CI job, and all three are enforced:
+
+- Any multi-line `run:` block fails. The rule has no baseline, so
+  `[ci_scripts]` in `rules/registry.toml` lists none for it.
+- The baselines it lists for the other two checks,
+  `rules/baselines/ci-untested-scripts.txt` and
+  `rules/baselines/ci-shellcheck.txt`, are empty, and stay so:
+  `python -m scripts.rules validate`, run by the `rules-registry` guard,
+  fails if a check whose rule is enforced lists a baseline with an entry.
 
 ## Pushing to main from a workflow
 

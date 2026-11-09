@@ -7,6 +7,7 @@ registry discovers.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -142,7 +143,22 @@ def write_fake_smoke_curl(tmp_path: Path, revisions: list[str]) -> tuple[Path, P
                 printf '{"status":"healthy"}' > "${body_file}"
                 ;;
               */ready)
-                printf '{"status":"ready"}'
+                ready_body='{"status":"ready"}'
+                if [ -n "${FAKE_CURL_READY_BODIES:-}" ]; then
+                  # One body per line, served in order; the last one repeats.
+                  ready_count=0
+                  if [ -f "${FAKE_CURL_READY_BODIES}.count" ]; then
+                    ready_count="$(cat "${FAKE_CURL_READY_BODIES}.count")"
+                  fi
+                  ready_count=$((ready_count + 1))
+                  printf '%s' "${ready_count}" > "${FAKE_CURL_READY_BODIES}.count"
+                  line_count="$(wc -l < "${FAKE_CURL_READY_BODIES}")"
+                  if [ "${ready_count}" -gt "${line_count}" ]; then
+                    ready_count="${line_count}"
+                  fi
+                  ready_body="$(sed -n "${ready_count}p" "${FAKE_CURL_READY_BODIES}")"
+                fi
+                printf '%s' "${FAKE_CURL_READY:-${ready_body}}"
                 ;;
               */versions)
                 versions='{}'
@@ -195,11 +211,133 @@ def job_section(workflow: str, job_name: str) -> str:
     return match.group("body")
 
 
+SCRIPTS_DIRECTORY = REPOSITORY_ROOT / ".github" / "scripts"
+# What follows .github/scripts/ in a path, from the root or a project directory.
+SCRIPT_REFERENCE = re.compile(r"\.github/scripts/([^\s\"'`;|&()<>{}]*)")
+# A script file name built from a variable, such as routing-${mode}.sh.
+VARIABLE_SCRIPT_NAME = re.compile(
+    r"(?:^|[\s/\"'=(])[^\s/\"'=()]*\$[^\s/\"'()]*\.(?:sh|bash|py)(?![\w.-])"
+)
+
+
+def called_scripts(line: str, scripts_directory: Path | None = None) -> list[Path]:
+    """Return the files in ``scripts_directory`` whose names a shell line holds.
+
+    A file counts when its whole name appears in the line, written as a path
+    or after a directory variable such as ``"${script_directory}/name.sh"``,
+    whatever its extension. A mention that is not a call, such as a name in a
+    message, also counts: reading too much is safe, reading too little is
+    not. A call the tests cannot read fails: a ``.github/scripts/`` path that
+    names no file directly in the directory, or a script name built from a
+    variable.
+    """
+    directory = scripts_directory or SCRIPTS_DIRECTORY
+    # Punctuation after a path, as at the end of a sentence, is not its name.
+    references = (
+        reference.rstrip(".,:") for reference in SCRIPT_REFERENCE.findall(line)
+    )
+    for reference in filter(None, references):
+        assert "$" not in reference, (
+            f"Cannot read a script whose name is built from a variable: {line}"
+        )
+        assert "/" not in reference, f"Missing repository script: {reference}"
+        assert (directory / reference).is_file(), (
+            f"Missing repository script: {reference}"
+        )
+    assert not VARIABLE_SCRIPT_NAME.search(line), (
+        f"Cannot read a script whose name is built from a variable: {line}"
+    )
+    # A whole name is a maximal run of name characters equal to a file name.
+    words = set(re.findall(r"[\w.-]+", line))
+    return [directory / name for name in sorted(words & _file_names(directory))]
+
+
+@functools.cache
+def _file_names(directory: Path) -> frozenset[str]:
+    """Return the names of the files directly in ``directory``, read once."""
+    return frozenset(path.name for path in directory.iterdir() if path.is_file())
+
+
+def with_called_scripts(text: str, scripts_directory: Path | None = None) -> str:
+    """Return shell text followed by every repository script it names, recursively.
+
+    ``called_scripts`` decides what a line names. Each script is read once, so
+    one that names itself does not recurse, and its comment lines are left
+    out, so a search of the result finds only commands.
+    """
+    return _with_called_scripts(text, scripts_directory or SCRIPTS_DIRECTORY)
+
+
+@functools.cache
+def _with_called_scripts(text: str, scripts_directory: Path) -> str:
+    """Return ``with_called_scripts`` for one scripts directory, computed once."""
+    texts = [text]
+    read: set[str] = set()
+    pending = [text]
+    while pending:
+        for line in pending.pop(0).splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            for script in called_scripts(line, scripts_directory):
+                if script.name in read:
+                    continue
+                read.add(script.name)
+                body = "\n".join(
+                    line
+                    for line in script.read_text(encoding="utf-8").splitlines()
+                    if not line.lstrip().startswith("#")
+                )
+                texts.append(body)
+                pending.append(body)
+    return "\n".join(texts)
+
+
+def step_shell(step: dict) -> str:
+    """Return a step's run: text followed by each repository script it calls.
+
+    A test that looks for a command in a step reads this, so it finds the
+    command whether the step runs it inline or through a script under
+    .github/scripts/.
+    """
+    return with_called_scripts(step.get("run", ""))
+
+
+def run_step(
+    step: dict,
+    *,
+    env: dict[str, str],
+    replacements: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run a step's run: text from its working directory, as a workflow step.
+
+    It runs with ``bash --noprofile --norc -eo pipefail``, the options GitHub
+    Actions uses for ``shell: bash``. A job without a ``shell`` runs with
+    ``bash -e``, without pipefail, so this is the stricter of the two. From the
+    working directory, a ``../../.github/scripts/`` call runs the real script.
+    ``replacements`` substitutes ``${{ }}`` expressions in the text.
+    """
+    script = step["run"]
+    for expression, value in (replacements or {}).items():
+        script = script.replace(expression, value)
+    return run_bash(
+        "--noprofile",
+        "--norc",
+        "-eo",
+        "pipefail",
+        "-c",
+        script,
+        check=False,
+        capture_output=True,
+        env=env,
+        cwd=REPOSITORY_ROOT / step.get("working-directory", "."),
+    )
+
+
 def sentinel_check_step(job: dict) -> dict:
     steps = [
         step
         for step in job["steps"]
-        if "src.modal.utils.release_sentinel check" in step.get("run", "")
+        if "src.modal.utils.release_sentinel check" in step_shell(step)
     ]
     assert len(steps) == 1
     return steps[0]
@@ -363,12 +501,15 @@ def routing_context(**overrides):
                 "outputs": {
                     "before_sha256": "a" * 64,
                     "after_sha256": "b" * 64,
-                    "advances_latest": "true",
                 },
             },
             "integration": {"result": "success"},
             "authenticated_test": {"result": "success"},
             "promote_entrypoint": {"result": "success"},
+            "publish_latest": {
+                "result": "success",
+                "outputs": {"advances_latest": "true"},
+            },
         },
     }
     for path, value in overrides.items():
@@ -423,3 +564,84 @@ def workflow_jobs(path: Path) -> dict:
     import yaml
 
     return yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]
+
+
+def cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
+    """Return a complete deployment environment backed by a fake gcloud."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            if [[ "$1 $2 $3" == "secrets versions list" ]]; then
+              printf '%s\n' 1 3 2
+              exit 0
+            fi
+
+            if [[ "$1 $2" == "run deploy" ]]; then
+              printf '%s\n' "$@" > "${GCLOUD_ARGUMENTS_CAPTURE}"
+              while (($#)); do
+                if [[ "$1" == "--env-vars-file" ]]; then
+                  cp "$2" "${GCLOUD_ENV_FILE_CAPTURE}"
+                  exit 0
+                fi
+                shift
+              done
+            fi
+
+            printf 'unexpected gcloud invocation\n' >&2
+            exit 1
+            """
+        ),
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name != "SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"
+    }
+    return environment | {
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "RUNNER_TEMP": str(tmp_path),
+        "GCLOUD_ARGUMENTS_CAPTURE": str(tmp_path / "gcloud-arguments.txt"),
+        "GCLOUD_ENV_FILE_CAPTURE": str(tmp_path / "runtime-environment.json"),
+        "PROJECT_ID": "policyengine-staging",
+        "REGION": "us-central1",
+        "IMAGE": "us-central1-docker.pkg.dev/project/repository/image:sha",
+        "TAG": "s-123",
+        "DEPLOY_STAGE12_V2": "true",
+        "APP_ENVIRONMENT": "staging",
+        "MODAL_ENVIRONMENT": "staging",
+        "ENTRYPOINT_SERVICE": "policyengine-simulation-entry-staging",
+        "ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT": (
+            "simulation-entry@policyengine-staging.iam.gserviceaccount.com"
+        ),
+        "ENTRYPOINT_MIN_INSTANCES": "0",
+        "ENTRYPOINT_MAX_INSTANCES": "10",
+        "SIMULATION_ENTRYPOINT_AUTH_ISSUER_VALUE": (
+            "https://issuer.example/path?literal=$(not-a-command)"
+        ),
+        "SIMULATION_ENTRYPOINT_AUTH_AUDIENCE_VALUE": "simulation-api",
+        "OLD_GATEWAY_URL_VALUE": "https://legacy.example",
+        "OLD_GATEWAY_AUTH_ISSUER_VALUE": "https://issuer.example",
+        "OLD_GATEWAY_AUTH_AUDIENCE_VALUE": "legacy-api",
+        "OLD_GATEWAY_AUTH_CLIENT_ID_VALUE": "entrypoint-client",
+        "OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME": "old-client-secret",
+        "OBSERVABILITY_SERVICE_NAMESPACE": "policyengine.simulation-entry",
+        "OBSERVABILITY_TRACE_PROJECT_ID": "policyengine-observability",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://collector.example",
+        "POLICYENGINE_OTEL_GOOGLE_AUDIENCE": "https://collector.example",
+        "STAGE12_ENABLED_VALUE": "0",
+        "STAGE12_ARTIFACT_BUCKET_VALUE": "policyengine-stage12-staging",
+        "STAGE12_DATABASE_URL_SECRET_NAME": "stage12-staging-database-url",
+        "MODAL_TOKEN_ID_SECRET_NAME": "modal-token-id",
+        "MODAL_TOKEN_SECRET_SECRET_NAME": "modal-token-secret",
+        "SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME": (
+            "simulation-staging-service-database-url"
+        ),
+    }
