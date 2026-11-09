@@ -251,19 +251,16 @@ def test_deploy_gates_pass_the_release_identity_to_the_smoke():
             "${{ inputs.deploy_existing_stack && "
             "needs.prepare.outputs.uk_dataset_sha256 || '' }}"
         ),
-        # Latest must route to this release only when it should advance it.
-        "EXPECTED_LATEST": (
-            "${{ inputs.deploy_existing_stack && "
-            "needs.update_routing.outputs.advances_latest == 'true' && 'true' || '' }}"
-        ),
     }
     promote = jobs["promote_entrypoint"]
     for environment in (smoke_step["env"], promote["env"]):
         assert {key: environment.get(key) for key in expected} == expected
-    for job in ("integration", "promote_entrypoint"):
-        assert {"prepare", "deploy_executor", "update_routing"} <= set(
-            jobs[job]["needs"]
-        )
+        # latest moves after these checks; publish_latest checks it then.
+        assert "EXPECTED_LATEST" not in environment
+    assert {"prepare", "deploy_executor", "update_routing"} <= set(
+        jobs["integration"]["needs"]
+    )
+    assert {"prepare", "deploy_executor"} <= set(jobs["promote_entrypoint"]["needs"])
     # The promotion smoke runs inherit the job environment; no step overrides it.
     for step in promote["steps"]:
         if "cloud-run-simulation-entry-smoke.sh" in step.get("run", ""):

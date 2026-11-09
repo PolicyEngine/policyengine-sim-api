@@ -66,12 +66,21 @@ def recorded_writers(monkeypatch, patched_modal, tmp_path):
         ("restore_routing_state", "restore-latest", RECORDED_STATE),
         ("seed_active_routing_state_from_legacy", "seed", RECORDED_STATE),
         (
-            "plan_routing_publication",
+            "plan_routes_publication",
             "plan",
             {
                 "before_sha256": "b" * 64,
                 "after_sha256": "a" * 64,
                 "advances_latest": False,
+            },
+        ),
+        (
+            "plan_latest_publication",
+            "plan-latest",
+            {
+                "before_sha256": "c" * 64,
+                "after_sha256": "d" * 64,
+                "advances_latest": True,
             },
         ),
         ("publish_routing_state", "publish", RECORDED_STATE),
@@ -189,9 +198,25 @@ def recorded_writers(monkeypatch, patched_modal, tmp_path):
             ],
         ),
         (
-            (*PUBLISHING_ARGUMENTS, "--dry-run", "--force-latest"),
+            (*PUBLISHING_ARGUMENTS, "--dry-run"),
             (
                 "plan",
+                {
+                    "current_state": None,
+                    "deployed": DEPLOYED_6_3_0,
+                    "publication_id": None,
+                },
+            ),
+            [
+                f"before_sha256={'b' * 64}",
+                f"after_sha256={'a' * 64}",
+                "advances_latest=false",
+            ],
+        ),
+        (
+            (*PUBLISHING_ARGUMENTS, "--plan-latest-out", "{plan}", "--force-latest"),
+            (
+                "plan-latest",
                 {
                     "current_state": None,
                     "deployed": DEPLOYED_6_3_0,
@@ -200,9 +225,9 @@ def recorded_writers(monkeypatch, patched_modal, tmp_path):
                 },
             ),
             [
-                f"before_sha256={'b' * 64}",
-                f"after_sha256={'a' * 64}",
-                "advances_latest=false",
+                f"before_sha256={'c' * 64}",
+                f"after_sha256={'d' * 64}",
+                "advances_latest=true",
             ],
         ),
         (
@@ -244,6 +269,7 @@ def recorded_writers(monkeypatch, patched_modal, tmp_path):
         "restore-latest",
         "seed",
         "plan",
+        "plan-latest",
         "publish",
     ],
 )
@@ -334,6 +360,17 @@ def test_main_reports_a_foreign_publication_before_its_outcome(
             "the following arguments are required: --policyengine-version, "
             "--us-version",
         ),
+        (
+            (*PUBLISHING_ARGUMENTS, "--dry-run", "--force-latest"),
+            "--force-latest moves latest, which the routes plan never does; "
+            "pass it with --plan-latest-out",
+        ),
+        (
+            # A regression would write the plan to /dev/null, not the checkout.
+            (*PUBLISHING_ARGUMENTS, "--plan-out", "/dev/null", "--force-latest"),
+            "--force-latest moves latest, which the routes plan never does; "
+            "pass it with --plan-latest-out",
+        ),
     ],
     ids=[
         "finalize-inputs",
@@ -341,6 +378,8 @@ def test_main_reports_a_foreign_publication_before_its_outcome(
         "expected-latest",
         "publish-arguments",
         "plan-arguments",
+        "dry-run-force-latest",
+        "routes-plan-force-latest",
     ],
 )
 def test_main_refuses_incomplete_arguments_before_any_operation(

@@ -72,7 +72,6 @@ def test_full_stack_promotion_order_is_explicit():
         "deploy_executor",
         "authenticated_test",
         "sentinel_expected",
-        "update_routing",
     } <= promote_needs
     assert (
         'cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}" '
@@ -236,8 +235,10 @@ def test_stage12_only_deployment_cannot_redeploy_existing_modal_resources():
     assert "src.modal.utils.update_version_registry" not in with_called_scripts(
         stage12_section
     )
-    finalizer_job = job_section(reusable_workflow, "finalize_routing")
-    assert "inputs.deploy_existing_stack &&" in finalizer_job
+    for job_name in ("finalize_routing", "publish_latest"):
+        assert "inputs.deploy_existing_stack &&" in job_section(
+            reusable_workflow, job_name
+        )
     sentinel_job = job_section(reusable_workflow, "sentinel_expected")
     assert "if: ${{ inputs.deploy_existing_stack }}" in sentinel_job
 

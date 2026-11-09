@@ -105,6 +105,17 @@ def test_the_expression_evaluator_refuses_what_it_cannot_read(expression):
         ({"needs__promote_entrypoint__result": "failure"}, True, "false"),
         # Publication then a failure inside update_routing itself (#744 H2).
         ({"needs__update_routing__result": "failure"}, True, "false"),
+        # latest failed to move or its check failed: its publication restores.
+        ({"needs__publish_latest__result": "failure"}, True, "false"),
+        # A check failed, so latest never moved; the routes stay completed.
+        (
+            {
+                "needs__integration__result": "failure",
+                "needs__publish_latest__result": "skipped",
+            },
+            True,
+            "false",
+        ),
         (
             {
                 "inputs__promote_entrypoint": False,
@@ -201,6 +212,8 @@ def test_the_expression_evaluator_refuses_what_it_cannot_read(expression):
         "authenticated",
         "promotion",
         "routing-job",
+        "latest-job",
+        "latest-skipped-after-a-failed-check",
         "no-promotion",
         "missing-outputs",
         "runner-lost-all-outputs",
