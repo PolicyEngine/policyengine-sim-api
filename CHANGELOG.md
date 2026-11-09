@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.6.1] - 2026-11-09
+
+### Changed
+
+- A deployment that publishes Stage 12 now adds its v2 worker before its checks without moving the v2 manifest's default version, and moves the default to the new worker only after every check and the Cloud Run promotion pass, writing back the manifest it replaced if a later step fails or the run is cancelled. So Stage 12 reports reach a new release's worker only after that environment's checks pass, except the first worker in an empty manifest and a redeploy of the same version, whose worker is replaced in place.
+
+
 ## [0.6.0] - 2026-11-09
 
 ### Added
