@@ -30,6 +30,7 @@ from policyengine_simulation_contract.stage12_manifest import (
     publish_v2_manifest,
     read_v2_manifest,
     v2_application_name,
+    v2_manifest_copies,
     validate_manifest_has_no_credentials,
     write_v2_manifest,
 )
@@ -93,16 +94,31 @@ def _publish_worker(
     return manifest
 
 
-def _stored_digest(store: V2ManifestStore) -> str | None:
-    manifest = read_v2_manifest(store)
-    return None if manifest is None else manifest_digest(manifest)
+def _holds(store: V2ManifestStore, manifest: V2VersionManifest) -> bool:
+    """Return whether every reader's key holds its copy of ``manifest``."""
+    return all(
+        store.get(key) == copy for key, copy in v2_manifest_copies(manifest).items()
+    )
 
 
-def _write_and_check(
-    store: V2ManifestStore, manifest: V2VersionManifest, expected_digest: str
-) -> None:
+def _holds_each_key_of_either(
+    store: V2ManifestStore, before: V2VersionManifest, after: V2VersionManifest
+) -> bool:
+    """Return whether each key holds its copy of ``before`` or of ``after``.
+
+    A write that stopped part-way leaves some keys on each.
+    """
+    before_copies = v2_manifest_copies(before)
+    after_copies = v2_manifest_copies(after)
+    return all(
+        store.get(key) in (copy, after_copies[key])
+        for key, copy in before_copies.items()
+    )
+
+
+def _write_and_check(store: V2ManifestStore, manifest: V2VersionManifest) -> None:
     write_v2_manifest(store=store, manifest=manifest)
-    if _stored_digest(store) != expected_digest:
+    if not _holds(store, manifest):
         msg = "the written v2 manifest reads back differently"
         raise ValueError(msg)
 
@@ -111,12 +127,19 @@ def _move_default(store: V2ManifestStore, version: str, plan_file: Path) -> dict
     """Plan moving the default to ``version``, keep the plan, then apply it.
 
     The plan holds the manifest before and after the move with their
-    digests; the move is written only while the stored manifest is still the
-    plan's starting point.
+    digests, and is kept before anything is written. The move is written
+    only while every key still holds the plan's starting manifest, and not
+    at all when the default stays.
     """
     before = read_v2_manifest(store)
     if before is None:
         msg = "there is no v2 manifest to move the default of"
+        raise ValueError(msg)
+    if not _holds(store, before):
+        msg = (
+            "the stored copies of the v2 manifest differ (a write stopped "
+            "part-way); restore or republish it before moving the default"
+        )
         raise ValueError(msg)
     after = move_v2_default(current=before, version=version)
     plan = {
@@ -129,15 +152,17 @@ def _move_default(store: V2ManifestStore, version: str, plan_file: Path) -> dict
         "advances_default": after.default_version == version,
     }
     plan_file.write_text(json.dumps(plan, indent=2, sort_keys=True), encoding="utf-8")
-    if _stored_digest(store) != plan["before_sha256"]:
+    if after == before:
+        return plan
+    if not _holds(store, before):
         msg = "the v2 manifest changed after the default move was planned"
         raise ValueError(msg)
-    _write_and_check(store, after, plan["after_sha256"])
+    _write_and_check(store, after)
     return plan
 
 
-def _read_plan(plan_file: Path) -> tuple[dict, V2VersionManifest, V2VersionManifest]:
-    """Return a default plan and its manifests, refusing one that does not match."""
+def _read_plan(plan_file: Path) -> tuple[V2VersionManifest, V2VersionManifest]:
+    """Return a default plan's manifests, refusing a plan that does not match."""
     plan = json.loads(plan_file.read_text(encoding="utf-8"))
     if not isinstance(plan, dict) or plan.get("schema") != V2_DEFAULT_PLAN_SCHEMA:
         msg = f"not a {V2_DEFAULT_PLAN_SCHEMA} plan"
@@ -150,13 +175,17 @@ def _read_plan(plan_file: Path) -> tuple[dict, V2VersionManifest, V2VersionManif
     ):
         msg = "the plan's manifests do not match its digests"
         raise ValueError(msg)
-    return plan, before, after
+    return before, after
 
 
 def _verify_plan(store: V2ManifestStore, plan_file: Path) -> str:
-    """Return the default a reader resolves, refusing unless it is the plan's."""
-    plan, _before, after = _read_plan(plan_file)
-    if _stored_digest(store) != plan["after_sha256"]:
+    """Return the default a reader resolves, refusing unless it is the plan's.
+
+    Every reader's key, including those older entrypoint revisions read, must
+    hold its copy of the manifest the move wrote.
+    """
+    _before, after = _read_plan(plan_file)
+    if not _holds(store, after):
         msg = "the stored v2 manifest is not what this default move wrote"
         raise ValueError(msg)
     resolved_version = V2ManifestLoader(store).resolve()[0]
@@ -172,21 +201,22 @@ def _verify_plan(store: V2ManifestStore, plan_file: Path) -> str:
 def _restore_plan(store: V2ManifestStore, plan_file: Path) -> str:
     """Write back the plan's starting manifest while its move is what is stored.
 
-    Returns ``restored``, or ``unchanged`` when the stored manifest is still
-    the starting one (the move was never written, or was already undone).
-    Any other stored manifest is a conflict, and nothing is written.
+    Returns ``restored`` when it wrote it back, including after a move or an
+    earlier restore that stopped part-way (each key holds the starting or the
+    moved manifest's copy), or ``unchanged`` when every key already holds the
+    starting manifest. Any other stored manifest is a conflict, and nothing
+    is written.
     """
-    plan, before, _after = _read_plan(plan_file)
-    stored = _stored_digest(store)
-    if stored == plan["before_sha256"]:
+    before, after = _read_plan(plan_file)
+    if _holds(store, before):
         return "unchanged"
-    if stored != plan["after_sha256"]:
+    if not _holds_each_key_of_either(store, before, after):
         msg = (
             "the v2 manifest is neither what this default move replaced nor "
             "what it wrote; another publish changed it, so nothing was restored"
         )
         raise ValueError(msg)
-    _write_and_check(store, before, plan["before_sha256"])
+    _write_and_check(store, before)
     return "restored"
 
 
@@ -249,6 +279,8 @@ def main() -> None:
         parser.error("--keep-default needs --validation-file")
     if (args.move_default is None) != (args.plan_out is None):
         parser.error("--move-default and --plan-out go together")
+    if args.force_default and args.validation_file is None:
+        parser.error("--force-default applies only with --validation-file")
 
     assert_separate_manifest_names(
         v1_name=V1_ROUTING_STATE_NAME,

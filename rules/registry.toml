@@ -608,6 +608,7 @@ nodes = [
   "tests/test_deployment_assets_stage12_default.py::test_the_default_job_moves_keeps_checks_and_restores_in_order",
   "tests/test_deployment_assets_stage12_default.py::test_the_stage12_default_shares_nothing_with_v1_routing",
   "tests/test_deployment_assets_stage12_default.py::test_the_deployment_reports_success_only_after_the_stage12_default_moved",
+  "tests/test_deployment_assets_stage12_default.py::test_each_default_step_gets_the_modal_access_its_script_reads",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"

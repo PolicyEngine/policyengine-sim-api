@@ -104,6 +104,8 @@ def test_the_default_moves_only_after_every_check_and_the_promotion():
             },
             False,
         ),
+        # The input alone decides, even if the worker job had succeeded.
+        ({"inputs__deploy_stage12_v2": False}, False),
         # A Stage 12-only deployment (stage12-deploy.yml) moves it too.
         (
             {
@@ -123,6 +125,7 @@ def test_the_default_moves_only_after_every_check_and_the_promotion():
         "no-promotion-requested",
         "promotion-skipped",
         "stage12-not-requested",
+        "stage12-input-off",
         "stage12-only",
         "cancelled",
     ],
@@ -198,3 +201,34 @@ def test_the_deployment_reports_success_only_after_the_stage12_default_moved():
         "REQUESTED": "${{ inputs.deploy_stage12_v2 }}",
         "DEFAULT_RESULT": f"${{{{ needs.{DEFAULT_JOB}.result }}}}",
     }
+
+
+MODAL_ACCESS = {
+    "MODAL_TOKEN_ID": "${{ secrets.MODAL_TOKEN_ID }}",
+    "MODAL_TOKEN_SECRET": "${{ secrets.MODAL_TOKEN_SECRET }}",
+    "MODAL_ENVIRONMENT": "${{ inputs.modal_environment }}",
+}
+
+
+@pytest.mark.parametrize(
+    ("step_name", "env"),
+    [
+        (
+            "Move the v2 default to the release",
+            {
+                **MODAL_ACCESS,
+                "POLICYENGINE_VERSION": (
+                    "${{ needs.prepare.outputs.policyengine_version }}"
+                ),
+            },
+        ),
+        ("Verify a reader resolves the v2 default", MODAL_ACCESS),
+        ("Put the v2 default back after a failed or cancelled step", MODAL_ACCESS),
+    ],
+    ids=["move", "verify", "restore"],
+)
+def test_each_default_step_gets_the_modal_access_its_script_reads(step_name, env):
+    step = _step(_jobs()[DEFAULT_JOB], step_name)
+
+    assert step["env"] == env
+    assert step["working-directory"] == "projects/policyengine-simulation-executor"

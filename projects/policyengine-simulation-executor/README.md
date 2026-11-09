@@ -148,8 +148,21 @@ with its own mechanism, separate from the v1 routing jobs above:
    `deployment_ready` requires this job to succeed whenever Stage 12 was
    requested.
 
+The manifest is three keys, one copy for each generation of reader, written
+one after another, so a write that stops part-way leaves some keys on the
+previous manifest. The move refuses to start unless all three hold the same
+manifest, the check reads all three, and the restore recognises a part-way
+write of either the move or an earlier restore and writes the starting
+manifest back to every key. A move that leaves the default where it is writes
+nothing, so the manifest's digest, which Stage 12 report identities include,
+stays the same.
+
 The plan is kept as the `stage12-v2-default-plan-<environment>-<attempt>`
-artifact. No workflow restores an earlier default after a completed deploy.
+artifact. If the restore step itself fails, an operator can download that
+artifact and run `update_v2_version_manifest --environment <modal environment>
+--restore-plan <plan.json>` with that environment's Modal credentials. No
+workflow restores an earlier default after a completed deploy, and the
+deployment's `force_latest` input does not move the v2 default.
 
 ## Baseline artifact pipeline (precompute → store → image fetch)
 

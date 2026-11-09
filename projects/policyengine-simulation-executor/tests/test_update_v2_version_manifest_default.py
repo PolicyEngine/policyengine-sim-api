@@ -14,12 +14,15 @@ from types import SimpleNamespace
 
 import pytest
 from policyengine_simulation_contract.stage12_manifest import (
+    PRE_CACHE_MANIFEST_KEY,
     V2ManifestLoader,
+    V2VersionManifest,
     V2WorkerVersion,
     add_v2_worker,
     move_v2_default,
     read_v2_manifest,
     v2_application_name,
+    v2_manifest_copies,
     write_v2_manifest,
 )
 from src.modal.utils import update_v2_version_manifest as publisher
@@ -29,14 +32,29 @@ OLDER = "1.0.0"
 
 
 class FakeStore:
+    """A Modal Dict stand-in that can fail on a chosen later write."""
+
     def __init__(self) -> None:
         self.values: dict[str, object] = {}
+        self.writes = 0
+        self.writes_until_failure: int | None = None
 
     def get(self, key: str, default: object = None) -> object:
         return self.values.get(key, default)
 
     def __setitem__(self, key: str, value: object) -> None:
+        if self.writes_until_failure == 0:
+            self.writes_until_failure = None
+            msg = "Modal Dict write failed"
+            raise RuntimeError(msg)
+        if self.writes_until_failure is not None:
+            self.writes_until_failure -= 1
+        self.writes += 1
         self.values[key] = json.loads(json.dumps(value))
+
+    def holds(self, manifest: object) -> bool:
+        copies = v2_manifest_copies(V2VersionManifest.model_validate(manifest))
+        return all(self.values.get(key) == copy for key, copy in copies.items())
 
 
 @pytest.fixture
@@ -147,9 +165,13 @@ def test_move_default_keeps_a_newer_default(monkeypatch, tmp_path, store):
         ),
     )
 
+    writes = store.writes
+
     plan = _move(monkeypatch, tmp_path, OLDER)
 
     assert plan["advances_default"] is False
+    assert plan["before"] == plan["after"]
+    assert store.writes == writes
     assert read_v2_manifest(store).default_version == _installed_version()
 
 
@@ -239,6 +261,90 @@ def test_the_command_line_refuses_an_incomplete_or_mixed_request(
 ):
     with pytest.raises(SystemExit) as refusal:
         _run(monkeypatch, *arguments)
+
+    assert refusal.value.code == 2
+    assert store.values == {}
+
+
+def test_the_plan_is_kept_before_the_manifest_is_written(monkeypatch, tmp_path, store):
+    _with_both_workers(store)
+    store.writes_until_failure = 0
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        _move(monkeypatch, tmp_path, _installed_version())
+
+    assert json.loads((tmp_path / "plan.json").read_text())["advances_default"]
+
+
+@pytest.mark.parametrize("completed_writes", [1, 2], ids=["one-key", "two-keys"])
+def test_restore_recovers_from_a_move_that_stopped_part_way(
+    monkeypatch, tmp_path, store, capsys, completed_writes
+):
+    # The move wrote only some of the manifest's keys, so readers fall back
+    # to an older key's copy, which a digest of either plan state misses.
+    _with_both_workers(store)
+    store.writes_until_failure = completed_writes
+    with pytest.raises(RuntimeError, match="write failed"):
+        _move(monkeypatch, tmp_path, _installed_version())
+    plan = json.loads((tmp_path / "plan.json").read_text())
+
+    _run(monkeypatch, "--restore-plan", str(tmp_path / "plan.json"))
+
+    assert "v2 default restore: restored" in capsys.readouterr().out
+    assert store.holds(plan["before"])
+
+
+def test_a_restore_that_stopped_part_way_can_be_run_again(monkeypatch, tmp_path, store):
+    _with_both_workers(store)
+    plan = _move(monkeypatch, tmp_path, _installed_version())
+    store.writes_until_failure = 1
+    with pytest.raises(RuntimeError, match="write failed"):
+        _run(monkeypatch, "--restore-plan", str(tmp_path / "plan.json"))
+
+    _run(monkeypatch, "--restore-plan", str(tmp_path / "plan.json"))
+
+    assert store.holds(plan["before"])
+
+
+def test_move_refuses_a_manifest_whose_copies_differ(monkeypatch, tmp_path, store):
+    # Moving from a mixed store would write one copy's content to every key,
+    # dropping what the others hold (such as region datasets).
+    _with_both_workers(store)
+    older_copy = v2_manifest_copies(
+        add_v2_worker(current=None, worker=_older_worker())
+    )[PRE_CACHE_MANIFEST_KEY]
+    store.values[PRE_CACHE_MANIFEST_KEY] = older_copy
+    writes = store.writes
+
+    with pytest.raises(ValueError, match="copies of the v2 manifest differ"):
+        _move(monkeypatch, tmp_path, _installed_version())
+    assert store.writes == writes
+
+
+def test_verify_checks_the_copy_older_readers_read(monkeypatch, tmp_path, store):
+    _with_both_workers(store)
+    plan = _move(monkeypatch, tmp_path, _installed_version())
+    before_copy = v2_manifest_copies(V2VersionManifest.model_validate(plan["before"]))
+    store.values[PRE_CACHE_MANIFEST_KEY] = before_copy[PRE_CACHE_MANIFEST_KEY]
+
+    with pytest.raises(ValueError, match="is not what this default move wrote"):
+        _run(monkeypatch, "--verify-plan", str(tmp_path / "plan.json"))
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        ("--move-default", "1.0.0", "--plan-out", "p.json"),
+        ("--verify-plan", "p.json"),
+        ("--restore-plan", "p.json"),
+    ],
+    ids=["move", "verify", "restore"],
+)
+def test_force_default_is_refused_outside_a_worker_publication(
+    monkeypatch, store, mode
+):
+    with pytest.raises(SystemExit) as refusal:
+        _run(monkeypatch, *mode, "--force-default")
 
     assert refusal.value.code == 2
     assert store.values == {}

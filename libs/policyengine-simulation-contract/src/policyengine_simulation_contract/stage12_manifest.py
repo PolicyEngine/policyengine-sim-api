@@ -352,19 +352,19 @@ def move_v2_default(
     """Return ``current`` with its default moved to an added worker ``version``.
 
     The default moves only when ``version`` is newer by PEP 440 ordering (an
-    unparsable version never is) or ``force_default`` is set. Raises
-    ValueError when ``current`` has no worker for ``version``.
+    unparsable version never is) or ``force_default`` is set; otherwise the
+    manifest is returned as it was, generation included, so its digest (and
+    every Stage 12 identity built from it) stays. Raises ValueError when
+    ``current`` has no worker for ``version``.
     """
     parsed = V2VersionManifest.model_validate(current)
     worker = parsed.versions.get(version)
     if worker is None:
         msg = f"the v2 manifest has no v2 worker {version!r} to make the default"
         raise ValueError(msg)
-    default_version = (
-        version
-        if force_default or _is_newer(version, parsed.default_version)
-        else parsed.default_version
-    )
+    if not (force_default or _is_newer(version, parsed.default_version)):
+        return parsed
+    default_version = version
     return V2VersionManifest(
         generation=f"default:{version}:{worker.application_name}",
         default_version=default_version,
@@ -384,14 +384,24 @@ def read_v2_manifest(store: V2ManifestStore) -> V2VersionManifest | None:
     return V2VersionManifest.model_validate(current)
 
 
+def v2_manifest_copies(manifest: V2VersionManifest) -> dict[str, object]:
+    """Return each reader's key and its copy of ``manifest``, in write order."""
+    return {
+        REGION_DATASETS_MANIFEST_KEY: manifest.model_dump(mode="json"),
+        ACTIVE_MANIFEST_KEY: pre_region_datasets_manifest_payload(manifest),
+        PRE_CACHE_MANIFEST_KEY: pre_cache_manifest_payload(manifest),
+    }
+
+
 def write_v2_manifest(*, store: V2ManifestStore, manifest: V2VersionManifest) -> None:
     """Write ``manifest`` under each reader's key, each as one whole document."""
     # Each key holds one entire validated document, and a reader uses one
     # whole document (the region dataset copy only while it matches the cache
-    # copy), so no reader observes a partial update assembled from several.
-    store[REGION_DATASETS_MANIFEST_KEY] = manifest.model_dump(mode="json")
-    store[ACTIVE_MANIFEST_KEY] = pre_region_datasets_manifest_payload(manifest)
-    store[PRE_CACHE_MANIFEST_KEY] = pre_cache_manifest_payload(manifest)
+    # copy), so no reader observes a document assembled from several. The
+    # keys are written one after another, so a write that stops part-way
+    # leaves some keys on the previous manifest.
+    for key, copy in v2_manifest_copies(manifest).items():
+        store[key] = copy
 
 
 def publish_v2_manifest(
@@ -403,8 +413,7 @@ def publish_v2_manifest(
     """Add ``worker`` to the stored manifest, write it back and return it.
 
     The default moves as :func:`build_next_v2_manifest` moves it, in the same
-    write. The whole manifest is written as one store value, so readers never
-    see a partial update.
+    write (see :func:`write_v2_manifest`).
     """
     next_manifest = build_next_v2_manifest(
         current=_current_manifest(store),

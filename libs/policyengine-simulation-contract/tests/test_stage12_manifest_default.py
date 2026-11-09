@@ -18,6 +18,7 @@ from policyengine_simulation_contract.stage12_manifest import (
     pre_region_datasets_manifest_payload,
     publish_v2_manifest,
     read_v2_manifest,
+    v2_manifest_copies,
     write_v2_manifest,
 )
 from test_stage12_manifest import FakeStore, _worker
@@ -69,7 +70,9 @@ def test_the_default_moves_to_an_older_worker_only_when_forced():
     kept = move_v2_default(current=added, version=OLD)
     forced = move_v2_default(current=added, version=OLD, force_default=True)
 
-    assert kept.default_version == NEW
+    # A default that stays leaves the manifest as it was, generation included,
+    # so its digest (and every Stage 12 identity built from it) stays too.
+    assert kept == added
     assert forced.default_version == OLD
 
 
@@ -91,6 +94,7 @@ def test_writing_a_manifest_writes_each_readers_key_and_reads_back():
         (ACTIVE_MANIFEST_KEY, pre_region_datasets_manifest_payload(manifest)),
         (PRE_CACHE_MANIFEST_KEY, pre_cache_manifest_payload(manifest)),
     ]
+    assert list(v2_manifest_copies(manifest).items()) == store.writes
     assert read_v2_manifest(store) == manifest
     assert V2ManifestLoader(store).resolve()[0] == NEW
 
