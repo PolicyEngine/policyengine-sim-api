@@ -1,0 +1,59 @@
+name: Read the Stage 12 v2 manifest
+
+# Modal expires a Dict entry after 7 days without a read or write. The
+# entrypoint reads the Stage 12 v2 manifest only for a Stage 12 request, and
+# Stage 12 is off in beta, so without this a week with no deployment would
+# lose the manifest. Reading every key once a day keeps each entry. Stage 12's
+# own mechanism, separate from the v1 routing jobs.
+on:
+  schedule:
+    - cron: "41 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Reads only. It stays out of simulation-deploy-main, where a queued run would
+# cancel a pending deployment.
+concurrency:
+  group: stage12-v2-manifest-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Read the Stage 12 v2 manifest in ${{ matrix.modal_environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The Modal environments simulation-deploy.yml and stage12-deploy.yml
+        # publish the manifest to.
+        modal_environment: [staging, main]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.13.6"
+
+      - name: Install Stage 12 manifest publisher dependencies
+        working-directory: projects/policyengine-simulation-executor
+        run: uv sync --frozen
+
+      # Fails when there is no manifest: a deployment then refuses to publish
+      # into it until an operator publishes the first worker.
+      - name: Read every key of the v2 manifest
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_ENVIRONMENT: ${{ matrix.modal_environment }}
+        run: ../../.github/scripts/stage12-v2-manifest-refresh.sh
