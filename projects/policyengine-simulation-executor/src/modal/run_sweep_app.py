@@ -11,9 +11,11 @@ reports. It connects as the Modal worker role, from the same Modal secret the
 v2 coordinator and workers use. This application is not versioned with the
 .py bundle: one copy runs per Modal environment.
 
-The deployment workflow's executor job deploys it to each Modal environment,
-after the versioned executor (``simulation-deploy.reusable.yml``). Modal
-refuses the deployment until the Modal secret exists in that environment.
+Each deployment from ``main`` deploys it to its Modal environment after
+every check, in ``publish_stage12_v2_default`` after the Stage 12 v2
+default moves (``simulation-deploy.reusable.yml``); if this deploy fails,
+that job puts the previous default back. Modal refuses the deployment
+while the Modal secret is missing from that environment.
 """
 
 from __future__ import annotations
