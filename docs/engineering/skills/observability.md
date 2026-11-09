@@ -130,11 +130,17 @@ record an operation or request that ends in `KeyboardInterrupt` with the
 outcome `interrupted` at WARNING and leave it out of the error count metric;
 a span that ends in it keeps an unset status and gets the attribute
 `policyengine.outcome` set to `interrupted`. The exception propagates
-unchanged, so a preempted attempt doesn't reach the daily telemetry error
-report. Let `KeyboardInterrupt` leave the
-operation block as it is: code that catches it and raises another exception
-instead reports the attempt as a failure at ERROR. `except Exception` doesn't
-catch it.
+unchanged, so the preempted call's own records don't reach the daily
+telemetry error report. Let `KeyboardInterrupt` leave the operation block as
+it is: code that catches it and raises another exception instead reports the
+attempt as a failure at ERROR. `except Exception` doesn't catch it.
+
+Modal ends a call it cancels with `InputCancellation` instead, which is a
+`BaseException` but not a `KeyboardInterrupt`, and policyengine-observability
+records that operation with the outcome `error` at ERROR. A preempted Stage 12
+segment runner cancels the segment calls it started, and a preempted Stage 12
+coordinator with a report run cancels its unfinished simulation calls, so each
+of those child calls that was running writes an ERROR record.
 
 ## Metric resource identity
 
