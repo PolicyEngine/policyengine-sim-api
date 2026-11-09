@@ -3,14 +3,17 @@
 import hashlib
 import json
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
 from src.modal.routing_publisher.state import (
     ROUTING_PUBLICATION_KEY,
     DeployedAppVersions,
+    RoutingState,
+    build_latest_routing_state,
     build_next_routing_state,
+    build_routes_routing_state,
 )
 
 if TYPE_CHECKING:
@@ -18,12 +21,12 @@ if TYPE_CHECKING:
 
 # --- Routing plans: publish exactly once, restore exactly what was replaced ---
 #
-# A deployment writes its plan (the routing state before and after publishing)
+# A deployment writes each plan (the routing state before and after publishing)
 # before it changes anything, keeps it as a workflow artifact, then applies
-# it. A failed release is undone by restoring the plan's "before" state, but
-# only while the live state is still the plan's "after" state: a restore never
-# overwrites a change made by anyone else, and a plan that was never applied
-# restores nothing.
+# it: a routes plan before its checks and a latest plan after them. A plan is
+# undone by restoring its "before" state, but only while the live state is
+# still its "after" state: a restore never overwrites a change made by anyone
+# else, and a plan that was never applied restores nothing.
 
 ROUTING_PLAN_SCHEMA = "policyengine-simulation.routing-plan/v1"
 
@@ -43,14 +46,15 @@ def _json_copy[JsonValue](value: JsonValue) -> JsonValue:
     return json.loads(json.dumps(value))
 
 
-def plan_routing_publication(
+def _plan_publication(
     *,
     current_state: object,
     deployed: DeployedAppVersions,
-    force_latest: bool = False,
-    publication_id: str | None = None,
+    build_after: Callable[[object], RoutingState],
+    generation_prefix: str,
+    publication_id: str | None,
 ) -> dict:
-    """Plan the routing state before and after publishing a release, with digests.
+    """Plan publishing ``build_after(current_state)``, with digests.
 
     The published state's ``generation`` names this publication uniquely
     (``publication_id``, by default a random one), so a later publication of
@@ -62,14 +66,10 @@ def plan_routing_publication(
     app_name = deployed.app_name
     policyengine_version = deployed.policyengine_version
     before = _json_copy(current_state) if current_state is not None else None
-    after = _json_copy(
-        build_next_routing_state(
-            current_state=deepcopy(current_state),
-            deployed=deployed,
-            force_latest=force_latest,
-        )
+    after = _json_copy(build_after(deepcopy(current_state)))
+    after["generation"] = (
+        f"{generation_prefix}{policyengine_version}:{app_name}:{publication_id}"
     )
-    after["generation"] = f"{policyengine_version}:{app_name}:{publication_id}"
     return {
         "schema": ROUTING_PLAN_SCHEMA,
         "publication_id": publication_id,
@@ -81,6 +81,77 @@ def plan_routing_publication(
         "after_sha256": routing_state_digest(after),
         "advances_latest": after["latest"].get("policyengine") == policyengine_version,
     }
+
+
+def plan_routing_publication(
+    *,
+    current_state: object,
+    deployed: DeployedAppVersions,
+    force_latest: bool = False,
+    publication_id: str | None = None,
+) -> dict:
+    """Plan publishing a release's routes and moving ``latest`` in one write.
+
+    See :func:`build_next_routing_state`. Deployments publish the two
+    separately: :func:`plan_routes_publication` before their checks and
+    :func:`plan_latest_publication` after them.
+    """
+    return _plan_publication(
+        current_state=current_state,
+        deployed=deployed,
+        build_after=lambda state: build_next_routing_state(
+            current_state=state, deployed=deployed, force_latest=force_latest
+        ),
+        generation_prefix="",
+        publication_id=publication_id,
+    )
+
+
+def plan_routes_publication(
+    *,
+    current_state: object,
+    deployed: DeployedAppVersions,
+    publication_id: str | None = None,
+) -> dict:
+    """Plan publishing a release's routes and bundle manifest, leaving ``latest``.
+
+    See :func:`build_routes_routing_state`. A deployment applies this plan
+    before its checks, which pin the release's versions.
+    """
+    return _plan_publication(
+        current_state=current_state,
+        deployed=deployed,
+        build_after=lambda state: build_routes_routing_state(
+            current_state=state, deployed=deployed
+        ),
+        generation_prefix="",
+        publication_id=publication_id,
+    )
+
+
+def plan_latest_publication(
+    *,
+    current_state: object,
+    deployed: DeployedAppVersions,
+    force_latest: bool = False,
+    publication_id: str | None = None,
+) -> dict:
+    """Plan moving ``latest`` to a release whose routes are already published.
+
+    See :func:`build_latest_routing_state`. A deployment applies this plan
+    after every check has passed. Its state is always new (its generation
+    starts with ``latest:``), even when ``latest`` stays, so each attempt
+    that reaches this step journals its own publication.
+    """
+    return _plan_publication(
+        current_state=current_state,
+        deployed=deployed,
+        build_after=lambda state: build_latest_routing_state(
+            current_state=state, deployed=deployed, force_latest=force_latest
+        ),
+        generation_prefix="latest:",
+        publication_id=publication_id,
+    )
 
 
 def validate_routing_plan(plan: object) -> dict:

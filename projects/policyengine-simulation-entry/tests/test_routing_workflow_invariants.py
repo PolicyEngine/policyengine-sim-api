@@ -52,6 +52,7 @@ WRITING_OPTIONS = frozenset(
 READ_ONLY_OPTIONS = frozenset(
     {
         "--plan-out",
+        "--plan-latest-out",
         "--dry-run",
         "--print-identity",
         "--print-latest",
@@ -66,6 +67,7 @@ VALUE_OPTIONS = frozenset(
         "--uk-version",
         "--environment",
         "--plan-out",
+        "--plan-latest-out",
         "--apply-plan",
         "--restore-plan",
         "--publication-id",
@@ -1110,6 +1112,11 @@ def test_the_reusable_deployments_routing_writers_are_its_journal_steps():
     assert writers == {
         ("update_routing", "Record the unfinished routing publication"),
         ("update_routing", "Publish the planned routing"),
+        ("update_routing", "Complete the routing publication"),
+        ("publish_latest", "Record the unfinished latest publication"),
+        ("publish_latest", "Move latest to the release"),
+        ("publish_latest", "Complete the latest publication"),
+        ("publish_latest", "Put latest back after a failed step"),
         ("finalize_routing", "Finalize the routing publication"),
     }
 

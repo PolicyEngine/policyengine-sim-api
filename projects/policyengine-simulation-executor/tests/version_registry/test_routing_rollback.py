@@ -241,9 +241,7 @@ def test_main_plans_applies_and_restores(patched_modal, monkeypatch, capsys, tmp
     state = published_routing_state(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
     store = install_routing_store(patched_modal, state)
     install_bundle_manifests(monkeypatch, {"6.3.0": ("1.1.0", "2.2.0")})
-    plan_file = tmp_path / "plan.json"
-    run_registry_main(
-        monkeypatch,
+    publishing_arguments = (
         "--app-name",
         versioned_app_name("6.3.0"),
         "--policyengine-version",
@@ -252,19 +250,29 @@ def test_main_plans_applies_and_restores(patched_modal, monkeypatch, capsys, tmp
         "1.1.0",
         "--uk-version",
         "2.2.0",
-        "--plan-out",
-        str(plan_file),
     )
-    plan = json.loads(plan_file.read_text())
+    routes_file = tmp_path / "plan.json"
+    run_registry_main(
+        monkeypatch, *publishing_arguments, "--plan-out", str(routes_file)
+    )
+    routes = json.loads(routes_file.read_text())
     assert capsys.readouterr().out.splitlines() == [
-        f"before_sha256={plan['before_sha256']}",
-        f"after_sha256={plan['after_sha256']}",
-        "advances_latest=true",
+        f"before_sha256={routes['before_sha256']}",
+        f"after_sha256={routes['after_sha256']}",
+        "advances_latest=false",
     ]
     assert store.get("active") == json.loads(
         json.dumps(state)
     )  # planning changes nothing
-    run_registry_main(monkeypatch, "--apply-plan", str(plan_file))
+    run_registry_main(monkeypatch, "--apply-plan", str(routes_file))
+    # The routes are published; latest moves only with the latest plan.
+    assert store.get("active")["latest"]["policyengine"] == "6.2.6"
+    latest_file = tmp_path / "latest-plan.json"
+    run_registry_main(
+        monkeypatch, *publishing_arguments, "--plan-latest-out", str(latest_file)
+    )
+    capsys.readouterr()
+    run_registry_main(monkeypatch, "--apply-plan", str(latest_file))
     assert store.get("active")["latest"]["policyengine"] == "6.3.0"
     run_registry_main(monkeypatch, "--print-identity")
     assert capsys.readouterr().out.splitlines()[-4:] == [
@@ -273,7 +281,7 @@ def test_main_plans_applies_and_restores(patched_modal, monkeypatch, capsys, tmp
         "uk_model_version=2.2.0",
         "uk_dataset_sha256=" + "5" * 64,
     ]
-    run_registry_main(monkeypatch, "--restore-plan", str(plan_file))
+    run_registry_main(monkeypatch, "--restore-plan", str(routes_file), str(latest_file))
     assert "restored" in capsys.readouterr().out
     assert store.get("active") == json.loads(json.dumps(state))
 
