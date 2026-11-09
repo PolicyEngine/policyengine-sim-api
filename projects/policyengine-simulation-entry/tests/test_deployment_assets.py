@@ -215,8 +215,9 @@ def _assert_deployment_environment_settings(reusable_workflow: str) -> None:
     assert (
         # Every job but stage12_v2_ready declares the release environment;
         # the job that moves latest after the checks reads the prod
-        # environment's custom-hostname variable.
-        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 16
+        # environment's custom-hostname variable, and the job that moves the
+        # Stage 12 v2 default after them is the seventeenth.
+        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 17
     )
     assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow

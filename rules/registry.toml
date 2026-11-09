@@ -590,6 +590,31 @@ job = "test"
 invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
+id = "sim.deploy.stage12-default-moves-after-checks"
+category = "deployment"
+statement = "A deployment that publishes Stage 12 adds its v2 worker before its checks without moving the v2 manifest's default version, and moves the default only after every check and the Cloud Run promotion pass, then checks that a reader resolves it and writes back the manifest it replaced if a later step fails or the run is cancelled; this mechanism shares no code with the v1 routing jobs."
+rationale = "projects/policyengine-simulation-executor/README.md#stage-12-v2-default-version"
+scope = [".github/workflows/simulation-deploy.reusable.yml", ".github/scripts/stage12-v2-default-*.sh"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets_stage12_default.py::test_the_worker_is_published_before_the_checks_without_moving_the_default",
+  "tests/test_deployment_assets_stage12_default.py::test_the_default_moves_only_after_every_check_and_the_promotion",
+  "tests/test_deployment_assets_stage12_default.py::test_the_default_job_runs_only_when_everything_before_it_passed",
+  "tests/test_deployment_assets_stage12_default.py::test_the_default_job_moves_keeps_checks_and_restores_in_order",
+  "tests/test_deployment_assets_stage12_default.py::test_the_stage12_default_shares_nothing_with_v1_routing",
+  "tests/test_deployment_assets_stage12_default.py::test_the_deployment_reports_success_only_after_the_stage12_default_moved",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
+
+[[rule]]
 id = "sim.deploy.release-commit-deploys-once"
 category = "deployment"
 statement = "A merge to main deploys only through the release commit the versioning job in simulation-deploy.yml pushes with the GitHub App token: every other push to main runs only that job, the release commit runs only the deploy jobs and never another release, a manual dispatch deploys without a release, and client publication follows only the release commit's run, so each merge deploys once and nothing loops."

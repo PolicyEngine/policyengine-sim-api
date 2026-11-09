@@ -124,6 +124,33 @@ stopping short. Leave `resolve_pending_publication=false` in both
 modes. Read-only `--print-pending-plan --environment staging|main` also displays the
 durable plan without changing routing.
 
+## Stage 12 v2 default version
+
+Stage 12 keeps its own manifest of deployed v2 workers, in the separate
+`simulation-api-v2-version-manifest` Modal Dict, and the Simulation Entrypoint
+resolves each Stage 12 report through the manifest's `default_version` unless
+`STAGE12_V2_WORKER_VERSION` pins one. A deployment that publishes Stage 12
+changes the manifest twice (rule `sim.deploy.stage12-default-moves-after-checks`),
+with its own mechanism, separate from the v1 routing jobs above:
+
+1. **Before its checks**, `publish_stage12_v2_manifest` adds the release's
+   worker with `update_v2_version_manifest --keep-default`, leaving the
+   default version as it is (the first worker becomes the default). Stage 12
+   reports keep reaching the previous worker. No check is upstream of this job,
+   so "Re-run failed jobs" after a failed check never republishes the worker.
+2. **After every check and the Cloud Run promotion**,
+   `publish_stage12_v2_default` moves the default to the release's worker
+   when it is newer (`--move-default`), keeping a plan of the manifest before
+   and after; checks that the stored manifest is what it wrote and that a
+   reader resolves the plan's default (`--verify-plan`); and, if a later step
+   fails or the run is cancelled, writes back the manifest it replaced, only
+   while the stored manifest is still what it wrote (`--restore-plan`).
+   `deployment_ready` requires this job to succeed whenever Stage 12 was
+   requested.
+
+The plan is kept as the `stage12-v2-default-plan-<environment>-<attempt>`
+artifact. No workflow restores an earlier default after a completed deploy.
+
 ## Baseline artifact pipeline (precompute → store → image fetch)
 
 The precompute app fills a content-addressed GCS store with single-year US

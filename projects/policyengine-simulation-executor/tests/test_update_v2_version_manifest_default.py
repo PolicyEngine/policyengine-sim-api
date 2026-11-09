@@ -1,0 +1,244 @@
+"""Tests for publishing a Stage 12 v2 worker before the checks and its default after.
+
+The deployment adds the release's worker with ``--keep-default`` before its
+checks, then moves the default with ``--move-default`` after them, checks it
+with ``--verify-plan`` and, if a later step fails, restores it with
+``--restore-plan``.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from types import SimpleNamespace
+
+import pytest
+from policyengine_simulation_contract.stage12_manifest import (
+    V2ManifestLoader,
+    V2WorkerVersion,
+    add_v2_worker,
+    move_v2_default,
+    read_v2_manifest,
+    v2_application_name,
+    write_v2_manifest,
+)
+from src.modal.utils import update_v2_version_manifest as publisher
+from test_update_v2_version_manifest import _validation
+
+OLDER = "1.0.0"
+
+
+class FakeStore:
+    def __init__(self) -> None:
+        self.values: dict[str, object] = {}
+
+    def get(self, key: str, default: object = None) -> object:
+        return self.values.get(key, default)
+
+    def __setitem__(self, key: str, value: object) -> None:
+        self.values[key] = json.loads(json.dumps(value))
+
+
+@pytest.fixture
+def store(monkeypatch) -> FakeStore:
+    fake = FakeStore()
+
+    def from_name(name, *, environment_name, create_if_missing):
+        del name, environment_name, create_if_missing
+        return fake
+
+    monkeypatch.setattr(
+        publisher, "modal", SimpleNamespace(Dict=SimpleNamespace(from_name=from_name))
+    )
+    return fake
+
+
+def _installed_worker() -> V2WorkerVersion:
+    return publisher.build_worker(_validation().model_dump(mode="json"))
+
+
+def _installed_version() -> str:
+    return _installed_worker().bundle.policyengine_version
+
+
+def _older_worker() -> V2WorkerVersion:
+    payload = _installed_worker().model_dump(mode="json")
+    name = v2_application_name(OLDER)
+    payload["application_name"] = name
+    payload["validation"]["application_name"] = name
+    payload["bundle"]["policyengine_version"] = OLDER
+    payload["bundle"]["policyengine_requirement"] = f"policyengine=={OLDER}"
+    return V2WorkerVersion.model_validate(payload)
+
+
+def _with_older_default(store: FakeStore) -> None:
+    write_v2_manifest(
+        store=store, manifest=add_v2_worker(current=None, worker=_older_worker())
+    )
+
+
+def _with_both_workers(store: FakeStore) -> None:
+    _with_older_default(store)
+    write_v2_manifest(
+        store=store,
+        manifest=add_v2_worker(
+            current=read_v2_manifest(store), worker=_installed_worker()
+        ),
+    )
+
+
+def _run(monkeypatch, *arguments: str) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["update_v2_version_manifest", "--environment", "staging", *arguments],
+    )
+    publisher.main()
+
+
+def _move(monkeypatch, tmp_path, version: str) -> dict:
+    plan_file = tmp_path / "plan.json"
+    _run(monkeypatch, "--move-default", version, "--plan-out", str(plan_file))
+    return json.loads(plan_file.read_text())
+
+
+def test_keep_default_adds_the_worker_and_leaves_the_default(
+    monkeypatch, tmp_path, store
+):
+    _with_older_default(store)
+    validation_file = tmp_path / "validation.json"
+    validation_file.write_text(_validation().model_dump_json())
+
+    _run(monkeypatch, "--validation-file", str(validation_file), "--keep-default")
+
+    manifest = read_v2_manifest(store)
+    assert manifest is not None
+    assert manifest.default_version == OLDER
+    assert set(manifest.versions) == {OLDER, _installed_version()}
+
+
+def test_move_default_plans_moves_and_reports_it(monkeypatch, tmp_path, store, capsys):
+    _with_both_workers(store)
+    before = read_v2_manifest(store)
+
+    plan = _move(monkeypatch, tmp_path, _installed_version())
+
+    assert plan["version"] == _installed_version()
+    assert plan["before"]["default_version"] == OLDER
+    assert plan["after"]["default_version"] == _installed_version()
+    assert plan["advances_default"] is True
+    assert plan["before"] == json.loads(before.model_dump_json())
+    assert V2ManifestLoader(store).resolve()[0] == _installed_version()
+    assert capsys.readouterr().out.splitlines()[-3:] == [
+        f"before_sha256={plan['before_sha256']}",
+        f"after_sha256={plan['after_sha256']}",
+        "advances_default=true",
+    ]
+
+
+def test_move_default_keeps_a_newer_default(monkeypatch, tmp_path, store):
+    # The default is the installed worker, newer than the release being moved
+    # to, so the default stays.
+    _with_both_workers(store)
+    write_v2_manifest(
+        store=store,
+        manifest=move_v2_default(
+            current=read_v2_manifest(store), version=_installed_version()
+        ),
+    )
+
+    plan = _move(monkeypatch, tmp_path, OLDER)
+
+    assert plan["advances_default"] is False
+    assert read_v2_manifest(store).default_version == _installed_version()
+
+
+def test_move_default_refuses_a_version_without_a_worker(monkeypatch, tmp_path, store):
+    _with_older_default(store)
+
+    with pytest.raises(ValueError, match="no v2 worker"):
+        _move(monkeypatch, tmp_path, _installed_version())
+    assert read_v2_manifest(store).default_version == OLDER
+    assert not (tmp_path / "plan.json").exists()
+
+
+def test_move_default_refuses_an_empty_manifest(monkeypatch, tmp_path, store):
+    with pytest.raises(ValueError, match="no v2 manifest"):
+        _move(monkeypatch, tmp_path, _installed_version())
+
+
+def test_verify_accepts_the_moved_manifest(monkeypatch, tmp_path, store, capsys):
+    _with_both_workers(store)
+    _move(monkeypatch, tmp_path, _installed_version())
+
+    _run(monkeypatch, "--verify-plan", str(tmp_path / "plan.json"))
+
+    assert f"v2 default version: {_installed_version()}" in capsys.readouterr().out
+
+
+def test_verify_refuses_a_manifest_changed_since_the_move(monkeypatch, tmp_path, store):
+    _with_both_workers(store)
+    plan = _move(monkeypatch, tmp_path, _installed_version())
+    write_v2_manifest(
+        store=store,
+        manifest=add_v2_worker(current=plan["before"], worker=_installed_worker()),
+    )
+
+    with pytest.raises(ValueError, match="is not what this default move wrote"):
+        _run(monkeypatch, "--verify-plan", str(tmp_path / "plan.json"))
+
+
+def test_restore_puts_the_default_back_only_while_the_move_is_live(
+    monkeypatch, tmp_path, store, capsys
+):
+    _with_both_workers(store)
+    plan = _move(monkeypatch, tmp_path, _installed_version())
+    plan_file = str(tmp_path / "plan.json")
+
+    _run(monkeypatch, "--restore-plan", plan_file)
+    _run(monkeypatch, "--restore-plan", plan_file)
+
+    output = capsys.readouterr().out
+    assert "v2 default restore: restored" in output
+    assert "v2 default restore: unchanged" in output
+    assert json.loads(read_v2_manifest(store).model_dump_json()) == plan["before"]
+
+
+def test_restore_refuses_a_manifest_another_publish_changed(
+    monkeypatch, tmp_path, store
+):
+    _with_both_workers(store)
+    plan = _move(monkeypatch, tmp_path, _installed_version())
+    changed = add_v2_worker(current=plan["after"], worker=_older_worker())
+    write_v2_manifest(store=store, manifest=changed)
+
+    with pytest.raises(ValueError, match="nothing was restored"):
+        _run(monkeypatch, "--restore-plan", str(tmp_path / "plan.json"))
+    assert read_v2_manifest(store) == changed
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        (),
+        ("--keep-default",),
+        ("--move-default", "1.0.0"),
+        ("--move-default", "1.0.0", "--plan-out", "p.json", "--verify-plan", "p.json"),
+        ("--verify-plan", "p.json", "--restore-plan", "p.json"),
+    ],
+    ids=[
+        "no-mode",
+        "keep-default-without-validation",
+        "move-without-plan-file",
+        "two-modes",
+        "verify-and-restore",
+    ],
+)
+def test_the_command_line_refuses_an_incomplete_or_mixed_request(
+    monkeypatch, store, arguments
+):
+    with pytest.raises(SystemExit) as refusal:
+        _run(monkeypatch, *arguments)
+
+    assert refusal.value.code == 2
+    assert store.values == {}
