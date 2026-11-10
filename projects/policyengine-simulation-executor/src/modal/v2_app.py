@@ -4,7 +4,9 @@
 Besides the Stage 12 report coordinator and simulation workers, it defines a
 household function for each country, ``calculate_household_us`` and
 ``calculate_household_uk``, which calculates one household under one or more
-policies in an image without datasets or secrets.
+policies in an image without datasets. A call that names a household job
+records it with the Modal worker role's database secret, the functions' only
+secret.
 
 This module defines additional resources. It does not rename or modify the
 existing ``policyengine-simulation-py{version}`` applications.
@@ -16,6 +18,7 @@ import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from policyengine_simulation_contract.household_execution import (
     household_callable_name,
@@ -67,6 +70,10 @@ import modal
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from policyengine_simulation_contract.household_execution import (
+        HouseholdExecutionFailure,
+        HouseholdExecutionResult,
+    )
     from policyengine_simulation_contract.stage12_bundle import (
         CountryId,
         Stage12CountryBundle,
@@ -143,8 +150,9 @@ worker_secrets = [
     hf_secret,
     comparison_runtime_secret,
 ]
-# Only the functions that record a report run's or simulation run's status
-# and results hold the Modal worker role's database credentials.
+# Only the functions that record a report run's, simulation run's or
+# household job's status and results hold the Modal worker role's database
+# credentials.
 modal_worker_database_secret = modal.Secret.from_name(
     MODAL_WORKER_DATABASE_SECRET_NAME,
     required_keys=[MODAL_WORKER_DATABASE_URL_ENV],
@@ -247,9 +255,11 @@ def build_v2_image(
 def build_household_image() -> modal.Image:
     """Build the household functions' image: packages and source only.
 
-    A household calculation reads no dataset, cache, bucket or database, so
-    the image downloads none and its build needs no secret. The installed
-    PolicyEngine.py package names the bundle the functions calculate with.
+    A household calculation reads no dataset, cache or bucket, so the image
+    downloads none and its build needs no secret. A function given a
+    household job records it in the database at run time, with the secret
+    attached to the function. The installed PolicyEngine.py package names the
+    bundle the functions calculate with.
     """
     return _add_v2_sources(_v2_package_image().env(modal_image_environment()))
 
@@ -524,12 +534,19 @@ HOUSEHOLD_FUNCTION_MAX_CONTAINERS = 20
 def _run_household_calculation(
     country: CountryId,
     payload: dict,
+    *,
     observability_context: dict | None,
+    household_job_id: str | None,
 ) -> dict:
     """Calculate one household request for ``country`` and return its outcome.
 
     The outcome is a ``HouseholdExecutionResult`` or ``HouseholdExecutionFailure``
     as JSON. Raises for a malformed request or a request for another country.
+    With ``household_job_id``, the call claims that household job under its
+    Modal call ID and records the outcome on it, or returns the job's status
+    without calculating when another call holds it or it has finished
+    (``stage12_runtime.run_household_job``); without it, the call touches no
+    database.
     """
     from policyengine_simulation_contract.household_execution import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         HouseholdExecutionRequest,
@@ -545,6 +562,20 @@ def _run_household_calculation(
         platform="modal",
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
+
+    def calculate() -> HouseholdExecutionResult | HouseholdExecutionFailure:
+        return household_calculation.calculate_household(
+            HouseholdExecutionRequest.model_validate(payload),
+            worker=HouseholdWorkerIdentity(
+                application_name=APP_NAME,
+                function_name=household_callable_name(country),
+            ),
+            required_country=country,
+            dependencies=household_calculation.HouseholdCalculationDependencies(
+                runtime=runtime
+            ),
+        )
+
     try:
         propagated = normalize_observability_context(observability_context)
         result = None
@@ -553,18 +584,15 @@ def _run_household_calculation(
             attributes={"country": country},
             remote_context=propagated,
         ):
-            outcome = household_calculation.calculate_household(
-                HouseholdExecutionRequest.model_validate(payload),
-                worker=HouseholdWorkerIdentity(
-                    application_name=APP_NAME,
-                    function_name=household_callable_name(country),
-                ),
-                required_country=country,
-                dependencies=household_calculation.HouseholdCalculationDependencies(
-                    runtime=runtime
-                ),
-            )
-            result = outcome.model_dump(mode="json")
+            if household_job_id is None:
+                result = calculate().model_dump(mode="json")
+            else:
+                result = stage12_runtime.run_household_job(
+                    UUID(household_job_id),
+                    calculate,
+                    modal_call_id=modal.current_function_call_id(),
+                    runtime=runtime,
+                )
         if result is None:
             msg = f"the {country} household calculation returned no result"
             raise RuntimeError(msg)
@@ -580,15 +608,24 @@ def _run_household_calculation(
     timeout=HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS,
     retries=0,
     max_containers=HOUSEHOLD_FUNCTION_MAX_CONTAINERS,
-    secrets=[],
+    secrets=[modal_worker_database_secret],
 )
 def calculate_household_us(
     payload: dict,
     *,
     observability_context: dict | None = None,
+    household_job_id: str | None = None,
 ) -> dict:
-    """Calculate one US household under each requested policy."""
-    return _run_household_calculation("us", payload, observability_context)
+    """Calculate one US household under each requested policy.
+
+    With ``household_job_id``, record the calculation on that household job.
+    """
+    return _run_household_calculation(
+        "us",
+        payload,
+        observability_context=observability_context,
+        household_job_id=household_job_id,
+    )
 
 
 @app.function(
@@ -598,12 +635,21 @@ def calculate_household_us(
     timeout=HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS,
     retries=0,
     max_containers=HOUSEHOLD_FUNCTION_MAX_CONTAINERS,
-    secrets=[],
+    secrets=[modal_worker_database_secret],
 )
 def calculate_household_uk(
     payload: dict,
     *,
     observability_context: dict | None = None,
+    household_job_id: str | None = None,
 ) -> dict:
-    """Calculate one UK household under each requested policy."""
-    return _run_household_calculation("uk", payload, observability_context)
+    """Calculate one UK household under each requested policy.
+
+    With ``household_job_id``, record the calculation on that household job.
+    """
+    return _run_household_calculation(
+        "uk",
+        payload,
+        observability_context=observability_context,
+        household_job_id=household_job_id,
+    )
