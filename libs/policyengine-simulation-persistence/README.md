@@ -58,6 +58,27 @@ and they are kept apart from the models of the tables the service writes
 (`service_metadata`) and from the tables those name by `id` alone
 (`referenced_metadata`).
 
+## Reading a policy
+
+`read_policy_reform` (`policy_reform.py`) reads a stored policy as the reform
+values a calculation applies, `{parameter name: {period: value}}`: the shape
+of the Public API's policy JSON, which the household functions' contract and
+the economy requests take. The Public API stores a policy's values against
+the parameters of the catalog version it was saved on, so a calculation on
+any catalog version applies them by name; a parameter the calculation's
+version lacks raises `MissingPolicyParametersError`, naming each one, and a
+policy the country doesn't have raises `UnknownPolicyError`.
+
+Each period is a range, `YYYY-MM-DD.YYYY-MM-DD`, with the stored dates read
+in UTC. A value with no end date applies to 31 December 2200, the latest year
+a household job or simulation run can be for. A start date alone would not
+do: policyengine-core reads it as "from that day on", but policyengine-uk's
+reform dictionary reads it as that one day. The executor's
+`test_reform_periods_apply_in_2200_only_through_a_stop_in_2200` shows how
+both countries' household functions apply each form in 2200. Two values of
+one parameter on the same period raise `ConflictingPolicyValuesError`, so
+neither is lost.
+
 ## Checking the models against the Public API
 
 Rule `sim.persistence.models-match-public-api`. The PR workflow's
