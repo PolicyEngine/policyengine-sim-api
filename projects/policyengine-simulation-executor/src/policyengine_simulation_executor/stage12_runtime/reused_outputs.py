@@ -4,11 +4,13 @@ The simulation service may name, as a report run's baseline or reform, a
 simulation run that already succeeded for the same simulation, year and
 versions. The coordinator never claims, starts or calculates that run again.
 While it prepares the report, it reads the run's status, year, versions,
-output URI and digest from the database, reads the file from whichever
-``gs://`` bucket the URI names, checks the file's SHA-256 digest and the
-outputs the report plans, and describes the file as a worker describes the
-one it writes. The aggregation then uses those checked bytes in place of a
-worker's artifact.
+dataset, region, output URI and digest from the database, and checks them
+against the simulation input and the report run's other simulation run. It
+reads the file from whichever ``gs://`` bucket the URI names, checks its
+SHA-256 digest, decodes it once, and checks the outputs the report plans and
+the SPM calculation receipt a worker would write now. It describes the file
+as a worker describes the one it writes, and the aggregation uses the
+decoded frames in place of a worker's artifact.
 
 A reused run gets no Stage 12 child record: those records coordinate the
 workers the coordinator starts, and no worker runs for it. The coordinator
@@ -73,7 +75,8 @@ if TYPE_CHECKING:
         Stage12ArtifactStore,
     )
 
-    from .report_coordination import ReportCoordination
+    from .output_planning import StageScope
+    from .report_run_recording import ReportRunRecorder
 
 # The run records no output file, or no object is stored where it says.
 REUSED_OUTPUT_MISSING = "reused_simulation_output_missing"
@@ -163,17 +166,21 @@ class ReusedSimulationOutput:
 
 
 def reused_outputs(
-    coordination: ReportCoordination,
     simulations: Sequence[PlannedSimulationExecutionInput],
+    *,
+    report_run: ReportRunRecorder | None,
+    files: OutputFileReader | None,
+    span: StageScope,
 ) -> dict[str, ReusedSimulationOutput]:
     """Return, by role, the checked output of each simulation whose run succeeded.
 
-    A call that names no report run reuses nothing. A simulation run that is
-    pending, running or failed is left to a worker, as before. Raises
+    ``report_run`` reads the call's simulation runs; a call that names no
+    report run reuses nothing. ``files`` reads their output files, by default
+    from Cloud Storage, and each read is timed with ``span``. A simulation run
+    that is pending, running or failed is left to a worker, as before. Raises
     ``ReusedSimulationOutputError`` for a succeeded run whose output can't
     be used.
     """
-    report_run = coordination.report_run
     if report_run is None:
         return {}
     run_ids = report_run.run_ids
@@ -181,7 +188,7 @@ def reused_outputs(
         role: report_run.writer.get_simulation_run(run_ids.simulation_run_id(role))
         for role in (SimulationRole.BASELINE, SimulationRole.REFORM)
     }
-    files = coordination.dependencies.output_files or CloudStorageOutputFiles()
+    reader = files or CloudStorageOutputFiles()
     reused: dict[str, ReusedSimulationOutput] = {}
     for simulation in simulations:
         role = simulation.role
@@ -199,11 +206,9 @@ def reused_outputs(
             named=f"The reused {_run_name(role, run_ids)}",
             other_named=_run_name(other_role, run_ids),
         )
-        with coordination.span(
-            Stage.STAGE12_ARTIFACT_READ, {"simulation_role": role.value}
-        ):
+        with span(Stage.STAGE12_ARTIFACT_READ, {"simulation_role": role.value}):
             reused[role.value] = checked_output(
-                simulation, run_ids.simulation_run_id(role), stored, files=files
+                simulation, run_ids.simulation_run_id(role), stored, files=reader
             )
     return reused
 

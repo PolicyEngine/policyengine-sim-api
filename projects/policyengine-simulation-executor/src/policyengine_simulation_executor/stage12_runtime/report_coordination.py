@@ -1,4 +1,4 @@
-"""One claimed report's coordination: start, wait for and aggregate its simulations."""
+"""One claimed report's coordination: reuse or calculate, then aggregate its outputs."""
 
 from __future__ import annotations
 
@@ -246,7 +246,12 @@ class ReportCoordination:
                     {"simulation_role": simulation.role.value},
                 ):
                     simulations.append(plan_simulation_input(simulation, output_plan))
-            self.reused = reused_outputs(self, simulations)
+            self.reused = reused_outputs(
+                simulations,
+                report_run=self.report_run,
+                files=self.dependencies.output_files,
+                span=self.span,
+            )
         return output_plan, tuple(simulations)
 
     def _create_children(
