@@ -163,6 +163,10 @@ class FakeArtifacts:
             uk_local_authority_metadata=uk_local_authority_metadata,
         )
 
+    # The real store's choice between the two writes below, so the tests
+    # that use this fake check where a report run's output file goes.
+    write_simulation_output = Stage12ArtifactStore.write_simulation_output
+
     def write_simulation_run_output(self, location, *, simulation, frames, **metadata):
         """Store a report run's output in the fake simulation output bucket."""
         self.simulation_run_outputs.append(

@@ -32,7 +32,6 @@ from policyengine_simulation_observability.stages import (
 )
 
 from policyengine_simulation_executor.stage12_artifacts import (
-    SimulationRunOutputLocation,
     Stage12ArtifactStore,
     canonical_json_bytes,
 )
@@ -583,8 +582,12 @@ def run_single_simulation(
         )
         validate_output_frames(calculation.frames, simulation.output_plan)
         with stage_span(Stage.STAGE12_SIMULATION_ARTIFACT_WRITE):
-            descriptor = _write_output(
-                artifact_storage, context, simulation, calculation
+            descriptor = artifact_storage.write_simulation_output(
+                context,
+                simulation=simulation,
+                frames=calculation.frames,
+                calculation_provenance=calculation.calculation_provenance,
+                uk_local_authority_metadata=calculation.uk_local_authority_metadata,
             )
         _record_success(persistence, running, descriptor)
         return descriptor.model_dump(mode="json")
@@ -603,36 +606,6 @@ def run_single_simulation(
         )
         msg = "Stage 12 simulation execution failed"
         raise RuntimeError(msg) from None
-
-
-def _write_output(
-    artifact_storage: Stage12ArtifactStore,
-    context: Stage12InvocationContext,
-    simulation: PlannedSimulationExecutionInput,
-    calculation: SimulationCalculation,
-) -> SimulationArtifactDescriptor:
-    """Store the output file: a report run's in its simulation run's own place.
-
-    A comparison run's file stays under its artifact prefix.
-    """
-    if context.report_run is None:
-        return artifact_storage.write_simulation(
-            prefix=context.artifact_prefix,
-            simulation=simulation,
-            frames=calculation.frames,
-            calculation_provenance=calculation.calculation_provenance,
-            uk_local_authority_metadata=calculation.uk_local_authority_metadata,
-        )
-    return artifact_storage.write_simulation_run_output(
-        SimulationRunOutputLocation(
-            environment=context.environment,
-            simulation_run_id=context.report_run.simulation_run_id(simulation.role),
-        ),
-        simulation=simulation,
-        frames=calculation.frames,
-        calculation_provenance=calculation.calculation_provenance,
-        uk_local_authority_metadata=calculation.uk_local_authority_metadata,
-    )
 
 
 def _claim_simulation(

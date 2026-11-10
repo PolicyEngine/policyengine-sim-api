@@ -21,6 +21,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ResultComparisonArtifactPayload,
     RowIdentity,
     SimulationArtifactDescriptor,
+    Stage12InvocationContext,
     stage12_output_plan_sha256,
 )
 from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
@@ -457,6 +458,41 @@ class Stage12ArtifactStore:
         )
         return _simulation_descriptor(
             simulation, artifact, row_identity, calculation_provenance
+        )
+
+    def write_simulation_output(
+        self,
+        context: Stage12InvocationContext,
+        *,
+        simulation: PlannedSimulationExecutionInput,
+        frames: Mapping[str, pd.DataFrame],
+        calculation_provenance: SPMProvenance | None = None,
+        uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
+    ) -> SimulationArtifactDescriptor:
+        """Store a simulation's output file where its call keeps it.
+
+        A call that names a report run keeps it in the simulation output
+        bucket, under its simulation run (``write_simulation_run_output``); a
+        comparison run keeps it under its artifact prefix
+        (``write_simulation``).
+        """
+        if context.report_run is None:
+            return self.write_simulation(
+                prefix=context.artifact_prefix,
+                simulation=simulation,
+                frames=frames,
+                calculation_provenance=calculation_provenance,
+                uk_local_authority_metadata=uk_local_authority_metadata,
+            )
+        return self.write_simulation_run_output(
+            SimulationRunOutputLocation(
+                environment=context.environment,
+                simulation_run_id=context.report_run.simulation_run_id(simulation.role),
+            ),
+            simulation=simulation,
+            frames=frames,
+            calculation_provenance=calculation_provenance,
+            uk_local_authority_metadata=uk_local_authority_metadata,
         )
 
     def write_aggregate(
