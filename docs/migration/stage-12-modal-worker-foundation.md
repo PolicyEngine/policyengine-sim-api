@@ -235,6 +235,28 @@ variable. The workers write both buckets with the same
 (`stage12-modal-staging@` or `stage12-modal-production@` in
 `policyengine-simulation-entry`), which has `roles/storage.objectUser` on each.
 
+### Deployments that change where output files go
+
+A report run reaches the v2 application that the manifest's default version
+names, or the one `STAGE12_V2_WORKER_VERSION` pins. Two cases still put a
+report run's simulation output file in the artifact bucket, or stop the run:
+
+- **Before the default moves.** A deployment of this change moves the default
+  to its application only after every check. Until then report runs keep
+  reaching the previous application, which writes their simulation output
+  files to the artifact bucket, where they are deleted after 30 days. Runs that
+  succeeded before the change name files there too.
+- **A deployment from an earlier commit.** Its secret-sync step replaces the
+  whole `stage12-evaluation-runtime` secret without `V2_SIMULATION_OUTPUT_BUCKET`.
+  Report runs that reach an application from this change or later then fail
+  with the `ValueError` until a deployment from a later commit restores the
+  variable. The rollback workflow does not change Stage 12, so only such a
+  deployment does this.
+
+So a succeeded simulation run can name a file that no longer exists: reusing
+succeeded simulation runs' output files must treat a run whose file is gone as
+not reusable.
+
 The current Public API omits `data` for the certified default dataset. The v2
 adapter therefore resolves an absent `data` field to the exact default dataset
 in the selected `.py` bundle. An explicit `data` value is eligible only when it
