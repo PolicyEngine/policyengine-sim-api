@@ -202,6 +202,13 @@ BUDGET_WINDOW_PAYLOAD = {
     "window_size": 1,
 }
 STAGE12_REPORT_PATH = "/internal/stage12/reports/00000000-0000-0000-0000-000000000001"
+HOUSEHOLD_CALCULATION_PAYLOAD = {
+    "country": "us",
+    "household_id": "00000000-0000-4000-8000-0000000000bb",
+}
+HOUSEHOLD_CALCULATION_PATH = (
+    "/household-calculations/00000000-0000-4000-8000-0000000000aa"
+)
 
 
 class ProtectedRoute(NamedTuple):
@@ -215,8 +222,9 @@ class ProtectedRoute(NamedTuple):
 
 
 # Each protected route, the permission it requires, and the status its handler
-# returns once authorized. Stage 12 is disabled and unconfigured in these
-# tests, so an authorized Stage 12 request reaches the handler's 503 response.
+# returns once authorized. Stage 12 and household calculations are
+# unconfigured in these tests, so an authorized request to either reaches the
+# handler's 503 response.
 PROTECTED_ROUTES = [
     pytest.param(
         ProtectedRoute(
@@ -277,6 +285,26 @@ PROTECTED_ROUTES = [
             503,
         ),
         id="stage12-status",
+    ),
+    pytest.param(
+        ProtectedRoute(
+            "post",
+            "/household-calculations",
+            HOUSEHOLD_CALCULATION_PAYLOAD,
+            "simulation:submit",
+            503,
+        ),
+        id="submit-household-calculation",
+    ),
+    pytest.param(
+        ProtectedRoute(
+            "get",
+            HOUSEHOLD_CALCULATION_PATH,
+            None,
+            "simulation:read",
+            503,
+        ),
+        id="read-household-calculation",
     ),
 ]
 

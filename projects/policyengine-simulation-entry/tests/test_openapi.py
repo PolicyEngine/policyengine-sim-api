@@ -29,11 +29,13 @@ class OpenAPIDocument(TypedDict):
 
 EXPECTED_ROUTES = {
     ("GET", "/budget-window-jobs/{batch_job_id}"),
+    ("GET", "/household-calculations/{household_job_id}"),
     ("GET", "/health"),
     ("GET", "/jobs/{job_id}"),
     ("GET", "/ready"),
     ("GET", "/versions"),
     ("GET", "/versions/{kind}"),
+    ("POST", "/household-calculations"),
     ("POST", "/ping"),
     ("POST", "/simulate/economy/budget-window"),
     ("POST", "/simulate/economy/comparison"),
@@ -58,10 +60,28 @@ def operation_ids(spec: OpenAPIDocument) -> dict[tuple[str, str], str]:
     }
 
 
+# The household calculation routes, which only the Cloud Run entrypoint has.
+HOUSEHOLD_PATHS = (
+    "/household-calculations",
+    "/household-calculations/{household_job_id}",
+)
+HOUSEHOLD_SCHEMAS = (
+    "HouseholdCalculationAccepted",
+    "HouseholdCalculationError",
+    "HouseholdCalculationRequest",
+    "HouseholdCalculationState",
+    "HouseholdJobStatus",
+    "HouseholdRequestReason",
+    "HouseholdRequestUnprocessable",
+)
+
+
 def normalized_compatibility_paths(spec: OpenAPIDocument) -> OpenAPIPathMap:
     """Remove intentional Cloud Run and additive SPM error documentation."""
     paths = deepcopy(spec["paths"])
     paths.pop("/ready", None)
+    for path in HOUSEHOLD_PATHS:
+        paths.pop(path, None)
     for operations in paths.values():
         for method, operation in operations.items():
             if method.lower() in {"get", "post", "put", "patch", "delete"}:
@@ -191,9 +211,75 @@ def test_normalized_contract_matches_old_gateway():
     cloud_run_schemas.pop("SimulationEntrypointReadinessResponse")
     cloud_run_schemas.pop("SimulationDatabaseReadiness")
     cloud_run_schemas.pop("SimulationErrorResponse")
+    for schema_name in HOUSEHOLD_SCHEMAS:
+        cloud_run_schemas.pop(schema_name)
     assert cloud_run_schemas == gateway_spec["components"]["schemas"]
     gateway_operation_ids = operation_ids(gateway_spec)
     cloud_run_operation_ids = operation_ids(cloud_run_spec)
     assert {
         key: cloud_run_operation_ids[key] for key in gateway_operation_ids
     } == gateway_operation_ids
+
+
+def _responses(spec: dict, method: str, path: str) -> dict[str, dict]:
+    return spec["paths"][path][method]["responses"]
+
+
+def _response_schema(response: dict) -> dict:
+    return response["content"]["application/json"]["schema"]
+
+
+def test_household_routes_declare_every_answer():
+    spec = create_app().openapi()
+    error = {"$ref": "#/components/schemas/HouseholdCalculationError"}
+    unprocessable = {"$ref": "#/components/schemas/HouseholdRequestUnprocessable"}
+
+    submit = _responses(spec, "post", "/household-calculations")
+    read = _responses(spec, "get", "/household-calculations/{household_job_id}")
+
+    assert set(submit) == {"202", "400", "403", "422", "503"}
+    assert _response_schema(submit["202"]) == {
+        "$ref": "#/components/schemas/HouseholdCalculationAccepted"
+    }
+    assert _response_schema(submit["400"]) == error
+    assert _response_schema(submit["422"]) == unprocessable
+    assert _response_schema(submit["503"]) == error
+    assert set(read) == {"200", "403", "404", "422", "503"}
+    assert _response_schema(read["200"]) == {
+        "$ref": "#/components/schemas/HouseholdCalculationState"
+    }
+    assert _response_schema(read["404"]) == error
+    assert _response_schema(read["422"]) == unprocessable
+    assert _response_schema(read["503"]) == error
+
+
+def test_household_routes_name_their_operations():
+    spec = create_app().openapi()
+
+    assert operation_ids(spec)[("POST", "/household-calculations")] == (
+        "submit_household_calculation"
+    )
+    assert operation_ids(spec)[
+        ("GET", "/household-calculations/{household_job_id}")
+    ] == ("get_household_calculation")
+
+
+def test_a_household_calculation_request_names_its_fields_only():
+    schemas = create_app().openapi()["components"]["schemas"]
+    request = schemas["HouseholdCalculationRequest"]
+
+    assert set(request["properties"]) == {
+        "country",
+        "household_id",
+        "policy_id",
+        "add_missing_variables",
+        "spm",
+    }
+    assert set(request["required"]) == {"country", "household_id"}
+    assert request["additionalProperties"] is False
+    assert schemas["HouseholdJobStatus"]["enum"] == [
+        "pending",
+        "running",
+        "succeeded",
+        "failed",
+    ]
