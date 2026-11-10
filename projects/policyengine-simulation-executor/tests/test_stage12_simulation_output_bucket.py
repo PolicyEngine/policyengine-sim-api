@@ -23,8 +23,9 @@ from policyengine_simulation_executor.stage12_artifacts import (
 from policyengine_simulation_executor.stage12_runtime.dependencies import (
     artifact_store,
 )
+from stage12_fake_report_runs import REFORM_RUN_ID, report_run_context
 from stage12_fake_stores import simulation_frames
-from stage12_runtime_support import planned_simulation
+from stage12_runtime_support import invocation_context, planned_simulation
 
 ARTIFACT_BUCKET = "policyengine-stage12-staging-artifacts"
 OUTPUT_BUCKET = "policyengine-v2-staging-simulation-outputs"
@@ -169,6 +170,46 @@ def test_the_store_reads_its_artifact_and_simulation_output_buckets_only() -> No
         store.read(f"gs://{OUTPUT_BUCKET}/simulation-runs/missing.parquet")
     with pytest.raises(ValueError, match="another bucket"):
         store.read("gs://another-bucket/simulation-runs/output.parquet")
+
+
+def test_the_store_keeps_a_report_runs_output_with_its_simulation_run() -> None:
+    artifact_objects = InMemoryObjectStore()
+    output_objects = InMemoryObjectStore()
+    store = _report_run_store(artifact_objects, output_objects)
+
+    descriptor = store.write_simulation_output(
+        report_run_context(),
+        simulation=planned_simulation(SimulationRole.REFORM),
+        frames=simulation_frames(),
+    )
+
+    digest = descriptor.artifact.content_sha256
+    path = f"simulation-runs/staging/us/{REFORM_RUN_ID}/output-{digest}.parquet"
+    assert descriptor.artifact.uri == f"gs://{OUTPUT_BUCKET}/{path}"
+    assert list(output_objects.objects) == [path]
+    assert artifact_objects.objects == {}
+
+
+def test_the_store_keeps_a_comparison_runs_output_under_its_prefix() -> None:
+    artifact_objects = InMemoryObjectStore()
+    output_objects = InMemoryObjectStore()
+    # An output bucket is configured, but a comparison run never uses it.
+    store = Stage12ArtifactStore(
+        ARTIFACT_BUCKET,
+        store=artifact_objects,
+        simulation_outputs=SimulationOutputBucket(OUTPUT_BUCKET, store=output_objects),
+    )
+
+    descriptor = store.write_simulation_output(
+        invocation_context(),
+        simulation=planned_simulation(SimulationRole.BASELINE),
+        frames=simulation_frames(),
+    )
+
+    path = f"{invocation_context().artifact_prefix}/simulations/baseline.parquet"
+    assert descriptor.artifact.uri == f"gs://{ARTIFACT_BUCKET}/{path}"
+    assert list(artifact_objects.objects) == [path]
+    assert output_objects.objects == {}
 
 
 @pytest.fixture
