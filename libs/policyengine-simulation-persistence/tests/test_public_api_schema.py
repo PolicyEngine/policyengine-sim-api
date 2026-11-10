@@ -17,11 +17,16 @@ import os
 from pathlib import Path
 
 import pytest
-from policyengine_simulation_persistence import referenced_metadata, service_metadata
+from policyengine_simulation_persistence import (
+    input_metadata,
+    referenced_metadata,
+    service_metadata,
+)
 from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
 from schema_comparison import (
     describe_tables,
     foreign_keys_to,
+    read_column_differences,
     schema_differences,
     schema_from_json,
 )
@@ -67,6 +72,37 @@ def test_the_models_match_the_public_api_tables(
     assert set(models.tables) == set(table_names)
     compared_with = os.environ.get(COMMIT_VARIABLE) or "an unrecorded commit"
     assert schema_differences(models, real) == [], (
+        f"compared with the Public API at {compared_with}"
+    )
+
+
+@pytest.mark.public_api_schema
+def test_the_input_models_match_the_public_api_columns(
+    disposable_database, public_api_database_url
+) -> None:
+    """Each column the service reads exists, with the type and nullability modelled.
+
+    The read-only models of the Public API's input tables name only the
+    columns the service reads, so only those are compared: their other
+    columns, defaults, constraints and indexes are the Public API's alone.
+    """
+    table_names = [table.name for table in input_metadata.tables.values()]
+    models_engine = _engine(disposable_database.superuser_url)
+    real_engine = _engine(public_api_database_url)
+    try:
+        # Tests may build the models' tables; runtime code never does.
+        input_metadata.create_all(models_engine)
+        with models_engine.connect() as connection:
+            models = describe_tables(connection, table_names)
+        with real_engine.connect() as connection:
+            real = describe_tables(connection, table_names)
+    finally:
+        models_engine.dispose()
+        real_engine.dispose()
+
+    assert set(models.tables) == set(table_names)
+    compared_with = os.environ.get(COMMIT_VARIABLE) or "an unrecorded commit"
+    assert read_column_differences(models, real) == [], (
         f"compared with the Public API at {compared_with}"
     )
 

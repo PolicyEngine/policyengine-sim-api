@@ -6,6 +6,7 @@ from policyengine_simulation_persistence import (
     SERVICE_TABLE_PRIVILEGES,
     SimulationStatus,
     household_jobs,
+    input_metadata,
     referenced_metadata,
     report_runs,
     reports,
@@ -179,3 +180,31 @@ def test_a_budget_window_has_one_report_run_per_year_of_one_report() -> None:
         "budget_window_run_id",
         "year",
     )
+
+
+def test_the_input_models_are_tables_the_service_reads() -> None:
+    """Each input table is one the service's role may SELECT and never writes."""
+    readable_only = {
+        table_name
+        for table_name, privileges in SERVICE_TABLE_PRIVILEGES.items()
+        if privileges == {"SELECT"}
+    }
+
+    assert {table.name for table in input_metadata.tables.values()} == {
+        "households",
+        "policies",
+        "parameters",
+        "parameter_values",
+        "tax_benefit_models",
+        "tax_benefit_model_versions",
+    }
+    assert {table.name for table in input_metadata.tables.values()} <= readable_only
+
+
+def test_the_input_models_share_no_table_with_the_service_models() -> None:
+    """The read models are their own metadata, apart from the run models and keys."""
+    input_tables = set(input_metadata.tables.values())
+
+    assert input_metadata.schema == "public"
+    assert input_tables.isdisjoint(service_metadata.tables.values())
+    assert input_tables.isdisjoint(referenced_metadata.tables.values())
