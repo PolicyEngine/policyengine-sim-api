@@ -21,6 +21,7 @@ def _environment() -> dict[str, str]:
         "STAGE12_DATABASE_URL": "postgresql://runtime:secret@db.example/postgres",
         "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
         "STAGE12_CACHE_BUCKET": "policyengine-stage12-cache-staging",
+        "V2_SIMULATION_OUTPUT_BUCKET": "policyengine-v2-staging-simulation-outputs",
     }
 
 
@@ -391,6 +392,23 @@ def test_validation_uses_the_process_environment_by_default(monkeypatch) -> None
         RuntimeError,
         match=r"^Stage 12 worker is missing required secret values: "
         r"STAGE12_ARTIFACT_BUCKET$",
+    ):
+        _validate(environment=None)
+
+
+def test_validation_requires_the_simulation_output_bucket(monkeypatch) -> None:
+    # A report run's worker writes its output file there, so a worker
+    # deployed without it would fail every report run.
+    for name, value in _environment().items():
+        monkeypatch.setenv(name, value)
+
+    assert _validate(environment=None)["validated"] is True
+
+    monkeypatch.delenv("V2_SIMULATION_OUTPUT_BUCKET")
+    with pytest.raises(
+        RuntimeError,
+        match=r"^Stage 12 worker is missing required secret values: "
+        r"V2_SIMULATION_OUTPUT_BUCKET$",
     ):
         _validate(environment=None)
 
