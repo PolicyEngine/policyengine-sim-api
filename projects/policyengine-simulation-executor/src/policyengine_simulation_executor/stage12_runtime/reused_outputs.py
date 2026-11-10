@@ -37,6 +37,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ArtifactMediaType,
     ArtifactReference,
     SimulationArtifactDescriptor,
+    SimulationRole,
     stage12_output_plan_sha256,
 )
 from policyengine_simulation_observability.stages import Stage
@@ -61,6 +62,7 @@ if TYPE_CHECKING:
     from policyengine_simulation_contract.spm import SPMProvenance
     from policyengine_simulation_contract.stage12_execution import (
         PlannedSimulationExecutionInput,
+        ReportRunIds,
     )
     from policyengine_stage12_persistence import SimulationRunState
 
@@ -81,7 +83,8 @@ REUSED_OUTPUT_INCOMPATIBLE = "reused_simulation_output_incompatible"
 # this report run's simulation: another selection, another year, or a receipt
 # where none is calculated, or none where one is.
 REUSED_SPM_MISMATCH = "reused_simulation_spm_mismatch"
-# The run calculated another year, country package version or .py version.
+# The run calculated another year, country package version or .py version,
+# or names another dataset or region than its report run's other run.
 REUSED_RUN_MISMATCH = "reused_simulation_run_mismatch"
 
 STORAGE_OBJECT_URI = re.compile(r"gs://(?P<bucket>[^/]+)/(?P<path>.+)")
@@ -154,17 +157,74 @@ def reused_outputs(
     report_run = coordination.report_run
     if report_run is None:
         return {}
+    run_ids = report_run.run_ids
+    stored_runs = {
+        role: report_run.writer.get_simulation_run(run_ids.simulation_run_id(role))
+        for role in (SimulationRole.BASELINE, SimulationRole.REFORM)
+    }
     files = coordination.dependencies.output_files or CloudStorageOutputFiles()
     reused: dict[str, ReusedSimulationOutput] = {}
     for simulation in simulations:
-        run_id = report_run.run_ids.simulation_run_id(simulation.role)
-        stored = report_run.writer.get_simulation_run(run_id)
+        role = simulation.role
+        stored = stored_runs[role]
         if stored.status is not RunStatus.SUCCEEDED:
             continue
-        role = simulation.role.value
-        with coordination.span(Stage.STAGE12_ARTIFACT_READ, {"simulation_role": role}):
-            reused[role] = checked_output(simulation, run_id, stored, files=files)
+        other_role = (
+            SimulationRole.REFORM
+            if role is SimulationRole.BASELINE
+            else SimulationRole.BASELINE
+        )
+        _require_shared_population(
+            stored,
+            stored_runs[other_role],
+            named=f"The reused {_run_name(role, run_ids)}",
+            other_named=_run_name(other_role, run_ids),
+        )
+        with coordination.span(
+            Stage.STAGE12_ARTIFACT_READ, {"simulation_role": role.value}
+        ):
+            reused[role.value] = checked_output(
+                simulation, run_ids.simulation_run_id(role), stored, files=files
+            )
     return reused
+
+
+def _run_name(role: SimulationRole, run_ids: ReportRunIds) -> str:
+    return f"{role.value} simulation run {run_ids.simulation_run_id(role)}"
+
+
+def _require_shared_population(
+    stored: SimulationRunState,
+    other: SimulationRunState,
+    *,
+    named: str,
+    other_named: str,
+) -> None:
+    """Raise unless the run names the dataset and region of its report run's other run.
+
+    The baseline and reform of one report calculate one population and
+    geography. The report's input names them by the bundle's dataset identity
+    and a region code, which nothing maps to the Public API's catalog rows,
+    so the runs are compared with each other.
+    """
+    differences = [
+        f"{column} {_shown(recorded)} instead of {_shown(shared)}"
+        for column, recorded, shared in (
+            ("dataset_id", stored.dataset_id, other.dataset_id),
+            ("region_id", stored.region_id, other.region_id),
+        )
+        if recorded != shared
+    ]
+    if differences:
+        raise ReusedSimulationOutputError(
+            REUSED_RUN_MISMATCH,
+            f"{named} differs from this report run's {other_named}: "
+            f"{'; '.join(differences)}.",
+        )
+
+
+def _shown(catalog_id: UUID | None) -> str:
+    return "none" if catalog_id is None else str(catalog_id)
 
 
 def checked_output(

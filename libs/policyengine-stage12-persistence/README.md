@@ -13,8 +13,9 @@ revisions and live schema. This package never changes a schema.
   write them as the Modal worker role (`policyengine_v2_modal_worker`), for a
   call that names a report run, and the scheduled stuck-run sweep fails the
   runs nothing will finish, as the same role. The coordinator also reads a
-  simulation run's status, year, versions and output file, so a report run
-  can use a run that already succeeded instead of calculating it again. The
+  simulation run's status, year, versions, dataset, region and output file,
+  so a report run can use a run that already succeeded instead of
+  calculating it again. The
   mappings declare only the columns those statements read or write, and
   each `UPDATE` sets only
   columns the role may update. Every status write is one `UPDATE`

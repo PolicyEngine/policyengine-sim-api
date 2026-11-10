@@ -53,7 +53,7 @@ class ReportRunWriter(Protocol):
         ...
 
     def get_simulation_run(self, simulation_run_id: UUID) -> SimulationRunState:
-        """Return a simulation run's status, year, versions and output file.
+        """Return a simulation run's status, year, versions, dataset, region and output.
 
         LookupError when the run does not exist.
         """

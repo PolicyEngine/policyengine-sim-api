@@ -50,8 +50,9 @@ report_runs = Table(
     Column("data_version", String(128)),
 )
 
-# A simulation run's year and versions say what it calculated; the
-# coordinator checks them on a succeeded run that a report run reuses.
+# A simulation run's year, versions, dataset and region say what it
+# calculated; the coordinator checks them on a succeeded run that a report
+# run reuses.
 simulation_runs = Table(
     "simulation_runs",
     metadata,
@@ -60,6 +61,8 @@ simulation_runs = Table(
     Column("year", Integer, nullable=False),
     Column("country_package_version", String(128), nullable=False),
     Column("policyengine_version", String(128), nullable=False),
+    Column("dataset_id", UUID(as_uuid=True)),
+    Column("region_id", UUID(as_uuid=True)),
     Column("status", simulation_run_status_type, nullable=False),
     Column("modal_call_id", String(255)),
     Column("error_message", String),
