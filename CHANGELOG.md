@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.8.4] - 2026-11-10
+
+### Changed
+
+- The Simulation Entrypoint answers `POST /ping` itself instead of forwarding it to the old gateway. The answer is unchanged: the request's `value` plus one, as `incremented`. While the old gateway is unavailable or times out, `/ping` now answers 200 instead of 503 or 504. Its responses no longer carry `X-PolicyEngine-Simulation-Backend: old_gateway`, and it no longer records the `simulation_entry_backend_response`, `simulation_entry_backend_timeout` or `simulation_entry_backend_unavailable` telemetry events.
+
+
 ## [0.8.3] - 2026-11-10
 
 ### Changed
