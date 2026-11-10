@@ -614,3 +614,78 @@ def test_a_simulation_run_no_report_run_names_is_listed_and_failed(
         )
     ]
     assert failed == [RunWrite(changed=True, status=RunStatus.FAILED)]
+
+
+def test_the_sweep_never_lists_or_fails_a_succeeded_run_two_report_runs_reuse(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    run_ids = seeded_run.run_ids
+    shared_baseline = _another_simulation_run(
+        seeder,
+        seeded_run,
+        status="succeeded",
+        started_at=NOW,
+        completed_at=NOW,
+        output_uri="gs://detailed-save-outputs/simulations/shared-baseline.parquet",
+        output_sha256="d" * 64,
+    )
+    # The seeded report run and a second one, each running under its own
+    # coordinator call, name the same succeeded baseline run at the same time.
+    _set_run(
+        seeder,
+        "report_runs",
+        run_ids.report_run_id,
+        baseline_simulation_run_id=shared_baseline,
+        status="running",
+        modal_call_id="fc-coordinator",
+        started_at=NOW,
+    )
+    second = _second_report_run(
+        seeder,
+        seeded_run,
+        "running",
+        reform_simulation_run_id=_another_simulation_run(
+            seeder, seeded_run, status="pending"
+        ),
+    )
+    _set_run(
+        seeder,
+        "report_runs",
+        second,
+        modal_call_id="fc-second-coordinator",
+        started_at=NOW,
+    )
+    stored_baseline = seeder.row("simulation_runs", shared_baseline)
+
+    listed_report_runs = {
+        run.run_id: run
+        for run in store.list_active_runs(
+            RunKind.REPORT_RUN, active_since_before=CUTOFF
+        )
+    }
+    # The seeded report run's coordinator call ended, so the sweep fails it.
+    failed_first = store.fail_stuck_run(
+        listed_report_runs[run_ids.report_run_id],
+        error_message=ENDED_MESSAGE,
+        failed_at=CUTOFF,
+    )
+    shared_listed = _simulation_run_listed(store, shared_baseline)
+    # A sweep that had listed the shared run as running changes nothing either.
+    forged = store.fail_stuck_run(
+        ActiveRun(
+            kind=RunKind.SIMULATION_RUN,
+            run_id=shared_baseline,
+            status=RunStatus.RUNNING,
+            modal_call_id=None,
+        ),
+        error_message=ENDED_MESSAGE,
+        failed_at=CUTOFF,
+    )
+
+    assert {run_ids.report_run_id, second} <= set(listed_report_runs)
+    assert failed_first == RunWrite(changed=True, status=RunStatus.FAILED)
+    assert not shared_listed
+    assert forged == RunWrite(changed=False, status=RunStatus.SUCCEEDED)
+    assert seeder.row("simulation_runs", shared_baseline) == stored_baseline
+    # Failing one report run leaves the other running under its own call.
+    assert seeder.row("report_runs", second)["status"] == "running"
