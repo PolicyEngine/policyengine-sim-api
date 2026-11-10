@@ -380,3 +380,73 @@ def test_incomplete_cache_leaves_no_incomplete_output_in_memory(monkeypatch) -> 
         assert _cache.get(model.storage_id) is None
     finally:
         _cache.clear()
+
+
+class _RecalculationFailedError(Exception):
+    """Stands in for an error raised while Stage 12 recalculates a cache file."""
+
+
+def _load_incomplete_file(simulation: Simulation) -> None:
+    simulation.output_dataset = _output(complete=False)
+
+
+@pytest.mark.parametrize("failing_step", ["run", "save"])
+def test_recalculation_error_carries_no_output_plan_error(
+    monkeypatch, failing_step: str
+) -> None:
+    """An error from recalculating an incomplete file isn't chained to the check.
+
+    The telemetry error report groups an error by the first traceback in its
+    stack, so a chained output-plan error would group every recalculation
+    failure under the check that found the file incomplete.
+    """
+    recalculation_failure = _RecalculationFailedError(f"{failing_step} failed")
+
+    def raise_recalculation_failure(simulation: Simulation) -> None:
+        raise recalculation_failure
+
+    def recalculate_complete_output(simulation: Simulation) -> None:
+        simulation.output_dataset = _output()
+
+    model = _cached_model()
+    monkeypatch.setattr(Simulation, "ensure", _load_incomplete_file)
+    monkeypatch.setattr(
+        Simulation,
+        "run",
+        raise_recalculation_failure
+        if failing_step == "run"
+        else recalculate_complete_output,
+    )
+    monkeypatch.setattr(
+        Simulation,
+        "save",
+        raise_recalculation_failure if failing_step == "save" else lambda self: None,
+    )
+
+    with pytest.raises(_RecalculationFailedError) as raised:
+        model.ensure()
+
+    assert raised.value is recalculation_failure
+    assert raised.value.__context__ is None
+    assert raised.value.__cause__ is None
+    assert model.stage12_cache_outcome == CACHE_INCOMPLETE
+
+
+def test_preemption_during_recalculation_carries_no_output_plan_error(
+    monkeypatch,
+) -> None:
+    """A Modal preemption during the recalculation isn't chained to the check."""
+
+    def preempted_run(simulation: Simulation) -> None:
+        raise KeyboardInterrupt
+
+    model = _cached_model()
+    monkeypatch.setattr(Simulation, "ensure", _load_incomplete_file)
+    monkeypatch.setattr(Simulation, "run", preempted_run)
+    monkeypatch.setattr(Simulation, "save", lambda self: None)
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        model.ensure()
+
+    assert raised.value.__context__ is None
+    assert model.stage12_cache_outcome == CACHE_INCOMPLETE
