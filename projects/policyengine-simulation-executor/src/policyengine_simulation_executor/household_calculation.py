@@ -393,7 +393,9 @@ class _HouseholdSimulation:
     """The country model's simulation of the household under the request's policy.
 
     ``household`` is the household document its calculated values are written
-    into, and ``warnings`` the values it could not calculate.
+    into. A value it cannot calculate is written as null, one per point for a
+    household with axes. ``warnings`` names such a value only for a household
+    with axes; without axes the value is only logged.
     """
 
     simulation: Simulation

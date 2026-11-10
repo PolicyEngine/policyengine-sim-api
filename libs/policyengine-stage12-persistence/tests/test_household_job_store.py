@@ -77,7 +77,11 @@ FAILED_OUTCOME = HouseholdExecutionFailure(
 )
 SUCCEEDED_DOCUMENT = SUCCEEDED_OUTCOME.model_dump(mode="json")
 FAILED_DOCUMENT = FAILED_OUTCOME.model_dump(mode="json")
-FAILURE_SUMMARY = "invalid_inputs: Unrecognized calculate input(s): ..."
+# What the executor's household_failure_summary returns for FAILED_OUTCOME: its
+# error code, then its whole message, which is well under the summary's limit.
+FAILURE_SUMMARY = (
+    "invalid_inputs: Unrecognized calculate input(s): Unrecognized policy parameter"
+)
 ENDED_MESSAGE = "modal_call_ended: the job's Modal call ended without recording it"
 
 
