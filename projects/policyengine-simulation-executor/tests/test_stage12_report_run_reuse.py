@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from types import SimpleNamespace
 from uuid import UUID
@@ -22,6 +22,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     ReportRunIds,
 )
+from policyengine_simulation_executor import spm as runtime_spm
 from policyengine_simulation_executor.stage12_artifacts import (
     serialize_simulation_frames,
 )
@@ -52,6 +53,35 @@ from stage12_runtime_support import (
 COORDINATOR_CALL_ID = "fc-coordinator"
 # Another bucket than the Stage 12 artifact bucket the fakes write to.
 OUTPUT_BUCKET = "detailed-save-outputs"
+# The complete SPM selection ``spm_calculation_provenance``'s receipt records.
+SPM_SELECTION = {
+    "forecast_content_sha256": "f" * 64,
+    "scenario": "official",
+    "geography_kind": "national",
+    "geography_id": None,
+    "county_vintage": "2020",
+    "as_of": None,
+}
+
+
+@dataclass
+class ResolvedSpmSelection:
+    """What the runtime resolves a simulation's SPM request to, and what it read."""
+
+    selection: dict | None = None
+    requests: list[dict] = field(default_factory=list)
+
+    def resolve(self, params):
+        self.requests.append(params)
+        return self.selection
+
+
+@pytest.fixture(autouse=True)
+def resolved_spm(monkeypatch) -> ResolvedSpmSelection:
+    """Resolve every SPM request to no SPM calculation, unless a test sets one."""
+    resolved = ResolvedSpmSelection()
+    monkeypatch.setattr(runtime_spm, "normalize_runtime_spm", resolved.resolve)
+    return resolved
 
 
 class FakeOutputFiles:
@@ -323,7 +353,7 @@ UNUSABLE_OUTPUTS = {
     ),
     "unrequested-spm-calculation": (
         _unrequested_spm_calculation,
-        "reused_simulation_output_incompatible",
+        "reused_simulation_spm_mismatch",
     ),
     "other-year": (_other_year, "reused_simulation_run_mismatch"),
     "other-policyengine-version": (
@@ -368,17 +398,12 @@ def test_a_reused_output_that_cannot_be_used_fails_the_report_run_uncalculated(
     assert store.parent.error_code == error_code
 
 
-def test_a_reused_output_without_the_requested_spm_calculation_fails_the_report() -> (
-    None
-):
-    report = report_execution_input()
-    spm_options = {"spm": {"scenario": "official"}}
-    report = report.model_copy(
-        update={
-            "baseline": report.baseline.model_copy(update={"options": spm_options}),
-            "reform": report.reform.model_copy(update={"options": spm_options}),
-        }
-    )
+def test_a_reused_output_without_the_resolved_spm_calculation_fails_the_report(
+    resolved_spm,
+) -> None:
+    # The runtime resolves a US request with no SPM option to the bundle's
+    # certified defaults, so a worker would calculate SPM and write a receipt.
+    resolved_spm.selection = SPM_SELECTION
     store = FakeStore()
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
@@ -387,15 +412,121 @@ def test_a_reused_output_without_the_requested_spm_calculation_fails_the_report(
     invoker = ConcurrentInvoker(artifacts)
 
     with pytest.raises(RuntimeError, match="coordination failed"):
-        _coordinate(store, report_runs, invoker, artifacts, files, report=report)
+        _coordinate(store, report_runs, invoker, artifacts, files)
 
     report_run = report_runs.report_runs[REPORT_RUN_ID]
-    assert report_run.error_message.startswith(
-        "reused_simulation_output_incompatible: "
-    )
-    assert "SPM" in report_run.error_message
+    assert report_run.error_message.startswith("reused_simulation_spm_mismatch: ")
+    assert "without an SPM calculation receipt" in report_run.error_message
     assert invoker.events == []
     assert report_runs.simulation_runs[BASELINE_RUN_ID].writes == []
+
+
+def _reused_under_spm_receipt(report_runs, files, run_ids, receipt):
+    for run_id in run_ids:
+        _succeeded_with_output(
+            report_runs, files, run_id, calculation_provenance=receipt
+        )
+
+
+OTHER_SPM_SELECTIONS = {
+    "scenario": {**SPM_SELECTION, "scenario": "zero_real"},
+    "geography_kind": {**SPM_SELECTION, "geography_kind": "county"},
+    "county_vintage": {**SPM_SELECTION, "county_vintage": "2010"},
+}
+
+
+@pytest.mark.parametrize(
+    "reused_run_ids",
+    [(BASELINE_RUN_ID, REFORM_RUN_ID), (BASELINE_RUN_ID,), (REFORM_RUN_ID,)],
+    ids=["both-reused", "baseline-reused", "reform-reused"],
+)
+@pytest.mark.parametrize(
+    ("differing_field", "requested_selection"),
+    list(OTHER_SPM_SELECTIONS.items()),
+    ids=list(OTHER_SPM_SELECTIONS),
+)
+def test_outputs_reused_from_another_spm_selection_fail_before_any_worker_starts(
+    resolved_spm, reused_run_ids, differing_field, requested_selection
+) -> None:
+    resolved_spm.selection = requested_selection
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+    files = FakeOutputFiles()
+    _reused_under_spm_receipt(
+        report_runs, files, reused_run_ids, spm_calculation_provenance()
+    )
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts)
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(store, report_runs, invoker, artifacts, files)
+
+    report_run = report_runs.report_runs[REPORT_RUN_ID]
+    assert report_run.status is RunStatus.FAILED
+    assert report_run.error_message.startswith("reused_simulation_spm_mismatch: ")
+    assert f"SPM receipt {differing_field} differs" in report_run.error_message
+    # Neither simulation is calculated, and no simulation run is written.
+    assert invoker.events == []
+    for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
+        assert report_runs.simulation_runs[run_id].writes == []
+    assert store.parent.error_code == "reused_simulation_spm_mismatch"
+
+
+def test_an_output_whose_spm_receipt_lacks_the_report_year_fails_the_report(
+    resolved_spm,
+) -> None:
+    resolved_spm.selection = SPM_SELECTION
+    report_runs = FakeReportRuns()
+    files = FakeOutputFiles()
+    _reused_under_spm_receipt(
+        report_runs,
+        files,
+        (BASELINE_RUN_ID,),
+        spm_calculation_provenance().model_copy(update={"years": ("2027",)}),
+    )
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts)
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(FakeStore(), report_runs, invoker, artifacts, files)
+
+    report_run = report_runs.report_runs[REPORT_RUN_ID]
+    assert report_run.error_message.startswith("reused_simulation_spm_mismatch: ")
+    assert "covers 2027, not 2026" in report_run.error_message
+    assert invoker.events == []
+
+
+def test_an_output_with_the_resolved_spm_selection_is_reused(resolved_spm) -> None:
+    resolved_spm.selection = SPM_SELECTION
+    report_runs = FakeReportRuns()
+    files = FakeOutputFiles()
+    receipt = spm_calculation_provenance()
+    _reused_under_spm_receipt(report_runs, files, (BASELINE_RUN_ID,), receipt)
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts)
+    aggregated = []
+
+    def recording_aggregator(**inputs):
+        aggregated.append(inputs)
+        return economy_aggregate()
+
+    _coordinate(
+        FakeStore(),
+        report_runs,
+        invoker,
+        artifacts,
+        files,
+        aggregator=recording_aggregator,
+    )
+
+    assert invoker.events == ["spawn:reform"]
+    assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
+    (inputs,) = aggregated
+    assert inputs["baseline"].descriptor.calculation_provenance == receipt
+    # The selection is resolved from the reused simulation's own parameters.
+    (request,) = resolved_spm.requests
+    assert request["time_period"] == "2026"
+    assert request["country"] == "us"
 
 
 SECOND_REPORT_RUN_ID = UUID("00000000-0000-0000-0000-0000000000a2")
