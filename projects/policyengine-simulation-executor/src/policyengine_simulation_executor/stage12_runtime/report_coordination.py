@@ -672,13 +672,17 @@ class ReportCoordination:
             )
 
     def reconcile_simulation_runs(self) -> None:
-        """Give each simulation run of the report its child record's outcome."""
+        """Give each simulation run of the report its child record's outcome.
+
+        A reused run already succeeded, and nothing writes to it.
+        """
         if not isinstance(self.persistence, SimulationRunRecordingStore):
             return
         for simulation in (self.report.baseline, self.report.reform):
-            self.persistence.reconcile_simulation_run(
-                simulation.simulation_execution_id
-            )
+            if simulation.role.value not in self.reused:
+                self.persistence.reconcile_simulation_run(
+                    simulation.simulation_execution_id
+                )
 
     def fail_running_children(self, detail: Stage12FailureDetail) -> None:
         """Fail every child record of a report run that is still running.
