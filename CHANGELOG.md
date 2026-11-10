@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.8.2] - 2026-11-10
+
+### Fixed
+
+- An error raised while Stage 12 recalculates an incomplete cache file, including a Modal preemption, is no longer chained to the output-plan check that found the file incomplete, so the telemetry error report groups it by where it was raised.
+
+
 ## [0.8.1] - 2026-11-10
 
 ### Fixed
