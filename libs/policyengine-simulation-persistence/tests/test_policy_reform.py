@@ -37,13 +37,22 @@ def test_a_value_with_an_end_date_applies_from_its_start_to_its_end() -> None:
 
 
 def test_a_value_without_an_end_date_applies_to_the_end_of_2200() -> None:
-    """A value with no end date applies to every year a calculation can be for.
+    """A value with no end date, and none after it, runs to the end of 2200.
 
-    Household jobs and simulation runs are for years up to 2200. A range is
-    read the same way by every country's model; a start date alone is not
-    (``test_household_calculation.py`` in the executor shows both).
+    Household jobs and simulation runs are for years up to 2200; .py's own
+    conversion stops there at 2100. A range is read the same way by every
+    country's model; a start date alone is not (``test_household_calculation.py``
+    in the executor shows both).
     """
     assert reform_period(START, None) == "2026-01-01.2200-12-31"
+
+
+def test_a_value_without_an_end_date_stops_before_the_next_value_starts() -> None:
+    """.py's rule: the parameter's next later value takes over."""
+    assert (
+        reform_period(START, None, next_start_date=datetime(2028, 7, 1, tzinfo=UTC))
+        == "2026-01-01.2028-06-30"
+    )
 
 
 def test_dates_are_read_in_utc() -> None:
@@ -109,6 +118,82 @@ def test_a_policy_is_read_as_its_values_by_parameter_name_and_period(
             "2028-01-01.2200-12-31": 4_000,
         },
         STANDARD_DEDUCTION: {"2026-01-01.2200-12-31": [1, 2]},
+    }
+
+
+def _reform_of(public_api_database_url, values: list[StoredValue]) -> dict:
+    """Store a US policy setting ``values`` and read it as the service's role."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        catalog = insert_catalog_version(
+            connection,
+            country="us",
+            model_id=insert_model(connection, "us"),
+            policyengine_version="6.17.1",
+            parameter_names=sorted({value.parameter_name for value in values}),
+        )
+        policy_id = insert_policy(connection, catalog, values)
+        act_as_the_service(connection)
+        return read_policy_reform(
+            connection,
+            country="us",
+            policy_id=policy_id,
+            catalog_version_id=catalog.version_id,
+        )
+
+
+@pytest.mark.public_api_schema
+def test_a_value_without_an_end_date_gives_way_to_a_bounded_one_for_good(
+    public_api_database_url,
+) -> None:
+    """After the bounded value ends, current law applies, as .py has it.
+
+    The executor's ``test_py_reform_dicts.py`` shows .py's
+    ``reform_dict_from_parameter_values`` giving these periods, with 2100
+    where this has 2200.
+    """
+    reform = _reform_of(
+        public_api_database_url,
+        [
+            StoredValue(CTC_AMOUNT, 3_000, START),
+            StoredValue(
+                CTC_AMOUNT,
+                5_000,
+                datetime(2028, 1, 1, tzinfo=UTC),
+                datetime(2028, 12, 31, tzinfo=UTC),
+            ),
+        ],
+    )
+
+    assert reform == {
+        CTC_AMOUNT: {
+            "2026-01-01.2027-12-31": 3_000,
+            "2028-01-01.2028-12-31": 5_000,
+        }
+    }
+
+
+@pytest.mark.public_api_schema
+def test_values_without_end_dates_run_one_after_another(
+    public_api_database_url,
+) -> None:
+    """Each runs until the next starts; the last runs to the end of 2200."""
+    reform = _reform_of(
+        public_api_database_url,
+        [
+            StoredValue(CTC_AMOUNT, 1_000, START),
+            StoredValue(CTC_AMOUNT, 2_000, datetime(2027, 7, 1, tzinfo=UTC)),
+            StoredValue(CTC_AMOUNT, 3_000, datetime(2030, 1, 1, tzinfo=UTC)),
+            StoredValue(STANDARD_DEDUCTION, 20_000, datetime(2029, 1, 1, tzinfo=UTC)),
+        ],
+    )
+
+    assert reform == {
+        CTC_AMOUNT: {
+            "2026-01-01.2027-06-30": 1_000,
+            "2027-07-01.2029-12-31": 2_000,
+            "2030-01-01.2200-12-31": 3_000,
+        },
+        STANDARD_DEDUCTION: {"2029-01-01.2200-12-31": 20_000},
     }
 
 
@@ -208,10 +293,10 @@ def test_a_policy_changing_parameters_the_run_lacks_names_each_of_them(
 
 
 @pytest.mark.public_api_schema
-def test_two_values_of_one_parameter_for_the_same_period_are_refused(
+def test_two_values_of_one_parameter_starting_the_same_day_are_refused(
     public_api_database_url,
 ) -> None:
-    """Start times on the same day give one period; neither value may be lost."""
+    """Start times on the same day give one start date; neither may be lost."""
     with rolled_back_transaction(public_api_database_url) as connection:
         catalog = insert_catalog_version(
             connection,
@@ -238,6 +323,4 @@ def test_two_values_of_one_parameter_for_the_same_period_are_refused(
                 catalog_version_id=catalog.version_id,
             )
 
-    assert str(raised.value) == (
-        f"the policy sets {CTC_AMOUNT} twice for 2026-01-01.2027-12-31"
-    )
+    assert str(raised.value) == (f"the policy sets {CTC_AMOUNT} twice from 2026-01-01")
