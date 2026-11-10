@@ -66,6 +66,7 @@ HOUSEHOLD_PATHS = (
     "/household-calculations/{household_job_id}",
 )
 HOUSEHOLD_SCHEMAS = (
+    "HouseholdAxis",
     "HouseholdCalculationAccepted",
     "HouseholdCalculationError",
     "HouseholdCalculationRequest",

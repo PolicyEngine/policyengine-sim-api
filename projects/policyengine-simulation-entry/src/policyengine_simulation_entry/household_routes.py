@@ -142,7 +142,7 @@ def _observability_context(
 
 def _state(record: HouseholdJobRecord) -> HouseholdCalculationState:
     return HouseholdCalculationState(
-        id=record.id,
+        job_id=record.id,
         status=record.status,
         country=record.country,
         household_id=record.household_id,

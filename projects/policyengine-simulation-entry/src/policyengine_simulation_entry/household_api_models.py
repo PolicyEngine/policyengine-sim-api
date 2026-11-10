@@ -11,12 +11,14 @@ stands.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
+from policyengine_simulation_contract.household_execution import Axes
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_persistence import HouseholdJobStatus
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic.json_schema import SkipJsonSchema
 
 # Why a submission is refused (400): a row it names, or the household
 # function it needs, does not exist.
@@ -46,6 +48,11 @@ HouseholdErrorCode = Literal[
 ]
 
 
+def _omit_spm_default(schema: dict[str, Any]) -> None:
+    """Leave out the null default: omit ``spm`` to send no settings."""
+    schema.pop("default", None)
+
+
 class HouseholdCalculationRequest(BaseModel):
     """A stored household to calculate under one stored policy, or current law.
 
@@ -54,11 +61,13 @@ class HouseholdCalculationRequest(BaseModel):
     household's ``default_year``, on the v2 version manifest's default worker.
     ``add_missing_variables`` adds every yearly, monthly and eternal variable
     the household lacks, as the Public API's ``/calculate-full`` does.
+    ``axes`` vary the stored household's inputs across points, within the
+    household contract's limits.
 
-    ``spm`` holds SPM settings exactly as the household contract takes them,
-    as any JSON value, and the household function checks them. Omit it to use
-    the household's saved selection, or, without one, the bundle's certified
-    defaults; sending it, even as null, is the request's own choice.
+    ``spm`` holds SPM settings as an object, which the household function
+    checks with the Public API's SPM error codes. Omit it to use the
+    household's saved selection, or, without one, the bundle's certified
+    defaults; an explicit null is refused.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
@@ -67,13 +76,25 @@ class HouseholdCalculationRequest(BaseModel):
     household_id: UUID
     policy_id: UUID | None = None
     add_missing_variables: bool = False
-    spm: JsonValue = Field(
+    axes: Axes = None
+    spm: dict[str, JsonValue] | SkipJsonSchema[None] = Field(
         default=None,
         description=(
-            "SPM settings as the household contract takes them. Omit to use "
-            "the household's saved selection or the bundle's defaults."
+            "SPM settings as the household contract takes them, as an object. "
+            "Omit to use the household's saved selection or the bundle's "
+            "defaults; null is refused."
         ),
+        json_schema_extra=_omit_spm_default,
     )
+
+    @field_validator("spm", mode="before")
+    @classmethod
+    def refuse_null_spm(cls, value: object) -> object:
+        """Refuse an explicit null; omit ``spm`` to send no settings."""
+        if value is None:
+            msg = "spm must be an object when given; omit it to send no settings"
+            raise ValueError(msg)
+        return value
 
     @property
     def spm_requested(self) -> bool:
@@ -84,13 +105,13 @@ class HouseholdCalculationRequest(BaseModel):
 class HouseholdCalculationAccepted(BaseModel):
     """The household job a submission created, and its status as it stands.
 
-    Poll ``GET /household-calculations/{id}`` until the status is
+    Poll ``GET /household-calculations/{job_id}`` until the status is
     ``succeeded`` or ``failed``.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    id: UUID
+    job_id: UUID
     status: HouseholdJobStatus
 
 
@@ -108,7 +129,7 @@ class HouseholdCalculationState(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    id: UUID
+    job_id: UUID
     status: HouseholdJobStatus
     country: str
     household_id: UUID

@@ -75,7 +75,7 @@ submission_status="$(
 )"
 [[ "${submission_status}" == "202" ]] \
   || fail "POST /household-calculations answered ${submission_status}: $(cat "${work_directory}/submission.json")"
-job_id="$(jq -r '.id // empty' "${work_directory}/submission.json")"
+job_id="$(jq -r '.job_id // empty' "${work_directory}/submission.json")"
 [[ "${job_id}" =~ ${uuid_pattern} ]] || fail "the submission named no household job"
 printf 'Submitted household job %s for staging household %s\n' "${job_id}" "${household_id}"
 

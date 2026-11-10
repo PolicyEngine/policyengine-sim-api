@@ -73,12 +73,13 @@ setup required before enforcement is described in `DEPLOYMENT.md`.
 
 `POST /household-calculations` names a stored household, and optionally a
 stored policy, of the Public API: `country`, `household_id`, `policy_id`,
-`add_missing_variables` and `spm` (SPM settings as the household contract
-takes them; omit it to use the household's saved selection). The service
-reads the rows itself, calculates the household's `default_year` on the v2
-version manifest's default worker, creates a `household_jobs` row and starts
-the household function's call with `spawn`, answering 202 with the job's
-`id` and `status`. Each submission creates a new job.
+`add_missing_variables`, `axes` (within the household contract's limits)
+and `spm` (SPM settings as an object; omit it to use the household's saved
+selection, since null is refused). The service reads the rows itself,
+calculates the household's `default_year` on the v2 version manifest's
+default worker, creates a `household_jobs` row and starts the household
+function's call with `spawn`, answering 202 with the job's `job_id` and
+`status`. Each submission creates a new job.
 `GET /household-calculations/{household_job_id}` returns the job's status,
 the household function's `result` document once it has one, and its
 `error_message`.

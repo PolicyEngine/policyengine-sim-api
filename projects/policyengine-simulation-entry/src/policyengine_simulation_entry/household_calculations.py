@@ -258,7 +258,11 @@ def prepare_household_job(
                 "country": request.country,
                 # The household's default year, as a situation's period key.
                 "year": str(household.default_year),
-                "household": situation,
+                "household": (
+                    situation
+                    if request.axes is None
+                    else {**situation, "axes": request.axes}
+                ),
                 **job_policy_fields(reform=inputs.reform),
                 "add_missing_variables": request.add_missing_variables,
                 "bundle": worker.bundle,
@@ -344,7 +348,7 @@ class HouseholdCalculationService:
                 household_job_id=job_id,
             ) from None
         status = await self._record_call(job_id, call_id)
-        return HouseholdCalculationAccepted(id=job_id, status=status)
+        return HouseholdCalculationAccepted(job_id=job_id, status=status)
 
     async def read(self, job_id: UUID) -> HouseholdJobRecord | None:
         """Return the household job as it stands, or None when there is none.

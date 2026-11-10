@@ -84,7 +84,7 @@ class FakeHouseholdCalculations:
         if self.failure is not None:
             raise self.failure
         return HouseholdCalculationAccepted(
-            id=JOB_ID, status=HouseholdJobStatus.PENDING
+            job_id=JOB_ID, status=HouseholdJobStatus.PENDING
         )
 
     async def read(self, job_id: UUID) -> HouseholdJobRecord | None:
