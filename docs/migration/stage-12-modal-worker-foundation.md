@@ -71,7 +71,8 @@ with the live API-owned schema.
   `stage12-evaluation-gcp-credentials` Modal secret. The worker application
   does not receive the existing general GCP credential secret. The credential's
   service account can read and write its environment-specific Stage 12 artifact
-  bucket. A conditional IAM binding separately permits it to read
+  bucket and simulation output bucket. A conditional IAM binding separately
+  permits it to read
   `constituencies_2024.csv` from `policyengine-uk-data-private`; deployment
   validation downloads that lookup file using the worker credential. Stage 12
   local-authority output uses packaged metadata and does not require access to
@@ -115,7 +116,7 @@ automation or infrastructure configuration:
 | Build and verify the Stage 12 dataset and baseline cache | Simulation deployment workflow |
 | Create or update the separate v2 manifest storage object | V2 manifest publisher |
 | Configure the v2 manifest reader and `STAGE12_ENABLED` | Cloud Run deployment workflow |
-| Create the private report-artifact and cache buckets and their policies | Infrastructure configuration |
+| Create the private report-artifact, simulation output and cache buckets and their policies | Infrastructure configuration |
 | Ensure the existing API v2 runtime identity has comparison-row database access | API infrastructure configuration |
 | Deliver the existing shared runtime database secret to Cloud Run and Modal | Simulation deployment workflow |
 | Grant private-object access only to the Modal runtime | Infrastructure configuration |
@@ -191,9 +192,48 @@ Secret Manager, verifies the expected `policyengine_v2_runtime` identity and
 permissions, inspects the complete temporary schema against the declared
 SQLAlchemy mappings, and runs a rolled-back insert/read/update/delete canary. It
 also verifies required Secret Manager access and performs separate
-create/read/delete checks in the private report-artifact and cache buckets. The
-temporary objects are deleted in the normal path and by exit cleanup after a
-failure.
+create/read/delete checks in the private report-artifact, simulation output and
+cache buckets. The temporary objects are deleted in the normal path and by exit
+cleanup after a failure.
+
+## Where output files are kept
+
+| Files | Bucket, named by the GitHub environment variable | Object key | Retention |
+| --- | --- | --- | --- |
+| Every artifact of a comparison run; the planned inputs and aggregate of a report run | `STAGE12_ARTIFACT_BUCKET`: `policyengine-stage12-staging-artifacts`, `policyengine-stage12-production-artifacts` | `stage-12-runs/<environment>/<YYYY>/<MM>/<evaluation_id>/...` | Deleted 30 days after it is written |
+| The simulation output files of a report run | `V2_SIMULATION_OUTPUT_BUCKET`: `policyengine-v2-staging-simulation-outputs`, `policyengine-v2-production-simulation-outputs` | `simulation-runs/<environment>/<country>/<simulation_run_id>/output-<SHA-256>.parquet` | Never deleted; moved to Coldline 90 days after it is written |
+
+A report run is a call whose invocation context names the Public API's report
+run and its baseline and reform simulation runs (`report_run`); the
+detailed-save API's reports are calculated this way. Each of its workers writes
+its simulation output file to the simulation output bucket, keyed by its
+simulation run, and records that URI as the `output_uri` of both its simulation
+run in `simulation_runs` and its temporary Stage 12 child record. The
+coordinator reads the file back from there to aggregate it, and a later report
+run can reuse a succeeded simulation run's file. The key names the file's
+SHA-256, so a worker Modal restarts can store other bytes beside its earlier
+attempt's file, and identical bytes reuse the object. The child record's
+`retention_expires_at` still describes the artifact bucket; the file it names
+outlasts it.
+
+A report run's coordinator or worker without `V2_SIMULATION_OUTPUT_BUCKET`
+fails with a `ValueError` naming the variable before it claims anything; it
+never writes the file to the artifact bucket, which would delete it after 30
+days, and the store refuses a simulation output bucket equal to the artifact
+bucket. Comparison runs never read the variable.
+
+The deployment's Stage 12 secret-sync step copies the environment's
+`V2_SIMULATION_OUTPUT_BUCKET` GitHub variable into the
+`stage12-evaluation-runtime` Modal secret, beside `STAGE12_ARTIFACT_BUCKET` and
+`STAGE12_CACHE_BUCKET`, and every v2 function receives that secret. The
+infrastructure validation requires the name to identify the environment and to
+differ from the artifact bucket, and writes, reads back and removes a canary
+object under `simulation-runs/_deployment-validation/<environment>/` with the
+worker's credential. Worker validation fails when the secret lacks the
+variable. The workers write both buckets with the same
+`stage12-evaluation-gcp-credentials` service account
+(`stage12-modal-staging@` or `stage12-modal-production@` in
+`policyengine-simulation-entry`), which has `roles/storage.objectUser` on each.
 
 The current Public API omits `data` for the certified default dataset. The v2
 adapter therefore resolves an absent `data` field to the exact default dataset
@@ -652,8 +692,9 @@ comparison retry requires a separately reviewed entry point and state
 transition. Direct Stage 12-only runs have no production result and keep
 comparison status `not_requested`.
 
-The artifact bucket deletes private Stage 12 objects after 30 days. This
-application registers no periodic cleanup function and does not delete the
+The artifact bucket deletes private Stage 12 objects after 30 days. The
+simulation output bucket deletes nothing (see "Where output files are kept").
+This application registers no periodic cleanup function and does not delete the
 temporary PostgreSQL rows. Those rows remain restricted operational history
 until Stage 14 removes the temporary schema.
 

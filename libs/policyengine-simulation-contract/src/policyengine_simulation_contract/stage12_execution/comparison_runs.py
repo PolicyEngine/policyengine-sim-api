@@ -65,7 +65,8 @@ class Stage12InvocationContext(StrictContractModel):
     callable, the manifest digests and the artifact prefix. Automatic runs also
     name the production function call they are compared with. Artifacts are kept
     for at most 30 days after ``created_at``. A call that also records its
-    outcome on the Public API's run tables names those runs in ``report_run``.
+    outcome on the Public API's run tables names those runs in ``report_run``;
+    its simulation output files go to their own bucket, which keeps them.
     """
 
     contract_version: Literal[1] = 1
