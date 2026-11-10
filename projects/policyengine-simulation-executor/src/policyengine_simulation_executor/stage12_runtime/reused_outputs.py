@@ -29,6 +29,10 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING, Protocol
 
+from policyengine_simulation_contract.spm import (
+    SPMSelection,
+    validate_spm_calculation_provenance,
+)
 from policyengine_simulation_contract.stage12_execution import (
     ArtifactMediaType,
     ArtifactReference,
@@ -47,6 +51,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
 
 from .failures import Stage12InputError
 from .output_planning import validate_output_frames
+from .simulation import simulation_runtime_params
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -70,10 +75,12 @@ REUSED_OUTPUT_MISSING = "reused_simulation_output_missing"
 # The file can't be read, or isn't a Stage 12 simulation output.
 REUSED_OUTPUT_UNREADABLE = "reused_simulation_output_unreadable"
 REUSED_OUTPUT_DIGEST_MISMATCH = "reused_simulation_output_digest_mismatch"
-# The file lacks an entity or column this report's output plan names, or
-# doesn't hold the SPM calculation this report requests, or holds one it
-# doesn't request.
+# The file lacks an entity or column this report's output plan names.
 REUSED_OUTPUT_INCOMPATIBLE = "reused_simulation_output_incompatible"
+# The file's SPM calculation receipt isn't the one a worker would write for
+# this report run's simulation: another selection, another year, or a receipt
+# where none is calculated, or none where one is.
+REUSED_SPM_MISMATCH = "reused_simulation_spm_mismatch"
 # The run calculated another year, country package version or .py version.
 REUSED_RUN_MISMATCH = "reused_simulation_run_mismatch"
 
@@ -172,7 +179,7 @@ def checked_output(
     Raises ``ReusedSimulationOutputError`` when the run calculated another
     year or version, or its file is missing, unreadable, differs from its
     digest, lacks an entity or column the report plans, or has an SPM
-    calculation receipt exactly when the report requests none.
+    calculation receipt other than the one a worker would write now.
     """
     named = f"The reused {simulation.role.value} simulation run {run_id}"
     _require_same_calculation(simulation, stored, named=named)
@@ -194,7 +201,7 @@ def checked_output(
             REUSED_OUTPUT_INCOMPATIBLE,
             f"{named} names an output file without outputs this report needs: {error}",
         ) from error
-    _require_requested_spm_calculation(simulation, calculation_provenance, named=named)
+    _require_resolved_spm_calculation(simulation, calculation_provenance, named=named)
     return ReusedSimulationOutput(
         payload=payload,
         descriptor=SimulationArtifactDescriptor(
@@ -246,29 +253,52 @@ def _require_same_calculation(
         )
 
 
-def _require_requested_spm_calculation(
+def _require_resolved_spm_calculation(
     simulation: PlannedSimulationExecutionInput,
-    calculation_provenance: SPMProvenance | None,
+    receipt: SPMProvenance | None,
     *,
     named: str,
 ) -> None:
-    """Raise unless the file has an SPM receipt exactly when the report requests one.
+    """Raise unless the file has the SPM calculation receipt a worker would write now.
 
-    A worker writes an SPM calculation receipt exactly when its report
-    requests an SPM calculation, which changes the values it calculates.
+    The worker resolves the simulation's SPM request with
+    ``normalize_runtime_spm``, so an option the request leaves out takes the
+    bundle's certified default, and a US request with no SPM option still
+    calculates the default selection. A calculation under another selection
+    calculates other values.
     """
-    spm_requested = simulation.options.get("spm") is not None
-    if spm_requested and calculation_provenance is None:
+    from policyengine_simulation_executor.spm import normalize_runtime_spm
+
+    resolved = normalize_runtime_spm(simulation_runtime_params(simulation))
+    if resolved is None and receipt is None:
+        return
+    if resolved is None:
         raise ReusedSimulationOutputError(
-            REUSED_OUTPUT_INCOMPATIBLE,
-            f"{named} names an output file without the SPM calculation "
-            "receipt this report requests.",
+            REUSED_SPM_MISMATCH,
+            f"{named} names an output file with an SPM calculation receipt, but "
+            "this report run's simulation calculates no SPM measure.",
         )
-    if not spm_requested and calculation_provenance is not None:
+    if receipt is None:
         raise ReusedSimulationOutputError(
-            REUSED_OUTPUT_INCOMPATIBLE,
-            f"{named} names an output file with an SPM calculation receipt, "
-            "but this report requests no SPM calculation.",
+            REUSED_SPM_MISMATCH,
+            f"{named} names an output file without an SPM calculation receipt, "
+            "but this report run's simulation calculates an SPM measure.",
+        )
+    try:
+        validate_spm_calculation_provenance(
+            config=SPMSelection.model_validate(resolved), receipt=receipt
+        )
+    except ValueError as error:
+        raise ReusedSimulationOutputError(
+            REUSED_SPM_MISMATCH,
+            f"{named} names an output file calculated under another SPM "
+            f"selection than this report run's: {error}.",
+        ) from error
+    if str(simulation.year) not in receipt.years:
+        raise ReusedSimulationOutputError(
+            REUSED_SPM_MISMATCH,
+            f"{named} names an output file whose SPM calculation receipt covers "
+            f"{', '.join(receipt.years) or 'no year'}, not {simulation.year}.",
         )
 
 
