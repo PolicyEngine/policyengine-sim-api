@@ -12,8 +12,10 @@ service:
 3. creates the job ``pending`` with no Modal call ID;
 4. starts the household function's call with ``spawn``, passing the job's
    ID, then records the call's ID while the job is still pending with none
-   (the function may have claimed it already); when Modal refuses the call,
-   or does not accept it in time, it fails the job at once instead.
+   (the function may have claimed it already). When Modal refuses the call,
+   or does not confirm it in time, it fails the job at once instead, under
+   the same condition; a job the function claimed meanwhile, because Modal
+   accepted the call after all, is answered as it stands.
 
 Whatever is missing or cannot be calculated is refused in steps 1 and 2,
 before anything is written. The household function then claims the job and
@@ -50,7 +52,7 @@ from policyengine_simulation_entry.household_api_models import (
 )
 from policyengine_simulation_entry.household_contract_fields import (
     job_policy_fields,
-    names_the_policy,
+    request_field_of,
 )
 from policyengine_simulation_entry.household_conversion import (
     UnreadableHouseholdError,
@@ -122,6 +124,13 @@ class HouseholdCalculationUnprocessableError(Exception):
         self.reasons = reasons
 
 
+class HouseholdCalculationInternalError(Exception):
+    """The service built a household function request its contract refuses.
+
+    The message names each refused field the service built, never a value.
+    """
+
+
 class HouseholdCalculationUnavailableError(Exception):
     """A dependency could not be read or refused the call; ask again later.
 
@@ -183,23 +192,55 @@ class PreparedHouseholdJob:
     payload: dict[str, Any]
 
 
+def _job_state_unknown(job_id: UUID) -> HouseholdCalculationUnavailableError:
+    return HouseholdCalculationUnavailableError(
+        code="job_state_unknown",
+        detail=(
+            "Modal did not confirm the household function's call, and the job's "
+            "state could not be recorded or read; read the job before submitting "
+            "again."
+        ),
+        household_job_id=job_id,
+    )
+
+
 def _database_unavailable() -> HouseholdCalculationUnavailableError:
     return HouseholdCalculationUnavailableError(
         code="database_unavailable", detail="The simulation database could not be read."
     )
 
 
-def _contract_reasons(error: ValidationError) -> tuple[UnprocessableReason, ...]:
-    """Name each field the contract refuses by the request field it traces to."""
+def _contract_reasons(
+    error: ValidationError, request: HouseholdCalculationRequest
+) -> tuple[UnprocessableReason, ...]:
+    """Name each field the contract refuses by the request field it traces to.
+
+    Raise HouseholdCalculationInternalError when the contract refuses a field
+    the service builds itself, which is no fault of the caller's.
+    """
     reasons = []
+    built_wrong = []
     for item in error.errors():
         location = tuple(item["loc"])
-        field = "policy_id" if names_the_policy(location) else "household_id"
+        request_field = request_field_of(
+            location, spm_from_request=request.spm_requested
+        )
+        if request_field is None:
+            built_wrong.append(".".join(str(part) for part in location) or "request")
+            continue
         reasons.append(
             UnprocessableReason(
-                loc=("body", field, *location), msg=item["msg"], type=item["type"]
+                loc=("body", request_field, *location),
+                msg=item["msg"],
+                type=item["type"],
             )
         )
+    if built_wrong:
+        msg = (
+            "the household function's request has fields the service built "
+            f"wrong: {', '.join(built_wrong)}"
+        )
+        raise HouseholdCalculationInternalError(msg)
     return tuple(reasons)
 
 
@@ -270,7 +311,9 @@ def prepare_household_job(
             }
         )
     except ValidationError as error:
-        raise HouseholdCalculationUnprocessableError(_contract_reasons(error)) from None
+        raise HouseholdCalculationUnprocessableError(
+            _contract_reasons(error, request)
+        ) from None
     return PreparedHouseholdJob(
         job=NewHouseholdJob(
             id=job_id,
@@ -320,8 +363,10 @@ class HouseholdCalculationService:
 
         Raise HouseholdCalculationRefusedError (400) or
         HouseholdCalculationUnprocessableError (422) before writing anything,
-        and HouseholdCalculationUnavailableError (503) when the manifest or
-        database cannot be read or Modal refuses the call.
+        HouseholdCalculationInternalError (500) when the service builds a
+        request the contract refuses, and HouseholdCalculationUnavailableError
+        (503) when the manifest or database cannot be read, or Modal doesn't
+        confirm the call and the job was failed or its state is unknown.
         """
         worker = await self._default_worker(request.country)
         prepared = await self._prepare(request, worker)
@@ -338,15 +383,9 @@ class HouseholdCalculationService:
                 timeout=self._call_start_timeout_seconds,
             )
         # Modal raises its own errors; any of them, or the timeout, means the
-        # call was not accepted, and the job is failed.
-        except Exception as error:  # noqa: BLE001  # every refusal fails the job
-            await self._fail_refused_call(job_id, error)
-            raise HouseholdCalculationUnavailableError(
-                code="modal_call_refused",
-                detail="Modal did not accept the household function's call; the job "
-                "was failed.",
-                household_job_id=job_id,
-            ) from None
+        # call was not confirmed, and the job is failed unless it has started.
+        except Exception as error:  # noqa: BLE001  # every unconfirmed call is answered alike
+            return await self._answer_unconfirmed_call(job_id, error)
         status = await self._record_call(job_id, call_id)
         return HouseholdCalculationAccepted(job_id=job_id, status=status)
 
@@ -463,11 +502,21 @@ class HouseholdCalculationService:
             )
             raise _database_unavailable() from None
 
-    async def _fail_refused_call(self, job_id: UUID, error: BaseException) -> None:
-        """Fail the job whose call Modal refused; a failed write is only logged."""
+    async def _answer_unconfirmed_call(
+        self, job_id: UUID, error: BaseException
+    ) -> HouseholdCalculationAccepted:
+        """Fail the job of a call Modal didn't confirm, unless it has started.
+
+        Modal may have accepted the call after the wait ended, and its
+        household function claimed the job first: the failure write then
+        changes nothing, and the job is answered as it stands. Raise
+        HouseholdCalculationUnavailableError, ``modal_call_refused`` when
+        the job was failed, and ``job_state_unknown`` when the failure write,
+        or reading the job back, itself failed.
+        """
         # The log names the error type only; its text could repeat request data.
         logger.error(
-            "household_call_refused",
+            "household_call_unconfirmed",
             extra={"household_job_id": str(job_id), "error_type": type(error).__name__},
         )
         message = (
@@ -475,9 +524,11 @@ class HouseholdCalculationService:
             f"({type(error).__name__})."
         )
         try:
-            await asyncio.to_thread(self._store.fail_unstarted, job_id, message)
+            failed = await asyncio.to_thread(
+                self._store.fail_unstarted, job_id, message
+            )
         except SQLAlchemyError as write_error:
-            # The stuck-run sweep fails the pending job later.
+            # The stuck-run sweep fails the job later if it stays pending.
             logger.warning(
                 "household_job_not_failed",
                 extra={
@@ -485,6 +536,30 @@ class HouseholdCalculationService:
                     "error_type": type(write_error).__name__,
                 },
             )
+            raise _job_state_unknown(job_id) from None
+        if failed:
+            raise HouseholdCalculationUnavailableError(
+                code="modal_call_refused",
+                detail=(
+                    "Modal did not accept the household function's call; the job "
+                    "was failed."
+                ),
+                household_job_id=job_id,
+            )
+        try:
+            record = await asyncio.to_thread(self._store.read, job_id)
+        except SQLAlchemyError as read_error:
+            logger.warning(
+                "household_job_not_read",
+                extra={
+                    "household_job_id": str(job_id),
+                    "error_type": type(read_error).__name__,
+                },
+            )
+            raise _job_state_unknown(job_id) from None
+        if record is None:
+            raise _job_state_unknown(job_id)
+        return HouseholdCalculationAccepted(job_id=job_id, status=record.status)
 
     async def _record_call(self, job_id: UUID, call_id: str) -> HouseholdJobStatus:
         """Record the call's ID; when that fails, answer the job as created.

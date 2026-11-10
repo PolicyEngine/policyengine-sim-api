@@ -92,7 +92,12 @@ default year, the policy sets parameters that catalog version lacks, or the
 household contract refuses the stored data. A job naming a row deleted
 since the reads is refused by the database's foreign keys, also with 400.
 The routes answer 503 with `Retry-After` when the manifest or the database
-can't be read; when Modal refuses the call, the job is failed at once and the
-503 names it. `DEPLOYMENT.md` describes the deployment settings and the
+can't be read. When Modal refuses the call, or doesn't confirm it within ten
+seconds, the job is failed at once and the 503 (`modal_call_refused`) names
+it; a job the household function claimed meanwhile is answered with 202 as
+it stands, and a job whose state couldn't then be recorded or read gets a
+503 `job_state_unknown` naming it, to be read before submitting again. A
+request the service builds and the household contract refuses is an
+internal error, 500. `DEPLOYMENT.md` describes the deployment settings and the
 staging check.
 

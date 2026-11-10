@@ -21,6 +21,7 @@ observability ID, so a read returns none.
 from __future__ import annotations
 
 import contextlib
+import logging
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
@@ -35,6 +36,7 @@ from policyengine_simulation_entry.household_api_models import (
     HouseholdRequestUnprocessable,
 )
 from policyengine_simulation_entry.household_calculations import (
+    HouseholdCalculationInternalError,
     HouseholdCalculationRefusedError,
     HouseholdCalculationUnavailableError,
     HouseholdCalculationUnprocessableError,
@@ -47,12 +49,20 @@ if TYPE_CHECKING:
     from policyengine_simulation_entry.auth import AuthorizationDependency
     from policyengine_simulation_entry.entry_runtime import EntryRuntime
 
+logger = logging.getLogger(__name__)
+
 SUBMISSION_PATH = "/household-calculations"
 JOB_PATH = "/household-calculations/{household_job_id}"
 RETRY_AFTER_SECONDS = 10
 
 _ERROR = {"model": HouseholdCalculationError}
-_UNPROCESSABLE = {
+_RETRY_AFTER = {
+    "Retry-After": {
+        "description": "Seconds to wait before asking again",
+        "schema": {"type": "integer"},
+    }
+}
+_SUBMISSION_UNPROCESSABLE = {
     "description": (
         "The request's fields, or the stored household or policy it names, "
         "cannot be calculated: one reason per field, its location starting "
@@ -60,13 +70,35 @@ _UNPROCESSABLE = {
     ),
     "model": HouseholdRequestUnprocessable,
 }
-_UNAVAILABLE = {
+_SUBMISSION_UNAVAILABLE = {
     "description": (
-        "Household calculations are not configured, the v2 version manifest "
-        "or the database cannot be read, or Modal refused the household "
-        "function's call (the job named by household_job_id was failed); "
-        "retry after Retry-After seconds"
+        "Household calculations are not configured; the v2 version manifest "
+        "or the database cannot be read; Modal refused the household "
+        "function's call, and the job named by household_job_id was failed "
+        "(modal_call_refused); or Modal didn't confirm the call and that job's "
+        "state is unknown, so read it before submitting again "
+        "(job_state_unknown). Retry after Retry-After seconds"
     ),
+    "headers": _RETRY_AFTER,
+    **_ERROR,
+}
+_SUBMISSION_INTERNAL_ERROR = {
+    "description": (
+        "The service built a household function request the household "
+        "contract refuses (internal_error)"
+    ),
+    **_ERROR,
+}
+_READ_UNPROCESSABLE = {
+    "description": "The household job ID is not a UUID",
+    "model": HouseholdRequestUnprocessable,
+}
+_READ_UNAVAILABLE = {
+    "description": (
+        "Household calculations are not configured, or the database cannot "
+        "be read; retry after Retry-After seconds"
+    ),
+    "headers": _RETRY_AFTER,
     **_ERROR,
 }
 _FORBIDDEN = {
@@ -121,6 +153,44 @@ def _unavailable(error: HouseholdCalculationUnavailableError) -> JSONResponse:
             code=error.code,
             detail=error.detail,
             household_job_id=error.household_job_id,
+        ),
+    )
+
+
+_SUBMISSION_FAILURES = (
+    HouseholdCalculationRefusedError,
+    HouseholdCalculationUnprocessableError,
+    HouseholdCalculationInternalError,
+    HouseholdCalculationUnavailableError,
+)
+
+
+def _submission_failure_response(error: Exception) -> JSONResponse:
+    """Answer a submission the service refused or could not serve."""
+    if isinstance(error, HouseholdCalculationRefusedError):
+        return _error_response(
+            status.HTTP_400_BAD_REQUEST,
+            HouseholdCalculationError(code=error.code, detail=error.detail),
+        )
+    if isinstance(error, HouseholdCalculationUnprocessableError):
+        return JSONResponse(
+            {
+                "detail": [
+                    {"loc": list(reason.loc), "msg": reason.msg, "type": reason.type}
+                    for reason in error.reasons
+                ]
+            },
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    if isinstance(error, HouseholdCalculationUnavailableError):
+        return _unavailable(error)
+    # The message names the refused fields the service built, never a value.
+    logger.error("household_request_built_wrong: %s", error)
+    return _error_response(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        HouseholdCalculationError(
+            code="internal_error",
+            detail="The service could not build the household function's request.",
         ),
     )
 
@@ -191,8 +261,9 @@ def add_household_calculation_routes(
                 **_ERROR,
             },
             403: _FORBIDDEN,
-            422: _UNPROCESSABLE,
-            503: _UNAVAILABLE,
+            422: _SUBMISSION_UNPROCESSABLE,
+            500: _SUBMISSION_INTERNAL_ERROR,
+            503: _SUBMISSION_UNAVAILABLE,
         },
         dependencies=[Depends(submitter)],
     )
@@ -207,27 +278,8 @@ def add_household_calculation_routes(
                 body,
                 observability_context=_observability_context(entry, observability_id),
             )
-        except HouseholdCalculationRefusedError as error:
-            return _error_response(
-                status.HTTP_400_BAD_REQUEST,
-                HouseholdCalculationError(code=error.code, detail=error.detail),
-            )
-        except HouseholdCalculationUnprocessableError as error:
-            return JSONResponse(
-                {
-                    "detail": [
-                        {
-                            "loc": list(reason.loc),
-                            "msg": reason.msg,
-                            "type": reason.type,
-                        }
-                        for reason in error.reasons
-                    ]
-                },
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            )
-        except HouseholdCalculationUnavailableError as error:
-            return _unavailable(error)
+        except _SUBMISSION_FAILURES as error:
+            return _submission_failure_response(error)
         return JSONResponse(
             accepted.model_dump(mode="json"), status_code=status.HTTP_202_ACCEPTED
         )
@@ -245,8 +297,8 @@ def add_household_calculation_routes(
             200: {"description": "The job as it stands"},
             403: _FORBIDDEN,
             404: {"description": "There is no such household job", **_ERROR},
-            422: _UNPROCESSABLE,
-            503: _UNAVAILABLE,
+            422: _READ_UNPROCESSABLE,
+            503: _READ_UNAVAILABLE,
         },
         dependencies=[Depends(reader)],
     )

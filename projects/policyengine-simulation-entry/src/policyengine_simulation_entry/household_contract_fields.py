@@ -15,6 +15,15 @@ if TYPE_CHECKING:
 
 # The request's top-level fields that hold the policy.
 POLICY_FIELDS: Final = frozenset({"policy"})
+# The request field each of the contract request's top-level fields is built
+# from, apart from the axes and SPM settings; the service builds the rest.
+_REQUEST_FIELDS: Final = {
+    "household": "household_id",
+    "year": "household_id",
+    "country": "country",
+    "add_missing_variables": "add_missing_variables",
+    **dict.fromkeys(POLICY_FIELDS, "policy_id"),
+}
 
 
 def job_policy_fields(*, reform: PolicyReform) -> dict[str, object]:
@@ -25,6 +34,20 @@ def job_policy_fields(*, reform: PolicyReform) -> dict[str, object]:
     return {"policy": {"parameters": reform}}
 
 
-def names_the_policy(location: tuple[str | int, ...]) -> bool:
-    """Return whether a refused field of the request belongs to its policy."""
-    return bool(location) and location[0] in POLICY_FIELDS
+def request_field_of(
+    location: tuple[str | int, ...], *, spm_from_request: bool
+) -> str | None:
+    """Return the request field a refused field of the contract's request came from.
+
+    The stored household, and its default year, come from ``household_id``,
+    except the request's own axes; the policy from ``policy_id``; SPM
+    settings from ``spm`` when the request sent them, else from the stored
+    household. Return None for a field the service builds itself, such as
+    the bundle or the calculation ID: its refusal is the service's fault.
+    """
+    top_field = location[0] if location else None
+    if top_field == "household" and location[1:2] == ("axes",):
+        return "axes"
+    if top_field == "spm":
+        return "spm" if spm_from_request else "household_id"
+    return _REQUEST_FIELDS.get(str(top_field))

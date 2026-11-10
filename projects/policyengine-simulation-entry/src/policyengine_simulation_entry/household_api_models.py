@@ -41,10 +41,18 @@ HouseholdUnavailableCode = Literal[
     # Modal refused the household function's call, or did not accept it in
     # time; the job was failed at once.
     "modal_call_refused",
+    # Modal did not confirm the call, and the job's state could not then be
+    # recorded or read: read the job before submitting again.
+    "job_state_unknown",
 ]
+# The service built a household function request its contract refuses.
+HouseholdInternalCode = Literal["internal_error"]
 # Every code a household route's error answer carries.
 HouseholdErrorCode = Literal[
-    HouseholdRefusalCode, HouseholdUnavailableCode, "unknown_household_job"
+    HouseholdRefusalCode,
+    HouseholdUnavailableCode,
+    HouseholdInternalCode,
+    "unknown_household_job",
 ]
 
 
