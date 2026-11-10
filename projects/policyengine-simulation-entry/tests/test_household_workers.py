@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from uuid import UUID
+
 import pytest
 from household_fixtures import (
     BUNDLE_MANIFEST_SHA256,
@@ -10,9 +13,11 @@ from household_fixtures import (
     manifest_store,
 )
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
+from policyengine_simulation_entry import household_workers
 from policyengine_simulation_entry.household_workers import (
     HouseholdFunctionUnavailableError,
     ManifestHouseholdWorkers,
+    ModalHouseholdFunctionCaller,
     VersionManifestUnavailableError,
 )
 
@@ -107,3 +112,72 @@ def test_a_store_that_stops_answering_is_unavailable_even_after_a_read() -> None
 
     with pytest.raises(VersionManifestUnavailableError):
         workers.default_worker("us")
+
+
+class FakeModalFunction:
+    """A deployed Modal function, as ``modal.Function.from_name`` returns it."""
+
+    def __init__(self, call_id: str | None) -> None:
+        self.call_id = call_id
+        self.spawned: list[tuple[tuple, dict]] = []
+        self.spawn = SimpleNamespace(aio=self._spawn)
+
+    async def _spawn(self, *arguments, **keywords):
+        self.spawned.append((arguments, keywords))
+        return SimpleNamespace(object_id=self.call_id)
+
+
+JOB_ID = UUID("00000000-0000-4000-8000-0000000000aa")
+
+
+@pytest.mark.asyncio
+async def test_a_household_function_is_called_by_name_with_its_job(monkeypatch):
+    function = FakeModalFunction("fc-household-1")
+    looked_up: list[tuple] = []
+
+    def from_name(application_name, function_name, *, environment_name):
+        looked_up.append((application_name, function_name, environment_name))
+        return function
+
+    monkeypatch.setattr(household_workers.modal.Function, "from_name", from_name)
+    worker = ManifestHouseholdWorkers(
+        manifest_store(household_worker_version())
+    ).default_worker("us")
+
+    call_id = await ModalHouseholdFunctionCaller("staging").spawn(
+        worker,
+        {"calculation_id": str(JOB_ID)},
+        household_job_id=JOB_ID,
+        observability_context={"observability_id": "o-1"},
+    )
+
+    assert call_id == "fc-household-1"
+    assert looked_up == [
+        (v2_application_name(POLICYENGINE_VERSION), "calculate_household_us", "staging")
+    ]
+    assert function.spawned == [
+        (
+            ({"calculation_id": str(JOB_ID)},),
+            {
+                "household_job_id": str(JOB_ID),
+                "observability_context": {"observability_id": "o-1"},
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_call_modal_gives_no_id_is_refused(monkeypatch):
+    monkeypatch.setattr(
+        household_workers.modal.Function,
+        "from_name",
+        lambda *names, environment_name: FakeModalFunction(None),
+    )
+    worker = ManifestHouseholdWorkers(
+        manifest_store(household_worker_version())
+    ).default_worker("uk")
+
+    with pytest.raises(RuntimeError, match="no call ID"):
+        await ModalHouseholdFunctionCaller("staging").spawn(
+            worker, {}, household_job_id=JOB_ID, observability_context=None
+        )
