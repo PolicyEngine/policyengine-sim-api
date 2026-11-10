@@ -46,6 +46,8 @@ REQUIRED_SECRET_ALTERNATIVES = (
     ("STAGE12_DATABASE_URL",),
     ("STAGE12_ARTIFACT_BUCKET",),
     ("STAGE12_CACHE_BUCKET",),
+    # A report run's workers keep their simulation output files there.
+    ("V2_SIMULATION_OUTPUT_BUCKET",),
 )
 
 US_VALIDATION_REFORM = {
