@@ -47,6 +47,7 @@ from policyengine_simulation_executor.artifact_store import ArtifactStore
 from policyengine_simulation_executor.stage12_artifacts import (
     deserialize_calculation_provenance,
     deserialize_simulation_frames,
+    deserialize_uk_local_authority_metadata,
     simulation_row_identity,
 )
 
@@ -58,12 +59,14 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from uuid import UUID
 
+    import pandas as pd
     from google.cloud import storage
     from policyengine_simulation_contract.spm import SPMProvenance
     from policyengine_simulation_contract.stage12_execution import (
         PlannedSimulationExecutionInput,
         ReportRunIds,
     )
+    from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
     from policyengine_stage12_persistence import SimulationRunState
 
     from policyengine_simulation_executor.stage12_artifacts import (
@@ -132,14 +135,30 @@ class CloudStorageOutputFiles:
 
 
 @dataclass(frozen=True)
-class ReusedSimulationOutput:
-    """A succeeded simulation run's checked output file, read once.
+class DecodedSimulationOutput:
+    """One simulation output file's entity frames and UK local authority metadata."""
 
-    ``descriptor`` describes ``payload`` for this report as a worker
-    describes the file it writes.
+    frames: dict[str, pd.DataFrame]
+    uk_local_authority_metadata: UKLocalAuthorityMetadata | None
+
+
+def decode_simulation_output(payload: bytes) -> DecodedSimulationOutput:
+    """Decode a simulation output file's frames and UK local authority metadata."""
+    return DecodedSimulationOutput(
+        frames=deserialize_simulation_frames(payload),
+        uk_local_authority_metadata=deserialize_uk_local_authority_metadata(payload),
+    )
+
+
+@dataclass(frozen=True)
+class ReusedSimulationOutput:
+    """A succeeded simulation run's checked output file, read and decoded once.
+
+    ``descriptor`` describes the file for this report as a worker describes
+    the file it writes; the aggregation uses ``decoded`` as it is.
     """
 
-    payload: bytes
+    decoded: DecodedSimulationOutput
     descriptor: SimulationArtifactDescriptor
 
 
@@ -245,9 +264,9 @@ def checked_output(
     _require_same_calculation(simulation, stored, named=named)
     uri, digest, payload = _read_output(stored, files=files, named=named)
     try:
-        frames = deserialize_simulation_frames(payload)
+        decoded = decode_simulation_output(payload)
         calculation_provenance = deserialize_calculation_provenance(payload)
-        row_identity = simulation_row_identity(frames)
+        row_identity = simulation_row_identity(decoded.frames)
     except Exception as error:
         raise ReusedSimulationOutputError(
             REUSED_OUTPUT_UNREADABLE,
@@ -255,7 +274,7 @@ def checked_output(
             f"output ({type(error).__name__}).",
         ) from error
     try:
-        validate_output_frames(frames, simulation.output_plan)
+        validate_output_frames(decoded.frames, simulation.output_plan)
     except ValueError as error:
         raise ReusedSimulationOutputError(
             REUSED_OUTPUT_INCOMPATIBLE,
@@ -263,7 +282,7 @@ def checked_output(
         ) from error
     _require_resolved_spm_calculation(simulation, calculation_provenance, named=named)
     return ReusedSimulationOutput(
-        payload=payload,
+        decoded=decoded,
         descriptor=SimulationArtifactDescriptor(
             evaluation_id=simulation.evaluation_id,
             simulation_execution_id=simulation.simulation_execution_id,
@@ -410,13 +429,34 @@ def simulations_to_calculate(
     )
 
 
-def output_payload(
-    descriptor: SimulationArtifactDescriptor,
+def worker_payloads(
+    descriptors: Sequence[SimulationArtifactDescriptor],
     reused: Mapping[str, ReusedSimulationOutput],
     artifacts: Stage12ArtifactStore,
-) -> bytes:
-    """Return a reused output's checked bytes, or read the artifact a worker wrote."""
+) -> dict[str, bytes]:
+    """Read, by role, each worker's artifact; a reused output is already read."""
+    return {
+        descriptor.role.value: artifacts.read(descriptor.artifact.uri)
+        for descriptor in descriptors
+        if descriptor.role.value not in reused
+    }
+
+
+def decoded_output(
+    descriptor: SimulationArtifactDescriptor,
+    payloads: Mapping[str, bytes],
+    reused: Mapping[str, ReusedSimulationOutput],
+) -> DecodedSimulationOutput:
+    """Return a reused output as decoded, or digest-check and decode a worker's.
+
+    Raises ValueError when the bytes a worker's artifact holds differ from
+    its digest.
+    """
     output = reused.get(descriptor.role.value)
     if output is not None:
-        return output.payload
-    return artifacts.read(descriptor.artifact.uri)
+        return output.decoded
+    payload = payloads[descriptor.role.value]
+    if sha256(payload).hexdigest() != descriptor.artifact.content_sha256:
+        msg = f"{descriptor.role.value} artifact digest mismatch"
+        raise ValueError(msg)
+    return decode_simulation_output(payload)

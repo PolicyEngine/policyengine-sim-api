@@ -30,8 +30,6 @@ from policyengine_stage12_persistence import RunStatus
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
     deserialize_calculation_provenance,
-    deserialize_simulation_frames,
-    deserialize_uk_local_authority_metadata,
 )
 from policyengine_simulation_executor.stage12_timeouts import (
     SIMULATION_WAIT_TIMEOUT_SECONDS,
@@ -72,7 +70,12 @@ from .output_planning import (
     validate_output_frames,
 )
 from .report_run_recording import SimulationRunRecordingStore
-from .reused_outputs import output_payload, reused_outputs, simulations_to_calculate
+from .reused_outputs import (
+    decoded_output,
+    reused_outputs,
+    simulations_to_calculate,
+    worker_payloads,
+)
 from .simulation import descriptor_from_record
 
 if TYPE_CHECKING:
@@ -445,36 +448,29 @@ class ReportCoordination:
         RetainedSimulationOutput,
         UKLocalAuthorityMetadata | None,
     ]:
-        """Read, digest-check and validate both children's retained artifacts."""
+        """Read, digest-check and validate the baseline and reform outputs.
+
+        A worker's artifact is read and decoded here; a reused output was
+        read, checked and decoded while the report was prepared.
+        """
         validate_aligned_outputs(self.report, output_plan, baseline, reform)
         with self.span(Stage.STAGE12_ARTIFACT_READ):
-            baseline_payload = output_payload(
-                baseline, self.reused, self.artifact_storage
+            payloads = worker_payloads(
+                (baseline, reform), self.reused, self.artifact_storage
             )
-            reform_payload = output_payload(reform, self.reused, self.artifact_storage)
-        _require_artifact_digest(
-            baseline_payload,
-            baseline.artifact.content_sha256,
-            mismatch_message="baseline artifact digest mismatch",
-        )
-        _require_artifact_digest(
-            reform_payload,
-            reform.artifact.content_sha256,
-            mismatch_message="reform artifact digest mismatch",
-        )
-        baseline_frames = deserialize_simulation_frames(baseline_payload)
-        reform_frames = deserialize_simulation_frames(reform_payload)
+        baseline_output = decoded_output(baseline, payloads, self.reused)
+        reform_output = decoded_output(reform, payloads, self.reused)
         uk_local_authority_metadata = validate_uk_local_authority_metadata(
             self.report.baseline.geography.country,
-            deserialize_uk_local_authority_metadata(baseline_payload),
-            deserialize_uk_local_authority_metadata(reform_payload),
+            baseline_output.uk_local_authority_metadata,
+            reform_output.uk_local_authority_metadata,
             region_code=self.report.baseline.geography.region,
         )
-        validate_output_frames(baseline_frames, output_plan)
-        validate_output_frames(reform_frames, output_plan)
+        validate_output_frames(baseline_output.frames, output_plan)
+        validate_output_frames(reform_output.frames, output_plan)
         return (
-            RetainedSimulationOutput(baseline_frames, baseline),
-            RetainedSimulationOutput(reform_frames, reform),
+            RetainedSimulationOutput(baseline_output.frames, baseline),
+            RetainedSimulationOutput(reform_output.frames, reform),
             uk_local_authority_metadata,
         )
 

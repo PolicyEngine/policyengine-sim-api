@@ -26,7 +26,9 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from policyengine_simulation_executor import spm as runtime_spm
 from policyengine_simulation_executor.stage12_artifacts import (
+    deserialize_simulation_frames,
     serialize_simulation_frames,
+    simulation_row_identity,
 )
 from policyengine_simulation_executor.stage12_runtime import (
     report_coordination as report_coordination_module,
@@ -778,6 +780,23 @@ def test_a_reused_output_file_is_read_and_decoded_once(monkeypatch) -> None:
 
     assert files.reads == [stored.uri]
     assert decoded_digests.count(stored.sha256) == 1
+
+
+def test_a_decoded_files_row_identity_is_the_one_it_was_written_with() -> None:
+    frames = {
+        "household": pd.DataFrame(
+            {"household_id": [30, 10, 20], "household_net_income": [3.0, 1.0, 2.0]}
+        ),
+        "person": pd.DataFrame(
+            {"person_id": [2, 1], "household_id": [10, 30], "age": [40, 41]}
+        ),
+    }
+    payload, written_identity = serialize_simulation_frames(frames)
+
+    assert (
+        simulation_row_identity(deserialize_simulation_frames(payload))
+        == written_identity
+    )
 
 
 class FakeStorageClient:
