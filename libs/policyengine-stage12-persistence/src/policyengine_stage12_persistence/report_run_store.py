@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import exists, func, insert, or_, select, update
+from sqlalchemy import and_, exists, func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from policyengine_stage12_persistence.report_run_tables import (
@@ -209,8 +209,7 @@ class ReportRunStore:
             update(report_runs)
             .where(
                 report_runs.c.id == run_ids.report_run_id,
-                report_runs.c.status == RunStatus.RUNNING.value,
-                report_runs.c.modal_call_id == modal_call_id,
+                _running_under_call(report_runs, modal_call_id),
             )
             .values(
                 status=RunStatus.SUCCEEDED.value,
@@ -241,8 +240,7 @@ class ReportRunStore:
             update(report_runs)
             .where(
                 report_runs.c.id == report_run_id,
-                report_runs.c.status == RunStatus.RUNNING.value,
-                report_runs.c.modal_call_id == modal_call_id,
+                _running_under_call(report_runs, modal_call_id),
             )
             .values(
                 status=RunStatus.FAILED.value,
@@ -387,8 +385,7 @@ class ReportRunStore:
             update(household_jobs)
             .where(
                 household_jobs.c.id == household_job_id,
-                household_jobs.c.status == RunStatus.RUNNING.value,
-                household_jobs.c.modal_call_id == modal_call_id,
+                _running_under_call(household_jobs, modal_call_id),
             )
             .values(
                 status=RunStatus.SUCCEEDED.value,
@@ -421,8 +418,7 @@ class ReportRunStore:
             update(household_jobs)
             .where(
                 household_jobs.c.id == household_job_id,
-                household_jobs.c.status == RunStatus.RUNNING.value,
-                household_jobs.c.modal_call_id == modal_call_id,
+                _running_under_call(household_jobs, modal_call_id),
             )
             .values(
                 status=RunStatus.FAILED.value,
@@ -579,6 +575,18 @@ def _uniform_rows(rows: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
     """Give every row the same columns, unset ones null, for one batched insert."""
     columns = {name for row in rows for name in row}
     return [dict.fromkeys(columns) | row for row in rows]
+
+
+def _running_under_call(table: Table, modal_call_id: str) -> ColumnElement[bool]:
+    """Return the condition that a row is running under ``modal_call_id``.
+
+    A report run or household job is completed or failed by a call only while
+    that call holds it running.
+    """
+    return and_(
+        table.c.status == RunStatus.RUNNING.value,
+        table.c.modal_call_id == modal_call_id,
+    )
 
 
 def _no_active_report_run_names(table: Table) -> ColumnElement[bool]:
