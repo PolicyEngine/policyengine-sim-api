@@ -354,3 +354,59 @@ def test_the_simulation_database_url_must_be_canonical(database_url):
         make_settings(simulation_database_url=database_url).validate()
 
     assert "secret" not in str(error.value)
+
+
+DATABASE_URL = "postgresql://simulation_service:secret@db.example:5432/postgres"
+
+
+def test_the_v2_manifest_settings_are_read_from_the_environment(monkeypatch):
+    from policyengine_simulation_entry.config import Settings
+
+    monkeypatch.setenv("SIMULATION_V2_MODAL_ENVIRONMENT", "staging")
+    monkeypatch.setenv("SIMULATION_V2_MANIFEST_NAME", "another-v2-manifest")
+    settings = Settings.from_env()
+
+    assert settings.v2_modal_environment == "staging"
+    assert settings.v2_manifest_name == "another-v2-manifest"
+
+
+def test_the_v2_manifest_is_the_published_one_unless_named(monkeypatch):
+    from policyengine_simulation_contract.stage12_manifest import (
+        V2_VERSION_MANIFEST_NAME,
+    )
+    from policyengine_simulation_entry.config import Settings
+
+    monkeypatch.delenv("SIMULATION_V2_MODAL_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("SIMULATION_V2_MANIFEST_NAME", raising=False)
+    settings = Settings.from_env()
+
+    assert settings.v2_modal_environment == ""
+    assert settings.v2_manifest_name == V2_VERSION_MANIFEST_NAME
+
+
+def test_household_calculations_need_the_database_and_the_v2_modal_environment():
+    assert not make_settings().household_calculations_configured
+    assert not make_settings(
+        simulation_database_url=DATABASE_URL
+    ).household_calculations_configured
+    assert not make_settings(
+        v2_modal_environment="staging"
+    ).household_calculations_configured
+    assert make_settings(
+        simulation_database_url=DATABASE_URL, v2_modal_environment="staging"
+    ).household_calculations_configured
+
+
+def test_the_v2_manifest_must_not_reuse_the_v1_storage_name():
+    with pytest.raises(ConfigurationError, match="different storage names"):
+        make_settings(v2_manifest_name="simulation-api-routing-state").validate()
+
+
+def test_the_v2_manifest_settings_configure_no_stage12_resource():
+    """The household path has settings of its own; Stage 12 stays all or nothing."""
+    settings = make_settings(
+        simulation_database_url=DATABASE_URL, v2_modal_environment="staging"
+    )
+
+    settings.validate()
+    assert not settings.stage12_resources_configured
