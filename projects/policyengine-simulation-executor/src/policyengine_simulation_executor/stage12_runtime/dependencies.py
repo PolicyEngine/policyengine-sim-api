@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from policyengine_stage12_persistence import Stage12PersistenceStore
 
-from policyengine_simulation_executor.stage12_artifacts import Stage12ArtifactStore
+from policyengine_simulation_executor.stage12_artifacts import (
+    SimulationOutputBucket,
+    Stage12ArtifactStore,
+)
 
 from .database_retry import open_connection_with_retry
 
@@ -177,12 +180,32 @@ def runtime_store(
     )
 
 
-def artifact_store(*, content_addressed: bool = False) -> Stage12ArtifactStore:
+# The bucket a report run's simulation output files are kept in: the
+# Stage 12 runtime Modal secret holds it, from the GitHub environment
+# variable of the same name.
+SIMULATION_OUTPUT_BUCKET_ENV = "V2_SIMULATION_OUTPUT_BUCKET"
+
+
+def artifact_store(*, report_run: bool = False) -> Stage12ArtifactStore:
     """Build the store for ``STAGE12_ARTIFACT_BUCKET``; ValueError if it is unset.
 
-    A ``content_addressed`` store names each artifact's digest in its key.
+    A call that names a report run gets a store that names each artifact's
+    digest in its key, and that keeps simulation output files in
+    ``V2_SIMULATION_OUTPUT_BUCKET``, where nothing is deleted. Without that
+    variable it raises ValueError rather than keep them in the artifact
+    bucket, which deletes them after 30 days.
     """
+    simulation_outputs = None
+    if report_run:
+        output_bucket = os.environ.get(SIMULATION_OUTPUT_BUCKET_ENV, "")
+        if not output_bucket:
+            msg = (
+                f"a report run's Stage 12 call requires {SIMULATION_OUTPUT_BUCKET_ENV}"
+            )
+            raise ValueError(msg)
+        simulation_outputs = SimulationOutputBucket(output_bucket)
     return Stage12ArtifactStore(
         os.environ.get("STAGE12_ARTIFACT_BUCKET", ""),
-        content_addressed=content_addressed,
+        content_addressed=report_run,
+        simulation_outputs=simulation_outputs,
     )
