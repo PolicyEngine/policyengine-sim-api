@@ -56,7 +56,7 @@ def household_validation_request(
             "country": country,
             "year": period,
             "household": household,
-            "policies": [{"policy_key": "baseline", "parameters": {}}],
+            "policy": {"parameters": {}},
             "bundle": installed_household_bundle(country),
         }
     )
@@ -85,7 +85,7 @@ def check_household_validation(
     if parsed.worker != worker:
         msg = f"{name} reported another function"
         raise RuntimeError(msg)
-    situation = parsed.output.results[0].household.to_situation()
+    situation = parsed.output.household.to_situation()
     net_income = situation["households"]["your household"]["household_net_income"]
     values = list(net_income.values()) if isinstance(net_income, dict) else []
     if len(values) != 1 or not isinstance(values[0], float):

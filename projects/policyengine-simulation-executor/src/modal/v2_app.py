@@ -3,8 +3,8 @@
 
 Besides the Stage 12 report coordinator and simulation workers, it defines a
 household function for each country, ``calculate_household_us`` and
-``calculate_household_uk``, which calculates one household under one or more
-policies in an image without datasets. A call that names a household job
+``calculate_household_uk``, which calculates one household under one policy
+in an image without datasets. A call that names a household job
 records it with the Modal worker role's database secret, the functions' only
 secret.
 
@@ -520,8 +520,8 @@ def coordinate_report(
         runtime.shutdown()
 
 
-# Household function sizing. A call holds one country model and, for each
-# policy, a simulation of the household at every axis point. Each container
+# Household function sizing. A call holds one country model and a simulation
+# of the household, under its one policy, at every axis point. Each container
 # reserves 4 GiB and may use up to 16 GiB before Modal stops it, so a large
 # household calculated with every variable at many axis points still fits.
 # The timeout is three times the Public API's 300-second request timeout.
@@ -616,7 +616,7 @@ def calculate_household_us(
     observability_context: dict | None = None,
     household_job_id: str | None = None,
 ) -> dict:
-    """Calculate one US household under each requested policy.
+    """Calculate one US household under the request's policy.
 
     With ``household_job_id``, record the calculation on that household job.
     """
@@ -643,7 +643,7 @@ def calculate_household_uk(
     observability_context: dict | None = None,
     household_job_id: str | None = None,
 ) -> dict:
-    """Calculate one UK household under each requested policy.
+    """Calculate one UK household under the request's policy.
 
     With ``household_job_id``, record the calculation on that household job.
     """

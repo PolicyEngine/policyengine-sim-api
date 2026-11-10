@@ -1,7 +1,7 @@
 """Household calculations for the v2 Modal household functions.
 
 ``calculate_household`` runs one ``HouseholdExecutionRequest``: it calculates
-the household under each requested policy, in order, and returns a
+the household under the request's one policy and returns a
 ``HouseholdExecutionResult`` or a typed ``HouseholdExecutionFailure``.
 
 The calculation reproduces the Public API's in-process household calculation
@@ -32,12 +32,6 @@ Every known difference from the Public API is listed here:
   ``year``, as the Public API does not.
 - An explicit null ``axes`` means no axes, because the contract drops it; the
   Public API treats the key's presence as a household with axes.
-- Every policy's parameters are checked before any policy is calculated, so
-  an unknown parameter in a reform fails the whole request. Likewise any
-  failure under one policy, such as a reform value that cannot be converted
-  or an SPM error only the reform causes, returns one failure for the whole
-  request, without the policies already calculated; the Public API's
-  separate request for each policy would still return the others.
 - Its messages are the request routes' (``/calculate`` and
   ``/calculate-full``). The stored-household route words a household it
   cannot read, and any other failure except an SPM error, with the household
@@ -70,7 +64,6 @@ from policyengine_simulation_contract.household_execution import (
     HouseholdCalculationOutput,
     HouseholdExecutionFailure,
     HouseholdExecutionResult,
-    HouseholdPolicyResult,
 )
 from policyengine_simulation_contract.spm import (
     SPMErrorDetail,
@@ -188,20 +181,13 @@ class _CalculationFailedError(Exception):
         self.error = error
 
 
-def _failure(
-    code: HouseholdErrorCode,
-    message: str,
-    *,
-    policy_key: str | None = None,
-) -> _CalculationFailedError:
+def _failure(code: HouseholdErrorCode, message: str) -> _CalculationFailedError:
     return _CalculationFailedError(
-        HouseholdCalculationError(code=code, message=message, policy_key=policy_key)
+        HouseholdCalculationError(code=code, message=message)
     )
 
 
-def _spm_failure(
-    error: BaseException, *, policy_key: str | None
-) -> _CalculationFailedError | None:
+def _spm_failure(error: BaseException) -> _CalculationFailedError | None:
     detail = household_spm_error_detail(error)
     if detail is None:
         return None
@@ -210,20 +196,15 @@ def _spm_failure(
             code="invalid_spm_selection",
             message=detail.message,
             spm_error=detail,
-            policy_key=policy_key,
         )
     )
 
 
 def _invalid_household_failure(
-    error: SituationParsingError, *, policy_key: str
+    error: SituationParsingError,
 ) -> _CalculationFailedError:
     """Report a household the country model cannot read, as the Public API does."""
-    return _failure(
-        "invalid_household",
-        f"Invalid household payload: {error}",
-        policy_key=policy_key,
-    )
+    return _failure("invalid_household", f"Invalid household payload: {error}")
 
 
 def _bundle_mismatch_failure(
@@ -239,20 +220,14 @@ def _bundle_mismatch_failure(
     )
 
 
-def _unexpected_failure(
-    error: BaseException, *, policy_key: str
-) -> _CalculationFailedError:
+def _unexpected_failure(error: BaseException) -> _CalculationFailedError:
     """Report an SPM error as such, and anything else as a failed calculation."""
-    failure = _spm_failure(error, policy_key=policy_key)
+    failure = _spm_failure(error)
     if failure is not None:
         return failure
-    logger.error(
-        "Error calculating household under policy %s", policy_key, exc_info=error
-    )
+    logger.error("Error calculating household under its policy", exc_info=error)
     return _failure(
-        "calculation_failed",
-        f"Error calculating household under policy: {error}",
-        policy_key=policy_key,
+        "calculation_failed", f"Error calculating household under policy: {error}"
     )
 
 
@@ -324,7 +299,7 @@ def _serialize_entity_value(
 
 @dataclass(frozen=True)
 class _PreparedHousehold:
-    """A household ready to calculate under each policy.
+    """A household ready to calculate under its policy.
 
     ``situation`` has its values and axes without a period put in the
     request's year, its missing variables added for that year and its
@@ -505,9 +480,9 @@ def _parsed_policy_calculation(
     try:
         simulation = _create_simulation(model, prepared, policy)
     except SituationParsingError as error:
-        raise _invalid_household_failure(error, policy_key=policy.policy_key) from error
+        raise _invalid_household_failure(error) from error
     except Exception as error:
-        raise _unexpected_failure(error, policy_key=policy.policy_key) from error
+        raise _unexpected_failure(error) from error
     return _PolicyCalculation(
         simulation=simulation,
         household=json.loads(json.dumps(prepared.situation)),
@@ -515,21 +490,30 @@ def _parsed_policy_calculation(
     )
 
 
+@dataclass(frozen=True)
+class _CalculatedPolicy:
+    """The household calculated under the request's policy, with its warnings.
+
+    ``spm_provenance`` is the SPM receipt of a household calculated with SPM.
+    """
+
+    household: CalculatedHousehold
+    warnings: tuple[str, ...]
+    spm_provenance: SPMProvenance | None
+
+
 def _calculated_policy_result(
     calculation: _PolicyCalculation,
     prepared: _PreparedHousehold,
-    policy: HouseholdPolicy,
-) -> HouseholdPolicyResult:
-    """Calculate the requested values and return the policy's result."""
+) -> _CalculatedPolicy:
+    """Calculate the requested values and return the calculated household."""
     calculation.calculate_all()
-    spm_provenance: SPMProvenance | None = household_spm_provenance(
-        calculation.simulation, prepared.spm_selection
-    )
-    return HouseholdPolicyResult(
-        policy_key=policy.policy_key,
+    return _CalculatedPolicy(
         household=CalculatedHousehold.model_validate(calculation.household),
         warnings=(*prepared.input_warnings, *calculation.warnings),
-        spm_provenance=spm_provenance,
+        spm_provenance=household_spm_provenance(
+            calculation.simulation, prepared.spm_selection
+        ),
     )
 
 
@@ -537,18 +521,16 @@ def _calculate_policy(
     model: CountryHouseholdModel,
     prepared: _PreparedHousehold,
     policy: HouseholdPolicy,
-) -> HouseholdPolicyResult:
-    """Calculate the household under one policy, raising a typed failure."""
+) -> _CalculatedPolicy:
+    """Calculate the household under ``policy``, raising a typed failure."""
     calculation = _parsed_policy_calculation(model, prepared, policy)
     try:
-        return _calculated_policy_result(calculation, prepared, policy)
+        return _calculated_policy_result(calculation, prepared)
     except SituationParsingError as error:
-        failure = _spm_failure(
-            error, policy_key=policy.policy_key
-        ) or _invalid_household_failure(error, policy_key=policy.policy_key)
+        failure = _spm_failure(error) or _invalid_household_failure(error)
         raise failure from error
     except Exception as error:
-        raise _unexpected_failure(error, policy_key=policy.policy_key) from error
+        raise _unexpected_failure(error) from error
 
 
 def _resolved_spm_selection(
@@ -579,9 +561,8 @@ def _prepared_household(
 ) -> _PreparedHousehold:
     """Prepare the household as the Public API does; raise for unknown names.
 
-    Unknown household names are reported with the first policy, as the Public
-    API's baseline request would report them; unknown policy parameters are
-    reported with the policy that names them.
+    Unknown household names are listed first, then the policy's unknown
+    parameters, as the Public API lists them.
     """
     situation = request.household.to_situation()
     assign_request_year(situation, year=request.year)
@@ -591,20 +572,18 @@ def _prepared_household(
     household_errors = find_unrecognized_household_inputs(
         deprecated.household, model.metadata
     )
-    for policy in request.policies:
-        policy_errors = find_unrecognized_policy_inputs(
-            policy.parameters, model.metadata
-        )
-        input_errors = (*household_errors, *policy_errors)
-        if input_errors:
-            raise _CalculationFailedError(
-                HouseholdCalculationError(
-                    code="invalid_inputs",
-                    message=unrecognized_inputs_message(input_errors),
-                    input_errors=input_errors,
-                    policy_key=policy.policy_key if policy_errors else None,
-                )
+    policy_errors = find_unrecognized_policy_inputs(
+        request.policy.parameters, model.metadata
+    )
+    input_errors = (*household_errors, *policy_errors)
+    if input_errors:
+        raise _CalculationFailedError(
+            HouseholdCalculationError(
+                code="invalid_inputs",
+                message=unrecognized_inputs_message(input_errors),
+                input_errors=input_errors,
             )
+        )
     return _PreparedHousehold(
         situation=deprecated.household,
         input_warnings=tuple(warning.message for warning in deprecated.warnings),
@@ -618,13 +597,13 @@ def _calculate_output(
     bundle: HouseholdBundleProvenance,
     dependencies: HouseholdCalculationDependencies,
 ) -> HouseholdCalculationOutput:
-    """Calculate every policy of ``request``, raising a typed failure.
+    """Calculate ``request``'s household under its policy, raising a typed failure.
 
     After the bundle check and loading the country model, checks run in the
-    Public API's order: the SPM selection, the household's and policies'
-    names, then each policy. The model loads first so its span measures the
-    whole load, which for the US otherwise happens while the SPM selection is
-    resolved.
+    Public API's order: the SPM selection, the household's and the policy's
+    names, then the calculation. The model loads first so its span measures
+    the whole load, which for the US otherwise happens while the SPM
+    selection is resolved.
     """
     if request.bundle != bundle:
         raise _bundle_mismatch_failure(bundle)
@@ -635,11 +614,8 @@ def _calculate_output(
     with _stage_scope(runtime, Stage.V2_HOUSEHOLD_INPUT_NORMALIZATION, country):
         spm_selection = _resolved_spm_selection(request)
         prepared = _prepared_household(request, model, spm_selection=spm_selection)
-    results = []
-    for policy in request.policies:
-        attributes = {**country, "policy_key": policy.policy_key}
-        with _stage_scope(runtime, Stage.V2_HOUSEHOLD_CALCULATION, attributes):
-            results.append(_calculate_policy(model, prepared, policy))
+    with _stage_scope(runtime, Stage.V2_HOUSEHOLD_CALCULATION, country):
+        calculated = _calculate_policy(model, prepared, request.policy)
     return HouseholdCalculationOutput(
         country=request.country,
         bundle=bundle,
@@ -648,7 +624,9 @@ def _calculate_output(
             if spm_selection is not None
             else None
         ),
-        results=tuple(results),
+        household=calculated.household,
+        warnings=calculated.warnings,
+        spm_provenance=calculated.spm_provenance,
     )
 
 
@@ -659,9 +637,9 @@ def calculate_household(
     required_country: str | None = None,
     dependencies: HouseholdCalculationDependencies | None = None,
 ) -> HouseholdExecutionResult | HouseholdExecutionFailure:
-    """Calculate one household under each requested policy.
+    """Calculate one household under the request's policy.
 
-    Returns the per-policy results, or a typed failure for a request for
+    Returns the calculated household, or a typed failure for a request for
     another bundle, an unusable SPM selection, unrecognized inputs, a household
     the country model cannot build, or any other calculation error. Raises
     ValueError when ``required_country`` is set and the request names another
