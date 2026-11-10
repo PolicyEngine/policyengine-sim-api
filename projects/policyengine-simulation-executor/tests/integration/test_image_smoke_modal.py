@@ -38,3 +38,10 @@ def test_stage12_static_runtime_file_image_smoke():
     result = _run_modal_smoke("src/modal/v2_static_runtime_files_smoke.py")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Stage 12 static runtime file smoke OK" in result.stdout
+
+
+@pytest.mark.integration
+def test_v2_image_smoke():
+    result = _run_modal_smoke("src/modal/v2_image_smoke.py")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "v2 image smoke OK" in result.stdout

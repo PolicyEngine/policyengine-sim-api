@@ -1,4 +1,4 @@
-"""The sweep that fails report runs and simulation runs nothing will finish.
+"""The sweep that fails runs and household jobs nothing will finish.
 
 A coordinator or worker records the Modal call running each run it claims,
 and the simulation service is to record the call it starts on a pending
@@ -19,6 +19,11 @@ pending meanwhile, so a pre-empted coordinator's report run is never failed.
 Its children are cancelled and started again under new calls, and it starts
 them only once Modal runs it, so the sweep judges a simulation run only once
 no pending or running report run names it as its baseline or reform.
+
+Household jobs follow the same rule: the simulation service records the
+call it starts on a pending job, and a household function claims the job
+under that call. A household job counts from its creation, while pending or
+running, for both ages.
 """
 
 from __future__ import annotations
@@ -40,8 +45,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # A run must have been unfinished at least this long, counted from its first
-# claim or, while it is pending, from its creation, before the sweep judges
-# it; a pending run with no call recorded by then is failed.
+# claim or, while it is pending, from its creation (a household job's from its
+# creation), before the sweep judges it; a pending run with no call recorded
+# by then is failed.
 DEFAULT_MINIMUM_AGE = timedelta(minutes=10)
 ENDED_CALL_MESSAGE = (
     "modal_call_ended: The Modal call recorded for this run ended without "
@@ -51,8 +57,8 @@ NOT_STARTED_MESSAGE = (
     "run_not_started: The run stayed pending with no Modal call recorded for it."
 )
 # A run still unfinished this long after its first claim, or its creation if
-# it was never claimed, is failed whatever Modal reports, or with no call
-# recorded at all. No attempt of the v2
+# it was never claimed (a household job's creation), is failed whatever Modal
+# reports, or with no call recorded at all. No attempt of the v2
 # functions can run anywhere near this long (the coordinator's own time
 # limit is 90 minutes), however often Modal pre-empts and restarts it; it
 # stops Modal's pending status for an internal failure it won't retry, or
@@ -86,7 +92,7 @@ class StuckRunStore(Protocol):
     def list_active_runs(
         self, kind: RunKind, *, active_since_before: datetime
     ) -> tuple[ActiveRun, ...]:
-        """Return the pending and running runs of ``kind`` older than a time."""
+        """Return the pending and running runs, or household jobs, older than a time."""
         ...
 
     def fail_stuck_run(
@@ -101,9 +107,15 @@ class StuckRunStore(Protocol):
         ...
 
 
+# The order the sweep judges each kind in: report runs before simulation
+# runs, which are listed only once no unfinished report run names them, then
+# household jobs, which no run names.
+SWEPT_KINDS = (RunKind.REPORT_RUN, RunKind.SIMULATION_RUN, RunKind.HOUSEHOLD_JOB)
+
+
 @dataclass(frozen=True)
 class SweepSummary:
-    """What the sweep did with the runs it listed.
+    """What the sweep did with the runs and household jobs it listed, together.
 
     ``checked`` runs were judged after the minimum age: ``failed`` because
     their call ended, ``failed_without_call`` because they stayed pending with
@@ -185,12 +197,13 @@ def sweep_stuck_runs(  # the store, then keyword-only seams and limits
 ) -> SweepSummary:
     """Fail every listed run whose recorded Modal call has ended or was never started.
 
-    Runs older than ``maximum_age`` are failed first, report runs then
-    simulation runs, before any Modal lookup can use up the scheduled
-    function's time. Then, report runs first, so a dead coordinator's
-    simulation runs are listed in the same sweep, each run older than
-    ``minimum_age`` is judged: a pending run with no call recorded is failed,
-    and each recorded call is asked about once. A run whose call is running,
+    Household jobs are judged as runs are. Runs older than ``maximum_age``
+    are failed first, report runs, then simulation runs, then household
+    jobs, before any Modal lookup can use up the scheduled function's time.
+    Then, in the same order, so a dead coordinator's simulation runs are
+    listed in the same sweep, each run older than ``minimum_age`` is judged:
+    a pending run with no call recorded is failed, and each recorded call is
+    asked about once. A run whose call is running,
     or whose state is unknown, is left as it is, as is a running run with no
     call recorded, until the maximum age; so is one whose conditional failure
     changes nothing, which makes two sweeps at once safe.
@@ -198,7 +211,7 @@ def sweep_stuck_runs(  # the store, then keyword-only seams and limits
     now = now or datetime.now(UTC)
     states: dict[str, CallState] = {}
     tally = _Tally()
-    for kind in (RunKind.REPORT_RUN, RunKind.SIMULATION_RUN):
+    for kind in SWEPT_KINDS:
         for run in store.list_active_runs(kind, active_since_before=now - maximum_age):
             if store.fail_stuck_run(
                 run, error_message=EXCEEDED_AGE_MESSAGE, failed_at=now
@@ -206,7 +219,7 @@ def sweep_stuck_runs(  # the store, then keyword-only seams and limits
                 tally.failed_for_age += 1
             else:
                 tally.left += 1
-    for kind in (RunKind.REPORT_RUN, RunKind.SIMULATION_RUN):
+    for kind in SWEPT_KINDS:
         for run in store.list_active_runs(kind, active_since_before=now - minimum_age):
             _sweep_run(
                 store, run, states=states, call_state=call_state, now=now, tally=tally

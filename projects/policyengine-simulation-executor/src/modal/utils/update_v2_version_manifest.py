@@ -16,8 +16,11 @@ import json
 from pathlib import Path
 
 import modal
+from policyengine_simulation_contract.household_execution import (
+    household_callable_name,
+)
 from policyengine_simulation_contract.stage12_manifest import (
-    REGION_DATASETS_MANIFEST_KEY,
+    SCHEMA_2_MANIFEST_KEY,
     V1_ROUTING_STATE_NAME,
     V2_MANIFEST_KEYS,
     V2_VERSION_MANIFEST_NAME,
@@ -44,8 +47,11 @@ from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 def build_worker(validation_payload: object) -> V2WorkerVersion:
     """Build the installed bundle's v2 worker entry from a validation record.
 
-    Raises ValueError if the record is invalid or the entry carries a
-    credential-like key.
+    Every bundle country has a single-simulation worker, so each is recorded
+    as economy-capable. A country's household function is recorded when the
+    record shows that it calculated the validation household. Raises
+    ValueError if the record is invalid or the entry carries a credential-like
+    key.
     """
     resolved = load_stage12_bundle()
     validation = V2WorkerValidation.model_validate(validation_payload)
@@ -55,7 +61,13 @@ def build_worker(validation_payload: object) -> V2WorkerVersion:
         countries=tuple(
             V2CountryWorker(
                 country=country.country,
-                single_simulation_callable=(f"run_single_simulation_{country.country}"),
+                economy_capable=True,
+                single_simulation_callable=f"run_single_simulation_{country.country}",
+                household_callable=(
+                    household_callable_name(country.country)
+                    if country.country in validation.household_validation_invocation_ids
+                    else None
+                ),
             )
             for country in resolved.bundle.countries
         ),
@@ -176,14 +188,14 @@ def _key_holds(store: V2ManifestStore, key: str, copies: tuple[object, ...]) -> 
     """Return whether ``key`` holds one of ``copies``, or is an older key that expired.
 
     Modal expires a Dict entry after 7 days without a read or write, and
-    current readers read the oldest key only when neither newer key exists,
-    so it can expire between deployments. A write never deletes a key, so a
-    missing older key is never one a part-way write left behind, and the next
-    write restores it. The newest key, which current readers read first, is
-    required.
+    current readers read the schema version 1 keys only when the schema
+    version 2 key is missing or out of date, so they can expire between
+    deployments. A write never deletes a key, so a missing older key is never
+    one a part-way write left behind, and the next write restores it. The
+    schema version 2 key, which current readers read first, is required.
     """
     value = store.get(key)
-    if value is None and key != REGION_DATASETS_MANIFEST_KEY:
+    if value is None and key != SCHEMA_2_MANIFEST_KEY:
         return True
     return value in copies
 
@@ -205,13 +217,16 @@ def _holds_each_key_of_either(
     """Return whether each key holds its copy of ``before`` or of ``after``.
 
     A write that stopped part-way leaves some keys on each. An older key that
-    expired counts as holding either (see :func:`_key_holds`).
+    expired counts as holding either (see :func:`_key_holds`). A schema
+    version 1 key that one of the two manifests has no copy for (schema
+    version 1 can't describe it) is one its write left alone, so any value
+    there counts.
     """
     before_copies = v2_manifest_copies(before)
     after_copies = v2_manifest_copies(after)
     return all(
-        _key_holds(store, key, (copy, after_copies[key]))
-        for key, copy in before_copies.items()
+        _key_holds(store, key, (before_copies[key], after_copies[key]))
+        for key in before_copies.keys() & after_copies.keys()
     )
 
 

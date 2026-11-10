@@ -9,6 +9,7 @@ import pytest
 from report_run_database import (
     SEED_URL_ENV,
     ReportRunSeeder,
+    SeededHouseholdJob,
     SeededReportRun,
     worker_database_url,
 )
@@ -37,3 +38,13 @@ def seeded_run(seeder: ReportRunSeeder) -> Iterator[SeededReportRun]:
         yield seeded
     finally:
         seeder.remove(seeded)
+
+
+@pytest.fixture
+def seeded_household_job(seeder: ReportRunSeeder) -> Iterator[SeededHouseholdJob]:
+    """Yield one freshly seeded pending household job, removed after the test."""
+    seeded = seeder.seed_household_job()
+    try:
+        yield seeded
+    finally:
+        seeder.remove_household_job(seeded)

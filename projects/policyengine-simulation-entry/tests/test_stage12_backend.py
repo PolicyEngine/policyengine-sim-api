@@ -29,8 +29,8 @@ OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000012"
 
 
 class FakeLoader:
-    def __init__(self):
-        self.worker = worker()
+    def __init__(self, *, household_only: tuple[str, ...] = ()):
+        self.worker = worker(household_only=household_only)
         self.resolved_versions = []
 
     def resolve(self, version=None):
@@ -68,7 +68,14 @@ class FakeInvoker:
         return "modal-call-1"
 
 
-def _backend(store, invoker, *, environment="staging", modal_environment="staging"):
+def _backend(
+    store,
+    invoker,
+    *,
+    environment="staging",
+    modal_environment="staging",
+    household_only=(),
+):
     runtime = MagicMock()
     runtime.capture_context.return_value = {
         "observability_id": "00000000-0000-4000-8000-000000000099",
@@ -79,7 +86,7 @@ def _backend(store, invoker, *, environment="staging", modal_environment="stagin
             environment=environment,
             stage12_v2_manifest_environment=modal_environment,
         ),
-        manifest_loader=FakeLoader(),
+        manifest_loader=FakeLoader(household_only=household_only),
         store=store,
         invoker=invoker,
         runtime=runtime,
@@ -345,6 +352,48 @@ def test_temporary_submission_rejects_unsupported_input_without_side_effects() -
     assert error.value.reason == "unsupported_request_shape"
     assert store.events == []
     assert invoker.calls == []
+
+
+def test_temporary_submission_rejects_a_country_without_economy_reports() -> None:
+    store = FakeStore()
+    invoker = FakeInvoker()
+
+    with pytest.raises(TemporaryStage12UnsupportedRequestError) as error:
+        asyncio.run(
+            _backend(store, invoker, household_only=("us",)).submit_temporary_report(
+                request_payload=eligible_payload(),
+                request_id="request-1",
+                observability_id=OBSERVABILITY_ID,
+            )
+        )
+
+    assert error.value.reason == "unsupported_country"
+    assert store.events == []
+    assert invoker.calls == []
+
+
+def test_automatic_dispatch_skips_a_country_without_economy_reports() -> None:
+    invoker = FakeInvoker()
+    backend = _backend(FakeStore(), invoker, household_only=("us",))
+
+    asyncio.run(
+        backend.dispatch_after_production(
+            request_payload=eligible_payload(),
+            production_response=_response(),
+            request_id="request-1",
+            observability_id=OBSERVABILITY_ID,
+        )
+    )
+
+    assert invoker.calls == []
+    backend._runtime.event.assert_called_once_with(
+        "stage12_comparison_run_skipped",
+        attributes={
+            "request_id": "request-1",
+            "production_identity": "job-1",
+            "reason": "unsupported_country",
+        },
+    )
 
 
 def test_temporary_status_reads_coordinator_owned_postgres_state() -> None:

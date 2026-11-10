@@ -29,7 +29,12 @@ NOW = datetime(2026, 9, 14, tzinfo=UTC)
 EVALUATION_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
-def worker() -> V2WorkerVersion:
+def worker(*, household_only: tuple[str, ...] = ()) -> V2WorkerVersion:
+    """Return a validated v2 worker for the US and the UK.
+
+    A country in ``household_only`` has only a household function, so its
+    economy reports cannot run.
+    """
     countries = []
     country_workers = []
     for country, package, package_version, dataset in (
@@ -60,10 +65,15 @@ def worker() -> V2WorkerVersion:
                 ),
             )
         )
+        economy_capable = country not in household_only
         country_workers.append(
             V2CountryWorker(
                 country=country,
-                single_simulation_callable=f"run_single_simulation_{country}",
+                economy_capable=economy_capable,
+                single_simulation_callable=(
+                    f"run_single_simulation_{country}" if economy_capable else None
+                ),
+                household_callable=f"calculate_household_{country}",
             )
         )
     application_name = v2_application_name("5.2.0")
@@ -86,8 +96,13 @@ def worker() -> V2WorkerVersion:
             validated_at=datetime(2026, 9, 14, tzinfo=UTC),
             validation_invocation_id="validation-1",
             country_validation_invocation_ids={
-                "us": "validation-us",
-                "uk": "validation-uk",
+                item.country: f"validation-{item.country}"
+                for item in country_workers
+                if item.economy_capable
+            },
+            household_validation_invocation_ids={
+                item.country: f"household-validation-{item.country}"
+                for item in country_workers
             },
         ),
     )

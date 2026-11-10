@@ -1,15 +1,17 @@
-"""A scheduled Modal function that fails runs nothing will finish.
+"""A scheduled Modal function that fails runs and household jobs nothing will finish.
 
-Every ten minutes it lists the Public API's report runs and simulation runs
-that have been pending or running for at least ten minutes, counted from
-their first claim or, while pending, from their creation. It asks Modal for
-the status of each recorded call and marks a run failed once its call has
-ended, and fails a pending run that has no call recorded, because nothing
-will run it. It also fails any run still unfinished 24 hours after it was
-created or started, longer than any Modal call of it can run, whatever Modal
-reports. It connects as the Modal worker role, from the same Modal secret the
-v2 coordinator and workers use. This application is not versioned with the
-.py bundle: one copy runs per Modal environment.
+Every ten minutes it lists the Public API's report runs, simulation runs and
+household jobs that have been pending or running for at least ten minutes,
+counted from a run's first claim or, while it is pending, from its creation,
+and from a household job's creation. It asks Modal for the status of each
+recorded call and marks a run or job failed once its call has ended, and
+fails a pending one that has no call recorded, because nothing will run it.
+It also fails any still unfinished 24 hours after it was created or started,
+longer than any Modal call of it can run, whatever Modal reports. Its result
+counts runs and household jobs together. It connects as the Modal worker
+role, from the same Modal secret the v2 coordinator, workers and household
+functions use. This application is not versioned with the .py bundle: one
+copy runs per Modal environment.
 
 Each deployment from ``main`` deploys it to its Modal environment after
 every check, in ``publish_stage12_v2_default``, once that job has moved the
@@ -76,7 +78,7 @@ sweep_image = (
     secrets=[modal_worker_database_secret],
 )
 def sweep_stuck_runs() -> dict:
-    """Fail the runs nothing will finish; return how many were judged and why."""
+    """Fail the runs and household jobs nothing will finish; count them and why."""
     from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the container, not at deploy time
         report_run_access,
         run_sweep,
