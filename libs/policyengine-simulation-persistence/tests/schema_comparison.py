@@ -12,6 +12,8 @@ with PostgreSQL's definition, and its other indexes by name with their
 definition; and the values of each enum its columns use.
 ``schema_differences`` lists every way the models' tables differ from the
 real ones. Tables the models leave out are not compared.
+``read_column_differences`` compares read-only models, which name only the
+columns the service reads: each column's type and whether it allows null.
 ``foreign_key_targets`` reads which table each foreign key names, and
 ``foreign_keys_to`` keeps the keys that name the given tables.
 """
@@ -261,6 +263,40 @@ def schema_differences(models: SchemaShape, real: SchemaShape) -> list[str]:
                 f"enum {enum_name}: the model has ({', '.join(modelled_values)}), "
                 f"the Public API has ({', '.join(actual_values)})"
             )
+    return found
+
+
+def read_column_differences(models: SchemaShape, real: SchemaShape) -> list[str]:
+    """Return each way a read-only model's columns differ from the real ones.
+
+    Read-only models name only the columns the service reads, so only those
+    columns are compared, by type and nullability. Defaults, constraints,
+    indexes and the real tables' other columns are the Public API's alone.
+    """
+    found = []
+    for table_name, modelled in models.tables.items():
+        actual = real.tables.get(table_name)
+        if actual is None:
+            found.append(f"{table_name}: the Public API has no such table")
+            continue
+        for column_name, modelled_column in modelled.columns.items():
+            actual_column = actual.columns.get(column_name)
+            where = f"{table_name}.{column_name}"
+            if actual_column is None:
+                found.append(f"{where}: the Public API's table has no such column")
+                continue
+            if modelled_column.column_type != actual_column.column_type:
+                found.append(
+                    f"{where}: the model is {modelled_column.column_type}, the "
+                    f"Public API's is {actual_column.column_type}"
+                )
+            if modelled_column.nullable != actual_column.nullable:
+                found.append(
+                    f"{where}: the model "
+                    f"{'allows' if modelled_column.nullable else 'refuses'} null, "
+                    "the Public API's "
+                    f"{'allows' if actual_column.nullable else 'refuses'} it"
+                )
     return found
 
 

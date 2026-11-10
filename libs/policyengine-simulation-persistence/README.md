@@ -47,6 +47,17 @@ household report with only a baseline). A report with a `budget_window_size`
 is calculated as a `budget_window_runs` row with one report run per year; each
 year's report run names that row and its year, and belongs to the same report.
 
+## Input tables
+
+`input_tables.py` holds read-only models of the Public API's tables a
+calculation is read from: `households`, `policies`, `parameters`,
+`parameter_values`, `tax_benefit_models` and `tax_benefit_model_versions`, in
+`input_metadata`. The service only reads them, with `SELECT`. Each names only
+the columns the service reads, so they are not models of the whole tables,
+and they are kept apart from the models of the tables the service writes
+(`service_metadata`) and from the tables those name by `id` alone
+(`referenced_metadata`).
+
 ## Checking the models against the Public API
 
 Rule `sim.persistence.models-match-public-api`. The PR workflow's
@@ -60,8 +71,12 @@ tables their keys name (`referenced_metadata`, by `id` alone), and compares
 the models' tables with the Public API's through PostgreSQL's catalog
 (`tests/schema_comparison.py`): every column's type, nullability and default,
 every constraint and index by name and definition, and every enum's values
-must match. `test_service_writes` creates a row in every modelled table as
-the service's role. Another test, outside the rule, requires the modelled
+must match. `test_the_input_models_match_the_public_api_columns` builds
+the read-only input models' tables in another disposable database and
+requires every column they name to exist in the Public API's table with the
+same type and nullability; their other columns, defaults, constraints and
+indexes are the Public API's alone. `test_service_writes` creates a row in every modelled
+table as the service's role. Another test, outside the rule, requires the modelled
 tables' foreign keys to the Public API's users, policies, dynamics,
 households, datasets, regions and model catalog tables to be exactly the 20
 in `tests/public_api_keys.py`, each by its own table, its name and the table

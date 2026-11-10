@@ -10,6 +10,7 @@ from policyengine_simulation_persistence.engine import (
     create_simulation_engine,
     normalized_database_url,
 )
+from policyengine_simulation_persistence.input_tables import input_metadata
 from policyengine_simulation_persistence.tables import (
     HouseholdJobStatus,
     ReportRunStatus,
@@ -37,6 +38,7 @@ __all__ = [
     "budget_window_runs",
     "create_simulation_engine",
     "household_jobs",
+    "input_metadata",
     "missing_table_privileges",
     "normalized_database_url",
     "read_missing_table_privileges",
