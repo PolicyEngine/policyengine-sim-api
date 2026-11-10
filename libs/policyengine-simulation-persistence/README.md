@@ -58,6 +58,22 @@ and they are kept apart from the models of the tables the service writes
 (`service_metadata`) and from the tables those name by `id` alone
 (`referenced_metadata`).
 
+## Household jobs
+
+`household_job_records.py` holds the simulation service's reads and writes
+for a household calculation, one `household_jobs` row. The service finds the
+catalog version by country and .py version (`read_catalog_version_id`) and
+the stored household in its country (`read_stored_household`), creates the
+job `pending` with no Modal call ID and no dynamic (`insert_household_job`),
+starts the household function's call, then records the call's ID
+(`record_household_call`), or fails the job at once when Modal refuses the
+call (`fail_unstarted_household_job`). Both updates apply only while the job
+is still `pending` with no call ID, and set `updated_at` themselves. A job
+naming a household, policy or catalog version that does not exist is refused
+by its foreign key with SQLSTATE `23503`; `HouseholdJobReferenceError` names
+the column. Each function takes a connection, so the caller chooses the
+transactions.
+
 ## Reading a policy
 
 `read_policy_reform` (`policy_reform.py`) reads a stored policy as the reform
