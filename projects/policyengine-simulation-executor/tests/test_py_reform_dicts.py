@@ -85,6 +85,19 @@ def test_py_runs_open_ended_values_one_after_another() -> None:
     }
 
 
+def _applied(reform: dict):
+    """Apply ``reform`` with policyengine-core to a system of one parameter.
+
+    ``credit.amount`` is 1,000 from 2020 under current law.
+    """
+    person = build_entity(key="person", plural="people", label="Person", is_person=True)
+    system = TaxBenefitSystem(entities=[person])
+    system.parameters = ParameterNode(
+        "", data={"credit": {"amount": {"values": {"2020-01-01": 1_000}}}}
+    )
+    return Reform.from_dict(reform)(system).parameters.get_child("credit.amount")
+
+
 def test_py_lets_the_later_of_two_values_starting_the_same_day_take_over() -> None:
     """.py ends the earlier value before it starts, so only the later applies.
 
@@ -96,13 +109,7 @@ def test_py_lets_the_later_of_two_values_starting_the_same_day_take_over() -> No
             _value("credit.amount", 4_000, datetime(2026, 1, 1, 12, tzinfo=UTC)),
         ]
     )
-    person = build_entity(key="person", plural="people", label="Person", is_person=True)
-    system = TaxBenefitSystem(entities=[person])
-    system.parameters = ParameterNode(
-        "", data={"credit": {"amount": {"values": {"2020-01-01": 1_000}}}}
-    )
-
-    amount = Reform.from_dict(reform)(system).parameters.get_child("credit.amount")
+    amount = _applied(reform)
 
     assert reform == {
         "credit.amount": {
@@ -117,3 +124,80 @@ def test_py_lets_the_later_of_two_values_starting_the_same_day_take_over() -> No
         4_000,
         4_000,
     ]
+
+
+def test_py_keeps_bounded_values_starting_the_same_day_in_their_order() -> None:
+    """Both ranges are kept; core applies them in order, so each holds part."""
+    reform = reform_dict_from_parameter_values(
+        [
+            _value(
+                "credit.amount",
+                3_000,
+                datetime(2026, 1, 1, tzinfo=UTC),
+                datetime(2026, 12, 31, tzinfo=UTC),
+            ),
+            _value(
+                "credit.amount",
+                4_000,
+                datetime(2026, 1, 1, 12, tzinfo=UTC),
+                datetime(2026, 6, 30, tzinfo=UTC),
+            ),
+        ]
+    )
+
+    assert list(reform["credit.amount"].items()) == [
+        ("2026-01-01.2026-12-31", 3_000),
+        ("2026-01-01.2026-06-30", 4_000),
+    ]
+    amount = _applied(reform)
+    assert [
+        amount(instant) for instant in ("2026-03-01", "2026-09-01", "2027-03-01")
+    ] == [4_000, 3_000, 1_000]
+
+
+def test_py_lets_an_open_ended_value_follow_a_bounded_one_on_the_same_day() -> None:
+    reform = reform_dict_from_parameter_values(
+        [
+            _value(
+                "credit.amount",
+                3_000,
+                datetime(2026, 1, 1, tzinfo=UTC),
+                datetime(2026, 6, 30, tzinfo=UTC),
+            ),
+            _value("credit.amount", 4_000, datetime(2026, 1, 1, 12, tzinfo=UTC)),
+        ]
+    )
+
+    assert list(reform["credit.amount"].items()) == [
+        ("2026-01-01.2026-06-30", 3_000),
+        ("2026-01-01.2100-12-31", 4_000),
+    ]
+    amount = _applied(reform)
+    assert [amount(instant) for instant in ("2026-03-01", "2026-09-01")] == [
+        4_000,
+        4_000,
+    ]
+
+
+def test_py_reads_a_start_the_public_api_stored_in_utc_on_its_utc_day() -> None:
+    """.py reads a start the Public API normalized to UTC on its UTC day.
+
+    The Public API stores 20:00 on 31 December, five hours behind UTC, as
+    1 January 01:00 UTC, which .py reads as 1 January. An open-ended value
+    starting after its 2100 stop gets a range ending before it starts.
+    """
+    reform = reform_dict_from_parameter_values(
+        [
+            _value(CTC_AMOUNT, 1_000, datetime(2026, 1, 1, 1, tzinfo=UTC)),
+            _value(CTC_AMOUNT, 2_000, datetime(2027, 1, 1, tzinfo=UTC)),
+            _value(STANDARD_DEDUCTION, 9_000, datetime(2250, 1, 1, tzinfo=UTC)),
+        ]
+    )
+
+    assert reform == {
+        CTC_AMOUNT: {
+            "2026-01-01.2026-12-31": 1_000,
+            "2027-01-01.2100-12-31": 2_000,
+        },
+        STANDARD_DEDUCTION: {"2250-01-01.2100-12-31": 9_000},
+    }

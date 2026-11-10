@@ -239,6 +239,8 @@ def test_household_routes_declare_every_answer():
     read = _responses(spec, "get", "/household-calculations/{household_job_id}")
 
     assert set(submit) == {"202", "400", "403", "422", "500", "503"}
+    # A 202 may also be a job whose call Modal didn't confirm: poll it.
+    assert "pending" in submit["202"]["description"]
     assert _response_schema(submit["202"]) == {
         "$ref": "#/components/schemas/HouseholdCalculationAccepted"
     }

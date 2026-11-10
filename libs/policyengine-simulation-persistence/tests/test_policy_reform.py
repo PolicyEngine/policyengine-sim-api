@@ -66,10 +66,13 @@ def test_dates_are_read_in_utc() -> None:
     )
 
 
-def test_a_value_starting_after_2200_without_an_end_ends_where_it_starts() -> None:
-    """No calculable year reaches it, and its range never ends before it starts."""
+def test_a_value_starting_after_2200_without_an_end_still_stops_in_2200() -> None:
+    """.py's rule gives it a range ending before it starts; no year is in it.
+
+    ``read_policy_reform`` leaves such a value out.
+    """
     assert reform_period(datetime(2250, 1, 1, tzinfo=UTC), None) == (
-        "2250-01-01.2250-01-01"
+        "2250-01-01.2200-12-31"
     )
 
 
@@ -313,5 +316,76 @@ def test_of_values_starting_the_same_day_the_latest_takes_over(
         CTC_AMOUNT: {
             "2026-01-01.2027-12-31": 4_000,
             "2028-01-01.2200-12-31": 5_000,
+        }
+    }
+
+
+# These match .py's reform_dict_from_parameter_values for the same values
+# (the executor's test_py_reform_dicts.py), with 2200 where .py has 2100.
+
+
+@pytest.mark.public_api_schema
+def test_bounded_values_starting_the_same_day_are_kept_in_start_order(
+    public_api_database_url,
+) -> None:
+    """Both ranges are kept, as .py keeps them, and applied in this order."""
+    reform = _reform_of(
+        public_api_database_url,
+        [
+            StoredValue(CTC_AMOUNT, 3_000, START, datetime(2026, 12, 31, tzinfo=UTC)),
+            StoredValue(
+                CTC_AMOUNT,
+                4_000,
+                START + timedelta(hours=12),
+                datetime(2026, 6, 30, tzinfo=UTC),
+            ),
+        ],
+    )
+
+    assert list(reform[CTC_AMOUNT].items()) == [
+        ("2026-01-01.2026-12-31", 3_000),
+        ("2026-01-01.2026-06-30", 4_000),
+    ]
+
+
+@pytest.mark.public_api_schema
+def test_a_bounded_value_then_an_open_ended_one_on_the_same_day(
+    public_api_database_url,
+) -> None:
+    reform = _reform_of(
+        public_api_database_url,
+        [
+            StoredValue(CTC_AMOUNT, 3_000, START, datetime(2026, 6, 30, tzinfo=UTC)),
+            StoredValue(CTC_AMOUNT, 4_000, START + timedelta(hours=12)),
+        ],
+    )
+
+    assert list(reform[CTC_AMOUNT].items()) == [
+        ("2026-01-01.2026-06-30", 3_000),
+        ("2026-01-01.2200-12-31", 4_000),
+    ]
+
+
+@pytest.mark.public_api_schema
+def test_an_offset_start_is_read_on_its_utc_day(public_api_database_url) -> None:
+    """20:00 on 31 December five hours behind UTC is 1 January in UTC.
+
+    An open-ended value starting after 2200 has no year in its range and is
+    left out.
+    """
+    eastern = timezone(timedelta(hours=-5))
+    reform = _reform_of(
+        public_api_database_url,
+        [
+            StoredValue(CTC_AMOUNT, 1_000, datetime(2025, 12, 31, 20, tzinfo=eastern)),
+            StoredValue(CTC_AMOUNT, 2_000, datetime(2027, 1, 1, tzinfo=UTC)),
+            StoredValue(STANDARD_DEDUCTION, 9_000, datetime(2250, 1, 1, tzinfo=UTC)),
+        ],
+    )
+
+    assert reform == {
+        CTC_AMOUNT: {
+            "2026-01-01.2026-12-31": 1_000,
+            "2027-01-01.2200-12-31": 2_000,
         }
     }

@@ -39,6 +39,7 @@ RESULT_DOCUMENT = {
     "calculation_id": str(JOB_ID),
 }
 STATE_PATH = f"/household-calculations/{JOB_ID}"
+STATE_TEMPLATE = "/household-calculations/{household_job_id}"
 
 
 def _record(**changes: Any) -> HouseholdJobRecord:
@@ -442,5 +443,18 @@ def test_an_unexpected_failure_answers_a_json_500_without_its_values(
     assert result.status_code == 500
     assert result.headers["content-type"] == "application/json"
     assert result.json() == UNEXPECTED_FAILURE_ANSWER
-    assert "RuntimeError" in caplog.text
-    assert "a value that must not be logged" not in caplog.text
+    (record,) = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "household_route_failed"
+    ]
+    assert record.error_type == "RuntimeError"
+    assert record.route in {"/household-calculations", STATE_TEMPLATE}
+    # The stack frames say where it failed, here in the fake service.
+    assert any(
+        "test_household_routes.py" in frame
+        and (" in submit" in frame or " in read" in frame)
+        for frame in record.stack_frames
+    )
+    assert record.exc_info is None
+    assert "a value that must not be logged" not in str(record.__dict__)
