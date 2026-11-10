@@ -11,6 +11,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, field
+from functools import partial
 from hashlib import sha256
 from types import SimpleNamespace
 from uuid import UUID
@@ -21,6 +22,7 @@ from google.api_core.exceptions import NotFound
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     ReportRunIds,
+    SimulationRole,
 )
 from policyengine_simulation_executor import spm as runtime_spm
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -30,7 +32,11 @@ from policyengine_simulation_executor.stage12_runtime.reused_outputs import (
     CloudStorageOutputFiles,
 )
 from policyengine_stage12_persistence import RunStatus
-from stage12_child_call_support import ConcurrentInvoker, InjectedChildFaults
+from stage12_child_call_support import (
+    ConcurrentInvoker,
+    InjectedChildFaults,
+    TimeoutInvoker,
+)
 from stage12_fake_report_runs import (
     BASELINE_RUN_ID,
     REFORM_RUN_ID,
@@ -43,9 +49,11 @@ from stage12_fake_report_runs import (
 from stage12_fake_stores import FakeArtifacts, FakeStore, simulation_frames
 from stage12_runtime_support import (
     BASELINE_ID,
+    NOW,
     REFORM_ID,
     coordinate_report,
     parent_record,
+    planned_simulation,
     report_execution_input,
     spm_calculation_provenance,
 )
@@ -139,15 +147,14 @@ def _coordinate(  # noqa: PLR0913  # the stores, the seams and the call's identi
     artifacts,
     files,
     *,
-    report=None,
     context=None,
     coordinator_call_id=COORDINATOR_CALL_ID,
     aggregator=economy_aggregate,
+    **seams,
 ):
-    report = report or report_execution_input()
     context = context or report_run_context()
     return coordinate_report(
-        report.model_dump(mode="json"),
+        report_execution_input().model_dump(mode="json"),
         context.model_dump(mode="json"),
         parent_record().model_dump(mode="json"),
         application_name=context.modal_application,
@@ -158,6 +165,7 @@ def _coordinate(  # noqa: PLR0913  # the stores, the seams and the call's identi
         aggregator=aggregator,
         report_runs=report_runs,
         output_files=files,
+        **seams,
     )
 
 
@@ -568,6 +576,19 @@ SECOND_REFORM_RUN_ID = UUID("00000000-0000-0000-0000-0000000000c2")
 
 
 def test_two_report_runs_reusing_one_succeeded_run_at_once_leave_it_unchanged() -> None:
+    """Two report runs share one succeeded baseline run and its output file.
+
+    Each report run has its own Stage 12 report: in production its own
+    evaluation, with its own parent and child rows, which never interact with
+    another evaluation's. So each coordinator gets its own Stage 12 store,
+    standing in for those separate rows of one database; the test inputs give
+    both reports the same evaluation ID, which one shared store would treat
+    as one report claimed twice. What the two report runs do share, the run
+    tables and the output file, is shared: the fake report run store and the
+    output file reader. The check is that reusing, succeeding and failing in
+    one report run writes nothing to the shared run and doesn't change the
+    other report run.
+    """
     report_runs = FakeReportRuns()
     report_runs.report_runs[SECOND_REPORT_RUN_ID] = FakeRun()
     report_runs.simulation_runs[SECOND_REFORM_RUN_ID] = FakeRun()
@@ -627,6 +648,99 @@ def test_two_report_runs_reusing_one_succeeded_run_at_once_leave_it_unchanged() 
     assert files.reads == [shared.uri, shared.uri]
     assert first_invoker.events == ["spawn:reform"]
     assert second_invoker.events == ["spawn:reform"]
+
+
+def test_a_succeeded_reform_run_is_reused_while_its_baseline_is_calculated() -> None:
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+    files = FakeOutputFiles()
+    stored = _succeeded_with_output(
+        report_runs, files, REFORM_RUN_ID, frames=simulation_frames(120.0)
+    )
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts)
+
+    result = _coordinate(store, report_runs, invoker, artifacts, files)
+
+    assert invoker.events == ["spawn:baseline"]
+    assert set(store.children) == {BASELINE_ID}
+    assert report_runs.simulation_runs[REFORM_RUN_ID].writes == []
+    assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
+    assert result["reform_artifact_sha256"] == stored.sha256
+    assert files.reads == [stored.uri]
+
+
+class RestartInvoker(ConcurrentInvoker):
+    """Start new children; an earlier attempt's restored child can only be cancelled."""
+
+    def __init__(self, artifacts):
+        super().__init__(artifacts)
+        self.cancelled: list[str] = []
+
+    def restore(self, invocation_id):
+        self.events.append(f"restore:{invocation_id}")
+        return SimpleNamespace(
+            object_id=invocation_id,
+            cancel=partial(self.cancelled.append, invocation_id),
+        )
+
+
+def _preempt(_seconds):
+    raise KeyboardInterrupt
+
+
+def test_a_restarted_call_reuses_the_output_its_own_baseline_worker_recorded() -> None:
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+    files = FakeOutputFiles()
+    artifacts = FakeArtifacts()
+    # The first attempt starts both children, then Modal pre-empts it.
+    with pytest.raises(KeyboardInterrupt):
+        _coordinate(
+            store, report_runs, TimeoutInvoker(), artifacts, files, sleep=_preempt
+        )
+    # Before the pre-empted call cancelled it, the baseline's worker wrote its
+    # output and recorded its child record and simulation run as succeeded.
+    descriptor = artifacts.add_simulation(planned_simulation(SimulationRole.BASELINE))
+    files.payloads[descriptor.artifact.uri] = artifacts.payloads[
+        descriptor.artifact.uri
+    ]
+    store.children[BASELINE_ID] = store.children[BASELINE_ID].model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
+            "output_uri": descriptor.artifact.uri,
+            "output_sha256": descriptor.artifact.content_sha256,
+            "output_schema_version": 1,
+            "row_identity_columns": descriptor.row_identity.identifier_columns,
+            "row_count": descriptor.row_identity.row_count,
+            "row_identity_sha256": descriptor.row_identity.identity_sha256,
+            "completed_at": NOW,
+        }
+    )
+    baseline_run = report_runs.simulation_runs[BASELINE_RUN_ID]
+    baseline_run.status = RunStatus.SUCCEEDED
+    baseline_run.modal_call_id = "fc-baseline-worker"
+    baseline_run.output_uri = descriptor.artifact.uri
+    baseline_run.output_sha256 = descriptor.artifact.content_sha256
+    baseline_before = deepcopy(baseline_run)
+    restart_invoker = RestartInvoker(artifacts)
+
+    result = _coordinate(store, report_runs, restart_invoker, artifacts, files)
+
+    # Only the reform starts again, after its earlier call is cancelled.
+    assert restart_invoker.events == ["restore:call-reform", "spawn:reform"]
+    assert restart_invoker.cancelled == ["call-reform"]
+    assert files.reads == [descriptor.artifact.uri]
+    assert result["baseline_artifact_sha256"] == descriptor.artifact.content_sha256
+    assert report_runs.simulation_runs[BASELINE_RUN_ID] == baseline_before
+    assert store.children[BASELINE_ID].status is ComparisonRunLifecycleStatus.SUCCEEDED
+    report_run = report_runs.report_runs[REPORT_RUN_ID]
+    assert report_run.status is RunStatus.SUCCEEDED
+    assert report_run.writes == [
+        "claim_report_run",
+        "claim_report_run",
+        "complete_report_run",
+    ]
 
 
 class FakeStorageClient:
