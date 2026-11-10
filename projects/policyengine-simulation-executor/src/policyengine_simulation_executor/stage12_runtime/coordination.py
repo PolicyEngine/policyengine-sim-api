@@ -24,6 +24,11 @@ from policyengine_simulation_executor.stage12_timeouts import (
     SIMULATION_WAIT_TIMEOUT_SECONDS,
 )
 
+from .child_wait import (
+    SIMULATION_POLL_BACKOFF_FACTOR,
+    SIMULATION_POLL_INITIAL_SECONDS,
+    SIMULATION_POLL_MAX_SECONDS,
+)
 from .coordinated_simulations import (
     SIMULATION_CANCELLED_ERROR_CODE,
     cancel_pending_simulations,
@@ -39,9 +44,6 @@ from .parent_claim import (
 )
 from .report_claims import claim_report
 from .report_coordination import (
-    SIMULATION_POLL_BACKOFF_FACTOR,
-    SIMULATION_POLL_INITIAL_SECONDS,
-    SIMULATION_POLL_MAX_SECONDS,
     CoordinatorDependencies,
     CoordinatorInvocation,
     ReportCoordination,
