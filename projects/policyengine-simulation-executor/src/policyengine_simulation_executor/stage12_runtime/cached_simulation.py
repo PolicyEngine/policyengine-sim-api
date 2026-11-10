@@ -141,6 +141,9 @@ class Stage12CachedSimulation(Simulation):
             raise RuntimeError(msg)
         data = getattr(getattr(self, "output_dataset", None), "data", None)
         entity_data = getattr(data, "entity_data", None)
+        # Recalculate after leaving the except block. An error raised inside
+        # it would carry the output-plan error as its context, and the
+        # telemetry error report groups an error by its first traceback.
         try:
             validate_output_frames(entity_data or {}, plan)
         except (TypeError, ValueError):
@@ -148,6 +151,10 @@ class Stage12CachedSimulation(Simulation):
                 "Stage 12 cache %s is incomplete; recalculating",
                 self.id,
             )
+            output_is_incomplete = True
+        else:
+            output_is_incomplete = False
+        if output_is_incomplete:
             self._record_outcome(CACHE_INCOMPLETE)
             self.run()
             self.save()
