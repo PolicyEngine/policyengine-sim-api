@@ -519,13 +519,41 @@ another country, and returns a `bundle_mismatch` failure for a request that
 names another bundle. Nothing calls these functions until the Simulation
 Entrypoint has household routes.
 
+A call can name a household job, a `household_jobs` row the Simulation
+Entrypoint inserts pending, with the `household_job_id` keyword argument. As
+the Modal worker role, the function then claims the job under its own Modal
+call ID, while the job is pending or running and records no call or this
+call, and records the outcome on it: a `HouseholdExecutionResult` as the
+job's `result`, with status `succeeded`, or a `HouseholdExecutionFailure` as
+its `result`, with status `failed` and a one-line summary (the error code and
+message, at most 500 characters) as its `error_message`. A job another call
+holds, or one already finished, returns `deduplicated`, the job's ID and its
+status, without calculating. An error outside the calculation, or Modal's
+cancellation of the call, fails the job with a summary naming only the
+error's type and no `result`, then propagates; a pre-emption records nothing,
+because Modal runs the call again under the same call ID. Each write sets
+only columns the role may update: `status`, `modal_call_id`,
+`error_message`, `result`, `started_at`, `completed_at` and `updated_at`. A
+call that names no job, as deployment validation makes, touches no database.
+
+The stuck-run sweep (`src/modal/run_sweep_app.py`) fails household jobs
+nothing will finish by the rule it applies to report runs and simulation
+runs, counting a job's age from its creation: a pending job with no call
+recorded ten minutes after its creation, a pending or running job once
+Modal reports its recorded call ended, and any job still unfinished 24 hours
+after its creation, whatever Modal reports.
+
 - Image: the CA store, the frozen `modal-simulation-image` dependency group
   and the source packages, without the bundle's datasets or the Stage 12
   cache. Building it needs no secret.
-- Secrets: none. A household calculation reads no private data, Cloud
-  Storage or database. Telemetry authenticates with the identity token Modal
-  gives every container (`MODAL_IDENTITY_TOKEN`) and the workload identity
-  settings baked into the image at deployment.
+- Secrets: only `policyengine-modal-worker-database`, whose
+  `MODAL_WORKER_DATABASE_URL` connects as the Modal worker role, to record
+  the household job a call names. Like the coordinator and the simulation
+  workers, the application cannot deploy to a Modal environment without it.
+  A household calculation reads no private data or Cloud Storage. Telemetry
+  authenticates with the identity token Modal gives every container
+  (`MODAL_IDENTITY_TOKEN`) and the workload identity settings baked into the
+  image at deployment.
 - Limits: 2 CPUs, 4,096 MiB of reserved and 16,384 MiB of maximum memory, a
   900-second timeout, no retries, and a Modal `max_containers` value of 20.
 - Each container loads a country model the first time it calculates that
