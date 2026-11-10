@@ -46,6 +46,7 @@ from stage12_runtime_support import (
     coordinate_report,
     parent_record,
     report_execution_input,
+    spm_calculation_provenance,
 )
 
 COORDINATOR_CALL_ID = "fc-coordinator"
@@ -79,10 +80,14 @@ class StoredOutput:
     frames: dict[str, pd.DataFrame]
 
 
-def _succeeded_with_output(report_runs, files, run_id, *, frames=None):
+def _succeeded_with_output(
+    report_runs, files, run_id, *, frames=None, calculation_provenance=None
+):
     """Mark a simulation run succeeded with a stored output file of ``frames``."""
     frames = frames or simulation_frames()
-    payload, _row_identity = serialize_simulation_frames(frames)
+    payload, _row_identity = serialize_simulation_frames(
+        frames, calculation_provenance=calculation_provenance
+    )
     stored = StoredOutput(
         uri=f"gs://{OUTPUT_BUCKET}/simulations/{run_id}.parquet",
         sha256=sha256(payload).hexdigest(),
@@ -102,13 +107,15 @@ def _coordinate(  # noqa: PLR0913  # the stores, the seams and the call's identi
     artifacts,
     files,
     *,
+    report=None,
     context=None,
     coordinator_call_id=COORDINATOR_CALL_ID,
     aggregator=economy_aggregate,
 ):
+    report = report or report_execution_input()
     context = context or report_run_context()
     return coordinate_report(
-        report_execution_input().model_dump(mode="json"),
+        report.model_dump(mode="json"),
         context.model_dump(mode="json"),
         parent_record().model_dump(mode="json"),
         application_name=context.modal_application,
@@ -267,6 +274,15 @@ def _missing_planned_column(report_runs, files):
     return _succeeded_with_output(report_runs, files, BASELINE_RUN_ID, frames=frames)
 
 
+def _unrequested_spm_calculation(report_runs, files):
+    return _succeeded_with_output(
+        report_runs,
+        files,
+        BASELINE_RUN_ID,
+        calculation_provenance=spm_calculation_provenance(),
+    )
+
+
 def _other_year(report_runs, files):
     stored = _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
     report_runs.simulation_runs[BASELINE_RUN_ID].year = 2025
@@ -303,6 +319,10 @@ UNUSABLE_OUTPUTS = {
     "other-digest": (_other_digest, "reused_simulation_output_digest_mismatch"),
     "missing-planned-column": (
         _missing_planned_column,
+        "reused_simulation_output_incompatible",
+    ),
+    "unrequested-spm-calculation": (
+        _unrequested_spm_calculation,
         "reused_simulation_output_incompatible",
     ),
     "other-year": (_other_year, "reused_simulation_run_mismatch"),
@@ -346,6 +366,36 @@ def test_a_reused_output_that_cannot_be_used_fails_the_report_run_uncalculated(
     assert report_runs.simulation_runs[REFORM_RUN_ID].writes == []
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_code == error_code
+
+
+def test_a_reused_output_without_the_requested_spm_calculation_fails_the_report() -> (
+    None
+):
+    report = report_execution_input()
+    spm_options = {"spm": {"scenario": "official"}}
+    report = report.model_copy(
+        update={
+            "baseline": report.baseline.model_copy(update={"options": spm_options}),
+            "reform": report.reform.model_copy(update={"options": spm_options}),
+        }
+    )
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+    files = FakeOutputFiles()
+    _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts)
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(store, report_runs, invoker, artifacts, files, report=report)
+
+    report_run = report_runs.report_runs[REPORT_RUN_ID]
+    assert report_run.error_message.startswith(
+        "reused_simulation_output_incompatible: "
+    )
+    assert "SPM" in report_run.error_message
+    assert invoker.events == []
+    assert report_runs.simulation_runs[BASELINE_RUN_ID].writes == []
 
 
 SECOND_REPORT_RUN_ID = UUID("00000000-0000-0000-0000-0000000000a2")
