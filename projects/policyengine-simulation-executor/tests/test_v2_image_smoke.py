@@ -93,7 +93,7 @@ def test_household_image_smoke_calculates_each_validation_household(
                 "output": {
                     "country": request.country,
                     "bundle": request.bundle,
-                    "results": [{"policy_key": "baseline", "household": situation}],
+                    "household": situation,
                 },
                 "worker": worker,
             }

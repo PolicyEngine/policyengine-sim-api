@@ -33,7 +33,7 @@ SUCCEEDED_DOCUMENT = {
     "status": "succeeded",
     "schema_version": 1,
     "calculation_id": "00000000-0000-4000-8000-0000000000c1",
-    "output": {"country": "us", "results": [{"policy_key": "baseline"}]},
+    "output": {"country": "us", "household": {"people": {"you": {"age": {}}}}},
     "worker": WORKER,
 }
 FAILED_DOCUMENT = {

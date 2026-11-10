@@ -118,12 +118,7 @@ def _succeeded() -> HouseholdExecutionResult:
                     "country_package_version": "2.2.1",
                     "bundle_manifest_sha256": "a" * 64,
                 },
-                "results": [
-                    {
-                        "policy_key": "baseline",
-                        "household": {"people": {"you": {"age": {"2026": 40}}}},
-                    }
-                ],
+                "household": {"people": {"you": {"age": {"2026": 40}}}},
             },
             "worker": WORKER.model_dump(),
         }

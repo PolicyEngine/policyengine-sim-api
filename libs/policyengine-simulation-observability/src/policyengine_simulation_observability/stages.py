@@ -277,7 +277,7 @@ RUN_STAGE_REGISTRY: Mapping[RunConfiguration, StagePlan] = MappingProxyType(
             ),
         ),
         # One v2 household function call: loading the country model,
-        # preparing the household, then one calculation per policy.
+        # preparing the household, then calculating it under its policy.
         RunConfiguration.V2_HOUSEHOLD: StagePlan(
             RunConfiguration.V2_HOUSEHOLD,
             (

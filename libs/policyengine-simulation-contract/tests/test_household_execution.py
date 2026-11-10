@@ -8,7 +8,6 @@ from uuid import UUID
 import pytest
 from policyengine_simulation_contract.household_execution import (
     MAXIMUM_AXIS_POINTS,
-    MAXIMUM_POLICIES_PER_REQUEST,
     CalculatedHousehold,
     HouseholdBundleProvenance,
     HouseholdCalculationError,
@@ -19,7 +18,6 @@ from policyengine_simulation_contract.household_execution import (
     HouseholdExecutionResult,
     HouseholdInputError,
     HouseholdPolicy,
-    HouseholdPolicyResult,
     HouseholdWorkerIdentity,
     household_callable_name,
     parse_household_execution_outcome,
@@ -111,11 +109,8 @@ def _bundle() -> HouseholdBundleProvenance:
     )
 
 
-def _policies() -> list[dict[str, object]]:
-    return [
-        {"policy_key": "baseline", "parameters": {}},
-        {"policy_key": "reform", "parameters": CTC_REFORM},
-    ]
+def _policy() -> dict[str, object]:
+    return {"parameters": CTC_REFORM}
 
 
 def _request(**overrides: object) -> HouseholdExecutionRequest:
@@ -124,7 +119,7 @@ def _request(**overrides: object) -> HouseholdExecutionRequest:
         "country": "us",
         "year": "2026",
         "household": US_SITUATION,
-        "policies": _policies(),
+        "policy": _policy(),
         "bundle": _bundle().model_dump(mode="json"),
     }
     values.update(overrides)
@@ -146,18 +141,13 @@ def _output(**overrides: object) -> HouseholdCalculationOutput:
     values: dict[str, object] = {
         "country": "us",
         "bundle": _bundle(),
-        "results": (
-            HouseholdPolicyResult(
-                policy_key="baseline",
-                household=_calculated(
-                    {
-                        "people": {"you": {"age": {"2026": 40}}},
-                        "households": {"your household": {"members": ["you"]}},
-                    }
-                ),
-                warnings=("Input `x` was ignored.",),
-            ),
+        "household": _calculated(
+            {
+                "people": {"you": {"age": {"2026": 40}}},
+                "households": {"your household": {"members": ["you"]}},
+            }
         ),
+        "warnings": ("Input `x` was ignored.",),
     }
     values.update(overrides)
     return HouseholdCalculationOutput.model_validate(values)
@@ -275,11 +265,11 @@ def test_parallel_axes_must_share_one_point_count() -> None:
         )
 
 
-def test_one_request_carries_the_baseline_and_its_reform() -> None:
+def test_a_request_carries_one_policy() -> None:
     request = _request()
 
-    assert [policy.policy_key for policy in request.policies] == ["baseline", "reform"]
-    assert request.policies[1].parameters == CTC_REFORM
+    assert request.policy.parameters == CTC_REFORM
+    assert request.model_dump(mode="json")["policy"] == {"parameters": CTC_REFORM}
     assert request.schema_version == 1
     assert request.add_missing_variables is False
     assert request.spm_selection_source == "request"
@@ -315,25 +305,22 @@ def test_add_missing_variables_asks_for_a_full_calculation() -> None:
     assert _request(add_missing_variables=True).add_missing_variables is True
 
 
-def test_a_request_needs_one_to_ten_policies_with_unique_keys() -> None:
-    eleven_policies = [
-        {"policy_key": f"policy-{index}", "parameters": {}}
-        for index in range(MAXIMUM_POLICIES_PER_REQUEST + 1)
-    ]
-    repeated_key = [
-        {"policy_key": "reform", "parameters": {}},
-        {"policy_key": "reform", "parameters": CTC_REFORM},
-    ]
+def test_a_request_names_exactly_one_policy() -> None:
+    # A baseline and its reform are two requests; a policy has no name.
+    values = _request().model_dump(mode="json")
+    without_policy = {name: value for name, value in values.items() if name != "policy"}
 
-    assert len(_request(policies=eleven_policies[:10]).policies) == 10
+    assert _request(policy={"parameters": {}}).policy.parameters == {}
+    with pytest.raises(ValidationError, match="policy"):
+        HouseholdExecutionRequest.model_validate(without_policy)
+    with pytest.raises(ValidationError, match="policies"):
+        HouseholdExecutionRequest.model_validate(
+            {**without_policy, "policies": [_policy()]}
+        )
     with pytest.raises(ValidationError):
-        _request(policies=[])
-    with pytest.raises(ValidationError):
-        _request(policies=eleven_policies)
-    with pytest.raises(ValidationError, match="unique"):
-        _request(policies=repeated_key)
-    with pytest.raises(ValidationError):
-        _request(policies=[{"policy_key": "Not A Key", "parameters": {}}])
+        _request(policy=[_policy(), _policy()])
+    with pytest.raises(ValidationError, match="policy_key"):
+        _request(policy={"policy_key": "reform", "parameters": {}})
 
 
 def test_omitted_spm_inherits_the_defaults_and_is_not_a_choice() -> None:
@@ -468,14 +455,36 @@ def test_input_errors_serialize_as_the_public_api_lists_them() -> None:
     assert HouseholdInputError.model_validate(unknown.model_dump()) == unknown
 
 
-def test_output_results_must_have_unique_policy_keys() -> None:
-    result = _output().results[0]
+def test_an_output_holds_the_one_calculated_household_and_its_warnings() -> None:
+    output = _output()
+    transported = HouseholdCalculationOutput.model_validate(
+        json.loads(output.model_dump_json())
+    )
 
-    with pytest.raises(ValidationError, match="unique"):
-        _output(results=(result, result))
+    assert transported == output
+    assert transported.household.to_situation()["people"] == {
+        "you": {"age": {"2026": 40}}
+    }
+    assert transported.warnings == ("Input `x` was ignored.",)
+    assert transported.spm_provenance is None
+    assert "results" not in output.model_dump(mode="json")
+    with pytest.raises(ValidationError, match="results"):
+        HouseholdCalculationOutput.model_validate(
+            {
+                **output.model_dump(mode="json"),
+                "results": [{"household": output.household.to_situation()}],
+            }
+        )
 
 
-def test_output_carries_the_applied_spm_selection_and_each_receipt() -> None:
+def test_a_calculation_error_names_no_policy() -> None:
+    with pytest.raises(ValidationError, match="policy_key"):
+        HouseholdCalculationError.model_validate(
+            {"code": "calculation_failed", "message": "failed", "policy_key": "reform"}
+        )
+
+
+def test_output_carries_the_applied_spm_selection_and_its_receipt() -> None:
     receipt = build_spm_provenance(
         forecast_id="forecast-2026",
         forecast_sha256="c" * 64,
@@ -486,15 +495,13 @@ def test_output_carries_the_applied_spm_selection_and_each_receipt() -> None:
     applied = SPMResolvedConfiguration.model_validate(
         RESOLVED_SPM_SELECTION.model_dump(mode="json")
     )
-    result = _output().results[0].model_copy(update={"spm_provenance": receipt})
-
-    output = _output(results=(result,), spm_config=applied)
+    output = _output(spm_provenance=receipt, spm_config=applied)
     transported = HouseholdCalculationOutput.model_validate(
         json.loads(output.model_dump_json())
     )
 
     assert transported.spm_config == applied
-    assert transported.results[0].spm_provenance == receipt
+    assert transported.spm_provenance == receipt
     assert transported.model_dump(mode="json")["spm_config"] == {
         "forecast_content_sha256": "c" * 64,
         "scenario": "ce_trend",
@@ -561,7 +568,6 @@ def test_household_functions_are_named_by_country() -> None:
 def test_policy_values_may_be_lists_for_list_parameters() -> None:
     policy = HouseholdPolicy.model_validate(
         {
-            "policy_key": "reform",
             "parameters": {
                 "gov.usda.snap.income.sources.earned": {
                     "2026-01-01.2100-12-31": ["employment_income"]

@@ -17,8 +17,8 @@ same input errors as the Public API.
 Wire models:
 
 - ``HouseholdExecutionRequest``: the caller to a Modal household function. It
-  names one to ten policies, so a baseline and its reform are calculated in
-  one call.
+  names one household, one year and one policy; a baseline and its reform
+  are two requests.
 - ``HouseholdExecutionResult`` or ``HouseholdExecutionFailure``: what the
   household function returns, told apart by ``status``.
 """
@@ -38,7 +38,6 @@ from pydantic import (
     JsonValue,
     PrivateAttr,
     TypeAdapter,
-    field_validator,
     model_serializer,
     model_validator,
 )
@@ -73,7 +72,6 @@ MAXIMUM_PARALLEL_AXES = 32
 # The number of points a household is calculated at: the product of the point
 # counts of its perpendicular axis groups.
 MAXIMUM_AXIS_POINTS = 10_000
-MAXIMUM_POLICIES_PER_REQUEST = 10
 MAXIMUM_POLICY_PARAMETERS = 10_000
 MAXIMUM_WARNINGS = 10_000
 
@@ -92,16 +90,6 @@ CalculationYear = Annotated[
             "The run's year, written as a situation's period key, such as "
             "'2025': the period of added variables and of values and axes "
             "the household gives without one."
-        ),
-    ),
-]
-PolicyKey = Annotated[
-    str,
-    Field(
-        pattern=r"^[a-z][a-z0-9_-]{0,63}$",
-        description=(
-            "Caller-chosen name for one policy in the request, such as "
-            "'baseline' or 'reform'; its result carries the same name."
         ),
     ),
 ]
@@ -395,35 +383,17 @@ class CalculatedHousehold(_Situation):
 
 
 class HouseholdPolicy(StrictHouseholdModel):
-    """One policy to calculate the household under.
+    """The policy to calculate the household under.
 
     ``parameters`` maps each changed parameter path to its values by period
     range (``"YYYY-MM-DD.YYYY-MM-DD"``), as in the Public API's policy JSON.
     Empty parameters mean current law.
     """
 
-    policy_key: PolicyKey
     parameters: Annotated[
         dict[ParameterPath, dict[ParameterPeriod, ParameterValue]],
         Field(max_length=MAXIMUM_POLICY_PARAMETERS),
     ]
-
-
-def _unique_policy_keys(
-    policies: tuple[HouseholdPolicy, ...],
-) -> tuple[HouseholdPolicy, ...]:
-    keys = [policy.policy_key for policy in policies]
-    if len(set(keys)) != len(keys):
-        msg = "policy keys must be unique within a request"
-        raise ValueError(msg)
-    return policies
-
-
-Policies = Annotated[
-    tuple[HouseholdPolicy, ...],
-    Field(min_length=1, max_length=MAXIMUM_POLICIES_PER_REQUEST),
-    AfterValidator(_unique_policy_keys),
-]
 
 
 class HouseholdBundleProvenance(StrictHouseholdModel):
@@ -479,9 +449,10 @@ class HouseholdExecutionRequest(StrictHouseholdModel):
     written as a situation's period key (four digits): the period of the
     variables ``add_missing_variables`` adds and of any value or axis the
     household gives without a period. Every other value is calculated for the
-    period the household names. ``bundle`` is the bundle the caller resolved
-    from the version manifest; the household function refuses a request for
-    any other bundle.
+    period the household names. ``policy`` is the one policy the household is
+    calculated under; a baseline and its reform are two requests. ``bundle``
+    is the bundle the caller resolved from the version manifest; the
+    household function refuses a request for any other bundle.
 
     ``add_missing_variables`` adds every yearly, monthly and eternal variable
     the household's entities lack, for ``year``, before calculating, as the
@@ -525,7 +496,7 @@ class HouseholdExecutionRequest(StrictHouseholdModel):
     country: CountryId
     year: CalculationYear
     household: HouseholdDocument
-    policies: Policies
+    policy: HouseholdPolicy
     add_missing_variables: bool = False
     spm: JsonValue = None
     spm_selection_source: Literal["request", "saved_household"] = "request"
@@ -547,48 +518,25 @@ class HouseholdExecutionRequest(StrictHouseholdModel):
         return "spm" in self.model_fields_set
 
 
-class HouseholdPolicyResult(StrictHouseholdModel):
-    """The calculated household under one policy.
-
-    ``warnings`` lists, in order, the deprecated inputs that were ignored and,
-    for a household with axes, the values that could not be calculated, worded
-    as the Public API words them. ``spm_provenance`` is the SPM calculation
-    receipt of a US household calculated with SPM settings.
-    """
-
-    policy_key: PolicyKey
-    household: CalculatedHousehold
-    warnings: Annotated[tuple[str, ...], Field(max_length=MAXIMUM_WARNINGS)] = ()
-    spm_provenance: SPMProvenance | None = None
-
-
 class HouseholdCalculationOutput(StrictHouseholdModel):
-    """A finished household calculation: one result per policy, in request order.
+    """A finished household calculation: the household under the request's policy.
 
-    ``spm_config`` is the complete SPM selection the calculation applied: the
-    caller's choice merged over the bundle's certified defaults, or None when
-    no SPM applies (any country but the US).
+    ``household`` is the calculated household. ``warnings`` lists, in order,
+    the deprecated inputs that were ignored and, for a household with axes,
+    the values that could not be calculated, worded as the Public API words
+    them. ``spm_config`` is the complete SPM selection the calculation
+    applied: the caller's choice merged over the bundle's certified defaults,
+    or None when no SPM applies (any country but the US). ``spm_provenance``
+    is the SPM calculation receipt of a US household calculated with SPM
+    settings.
     """
 
     country: CountryId
     bundle: HouseholdBundleProvenance
     spm_config: SPMResolvedConfiguration | None = None
-    results: Annotated[
-        tuple[HouseholdPolicyResult, ...],
-        Field(min_length=1, max_length=MAXIMUM_POLICIES_PER_REQUEST),
-    ]
-
-    @field_validator("results")
-    @classmethod
-    def require_unique_policy_keys(
-        cls, results: tuple[HouseholdPolicyResult, ...]
-    ) -> tuple[HouseholdPolicyResult, ...]:
-        """Reject results that repeat a policy key."""
-        keys = [result.policy_key for result in results]
-        if len(set(keys)) != len(keys):
-            msg = "result policy keys must be unique"
-            raise ValueError(msg)
-        return results
+    household: CalculatedHousehold
+    warnings: Annotated[tuple[str, ...], Field(max_length=MAXIMUM_WARNINGS)] = ()
+    spm_provenance: SPMProvenance | None = None
 
 
 class HouseholdInputError(StrictHouseholdModel):
@@ -622,17 +570,15 @@ class HouseholdCalculationError(StrictHouseholdModel):
     """Why a household calculation failed.
 
     ``message`` is worded as the Public API words the matching error response.
-    ``input_errors`` lists unrecognized names for ``invalid_inputs``;
-    ``spm_error`` holds the SPM error code for ``invalid_spm_selection``;
-    ``policy_key`` names the policy being prepared or calculated, when the
-    failure belongs to one.
+    ``input_errors`` lists unrecognized names for ``invalid_inputs``, the
+    household's then the policy's; ``spm_error`` holds the SPM error code for
+    ``invalid_spm_selection``.
     """
 
     code: HouseholdErrorCode
     message: Annotated[str, Field(min_length=1)]
     input_errors: tuple[HouseholdInputError, ...] = ()
     spm_error: SPMErrorDetail | None = None
-    policy_key: PolicyKey | None = None
 
 
 class HouseholdWorkerIdentity(StrictHouseholdModel):

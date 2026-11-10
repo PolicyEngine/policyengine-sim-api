@@ -53,7 +53,7 @@ def _request(country: str, household: dict, **overrides) -> HouseholdExecutionRe
         "country": country,
         "year": "2026",
         "household": household,
-        "policies": [{"policy_key": "baseline", "parameters": {}}],
+        "policy": {"parameters": {}},
         "bundle": installed_household_bundle(country).model_dump(mode="json"),
     }
     values.update(overrides)
@@ -204,7 +204,7 @@ def test_a_value_that_cannot_be_calculated_is_null_without_a_warning() -> None:
     )
 
     assert isinstance(outcome, HouseholdExecutionResult)
-    result = outcome.output.results[0]
+    result = outcome.output
     home = result.household.to_situation()["households"]["home"]
     assert home["net_income"] == {"2026": 1.5}
     assert home["spm_resources"] == {"2026": None}
@@ -232,7 +232,7 @@ def test_with_axes_a_failed_value_is_one_null_per_point_with_a_warning() -> None
     )
 
     assert isinstance(outcome, HouseholdExecutionResult)
-    result = outcome.output.results[0]
+    result = outcome.output
     situation = result.household.to_situation()
     assert situation["people"]["you"]["age"] == {"2026": [0, 1, 2]}
     assert situation["households"]["home"]["net_income"] == {
@@ -269,7 +269,7 @@ def test_single_values_are_calculated_for_the_request_year() -> None:
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
     assert created[0]["people"]["you"]["age"] == {"2024": 30}
-    situation = outcome.output.results[0].household.to_situation()
+    situation = outcome.output.household.to_situation()
     assert situation["people"]["you"]["age"] == {"2024": 30}
     assert situation["households"]["home"]["net_income"] == {"2024": 2.5}
 
@@ -291,7 +291,7 @@ def test_dates_are_written_as_the_public_api_writes_them() -> None:
     )
 
     assert isinstance(outcome, HouseholdExecutionResult)
-    home = outcome.output.results[0].household.to_situation()["households"]["home"]
+    home = outcome.output.household.to_situation()["households"]["home"]
     assert home["registration_date"] == {"2026": "Thu, 01 Jan 1970 00:00:00 GMT"}
 
 
@@ -323,7 +323,7 @@ def test_an_spm_input_error_fails_only_a_chosen_measurement(monkeypatch) -> None
     )
 
     assert isinstance(inherited, HouseholdExecutionResult)
-    home = inherited.output.results[0].household.to_situation()["households"]["home"]
+    home = inherited.output.household.to_situation()["households"]["home"]
     assert home["spm_resources"] == {"2026": None}
     assert inherited.output.spm_config is not None
     assert inherited.output.spm_config.model_dump(mode="json") == resolved
@@ -332,10 +332,9 @@ def test_an_spm_input_error_fails_only_a_chosen_measurement(monkeypatch) -> None
     assert chosen.error.spm_error is not None
     assert chosen.error.spm_error.code == "SPM_GEOGRAPHY_REQUIRED"
     assert chosen.error.message == "SPM needs a county"
-    assert chosen.error.policy_key == "baseline"
 
 
-def test_the_selection_and_its_receipt_reach_each_simulation(monkeypatch) -> None:
+def test_the_selection_and_its_receipt_reach_the_simulation(monkeypatch) -> None:
     resolved = {
         "forecast_content_sha256": "a" * 64,
         "scenario": "ce_trend",
@@ -437,7 +436,6 @@ def test_simulation_build_failures_use_public_api_messages(
     assert isinstance(outcome, HouseholdExecutionFailure)
     assert outcome.error.code == code
     assert outcome.error.message.startswith(message)
-    assert outcome.error.policy_key == "baseline"
     assert outcome.worker == _worker("uk")
     assert outcome.calculation_id == CALCULATION_ID
 
@@ -462,7 +460,6 @@ def test_spm_settings_as_sent_fail_with_public_api_codes(
     assert outcome.error.spm_error is not None
     assert outcome.error.spm_error.code == spm_code
     assert outcome.error.message == outcome.error.spm_error.message
-    assert outcome.error.policy_key is None
 
 
 @pytest.mark.parametrize(
@@ -565,7 +562,6 @@ def test_a_request_for_another_bundle_is_refused() -> None:
 
     assert isinstance(outcome, HouseholdExecutionFailure)
     assert outcome.error.code == "bundle_mismatch"
-    assert outcome.error.policy_key is None
 
 
 def test_a_function_refuses_another_countrys_household() -> None:
@@ -623,30 +619,26 @@ CTC_REFORM = {
 }
 
 
-def test_us_baseline_and_reform_are_calculated_in_one_request() -> None:
+def test_us_a_baseline_and_its_reform_are_calculated_in_separate_requests() -> None:
     runtime = RecordingRuntime()
-    request = _request(
-        "us",
-        US_FAMILY,
-        policies=[
-            {"policy_key": "baseline", "parameters": {}},
-            {"policy_key": "reform", "parameters": CTC_REFORM},
-        ],
+    baseline = calculate_household(
+        _request("us", US_FAMILY),
+        worker=_worker("us"),
+        dependencies=HouseholdCalculationDependencies(),
     )
 
-    outcome = calculate_household(
-        request,
+    reform = calculate_household(
+        _request("us", US_FAMILY, policy={"parameters": CTC_REFORM}),
         worker=_worker("us"),
         dependencies=HouseholdCalculationDependencies(runtime=runtime),
     )
 
-    assert isinstance(outcome, HouseholdExecutionResult), outcome
-    assert outcome.calculation_id == CALCULATION_ID
-    assert outcome.output.bundle == installed_household_bundle("us")
-    baseline, reform = outcome.output.results
-    assert (baseline.policy_key, reform.policy_key) == ("baseline", "reform")
-    baseline_situation = baseline.household.to_situation()
-    reform_situation = reform.household.to_situation()
+    assert isinstance(baseline, HouseholdExecutionResult), baseline
+    assert isinstance(reform, HouseholdExecutionResult), reform
+    assert reform.calculation_id == CALCULATION_ID
+    assert reform.output.bundle == installed_household_bundle("us")
+    baseline_situation = baseline.output.household.to_situation()
+    reform_situation = reform.output.household.to_situation()
     # Same structure as the input, with each requested value filled in.
     assert list(baseline_situation) == list(US_FAMILY)
     assert baseline_situation["people"] == US_FAMILY["people"]
@@ -656,18 +648,18 @@ def test_us_baseline_and_reform_are_calculated_in_one_request() -> None:
     assert isinstance(reform_ctc, float)
     assert reform_ctc > baseline_ctc
     # A US household inherits the certified SPM selection and carries its receipt.
-    assert outcome.output.spm_config is not None
-    assert outcome.output.spm_config.geography_kind == "county"
-    assert baseline.spm_provenance is not None
-    assert reform.spm_provenance is not None
-    assert baseline.spm_provenance.scenario == outcome.output.spm_config.scenario
+    assert reform.output.spm_config is not None
+    assert reform.output.spm_config.geography_kind == "county"
+    assert baseline.output.spm_provenance is not None
+    assert reform.output.spm_provenance is not None
+    assert reform.output.spm_provenance.scenario == reform.output.spm_config.scenario
+    # One calculation span per request, for its one policy.
     assert [name for name, _ in runtime.spans] == [
         "v2_household_country_model_load",
         "v2_household_input_normalization",
         "v2_household_calculation",
-        "v2_household_calculation",
     ]
-    assert runtime.spans[3][1] == {"country": "us", "policy_key": "reform"}
+    assert runtime.spans[2][1] == {"country": "us"}
 
 
 def test_us_axes_calculate_one_value_per_point() -> None:
@@ -693,7 +685,7 @@ def test_us_axes_calculate_one_value_per_point() -> None:
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
-    situation = outcome.output.results[0].household.to_situation()
+    situation = outcome.output.household.to_situation()
     incomes = situation["households"]["your household"]["household_net_income"]
     assert len(incomes["2026"]) == 5
     assert all(isinstance(income, float) for income in incomes["2026"])
@@ -718,7 +710,7 @@ def test_us_calculate_full_adds_and_calculates_every_missing_variable() -> None:
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
-    situation = outcome.output.results[0].household.to_situation()
+    situation = outcome.output.household.to_situation()
     you = situation["people"]["you"]
     tax_unit = situation["tax_units"]["your tax unit"]
     model = load_country_household_model("us")
@@ -767,18 +759,18 @@ def test_us_a_chosen_spm_selection_must_have_its_geography() -> None:
     national = calculate(spm={"geography_kind": "national"})
 
     assert isinstance(inherited, HouseholdExecutionResult), inherited
-    unit = inherited.output.results[0].household.to_situation()["spm_units"]
+    unit = inherited.output.household.to_situation()["spm_units"]
     assert unit["your spm unit"]["spm_unit_spm_threshold"] == {"2026": None}
     assert isinstance(chosen, HouseholdExecutionFailure)
     assert chosen.error.code == "invalid_spm_selection"
     assert chosen.error.spm_error is not None
     assert chosen.error.spm_error.code == "SPM_GEOGRAPHY_REQUIRED"
     assert isinstance(national, HouseholdExecutionResult), national
-    unit = national.output.results[0].household.to_situation()["spm_units"]
+    unit = national.output.household.to_situation()["spm_units"]
     assert isinstance(unit["your spm unit"]["spm_unit_spm_threshold"]["2026"], float)
     assert national.output.spm_config is not None
     assert national.output.spm_config.geography_kind == "national"
-    receipt = national.output.results[0].spm_provenance
+    receipt = national.output.spm_provenance
     assert receipt is not None
     assert receipt.geography_kind == "national"
 
@@ -832,7 +824,7 @@ def test_us_calculate_full_calculates_the_request_year_not_this_year() -> None:
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
-    situation = outcome.output.results[0].household.to_situation()
+    situation = outcome.output.household.to_situation()
     assert _periods(situation) == {"2025"}
     tax_unit = situation["tax_units"]["tax-unit-1"]
     household = situation["households"]["household-1"]
@@ -866,7 +858,7 @@ def test_us_an_axis_without_a_period_varies_the_request_year() -> None:
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
-    situation = outcome.output.results[0].household.to_situation()
+    situation = outcome.output.household.to_situation()
     incomes = situation["households"]["household-1"]["household_net_income"]["2025"]
     assert incomes[0] < incomes[1] < incomes[2]
     assert situation["people"]["person-1"]["employment_income"] == {
@@ -998,14 +990,14 @@ def test_uk_axes_calculate_one_value_per_point() -> None:
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
-    situation = outcome.output.results[0].household.to_situation()
+    situation = outcome.output.household.to_situation()
     incomes = situation["households"]["your household"]["household_net_income"]
     assert len(incomes["2026"]) == 3
     assert incomes["2026"][0] < incomes["2026"][2]
     assert situation["people"]["you"]["employment_income"] == {
         "2026": [0.0, 30_000.0, 60_000.0]
     }
-    assert outcome.output.results[0].spm_provenance is None
+    assert outcome.output.spm_provenance is None
     assert outcome.output.spm_config is None
 
 
@@ -1017,7 +1009,7 @@ def test_uk_calculate_full_adds_every_missing_yearly_variable() -> None:
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
-    you = outcome.output.results[0].household.to_situation()["people"]["you"]
+    you = outcome.output.household.to_situation()["people"]["you"]
     assert isinstance(you["income_tax"]["2026"], float)
 
 
@@ -1026,43 +1018,32 @@ def test_uk_unrecognized_inputs_fail_with_public_api_errors() -> None:
         **UK_SINGLE,
         "people": {"you": {**UK_SINGLE["people"]["you"], "not_a_variable": 1}},
     }
-    request = _request(
-        "uk",
-        household,
-        policies=[
-            {"policy_key": "baseline", "parameters": {}},
-            {"policy_key": "reform", "parameters": {"gov.not.a.parameter": {}}},
-        ],
-    )
-
     outcome = calculate_household(
-        request,
+        _request("uk", household),
         worker=_worker("uk"),
         dependencies=HouseholdCalculationDependencies(),
     )
 
-    # The first policy's request already fails on the household's own input,
-    # as the Public API's baseline request would.
     assert isinstance(outcome, HouseholdExecutionFailure)
     assert outcome.error.code == "invalid_inputs"
     assert outcome.error.message == (
         "Unrecognized calculate input(s): Unrecognized household variable "
         "`not_a_variable` at `household.people.you.not_a_variable`."
     )
-    assert outcome.error.policy_key is None
     assert [error.path for error in outcome.error.input_errors] == [
         "household.people.you.not_a_variable"
     ]
 
 
-def test_uk_unrecognized_policy_parameters_name_their_policy() -> None:
+def test_uk_unrecognized_policy_parameters_follow_the_households_inputs() -> None:
+    # The household's unknown names are listed first, then the policy's, as
+    # the Public API lists them for one request.
+    household = {
+        **UK_SINGLE,
+        "people": {"you": {**UK_SINGLE["people"]["you"], "not_a_variable": 1}},
+    }
     request = _request(
-        "uk",
-        UK_SINGLE,
-        policies=[
-            {"policy_key": "baseline", "parameters": {}},
-            {"policy_key": "reform", "parameters": {"gov.not.a.parameter": {}}},
-        ],
+        "uk", household, policy={"parameters": {"gov.not.a.parameter": {}}}
     )
 
     outcome = calculate_household(
@@ -1073,9 +1054,9 @@ def test_uk_unrecognized_policy_parameters_name_their_policy() -> None:
 
     assert isinstance(outcome, HouseholdExecutionFailure)
     assert outcome.error.code == "invalid_inputs"
-    assert outcome.error.policy_key == "reform"
     assert [error.path for error in outcome.error.input_errors] == [
-        "policy.gov.not.a.parameter"
+        "household.people.you.not_a_variable",
+        "policy.gov.not.a.parameter",
     ]
 
 
@@ -1083,37 +1064,34 @@ def test_uk_reform_values_given_as_text_are_converted_to_numbers() -> None:
     # The Public API converts a reform value to the parameter's type, reading
     # numeric text as a number first.
     basic_rate = "gov.hmrc.income_tax.rates.uk[0].rate"
-    request = _request(
-        "uk",
-        UK_SINGLE,
-        policies=[
-            {"policy_key": "baseline", "parameters": {}},
-            {
-                "policy_key": "reform",
-                "parameters": {basic_rate: {"2026-01-01.2100-12-31": "0.3"}},
-            },
-        ],
+    policies = (
+        {"parameters": {}},
+        {"parameters": {basic_rate: {"2026-01-01.2100-12-31": "0.3"}}},
     )
 
-    outcome = calculate_household(
-        request,
-        worker=_worker("uk"),
-        dependencies=HouseholdCalculationDependencies(),
-    )
+    outcomes = [
+        calculate_household(
+            _request("uk", UK_SINGLE, policy=policy),
+            worker=_worker("uk"),
+            dependencies=HouseholdCalculationDependencies(),
+        )
+        for policy in policies
+    ]
 
-    assert isinstance(outcome, HouseholdExecutionResult), outcome
+    assert all(isinstance(outcome, HouseholdExecutionResult) for outcome in outcomes)
     baseline, reform = (
-        result.household.to_situation()["households"]["your household"][
+        outcome.output.household.to_situation()["households"]["your household"][
             "household_net_income"
         ]["2026"]
-        for result in outcome.output.results
+        for outcome in outcomes
+        if isinstance(outcome, HouseholdExecutionResult)
     )
     assert isinstance(baseline, float)
     assert isinstance(reform, float)
     assert reform < baseline
 
 
-def test_uk_deprecated_inputs_warn_in_every_policy_result() -> None:
+def test_uk_deprecated_inputs_are_dropped_with_a_warning() -> None:
     household = {
         **UK_SINGLE,
         "people": {
@@ -1123,27 +1101,17 @@ def test_uk_deprecated_inputs_warn_in_every_policy_result() -> None:
             }
         },
     }
-    request = _request(
-        "uk",
-        household,
-        policies=[
-            {"policy_key": "baseline", "parameters": {}},
-            {"policy_key": "other-baseline", "parameters": {}},
-        ],
-    )
-
     outcome = calculate_household(
-        request,
+        _request("uk", household),
         worker=_worker("uk"),
         dependencies=HouseholdCalculationDependencies(),
     )
 
     assert isinstance(outcome, HouseholdExecutionResult), outcome
-    for result in outcome.output.results:
-        assert len(result.warnings) == 1
-        assert "uc_has_limited_capability_for_work" in result.warnings[0]
-        you = result.household.to_situation()["people"]["you"]
-        assert "uc_has_limited_capability_for_work" not in you
+    (warning,) = outcome.output.warnings
+    assert "uc_has_limited_capability_for_work" in warning
+    you = outcome.output.household.to_situation()["people"]["you"]
+    assert "uc_has_limited_capability_for_work" not in you
 
 
 def test_uk_spm_settings_are_refused() -> None:
