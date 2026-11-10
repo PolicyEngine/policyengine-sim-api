@@ -40,6 +40,11 @@ and this repository has no migration chain of its own
   `household_jobs`), modelled in `libs/policyengine-simulation-persistence`.
   The service connects as its own role, which policyengine-api's privilege
   manifest grants.
+- the policyengine-api tables a calculation is read from (`households`,
+  `policies`, `parameters`, `parameter_values`, `tax_benefit_models` and
+  `tax_benefit_model_versions`), which the simulation service only reads.
+  Their read-only models in that library's `input_tables.py` name only the
+  columns the service reads, apart from the models of the tables it writes.
 - the run tables the v2 Modal coordinator, workers, household functions and
   stuck-run sweep write as the Modal worker role: `report_runs`, `simulation_runs`, the
   result tables and `household_jobs`. Their mappings in
