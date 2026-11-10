@@ -919,6 +919,30 @@ class TestModalRunSimulation:
         assert writes[-1][1].stage is JobStage.REFORM
         assert writes[-1][1].attempts == 2
 
+    def test__preempted_job_is_recorded_at_warning(
+        self, modal_app, monkeypatch, recorded_observability_runtime
+    ):
+        # Modal preempts a container by raising KeyboardInterrupt in the
+        # running function, then runs the same input again.
+        runtime, written_records = recorded_observability_runtime
+
+        def dispatch(_params, *, app_name, runtime, progress):
+            progress.enter(JobStage.BASELINE)
+            raise KeyboardInterrupt
+
+        self._wire(modal_app, monkeypatch, dispatch)
+        monkeypatch.setattr(
+            modal_app,
+            "_configure_modal_observability",
+            lambda *, service_role: runtime,
+        )
+
+        with pytest.raises(KeyboardInterrupt):
+            modal_app.run_simulation({"country": "us"})
+
+        assert _operation_completions(written_records) == [("WARNING", "interrupted")]
+        assert _error_records(written_records) == []
+
     def test__store_failure_does_not_change_the_result(self, modal_app, monkeypatch):
         from policyengine_simulation_contract import job_progress_state
 
@@ -946,3 +970,39 @@ class TestModalRunSimulation:
         )
 
         assert modal_app._job_progress_reporter() is NULL_JOB_PROGRESS
+
+
+def test_preempted_segment_is_recorded_at_warning(
+    modal_app, monkeypatch, recorded_observability_runtime
+):
+    # A segment child of a national run is preempted the same way.
+    runtime, written_records = recorded_observability_runtime
+    monkeypatch.setattr(
+        modal_app,
+        "_configure_modal_observability",
+        lambda *, service_role: runtime,
+    )
+
+    def preempted(_params, *, runtime):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sr, "run_simulation_impl", preempted)
+
+    with pytest.raises(KeyboardInterrupt):
+        modal_app.run_simulation_segment({"country": "us"})
+
+    assert _operation_completions(written_records) == [("WARNING", "interrupted")]
+    assert _error_records(written_records) == []
+
+
+def _operation_completions(written_records: list[dict]) -> list[tuple[str, str]]:
+    """Return the severity and outcome of each operation completion record."""
+    return [
+        (record["severity"], record["outcome"])
+        for record in written_records
+        if record.get("event.name") == "operation.completed"
+    ]
+
+
+def _error_records(written_records: list[dict]) -> list[dict]:
+    return [record for record in written_records if record["severity"] == "ERROR"]

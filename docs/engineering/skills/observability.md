@@ -80,9 +80,9 @@ appropriate `StagePlan` and call `plan.name(Stage.VALUE)`. Do not add span name
 string literals in services or workers.
 
 Open a span with `runtime.span(plan.name(Stage.VALUE))`, and an operation with
-`runtime.operation(...)`. policyengine-observability 3.0.4 types both scopes
-correctly: their `__exit__` and `__aexit__` return `Literal[False]`, so Pyright
-knows an exception raised in the block propagates; see
+`runtime.operation(...)`. policyengine-observability 3.0.4 and later type both
+scopes correctly: their `__exit__` and `__aexit__` return `Literal[False]`, so
+Pyright knows an exception raised in the block propagates; see
 `docs/engineering/skills/type-checking.md`.
 
 When adding a run configuration or runtime stage:
@@ -121,6 +121,33 @@ attribute set is bounded by the `JobStage` enum.
 Modal can run the same call again after a preemption, under the same call
 id. A later attempt continues the stored stage record, so the durations add
 up over attempts, and `job_attempts` counts them.
+
+### Preemptions
+
+Modal delivers a preemption to a running synchronous function, which every
+executor and Stage 12 Modal function is, as `KeyboardInterrupt`, then runs
+the same input again. In an async app, such as the gateway's ASGI app, Modal
+cancels the running task instead, so a request there ends in
+`asyncio.CancelledError` and what follows doesn't apply to it.
+policyengine-observability 3.0.7 and later
+record an operation or request that ends in `KeyboardInterrupt` with the
+outcome `interrupted` at WARNING and leave it out of the error count metric;
+a span that ends in it keeps an unset status and gets the attribute
+`policyengine.outcome` set to `interrupted`. The exception propagates
+unchanged, so the preempted call's own records don't reach the daily
+telemetry error report. Let `KeyboardInterrupt` leave the operation block as
+it is: code that catches it and raises another exception instead reports the
+attempt as a failure at ERROR. `except Exception` doesn't catch it.
+
+Modal ends a call it cancels with `InputCancellation` instead, which is a
+`BaseException` but not a `KeyboardInterrupt`, and policyengine-observability
+records that operation with the outcome `error` at ERROR. A preempted Stage 12
+segment runner cancels the segment calls it started, and a preempted Stage 12
+coordinator with a report run cancels its unfinished simulation calls; a
+segmented US simulation cancelled that way cancels its own started segment
+calls in turn. Each of those calls that was running writes an ERROR record,
+so one coordinator preemption can write one for each simulation and each of
+its running segments.
 
 ## Metric resource identity
 
