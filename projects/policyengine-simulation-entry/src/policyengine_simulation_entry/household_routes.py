@@ -2,7 +2,9 @@
 
 - ``POST /household-calculations`` (permission ``simulation:submit``) creates
   a household job and starts its household function's call, answering 202
-  with the job's ID and status.
+  with the job's ID and status. A 202 ``pending`` may also be a job whose
+  call Modal didn't confirm and whose state couldn't then be recorded or
+  read: poll the job rather than submitting again.
 - ``GET /household-calculations/{household_job_id}`` (``simulation:read``)
   returns the job as it stands: its status, the household function's result
   document once it has one, and its error message.
@@ -11,7 +13,10 @@ A refused submission answers 400 (a row it names, or the household function
 it needs, is missing) or 422 (its fields, or the stored data it names, cannot
 be calculated), naming why. Either route answers 503 with ``Retry-After``
 when household calculations are not configured or a dependency cannot be
-read, and a submission does too when Modal refuses the call.
+read, and a submission does too when Modal refuses the call and its job was
+failed. Every 500 of either route, an unexpected failure or a request the
+service built and the household contract refuses, is the JSON error with
+code ``internal_error``.
 
 A submission gets its observability ID from the caller's header, or a new
 one, and passes it to the household function. ``household_jobs`` keeps no
@@ -22,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import traceback
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
@@ -118,7 +124,10 @@ class HouseholdCalculations(Protocol):
         *,
         observability_context: dict[str, Any] | None,
     ) -> HouseholdCalculationAccepted:
-        """Create the household job and start its call."""
+        """Create the household job and start its call; return it as it stands.
+
+        A ``pending`` job may be one whose call Modal didn't confirm.
+        """
         ...
 
     async def read(self, job_id: UUID) -> HouseholdJobRecord | None:
@@ -201,10 +210,24 @@ def _submission_failure_response(error: Exception) -> JSONResponse:
 def _unexpected_failure_response(route: str, error: Exception) -> JSONResponse:
     """Answer an unexpected failure with the JSON 500 the routes declare.
 
-    The log names the route and the error's type only; its text could
-    repeat request or stored data.
+    The log is the fixed event ``household_route_failed`` with the route, the
+    error's type and its stack frames (file, line and function), never the
+    error's message or any value, which could repeat request or stored data.
+    The fields go in ``policyengine_attributes`` too, the only extra fields
+    the observability runtime's log handler keeps.
     """
-    logger.error("household_route_failed: %s raised %s", route, type(error).__name__)
+    fields = {
+        "route": route,
+        "error_type": type(error).__name__,
+        "stack_frames": [
+            f"{frame.filename}:{frame.lineno} in {frame.name}"
+            for frame in traceback.extract_tb(error.__traceback__)
+        ],
+    }
+    logger.error(
+        "household_route_failed",
+        extra={**fields, "policyengine_attributes": fields},
+    )
     return _error_response(
         status.HTTP_500_INTERNAL_SERVER_ERROR,
         HouseholdCalculationError(
@@ -270,7 +293,14 @@ def add_household_calculation_routes(
         status_code=status.HTTP_202_ACCEPTED,
         response_model=HouseholdCalculationAccepted,
         responses={
-            202: {"description": "The job was created and its call started"},
+            202: {
+                "description": (
+                    "The job was created and its call started; or Modal didn't "
+                    "confirm the call and the job's state couldn't be recorded "
+                    "or read, and it is answered pending: poll it rather than "
+                    "submitting again"
+                )
+            },
             400: {
                 "description": (
                     "A row the request names, or the household function it "
