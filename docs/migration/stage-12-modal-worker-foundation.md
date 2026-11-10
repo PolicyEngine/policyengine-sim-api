@@ -501,9 +501,12 @@ computed because no file existed.
 The versioned v2 application also defines a household function for each
 country, `calculate_household_us` and `calculate_household_uk`. Each call
 calculates one household, in the Public API's situation shape and with
-optional axes, under one to ten policies, so a baseline and its reform are
-calculated in one call. It takes a `HouseholdExecutionRequest` and returns a
-`HouseholdExecutionResult` or a typed `HouseholdExecutionFailure` from
+optional axes, for one year under one policy, as a household job or a
+household simulation run is one household, one year and one policy; a
+baseline and its reform are two calls. It takes a `HouseholdExecutionRequest`
+and returns a `HouseholdExecutionResult`, which holds the calculated
+household with its warnings and SPM receipt, or a typed
+`HouseholdExecutionFailure`, from
 `policyengine_simulation_contract.household_execution`, as JSON. The request
 names the run's year, such as a stored household's default year. A
 calculate-full request adds the household's missing variables for that year,
