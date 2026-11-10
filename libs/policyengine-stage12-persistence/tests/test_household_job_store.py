@@ -10,9 +10,19 @@ worker role (see ``report_run_database``).
 from __future__ import annotations
 
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+from policyengine_simulation_contract.household_execution import (
+    CalculatedHousehold,
+    HouseholdBundleProvenance,
+    HouseholdCalculationError,
+    HouseholdCalculationOutput,
+    HouseholdExecutionFailure,
+    HouseholdExecutionResult,
+    HouseholdWorkerIdentity,
+    parse_household_execution_outcome,
+)
 from policyengine_stage12_persistence import (
     ActiveRun,
     ReportRunStore,
@@ -25,25 +35,53 @@ from sqlalchemy import select
 
 LATER = NOW + timedelta(minutes=5)
 CUTOFF = NOW + timedelta(minutes=30)
-WORKER = {
-    "application_name": "policyengine-simulation-v2-py6-12-0",
-    "function_name": "calculate_household_us",
-}
-SUCCEEDED_DOCUMENT = {
-    "status": "succeeded",
-    "schema_version": 1,
-    "calculation_id": "00000000-0000-4000-8000-0000000000c1",
-    "output": {"country": "us", "household": {"people": {"you": {"age": {}}}}},
-    "worker": WORKER,
-}
-FAILED_DOCUMENT = {
-    "status": "failed",
-    "schema_version": 1,
-    "calculation_id": "00000000-0000-4000-8000-0000000000c1",
-    "error": {"code": "invalid_inputs", "message": "Unrecognized inputs"},
-    "worker": WORKER,
-}
-FAILURE_SUMMARY = "invalid_inputs: Unrecognized inputs"
+CALCULATION_ID = UUID("00000000-0000-4000-8000-0000000000c1")
+WORKER = HouseholdWorkerIdentity(
+    application_name="policyengine-simulation-v2-py6-12-0",
+    function_name="calculate_household_us",
+)
+# The documents a household function stores, built from the contract's models
+# so they stay valid household function outcomes.
+SUCCEEDED_OUTCOME = HouseholdExecutionResult(
+    calculation_id=CALCULATION_ID,
+    output=HouseholdCalculationOutput(
+        country="us",
+        bundle=HouseholdBundleProvenance(
+            policyengine_version="6.12.0",
+            core_package_version="3.33.0",
+            country_package_name="policyengine-us",
+            country_package_version="1.0.0",
+            bundle_manifest_sha256="a" * 64,
+        ),
+        household=CalculatedHousehold.model_validate(
+            {
+                "people": {"you": {"age": {"2026": 40}}},
+                "households": {
+                    "your household": {
+                        "members": ["you"],
+                        "household_net_income": {"2026": 25_000.0},
+                    }
+                },
+            }
+        ),
+    ),
+    worker=WORKER,
+)
+FAILED_OUTCOME = HouseholdExecutionFailure(
+    calculation_id=CALCULATION_ID,
+    error=HouseholdCalculationError(
+        code="invalid_inputs",
+        message="Unrecognized calculate input(s): Unrecognized policy parameter",
+    ),
+    worker=WORKER,
+)
+SUCCEEDED_DOCUMENT = SUCCEEDED_OUTCOME.model_dump(mode="json")
+FAILED_DOCUMENT = FAILED_OUTCOME.model_dump(mode="json")
+# What the executor's household_failure_summary returns for FAILED_OUTCOME: its
+# error code, then its whole message, which is well under the summary's limit.
+FAILURE_SUMMARY = (
+    "invalid_inputs: Unrecognized calculate input(s): Unrecognized policy parameter"
+)
 ENDED_MESSAGE = "modal_call_ended: the job's Modal call ended without recording it"
 
 
@@ -155,7 +193,9 @@ def test_a_household_job_completes_with_its_result_only_while_its_call_holds_it(
     repeated = store.complete_household_job(
         job_id,
         modal_call_id="fc-household",
-        result={**SUCCEEDED_DOCUMENT, "output": {}},
+        result=SUCCEEDED_OUTCOME.model_copy(
+            update={"calculation_id": uuid4()}
+        ).model_dump(mode="json"),
         completed_at=CUTOFF,
     )
     failed_after = store.fail_household_job(
@@ -178,6 +218,7 @@ def test_a_household_job_completes_with_its_result_only_while_its_call_holds_it(
     row = seeder.row("household_jobs", job_id)
     assert row["status"] == "succeeded"
     assert row["result"] == SUCCEEDED_DOCUMENT
+    assert parse_household_execution_outcome(row["result"]) == SUCCEEDED_OUTCOME
     assert row["error_message"] is None
     assert row["completed_at"] == LATER
     assert row["updated_at"] == LATER
@@ -229,6 +270,7 @@ def test_a_household_job_fails_with_its_failure_document_and_then_never_complete
     assert completed == RunWrite(changed=False, status=RunStatus.FAILED)
     row = seeder.row("household_jobs", job_id)
     assert row["result"] == FAILED_DOCUMENT
+    assert parse_household_execution_outcome(row["result"]) == FAILED_OUTCOME
     assert row["error_message"] == FAILURE_SUMMARY
     assert row["completed_at"] == LATER
 
