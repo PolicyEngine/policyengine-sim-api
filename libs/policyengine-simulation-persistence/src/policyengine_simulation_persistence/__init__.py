@@ -31,7 +31,6 @@ from policyengine_simulation_persistence.household_job_store import (
 )
 from policyengine_simulation_persistence.input_tables import input_metadata
 from policyengine_simulation_persistence.policy_reform import (
-    ConflictingPolicyValuesError,
     MissingPolicyParametersError,
     PolicyReform,
     UnknownPolicyError,
@@ -57,7 +56,6 @@ from policyengine_simulation_persistence.tables import (
 __all__ = [
     "SERVICE_TABLE_PRIVILEGES",
     "SERVICE_UPDATABLE_COLUMNS",
-    "ConflictingPolicyValuesError",
     "HouseholdCalculationInputs",
     "HouseholdJobRecord",
     "HouseholdJobReferenceError",

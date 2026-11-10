@@ -95,9 +95,10 @@ The routes answer 503 with `Retry-After` when the manifest or the database
 can't be read. When Modal refuses the call, or doesn't confirm it within ten
 seconds, the job is failed at once and the 503 (`modal_call_refused`) names
 it; a job the household function claimed meanwhile is answered with 202 as
-it stands, and a job whose state couldn't then be recorded or read gets a
-503 `job_state_unknown` naming it, to be read before submitting again. A
-request the service builds and the household contract refuses is an
-internal error, 500. `DEPLOYMENT.md` describes the deployment settings and the
+it stands, and a job whose state couldn't then be recorded or read with 202
+`pending`, to be read rather than submitted again (the stuck-run sweep fails
+it if no call ever starts). Every 500 of either route, from an unexpected
+failure or a request the service built and the household contract refuses,
+is the JSON error with code `internal_error`. `DEPLOYMENT.md` describes the deployment settings and the
 staging check.
 

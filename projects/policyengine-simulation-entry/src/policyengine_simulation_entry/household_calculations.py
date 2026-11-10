@@ -35,7 +35,6 @@ from policyengine_simulation_contract.household_execution import (
     HouseholdExecutionRequest,
 )
 from policyengine_simulation_persistence import (
-    ConflictingPolicyValuesError,
     HouseholdJobReferenceError,
     HouseholdJobStatus,
     MissingPolicyParametersError,
@@ -190,18 +189,6 @@ class PreparedHouseholdJob:
 
     job: NewHouseholdJob
     payload: dict[str, Any]
-
-
-def _job_state_unknown(job_id: UUID) -> HouseholdCalculationUnavailableError:
-    return HouseholdCalculationUnavailableError(
-        code="job_state_unknown",
-        detail=(
-            "Modal did not confirm the household function's call, and the job's "
-            "state could not be recorded or read; read the job before submitting "
-            "again."
-        ),
-        household_job_id=job_id,
-    )
 
 
 def _database_unavailable() -> HouseholdCalculationUnavailableError:
@@ -366,7 +353,7 @@ class HouseholdCalculationService:
         HouseholdCalculationInternalError (500) when the service builds a
         request the contract refuses, and HouseholdCalculationUnavailableError
         (503) when the manifest or database cannot be read, or Modal doesn't
-        confirm the call and the job was failed or its state is unknown.
+        confirm the call and the job was failed.
         """
         worker = await self._default_worker(request.country)
         prepared = await self._prepare(request, worker)
@@ -459,16 +446,6 @@ class HouseholdCalculationService:
                     for name in error.parameter_names
                 )
             ) from None
-        except ConflictingPolicyValuesError as error:
-            raise HouseholdCalculationUnprocessableError(
-                (
-                    UnprocessableReason(
-                        loc=("body", "policy_id"),
-                        msg=str(error),
-                        type="conflicting_policy_values",
-                    ),
-                )
-            ) from None
         except SQLAlchemyError as error:
             logger.warning(
                 "household_inputs_unreadable",
@@ -510,9 +487,11 @@ class HouseholdCalculationService:
         Modal may have accepted the call after the wait ended, and its
         household function claimed the job first: the failure write then
         changes nothing, and the job is answered as it stands. Raise
-        HouseholdCalculationUnavailableError, ``modal_call_refused`` when
-        the job was failed, and ``job_state_unknown`` when the failure write,
-        or reading the job back, itself failed.
+        HouseholdCalculationUnavailableError ``modal_call_refused`` when the
+        job was failed. When the failure write, or reading the job back,
+        itself fails, the job is answered pending: it exists, so the caller
+        reads it rather than submitting again, and the stuck-run sweep fails
+        it if no call ever starts.
         """
         # The log names the error type only; its text could repeat request data.
         logger.error(
@@ -536,7 +515,9 @@ class HouseholdCalculationService:
                     "error_type": type(write_error).__name__,
                 },
             )
-            raise _job_state_unknown(job_id) from None
+            return HouseholdCalculationAccepted(
+                job_id=job_id, status=HouseholdJobStatus.PENDING
+            )
         if failed:
             raise HouseholdCalculationUnavailableError(
                 code="modal_call_refused",
@@ -556,10 +537,12 @@ class HouseholdCalculationService:
                     "error_type": type(read_error).__name__,
                 },
             )
-            raise _job_state_unknown(job_id) from None
-        if record is None:
-            raise _job_state_unknown(job_id)
-        return HouseholdCalculationAccepted(job_id=job_id, status=record.status)
+        else:
+            if record is not None:
+                return HouseholdCalculationAccepted(job_id=job_id, status=record.status)
+        return HouseholdCalculationAccepted(
+            job_id=job_id, status=HouseholdJobStatus.PENDING
+        )
 
     async def _record_call(self, job_id: UUID, call_id: str) -> HouseholdJobStatus:
         """Record the call's ID; when that fails, answer the job as created.

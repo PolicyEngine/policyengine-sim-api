@@ -1,9 +1,12 @@
-"""How the household path names the job's policy in the household contract.
+"""How the household path's request maps onto the household contract's request.
 
 ``policyengine_simulation_contract.household_execution`` defines the request
-a household function takes. Everything the service depends on about how
-that request names the policy a job calculates is here, so a change to the
-contract's policy fields changes this module alone.
+a household function takes. This module holds what the service depends on
+about its fields: how the request names the job's one policy
+(``job_policy_fields``), and which field of the service's own request each
+of its fields comes from (``request_field_of``), so that a refusal names the
+caller's field or, for a field the service builds itself, is an internal
+error. A change to the contract's fields changes this module alone.
 """
 
 from __future__ import annotations

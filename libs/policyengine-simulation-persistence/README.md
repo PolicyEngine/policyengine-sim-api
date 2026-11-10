@@ -104,8 +104,9 @@ that one day. The executor's
 `test_reform_periods_apply_in_2200_only_through_a_stop_in_2200` shows how
 both countries' household functions apply each form in 2200, and its
 `test_py_reform_dicts.py` pins .py's own periods for the cases the reader's
-tests check. Two values of one parameter starting on the same day raise
-`ConflictingPolicyValuesError`, so neither is lost.
+tests check. Periods are days, so of a parameter's values starting on the
+same UTC day only the latest applies, as in .py, which ends the earlier one
+before it starts.
 
 ## Checking the models against the Public API
 

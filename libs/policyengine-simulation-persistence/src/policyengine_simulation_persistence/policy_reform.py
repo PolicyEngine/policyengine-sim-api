@@ -13,10 +13,11 @@ UTC. A value with no end date follows .py's own rule
 it stops the day before the same parameter's next later value starts, and
 otherwise runs to the end of 2200, the latest year a household job or
 simulation run can be for, where .py stops at 2100. So once a later bounded
-value ends, current law applies. A range is used even for the last value
-because the countries' models read a start date alone differently:
-policyengine-core reads it as "from that day on", but policyengine-uk's
-reform dictionary as that one day.
+value ends, current law applies. Periods are days, so of a parameter's
+values starting on one UTC day only the latest applies, as in .py. A range
+is used even for the last value because the countries' models read a start
+date alone differently: policyengine-core reads it as "from that day on",
+but policyengine-uk's reform dictionary as that one day.
 """
 
 from __future__ import annotations
@@ -63,10 +64,6 @@ class MissingPolicyParametersError(ValueError):
         )
 
 
-class ConflictingPolicyValuesError(ValueError):
-    """Two of a policy's values for one parameter start on the same day."""
-
-
 def reform_period(
     start_date: datetime,
     end_date: datetime | None,
@@ -99,10 +96,10 @@ def read_policy_reform(
 ) -> PolicyReform:
     """Return the values ``country``'s policy sets, by parameter name and period.
 
-    Raise UnknownPolicyError when the country has no such policy,
-    MissingPolicyParametersError when ``catalog_version_id`` lacks a
-    parameter the policy sets, and ConflictingPolicyValuesError when two
-    values of one parameter start on the same day (in UTC).
+    Of a parameter's values starting on the same UTC day, the latest takes
+    that day over. Raise UnknownPolicyError when the country has no such
+    policy, and MissingPolicyParametersError when ``catalog_version_id``
+    lacks a parameter the policy sets.
     """
     found = connection.execute(
         select(policies.c.id).where(
@@ -135,23 +132,24 @@ def read_policy_reform(
     missing = [name for name in names if name not in available]
     if missing:
         raise MissingPolicyParametersError(missing)
+    # The rows are ordered by parameter name, then start date. Periods are
+    # days, so of a parameter's values starting on one UTC day the latest
+    # takes that day over, as a later value takes over in .py.
+    kept = [
+        row
+        for position, row in enumerate(values)
+        if position + 1 == len(values)
+        or values[position + 1].name != row.name
+        or _utc_day(values[position + 1].start_date) != _utc_day(row.start_date)
+    ]
     reform: PolicyReform = {}
-    # The rows are ordered by parameter name, then start date.
-    for position, row in enumerate(values):
-        following = values[position + 1] if position + 1 < len(values) else None
+    for position, row in enumerate(kept):
+        following = kept[position + 1] if position + 1 < len(kept) else None
         next_start_date = (
             following.start_date
             if following is not None and following.name == row.name
             else None
         )
-        if next_start_date is not None and _utc_day(next_start_date) == _utc_day(
-            row.start_date
-        ):
-            msg = (
-                f"the policy sets {row.name} twice from "
-                f"{_utc_day(row.start_date).isoformat()}"
-            )
-            raise ConflictingPolicyValuesError(msg)
         period = reform_period(
             row.start_date, row.end_date, next_start_date=next_start_date
         )

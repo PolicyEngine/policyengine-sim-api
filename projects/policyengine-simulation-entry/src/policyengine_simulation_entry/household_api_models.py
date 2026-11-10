@@ -41,11 +41,9 @@ HouseholdUnavailableCode = Literal[
     # Modal refused the household function's call, or did not accept it in
     # time; the job was failed at once.
     "modal_call_refused",
-    # Modal did not confirm the call, and the job's state could not then be
-    # recorded or read: read the job before submitting again.
-    "job_state_unknown",
 ]
-# The service built a household function request its contract refuses.
+# The service failed unexpectedly, or built a household function request its
+# contract refuses.
 HouseholdInternalCode = Literal["internal_error"]
 # Every code a household route's error answer carries.
 HouseholdErrorCode = Literal[
@@ -155,7 +153,9 @@ class HouseholdCalculationState(BaseModel):
 class HouseholdCalculationError(BaseModel):
     """Why a household route refused a request or cannot answer now.
 
-    ``household_job_id`` names the job a refused Modal call failed.
+    ``household_job_id`` is set only with ``modal_call_refused``: it names
+    the job the service created and then failed, because Modal refused the
+    household function's call or didn't accept it in time.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

@@ -73,20 +73,23 @@ _SUBMISSION_UNPROCESSABLE = {
 _SUBMISSION_UNAVAILABLE = {
     "description": (
         "Household calculations are not configured; the v2 version manifest "
-        "or the database cannot be read; Modal refused the household "
-        "function's call, and the job named by household_job_id was failed "
-        "(modal_call_refused); or Modal didn't confirm the call and that job's "
-        "state is unknown, so read it before submitting again "
-        "(job_state_unknown). Retry after Retry-After seconds"
+        "or the database cannot be read; or Modal refused the household "
+        "function's call, or didn't accept it in time, and the job named by "
+        "household_job_id was failed (modal_call_refused). Retry after "
+        "Retry-After seconds"
     ),
     "headers": _RETRY_AFTER,
     **_ERROR,
 }
 _SUBMISSION_INTERNAL_ERROR = {
     "description": (
-        "The service built a household function request the household "
-        "contract refuses (internal_error)"
+        "The service failed unexpectedly, or built a household function "
+        "request the household contract refuses (internal_error)"
     ),
+    **_ERROR,
+}
+_READ_INTERNAL_ERROR = {
+    "description": "The service failed unexpectedly (internal_error)",
     **_ERROR,
 }
 _READ_UNPROCESSABLE = {
@@ -195,6 +198,21 @@ def _submission_failure_response(error: Exception) -> JSONResponse:
     )
 
 
+def _unexpected_failure_response(route: str, error: Exception) -> JSONResponse:
+    """Answer an unexpected failure with the JSON 500 the routes declare.
+
+    The log names the route and the error's type only; its text could
+    repeat request or stored data.
+    """
+    logger.error("household_route_failed: %s raised %s", route, type(error).__name__)
+    return _error_response(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        HouseholdCalculationError(
+            code="internal_error", detail="The service could not answer the request."
+        ),
+    )
+
+
 def _observability_context(
     entry: EntryRuntime, observability_id: str
 ) -> dict[str, Any]:
@@ -280,6 +298,9 @@ def add_household_calculation_routes(
             )
         except _SUBMISSION_FAILURES as error:
             return _submission_failure_response(error)
+        # Every other failure is still answered as the JSON 500 declared.
+        except Exception as error:  # noqa: BLE001  # answered as internal_error
+            return _unexpected_failure_response(SUBMISSION_PATH, error)
         return JSONResponse(
             accepted.model_dump(mode="json"), status_code=status.HTTP_202_ACCEPTED
         )
@@ -298,6 +319,7 @@ def add_household_calculation_routes(
             403: _FORBIDDEN,
             404: {"description": "There is no such household job", **_ERROR},
             422: _READ_UNPROCESSABLE,
+            500: _READ_INTERNAL_ERROR,
             503: _READ_UNAVAILABLE,
         },
         dependencies=[Depends(reader)],
@@ -307,9 +329,13 @@ def add_household_calculation_routes(
             return _not_configured()
         try:
             record = await calculations.read(household_job_id)
+            state = None if record is None else _state(record).model_dump(mode="json")
         except HouseholdCalculationUnavailableError as error:
             return _unavailable(error)
-        if record is None:
+        # Every other failure is still answered as the JSON 500 declared.
+        except Exception as error:  # noqa: BLE001  # answered as internal_error
+            return _unexpected_failure_response(JOB_PATH, error)
+        if state is None:
             return _error_response(
                 status.HTTP_404_NOT_FOUND,
                 HouseholdCalculationError(
@@ -317,6 +343,6 @@ def add_household_calculation_routes(
                     detail=f"There is no household job {household_job_id}.",
                 ),
             )
-        return JSONResponse(_state(record).model_dump(mode="json"))
+        return JSONResponse(state)
 
     app.include_router(router)

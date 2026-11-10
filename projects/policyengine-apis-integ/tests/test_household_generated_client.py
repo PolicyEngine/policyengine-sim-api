@@ -1,8 +1,10 @@
 """Hermetic wire checks of the household routes' generated client models."""
 
+from uuid import UUID
+
 import httpx
 import pytest
-from policyengine_api_simulation_client import Client
+from policyengine_api_simulation_client import AuthenticatedClient
 from policyengine_api_simulation_client.api.default import (
     get_household_calculation,
     submit_household_calculation,
@@ -92,11 +94,11 @@ UNEXPECTED_FAILURE_ANSWER = {
 }
 
 
-def _client_answering(status_code: int, body: dict) -> Client:
+def _client_answering(status_code: int, body: dict) -> AuthenticatedClient:
     transport = httpx.MockTransport(
         lambda request: httpx.Response(status_code, json=body)
     )
-    client = Client(base_url="https://simulation.example")
+    client = AuthenticatedClient(base_url="https://simulation.example", token="test")
     client.set_httpx_client(
         httpx.Client(base_url="https://simulation.example", transport=transport)
     )
@@ -116,7 +118,7 @@ def test_a_500_is_read_as_a_household_calculation_error(route):
             ),
         )
     else:
-        response = get_household_calculation.sync_detailed(JOB_ID, client=client)
+        response = get_household_calculation.sync_detailed(UUID(JOB_ID), client=client)
 
     assert isinstance(response.parsed, HouseholdCalculationError)
     assert response.parsed.to_dict() == UNEXPECTED_FAILURE_ANSWER

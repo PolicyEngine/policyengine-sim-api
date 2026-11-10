@@ -94,8 +94,7 @@ class HouseholdJobStore:
         """Read the catalog version, household and policy in one transaction.
 
         Raise UnknownCatalogVersionError, UnknownHouseholdError, or the
-        policy reader's UnknownPolicyError, MissingPolicyParametersError or
-        ConflictingPolicyValuesError.
+        policy reader's UnknownPolicyError or MissingPolicyParametersError.
         """
         with self._transaction() as connection:
             catalog_version_id = read_catalog_version_id(
