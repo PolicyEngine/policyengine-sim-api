@@ -196,6 +196,13 @@ create/read/delete checks in the private report-artifact, simulation output and
 cache buckets. The temporary objects are deleted in the normal path and by exit
 cleanup after a failure.
 
+The current Public API omits `data` for the certified default dataset. The v2
+adapter therefore resolves an absent `data` field to the exact default dataset
+in the selected `.py` bundle. An explicit `data` value is eligible only when it
+identifies an artifact declared by that same bundle. The request model converts
+the Public API's `_telemetry` field to `telemetry`; the adapter accepts that
+correlation metadata but does not include it in either simulation input.
+
 ## Where output files are kept
 
 | Files | Bucket, named by the GitHub environment variable | Object key | Retention |
@@ -238,31 +245,40 @@ variable. The workers write both buckets with the same
 ### Deployments that change where output files go
 
 A report run reaches the v2 application that the manifest's default version
-names, or the one `STAGE12_V2_WORKER_VERSION` pins. Two cases still put a
-report run's simulation output file in the artifact bucket, or stop the run:
+names, or the one `STAGE12_V2_WORKER_VERSION` pins. An application's name comes
+from its .py version alone, and a deployment runs `modal deploy` before its
+checks, so it replaces an application of the same .py version in place before
+any check. That gives these cases:
 
-- **Before the default moves.** A deployment of this change moves the default
-  to its application only after every check. Until then report runs keep
-  reaching the previous application, which writes their simulation output
-  files to the artifact bucket, where they are deleted after 30 days. Runs that
-  succeeded before the change name files there too.
+- **A deployment of this change with a newer .py version than the default's.**
+  It adds a new application and moves the default to it only after every check.
+  Until then report runs keep reaching the previous application, which writes
+  their simulation output files to the artifact bucket, where they are deleted
+  after 30 days.
+- **A deployment of this change with the default's .py version.** Its
+  `modal deploy` replaces the default's application before any check, so new
+  calls write their files to the simulation output bucket from then on. The
+  secret-sync step, which runs earlier in the same job, has already added
+  `V2_SIMULATION_OUTPUT_BUCKET`.
 - **A deployment from an earlier commit.** Its secret-sync step replaces the
   whole `stage12-evaluation-runtime` secret without `V2_SIMULATION_OUTPUT_BUCKET`.
-  Report runs that reach an application from this change or later then fail
-  with the `ValueError` until a deployment from a later commit restores the
-  variable. The rollback workflow does not change Stage 12, so only such a
-  deployment does this.
+  - At the .py version of an application from this change, its `modal deploy`
+    puts the earlier code back in that application. Report runs reaching it
+    then succeed and write their files to the artifact bucket. They fail with
+    the `ValueError` only between the secret sync and the `modal deploy`, while
+    the application still runs this change's code.
+  - Applications of other .py versions from this change or later keep this
+    change's code, so report runs reaching them, for example before the
+    deployment moves the default, fail with the `ValueError` until a deployment
+    from a later commit restores the variable.
 
-So a succeeded simulation run can name a file that no longer exists: reusing
-succeeded simulation runs' output files must treat a run whose file is gone as
-not reusable.
+  The rollback workflow does not change Stage 12, so only such a deployment
+  does this.
 
-The current Public API omits `data` for the certified default dataset. The v2
-adapter therefore resolves an absent `data` field to the exact default dataset
-in the selected `.py` bundle. An explicit `data` value is eligible only when it
-identifies an artifact declared by that same bundle. The request model converts
-the Public API's `_telemetry` field to `telemetry`; the adapter accepts that
-correlation metadata but does not include it in either simulation input.
+Runs that succeeded before this change, and report runs in the cases above,
+name files in the artifact bucket. So a succeeded simulation run can name a
+file that no longer exists: reusing succeeded simulation runs' output files
+must treat a run whose file is gone as not reusable.
 
 ## Report output planning
 
