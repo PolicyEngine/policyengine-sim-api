@@ -11,6 +11,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     SimulationRole,
 )
+from policyengine_simulation_executor import stage12_artifacts
 from policyengine_simulation_executor.stage12_artifacts import (
     SimulationOutputBucket,
     Stage12ArtifactStore,
@@ -36,7 +37,12 @@ from stage12_fake_report_runs import (
     economy_aggregate,
     report_run_context,
 )
-from stage12_fake_stores import FakeArtifacts, FakeStore, simulation_frames
+from stage12_fake_stores import (
+    SIMULATION_OUTPUT_BUCKET,
+    FakeArtifacts,
+    FakeStore,
+    simulation_frames,
+)
 from stage12_runtime_support import (
     child_record,
     coordinate_report,
@@ -434,10 +440,18 @@ def test_a_report_run_through_real_workers_records_every_run_once() -> None:
         assert run.status is RunStatus.SUCCEEDED
         assert run.modal_call_id == f"fc-{role}-worker"
         assert run.output_uri == child.output_uri
+        assert run.output_uri == (
+            f"gs://{SIMULATION_OUTPUT_BUCKET}/staging/{run_id}.parquet"
+        )
         assert run.writes.count("complete_simulation_run") >= 1
     assert report_runs.report_runs[REPORT_RUN_ID].writes == [
         "claim_report_run",
         "complete_report_run",
+    ]
+    # Each worker wrote its output file to the simulation output bucket.
+    assert sorted(artifacts.simulation_run_outputs) == [
+        ("staging", BASELINE_RUN_ID),
+        ("staging", REFORM_RUN_ID),
     ]
 
 
@@ -516,3 +530,38 @@ def test_a_report_run_reads_its_workers_outputs_from_the_simulation_output_bucke
     # The inputs and the aggregate stay in the Stage 12 artifact bucket.
     assert store.parent.aggregate_output_uri.startswith(f"gs://{artifact_bucket}/")
     assert not any(path.endswith(".parquet") for path in artifact_objects.objects)
+
+
+def test_a_report_run_coordinator_without_an_output_bucket_fails_before_its_claim(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "STAGE12_ARTIFACT_BUCKET", "policyengine-stage12-staging-artifacts"
+    )
+    monkeypatch.delenv("V2_SIMULATION_OUTPUT_BUCKET", raising=False)
+    # Every bucket the coordinator opens is in memory, so it never reaches GCP.
+    monkeypatch.setattr(
+        stage12_artifacts, "ArtifactStore", lambda _bucket_name: InMemoryObjectStore()
+    )
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+    invoker = RecordingInvoker(FakeArtifacts())
+
+    with pytest.raises(ValueError, match="V2_SIMULATION_OUTPUT_BUCKET"):
+        coordinate_report(
+            report_execution_input().model_dump(mode="json"),
+            report_run_context().model_dump(mode="json"),
+            parent_record().model_dump(mode="json"),
+            application_name=report_run_context().modal_application,
+            coordinator_invocation_id=COORDINATOR_CALL_ID,
+            store=store,
+            invoker=invoker,
+            aggregator=economy_aggregate,
+            report_runs=report_runs,
+        )
+
+    assert store.parent is None
+    assert store.children == {}
+    assert invoker.events == []
+    report_run = report_runs.report_runs[REPORT_RUN_ID]
+    assert (report_run.status, report_run.writes) == (RunStatus.PENDING, [])

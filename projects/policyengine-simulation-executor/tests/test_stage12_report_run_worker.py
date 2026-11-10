@@ -6,6 +6,7 @@ import pytest
 from fixtures.fake_object_store import InMemoryObjectStore
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
+    PlannedSimulationExecutionInput,
     SimulationRole,
 )
 from policyengine_simulation_executor import stage12_artifacts
@@ -26,7 +27,12 @@ from stage12_fake_report_runs import (
     FakeReportRuns,
     report_run_context,
 )
-from stage12_fake_stores import FakeArtifacts, FakeStore, simulation_frames
+from stage12_fake_stores import (
+    SIMULATION_OUTPUT_BUCKET,
+    FakeArtifacts,
+    FakeStore,
+    simulation_frames,
+)
 from stage12_runtime_support import (
     child_record,
     invocation_context,
@@ -67,11 +73,11 @@ def _run_worker(simulation, store, report_runs, *, context=None, calculator=None
 
 
 def _run_worker_over(artifacts, simulation, store, report_runs, *, context):
-    """Run the baseline worker over ``artifacts``, a real two-bucket store."""
+    """Run the simulation's worker over ``artifacts``, a real two-bucket store."""
     return run_single_simulation(
         simulation.model_dump(mode="json"),
         context.model_dump(mode="json"),
-        required_country="us",
+        required_country=simulation.geography.country,
         modal_call_id="fc-baseline-worker",
         dependencies=SimulationWorkerDependencies(
             store=store,
@@ -94,6 +100,9 @@ def test_worker_records_its_simulation_run_after_its_stage12_record() -> None:
     assert run.status is RunStatus.SUCCEEDED
     assert run.modal_call_id == "fc-baseline-worker"
     assert run.output_uri == result["artifact"]["uri"]
+    assert run.output_uri == (
+        f"gs://{SIMULATION_OUTPUT_BUCKET}/staging/{BASELINE_RUN_ID}.parquet"
+    )
     assert run.output_sha256 == result["artifact"]["content_sha256"]
     # The simulation run succeeds last, so a worker Modal restarts between
     # the two writes finds its Stage 12 record succeeded and completes the
@@ -285,10 +294,11 @@ def test_report_run_worker_needs_its_modal_call_id() -> None:
 def test_report_run_worker_names_its_artifacts_by_digest(monkeypatch) -> None:
     simulation = planned_simulation(SimulationRole.BASELINE)
     built = []
+    artifacts = FakeArtifacts()
 
     def recording_artifact_store(*, report_run=False):
         built.append(report_run)
-        return FakeArtifacts()
+        return artifacts
 
     monkeypatch.setattr(simulation_module, "artifact_store", recording_artifact_store)
 
@@ -305,6 +315,8 @@ def test_report_run_worker_names_its_artifacts_by_digest(monkeypatch) -> None:
     )
 
     assert built == [True]
+    # The output file went to the simulation output bucket, for its run.
+    assert artifacts.simulation_run_outputs == [("staging", BASELINE_RUN_ID)]
 
 
 def _two_bucket_artifacts(*, content_addressed):
@@ -398,3 +410,38 @@ def test_a_report_run_worker_without_an_output_bucket_fails_before_its_claim(
     child = store.children[simulation.simulation_execution_id]
     assert child.status is ComparisonRunLifecycleStatus.PENDING
     assert report_runs.simulation_runs[BASELINE_RUN_ID].status is RunStatus.PENDING
+
+
+def _uk_planned_simulation():
+    """Return the baseline planned simulation, for the whole of the UK."""
+    payload = planned_simulation(SimulationRole.BASELINE).model_dump(mode="json")
+    payload["geography"] = {"country": "uk", "region": "uk"}
+    payload["output_plan"]["country"] = "uk"
+    payload["bundle"]["country_package_name"] = "policyengine-uk"
+    return PlannedSimulationExecutionInput.model_validate(payload)
+
+
+def test_a_uk_report_run_worker_keeps_its_output_in_the_simulation_output_bucket() -> (
+    None
+):
+    simulation = _uk_planned_simulation()
+    store = _seeded_store(simulation)
+    report_runs = FakeReportRuns()
+    artifacts, artifact_objects, output_objects = _two_bucket_artifacts(
+        content_addressed=True
+    )
+
+    result = _run_worker_over(
+        artifacts, simulation, store, report_runs, context=report_run_context()
+    )
+
+    digest = result["artifact"]["content_sha256"]
+    path = f"simulation-runs/staging/uk/{BASELINE_RUN_ID}/output-{digest}.parquet"
+    assert result["artifact"]["uri"] == f"gs://{OUTPUT_BUCKET}/{path}"
+    assert list(output_objects.objects) == [path]
+    assert report_runs.simulation_runs[BASELINE_RUN_ID].output_uri == (
+        f"gs://{OUTPUT_BUCKET}/{path}"
+    )
+    assert not any(
+        stored_path.endswith(".parquet") for stored_path in artifact_objects.objects
+    )

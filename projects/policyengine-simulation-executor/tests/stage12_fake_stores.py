@@ -22,6 +22,10 @@ from policyengine_simulation_executor.stage12_artifacts import (
 )
 from stage12_runtime_support import EVALUATION_ID, shared_output_plan
 
+# A report run's output files go to this bucket; every other artifact the
+# fake stores names the bucket "private".
+SIMULATION_OUTPUT_BUCKET = "private-simulation-outputs"
+
 
 class FakeStore:
     def __init__(self):
@@ -151,12 +155,41 @@ class FakeArtifacts:
         calculation_provenance=None,
         uk_local_authority_metadata=None,
     ):
+        return self._store_simulation(
+            f"gs://private/{simulation.role.value}.parquet",
+            simulation,
+            frames,
+            calculation_provenance=calculation_provenance,
+            uk_local_authority_metadata=uk_local_authority_metadata,
+        )
+
+    def write_simulation_run_output(self, location, *, simulation, frames, **metadata):
+        """Store a report run's output in the fake simulation output bucket."""
+        self.simulation_run_outputs.append(
+            (location.environment, location.simulation_run_id)
+        )
+        return self._store_simulation(
+            f"gs://{SIMULATION_OUTPUT_BUCKET}/{location.environment}/"
+            f"{location.simulation_run_id}.parquet",
+            simulation,
+            frames,
+            **metadata,
+        )
+
+    def _store_simulation(
+        self,
+        uri,
+        simulation,
+        frames,
+        *,
+        calculation_provenance=None,
+        uk_local_authority_metadata=None,
+    ):
         payload, row_identity = serialize_simulation_frames(
             frames,
             calculation_provenance=calculation_provenance,
             uk_local_authority_metadata=uk_local_authority_metadata,
         )
-        uri = f"gs://private/{simulation.role.value}.parquet"
         self.payloads[uri] = payload
         descriptor = SimulationArtifactDescriptor(
             evaluation_id=simulation.evaluation_id,
@@ -174,15 +207,6 @@ class FakeArtifacts:
         )
         return descriptor.model_copy(
             update={"calculation_provenance": calculation_provenance}
-        )
-
-    def write_simulation_run_output(self, location, *, simulation, frames, **metadata):
-        """Store a report run's output under the same URI ``write_simulation`` uses."""
-        self.simulation_run_outputs.append(
-            (location.environment, location.simulation_run_id)
-        )
-        return self.write_simulation(
-            prefix=None, simulation=simulation, frames=frames, **metadata
         )
 
     def read(self, uri):
