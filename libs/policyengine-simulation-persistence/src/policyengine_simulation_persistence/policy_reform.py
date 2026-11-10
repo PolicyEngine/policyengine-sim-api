@@ -13,11 +13,14 @@ UTC. A value with no end date follows .py's own rule
 it stops the day before the same parameter's next later value starts, and
 otherwise runs to the end of 2200, the latest year a household job or
 simulation run can be for, where .py stops at 2100. So once a later bounded
-value ends, current law applies. Periods are days, so of a parameter's
-values starting on one UTC day only the latest applies, as in .py. A range
-is used even for the last value because the countries' models read a start
-date alone differently: policyengine-core reads it as "from that day on",
-but policyengine-uk's reform dictionary as that one day.
+value ends, current law applies. The reader gives the same periods, in the
+same order, as .py does for the values in start order, except that it
+leaves out an open-ended value whose range would end before it starts:
+one followed the same day by a later value, or one starting after 2200.
+.py gives those a range that applies on no day. A range is used even for
+the last value because the countries' models read a start date alone
+differently: policyengine-core reads it as "from that day on", but
+policyengine-uk's reform dictionary as that one day.
 """
 
 from __future__ import annotations
@@ -64,6 +67,20 @@ class MissingPolicyParametersError(ValueError):
         )
 
 
+def _period_days(
+    start_date: datetime,
+    end_date: datetime | None,
+    next_start_date: datetime | None,
+) -> tuple[date, date]:
+    """Return a value's first and last days, in UTC, by .py's rule."""
+    start_day = _utc_day(start_date)
+    if end_date is not None:
+        return start_day, _utc_day(end_date)
+    if next_start_date is not None:
+        return start_day, _utc_day(next_start_date) - timedelta(days=1)
+    return start_day, OPEN_ENDED_STOP
+
+
 def reform_period(
     start_date: datetime,
     end_date: datetime | None,
@@ -73,17 +90,11 @@ def reform_period(
     """Return a stored value's period as the range a calculation applies.
 
     The dates are read in UTC. A value without an end date stops the day
-    before ``next_start_date``, when the same parameter has a later value,
-    and otherwise at the end of 2200; one that starts later than that ends
-    where it starts.
+    before ``next_start_date``, the start of the same parameter's next
+    later value, if any, and otherwise at the end of 2200, as .py's rule
+    has it (with 2100); such a range may end before it starts.
     """
-    start_day = start_date.astimezone(UTC).date()
-    if end_date is not None:
-        stop_day = end_date.astimezone(UTC).date()
-    elif next_start_date is not None:
-        stop_day = next_start_date.astimezone(UTC).date() - timedelta(days=1)
-    else:
-        stop_day = max(start_day, OPEN_ENDED_STOP)
+    start_day, stop_day = _period_days(start_date, end_date, next_start_date)
     return f"{start_day.isoformat()}.{stop_day.isoformat()}"
 
 
@@ -96,8 +107,8 @@ def read_policy_reform(
 ) -> PolicyReform:
     """Return the values ``country``'s policy sets, by parameter name and period.
 
-    Of a parameter's values starting on the same UTC day, the latest takes
-    that day over. Raise UnknownPolicyError when the country has no such
+    The periods are .py's for the values in start order (see the module
+    docstring). Raise UnknownPolicyError when the country has no such
     policy, and MissingPolicyParametersError when ``catalog_version_id``
     lacks a parameter the policy sets.
     """
@@ -132,27 +143,25 @@ def read_policy_reform(
     missing = [name for name in names if name not in available]
     if missing:
         raise MissingPolicyParametersError(missing)
-    # The rows are ordered by parameter name, then start date. Periods are
-    # days, so of a parameter's values starting on one UTC day the latest
-    # takes that day over, as a later value takes over in .py.
-    kept = [
-        row
-        for position, row in enumerate(values)
-        if position + 1 == len(values)
-        or values[position + 1].name != row.name
-        or _utc_day(values[position + 1].start_date) != _utc_day(row.start_date)
-    ]
     reform: PolicyReform = {}
-    for position, row in enumerate(kept):
-        following = kept[position + 1] if position + 1 < len(kept) else None
-        next_start_date = (
-            following.start_date
-            if following is not None and following.name == row.name
-            else None
+    # The rows are ordered by parameter name, then start date, the order
+    # .py takes them in; each value's periods are .py's.
+    for position, row in enumerate(values):
+        next_start_date = next(
+            (
+                later.start_date
+                for later in values[position + 1 :]
+                if later.name == row.name and later.start_date > row.start_date
+            ),
+            None,
         )
-        period = reform_period(
-            row.start_date, row.end_date, next_start_date=next_start_date
+        start_day, stop_day = _period_days(
+            row.start_date, row.end_date, next_start_date
         )
+        if row.end_date is None and stop_day < start_day:
+            # .py's range for it applies on no day.
+            continue
+        period = f"{start_day.isoformat()}.{stop_day.isoformat()}"
         reform.setdefault(row.name, {})[period] = row.value_json
     return reform
 

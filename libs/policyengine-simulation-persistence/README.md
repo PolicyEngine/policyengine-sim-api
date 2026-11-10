@@ -104,9 +104,12 @@ that one day. The executor's
 `test_reform_periods_apply_in_2200_only_through_a_stop_in_2200` shows how
 both countries' household functions apply each form in 2200, and its
 `test_py_reform_dicts.py` pins .py's own periods for the cases the reader's
-tests check. Periods are days, so of a parameter's values starting on the
-same UTC day only the latest applies, as in .py, which ends the earlier one
-before it starts.
+tests check. The reader gives .py's periods, in .py's order, for the values
+in start order, with one difference besides 2200: it leaves out an
+open-ended value whose range would end before it starts (one followed the
+same day by a later value, or one starting after 2200), to which .py gives a
+range that applies on no day. Bounded values starting the same day are all
+kept, in start order, as .py keeps them.
 
 ## Checking the models against the Public API
 
