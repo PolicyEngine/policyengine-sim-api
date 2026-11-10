@@ -92,14 +92,9 @@ def input_path(*, prefix: str, role: str, content_sha256: str | None = None) -> 
     return f"{prefix}/inputs/{_content_named(role, content_sha256)}.json"
 
 
-def simulation_path(
-    *, prefix: str, role: str, content_sha256: str | None = None
-) -> str:
-    """Return the key of the Parquet output for one simulation role.
-
-    With ``content_sha256``, the key also names the content's SHA-256.
-    """
-    return f"{prefix}/simulations/{_content_named(role, content_sha256)}.parquet"
+def simulation_path(*, prefix: str, role: str) -> str:
+    """Return the key of a comparison run's Parquet output for one simulation role."""
+    return f"{prefix}/simulations/{role}.parquet"
 
 
 def simulation_run_output_path(
@@ -318,12 +313,14 @@ class Stage12ArtifactStore:
     """Write-once storage for one private bucket's Stage 12 run artifacts.
 
     A write to a path already holding identical bytes succeeds; different
-    bytes raise ``RuntimeError``. A ``content_addressed`` store names each
-    input, simulation output and aggregate's SHA-256 in its key, so a call
-    Modal restarts can store other bytes beside its earlier attempt's, and
-    identical bytes reuse the earlier object. A store given
-    ``simulation_outputs`` also writes a report run's simulation output files
-    to that bucket, and reads from both buckets.
+    bytes raise ``RuntimeError``. A ``content_addressed`` store, which a
+    report run's call uses, names each input and aggregate's SHA-256 in its
+    key, so a call Modal restarts can store other bytes beside its earlier
+    attempt's, and identical bytes reuse the earlier object. Such a store is
+    given ``simulation_outputs``, the bucket that keeps the call's simulation
+    output files, whose keys always name their SHA-256; it reads from both
+    buckets. A comparison run's simulation output file has its role's fixed
+    key under the run's prefix.
     """
 
     def __init__(
@@ -401,18 +398,18 @@ class Stage12ArtifactStore:
         calculation_provenance: SPMProvenance | None = None,
         uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
     ) -> SimulationArtifactDescriptor:
-        """Store a simulation's output frames and describe the artifact for reports."""
+        """Store a comparison run's output frames at its role's fixed key.
+
+        Returns the artifact's descriptor for reports. A report run's output
+        file goes to ``write_simulation_run_output`` instead.
+        """
         payload, row_identity = serialize_simulation_frames(
             frames,
             calculation_provenance=calculation_provenance,
             uk_local_authority_metadata=uk_local_authority_metadata,
         )
         artifact = self._write_immutable(
-            simulation_path(
-                prefix=prefix,
-                role=simulation.role.value,
-                content_sha256=self._key_digest(payload),
-            ),
+            simulation_path(prefix=prefix, role=simulation.role.value),
             payload,
             content_type=SIMULATION_MEDIA_TYPE,
         )
