@@ -161,7 +161,7 @@ def test_a_job_is_created_recorded_and_read_back(public_api_database_url) -> Non
         store = _store_on(connection)
         job_id = uuid4()
 
-        store.create(
+        store.create_job(
             NewHouseholdJob(
                 id=job_id,
                 country="uk",
@@ -202,7 +202,7 @@ def test_a_refused_call_fails_its_job(public_api_database_url) -> None:
         act_as_the_service(connection)
         store = _store_on(connection)
         job_id = uuid4()
-        store.create(
+        store.create_job(
             NewHouseholdJob(
                 id=job_id,
                 country="us",

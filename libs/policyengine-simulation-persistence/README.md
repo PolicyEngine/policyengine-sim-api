@@ -72,7 +72,14 @@ is still `pending` with no call ID, and set `updated_at` themselves. A job
 naming a household, policy or catalog version that does not exist is refused
 by its foreign key with SQLSTATE `23503`; `HouseholdJobReferenceError` names
 the column. Each function takes a connection, so the caller chooses the
-transactions.
+transactions. `HouseholdJobStore` runs them as the Simulation Entrypoint
+does, each step in a transaction of its own: `read_inputs` reads the catalog
+version, the household and the policy's reform values together, and
+`create_job`, `record_call`, `fail_unstarted` and `read` each write or read
+the job. `HouseholdJobStore.from_engine` opens each with `bounded_transaction`,
+which commits when its block ends and sets `statement_timeout` with
+`set_config`, local to the transaction, so the database ends a statement that
+runs too long and the limit never stays on a pooled connection.
 
 ## Reading a policy
 

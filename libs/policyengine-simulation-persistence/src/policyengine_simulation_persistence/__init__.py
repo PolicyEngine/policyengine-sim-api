@@ -7,6 +7,7 @@ from policyengine_simulation_persistence.access import (
     read_missing_table_privileges,
 )
 from policyengine_simulation_persistence.engine import (
+    bounded_transaction,
     create_simulation_engine,
     normalized_database_url,
 )
@@ -21,6 +22,12 @@ from policyengine_simulation_persistence.household_job_records import (
     read_household_job,
     read_stored_household,
     record_household_call,
+)
+from policyengine_simulation_persistence.household_job_store import (
+    HouseholdCalculationInputs,
+    HouseholdJobStore,
+    UnknownCatalogVersionError,
+    UnknownHouseholdError,
 )
 from policyengine_simulation_persistence.input_tables import input_metadata
 from policyengine_simulation_persistence.policy_reform import (
@@ -51,9 +58,11 @@ __all__ = [
     "SERVICE_TABLE_PRIVILEGES",
     "SERVICE_UPDATABLE_COLUMNS",
     "ConflictingPolicyValuesError",
+    "HouseholdCalculationInputs",
     "HouseholdJobRecord",
     "HouseholdJobReferenceError",
     "HouseholdJobStatus",
+    "HouseholdJobStore",
     "MissingPolicyParametersError",
     "NewHouseholdJob",
     "PolicyReform",
@@ -62,7 +71,10 @@ __all__ = [
     "SimulationStatus",
     "SimulationType",
     "StoredHousehold",
+    "UnknownCatalogVersionError",
+    "UnknownHouseholdError",
     "UnknownPolicyError",
+    "bounded_transaction",
     "budget_window_runs",
     "create_simulation_engine",
     "fail_unstarted_household_job",
