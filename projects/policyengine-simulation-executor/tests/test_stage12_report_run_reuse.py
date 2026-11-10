@@ -28,6 +28,12 @@ from policyengine_simulation_executor import spm as runtime_spm
 from policyengine_simulation_executor.stage12_artifacts import (
     serialize_simulation_frames,
 )
+from policyengine_simulation_executor.stage12_runtime import (
+    report_coordination as report_coordination_module,
+)
+from policyengine_simulation_executor.stage12_runtime import (
+    reused_outputs as reused_outputs_module,
+)
 from policyengine_simulation_executor.stage12_runtime.reused_outputs import (
     CloudStorageOutputFiles,
 )
@@ -741,6 +747,37 @@ def test_a_restarted_call_reuses_the_output_its_own_baseline_worker_recorded() -
         "claim_report_run",
         "complete_report_run",
     ]
+
+
+def test_a_reused_output_file_is_read_and_decoded_once(monkeypatch) -> None:
+    decoded_digests: list[str] = []
+
+    def counting_decoder(module):
+        decode = module.deserialize_simulation_frames
+
+        def counted(payload):
+            decoded_digests.append(sha256(payload).hexdigest())
+            return decode(payload)
+
+        return counted
+
+    # Every module of the coordinator that decodes a simulation output file.
+    for module in (reused_outputs_module, report_coordination_module):
+        if hasattr(module, "deserialize_simulation_frames"):
+            monkeypatch.setattr(
+                module, "deserialize_simulation_frames", counting_decoder(module)
+            )
+    report_runs = FakeReportRuns()
+    files = FakeOutputFiles()
+    stored = _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
+    artifacts = FakeArtifacts()
+
+    _coordinate(
+        FakeStore(), report_runs, ConcurrentInvoker(artifacts), artifacts, files
+    )
+
+    assert files.reads == [stored.uri]
+    assert decoded_digests.count(stored.sha256) == 1
 
 
 class FakeStorageClient:
