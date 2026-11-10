@@ -40,8 +40,8 @@ and this repository has no migration chain of its own
   `household_jobs`), modelled in `libs/policyengine-simulation-persistence`.
   The service connects as its own role, which policyengine-api's privilege
   manifest grants.
-- the run tables the v2 Modal coordinator, workers and household functions
-  write as the Modal worker role: `report_runs`, `simulation_runs`, the
+- the run tables the v2 Modal coordinator, workers, household functions and
+  stuck-run sweep write as the Modal worker role: `report_runs`, `simulation_runs`, the
   result tables and `household_jobs`. Their mappings in
   `policyengine_stage12_persistence.report_run_tables` and
   `report_run_results`, separate from the simulation service's models,

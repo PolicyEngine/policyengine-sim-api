@@ -190,9 +190,12 @@ def test_a_failure_summary_is_one_line_of_bounded_length() -> None:
 
 
 @pytest.mark.parametrize(
-    "status", [RunStatus.RUNNING, RunStatus.SUCCEEDED, RunStatus.FAILED]
+    "status",
+    [RunStatus.PENDING, RunStatus.RUNNING, RunStatus.SUCCEEDED, RunStatus.FAILED],
 )
 def test_a_job_another_call_holds_or_that_finished_is_not_calculated(status) -> None:
+    # A pending job whose recorded call is another call's is refused like a
+    # running one: the job stays pending for that call.
     jobs = FakeHouseholdJobs(RunWrite(changed=False, status=status))
     calculated = []
 
@@ -202,23 +205,6 @@ def test_a_job_another_call_holds_or_that_finished_is_not_calculated(status) -> 
         "deduplicated": True,
         "household_job_id": str(HOUSEHOLD_JOB_ID),
         "status": status.value,
-    }
-    assert calculated == []
-    assert jobs.kinds == ["claim"]
-
-
-def test_a_pending_job_that_records_another_call_is_not_calculated() -> None:
-    # The simulation service recorded another call on the pending job, so the
-    # store refuses this call's claim and the job stays pending for that call.
-    jobs = FakeHouseholdJobs(RunWrite(changed=False, status=RunStatus.PENDING))
-    calculated = []
-
-    returned = _run(jobs, lambda: calculated.append(True))
-
-    assert returned == {
-        "deduplicated": True,
-        "household_job_id": str(HOUSEHOLD_JOB_ID),
-        "status": "pending",
     }
     assert calculated == []
     assert jobs.kinds == ["claim"]
