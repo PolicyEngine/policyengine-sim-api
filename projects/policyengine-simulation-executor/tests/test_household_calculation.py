@@ -883,6 +883,98 @@ UK_SINGLE = {
 }
 
 
+# The simulation service writes a stored policy value that has no end date as
+# a range ending on 31 December 2200, the latest year a household job can be
+# calculated for. These show how the household functions apply each form of
+# period key in that year, with incomes high enough to be taxed at the
+# changed rate after the thresholds' uprating.
+SINGLE_ADULT_WITHOUT_PERIODS = {
+    "us": {
+        "people": {"you": {"age": 40, "employment_income": 100_000_000}},
+        "tax_units": {"your tax unit": {"members": ["you"]}},
+        "families": {"your family": {"members": ["you"]}},
+        "spm_units": {"your spm unit": {"members": ["you"]}},
+        "marital_units": {"your marital unit": {"members": ["you"]}},
+        "households": {
+            "your household": {
+                "members": ["you"],
+                "state_name": "TX",
+                "household_net_income": None,
+            }
+        },
+    },
+    "uk": {
+        "people": {"you": {"age": 40, "employment_income": 100_000_000}},
+        "benunits": {"your benefit unit": {"members": ["you"]}},
+        "households": {
+            "your household": {"members": ["you"], "household_net_income": None}
+        },
+    },
+}
+# A parameter each country's reform lowers net income through, and its value.
+CHANGED_PARAMETER = {
+    "us": ("gov.irs.income.bracket.rates.7", 0.5),
+    "uk": ("gov.hmrc.income_tax.rates.uk[0].rate", 0.3),
+}
+
+
+@pytest.mark.parametrize(
+    ("country", "start_date_alone_applies"),
+    [
+        # policyengine-core reads a start date alone as "from that day on".
+        ("us", True),
+        # policyengine-uk's reform dictionary reads it as that one day.
+        ("uk", False),
+    ],
+)
+def test_reform_periods_apply_in_2200_only_through_a_stop_in_2200(
+    country, start_date_alone_applies
+) -> None:
+    """A range applies through its stop date, in both countries.
+
+    Only a range reaching the end of 2200 changes a 2200 calculation in both
+    countries: a range ending in 2100 leaves it at current law, and a start
+    date alone means a different period in each.
+    """
+    parameter, value = CHANGED_PARAMETER[country]
+    reforms = {
+        "through_2200": {parameter: {"2026-01-01.2200-12-31": value}},
+        "through_2100": {parameter: {"2026-01-01.2100-12-31": value}},
+        "start_date_alone": {parameter: {"2026-01-01": value}},
+    }
+    request = _request(
+        country,
+        SINGLE_ADULT_WITHOUT_PERIODS[country],
+        year="2200",
+        policies=[
+            {"policy_key": "baseline", "parameters": {}},
+            *(
+                {"policy_key": policy_key, "parameters": parameters}
+                for policy_key, parameters in reforms.items()
+            ),
+        ],
+    )
+
+    outcome = calculate_household(
+        request,
+        worker=_worker(country),
+        dependencies=HouseholdCalculationDependencies(),
+    )
+
+    assert isinstance(outcome, HouseholdExecutionResult), outcome
+    net_incomes = {
+        result.policy_key: result.household.to_situation()["households"][
+            "your household"
+        ]["household_net_income"]["2200"]
+        for result in outcome.output.results
+    }
+    assert net_incomes["through_2200"] < net_incomes["baseline"]
+    assert net_incomes["through_2100"] == net_incomes["baseline"]
+    assert (net_incomes["start_date_alone"] < net_incomes["baseline"]) is (
+        start_date_alone_applies
+    )
+
+
 def test_uk_axes_calculate_one_value_per_point() -> None:
     household = {
         **UK_SINGLE,
