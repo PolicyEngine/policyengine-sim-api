@@ -24,7 +24,11 @@ if TYPE_CHECKING:
 
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.stage12_execution import ReportRunIds
-    from policyengine_stage12_persistence import ReportRunResult, RunWrite
+    from policyengine_stage12_persistence import (
+        ReportRunResult,
+        RunWrite,
+        SimulationRunState,
+    )
 
 # The Modal secret and the one key it must hold: a postgresql:// URL for the
 # Modal worker role on the database that holds the Public API's run tables.
@@ -36,7 +40,8 @@ class ReportRunWriter(Protocol):
     """Report run and simulation run writes; ``ReportRunStore`` implements it.
 
     Each write is conditional on the run's status and returns whether it
-    changed the run, and the run's status afterwards.
+    changed the run, and the run's status afterwards. The two reads,
+    ``require_simulation_runs`` and ``get_simulation_run``, change nothing.
     """
 
     def require_simulation_runs(self, run_ids: ReportRunIds) -> None:
@@ -44,6 +49,13 @@ class ReportRunWriter(Protocol):
 
         LookupError when the report run does not exist; ValueError when it
         names other simulation runs.
+        """
+        ...
+
+    def get_simulation_run(self, simulation_run_id: UUID) -> SimulationRunState:
+        """Return a simulation run's status, year, versions and output file.
+
+        LookupError when the run does not exist.
         """
         ...
 

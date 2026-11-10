@@ -152,6 +152,27 @@ def _frame_payload(
     return combined.reindex(columns=columns), dtypes, identifier_values
 
 
+def _row_identity(identifier_values: Mapping[str, list[str]]) -> RowIdentity:
+    """Fingerprint each entity's sorted row identifiers."""
+    return RowIdentity(
+        identifier_columns=tuple(
+            f"{entity}.{entity}_id" for entity in sorted(identifier_values)
+        ),
+        row_count=sum(len(values) for values in identifier_values.values()),
+        identity_sha256=sha256(canonical_json_bytes(identifier_values)).hexdigest(),
+    )
+
+
+def simulation_row_identity(frames: Mapping[str, pd.DataFrame]) -> RowIdentity:
+    """Return the row identity ``serialize_simulation_frames`` records for ``frames``.
+
+    Frames decoded from an artifact give the identity it was written with.
+    Raises the same ``ValueError`` for a missing or repeated row identifier.
+    """
+    _combined, _dtypes, identifier_values = _frame_payload(frames)
+    return _row_identity(identifier_values)
+
+
 def serialize_simulation_frames(
     frames: Mapping[str, pd.DataFrame],
     *,
@@ -165,14 +186,7 @@ def serialize_simulation_frames(
     local authority metadata travel in the Parquet schema metadata.
     """
     combined, dtypes, identifier_values = _frame_payload(frames)
-    identity_payload = canonical_json_bytes(identifier_values)
-    row_identity = RowIdentity(
-        identifier_columns=tuple(
-            f"{entity}.{entity}_id" for entity in sorted(identifier_values)
-        ),
-        row_count=sum(len(values) for values in identifier_values.values()),
-        identity_sha256=sha256(identity_payload).hexdigest(),
-    )
+    row_identity = _row_identity(identifier_values)
     table = pa.Table.from_pandas(combined, preserve_index=False)
     metadata = dict(table.schema.metadata or {})
     metadata[PARQUET_CONTRACT.schema_version_metadata_key.encode()] = str(

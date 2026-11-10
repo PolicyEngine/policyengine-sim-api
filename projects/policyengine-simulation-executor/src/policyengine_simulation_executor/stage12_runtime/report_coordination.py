@@ -73,6 +73,7 @@ from .output_planning import (
     validate_output_frames,
 )
 from .report_run_recording import SimulationRunRecordingStore
+from .reused_outputs import output_payload, reused_outputs, simulations_to_calculate
 from .simulation import descriptor_from_record
 
 if TYPE_CHECKING:
@@ -84,6 +85,7 @@ if TYPE_CHECKING:
 
     from .report_run_access import ReportRunWriter
     from .report_run_recording import ReportRunRecorder
+    from .reused_outputs import OutputFileReader, ReusedSimulationOutput
 
 SIMULATION_POLL_INITIAL_SECONDS = 0.25
 SIMULATION_POLL_MAX_SECONDS = 1.0
@@ -123,8 +125,9 @@ class CoordinatorDependencies:
     The defaults are the Stage 12 database store, the private artifact
     bucket, Modal child invocation, the standard aggregate builder and output
     plan resolution, no telemetry runtime, the real clock and sleep, the
-    standard child wait window, and the report run store, which only a call
-    that names a report run uses.
+    standard child wait window, and the report run store and the Cloud
+    Storage reader of reused output files, which only a call that names a
+    report run uses.
     """
 
     store: ComparisonStore | None = None
@@ -139,6 +142,7 @@ class CoordinatorDependencies:
     monotonic: Callable[[], float] = time.monotonic
     wait_timeout_seconds: float = SIMULATION_WAIT_TIMEOUT_SECONDS
     report_runs: ReportRunWriter | None = None
+    output_files: OutputFileReader | None = None
 
 
 @dataclass
@@ -168,6 +172,8 @@ class ReportCoordination:
     )
     # The report run the call names, when it records one.
     report_run: ReportRunRecorder | None = None
+    # Each reused simulation run's checked output by role, in place of a child.
+    reused: dict[str, ReusedSimulationOutput] = dataclasses.field(default_factory=dict)
 
     @property
     def runtime(self) -> ObservabilityRuntime | None:
@@ -198,13 +204,17 @@ class ReportCoordination:
         )
 
     def run(self, parent: ComparisonReportRecord) -> dict[str, Any]:
-        """Plan, start and await both children, then aggregate and complete."""
+        """Plan, reuse or start and await both outputs, then aggregate them."""
         output_plan, planned_simulations = self._prepare(parent)
         self.simulations = {
             simulation.role.value: simulation for simulation in planned_simulations
         }
-        children = self._create_children(planned_simulations)
-        descriptors, calls = self._start_children(planned_simulations, children)
+        self.descriptors.update(
+            {role: output.descriptor for role, output in self.reused.items()}
+        )
+        calculated = simulations_to_calculate(planned_simulations, self.reused)
+        children = self._create_children(calculated)
+        descriptors, calls = self._start_children(calculated, children)
         # Every required call has been started before the coordinator observes
         # baseline and reform together through nonblocking result probes.
         self._wait_for_children(calls, descriptors)
@@ -245,6 +255,7 @@ class ReportCoordination:
                     {"simulation_role": simulation.role.value},
                 ):
                     simulations.append(plan_simulation_input(simulation, output_plan))
+            self.reused = reused_outputs(self, simulations)
         return output_plan, tuple(simulations)
 
     def _create_children(
@@ -544,8 +555,10 @@ class ReportCoordination:
         """Read, digest-check and validate both children's retained artifacts."""
         validate_aligned_outputs(self.report, output_plan, baseline, reform)
         with self.span(Stage.STAGE12_ARTIFACT_READ):
-            baseline_payload = self.artifact_storage.read(baseline.artifact.uri)
-            reform_payload = self.artifact_storage.read(reform.artifact.uri)
+            baseline_payload = output_payload(
+                baseline, self.reused, self.artifact_storage
+            )
+            reform_payload = output_payload(reform, self.reused, self.artifact_storage)
         _require_artifact_digest(
             baseline_payload,
             baseline.artifact.content_sha256,
