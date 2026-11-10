@@ -1,10 +1,12 @@
-"""Conditional writes of report run and simulation run status, as the Modal worker role.
+"""Conditional writes of run and household job status, as the Modal worker role.
 
 Every status write is one ``UPDATE`` conditional on the run's expected
 status, so a call that Modal restarts after pre-emption, or a second writer,
 changes nothing that is already final. A report run's completion sets its own
 result columns in the same update, and inserts its result rows in the same
-transaction, only when its update changed the run.
+transaction, only when its update changed the run. A household job is
+written the same way, and its result document is set in the update that
+finishes it.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from sqlalchemy import exists, func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from policyengine_stage12_persistence.report_run_tables import (
+    household_jobs,
     report_runs,
     simulation_runs,
 )
@@ -28,7 +31,7 @@ from policyengine_stage12_persistence.store import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Mapping
     from datetime import datetime
     from uuid import UUID
 
@@ -40,7 +43,7 @@ if TYPE_CHECKING:
 
 
 class RunStatus(StrEnum):
-    """A report run's or simulation run's status."""
+    """A report run's, simulation run's or household job's status."""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -52,18 +55,29 @@ ACTIVE_STATUSES = (RunStatus.PENDING.value, RunStatus.RUNNING.value)
 
 
 class RunKind(StrEnum):
-    """Which run table a run is in."""
+    """Which run table a run, or a household job, is in."""
 
     REPORT_RUN = "report_run"
     SIMULATION_RUN = "simulation_run"
+    HOUSEHOLD_JOB = "household_job"
 
 
-RUN_TABLES = {RunKind.REPORT_RUN: report_runs, RunKind.SIMULATION_RUN: simulation_runs}
+RUN_TABLES = {
+    RunKind.REPORT_RUN: report_runs,
+    RunKind.SIMULATION_RUN: simulation_runs,
+    RunKind.HOUSEHOLD_JOB: household_jobs,
+}
+# What a missing row is called, by table name.
+_ROW_NOUNS = {
+    report_runs.name: "report run",
+    simulation_runs.name: "simulation run",
+    household_jobs.name: "household job",
+}
 
 
 @dataclass(frozen=True)
 class ActiveRun:
-    """A pending or running run, and the Modal call recorded on it.
+    """A pending or running run or household job, and its recorded Modal call.
 
     ``modal_call_id`` is None for a run with no call recorded.
     """
@@ -83,7 +97,7 @@ class RunWrite:
 
 
 class ReportRunStore:
-    """Status writes to the Public API's report runs and simulation runs."""
+    """Status writes to the Public API's run tables and household jobs."""
 
     def __init__(
         self,
@@ -321,6 +335,107 @@ class ReportRunStore:
             simulation_runs, simulation_run_id, statement, "fail_simulation_run"
         )
 
+    def claim_household_job(
+        self,
+        household_job_id: UUID,
+        *,
+        modal_call_id: str,
+        claimed_at: datetime,
+    ) -> RunWrite:
+        """Mark the household job running under ``modal_call_id``.
+
+        A pending or running job is claimed while it records no call or this
+        call: the simulation service records the call it starts while the job
+        is still pending, and Modal restarts a pre-empted call under the same
+        call ID. A job recording another call is that call's.
+        """
+        statement = (
+            update(household_jobs)
+            .where(
+                household_jobs.c.id == household_job_id,
+                household_jobs.c.status.in_(ACTIVE_STATUSES),
+                or_(
+                    household_jobs.c.modal_call_id.is_(None),
+                    household_jobs.c.modal_call_id == modal_call_id,
+                ),
+            )
+            .values(
+                status=RunStatus.RUNNING.value,
+                modal_call_id=modal_call_id,
+                started_at=func.coalesce(household_jobs.c.started_at, claimed_at),
+                updated_at=claimed_at,
+            )
+        )
+        return self._write(
+            household_jobs, household_job_id, statement, "claim_household_job"
+        )
+
+    def complete_household_job(
+        self,
+        household_job_id: UUID,
+        *,
+        modal_call_id: str,
+        result: Mapping[str, Any],
+        completed_at: datetime,
+    ) -> RunWrite:
+        """Mark the household job succeeded with ``result`` while this call holds it.
+
+        ``result`` is the calculation's ``HouseholdExecutionResult`` as JSON.
+        The job must be running under ``modal_call_id``.
+        """
+        statement = (
+            update(household_jobs)
+            .where(
+                household_jobs.c.id == household_job_id,
+                household_jobs.c.status == RunStatus.RUNNING.value,
+                household_jobs.c.modal_call_id == modal_call_id,
+            )
+            .values(
+                status=RunStatus.SUCCEEDED.value,
+                result=dict(result),
+                error_message=None,
+                completed_at=completed_at,
+                updated_at=completed_at,
+            )
+        )
+        return self._write(
+            household_jobs, household_job_id, statement, "complete_household_job"
+        )
+
+    def fail_household_job(
+        self,
+        household_job_id: UUID,
+        *,
+        modal_call_id: str,
+        error_message: str,
+        failed_at: datetime,
+        result: Mapping[str, Any] | None = None,
+    ) -> RunWrite:
+        """Mark the household job failed while ``modal_call_id`` holds it running.
+
+        ``result`` is the calculation's ``HouseholdExecutionFailure`` as JSON,
+        or None, which leaves the result null, for an error outside the
+        calculation. ``error_message`` is the failure's one-line summary.
+        """
+        statement = (
+            update(household_jobs)
+            .where(
+                household_jobs.c.id == household_job_id,
+                household_jobs.c.status == RunStatus.RUNNING.value,
+                household_jobs.c.modal_call_id == modal_call_id,
+            )
+            .values(
+                status=RunStatus.FAILED.value,
+                result=None if result is None else dict(result),
+                error_message=error_message,
+                completed_at=failed_at,
+                updated_at=failed_at,
+            )
+        )
+        return self._write(
+            household_jobs, household_job_id, statement, "fail_household_job"
+        )
+
     def list_active_runs(
         self,
         kind: RunKind,
@@ -330,15 +445,20 @@ class ReportRunStore:
         """Return the pending and running runs of ``kind`` active since before a time.
 
         A run counts from its first claim, or from its creation while it is
-        pending. Runs are oldest first, with or without a recorded Modal
-        call. A simulation run is listed only while no pending or running
-        report run names it as its baseline or reform: that report run's
-        coordinator starts its children's calls, records their outcomes, and
-        stops and starts them again when Modal restarts it, so they are its
-        to judge until it has finished.
+        pending; a household job counts from its creation, as the table's
+        status and creation index allows. Runs are oldest first, with or
+        without a recorded Modal call. A simulation run is listed only while
+        no pending or running report run names it as its baseline or reform:
+        that report run's coordinator starts its children's calls, records
+        their outcomes, and stops and starts them again when Modal restarts
+        it, so they are its to judge until it has finished.
         """
         table = RUN_TABLES[kind]
-        active_since = func.coalesce(table.c.started_at, table.c.created_at)
+        active_since = (
+            table.c.created_at
+            if kind is RunKind.HOUSEHOLD_JOB
+            else func.coalesce(table.c.started_at, table.c.created_at)
+        )
         conditions = [
             table.c.status.in_(ACTIVE_STATUSES),
             active_since < active_since_before,
@@ -433,8 +553,7 @@ class ReportRunStore:
                 select(table.c.status).where(table.c.id == run_id)
             ).scalar_one_or_none()
         if current is None:
-            noun = "report run" if table is report_runs else "simulation run"
-            msg = f"{noun} {run_id} does not exist"
+            msg = f"{_ROW_NOUNS[table.name]} {run_id} does not exist"
             raise LookupError(msg)
         return RunWrite(changed=False, status=RunStatus(current))
 
