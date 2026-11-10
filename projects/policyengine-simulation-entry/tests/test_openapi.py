@@ -238,7 +238,7 @@ def test_household_routes_declare_every_answer():
     submit = _responses(spec, "post", "/household-calculations")
     read = _responses(spec, "get", "/household-calculations/{household_job_id}")
 
-    assert set(submit) == {"202", "400", "403", "422", "503"}
+    assert set(submit) == {"202", "400", "403", "422", "500", "503"}
     assert _response_schema(submit["202"]) == {
         "$ref": "#/components/schemas/HouseholdCalculationAccepted"
     }
@@ -252,6 +252,30 @@ def test_household_routes_declare_every_answer():
     assert _response_schema(read["404"]) == error
     assert _response_schema(read["422"]) == unprocessable
     assert _response_schema(read["503"]) == error
+    assert _response_schema(submit["500"]) == error
+
+
+def test_a_household_job_read_declares_only_the_answers_a_read_gives():
+    """A read never refuses stored data or starts a Modal call."""
+    read = _responses(
+        create_app().openapi(), "get", "/household-calculations/{household_job_id}"
+    )
+
+    assert "stored" not in read["422"]["description"]
+    assert "UUID" in read["422"]["description"]
+    assert "Modal" not in read["503"]["description"]
+    assert "database" in read["503"]["description"]
+
+
+def test_every_household_503_declares_its_retry_after_header():
+    spec = create_app().openapi()
+
+    for method, path in (
+        ("post", "/household-calculations"),
+        ("get", "/household-calculations/{household_job_id}"),
+    ):
+        headers = _responses(spec, method, path)["503"]["headers"]
+        assert headers["Retry-After"]["schema"] == {"type": "integer"}
 
 
 def test_household_routes_name_their_operations():

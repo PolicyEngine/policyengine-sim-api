@@ -17,6 +17,7 @@ from policyengine_simulation_entry.household_api_models import (
     HouseholdCalculationRequest,
 )
 from policyengine_simulation_entry.household_calculations import (
+    HouseholdCalculationInternalError,
     HouseholdCalculationRefusedError,
     HouseholdCalculationService,
     HouseholdCalculationUnavailableError,
@@ -222,6 +223,32 @@ def test_a_malformed_submission_is_refused_with_its_reasons(client_for, body):
             {
                 "code": "database_unavailable",
                 "detail": "The simulation database could not be read.",
+            },
+        ),
+        (
+            HouseholdCalculationInternalError(
+                "the household function's request has a field the service "
+                "built wrong: bundle"
+            ),
+            500,
+            {
+                "code": "internal_error",
+                "detail": (
+                    "The service could not build the household function's request."
+                ),
+            },
+        ),
+        (
+            HouseholdCalculationUnavailableError(
+                code="job_state_unknown",
+                detail="Read the job.",
+                household_job_id=JOB_ID,
+            ),
+            503,
+            {
+                "code": "job_state_unknown",
+                "detail": "Read the job.",
+                "household_job_id": str(JOB_ID),
             },
         ),
         (

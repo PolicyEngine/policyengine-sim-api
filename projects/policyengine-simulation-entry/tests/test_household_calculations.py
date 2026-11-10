@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,10 +22,12 @@ from policyengine_simulation_entry.household_api_models import (
     HouseholdCalculationRequest,
 )
 from policyengine_simulation_entry.household_calculations import (
+    HouseholdCalculationInternalError,
     HouseholdCalculationRefusedError,
     HouseholdCalculationService,
     HouseholdCalculationUnavailableError,
     HouseholdCalculationUnprocessableError,
+    prepare_household_job,
 )
 from policyengine_simulation_entry.household_workers import (
     HouseholdFunctionUnavailableError,
@@ -48,6 +50,9 @@ from policyengine_simulation_persistence import (
 )
 from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 JOB_ID = UUID("00000000-0000-4000-8000-0000000000aa")
 HOUSEHOLD_ID = UUID("00000000-0000-4000-8000-0000000000bb")
@@ -131,6 +136,11 @@ class FakeStore:
     record_failure: Exception | None = None
     recorded_status: HouseholdJobStatus = HouseholdJobStatus.PENDING
     stored_job: HouseholdJobRecord | None = None
+    # Set once the household function has claimed the job: a failure write
+    # then changes nothing.
+    claimed_by_function: bool = False
+    fail_failure: Exception | None = None
+    job_read_failure: Exception | None = None
     reads: list[dict[str, Any]] = field(default_factory=list)
     created: list[NewHouseholdJob] = field(default_factory=list)
     recorded: list[tuple[UUID, str]] = field(default_factory=list)
@@ -164,11 +174,20 @@ class FakeStore:
 
     def fail_unstarted(self, job_id: UUID, error_message: str) -> bool:
         self.failed.append((job_id, error_message))
-        return True
+        if self.fail_failure is not None:
+            raise self.fail_failure
+        return not self.claimed_by_function
+
+    def claim_as_the_function(self, job_id: UUID) -> None:
+        """Claim the job as the household function does, once Modal runs it."""
+        self.claimed_by_function = True
+        self.stored_job = _record(job_id, status=HouseholdJobStatus.RUNNING)
 
     def read(self, job_id: UUID) -> HouseholdJobRecord | None:
         if self.read_failure is not None:
             raise self.read_failure
+        if self.job_read_failure is not None:
+            raise self.job_read_failure
         return (
             self.stored_job
             if self.stored_job and self.stored_job.id == job_id
@@ -182,6 +201,9 @@ class FakeCaller:
 
     failure: Exception | None = None
     delay_seconds: float = 0.0
+    # Called once Modal has accepted the call, before it answers: the
+    # household function may start then, and its answer may come too late.
+    on_accepted: Callable[[UUID], None] | None = None
     calls: list[dict[str, Any]] = field(default_factory=list)
 
     async def spawn(
@@ -200,6 +222,8 @@ class FakeCaller:
                 "observability_context": observability_context,
             }
         )
+        if self.on_accepted is not None:
+            self.on_accepted(household_job_id)
         if self.delay_seconds:
             await asyncio.sleep(self.delay_seconds)
         if self.failure is not None:
@@ -653,6 +677,81 @@ async def test_a_call_modal_does_not_accept_in_time_fails_its_job():
 
 
 @pytest.mark.asyncio
+async def test_a_call_accepted_after_the_wait_runs_and_is_answered_as_it_stands():
+    """Modal accepted the call late, and the function claimed the job first.
+
+    The failure write then changes nothing, so the job is not failed: the
+    answer is 202 with the job as it stands, and no second job is needed.
+    """
+    store = FakeStore()
+    service, store, _, _ = _service(
+        store,
+        caller=FakeCaller(delay_seconds=1.0, on_accepted=store.claim_as_the_function),
+        call_start_timeout_seconds=0.01,
+    )
+
+    accepted = await service.submit(_request(), observability_context=None)
+
+    assert (accepted.job_id, accepted.status) == (JOB_ID, HouseholdJobStatus.RUNNING)
+    assert len(store.failed) == 1
+    assert store.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_a_refused_call_whose_failure_cannot_be_written_leaves_the_job_unknown():
+    """The job may still be pending; the answer says to read it, not resubmit."""
+    service, store, _, _ = _service(
+        FakeStore(fail_failure=DATABASE_ERROR),
+        caller=FakeCaller(failure=ConnectionError("Modal is unreachable")),
+    )
+
+    with pytest.raises(HouseholdCalculationUnavailableError) as raised:
+        await service.submit(_request(), observability_context=None)
+
+    assert raised.value.code == "job_state_unknown"
+    assert raised.value.household_job_id == JOB_ID
+    assert "read the job" in raised.value.detail
+    assert len(store.failed) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_claimed_job_that_cannot_be_read_back_is_unknown():
+    store = FakeStore(job_read_failure=DATABASE_ERROR)
+    service, store, _, _ = _service(
+        store,
+        caller=FakeCaller(delay_seconds=1.0, on_accepted=store.claim_as_the_function),
+        call_start_timeout_seconds=0.01,
+    )
+
+    with pytest.raises(HouseholdCalculationUnavailableError) as raised:
+        await service.submit(_request(), observability_context=None)
+
+    assert raised.value.code == "job_state_unknown"
+    assert raised.value.household_job_id == JOB_ID
+
+
+def test_what_the_service_builds_itself_is_an_internal_error_when_refused():
+    """A refused bundle is the service's fault, not the caller's household."""
+    worker = _manifest_worker("us")
+    broken = HouseholdWorker(
+        application_name=worker.application_name,
+        function_name=worker.function_name,
+        bundle={"policyengine_version": "6.17.1"},  # pyright: ignore[reportArgumentType]  # a bundle the contract refuses
+    )
+    inputs = FakeStore().read_inputs(
+        country="us",
+        household_id=HOUSEHOLD_ID,
+        policy_id=None,
+        policyengine_version="6.17.1",
+    )
+
+    with pytest.raises(HouseholdCalculationInternalError) as raised:
+        prepare_household_job(_request(), broken, inputs, job_id=JOB_ID)
+
+    assert "bundle" in str(raised.value)
+
+
+@pytest.mark.asyncio
 async def test_a_call_whose_id_cannot_be_recorded_is_still_accepted():
     """The household function claims a pending job with no call ID itself."""
     service, store, _, _ = _service(FakeStore(record_failure=DATABASE_ERROR))
@@ -672,25 +771,27 @@ async def test_a_job_the_function_claimed_first_is_answered_as_it_stands():
     assert accepted.status is HouseholdJobStatus.RUNNING
 
 
-def _record(job_id: UUID) -> HouseholdJobRecord:
-    return HouseholdJobRecord(
-        id=job_id,
-        status=HouseholdJobStatus.SUCCEEDED,
-        country="us",
-        household_id=HOUSEHOLD_ID,
-        policy_id=None,
-        year=2026,
-        request_data={},
-        tax_benefit_model_version_id=CATALOG_VERSION_ID,
-        country_package_version="2.2.1",
-        policyengine_version="6.17.1",
-        modal_call_id="fc-1",
-        result={"status": "succeeded"},
-        error_message=None,
-        created_at=datetime(2026, 11, 10, tzinfo=UTC),
-        started_at=datetime(2026, 11, 10, tzinfo=UTC),
-        completed_at=datetime(2026, 11, 10, tzinfo=UTC),
-    )
+def _record(job_id: UUID, **changes: Any) -> HouseholdJobRecord:
+    values = {
+        "id": job_id,
+        "status": HouseholdJobStatus.SUCCEEDED,
+        "country": "us",
+        "household_id": HOUSEHOLD_ID,
+        "policy_id": None,
+        "year": 2026,
+        "request_data": {},
+        "tax_benefit_model_version_id": CATALOG_VERSION_ID,
+        "country_package_version": "2.2.1",
+        "policyengine_version": "6.17.1",
+        "modal_call_id": "fc-1",
+        "result": {"status": "succeeded"},
+        "error_message": None,
+        "created_at": datetime(2026, 11, 10, tzinfo=UTC),
+        "started_at": datetime(2026, 11, 10, tzinfo=UTC),
+        "completed_at": datetime(2026, 11, 10, tzinfo=UTC),
+        **changes,
+    }
+    return HouseholdJobRecord(**values)
 
 
 @pytest.mark.asyncio
