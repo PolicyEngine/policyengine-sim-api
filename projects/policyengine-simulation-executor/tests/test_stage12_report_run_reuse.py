@@ -19,10 +19,15 @@ from uuid import UUID
 import pandas as pd
 import pytest
 from google.api_core.exceptions import NotFound
+from policyengine_simulation_contract.spm import (
+    SPMRuntimeVersions,
+    SPMSelection,
+    build_spm_provenance,
+    validate_spm_calculation_provenance,
+)
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     ReportRunIds,
-    SimulationRole,
 )
 from policyengine_simulation_executor import spm as runtime_spm
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -61,9 +66,7 @@ from stage12_runtime_support import (
     REFORM_ID,
     coordinate_report,
     parent_record,
-    planned_simulation,
     report_execution_input,
-    spm_calculation_provenance,
 )
 
 COORDINATOR_CALL_ID = "fc-coordinator"
@@ -71,35 +74,74 @@ COORDINATOR_CALL_ID = "fc-coordinator"
 OUTPUT_BUCKET = "detailed-save-outputs"
 # A catalog row the report's simulations don't use.
 OTHER_CATALOG_ID = UUID("00000000-0000-0000-0000-0000000000f1")
-# The complete SPM selection ``spm_calculation_provenance``'s receipt records.
-SPM_SELECTION = {
-    "forecast_content_sha256": "f" * 64,
-    "scenario": "official",
-    "geography_kind": "national",
-    "geography_id": None,
-    "county_vintage": "2020",
+# The certified SPM defaults of the installed .py bundle (6.17.1), which a US
+# request takes for each SPM option it leaves out.
+CERTIFIED_SPM_DEFAULTS = {
     "as_of": None,
+    "county_vintage": "2020",
+    "forecast_content_sha256": (
+        "3d86d5c4c0423480e6b69b75d222ffa4a7a2639e4094df5ba2504af01be17173"
+    ),
+    "geography_id": None,
+    "geography_kind": "county",
+    "scenario": "ce_trend",
 }
 
 
-@dataclass
-class ResolvedSpmSelection:
-    """What the runtime resolves a simulation's SPM request to, and what it read."""
+def spm_receipt(selection=CERTIFIED_SPM_DEFAULTS, *, years=("2026",)):
+    """Return the receipt a worker writes for an SPM calculation under ``selection``."""
+    resolved = SPMSelection(**selection)
+    return validate_spm_calculation_provenance(
+        config=resolved,
+        receipt=build_spm_provenance(
+            forecast_id="forecast-1",
+            forecast_sha256=selection["forecast_content_sha256"],
+            selection=resolved,
+            years=years,
+            runtime_versions=SPMRuntimeVersions.model_validate(
+                {
+                    "policyengine": "5.2.0",
+                    "policyengine-core": "3.32.10",
+                    "policyengine-us": "1.764.6",
+                    "spm-calculator": "1.0.0",
+                }
+            ),
+        ),
+    )
 
-    selection: dict | None = None
+
+# What a worker of the shared US report writes when nothing overrides the
+# certified defaults.
+WORKER_SPM_RECEIPT = spm_receipt()
+
+
+@dataclass
+class InstalledSpmResolution:
+    """Resolve SPM requests as the installed bundle does, recording each request.
+
+    A US request takes ``certified_defaults`` for each SPM option it leaves
+    out, so it always calculates an SPM measure; None stands for a bundle
+    with no certified SPM measurement. Any other country calculates none.
+    """
+
+    certified_defaults: dict | None = field(
+        default_factory=partial(dict, CERTIFIED_SPM_DEFAULTS)
+    )
     requests: list[dict] = field(default_factory=list)
 
     def resolve(self, params):
         self.requests.append(params)
-        return self.selection
+        if params["country"] != "us" or self.certified_defaults is None:
+            return None
+        return {**self.certified_defaults, **(params.get("spm") or {})}
 
 
 @pytest.fixture(autouse=True)
-def resolved_spm(monkeypatch) -> ResolvedSpmSelection:
-    """Resolve every SPM request to no SPM calculation, unless a test sets one."""
-    resolved = ResolvedSpmSelection()
-    monkeypatch.setattr(runtime_spm, "normalize_runtime_spm", resolved.resolve)
-    return resolved
+def resolved_spm(monkeypatch) -> InstalledSpmResolution:
+    """Resolve every SPM request as the installed bundle does."""
+    resolution = InstalledSpmResolution()
+    monkeypatch.setattr(runtime_spm, "normalize_runtime_spm", resolution.resolve)
+    return resolution
 
 
 class FakeOutputFiles:
@@ -129,9 +171,18 @@ class StoredOutput:
 
 
 def _succeeded_with_output(
-    report_runs, files, run_id, *, frames=None, calculation_provenance=None
+    report_runs,
+    files,
+    run_id,
+    *,
+    frames=None,
+    calculation_provenance=WORKER_SPM_RECEIPT,
 ):
-    """Mark a simulation run succeeded with a stored output file of ``frames``."""
+    """Mark a simulation run succeeded with a stored output file of ``frames``.
+
+    The file carries the SPM receipt a worker writes by default; pass
+    ``calculation_provenance=None`` for a file with none.
+    """
     frames = frames or simulation_frames()
     payload, _row_identity = serialize_simulation_frames(
         frames, calculation_provenance=calculation_provenance
@@ -155,14 +206,16 @@ def _coordinate(  # noqa: PLR0913  # the stores, the seams and the call's identi
     artifacts,
     files,
     *,
+    report=None,
     context=None,
     coordinator_call_id=COORDINATOR_CALL_ID,
     aggregator=economy_aggregate,
     **seams,
 ):
+    report = report or report_execution_input()
     context = context or report_run_context()
     return coordinate_report(
-        report_execution_input().model_dump(mode="json"),
+        report.model_dump(mode="json"),
         context.model_dump(mode="json"),
         parent_record().model_dump(mode="json"),
         application_name=context.modal_application,
@@ -322,15 +375,6 @@ def _missing_planned_column(report_runs, files):
     return _succeeded_with_output(report_runs, files, BASELINE_RUN_ID, frames=frames)
 
 
-def _unrequested_spm_calculation(report_runs, files):
-    return _succeeded_with_output(
-        report_runs,
-        files,
-        BASELINE_RUN_ID,
-        calculation_provenance=spm_calculation_provenance(),
-    )
-
-
 def _other_year(report_runs, files):
     stored = _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
     report_runs.simulation_runs[BASELINE_RUN_ID].year = 2025
@@ -368,10 +412,6 @@ UNUSABLE_OUTPUTS = {
     "missing-planned-column": (
         _missing_planned_column,
         "reused_simulation_output_incompatible",
-    ),
-    "unrequested-spm-calculation": (
-        _unrequested_spm_calculation,
-        "reused_simulation_spm_mismatch",
     ),
     "other-year": (_other_year, "reused_simulation_run_mismatch"),
     "other-policyengine-version": (
@@ -448,16 +488,74 @@ def test_a_reused_run_must_share_the_dataset_and_region_of_its_report_runs_other
         assert report_runs.simulation_runs[run_id].writes == []
 
 
-def test_a_reused_output_without_the_resolved_spm_calculation_fails_the_report(
-    resolved_spm,
+def _report_with_options(options):
+    """Return the shared report with ``options`` on both of its simulations."""
+    report = report_execution_input()
+    return report.model_copy(
+        update={
+            "baseline": report.baseline.model_copy(update={"options": options}),
+            "reform": report.reform.model_copy(update={"options": options}),
+        }
+    )
+
+
+REUSED_SIDES = {
+    "both-reused": (BASELINE_RUN_ID, REFORM_RUN_ID),
+    "baseline-reused": (BASELINE_RUN_ID,),
+    "reform-reused": (REFORM_RUN_ID,),
+}
+REPORT_OPTIONS = {"spm": {"scenario": "ce_trend"}, "include_cliffs": True}
+
+
+@pytest.mark.parametrize(
+    "reused_run_ids", list(REUSED_SIDES.values()), ids=list(REUSED_SIDES)
+)
+def test_each_reused_simulations_options_country_and_year_reach_the_spm_resolver(
+    resolved_spm, reused_run_ids
 ) -> None:
-    # The runtime resolves a US request with no SPM option to the bundle's
-    # certified defaults, so a worker would calculate SPM and write a receipt.
-    resolved_spm.selection = SPM_SELECTION
+    report_runs = FakeReportRuns()
+    files = FakeOutputFiles()
+    for run_id in reused_run_ids:
+        _succeeded_with_output(report_runs, files, run_id)
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts)
+
+    _coordinate(
+        FakeStore(),
+        report_runs,
+        invoker,
+        artifacts,
+        files,
+        report=_report_with_options(REPORT_OPTIONS),
+    )
+
+    # Each reused side's request is what its worker would resolve: the
+    # report's options, its SPM option among them, and its country, region
+    # and year.
+    assert resolved_spm.requests == [
+        {
+            "country": "us",
+            "scope": "macro",
+            "time_period": "2026",
+            "region": "us",
+            **REPORT_OPTIONS,
+        }
+    ] * len(reused_run_ids)
+    assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
+    assert len(invoker.events) == 2 - len(reused_run_ids)
+
+
+def test_a_reused_output_without_the_resolved_spm_calculation_fails_the_report() -> (
+    None
+):
+    # A US request with no SPM option takes the certified defaults, so a
+    # worker would calculate an SPM measure and write its receipt.
     store = FakeStore()
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
-    _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
+    _succeeded_with_output(
+        report_runs, files, BASELINE_RUN_ID, calculation_provenance=None
+    )
     artifacts = FakeArtifacts()
     invoker = ConcurrentInvoker(artifacts)
 
@@ -471,45 +569,63 @@ def test_a_reused_output_without_the_resolved_spm_calculation_fails_the_report(
     assert report_runs.simulation_runs[BASELINE_RUN_ID].writes == []
 
 
-def _reused_under_spm_receipt(report_runs, files, run_ids, receipt):
-    for run_id in run_ids:
-        _succeeded_with_output(
-            report_runs, files, run_id, calculation_provenance=receipt
-        )
-
-
-OTHER_SPM_SELECTIONS = {
-    "scenario": {**SPM_SELECTION, "scenario": "zero_real"},
-    "geography_kind": {**SPM_SELECTION, "geography_kind": "county"},
-    "county_vintage": {**SPM_SELECTION, "county_vintage": "2010"},
-}
-
-
-@pytest.mark.parametrize(
-    "reused_run_ids",
-    [(BASELINE_RUN_ID, REFORM_RUN_ID), (BASELINE_RUN_ID,), (REFORM_RUN_ID,)],
-    ids=["both-reused", "baseline-reused", "reform-reused"],
-)
-@pytest.mark.parametrize(
-    ("differing_field", "requested_selection"),
-    list(OTHER_SPM_SELECTIONS.items()),
-    ids=list(OTHER_SPM_SELECTIONS),
-)
-def test_outputs_reused_from_another_spm_selection_fail_before_any_worker_starts(
-    resolved_spm, reused_run_ids, differing_field, requested_selection
+def test_an_output_with_an_spm_receipt_fails_where_no_spm_measure_is_calculated(
+    resolved_spm,
 ) -> None:
-    resolved_spm.selection = requested_selection
-    store = FakeStore()
+    # A bundle with no certified SPM measurement calculates none.
+    resolved_spm.certified_defaults = None
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
-    _reused_under_spm_receipt(
-        report_runs, files, reused_run_ids, spm_calculation_provenance()
-    )
+    _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
     artifacts = FakeArtifacts()
     invoker = ConcurrentInvoker(artifacts)
 
     with pytest.raises(RuntimeError, match="coordination failed"):
-        _coordinate(store, report_runs, invoker, artifacts, files)
+        _coordinate(FakeStore(), report_runs, invoker, artifacts, files)
+
+    report_run = report_runs.report_runs[REPORT_RUN_ID]
+    assert report_run.error_message.startswith("reused_simulation_spm_mismatch: ")
+    assert "calculates no SPM measure" in report_run.error_message
+    assert invoker.events == []
+
+
+# SPM options a report requests, each giving another selection than the one
+# the reused files were calculated under (the certified defaults).
+OTHER_SPM_REQUESTS = {
+    "scenario": {"scenario": "zero_real"},
+    "geography_kind": {"geography_kind": "national"},
+    "county_vintage": {"county_vintage": "2010"},
+}
+
+
+@pytest.mark.parametrize(
+    "reused_run_ids", list(REUSED_SIDES.values()), ids=list(REUSED_SIDES)
+)
+@pytest.mark.parametrize(
+    ("differing_field", "spm_request"),
+    list(OTHER_SPM_REQUESTS.items()),
+    ids=list(OTHER_SPM_REQUESTS),
+)
+def test_outputs_reused_from_another_spm_selection_fail_before_any_worker_starts(
+    reused_run_ids, differing_field, spm_request
+) -> None:
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+    files = FakeOutputFiles()
+    for run_id in reused_run_ids:
+        _succeeded_with_output(report_runs, files, run_id)
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts)
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(
+            store,
+            report_runs,
+            invoker,
+            artifacts,
+            files,
+            report=_report_with_options({"spm": spm_request}),
+        )
 
     report_run = report_runs.report_runs[REPORT_RUN_ID]
     assert report_run.status is RunStatus.FAILED
@@ -522,17 +638,14 @@ def test_outputs_reused_from_another_spm_selection_fail_before_any_worker_starts
     assert store.parent.error_code == "reused_simulation_spm_mismatch"
 
 
-def test_an_output_whose_spm_receipt_lacks_the_report_year_fails_the_report(
-    resolved_spm,
-) -> None:
-    resolved_spm.selection = SPM_SELECTION
+def test_an_output_whose_spm_receipt_lacks_the_report_year_fails_the_report() -> None:
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
-    _reused_under_spm_receipt(
+    _succeeded_with_output(
         report_runs,
         files,
-        (BASELINE_RUN_ID,),
-        spm_calculation_provenance().model_copy(update={"years": ("2027",)}),
+        BASELINE_RUN_ID,
+        calculation_provenance=spm_receipt(years=("2027",)),
     )
     artifacts = FakeArtifacts()
     invoker = ConcurrentInvoker(artifacts)
@@ -546,12 +659,15 @@ def test_an_output_whose_spm_receipt_lacks_the_report_year_fails_the_report(
     assert invoker.events == []
 
 
-def test_an_output_with_the_resolved_spm_selection_is_reused(resolved_spm) -> None:
-    resolved_spm.selection = SPM_SELECTION
+@pytest.mark.parametrize(
+    "options",
+    [{}, {"spm": {"scenario": "ce_trend", "geography_kind": "county"}}],
+    ids=["no-spm-option", "spm-option-naming-the-defaults"],
+)
+def test_an_output_with_the_resolved_spm_selection_is_reused(options) -> None:
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
-    receipt = spm_calculation_provenance()
-    _reused_under_spm_receipt(report_runs, files, (BASELINE_RUN_ID,), receipt)
+    _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
     artifacts = FakeArtifacts()
     invoker = ConcurrentInvoker(artifacts)
     aggregated = []
@@ -566,17 +682,14 @@ def test_an_output_with_the_resolved_spm_selection_is_reused(resolved_spm) -> No
         invoker,
         artifacts,
         files,
+        report=_report_with_options(options),
         aggregator=recording_aggregator,
     )
 
     assert invoker.events == ["spawn:reform"]
     assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
     (inputs,) = aggregated
-    assert inputs["baseline"].descriptor.calculation_provenance == receipt
-    # The selection is resolved from the reused simulation's own parameters.
-    (request,) = resolved_spm.requests
-    assert request["time_period"] == "2026"
-    assert request["country"] == "us"
+    assert inputs["baseline"].descriptor.calculation_provenance == WORKER_SPM_RECEIPT
 
 
 SECOND_REPORT_RUN_ID = UUID("00000000-0000-0000-0000-0000000000a2")
@@ -709,27 +822,30 @@ def test_a_restarted_call_reuses_the_output_its_own_baseline_worker_recorded() -
         )
     # Before the pre-empted call cancelled it, the baseline's worker wrote its
     # output and recorded its child record and simulation run as succeeded.
-    descriptor = artifacts.add_simulation(planned_simulation(SimulationRole.BASELINE))
-    files.payloads[descriptor.artifact.uri] = artifacts.payloads[
-        descriptor.artifact.uri
-    ]
+    payload, row_identity = serialize_simulation_frames(
+        simulation_frames(), calculation_provenance=WORKER_SPM_RECEIPT
+    )
+    output_uri = "gs://private/simulations/baseline.parquet"
+    output_sha256 = sha256(payload).hexdigest()
+    artifacts.payloads[output_uri] = payload
+    files.payloads[output_uri] = payload
     store.children[BASELINE_ID] = store.children[BASELINE_ID].model_copy(
         update={
             "status": ComparisonRunLifecycleStatus.SUCCEEDED,
-            "output_uri": descriptor.artifact.uri,
-            "output_sha256": descriptor.artifact.content_sha256,
+            "output_uri": output_uri,
+            "output_sha256": output_sha256,
             "output_schema_version": 1,
-            "row_identity_columns": descriptor.row_identity.identifier_columns,
-            "row_count": descriptor.row_identity.row_count,
-            "row_identity_sha256": descriptor.row_identity.identity_sha256,
+            "row_identity_columns": row_identity.identifier_columns,
+            "row_count": row_identity.row_count,
+            "row_identity_sha256": row_identity.identity_sha256,
             "completed_at": NOW,
         }
     )
     baseline_run = report_runs.simulation_runs[BASELINE_RUN_ID]
     baseline_run.status = RunStatus.SUCCEEDED
     baseline_run.modal_call_id = "fc-baseline-worker"
-    baseline_run.output_uri = descriptor.artifact.uri
-    baseline_run.output_sha256 = descriptor.artifact.content_sha256
+    baseline_run.output_uri = output_uri
+    baseline_run.output_sha256 = output_sha256
     baseline_before = deepcopy(baseline_run)
     restart_invoker = RestartInvoker(artifacts)
 
@@ -738,8 +854,8 @@ def test_a_restarted_call_reuses_the_output_its_own_baseline_worker_recorded() -
     # Only the reform starts again, after its earlier call is cancelled.
     assert restart_invoker.events == ["restore:call-reform", "spawn:reform"]
     assert restart_invoker.cancelled == ["call-reform"]
-    assert files.reads == [descriptor.artifact.uri]
-    assert result["baseline_artifact_sha256"] == descriptor.artifact.content_sha256
+    assert files.reads == [output_uri]
+    assert result["baseline_artifact_sha256"] == output_sha256
     assert report_runs.simulation_runs[BASELINE_RUN_ID] == baseline_before
     assert store.children[BASELINE_ID].status is ComparisonRunLifecycleStatus.SUCCEEDED
     report_run = report_runs.report_runs[REPORT_RUN_ID]
