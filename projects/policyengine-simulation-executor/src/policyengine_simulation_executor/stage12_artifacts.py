@@ -101,19 +101,6 @@ def simulation_path(
     return f"{prefix}/simulations/{_content_named(role, content_sha256)}.parquet"
 
 
-def aggregate_path(*, prefix: str, content_sha256: str | None = None) -> str:
-    """Return the key of the run's aggregate report JSON.
-
-    With ``content_sha256``, the key also names the content's SHA-256.
-    """
-    return f"{prefix}/reports/{_content_named('aggregate', content_sha256)}.json"
-
-
-def comparison_path(*, prefix: str) -> str:
-    """Return the key of the run's result-comparison report JSON."""
-    return f"{prefix}/reports/comparison.json"
-
-
 def simulation_run_output_path(
     *,
     environment: str,
@@ -134,6 +121,19 @@ def simulation_run_output_path(
         f"simulation-runs/{environment}/{country}/{simulation_run_id}/"
         f"output-{content_sha256}.parquet"
     )
+
+
+def aggregate_path(*, prefix: str, content_sha256: str | None = None) -> str:
+    """Return the key of the run's aggregate report JSON.
+
+    With ``content_sha256``, the key also names the content's SHA-256.
+    """
+    return f"{prefix}/reports/{_content_named('aggregate', content_sha256)}.json"
+
+
+def comparison_path(*, prefix: str) -> str:
+    """Return the key of the run's result-comparison report JSON."""
+    return f"{prefix}/reports/comparison.json"
 
 
 def _frame_payload(
@@ -311,82 +311,6 @@ def deserialize_uk_local_authority_metadata(
     if raw is None:
         return None
     return UKLocalAuthorityMetadata.model_validate_json(raw)
-
-
-def _write_once(
-    store: ArtifactStore,
-    uri_prefix: str,
-    path: str,
-    payload: bytes,
-    *,
-    content_type: str,
-) -> ArtifactReference:
-    """Store ``payload`` at ``path`` unless identical bytes are already there.
-
-    Raises ``RuntimeError`` when the path holds other bytes.
-    """
-    digest = sha256(payload).hexdigest()
-    created = store.upload_bytes(path, payload, content_type=content_type)
-    if not created:
-        existing = store.read_bytes(path)
-        if existing is None or sha256(existing).hexdigest() != digest:
-            msg = "immutable Stage 12 artifact path contains other data"
-            raise RuntimeError(msg)
-    return ArtifactReference(
-        uri=f"{uri_prefix}{path}",
-        media_type=ArtifactMediaType(content_type),
-        content_sha256=digest,
-        size_bytes=len(payload),
-    )
-
-
-def _simulation_descriptor(
-    simulation: PlannedSimulationExecutionInput,
-    artifact: ArtifactReference,
-    row_identity: RowIdentity,
-    calculation_provenance: SPMProvenance | None,
-) -> SimulationArtifactDescriptor:
-    """Describe a stored simulation output for the coordinator and the records."""
-    return SimulationArtifactDescriptor(
-        evaluation_id=simulation.evaluation_id,
-        simulation_execution_id=simulation.simulation_execution_id,
-        role=simulation.role,
-        artifact=artifact,
-        output_plan_sha256=stage12_output_plan_sha256(simulation.output_plan),
-        row_identity=row_identity,
-        bundle=simulation.bundle,
-        calculation_provenance=calculation_provenance,
-    )
-
-
-class SimulationOutputBucket:
-    """The bucket that keeps a report run's simulation output files.
-
-    The Stage 12 artifact bucket deletes every object 30 days after it is
-    written. This bucket, one per environment, deletes nothing: its lifecycle
-    only moves a file to Coldline after 90 days. A later report run can
-    therefore reuse a succeeded simulation run's file.
-    """
-
-    def __init__(self, bucket_name: str, *, store: ArtifactStore | None = None) -> None:
-        """Bind to ``bucket_name``, which must be non-empty (there is no default)."""
-        if not bucket_name:
-            msg = "a simulation output bucket must be explicitly configured"
-            raise ValueError(msg)
-        self.bucket_name = bucket_name
-        self.store = store or ArtifactStore(bucket_name)
-
-
-@dataclass(frozen=True)
-class SimulationRunOutputLocation:
-    """The environment and simulation run a report run's output file belongs to.
-
-    Its key also names the simulation's country and the file's SHA-256; see
-    ``simulation_run_output_path``.
-    """
-
-    environment: str
-    simulation_run_id: UUID
 
 
 class Stage12ArtifactStore:
@@ -588,3 +512,79 @@ class Stage12ArtifactStore:
                 return payload
         msg = "Stage 12 artifact URI names another bucket"
         raise ValueError(msg)
+
+
+def _write_once(
+    store: ArtifactStore,
+    uri_prefix: str,
+    path: str,
+    payload: bytes,
+    *,
+    content_type: str,
+) -> ArtifactReference:
+    """Store ``payload`` at ``path`` unless identical bytes are already there.
+
+    Raises ``RuntimeError`` when the path holds other bytes.
+    """
+    digest = sha256(payload).hexdigest()
+    created = store.upload_bytes(path, payload, content_type=content_type)
+    if not created:
+        existing = store.read_bytes(path)
+        if existing is None or sha256(existing).hexdigest() != digest:
+            msg = "immutable Stage 12 artifact path contains other data"
+            raise RuntimeError(msg)
+    return ArtifactReference(
+        uri=f"{uri_prefix}{path}",
+        media_type=ArtifactMediaType(content_type),
+        content_sha256=digest,
+        size_bytes=len(payload),
+    )
+
+
+def _simulation_descriptor(
+    simulation: PlannedSimulationExecutionInput,
+    artifact: ArtifactReference,
+    row_identity: RowIdentity,
+    calculation_provenance: SPMProvenance | None,
+) -> SimulationArtifactDescriptor:
+    """Describe a stored simulation output for the coordinator and the records."""
+    return SimulationArtifactDescriptor(
+        evaluation_id=simulation.evaluation_id,
+        simulation_execution_id=simulation.simulation_execution_id,
+        role=simulation.role,
+        artifact=artifact,
+        output_plan_sha256=stage12_output_plan_sha256(simulation.output_plan),
+        row_identity=row_identity,
+        bundle=simulation.bundle,
+        calculation_provenance=calculation_provenance,
+    )
+
+
+class SimulationOutputBucket:
+    """The bucket that keeps a report run's simulation output files.
+
+    The Stage 12 artifact bucket deletes every object 30 days after it is
+    written. This bucket, one per environment, deletes nothing: its lifecycle
+    only moves a file to Coldline after 90 days. A later report run can
+    therefore reuse a succeeded simulation run's file.
+    """
+
+    def __init__(self, bucket_name: str, *, store: ArtifactStore | None = None) -> None:
+        """Bind to ``bucket_name``, which must be non-empty (there is no default)."""
+        if not bucket_name:
+            msg = "a simulation output bucket must be explicitly configured"
+            raise ValueError(msg)
+        self.bucket_name = bucket_name
+        self.store = store or ArtifactStore(bucket_name)
+
+
+@dataclass(frozen=True)
+class SimulationRunOutputLocation:
+    """The environment and simulation run a report run's output file belongs to.
+
+    Its key also names the simulation's country and the file's SHA-256; see
+    ``simulation_run_output_path``.
+    """
+
+    environment: str
+    simulation_run_id: UUID
