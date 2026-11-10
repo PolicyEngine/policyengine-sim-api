@@ -104,7 +104,6 @@ if TYPE_CHECKING:
         HouseholdPolicy,
         HouseholdWorkerIdentity,
     )
-    from policyengine_simulation_contract.spm import SPMProvenance
 
 logger = logging.getLogger(__name__)
 
@@ -390,8 +389,12 @@ def _model_period(text: str) -> Period:
 
 
 @dataclass
-class _PolicyCalculation:
-    """One policy's simulation and the household its values are written into."""
+class _HouseholdSimulation:
+    """The country model's simulation of the household under the request's policy.
+
+    ``household`` is the household document its calculated values are written
+    into, and ``warnings`` the values it could not calculate.
+    """
 
     simulation: Simulation
     household: dict[str, Any]
@@ -471,11 +474,11 @@ class _PolicyCalculation:
         logger.warning("%s", warning)
 
 
-def _parsed_policy_calculation(
+def _build_household_simulation(
     model: CountryHouseholdModel,
     prepared: _PreparedHousehold,
     policy: HouseholdPolicy,
-) -> _PolicyCalculation:
+) -> _HouseholdSimulation:
     """Build the policy's simulation, failing as the Public API's parse stage does."""
     try:
         simulation = _create_simulation(model, prepared, policy)
@@ -483,54 +486,53 @@ def _parsed_policy_calculation(
         raise _invalid_household_failure(error) from error
     except Exception as error:
         raise _unexpected_failure(error) from error
-    return _PolicyCalculation(
+    return _HouseholdSimulation(
         simulation=simulation,
         household=json.loads(json.dumps(prepared.situation)),
         spm_requested=prepared.spm_requested,
     )
 
 
-@dataclass(frozen=True)
-class _CalculatedPolicy:
-    """The household calculated under the request's policy, with its warnings.
-
-    ``spm_provenance`` is the SPM receipt of a household calculated with SPM.
-    """
-
-    household: CalculatedHousehold
-    warnings: tuple[str, ...]
-    spm_provenance: SPMProvenance | None
-
-
-def _calculated_policy_result(
-    calculation: _PolicyCalculation,
-    prepared: _PreparedHousehold,
-) -> _CalculatedPolicy:
-    """Calculate the requested values and return the calculated household."""
-    calculation.calculate_all()
-    return _CalculatedPolicy(
-        household=CalculatedHousehold.model_validate(calculation.household),
-        warnings=(*prepared.input_warnings, *calculation.warnings),
-        spm_provenance=household_spm_provenance(
-            calculation.simulation, prepared.spm_selection
-        ),
-    )
-
-
-def _calculate_policy(
+def _calculate_under_policy(
+    request: HouseholdExecutionRequest,
     model: CountryHouseholdModel,
     prepared: _PreparedHousehold,
-    policy: HouseholdPolicy,
-) -> _CalculatedPolicy:
-    """Calculate the household under ``policy``, raising a typed failure."""
-    calculation = _parsed_policy_calculation(model, prepared, policy)
-    try:
-        return _calculated_policy_result(calculation, prepared)
-    except SituationParsingError as error:
-        failure = _spm_failure(error) or _invalid_household_failure(error)
-        raise failure from error
-    except Exception as error:
-        raise _unexpected_failure(error) from error
+    *,
+    bundle: HouseholdBundleProvenance,
+    runtime: ObservabilityRuntime | None,
+) -> HouseholdCalculationOutput:
+    """Calculate the household under the request's policy and return the output.
+
+    The calculation span covers building the simulation, calculating the
+    requested values and reading the SPM receipt; a failure in any of them is
+    raised as a typed failure.
+    """
+    country = {"country": request.country}
+    with _stage_scope(runtime, Stage.V2_HOUSEHOLD_CALCULATION, country):
+        simulation = _build_household_simulation(model, prepared, request.policy)
+        try:
+            simulation.calculate_all()
+            household = CalculatedHousehold.model_validate(simulation.household)
+            spm_provenance = household_spm_provenance(
+                simulation.simulation, prepared.spm_selection
+            )
+        except SituationParsingError as error:
+            failure = _spm_failure(error) or _invalid_household_failure(error)
+            raise failure from error
+        except Exception as error:
+            raise _unexpected_failure(error) from error
+    return HouseholdCalculationOutput(
+        country=request.country,
+        bundle=bundle,
+        spm_config=(
+            SPMResolvedConfiguration.model_validate(prepared.spm_selection)
+            if prepared.spm_selection is not None
+            else None
+        ),
+        household=household,
+        warnings=(*prepared.input_warnings, *simulation.warnings),
+        spm_provenance=spm_provenance,
+    )
 
 
 def _resolved_spm_selection(
@@ -614,19 +616,8 @@ def _calculate_output(
     with _stage_scope(runtime, Stage.V2_HOUSEHOLD_INPUT_NORMALIZATION, country):
         spm_selection = _resolved_spm_selection(request)
         prepared = _prepared_household(request, model, spm_selection=spm_selection)
-    with _stage_scope(runtime, Stage.V2_HOUSEHOLD_CALCULATION, country):
-        calculated = _calculate_policy(model, prepared, request.policy)
-    return HouseholdCalculationOutput(
-        country=request.country,
-        bundle=bundle,
-        spm_config=(
-            SPMResolvedConfiguration.model_validate(spm_selection)
-            if spm_selection is not None
-            else None
-        ),
-        household=calculated.household,
-        warnings=calculated.warnings,
-        spm_provenance=calculated.spm_provenance,
+    return _calculate_under_policy(
+        request, model, prepared, bundle=bundle, runtime=runtime
     )
 
 
