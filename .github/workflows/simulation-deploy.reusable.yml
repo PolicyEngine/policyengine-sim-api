@@ -1215,6 +1215,41 @@ jobs:
           MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
         run: ../../.github/scripts/stage12-v2-default-restore.sh
 
+  staging_household_check:
+    name: Calculate the staging household through the candidate
+    # Every staging deployment calculates the stored staging household that
+    # the beta variable SIMULATION_STAGING_HOUSEHOLD_ID names, through the
+    # candidate's household routes, and requires its household job to
+    # succeed. The routes use only the v2 manifest's default worker, so the
+    # check runs after the default has moved to the release's worker (or, in
+    # a deployment without Stage 12, with the default as it is). It calls the
+    # tagged candidate URL, which serves this release's revision whether or
+    # not it was promoted. The job's call writes a household_jobs row in the
+    # staging database, which the household function completes.
+    if: >-
+      ${{
+        !cancelled() &&
+        inputs.deployment_environment == 'staging' &&
+        needs.deploy_entrypoint.result == 'success' &&
+        needs.authenticated_test.result == 'success' &&
+        ((inputs.deploy_stage12_v2 && needs.publish_stage12_v2_default.result == 'success') ||
+         (!inputs.deploy_stage12_v2 && needs.publish_stage12_v2_default.result == 'skipped'))
+      }}
+    needs: [deploy_entrypoint, authenticated_test, publish_stage12_v2_default]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Calculate the staging household and require it to succeed
+        env:
+          STAGING_HOUSEHOLD_ID: ${{ vars.SIMULATION_STAGING_HOUSEHOLD_ID }}
+          SIMULATION_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+          SIMULATION_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+          SIMULATION_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
+          SIMULATION_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
+        run: .github/scripts/simulation-staging-household-check.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}"
+
   finalize_routing:
     name: Finalize the Modal routing publication
     # Finish the durable journal after every gate, including failed uploads
@@ -1273,7 +1308,7 @@ jobs:
     # The reporter only reads job results. Journal completion happens before
     # it, so a failure or cancellation here cannot strand a publication.
     if: ${{ !cancelled() }}
-    needs: [deploy_entrypoint, update_routing, integration, authenticated_test, promote_entrypoint, publish_latest, finalize_routing, publish_stage12_v2_default]
+    needs: [deploy_entrypoint, update_routing, integration, authenticated_test, promote_entrypoint, publish_latest, finalize_routing, publish_stage12_v2_default, staging_household_check]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -1301,6 +1336,12 @@ jobs:
           REQUESTED: ${{ inputs.deploy_stage12_v2 }}
           DEFAULT_RESULT: ${{ needs.publish_stage12_v2_default.result }}
         run: .github/scripts/stage12-v2-default-ready.sh
+
+      - name: Check the staging household check result
+        env:
+          REQUESTED: ${{ inputs.deployment_environment == 'staging' }}
+          CHECK_RESULT: ${{ needs.staging_household_check.result }}
+        run: .github/scripts/simulation-staging-household-ready.sh
 
   cleanup_entrypoint_revisions:
     name: Remove superseded Cloud Run revisions

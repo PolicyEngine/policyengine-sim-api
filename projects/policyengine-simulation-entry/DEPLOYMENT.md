@@ -76,6 +76,46 @@ privilege missing fails at once. The stable
 and rollback checks don't require it, because an older image may not use the
 database.
 
+## Household calculations
+
+`POST /household-calculations` and `GET /household-calculations/{id}` read
+the Public API's household, policy and catalog rows and write
+`household_jobs` through the simulation database above, and call the v2
+workers' household functions on Modal. Every deploy, whatever the Stage 12
+setting, gives the entrypoint:
+
+- `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`, the newest enabled versions of
+  the Secret Manager secrets the `beta` or `prod` variables
+  `MODAL_TOKEN_ID_SECRET_NAME` and `MODAL_TOKEN_SECRET_SECRET_NAME` name,
+  mounted once. The Modal client reads the token from those names, so the
+  Stage 12 comparison path, in the same process, uses the same mount. A
+  missing name stops the deploy.
+- `SIMULATION_V2_MODAL_ENVIRONMENT`, the deploy's Modal environment
+  (`staging` or `main`), and `SIMULATION_V2_MANIFEST_NAME`,
+  `simulation-api-v2-version-manifest`: where the household routes read the
+  v2 version manifest and find the household functions. These are the
+  household path's own settings, apart from the `STAGE12_V2_MANIFEST_*`
+  settings the Stage 12 block sets.
+
+Without the database URL or the Modal environment the routes answer 503
+(`not_configured`). They use only the manifest's default worker, so a
+release's household functions serve calculations once
+`publish_stage12_v2_default` has moved the default to its worker.
+
+### The staging household check
+
+Every staging deployment runs `staging_household_check` after the v2
+default has moved (or, in a deployment without Stage 12, after the
+authenticated tests): `.github/scripts/simulation-staging-household-check.sh`
+calculates the stored staging household that the `beta` variable
+`SIMULATION_STAGING_HOUSEHOLD_ID` names, through the candidate's tagged URL,
+with the authenticated tests' client credentials, and requires its job to
+succeed within ten minutes. `deployment_ready` requires the check to pass in
+staging, so a failure stops the production deployment. The household must
+be a US household stored in the staging Public API with a default year; each
+run adds one `household_jobs` row for it. An empty or malformed variable
+fails the check.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`
