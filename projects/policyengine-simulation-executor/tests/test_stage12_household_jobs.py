@@ -37,17 +37,23 @@ WORKER = HouseholdWorkerIdentity(
 
 
 class FakeHouseholdJobs:
-    """Records each household job write; a test sets what the claim returns."""
+    """Records each household job write; a test sets what each write returns."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913  # what each of the three writes returns or raises
         self,
         claimed: RunWrite | None = None,
         *,
         claim_error: BaseException | None = None,
+        completed: RunWrite | None = None,
+        complete_error: BaseException | None = None,
+        failed: RunWrite | None = None,
         fail_error: BaseException | None = None,
     ) -> None:
         self.claimed = claimed or RunWrite(changed=True, status=RunStatus.RUNNING)
         self.claim_error = claim_error
+        self.completed = completed or RunWrite(changed=True, status=RunStatus.SUCCEEDED)
+        self.complete_error = complete_error
+        self.failed = failed or RunWrite(changed=True, status=RunStatus.FAILED)
         self.fail_error = fail_error
         self.writes: list[dict] = []
 
@@ -70,7 +76,9 @@ class FakeHouseholdJobs:
                 "result": result,
             }
         )
-        return RunWrite(changed=True, status=RunStatus.SUCCEEDED)
+        if self.complete_error is not None:
+            raise self.complete_error
+        return self.completed
 
     def fail_household_job(
         self, household_job_id, *, modal_call_id, error_message, failed_at, result=None
@@ -86,7 +94,7 @@ class FakeHouseholdJobs:
         )
         if self.fail_error is not None:
             raise self.fail_error
-        return RunWrite(changed=True, status=RunStatus.FAILED)
+        return self.failed
 
     @property
     def kinds(self) -> list[str]:
@@ -197,6 +205,70 @@ def test_a_job_another_call_holds_or_that_finished_is_not_calculated(status) -> 
     }
     assert calculated == []
     assert jobs.kinds == ["claim"]
+
+
+def test_a_pending_job_that_records_another_call_is_not_calculated() -> None:
+    # The simulation service recorded another call on the pending job, so the
+    # store refuses this call's claim and the job stays pending for that call.
+    jobs = FakeHouseholdJobs(RunWrite(changed=False, status=RunStatus.PENDING))
+    calculated = []
+
+    returned = _run(jobs, lambda: calculated.append(True))
+
+    assert returned == {
+        "deduplicated": True,
+        "household_job_id": str(HOUSEHOLD_JOB_ID),
+        "status": "pending",
+    }
+    assert calculated == []
+    assert jobs.kinds == ["claim"]
+
+
+def test_a_failed_completion_write_fails_the_job_and_propagates() -> None:
+    # The calculation succeeded, but recording it raised: the job is failed
+    # with a generic summary and no result, and the write's error propagates.
+    jobs = FakeHouseholdJobs(complete_error=ConnectionError("connection lost"))
+
+    with pytest.raises(ConnectionError, match="connection lost"):
+        _run(jobs, _succeeded)
+
+    assert jobs.kinds == ["claim", "complete", "fail"]
+    failure = jobs.writes[2]
+    assert failure["call"] == CALL_ID
+    assert failure["result"] is None
+    assert failure["error_message"] == (
+        "household_function_error: The household function raised ConnectionError."
+    )
+
+
+@pytest.mark.parametrize(
+    ("outcome_of", "unchanged"),
+    [
+        (_succeeded, "completed"),
+        (_failed, "failed"),
+    ],
+    ids=["succeeded", "failed"],
+)
+def test_an_outcome_write_that_changes_nothing_still_returns_the_outcome(
+    caplog, outcome_of, unchanged
+) -> None:
+    # The sweep failed the job while it was calculated, so recording the
+    # outcome changes nothing; the call logs that and returns the outcome.
+    unchanged_write = RunWrite(changed=False, status=RunStatus.FAILED)
+    jobs = FakeHouseholdJobs(**{unchanged: unchanged_write})
+    outcome = outcome_of()
+
+    with caplog.at_level("WARNING", logger=household_job_recording.__name__):
+        returned = _run(jobs, lambda: outcome)
+
+    assert returned == outcome.model_dump(mode="json")
+    assert len(jobs.writes) == 2
+    (warning,) = caplog.records
+    assert warning.levelname == "WARNING"
+    assert warning.getMessage() == (
+        f"Household job {HOUSEHOLD_JOB_ID} was failed before its calculation "
+        "was recorded"
+    )
 
 
 def test_an_unexpected_error_fails_the_job_with_a_generic_summary_and_propagates() -> (
