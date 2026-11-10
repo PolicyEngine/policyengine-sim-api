@@ -8,8 +8,12 @@ shape of the Public API's policy JSON that the household functions' contract
 and the economy requests take.
 
 Each period is a range, ``YYYY-MM-DD.YYYY-MM-DD``, with the dates read in
-UTC. A value with no end date applies to the end of 2200, the latest year a
-household job or simulation run can be for. A range is used even then
+UTC. A value with no end date follows .py's own rule
+(``policyengine.utils.parametric_reforms.reform_dict_from_parameter_values``):
+it stops the day before the same parameter's next later value starts, and
+otherwise runs to the end of 2200, the latest year a household job or
+simulation run can be for, where .py stops at 2100. So once a later bounded
+value ends, current law applies. A range is used even for the last value
 because the countries' models read a start date alone differently:
 policyengine-core reads it as "from that day on", but policyengine-uk's
 reform dictionary as that one day.
@@ -17,7 +21,7 @@ reform dictionary as that one day.
 
 from __future__ import annotations
 
-from datetime import UTC, date
+from datetime import UTC, date, timedelta
 from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import select
@@ -60,21 +64,29 @@ class MissingPolicyParametersError(ValueError):
 
 
 class ConflictingPolicyValuesError(ValueError):
-    """Two of a policy's values for one parameter fall on the same period."""
+    """Two of a policy's values for one parameter start on the same day."""
 
 
-def reform_period(start_date: datetime, end_date: datetime | None) -> str:
+def reform_period(
+    start_date: datetime,
+    end_date: datetime | None,
+    *,
+    next_start_date: datetime | None = None,
+) -> str:
     """Return a stored value's period as the range a calculation applies.
 
-    The dates are read in UTC. A value without an end date applies to the
-    end of 2200; one that starts later than that ends where it starts.
+    The dates are read in UTC. A value without an end date stops the day
+    before ``next_start_date``, when the same parameter has a later value,
+    and otherwise at the end of 2200; one that starts later than that ends
+    where it starts.
     """
     start_day = start_date.astimezone(UTC).date()
-    stop_day = (
-        max(start_day, OPEN_ENDED_STOP)
-        if end_date is None
-        else end_date.astimezone(UTC).date()
-    )
+    if end_date is not None:
+        stop_day = end_date.astimezone(UTC).date()
+    elif next_start_date is not None:
+        stop_day = next_start_date.astimezone(UTC).date() - timedelta(days=1)
+    else:
+        stop_day = max(start_day, OPEN_ENDED_STOP)
     return f"{start_day.isoformat()}.{stop_day.isoformat()}"
 
 
@@ -90,7 +102,7 @@ def read_policy_reform(
     Raise UnknownPolicyError when the country has no such policy,
     MissingPolicyParametersError when ``catalog_version_id`` lacks a
     parameter the policy sets, and ConflictingPolicyValuesError when two
-    values of one parameter fall on the same period.
+    values of one parameter start on the same day (in UTC).
     """
     found = connection.execute(
         select(policies.c.id).where(
@@ -124,11 +136,28 @@ def read_policy_reform(
     if missing:
         raise MissingPolicyParametersError(missing)
     reform: PolicyReform = {}
-    for row in values:
-        periods = reform.setdefault(row.name, {})
-        period = reform_period(row.start_date, row.end_date)
-        if period in periods:
-            msg = f"the policy sets {row.name} twice for {period}"
+    # The rows are ordered by parameter name, then start date.
+    for position, row in enumerate(values):
+        following = values[position + 1] if position + 1 < len(values) else None
+        next_start_date = (
+            following.start_date
+            if following is not None and following.name == row.name
+            else None
+        )
+        if next_start_date is not None and _utc_day(next_start_date) == _utc_day(
+            row.start_date
+        ):
+            msg = (
+                f"the policy sets {row.name} twice from "
+                f"{_utc_day(row.start_date).isoformat()}"
+            )
             raise ConflictingPolicyValuesError(msg)
-        periods[period] = row.value_json
+        period = reform_period(
+            row.start_date, row.end_date, next_start_date=next_start_date
+        )
+        reform.setdefault(row.name, {})[period] = row.value_json
     return reform
+
+
+def _utc_day(moment: datetime) -> date:
+    return moment.astimezone(UTC).date()

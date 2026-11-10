@@ -93,14 +93,19 @@ version lacks raises `MissingPolicyParametersError`, naming each one, and a
 policy the country doesn't have raises `UnknownPolicyError`.
 
 Each period is a range, `YYYY-MM-DD.YYYY-MM-DD`, with the stored dates read
-in UTC. A value with no end date applies to 31 December 2200, the latest year
-a household job or simulation run can be for. A start date alone would not
-do: policyengine-core reads it as "from that day on", but policyengine-uk's
-reform dictionary reads it as that one day. The executor's
+in UTC. A value with no end date follows .py's own rule
+(`reform_dict_from_parameter_values`): it stops the day before the same
+parameter's next later value starts, so once a later bounded value ends
+current law applies, and otherwise runs to 31 December 2200, the latest year
+a household job or simulation run can be for, where .py stops at 2100. A
+start date alone would not do for that last value: policyengine-core reads it
+as "from that day on", but policyengine-uk's reform dictionary reads it as
+that one day. The executor's
 `test_reform_periods_apply_in_2200_only_through_a_stop_in_2200` shows how
-both countries' household functions apply each form in 2200. Two values of
-one parameter on the same period raise `ConflictingPolicyValuesError`, so
-neither is lost.
+both countries' household functions apply each form in 2200, and its
+`test_py_reform_dicts.py` pins .py's own periods for the cases the reader's
+tests check. Two values of one parameter starting on the same day raise
+`ConflictingPolicyValuesError`, so neither is lost.
 
 ## Checking the models against the Public API
 
