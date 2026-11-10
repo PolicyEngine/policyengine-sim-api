@@ -534,10 +534,10 @@ def _register_service_routes(app: FastAPI, entry: EntryRuntime) -> None:
         operation_id="ping_ping_post",
         response_model=PingResponse,
     )
-    async def ping(body: PingRequest, request: Request) -> Response:
-        return await entry.forward(
-            request, BackendCall("POST", "/ping", model_json(body))
-        )
+    async def ping(body: PingRequest) -> PingResponse:
+        # Answered here, as the old gateway answers it (the request's value
+        # plus one), so /ping no longer depends on the old gateway.
+        return PingResponse(incremented=body.value + 1)
 
 
 def create_app(

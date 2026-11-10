@@ -10,6 +10,31 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.8.3] - 2026-11-10
+
+### Changed
+
+- Updated policyengine.py from 6.16.0 to 6.17.1 in the simulation runtime.
+
+
+## [0.8.2] - 2026-11-10
+
+### Fixed
+
+- An error raised while Stage 12 recalculates an incomplete cache file, including a Modal preemption, is no longer chained to the output-plan check that found the file incomplete, so the telemetry error report groups it by where it was raised.
+
+
+## [0.8.1] - 2026-11-10
+
+### Fixed
+
+- A Modal preemption of a simulation worker, segment worker or Stage 12 function is now recorded as an interrupted operation at WARNING instead of a failed one at ERROR, so the preempted call no longer opens telemetry error issues. Modal delivers a preemption to these synchronous functions as `KeyboardInterrupt` and runs the same input again; the observability library, the executor, the gateway and the entrypoint now require policyengine-observability 3.0.7, which records an operation or request that ends in `KeyboardInterrupt` with the outcome `interrupted` at WARNING and leaves it out of `policyengine.error.count`. The request and operation count and duration metrics get `interrupted` as a new value of their `outcome` attribute. An operation's span, or a span opened with `runtime.span`, that ends in `KeyboardInterrupt` is no longer set to error: its status stays unset and it gets the attribute `policyengine.outcome` set to `interrupted`. This applies to the executor app this release deploys; executor apps deployed for older policyengine.py versions keep the earlier behaviour until they are redeployed.
+
+  A child call that a preempted Stage 12 segment runner or report coordinator cancels still writes an ERROR record, and so does each running segment of a segmented US simulation cancelled that way: Modal ends a cancelled call with `InputCancellation`, which is not a `KeyboardInterrupt`.
+
+  The move from 3.0.4 also brings 3.0.5's change: a record written while a FastAPI endpoint runs, such as `exception.recorded`, carries the matched route template as `http.route` instead of `<unmatched>`.
+
+
 ## [0.8.0] - 2026-11-10
 
 ### Added
