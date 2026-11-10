@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 # Why a submission is refused (400): a row it names, or the household
 # function it needs, does not exist.
-type HouseholdRefusalCode = Literal[
+HouseholdRefusalCode = Literal[
     # The country has no catalog version for the default worker's .py version.
     "unknown_catalog_version",
     "unknown_household",
@@ -31,7 +31,7 @@ type HouseholdRefusalCode = Literal[
     "missing_reference",
 ]
 # Why a route cannot answer now (503); retry after ``Retry-After`` seconds.
-type HouseholdUnavailableCode = Literal[
+HouseholdUnavailableCode = Literal[
     # The service has no database or v2 Modal environment configured.
     "not_configured",
     "manifest_unavailable",
@@ -40,7 +40,10 @@ type HouseholdUnavailableCode = Literal[
     # time; the job was failed at once.
     "modal_call_refused",
 ]
-type HouseholdErrorCode = HouseholdRefusalCode | HouseholdUnavailableCode
+# Every code a household route's error answer carries.
+HouseholdErrorCode = Literal[
+    HouseholdRefusalCode, HouseholdUnavailableCode, "unknown_household_job"
+]
 
 
 class HouseholdCalculationRequest(BaseModel):
@@ -128,7 +131,7 @@ class HouseholdCalculationError(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    code: HouseholdErrorCode | Literal["unknown_household_job"]
+    code: HouseholdErrorCode
     detail: str
     household_job_id: UUID | None = None
 
@@ -136,10 +139,11 @@ class HouseholdCalculationError(BaseModel):
 class HouseholdRequestReason(BaseModel):
     """One reason a request cannot be calculated, as FastAPI writes a field error.
 
-    ``loc`` starts with the request field the reason traces to.
+    ``loc`` starts with the request field the reason traces to. FastAPI's own
+    field errors may also carry ``input`` and ``ctx``.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="allow", frozen=True)
 
     loc: list[str | int]
     msg: str

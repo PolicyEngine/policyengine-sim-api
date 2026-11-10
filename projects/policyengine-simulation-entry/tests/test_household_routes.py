@@ -10,6 +10,7 @@ from uuid import UUID
 import pytest
 from conftest import FakeBackend, make_settings
 from fastapi.testclient import TestClient
+from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.household_api_models import (
     HouseholdCalculationAccepted,
@@ -17,10 +18,12 @@ from policyengine_simulation_entry.household_api_models import (
 )
 from policyengine_simulation_entry.household_calculations import (
     HouseholdCalculationRefusedError,
+    HouseholdCalculationService,
     HouseholdCalculationUnavailableError,
     HouseholdCalculationUnprocessableError,
     UnprocessableReason,
 )
+from policyengine_simulation_entry.simulation_database import SimulationDatabase
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 from policyengine_simulation_persistence import HouseholdJobRecord, HouseholdJobStatus
 
@@ -91,21 +94,35 @@ class FakeHouseholdCalculations:
         return self.stored if self.stored and self.stored.id == job_id else None
 
 
-def _client(calculations: FakeHouseholdCalculations | None) -> TestClient:
-    return TestClient(
-        create_app(
-            settings=make_settings(),
-            backend=FakeBackend(),
-            auth_dependency=lambda: None,
-            household_calculations=calculations,
+@pytest.fixture
+def client_for(monkeypatch):
+    """Return a function building a client whose app uses ``calculations``.
+
+    None leaves the app as an unconfigured service builds it.
+    """
+
+    def build(calculations: FakeHouseholdCalculations | None) -> TestClient:
+        if calculations is not None:
+            monkeypatch.setattr(
+                app_module,
+                "household_calculations_for",
+                lambda settings, database: calculations,
+            )
+        return TestClient(
+            create_app(
+                settings=make_settings(),
+                backend=FakeBackend(),
+                auth_dependency=lambda: None,
+            )
         )
-    )
+
+    return build
 
 
-def test_a_submission_answers_202_with_the_job_and_its_status():
+def test_a_submission_answers_202_with_the_job_and_its_status(client_for):
     calculations = FakeHouseholdCalculations()
 
-    with _client(calculations) as client:
+    with client_for(calculations) as client:
         result = client.post(
             "/household-calculations",
             json={**SUBMISSION, "add_missing_variables": True, "spm": None},
@@ -122,10 +139,10 @@ def test_a_submission_answers_202_with_the_job_and_its_status():
     assert context["observability_id"] == OBSERVABILITY_ID
 
 
-def test_a_submission_without_an_observability_id_gets_a_new_one():
+def test_a_submission_without_an_observability_id_gets_a_new_one(client_for):
     calculations = FakeHouseholdCalculations()
 
-    with _client(calculations) as client:
+    with client_for(calculations) as client:
         result = client.post("/household-calculations", json=SUBMISSION)
 
     observability_id = result.headers[OBSERVABILITY_ID_HEADER]
@@ -142,10 +159,10 @@ def test_a_submission_without_an_observability_id_gets_a_new_one():
         {"country": "us"},
     ],
 )
-def test_a_malformed_submission_is_refused_with_its_reasons(body):
+def test_a_malformed_submission_is_refused_with_its_reasons(client_for, body):
     calculations = FakeHouseholdCalculations()
 
-    with _client(calculations) as client:
+    with client_for(calculations) as client:
         result = client.post("/household-calculations", json=body)
 
     assert result.status_code == 422
@@ -214,8 +231,10 @@ def test_a_malformed_submission_is_refused_with_its_reasons(body):
         ),
     ],
 )
-def test_a_refused_submission_answers_with_its_reason(failure, status_code, body):
-    with _client(FakeHouseholdCalculations(failure=failure)) as client:
+def test_a_refused_submission_answers_with_its_reason(
+    client_for, failure, status_code, body
+):
+    with client_for(FakeHouseholdCalculations(failure=failure)) as client:
         result = client.post("/household-calculations", json=SUBMISSION)
 
     assert result.status_code == status_code
@@ -231,9 +250,9 @@ def test_a_refused_submission_answers_with_its_reason(failure, status_code, body
     ],
 )
 def test_without_a_database_or_v2_environment_the_routes_are_unavailable(
-    method, path, body
+    client_for, method, path, body
 ):
-    with _client(None) as client:
+    with client_for(None) as client:
         result = getattr(client, method)(path, **({"json": body} if body else {}))
 
     assert result.status_code == 503
@@ -244,10 +263,10 @@ def test_without_a_database_or_v2_environment_the_routes_are_unavailable(
     assert result.headers["Retry-After"] == "10"
 
 
-def test_a_job_is_read_with_its_result_document():
+def test_a_job_is_read_with_its_result_document(client_for):
     calculations = FakeHouseholdCalculations(stored=_record())
 
-    with _client(calculations) as client:
+    with client_for(calculations) as client:
         result = client.get(STATE_PATH)
 
     assert result.status_code == 200
@@ -269,7 +288,7 @@ def test_a_job_is_read_with_its_result_document():
     assert calculations.reads == [JOB_ID]
 
 
-def test_a_failed_job_is_read_with_its_error_message():
+def test_a_failed_job_is_read_with_its_error_message(client_for):
     calculations = FakeHouseholdCalculations(
         stored=_record(
             status=HouseholdJobStatus.FAILED,
@@ -279,7 +298,7 @@ def test_a_failed_job_is_read_with_its_error_message():
         )
     )
 
-    with _client(calculations) as client:
+    with client_for(calculations) as client:
         result = client.get(STATE_PATH)
 
     assert result.status_code == 200
@@ -290,9 +309,9 @@ def test_a_failed_job_is_read_with_its_error_message():
     )
 
 
-def test_reading_a_job_never_invents_an_observability_id():
+def test_reading_a_job_never_invents_an_observability_id(client_for):
     """household_jobs records none, so the read returns none, whatever is sent."""
-    with _client(FakeHouseholdCalculations(stored=_record())) as client:
+    with client_for(FakeHouseholdCalculations(stored=_record())) as client:
         result = client.get(
             STATE_PATH, headers={OBSERVABILITY_ID_HEADER: OBSERVABILITY_ID}
         )
@@ -300,8 +319,8 @@ def test_reading_a_job_never_invents_an_observability_id():
     assert OBSERVABILITY_ID_HEADER not in result.headers
 
 
-def test_an_unknown_job_answers_404():
-    with _client(FakeHouseholdCalculations()) as client:
+def test_an_unknown_job_answers_404(client_for):
+    with client_for(FakeHouseholdCalculations()) as client:
         result = client.get(STATE_PATH)
 
     assert result.status_code == 404
@@ -311,13 +330,13 @@ def test_an_unknown_job_answers_404():
     }
 
 
-def test_a_job_that_cannot_be_read_answers_503():
+def test_a_job_that_cannot_be_read_answers_503(client_for):
     failure = HouseholdCalculationUnavailableError(
         code="database_unavailable",
         detail="The simulation database could not be read.",
     )
 
-    with _client(FakeHouseholdCalculations(failure=failure)) as client:
+    with client_for(FakeHouseholdCalculations(failure=failure)) as client:
         result = client.get(STATE_PATH)
 
     assert result.status_code == 503
@@ -325,11 +344,50 @@ def test_a_job_that_cannot_be_read_answers_503():
     assert result.headers["Retry-After"] == "10"
 
 
-def test_a_job_id_that_is_not_a_uuid_is_refused():
+def test_a_job_id_that_is_not_a_uuid_is_refused(client_for):
     calculations = FakeHouseholdCalculations()
 
-    with _client(calculations) as client:
+    with client_for(calculations) as client:
         result = client.get("/household-calculations/not-a-uuid")
 
     assert result.status_code == 422
     assert calculations.reads == []
+
+
+DATABASE_URL = "postgresql://simulation_service:secret@db.example:5432/postgres"
+
+
+def test_a_configured_service_builds_household_calculations_without_connecting():
+    """Nothing reaches the database or Modal until the first submission."""
+    database = SimulationDatabase.from_url(DATABASE_URL)
+    try:
+        calculations = app_module.household_calculations_for(
+            make_settings(
+                simulation_database_url=DATABASE_URL, v2_modal_environment="staging"
+            ),
+            database,
+        )
+    finally:
+        database.dispose()
+
+    assert isinstance(calculations, HouseholdCalculationService)
+
+
+@pytest.mark.parametrize(
+    "settings_changes",
+    [
+        {},
+        {"simulation_database_url": DATABASE_URL},
+        {"v2_modal_environment": "staging"},
+    ],
+)
+def test_without_its_database_and_v2_environment_none_is_built(settings_changes):
+    database = SimulationDatabase.from_url(DATABASE_URL)
+    try:
+        calculations = app_module.household_calculations_for(
+            make_settings(**settings_changes), database
+        )
+    finally:
+        database.dispose()
+
+    assert calculations is None
