@@ -545,6 +545,40 @@ def test_each_reused_simulations_options_country_and_year_reach_the_spm_resolver
     assert len(invoker.events) == 2 - len(reused_run_ids)
 
 
+@pytest.mark.parametrize(
+    "column",
+    ["dataset_id", "region_id"],
+    ids=["different-datasets", "different-regions"],
+)
+def test_two_reused_runs_naming_different_datasets_or_regions_fail_the_report(
+    column,
+) -> None:
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+    files = FakeOutputFiles()
+    for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
+        _succeeded_with_output(report_runs, files, run_id)
+    baseline_value = getattr(report_runs.simulation_runs[BASELINE_RUN_ID], column)
+    setattr(report_runs.simulation_runs[REFORM_RUN_ID], column, OTHER_CATALOG_ID)
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts)
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(store, report_runs, invoker, artifacts, files)
+
+    message = report_runs.report_runs[REPORT_RUN_ID].error_message
+    assert message.startswith("reused_simulation_run_mismatch: ")
+    assert f"baseline simulation run {BASELINE_RUN_ID}" in message
+    assert f"reform simulation run {REFORM_RUN_ID}" in message
+    assert f"{column} {baseline_value} instead of {OTHER_CATALOG_ID}" in message
+    # The pair is refused before either file is read or any worker starts.
+    assert files.reads == []
+    assert invoker.events == []
+    for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
+        assert report_runs.simulation_runs[run_id].writes == []
+    assert store.parent.error_code == "reused_simulation_run_mismatch"
+
+
 def test_a_reused_output_without_the_resolved_spm_calculation_fails_the_report() -> (
     None
 ):
