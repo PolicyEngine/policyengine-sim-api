@@ -12,23 +12,30 @@ HOUSEHOLD_ID = "00000000-0000-4000-8000-0000000000bb"
 JOB_ID = "00000000-0000-4000-8000-0000000000aa"
 
 
-def test_omitted_spm_settings_stay_omitted_and_an_explicit_null_is_sent():
+def test_omitted_spm_settings_and_axes_stay_omitted():
     """The service uses the saved selection only when the request sends none."""
     omitted = HouseholdCalculationRequest.from_dict(
         {"country": "us", "household_id": HOUSEHOLD_ID}
     ).to_dict()
-    explicit_null = HouseholdCalculationRequest.from_dict(
-        {"country": "us", "household_id": HOUSEHOLD_ID, "spm": None}
+    given = HouseholdCalculationRequest.from_dict(
+        {
+            "country": "us",
+            "household_id": HOUSEHOLD_ID,
+            "spm": {"scenario": "zero_real"},
+            "axes": [[{"name": "age", "count": 3, "min": 20, "max": 60}]],
+        }
     ).to_dict()
 
     assert "spm" not in omitted
+    assert "axes" not in omitted
     assert "policy_id" not in omitted
-    assert explicit_null["spm"] is None
+    assert given["spm"] == {"scenario": "zero_real"}
+    assert given["axes"] == [[{"name": "age", "count": 3, "min": 20, "max": 60}]]
 
 
 def test_a_submission_answer_and_an_error_are_read():
     accepted = HouseholdCalculationAccepted.from_dict(
-        {"id": JOB_ID, "status": "pending"}
+        {"job_id": JOB_ID, "status": "pending"}
     )
     refused = HouseholdCalculationError.from_dict(
         {
@@ -50,7 +57,7 @@ def test_a_job_keeps_its_result_document_whole():
         "output": {"household": {"people": {"you": {"age": {"2026": 40}}}}},
     }
     state = {
-        "id": JOB_ID,
+        "job_id": JOB_ID,
         "status": "succeeded",
         "country": "us",
         "household_id": HOUSEHOLD_ID,

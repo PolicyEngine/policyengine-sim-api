@@ -125,12 +125,17 @@ def test_a_submission_answers_202_with_the_job_and_its_status(client_for):
     with client_for(calculations) as client:
         result = client.post(
             "/household-calculations",
-            json={**SUBMISSION, "add_missing_variables": True, "spm": None},
+            json={
+                **SUBMISSION,
+                "policy_id": None,
+                "add_missing_variables": True,
+                "spm": {"scenario": "zero_real"},
+            },
             headers={OBSERVABILITY_ID_HEADER: OBSERVABILITY_ID},
         )
 
     assert result.status_code == 202
-    assert result.json() == {"id": str(JOB_ID), "status": "pending"}
+    assert result.json() == {"job_id": str(JOB_ID), "status": "pending"}
     assert result.headers[OBSERVABILITY_ID_HEADER] == OBSERVABILITY_ID
     ((request, context),) = calculations.submissions
     assert request.household_id == HOUSEHOLD_ID
@@ -157,6 +162,9 @@ def test_a_submission_without_an_observability_id_gets_a_new_one(client_for):
         {**SUBMISSION, "household_id": "not-a-uuid"},
         {**SUBMISSION, "year": 2026},
         {"country": "us"},
+        {**SUBMISSION, "spm": None},
+        {**SUBMISSION, "spm": "ce_trend"},
+        {**SUBMISSION, "axes": [[{"name": "age", "count": 0, "min": 0, "max": 1}]]},
     ],
 )
 def test_a_malformed_submission_is_refused_with_its_reasons(client_for, body):
@@ -271,7 +279,7 @@ def test_a_job_is_read_with_its_result_document(client_for):
 
     assert result.status_code == 200
     assert result.json() == {
-        "id": str(JOB_ID),
+        "job_id": str(JOB_ID),
         "status": "succeeded",
         "country": "us",
         "household_id": str(HOUSEHOLD_ID),

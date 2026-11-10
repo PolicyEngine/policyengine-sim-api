@@ -273,7 +273,14 @@ def test_a_household_calculation_request_names_its_fields_only():
         "household_id",
         "policy_id",
         "add_missing_variables",
+        "axes",
         "spm",
+    }
+    # SPM settings are an object when given; null is refused.
+    assert request["properties"]["spm"]["type"] == "object"
+    assert set(schemas["HouseholdCalculationAccepted"]["properties"]) == {
+        "job_id",
+        "status",
     }
     assert set(request["required"]) == {"country", "household_id"}
     assert request["additionalProperties"] is False

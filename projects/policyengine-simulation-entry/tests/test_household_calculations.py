@@ -46,6 +46,7 @@ from policyengine_simulation_persistence import (
     UnknownHouseholdError,
     UnknownPolicyError,
 )
+from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 
 JOB_ID = UUID("00000000-0000-4000-8000-0000000000aa")
@@ -242,7 +243,7 @@ async def test_a_calculation_creates_its_job_then_starts_and_records_its_call():
     )
 
     worker = _manifest_worker("us")
-    assert (accepted.id, accepted.status) == (JOB_ID, HouseholdJobStatus.PENDING)
+    assert (accepted.job_id, accepted.status) == (JOB_ID, HouseholdJobStatus.PENDING)
     assert workers.countries == ["us"]
     assert store.reads == [
         {
@@ -309,14 +310,13 @@ async def test_current_law_is_calculated_as_a_policy_without_parameters():
 @pytest.mark.parametrize(
     ("request_fields", "saved", "expected_spm", "expected_source"),
     [
-        # The request's settings, even an explicit null, are its choice.
+        # The request's settings are its choice.
         (
             {"spm": {"scenario": "zero_real"}},
             SAVED_SPM,
             {"scenario": "zero_real"},
             "request",
         ),
-        ({"spm": None}, SAVED_SPM, None, "request"),
         # Otherwise the household's saved selection is used, as saved.
         ({}, SAVED_SPM, SAVED_SPM, "saved_household"),
     ],
@@ -333,6 +333,61 @@ async def test_the_spm_settings_come_from_the_request_or_the_saved_household(
     payload = caller.calls[0]["payload"]
     assert payload["spm"] == expected_spm
     assert payload["spm_selection_source"] == expected_source
+
+
+def test_an_explicit_null_spm_selection_is_refused():
+    """Omit ``spm`` to send no settings; null is no selection."""
+    with pytest.raises(ValidationError, match="spm"):
+        _request(spm=None)
+
+
+@pytest.mark.asyncio
+async def test_axes_are_calculated_with_the_stored_household():
+    """The request's axes vary the stored household's inputs across points."""
+    axes = [[{"name": "employment_income", "count": 5, "min": 0, "max": 80_000}]]
+    service, store, _, caller = _service()
+
+    await service.submit(_request(axes=axes), observability_context=None)
+
+    assert caller.calls[0]["payload"]["household"] == {**SITUATION, "axes": axes}
+    assert store.created[0].request_data["axes"] == axes
+
+
+@pytest.mark.asyncio
+async def test_without_axes_the_household_has_none():
+    service, store, _, caller = _service()
+
+    await service.submit(_request(), observability_context=None)
+
+    assert "axes" not in caller.calls[0]["payload"]["household"]
+    assert "axes" not in store.created[0].request_data
+
+
+@pytest.mark.parametrize(
+    "axes",
+    [
+        # Parallel axes must share one point count.
+        [
+            [
+                {"name": "employment_income", "count": 5, "min": 0, "max": 1},
+                {"name": "age", "count": 4, "min": 0, "max": 1},
+            ]
+        ],
+        # At most 10,000 points in all.
+        [
+            [{"name": "employment_income", "count": 101, "min": 0, "max": 1}],
+            [{"name": "age", "count": 100, "min": 0, "max": 1}],
+        ],
+        # At most eight groups.
+        [
+            [{"name": f"variable_{group}", "count": 1, "min": 0, "max": 1}]
+            for group in range(9)
+        ],
+    ],
+)
+def test_axes_beyond_the_household_contracts_limits_are_refused(axes):
+    with pytest.raises(ValidationError):
+        _request(axes=axes)
 
 
 @pytest.mark.asyncio
@@ -604,7 +659,7 @@ async def test_a_call_whose_id_cannot_be_recorded_is_still_accepted():
 
     accepted = await service.submit(_request(), observability_context=None)
 
-    assert (accepted.id, accepted.status) == (JOB_ID, HouseholdJobStatus.PENDING)
+    assert (accepted.job_id, accepted.status) == (JOB_ID, HouseholdJobStatus.PENDING)
     assert store.failed == []
 
 

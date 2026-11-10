@@ -77,7 +77,7 @@ esac
 def _job(status: str, **fields) -> str:
     return json.dumps(
         {
-            "id": JOB_ID,
+            "job_id": JOB_ID,
             "status": status,
             "country": "us",
             "household_id": HOUSEHOLD_ID,
@@ -116,7 +116,7 @@ def _run(fakes, tmp_path, answers: list[str], **overrides):
         "FAKE_BASE_URL": BASE_URL,
         "FAKE_ACCESS_TOKEN": ACCESS_TOKEN,
         "FAKE_SUBMISSION_STATUS": "202",
-        "FAKE_SUBMISSION_BODY": json.dumps({"id": JOB_ID, "status": "pending"}),
+        "FAKE_SUBMISSION_BODY": json.dumps({"job_id": JOB_ID, "status": "pending"}),
         **overrides,
     }
     result = run_script(CHECK_SCRIPT, BASE_URL + "/", env=fakes.env(**environment))
