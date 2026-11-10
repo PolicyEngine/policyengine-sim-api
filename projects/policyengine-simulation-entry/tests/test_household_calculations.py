@@ -99,11 +99,9 @@ def _manifest_worker(country: str) -> HouseholdWorker:
     return default_household_worker(manifest, country)
 
 
-def _expected_policy_fields(
-    policy_key: str, reform: dict[str, dict[str, object]]
-) -> dict[str, object]:
+def _expected_policy_fields(reform: dict[str, dict[str, object]]) -> dict[str, object]:
     """Return how the household contract's request names the job's one policy."""
-    return {"policies": [{"policy_key": policy_key, "parameters": reform}]}
+    return {"policy": {"parameters": reform}}
 
 
 class FakeWorkers:
@@ -282,7 +280,7 @@ async def test_a_calculation_creates_its_job_then_starts_and_records_its_call():
             "country": "us",
             "year": "2026",
             "household": SITUATION,
-            **_expected_policy_fields("reform", REFORM),
+            **_expected_policy_fields(REFORM),
             "add_missing_variables": True,
             "bundle": worker.bundle,
         }
@@ -293,7 +291,7 @@ async def test_a_calculation_creates_its_job_then_starts_and_records_its_call():
 
 
 @pytest.mark.asyncio
-async def test_current_law_is_calculated_as_a_baseline_without_parameters():
+async def test_current_law_is_calculated_as_a_policy_without_parameters():
     service, store, _, caller = _service()
 
     await service.submit(_request(), observability_context=None)
@@ -302,8 +300,8 @@ async def test_current_law_is_calculated_as_a_baseline_without_parameters():
     assert store.created[0].policy_id is None
     payload = caller.calls[0]["payload"]
     assert {
-        name: payload[name] for name in _expected_policy_fields("baseline", {})
-    } == _expected_policy_fields("baseline", {})
+        name: payload[name] for name in _expected_policy_fields({})
+    } == _expected_policy_fields({})
     assert caller.calls[0]["payload"]["add_missing_variables"] is False
 
 
@@ -499,7 +497,7 @@ async def test_what_the_household_contract_refuses_is_named_by_its_field():
         "members",
     ) in locations
     assert any(
-        location[:3] == ("body", "policy_id", "policies") for location in locations
+        location[:3] == ("body", "policy_id", "policy") for location in locations
     )
     assert store.created == []
     assert caller.calls == []

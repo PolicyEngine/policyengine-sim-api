@@ -259,9 +259,7 @@ def prepare_household_job(
                 # The household's default year, as a situation's period key.
                 "year": str(household.default_year),
                 "household": situation,
-                **job_policy_fields(
-                    current_law=request.policy_id is None, reform=inputs.reform
-                ),
+                **job_policy_fields(reform=inputs.reform),
                 "add_missing_variables": request.add_missing_variables,
                 "bundle": worker.bundle,
                 **_spm_fields(request, household.document),

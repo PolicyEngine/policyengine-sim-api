@@ -930,36 +930,28 @@ def test_reform_periods_apply_in_2200_only_through_a_stop_in_2200(
     """
     parameter, value = CHANGED_PARAMETER[country]
     reforms = {
+        "baseline": {},
         "through_2200": {parameter: {"2026-01-01.2200-12-31": value}},
         "through_2100": {parameter: {"2026-01-01.2100-12-31": value}},
         "start_date_alone": {parameter: {"2026-01-01": value}},
     }
-    request = _request(
-        country,
-        SINGLE_ADULT_WITHOUT_PERIODS[country],
-        year="2200",
-        policies=[
-            {"policy_key": "baseline", "parameters": {}},
-            *(
-                {"policy_key": policy_key, "parameters": parameters}
-                for policy_key, parameters in reforms.items()
+    net_incomes = {}
+    for reform_name, parameters in reforms.items():
+        outcome = calculate_household(
+            _request(
+                country,
+                SINGLE_ADULT_WITHOUT_PERIODS[country],
+                year="2200",
+                policy={"parameters": parameters},
             ),
-        ],
-    )
+            worker=_worker(country),
+            dependencies=HouseholdCalculationDependencies(),
+        )
+        assert isinstance(outcome, HouseholdExecutionResult), outcome
+        net_incomes[reform_name] = outcome.output.household.to_situation()[
+            "households"
+        ]["your household"]["household_net_income"]["2200"]
 
-    outcome = calculate_household(
-        request,
-        worker=_worker(country),
-        dependencies=HouseholdCalculationDependencies(),
-    )
-
-    assert isinstance(outcome, HouseholdExecutionResult), outcome
-    net_incomes = {
-        result.policy_key: result.household.to_situation()["households"][
-            "your household"
-        ]["household_net_income"]["2200"]
-        for result in outcome.output.results
-    }
     assert net_incomes["through_2200"] < net_incomes["baseline"]
     assert net_incomes["through_2100"] == net_incomes["baseline"]
     assert (net_incomes["start_date_alone"] < net_incomes["baseline"]) is (

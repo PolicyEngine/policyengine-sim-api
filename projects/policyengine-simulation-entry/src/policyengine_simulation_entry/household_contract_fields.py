@@ -13,20 +13,16 @@ from typing import TYPE_CHECKING, Final
 if TYPE_CHECKING:
     from policyengine_simulation_persistence import PolicyReform
 
-# The name the request gives the job's one policy.
-CURRENT_LAW_POLICY_KEY: Final = "baseline"
-STORED_POLICY_POLICY_KEY: Final = "reform"
 # The request's top-level fields that hold the policy.
-POLICY_FIELDS: Final = frozenset({"policies"})
+POLICY_FIELDS: Final = frozenset({"policy"})
 
 
-def job_policy_fields(*, current_law: bool, reform: PolicyReform) -> dict[str, object]:
-    """Return the request fields naming the job's policy and its reform values.
+def job_policy_fields(*, reform: PolicyReform) -> dict[str, object]:
+    """Return the request fields naming the job's one policy and its values.
 
-    Current law changes no parameter.
+    Current law changes no parameter, so its reform is empty.
     """
-    policy_key = CURRENT_LAW_POLICY_KEY if current_law else STORED_POLICY_POLICY_KEY
-    return {"policies": [{"policy_key": policy_key, "parameters": reform}]}
+    return {"policy": {"parameters": reform}}
 
 
 def names_the_policy(location: tuple[str | int, ...]) -> bool:
