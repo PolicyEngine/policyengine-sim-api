@@ -42,7 +42,11 @@ Auth0 permission:
 | `GET /internal/stage12/reports/{evaluation_id}` | `stage12:operate` |
 
 `GET /health`, `GET /ready`, `GET /versions`, `GET /versions/{kind}` and
-`POST /ping` stay public.
+`POST /ping` stay public. The entrypoint answers `GET /health` and `POST /ping`
+itself, without calling the old gateway: `/ping` returns the request's `value`
+plus one as `incremented`, the same answer the old gateway gives. Their
+responses carry no `X-PolicyEngine-Simulation-Backend` header and record no
+old-gateway telemetry events.
 
 A caller holds a permission when it appears in the token's `permissions` claim
 (Auth0 RBAC). For a client-credentials (machine) token, an entry in its
