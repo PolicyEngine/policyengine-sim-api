@@ -28,7 +28,9 @@ from policyengine_simulation_observability.stages import Stage, StagePlan
 from policyengine_stage12_persistence import RunStatus
 
 from policyengine_simulation_executor.stage12_artifacts import (
+    DecodedSimulationOutput,
     Stage12ArtifactStore,
+    decode_simulation_output,
     deserialize_calculation_provenance,
 )
 from policyengine_simulation_executor.stage12_timeouts import (
@@ -70,12 +72,7 @@ from .output_planning import (
     validate_output_frames,
 )
 from .report_run_recording import SimulationRunRecordingStore
-from .reused_outputs import (
-    decoded_output,
-    reused_outputs,
-    simulations_to_calculate,
-    worker_payloads,
-)
+from .reused_outputs import reused_outputs, simulations_to_calculate
 from .simulation import descriptor_from_record
 
 if TYPE_CHECKING:
@@ -460,11 +457,15 @@ class ReportCoordination:
         """
         validate_aligned_outputs(self.report, output_plan, baseline, reform)
         with self.span(Stage.STAGE12_ARTIFACT_READ):
-            payloads = worker_payloads(
-                (baseline, reform), self.reused, self.artifact_storage
-            )
-        baseline_output = decoded_output(baseline, payloads, self.reused)
-        reform_output = decoded_output(reform, payloads, self.reused)
+            payloads = {
+                descriptor.role.value: self.artifact_storage.read(
+                    descriptor.artifact.uri
+                )
+                for descriptor in (baseline, reform)
+                if descriptor.role.value not in self.reused
+            }
+        baseline_output = self._decoded_output(baseline, payloads)
+        reform_output = self._decoded_output(reform, payloads)
         uk_local_authority_metadata = validate_uk_local_authority_metadata(
             self.report.baseline.geography.country,
             baseline_output.uk_local_authority_metadata,
@@ -478,6 +479,27 @@ class ReportCoordination:
             RetainedSimulationOutput(reform_output.frames, reform),
             uk_local_authority_metadata,
         )
+
+    def _decoded_output(
+        self,
+        descriptor: SimulationArtifactDescriptor,
+        payloads: Mapping[str, bytes],
+    ) -> DecodedSimulationOutput:
+        """Return a reused output as decoded, or digest-check and decode a worker's.
+
+        Raises ValueError when the bytes a worker's artifact holds differ from
+        its digest.
+        """
+        reused = self.reused.get(descriptor.role.value)
+        if reused is not None:
+            return reused.decoded
+        payload = payloads[descriptor.role.value]
+        _require_artifact_digest(
+            payload,
+            descriptor.artifact.content_sha256,
+            mismatch_message=f"{descriptor.role.value} artifact digest mismatch",
+        )
+        return decode_simulation_output(payload)
 
     def _aggregate_and_complete(
         self,

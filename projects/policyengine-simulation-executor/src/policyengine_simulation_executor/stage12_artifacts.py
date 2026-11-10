@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from hashlib import sha256
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
@@ -317,6 +318,22 @@ def deserialize_uk_local_authority_metadata(
     if raw is None:
         return None
     return UKLocalAuthorityMetadata.model_validate_json(raw)
+
+
+@dataclass(frozen=True)
+class DecodedSimulationOutput:
+    """One simulation output file's entity frames and UK local authority metadata."""
+
+    frames: dict[str, pd.DataFrame]
+    uk_local_authority_metadata: UKLocalAuthorityMetadata | None
+
+
+def decode_simulation_output(payload: bytes) -> DecodedSimulationOutput:
+    """Decode a simulation output file's frames and UK local authority metadata."""
+    return DecodedSimulationOutput(
+        frames=deserialize_simulation_frames(payload),
+        uk_local_authority_metadata=deserialize_uk_local_authority_metadata(payload),
+    )
 
 
 class Stage12ArtifactStore:

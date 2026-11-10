@@ -30,16 +30,11 @@ from policyengine_simulation_contract.stage12_execution import (
     ReportRunIds,
 )
 from policyengine_simulation_executor import spm as runtime_spm
+from policyengine_simulation_executor import stage12_artifacts
 from policyengine_simulation_executor.stage12_artifacts import (
     deserialize_simulation_frames,
     serialize_simulation_frames,
     simulation_row_identity,
-)
-from policyengine_simulation_executor.stage12_runtime import (
-    report_coordination as report_coordination_module,
-)
-from policyengine_simulation_executor.stage12_runtime import (
-    reused_outputs as reused_outputs_module,
 )
 from policyengine_simulation_executor.stage12_runtime.reused_outputs import (
     CloudStorageOutputFiles,
@@ -903,22 +898,17 @@ def test_a_restarted_call_reuses_the_output_its_own_baseline_worker_recorded() -
 
 def test_a_reused_output_file_is_read_and_decoded_once(monkeypatch) -> None:
     decoded_digests: list[str] = []
+    decode = stage12_artifacts.deserialize_simulation_frames
 
-    def counting_decoder(module):
-        decode = module.deserialize_simulation_frames
+    def counting_decoder(payload):
+        decoded_digests.append(sha256(payload).hexdigest())
+        return decode(payload)
 
-        def counted(payload):
-            decoded_digests.append(sha256(payload).hexdigest())
-            return decode(payload)
-
-        return counted
-
-    # Every module of the coordinator that decodes a simulation output file.
-    for module in (reused_outputs_module, report_coordination_module):
-        if hasattr(module, "deserialize_simulation_frames"):
-            monkeypatch.setattr(
-                module, "deserialize_simulation_frames", counting_decoder(module)
-            )
+    # decode_simulation_output, which decodes every reused and worker output
+    # file the coordinator aggregates, looks the decoder up in this module.
+    monkeypatch.setattr(
+        stage12_artifacts, "deserialize_simulation_frames", counting_decoder
+    )
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
     stored = _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)

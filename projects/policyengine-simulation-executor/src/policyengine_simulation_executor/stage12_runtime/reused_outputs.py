@@ -47,9 +47,8 @@ from policyengine_stage12_persistence import RunStatus
 
 from policyengine_simulation_executor.artifact_store import ArtifactStore
 from policyengine_simulation_executor.stage12_artifacts import (
+    decode_simulation_output,
     deserialize_calculation_provenance,
-    deserialize_simulation_frames,
-    deserialize_uk_local_authority_metadata,
     simulation_row_identity,
 )
 
@@ -61,18 +60,16 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from uuid import UUID
 
-    import pandas as pd
     from google.cloud import storage
     from policyengine_simulation_contract.spm import SPMProvenance
     from policyengine_simulation_contract.stage12_execution import (
         PlannedSimulationExecutionInput,
         ReportRunIds,
     )
-    from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
     from policyengine_stage12_persistence import SimulationRunState
 
     from policyengine_simulation_executor.stage12_artifacts import (
-        Stage12ArtifactStore,
+        DecodedSimulationOutput,
     )
 
     from .output_planning import StageScope
@@ -135,22 +132,6 @@ class CloudStorageOutputFiles:
         if payload is None:
             raise FileNotFoundError(uri)
         return payload
-
-
-@dataclass(frozen=True)
-class DecodedSimulationOutput:
-    """One simulation output file's entity frames and UK local authority metadata."""
-
-    frames: dict[str, pd.DataFrame]
-    uk_local_authority_metadata: UKLocalAuthorityMetadata | None
-
-
-def decode_simulation_output(payload: bytes) -> DecodedSimulationOutput:
-    """Decode a simulation output file's frames and UK local authority metadata."""
-    return DecodedSimulationOutput(
-        frames=deserialize_simulation_frames(payload),
-        uk_local_authority_metadata=deserialize_uk_local_authority_metadata(payload),
-    )
 
 
 @dataclass(frozen=True)
@@ -432,36 +413,3 @@ def simulations_to_calculate(
     return tuple(
         simulation for simulation in simulations if simulation.role.value not in reused
     )
-
-
-def worker_payloads(
-    descriptors: Sequence[SimulationArtifactDescriptor],
-    reused: Mapping[str, ReusedSimulationOutput],
-    artifacts: Stage12ArtifactStore,
-) -> dict[str, bytes]:
-    """Read, by role, each worker's artifact; a reused output is already read."""
-    return {
-        descriptor.role.value: artifacts.read(descriptor.artifact.uri)
-        for descriptor in descriptors
-        if descriptor.role.value not in reused
-    }
-
-
-def decoded_output(
-    descriptor: SimulationArtifactDescriptor,
-    payloads: Mapping[str, bytes],
-    reused: Mapping[str, ReusedSimulationOutput],
-) -> DecodedSimulationOutput:
-    """Return a reused output as decoded, or digest-check and decode a worker's.
-
-    Raises ValueError when the bytes a worker's artifact holds differ from
-    its digest.
-    """
-    output = reused.get(descriptor.role.value)
-    if output is not None:
-        return output.decoded
-    payload = payloads[descriptor.role.value]
-    if sha256(payload).hexdigest() != descriptor.artifact.content_sha256:
-        msg = f"{descriptor.role.value} artifact digest mismatch"
-        raise ValueError(msg)
-    return decode_simulation_output(payload)
