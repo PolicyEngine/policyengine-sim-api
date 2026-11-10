@@ -5,10 +5,15 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from fixtures.fake_object_store import InMemoryObjectStore
 from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     SimulationRole,
+)
+from policyengine_simulation_executor.stage12_artifacts import (
+    SimulationOutputBucket,
+    Stage12ArtifactStore,
 )
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationWorkerDependencies,
@@ -440,8 +445,8 @@ def test_report_run_coordinator_names_its_aggregate_by_digest(monkeypatch) -> No
     built = []
     artifacts = FakeArtifacts()
 
-    def recording_artifact_store(*, content_addressed=False):
-        built.append(content_addressed)
+    def recording_artifact_store(*, report_run=False):
+        built.append(report_run)
         return artifacts
 
     monkeypatch.setattr(coordination_module, "artifact_store", recording_artifact_store)
@@ -459,3 +464,55 @@ def test_report_run_coordinator_names_its_aggregate_by_digest(monkeypatch) -> No
     )
 
     assert built == [True]
+
+
+def test_a_report_run_reads_its_workers_outputs_from_the_simulation_output_bucket() -> (
+    None
+):
+    artifact_bucket = "policyengine-stage12-staging-artifacts"
+    output_bucket = "policyengine-v2-staging-simulation-outputs"
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+    artifact_objects = InMemoryObjectStore()
+    output_objects = InMemoryObjectStore()
+    artifacts = Stage12ArtifactStore(
+        artifact_bucket,
+        store=artifact_objects,
+        content_addressed=True,
+        simulation_outputs=SimulationOutputBucket(output_bucket, store=output_objects),
+    )
+    report = report_execution_input()
+    # A reform the real worker accepts: an effective period with dates.
+    report = report.model_copy(
+        update={
+            "reform": report.reform.model_copy(
+                update={"policy": {"reform": {"2026-01-01.2026-12-31": 1}}}
+            )
+        }
+    )
+
+    coordinate_report(
+        report.model_dump(mode="json"),
+        report_run_context().model_dump(mode="json"),
+        parent_record().model_dump(mode="json"),
+        application_name=report_run_context().modal_application,
+        coordinator_invocation_id=COORDINATOR_CALL_ID,
+        store=store,
+        artifacts=artifacts,
+        invoker=WorkerInvoker(store, artifacts, report_runs),
+        aggregator=economy_aggregate,
+        report_runs=report_runs,
+    )
+
+    assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
+    for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
+        output_uri = report_runs.simulation_runs[run_id].output_uri
+        run_prefix = f"gs://{output_bucket}/simulation-runs/staging/us/{run_id}/"
+        assert output_uri.startswith(f"{run_prefix}output-")
+        assert (
+            output_uri.removeprefix(f"gs://{output_bucket}/") in output_objects.objects
+        )
+    assert len(output_objects.objects) == 2
+    # The inputs and the aggregate stay in the Stage 12 artifact bucket.
+    assert store.parent.aggregate_output_uri.startswith(f"gs://{artifact_bucket}/")
+    assert not any(path.endswith(".parquet") for path in artifact_objects.objects)

@@ -111,6 +111,8 @@ class FakeArtifacts:
         self.aggregate_writes = []
         self.comparison_writes = []
         self.input_writes = []
+        # Each report run's output write: its environment and simulation run.
+        self.simulation_run_outputs = []
         # Aggregates go through the real store, so every coordinator test
         # enforces the aggregate artifact contract that production enforces.
         self.report_store = Stage12ArtifactStore("private", store=InMemoryObjectStore())
@@ -172,6 +174,15 @@ class FakeArtifacts:
         )
         return descriptor.model_copy(
             update={"calculation_provenance": calculation_provenance}
+        )
+
+    def write_simulation_run_output(self, location, *, simulation, frames, **metadata):
+        """Store a report run's output under the same URI ``write_simulation`` uses."""
+        self.simulation_run_outputs.append(
+            (location.environment, location.simulation_run_id)
+        )
+        return self.write_simulation(
+            prefix=None, simulation=simulation, frames=frames, **metadata
         )
 
     def read(self, uri):
