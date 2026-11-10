@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from google.cloud import storage
+    from policyengine_simulation_contract.spm import SPMProvenance
     from policyengine_simulation_contract.stage12_execution import (
         PlannedSimulationExecutionInput,
     )
@@ -69,7 +70,9 @@ REUSED_OUTPUT_MISSING = "reused_simulation_output_missing"
 # The file can't be read, or isn't a Stage 12 simulation output.
 REUSED_OUTPUT_UNREADABLE = "reused_simulation_output_unreadable"
 REUSED_OUTPUT_DIGEST_MISMATCH = "reused_simulation_output_digest_mismatch"
-# The file lacks an entity or column this report's output plan names.
+# The file lacks an entity or column this report's output plan names, or
+# doesn't hold the SPM calculation this report requests, or holds one it
+# doesn't request.
 REUSED_OUTPUT_INCOMPATIBLE = "reused_simulation_output_incompatible"
 # The run calculated another year, country package version or .py version.
 REUSED_RUN_MISMATCH = "reused_simulation_run_mismatch"
@@ -168,7 +171,8 @@ def checked_output(
 
     Raises ``ReusedSimulationOutputError`` when the run calculated another
     year or version, or its file is missing, unreadable, differs from its
-    digest, or lacks an entity or column the report plans.
+    digest, lacks an entity or column the report plans, or has an SPM
+    calculation receipt exactly when the report requests none.
     """
     named = f"The reused {simulation.role.value} simulation run {run_id}"
     _require_same_calculation(simulation, stored, named=named)
@@ -190,6 +194,7 @@ def checked_output(
             REUSED_OUTPUT_INCOMPATIBLE,
             f"{named} names an output file without outputs this report needs: {error}",
         ) from error
+    _require_requested_spm_calculation(simulation, calculation_provenance, named=named)
     return ReusedSimulationOutput(
         payload=payload,
         descriptor=SimulationArtifactDescriptor(
@@ -238,6 +243,32 @@ def _require_same_calculation(
             REUSED_RUN_MISMATCH,
             f"{named} differs from this report run's simulation: "
             f"{'; '.join(differences)}.",
+        )
+
+
+def _require_requested_spm_calculation(
+    simulation: PlannedSimulationExecutionInput,
+    calculation_provenance: SPMProvenance | None,
+    *,
+    named: str,
+) -> None:
+    """Raise unless the file has an SPM receipt exactly when the report requests one.
+
+    A worker writes an SPM calculation receipt exactly when its report
+    requests an SPM calculation, which changes the values it calculates.
+    """
+    spm_requested = simulation.options.get("spm") is not None
+    if spm_requested and calculation_provenance is None:
+        raise ReusedSimulationOutputError(
+            REUSED_OUTPUT_INCOMPATIBLE,
+            f"{named} names an output file without the SPM calculation "
+            "receipt this report requests.",
+        )
+    if not spm_requested and calculation_provenance is not None:
+        raise ReusedSimulationOutputError(
+            REUSED_OUTPUT_INCOMPATIBLE,
+            f"{named} names an output file with an SPM calculation receipt, "
+            "but this report requests no SPM calculation.",
         )
 
 
