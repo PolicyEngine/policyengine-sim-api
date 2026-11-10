@@ -135,3 +135,39 @@ class ManifestHouseholdWorkers:
             msg = "the v2 version manifest could not be read"
             raise VersionManifestUnavailableError(msg) from error
         return default_household_worker(manifest, country)
+
+
+class ModalHouseholdFunctionCaller:
+    """Start household function calls on Modal, by application and function name."""
+
+    def __init__(self, environment: str) -> None:
+        """Look up household functions in this Modal environment."""
+        self._environment = environment
+
+    async def spawn(
+        self,
+        worker: HouseholdWorker,
+        payload: dict[str, Any],
+        *,
+        household_job_id: UUID,
+        observability_context: dict[str, Any] | None,
+    ) -> str:
+        """Start the household function's call and return its Modal call ID.
+
+        Raise RuntimeError when Modal returns no call ID.
+        """
+        function = modal.Function.from_name(
+            worker.application_name,
+            worker.function_name,
+            environment_name=self._environment,
+        )
+        call = await function.spawn.aio(
+            payload,
+            household_job_id=str(household_job_id),
+            observability_context=observability_context,
+        )
+        call_id = getattr(call, "object_id", None)
+        if not isinstance(call_id, str) or not call_id:
+            msg = "Modal returned no call ID for the household function's call"
+            raise RuntimeError(msg)
+        return call_id

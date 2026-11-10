@@ -99,6 +99,13 @@ def _manifest_worker(country: str) -> HouseholdWorker:
     return default_household_worker(manifest, country)
 
 
+def _expected_policy_fields(
+    policy_key: str, reform: dict[str, dict[str, object]]
+) -> dict[str, object]:
+    """Return how the household contract's request names the job's one policy."""
+    return {"policies": [{"policy_key": policy_key, "parameters": reform}]}
+
+
 class FakeWorkers:
     """The default worker's household functions, or the lookup's failure."""
 
@@ -275,7 +282,7 @@ async def test_a_calculation_creates_its_job_then_starts_and_records_its_call():
             "country": "us",
             "year": "2026",
             "household": SITUATION,
-            "policies": [{"policy_key": "reform", "parameters": REFORM}],
+            **_expected_policy_fields("reform", REFORM),
             "add_missing_variables": True,
             "bundle": worker.bundle,
         }
@@ -293,9 +300,10 @@ async def test_current_law_is_calculated_as_a_baseline_without_parameters():
 
     assert store.reads[0]["policy_id"] is None
     assert store.created[0].policy_id is None
-    assert caller.calls[0]["payload"]["policies"] == [
-        {"policy_key": "baseline", "parameters": {}}
-    ]
+    payload = caller.calls[0]["payload"]
+    assert {
+        name: payload[name] for name in _expected_policy_fields("baseline", {})
+    } == _expected_policy_fields("baseline", {})
     assert caller.calls[0]["payload"]["add_missing_variables"] is False
 
 
