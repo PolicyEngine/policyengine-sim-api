@@ -574,7 +574,7 @@ def _household_payload(country: str) -> dict:
         "country": country,
         "year": "2026",
         "household": {"people": {"you": {"age": {"2026": 40}}}},
-        "policies": [{"policy_key": "baseline", "parameters": {}}],
+        "policy": {"parameters": {}},
         "bundle": {
             "policyengine_version": "6.7.5",
             "core_package_version": "3.0.0",

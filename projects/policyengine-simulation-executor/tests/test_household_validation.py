@@ -36,7 +36,7 @@ def _succeeded(request: HouseholdExecutionRequest) -> dict:
         "output": {
             "country": request.country,
             "bundle": request.bundle.model_dump(mode="json"),
-            "results": [{"policy_key": "baseline", "household": situation}],
+            "household": situation,
         },
         "worker": WORKER.model_dump(mode="json"),
     }
@@ -54,7 +54,7 @@ def test_the_validation_household_is_one_adult_under_current_law(
     assert request.country == country
     assert request.year == "2026"
     assert request.bundle == installed_household_bundle(country)
-    assert [policy.parameters for policy in request.policies] == [{}]
+    assert request.policy.parameters == {}
     assert list(situation["people"]) == ["you"]
     assert situation[group_plural] == {"your unit": {"members": ["you"]}}
     assert situation["households"]["your household"]["household_net_income"] == {
@@ -96,7 +96,7 @@ def _from_another_function(outcome: dict) -> dict:
 
 def _without_net_income(outcome: dict) -> dict:
     changed = deepcopy(outcome)
-    household = changed["output"]["results"][0]["household"]
+    household = changed["output"]["household"]
     household["households"]["your household"]["household_net_income"] = {"2026": None}
     return changed
 

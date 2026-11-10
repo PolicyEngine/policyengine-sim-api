@@ -25,7 +25,7 @@ def _household_outcome(
         "output": {
             "country": request.country,
             "bundle": request.bundle.model_dump(mode="json"),
-            "results": [{"policy_key": "baseline", "household": situation}],
+            "household": situation,
         },
         "worker": {
             "application_name": application_name,
