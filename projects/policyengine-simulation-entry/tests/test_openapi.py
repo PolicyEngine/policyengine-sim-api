@@ -245,7 +245,7 @@ def test_household_routes_declare_every_answer():
     assert _response_schema(submit["400"]) == error
     assert _response_schema(submit["422"]) == unprocessable
     assert _response_schema(submit["503"]) == error
-    assert set(read) == {"200", "403", "404", "422", "503"}
+    assert set(read) == {"200", "403", "404", "422", "500", "503"}
     assert _response_schema(read["200"]) == {
         "$ref": "#/components/schemas/HouseholdCalculationState"
     }
@@ -253,6 +253,12 @@ def test_household_routes_declare_every_answer():
     assert _response_schema(read["422"]) == unprocessable
     assert _response_schema(read["503"]) == error
     assert _response_schema(submit["500"]) == error
+    assert _response_schema(read["500"]) == error
+    code = spec["components"]["schemas"]["HouseholdCalculationError"]["properties"][
+        "code"
+    ]
+    assert "job_state_unknown" not in code["enum"]
+    assert "internal_error" in code["enum"]
 
 
 def test_a_household_job_read_declares_only_the_answers_a_read_gives():

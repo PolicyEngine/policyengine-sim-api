@@ -13,7 +13,6 @@ from uuid import uuid4
 import pytest
 from conftest import act_as_the_service, rolled_back_transaction
 from policyengine_simulation_persistence import (
-    ConflictingPolicyValuesError,
     MissingPolicyParametersError,
     UnknownPolicyError,
     read_policy_reform,
@@ -293,34 +292,26 @@ def test_a_policy_changing_parameters_the_run_lacks_names_each_of_them(
 
 
 @pytest.mark.public_api_schema
-def test_two_values_of_one_parameter_starting_the_same_day_are_refused(
+def test_of_values_starting_the_same_day_the_latest_takes_over(
     public_api_database_url,
 ) -> None:
-    """Start times on the same day give one start date; neither may be lost."""
-    with rolled_back_transaction(public_api_database_url) as connection:
-        catalog = insert_catalog_version(
-            connection,
-            country="us",
-            model_id=insert_model(connection, "us"),
-            policyengine_version="6.17.1",
-            parameter_names=[CTC_AMOUNT],
-        )
-        policy_id = insert_policy(
-            connection,
-            catalog,
-            [
-                StoredValue(CTC_AMOUNT, 3_000, START, END),
-                StoredValue(CTC_AMOUNT, 4_000, START + timedelta(hours=12), END),
-            ],
-        )
-        act_as_the_service(connection)
+    """Periods are days, so the later start of one day takes that day over.
 
-        with pytest.raises(ConflictingPolicyValuesError) as raised:
-            read_policy_reform(
-                connection,
-                country="us",
-                policy_id=policy_id,
-                catalog_version_id=catalog.version_id,
-            )
+    The executor's ``test_py_reform_dicts.py`` shows .py calculating the same:
+    it ends the earlier value before it starts, so only the later applies.
+    """
+    reform = _reform_of(
+        public_api_database_url,
+        [
+            StoredValue(CTC_AMOUNT, 3_000, START),
+            StoredValue(CTC_AMOUNT, 4_000, START + timedelta(hours=12)),
+            StoredValue(CTC_AMOUNT, 5_000, datetime(2028, 1, 1, tzinfo=UTC)),
+        ],
+    )
 
-    assert str(raised.value) == (f"the policy sets {CTC_AMOUNT} twice from 2026-01-01")
+    assert reform == {
+        CTC_AMOUNT: {
+            "2026-01-01.2027-12-31": 4_000,
+            "2028-01-01.2200-12-31": 5_000,
+        }
+    }

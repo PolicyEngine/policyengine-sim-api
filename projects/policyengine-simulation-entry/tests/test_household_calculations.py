@@ -36,7 +36,6 @@ from policyengine_simulation_entry.household_workers import (
     default_household_worker,
 )
 from policyengine_simulation_persistence import (
-    ConflictingPolicyValuesError,
     HouseholdCalculationInputs,
     HouseholdJobRecord,
     HouseholdJobReferenceError,
@@ -517,20 +516,6 @@ async def test_a_missing_row_or_function_is_refused_before_anything_is_written(
                 for name in (CTC_AMOUNT, "gov.removed")
             ],
         ),
-        (
-            FakeStore(
-                read_failure=ConflictingPolicyValuesError(
-                    f"the policy sets {CTC_AMOUNT} twice for 2026-01-01.2026-12-31"
-                )
-            ),
-            [
-                (
-                    ("body", "policy_id"),
-                    f"the policy sets {CTC_AMOUNT} twice for 2026-01-01.2026-12-31",
-                    "conflicting_policy_values",
-                )
-            ],
-        ),
     ],
 )
 async def test_stored_data_that_cannot_be_calculated_is_unprocessable(store, reasons):
@@ -698,36 +683,43 @@ async def test_a_call_accepted_after_the_wait_runs_and_is_answered_as_it_stands(
 
 
 @pytest.mark.asyncio
-async def test_a_refused_call_whose_failure_cannot_be_written_leaves_the_job_unknown():
-    """The job may still be pending; the answer says to read it, not resubmit."""
+async def test_a_refused_call_whose_failure_cannot_be_written_is_answered_pending():
+    """The job exists, so the caller reads it rather than submitting again.
+
+    A job no call started stays pending until the stuck-run sweep fails it.
+    """
     service, store, _, _ = _service(
         FakeStore(fail_failure=DATABASE_ERROR),
         caller=FakeCaller(failure=ConnectionError("Modal is unreachable")),
     )
 
-    with pytest.raises(HouseholdCalculationUnavailableError) as raised:
-        await service.submit(_request(), observability_context=None)
+    accepted = await service.submit(_request(), observability_context=None)
 
-    assert raised.value.code == "job_state_unknown"
-    assert raised.value.household_job_id == JOB_ID
-    assert "read the job" in raised.value.detail
+    assert (accepted.job_id, accepted.status) == (JOB_ID, HouseholdJobStatus.PENDING)
     assert len(store.failed) == 1
 
 
 @pytest.mark.asyncio
-async def test_a_claimed_job_that_cannot_be_read_back_is_unknown():
-    store = FakeStore(job_read_failure=DATABASE_ERROR)
+@pytest.mark.parametrize(
+    "store",
+    [
+        FakeStore(job_read_failure=DATABASE_ERROR),
+        # The failure write changed nothing, yet the job isn't found.
+        FakeStore(claimed_by_function=True),
+    ],
+    ids=["read-fails", "job-not-found"],
+)
+async def test_a_job_whose_state_cannot_be_read_back_is_answered_pending(store):
+    on_accepted = store.claim_as_the_function if not store.claimed_by_function else None
     service, store, _, _ = _service(
         store,
-        caller=FakeCaller(delay_seconds=1.0, on_accepted=store.claim_as_the_function),
+        caller=FakeCaller(delay_seconds=1.0, on_accepted=on_accepted),
         call_start_timeout_seconds=0.01,
     )
 
-    with pytest.raises(HouseholdCalculationUnavailableError) as raised:
-        await service.submit(_request(), observability_context=None)
+    accepted = await service.submit(_request(), observability_context=None)
 
-    assert raised.value.code == "job_state_unknown"
-    assert raised.value.household_job_id == JOB_ID
+    assert (accepted.job_id, accepted.status) == (JOB_ID, HouseholdJobStatus.PENDING)
 
 
 def test_what_the_service_builds_itself_is_an_internal_error_when_refused():

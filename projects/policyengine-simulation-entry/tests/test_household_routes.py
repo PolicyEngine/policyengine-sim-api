@@ -240,19 +240,6 @@ def test_a_malformed_submission_is_refused_with_its_reasons(client_for, body):
         ),
         (
             HouseholdCalculationUnavailableError(
-                code="job_state_unknown",
-                detail="Read the job.",
-                household_job_id=JOB_ID,
-            ),
-            503,
-            {
-                "code": "job_state_unknown",
-                "detail": "Read the job.",
-                "household_job_id": str(JOB_ID),
-            },
-        ),
-        (
-            HouseholdCalculationUnavailableError(
                 code="modal_call_refused",
                 detail="Modal did not accept the call.",
                 household_job_id=JOB_ID,
@@ -426,3 +413,34 @@ def test_without_its_database_and_v2_environment_none_is_built(settings_changes)
         database.dispose()
 
     assert calculations is None
+
+
+# What an unexpected failure answers, the same in the generated client's test.
+UNEXPECTED_FAILURE_ANSWER = {
+    "code": "internal_error",
+    "detail": "The service could not answer the request.",
+}
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("post", "/household-calculations", SUBMISSION),
+        ("get", STATE_PATH, None),
+    ],
+)
+def test_an_unexpected_failure_answers_a_json_500_without_its_values(
+    client_for, caplog, method, path, body
+):
+    calculations = FakeHouseholdCalculations(
+        failure=RuntimeError("a value that must not be logged")
+    )
+
+    with client_for(calculations) as client:
+        result = getattr(client, method)(path, **({"json": body} if body else {}))
+
+    assert result.status_code == 500
+    assert result.headers["content-type"] == "application/json"
+    assert result.json() == UNEXPECTED_FAILURE_ANSWER
+    assert "RuntimeError" in caplog.text
+    assert "a value that must not be logged" not in caplog.text

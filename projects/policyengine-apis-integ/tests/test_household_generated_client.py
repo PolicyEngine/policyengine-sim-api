@@ -1,5 +1,12 @@
 """Hermetic wire checks of the household routes' generated client models."""
 
+import httpx
+import pytest
+from policyengine_api_simulation_client import Client
+from policyengine_api_simulation_client.api.default import (
+    get_household_calculation,
+    submit_household_calculation,
+)
 from policyengine_api_simulation_client.models import (
     HouseholdCalculationAccepted,
     HouseholdCalculationError,
@@ -76,3 +83,40 @@ def test_a_job_keeps_its_result_document_whole():
 
     assert parsed.status is HouseholdJobStatus.SUCCEEDED
     assert parsed.to_dict()["result"] == document
+
+
+# What the service answers to an unexpected failure (test_household_routes.py).
+UNEXPECTED_FAILURE_ANSWER = {
+    "code": "internal_error",
+    "detail": "The service could not answer the request.",
+}
+
+
+def _client_answering(status_code: int, body: dict) -> Client:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(status_code, json=body)
+    )
+    client = Client(base_url="https://simulation.example")
+    client.set_httpx_client(
+        httpx.Client(base_url="https://simulation.example", transport=transport)
+    )
+    return client
+
+
+@pytest.mark.parametrize("route", ["submit", "read"])
+def test_a_500_is_read_as_a_household_calculation_error(route):
+    """Every 500 of the household routes is the JSON error the document declares."""
+    client = _client_answering(500, UNEXPECTED_FAILURE_ANSWER)
+
+    if route == "submit":
+        response = submit_household_calculation.sync_detailed(
+            client=client,
+            body=HouseholdCalculationRequest.from_dict(
+                {"country": "us", "household_id": HOUSEHOLD_ID}
+            ),
+        )
+    else:
+        response = get_household_calculation.sync_detailed(JOB_ID, client=client)
+
+    assert isinstance(response.parsed, HouseholdCalculationError)
+    assert response.parsed.to_dict() == UNEXPECTED_FAILURE_ANSWER
