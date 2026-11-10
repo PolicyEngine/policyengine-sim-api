@@ -11,6 +11,7 @@ from policyengine_stage12_persistence.report_run_store import (
     RunKind,
     RunStatus,
     RunWrite,
+    SimulationRunState,
 )
 from policyengine_stage12_persistence.store import (
     ConnectionOpener,
@@ -32,6 +33,7 @@ __all__ = [
     "RunKind",
     "RunStatus",
     "RunWrite",
+    "SimulationRunState",
     "Stage12PersistenceStore",
     "Stage12RuntimeAccessError",
     "create_stage12_engine",

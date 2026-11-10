@@ -8,7 +8,7 @@ typed DML; runtime code never emits DDL.
 
 from __future__ import annotations
 
-from sqlalchemy import Column, DateTime, Float, MetaData, String, Table
+from sqlalchemy import Column, DateTime, Float, Integer, MetaData, String, Table
 from sqlalchemy.dialects.postgresql import ENUM, JSONB, UUID
 
 RUN_STATUS_VALUES = ("pending", "running", "succeeded", "failed")
@@ -50,11 +50,16 @@ report_runs = Table(
     Column("data_version", String(128)),
 )
 
+# A simulation run's year and versions say what it calculated; the
+# coordinator checks them on a succeeded run that a report run reuses.
 simulation_runs = Table(
     "simulation_runs",
     metadata,
     Column("id", UUID(as_uuid=True), primary_key=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("year", Integer, nullable=False),
+    Column("country_package_version", String(128), nullable=False),
+    Column("policyengine_version", String(128), nullable=False),
     Column("status", simulation_run_status_type, nullable=False),
     Column("modal_call_id", String(255)),
     Column("error_message", String),
