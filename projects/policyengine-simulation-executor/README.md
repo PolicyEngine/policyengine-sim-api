@@ -45,7 +45,8 @@ workflows share the repository-wide `simulation-deploy-main` concurrency group
 with `cancel-in-progress: false`, which serializes publication and restoration.
 The routing CLI and library check the GitHub Actions repository and caller workflow
 before writing. Run the deployment or rollback workflow to change routing; local
-read-only queries, `--dry-run`, and `--plan-out` remain available.
+read-only queries, `--dry-run`, `--plan-out`, and `--plan-latest-out` remain
+available.
 
 Before changing live routing, each publication keeps its plan as an artifact,
 including a unique publication ID and the complete state it replaces. Recovery
@@ -57,14 +58,52 @@ Routing writes and recovery use no lease or lock expiry wait.
 For a same-version redeploy that replaced a Modal app in place, redeploy the
 previous commit to recover its code; restoring routing alone cannot recover it.
 
-Before uploading a deployment plan, the workflow records the full plan as a pending
+A deployment publishes routing twice (rule `sim.deploy.latest-moves-after-checks`):
+
+1. **Before its checks**, `update_routing` adds the release's routes (its
+   policyengine.py version and its US and UK model versions, mapped to the
+   deployed app) and its bundle manifest, and leaves `latest` alone. The
+   checks pin those versions, so they reach the release through the gateway,
+   while unpinned requests still reach the previous release. Requests that
+   pin one of the release's US or UK model versions without a policyengine.py
+   version reach the release from this point, including a model version it
+   shares with the previous release. The job completes its own publication,
+   so a failed check leaves the routes in place, and those requests keep
+   reaching the failed release until a rerun succeeds or a rollback with
+   `deploy_run_id` removes its routes.
+
+   The job publishes only into a stored routing state that is already valid
+   with a complete `latest` (a routed policyengine.py, US and UK version), or
+   into a missing or empty one: the first publication, which makes the
+   release latest (if the gateway was resolving through the legacy version
+   Dicts, those requests move to the release at this step). Before
+   publishing anything, it refuses any other stored state, which an operator
+   must repair, and refuses to reroute `latest`'s policyengine.py version to
+   the release when that version's stored route names another app.
+2. **After every check and the Cloud Run promotion**, `publish_latest` moves
+   `latest` to the release when it is newer (or with `force_latest`), checks
+   with the entrypoint smoke that the release is routed and, when it is now
+   latest, that unpinned requests reach it, and completes its publication. If
+   a step after recording fails, it restores the state it replaced; the Cloud
+   Run promotion, which ran before it, stays. It journals a new state even
+   when `latest` stays, so each attempt that reaches it replaces an earlier
+   attempt's outcome.
+
+No job that runs after `update_routing` is upstream of it, so "Re-run failed
+jobs" after a failed check reruns the failed checks, `publish_latest` and the
+finalizer without republishing the routes.
+
+Before uploading each plan, its job records the full plan as a pending
 publication in the routing store. The always-running `finalize_routing` job reads
-that journal after every release gate: if all gates pass and live routing matches
-the planned state, it marks the publication completed; otherwise it restores the
-recorded previous state and marks it restored. Finalization uses the deployment
-run ID and release environment, so failed-job reruns can finish an earlier attempt.
-Artifact upload failure does not prevent recovery. `deployment_ready` requires a
-successful finalizer with outcome `completed` before reporting the release green.
+that journal after every release check and `publish_latest`, and resolves a
+publication that a failed or cancelled job left pending: if all checks pass and
+live routing matches the planned state, it marks the publication completed;
+otherwise it restores the recorded previous state and marks it restored. When
+nothing is pending it reports the outcome this run last recorded. Finalization
+uses the deployment run ID and release environment, so failed-job reruns can
+finish an earlier attempt. Artifact upload failure does not prevent recovery.
+`deployment_ready` requires `publish_latest` to succeed and a successful
+finalizer with outcome `completed` before reporting the release green.
 
 Until completion or restoration, new routing writes refuse to proceed. If the
 finalizer's runner is lost, run `simulation-rollback.yml` with `target=beta` or
@@ -78,10 +117,160 @@ previous nor planned state, recovery fails and leaves the record pending for an
 operator to investigate. A finalizer for another deployment run cannot modify it.
 
 For a completed release, use `deploy_run_id=<original GitHub run ID>` with `target`
-to restore its saved artifact plans, or `policyengine_version=<published version>`
-to move latest to that release. Leave `resolve_pending_publication=false` in both
+to restore its saved artifact plans (each attempt's routes plan,
+`routing-plan-<target>-<attempt>`, and latest plan,
+`routing-latest-plan-<target>-<attempt>`), or
+`policyengine_version=<published version>` to move latest to that release.
+GitHub stops listing an attempt's artifact once the job that uploaded it
+reruns; the restore accepts such a missing plan only when the plans published
+before and after it show its change undone, and otherwise refuses rather than
+stopping short. Leave `resolve_pending_publication=false` in both
 modes. Read-only `--print-pending-plan --environment staging|main` also displays the
 durable plan without changing routing.
+
+## Stage 12 v2 default version
+
+Stage 12 keeps its own manifest of deployed v2 workers, in the separate
+`simulation-api-v2-version-manifest` Modal Dict, and the Simulation Entrypoint
+resolves each Stage 12 report through the manifest's `default_version` unless
+`STAGE12_V2_WORKER_VERSION` pins one. A deployment that publishes Stage 12
+changes the manifest twice (rule `sim.deploy.stage12-default-moves-after-checks`),
+with its own mechanism, separate from the v1 routing jobs above:
+
+1. **Before its checks**, `publish_stage12_v2_manifest` adds the release's
+   worker with `update_v2_version_manifest --keep-default`, leaving the
+   default version as it is. It refuses a manifest that is missing (see
+   below). Stage 12
+   reports keep reaching the previous worker. No check that runs after this
+   publication is upstream of this job, so "Re-run failed jobs" after a failed
+   check or default move never republishes the worker.
+2. **After every check and the Cloud Run promotion**,
+   `publish_stage12_v2_default` moves the default to the release's worker
+   when it is newer (`--move-default`), keeping a plan of the manifest before
+   and after; checks, from the runner, that every key holds what it wrote and
+   that a `V2ManifestLoader` (the reader the entrypoint uses) resolves the
+   plan's default (`--verify-plan`); and, if a later step
+   fails or the run is cancelled, writes back the manifest it replaced, only
+   while the stored manifest is still what it wrote (`--restore-plan`).
+   In a deployment from `main`, the same job then deploys the unversioned
+   stuck-run sweep (`src/modal/run_sweep_app.py`), whose schedule starts as
+   soon as it deploys; a failed sweep deploy, including a failed build of its
+   image, fails the job and so puts the previous default back. A deployment
+   from another branch leaves the sweep as it is.
+   `deployment_ready` requires this job to succeed whenever Stage 12 was
+   requested. This job does not wait for the v1 `publish_latest` job, so the
+   Stage 12 default can move even when v1 `latest` does not; `deployment_ready`
+   then fails the deployment.
+
+The v2 worker's Modal app is named after the policyengine.py version alone, so
+a deployment that does not change that version redeploys the current worker's
+app in place, before the checks; the ordering above applies to a deployment
+that changes it.
+
+The manifest is three keys, one copy for each generation of reader, written
+one after another, so a write that stops part-way leaves some keys on the
+previous manifest. The move refuses to start unless all three hold the same
+manifest, the check reads all three, and the restore recognises a part-way
+write of either the move or an earlier restore and writes the starting
+manifest back to every key. Modal expires a Dict entry after 7 days without a
+read or write, and current readers read the oldest key only when neither newer
+key exists, so it can expire between deployments. A write never deletes a key,
+so the move, check and restore accept a missing older key; a move or restore
+that writes the manifest writes it again, and otherwise the next deployment's
+worker publication does. The newest key is required. A move that leaves the
+default where it is writes nothing, so the manifest's digest, which Stage 12
+report identities include, stays the same. A release with a newer worker
+changes the digest twice, at the worker publication and at the move, so Stage
+12 reports created between the two get identities with the intermediate
+digest.
+
+The entrypoint reads the manifest only for a Stage 12 request, and Stage 12 is
+off in beta, so without other reads a week with no deployment would let all
+three keys expire. The scheduled workflow `stage12-v2-manifest-refresh.yml`
+(rule `sim.deploy.stage12-manifest-read-daily`) reads every key once a day in
+each Modal environment a deployment publishes the manifest to (`staging` and
+`main`), with `update_v2_version_manifest --refresh`, and fails when there is
+no manifest. GitHub notifies only whoever last changed a scheduled workflow's
+schedule of a failed run, and disables schedules in a public repository after
+60 days without activity; either way, a deployment then refuses the missing
+manifest as described next.
+
+A missing manifest, never published or expired, looks the same to a
+deployment, and publishing into it would make the release's worker the default
+before the checks and leave out every earlier worker. So the deployment's
+worker publication refuses it, before the checks, and opens the Dict without
+creating it. The integration tests need that publication, so the refusal holds
+up the whole beta deployment, and prod after it, even where Stage 12 is off,
+until the manifest is recovered. To recover, an operator, with Modal credentials for the workspace
+(their own token; the deployment uses the repository secrets `MODAL_TOKEN_ID`
+and `MODAL_TOKEN_SECRET`), from `projects/policyengine-simulation-executor`,
+while no deployment is running:
+
+1. Confirms the manifest is missing: `uv run --frozen python -m
+   src.modal.utils.update_v2_version_manifest --environment <modal environment>
+   --refresh` reports "there is no v2 manifest", as it also does when the Dict
+   itself does not exist. Any other error is not a missing manifest.
+2. Starts the manifest with the worker that was Stage 12's default before the
+   failed deployment, so that the failed deployment's own default move still
+   waits for its checks. That worker is the `default_version` of the `after`
+   manifest in the newest `stage12-v2-default-plan-<release environment>-<attempt>`
+   artifact, or of its `before` manifest if that run's restore step reported
+   "restored" (kept 30 days; past that, the last deployment whose "Move the
+   Stage 12 v2 default to the release after every check" job succeeded). The
+   worker's `validation.validation_invocation_id` and `validated_at` in that
+   manifest identify the deployment that published it, where several kept
+   the same policyengine.py version. Use
+   the release environment that deploys to the Modal environment being
+   recovered: `beta` for `staging`, `prod` for `main`. From the commit of the
+   deployment that published that worker, after `uv sync --frozen`, with that
+   deployment's `stage12-worker-validation-<release environment>` artifact, run
+   `uv run --frozen python -m src.modal.utils.update_v2_version_manifest
+   --environment <modal environment> --validation-file <validation.json>
+   --first-publication`; on a commit from before `--first-publication`
+   existed, leave that option out, which starts a missing manifest the same
+   way but does not refuse an existing one. If the failed deployment keeps
+   that policyengine.py version, its worker app has already replaced that one
+   in place, so use the failed deployment's commit and artifact instead. In a
+   new Modal environment there is no earlier worker, and the failed
+   deployment's own worker starts the manifest. `--first-publication` refuses
+   a manifest that exists.
+3. Reruns the failed jobs.
+
+Earlier workers' entries are not restored, so a request that pins one of them
+through `STAGE12_V2_WORKER_VERSION` fails until it is published again.
+
+The plan is kept as the `stage12-v2-default-plan-<environment>-<attempt>`
+artifact whenever the move step ran, including a move that stopped part-way;
+`<environment>` is the GitHub release environment, and `beta` deploys to the
+Modal environment `staging`, `prod` to `main`. The move step adds the
+manifest's digests before and after the move, and whether requests that pin no
+v2 version now reach the release's worker, to the run's summary page.
+If the restore step itself fails, an operator downloads that attempt's artifact
+and, from `projects/policyengine-simulation-executor`, runs
+`uv run --frozen python -m src.modal.utils.update_v2_version_manifest
+--environment <modal environment> --restore-plan <plan.json>` with Modal
+credentials for the workspace (the deployment uses the repository secrets
+`MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`). Do this before rerunning the job or
+deploying again. A rerun's move refuses keys that hold different manifests, and
+its own restore has no plan from the earlier attempt. The next deployment's
+worker publication reads the manifest the way a reader does and rewrites every
+key from that copy. After a move that wrote only the newest key, that drops
+the region datasets of every worker already in the manifest; after one that
+wrote the two newest, the failed release stays the default until that
+deployment's own move. No workflow
+restores an earlier default after a completed deploy, and the deployment's
+`force_latest` input does not move the v2 default. Only an operator's
+publication (`--first-publication`, or `--validation-file` alone) creates the
+manifest Dict, so a deployment's publication, a move, check, restore or refresh
+against a Modal environment without one fails instead of creating an empty Dict
+there.
+
+If the runner is lost after the move starts writing and before the plan is
+uploaded, no plan is kept and no restore runs. The default then stays on the
+release, which passed every check, and the deployment fails. "Re-run failed
+jobs" finds the default already on the release, writes nothing and succeeds,
+unless the write stopped part-way: then the rerun's move refuses the keys, and
+an operator repairs them by hand.
 
 ## Baseline artifact pipeline (precompute → store → image fetch)
 

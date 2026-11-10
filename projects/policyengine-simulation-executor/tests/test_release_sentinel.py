@@ -471,7 +471,7 @@ def test_check_submits_then_polls_the_job_url_with_the_token():
     ],
     ids=["header", "lowercase", "negative", "unparseable", "missing"],
 )
-@pytest.mark.parametrize("status", [202, 429, 503])
+@pytest.mark.parametrize("status", [202, 429, 502, 503, 504])
 def test_check_waits_for_a_pending_job_as_retry_after_says(status, headers, slept):
     api = ScriptedAPI(SUBMITTED, (status, headers, {"status": "submitted"}), COMPLETE)
 
@@ -479,6 +479,114 @@ def test_check_waits_for_a_pending_job_as_retry_after_says(status, headers, slep
 
     assert problems == []
     assert sleeps == [slept]
+
+
+# What the entrypoint answers when its call to the gateway times out, as when
+# Modal preempted the prod gateway container during run 42081132198.
+GATEWAY_TIMEOUT = (
+    504,
+    {"Retry-After": "10"},
+    {"detail": "Simulation backend timed out."},
+)
+RUNNING = (202, {}, {"status": "running"})
+
+
+def test_check_keeps_polling_through_a_gateway_restart():
+    """Run 42081132198: one poll timed out at the entrypoint mid-job."""
+    api = ScriptedAPI(SUBMITTED, RUNNING, RUNNING, GATEWAY_TIMEOUT, RUNNING, COMPLETE)
+
+    problems, sleeps = _check_scripted(api, poll_seconds=10)
+
+    assert problems == []
+    assert sleeps == [10, 10, 10, 10]
+    assert len(api.calls) == 6
+
+
+def test_check_gives_up_on_gateway_errors_once_the_deadline_has_passed():
+    ticks = iter([0, 100, 200, 300])
+    api = ScriptedAPI(SUBMITTED, GATEWAY_TIMEOUT, (502, {}, None), GATEWAY_TIMEOUT)
+
+    problems, sleeps = _check_scripted(
+        api, timeout_seconds=250, poll_seconds=5, clock=lambda: next(ticks)
+    )
+
+    # The last answer is named, so a stack that kept failing is told apart
+    # from a job that kept running.
+    assert problems == [
+        f"{LABEL}: no result within 250s; the last poll returned HTTP 504: "
+        "{'detail': 'Simulation backend timed out.'}"
+    ]
+    assert sleeps == [10, 5]
+    assert len(api.calls) == 4
+
+
+def test_check_keeps_polling_through_a_proxy_error_page():
+    api = ScriptedAPI(SUBMITTED, (502, {}, "<html>502 Bad Gateway</html>"), COMPLETE)
+
+    problems, sleeps = _check_scripted(api, poll_seconds=10)
+
+    assert problems == []
+    assert sleeps == [10]
+
+
+def test_check_sleeps_no_longer_than_the_time_left():
+    ticks = iter([0, 10, 260])
+    long_wait = (
+        504,
+        {"Retry-After": "3600"},
+        {"detail": "Simulation backend timed out."},
+    )
+    api = ScriptedAPI(SUBMITTED, long_wait, long_wait)
+
+    problems, sleeps = _check_scripted(
+        api, timeout_seconds=250, poll_seconds=5, clock=lambda: next(ticks)
+    )
+
+    assert sleeps == [240]
+    assert problems[0].startswith(f"{LABEL}: no result within 250s")
+
+
+@pytest.mark.parametrize("value", ["inf", "nan", "-inf"])
+def test_check_ignores_a_retry_after_that_is_not_finite(value):
+    api = ScriptedAPI(SUBMITTED, (504, {"Retry-After": value}, None), COMPLETE)
+
+    problems, sleeps = _check_scripted(api, poll_seconds=7)
+
+    assert problems == []
+    assert sleeps == [7]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        (500, {}, {"status": "failed", "error": "Simulation failed"}),
+        (400, {}, {"status": "failed", "error": "Invalid SPM request"}),
+        (404, {}, {"detail": "Job not found: fc-1"}),
+    ],
+    ids=["failed", "failed-spm-request", "not-found"],
+)
+def test_check_fails_at_once_on_a_failed_or_unknown_job(response):
+    api = ScriptedAPI(SUBMITTED, response)
+
+    problems, sleeps = _check_scripted(api)
+
+    assert problems == [f"{LABEL}: job returned HTTP {response[0]}: {response[2]}"]
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("status", [502, 504])
+def test_check_does_not_resubmit_after_a_gateway_error_on_submit(status):
+    """A resubmission could start a second job, so submit errors stay final."""
+    api = ScriptedAPI((status, {}, {"detail": "Simulation backend timed out."}))
+
+    problems, sleeps = _check_scripted(api)
+
+    assert problems == [
+        f"{LABEL}: submit returned HTTP {status}: "
+        "{'detail': 'Simulation backend timed out.'}"
+    ]
+    assert sleeps == []
+    assert len(api.calls) == 1
 
 
 def test_check_reports_identity_problems_before_value_problems():

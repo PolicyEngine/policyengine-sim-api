@@ -51,6 +51,12 @@ def with_duplicate_category(repo: Repo) -> None:
     )
 
 
+WROTE_BASELINES = (
+    "wrote ci_scripts baselines; update the rules' baseline counts "
+    "(checks without a baseline in [ci_scripts] are not recorded)"
+)
+
+
 class ValidateCommandTest(unittest.TestCase):
     def test_valid_registry_passes(self) -> None:
         with Repo() as repo:
@@ -219,7 +225,7 @@ class CiScriptsCommandTest(unittest.TestCase):
         ):
             self.assertEqual(
                 run_cli("ci-scripts", "--root", str(repo.root), "--write-baselines"),
-                (0, ["wrote ci_scripts baselines; update the rules' baseline counts"]),
+                (0, [WROTE_BASELINES]),
             )
             find.assert_called_once()
             self.assertEqual(find.call_args.args[1], repo.root.resolve())

@@ -9,6 +9,7 @@ from test_deployment_assets_support import (
     AUTHENTICATED_TESTS,
     CLOUD_RUN_DEPLOY_SCRIPT,
     DEPLOY_WORKFLOW,
+    MAIN_ONLY_PROMOTION,
     REPOSITORY_ROOT,
     REUSABLE_DEPLOY_WORKFLOW,
     SMOKE_SCRIPT,
@@ -198,8 +199,10 @@ def _assert_beta_then_prod_release(
     assert "deployment_environment: staging" in deploy_workflow
     assert "deployment_environment: production" in deploy_workflow
     assert deploy_workflow.count("deploy_existing_stack: true") == 2
-    assert "promote_entrypoint: false" in deploy_workflow
-    assert "promote_entrypoint: true" in deploy_workflow
+    # prod always promotes; beta promotes only a run from main.
+    assert deploy_workflow.count("promote_entrypoint: true") == 1
+    assert f"promote_entrypoint: {MAIN_ONLY_PROMOTION}" in deploy_workflow
+    assert "promote_entrypoint: false" not in deploy_workflow
     assert "entrypoint_environment" not in deploy_workflow
     assert "entrypoint_environment" not in reusable_workflow
     assert "entrypoint_public_url" not in deploy_workflow
@@ -210,8 +213,11 @@ def _assert_beta_then_prod_release(
 
 def _assert_deployment_environment_settings(reusable_workflow: str) -> None:
     assert (
-        # Sentinel, restore and final routing acknowledgement use secrets too.
-        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 15
+        # Every job but stage12_v2_ready declares the release environment;
+        # the job that moves latest after the checks reads the prod
+        # environment's custom-hostname variable, and the job that moves the
+        # Stage 12 v2 default after them is the seventeenth.
+        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 17
     )
     assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow

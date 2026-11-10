@@ -224,6 +224,43 @@ def test_dispatch_error_cancels_segments_that_already_started() -> None:
     assert all(call.cancelled == 1 for call in function.calls)
 
 
+class InputCancelledForTest(BaseException):
+    """Stands in for Modal's InputCancellation, a BaseException but not an Exception."""
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, InputCancelledForTest])
+def test_preempted_or_cancelled_worker_cancels_every_started_segment(
+    interruption,
+) -> None:
+    # Modal pre-empts a call with SIGINT (KeyboardInterrupt) and cancels one
+    # with InputCancellation; it does not cancel the calls the worker spawned.
+    runner, function, _, _ = _runner(errors={3: [interruption()]})
+
+    with pytest.raises(interruption):
+        runner.run()
+
+    assert len(function.calls) == 20
+    assert all(call.cancelled == 1 for call in function.calls)
+
+
+def test_worker_preempted_during_dispatch_cancels_the_segments_it_started() -> None:
+    runner, function, _, _ = _runner()
+    spawn = function.spawn
+
+    def preempt_during_dispatch(payload, *, observability_context):
+        if payload["segment_index"] == 5:
+            raise KeyboardInterrupt
+        return spawn(payload, observability_context=observability_context)
+
+    function.spawn = preempt_during_dispatch
+
+    with pytest.raises(KeyboardInterrupt):
+        runner.run()
+
+    assert len(function.calls) == 5
+    assert all(call.cancelled == 1 for call in function.calls)
+
+
 def test_persisted_parent_cancellation_cancels_all_segments() -> None:
     runner, function, _, sleeps = _runner(
         errors={index: [TimeoutError()] for index in range(20)}

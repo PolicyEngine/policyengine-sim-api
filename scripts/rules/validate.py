@@ -6,6 +6,7 @@ import re
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
+from scripts.rules.ci_scripts import RULE_NAMES as CI_SCRIPTS_RULE_NAMES
 from scripts.rules.model import (
     Kind,
     Registry,
@@ -324,7 +325,11 @@ def _validate_agents(registry: Registry, root: Path) -> list[Violation]:
 
 
 def _validate_ci_scripts(registry: Registry, root: Path) -> list[Violation]:
-    """Check that the ``[ci_scripts]`` directory and baseline files exist."""
+    """Check the ``[ci_scripts]`` directory and baseline files.
+
+    Each listed baseline must exist, and one whose check's rule is enforced
+    must list no entry.
+    """
     config = registry.ci_scripts
     if config is None:
         return []
@@ -352,7 +357,46 @@ def _validate_ci_scripts(registry: Registry, root: Path) -> list[Violation]:
         )
         if path and not (root / path).is_file()
     )
+    for check, path in (
+        ("multiline", config.multiline_baseline),
+        ("untested", config.untested_baseline),
+        ("shellcheck", config.shellcheck_baseline),
+    ):
+        if path and (root / path).is_file():
+            violation = _enforced_ci_baseline(registry, root, check, path)
+            if violation is not None:
+                violations.append(violation)
     return violations
+
+
+def _enforced_ci_baseline(
+    registry: Registry, root: Path, check: str, path: str
+) -> Violation | None:
+    """Refuse entries in a ci-scripts check's baseline when its rule is enforced.
+
+    Only a ratcheted rule tolerates findings; an enforced rule's check lists
+    no baseline, or an empty one.
+    """
+    rule = next(
+        (
+            rule
+            for rule in registry.rules
+            if rule.enforcer.get("name") == "ci-scripts"
+            and rule.id.endswith(f".ci.{CI_SCRIPTS_RULE_NAMES[check]}")
+        ),
+        None,
+    )
+    entries = baseline_entries(root / path)
+    if rule is None or rule.status is not Status.ENFORCED or entries == 0:
+        return None
+    noun = "entry" if entries == 1 else "entries"
+    return Violation(
+        rule.id,
+        "baseline",
+        f"ci_scripts baseline {path} lists {entries} {noun}, but its rule is enforced",
+        "fix the findings and remove their entries; only a ratcheted rule "
+        "tolerates findings",
+    )
 
 
 def _duplicate_ids(registry: Registry, category_ids: list[str]) -> list[Violation]:

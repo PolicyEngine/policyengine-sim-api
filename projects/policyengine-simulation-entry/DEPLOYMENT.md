@@ -22,6 +22,60 @@ Credential values belong in the cloud secret store. They must not be committed
 to the repository or stored as plain GitHub variables. The deployment workflow
 receives only the configuration needed to reference those protected resources.
 
+## Simulation database
+
+The simulation service connects to the Postgres database that holds the
+Public API's tables, with its own login role. This repository has no schema
+or migration chain of its own: the Public API's migration chain creates and
+changes those tables, and the Public API's privilege manifest grants the
+role what it may do on them.
+
+The deploy step resolves the Secret Manager secret named by the
+`SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME` environment variable to its
+newest enabled version and mounts that version as
+`SIMULATION_SERVICE_DATABASE_URL` on every deploy, whatever the Stage 12
+setting. The deploy service account must be
+able to list the secret's versions (`gcloud secrets versions list`), as for
+the other runtime secrets, and only the entrypoint's runtime service account
+may read it. A missing or invalid name, or a secret with no enabled version,
+stops the deploy before `gcloud run deploy` runs.
+
+So before the first deploy that carries this connection, each environment
+needs, in order: the Public API's tables the service writes, migrated in that
+environment's database; the service's login role, with the grants the Public
+API's privilege manifest declares; the role's URL stored in Secret Manager,
+readable by the runtime service account; and the `beta` or `prod`
+`SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME` variable naming it. Without the
+variable the deploy stops at once; without the tables, the role or its grants
+the candidate check below fails.
+
+`GET /ready` reports, under `simulation_database`, whether the check of the
+database succeeded within three seconds (`reachable`; false when the
+database wasn't reached, refused the role's login, or didn't answer in time)
+and whether its role holds every privilege the service needs
+(`has_required_privileges`; null when the check failed; the list is in
+`libs/policyengine-simulation-persistence`). The route is public, so it says
+only yes or no. The service's log says why: a `simulation_database_unreachable`
+message names the error's type and the database driver's error with its
+SQLSTATE code, when the database sent one (`28P01` for a refused password,
+`57014` for a statement timeout), and `simulation_database_missing_privileges`
+messages name each privilege missing, such as `INSERT on reports` or
+`UPDATE (modal_call_id) on report_runs`. A check
+that reached the database answers every request for 30 seconds, so repeated
+requests don't each take a database connection; a failed check isn't reused,
+so the next request checks again. The
+database does not change the readiness status, because no old-gateway or
+Stage 12 route uses it. The candidate smoke check
+(`REQUIRE_SIMULATION_DATABASE_ACCESS=true`) requires the database reached with
+every privilege held, which shows that the role's URL reached the revision and
+that the role holds its grants, and points to the revision's Cloud Run logs
+when it fails. While the check
+fails, as it does for a cold candidate that hasn't reached its database yet,
+it asks again, up to six requests in all; a database that answers with a
+privilege missing fails at once. The stable
+and rollback checks don't require it, because an older image may not use the
+database.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`
@@ -33,23 +87,60 @@ qualification uses Cloud Run's generated tagged revision URL and does not
 require a custom domain.
 
 The `prod` environment follows the same sequence automatically, but cannot
-begin until every `beta` deployment, routing, integration, and authentication
-job has succeeded. Production tests also use the tagged candidate URL, so the
-currently serving revision remains unchanged during qualification.
+begin until every `beta` deployment, routing, integration, authentication,
+promotion, and revision clean-up job has succeeded, so a failed staging
+clean-up also stops the production deployment. A run from a branch other than
+`main` skips `beta`'s promotion and clean-up, and the `prod` environment then
+refuses the run, since it accepts only `main`. Both environments' tests use
+the tagged candidate URL, so the currently serving revision remains unchanged
+during qualification.
 
 ## Promotion and rollback
 
-After the complete production suite passes, the workflow verifies that the
-exact tested revision belongs to the production service and is ready. It also
+Both `beta` and `prod` promote, `beta` only for a run from `main`. After an
+environment's complete suite passes, the workflow verifies that the exact
+tested revision belongs to that environment's service and is ready. It also
 checks that stable traffic still points to the revision recorded before
-deployment. If those guards pass, it assigns all stable service traffic to the
-tested production revision.
+deployment. If those checks pass, it assigns all stable service traffic to the
+tested revision.
+
+In `beta`, promotion keeps the staging service's stable URL on the revision
+that passed the staging tests, so staging callers of that URL, such as the
+Public API's staging service, reach the build the deployment tested. The
+staging deployment of the **Deploy Stage 12 comparison path** workflow promotes
+in the same way. Rule `sim.deploy.staging-promotes-tested-revision` requires
+both.
 
 The workflow then checks the stable generated Cloud Run URL. It uses the
 runtime revision header to prove that the stable URL reaches the exact revision
 that passed candidate tests, and it repeats the deployed authentication checks.
 If an immediate post-promotion check fails, the workflow restores the exact
 previous revision recorded before deployment and fails visibly.
+
+After a successful promotion and deployment, the workflow deletes the
+service's older revisions. It keeps only the promoted revision and the one it
+replaced, which `simulation-rollback.yml` can route back to.
+
+Both workflows can also be started manually, and the `beta` environment does
+not restrict which branch a run may come from. Both therefore pass
+`promote_entrypoint: ${{ github.ref == 'refs/heads/main' }}`. A manual run from
+a branch other than `main` deploys and tests its candidate revision, but leaves
+the staging service's Cloud Run traffic where it was and deletes no revisions,
+so the last revision deployed from `main` stays available for rollback.
+
+Promotion covers only the Cloud Run entrypoint. A branch run still deploys the
+branch's Modal services to the staging Modal environment and publishes their
+routing there, so callers of the staging stable URL can reach them: the main
+deployment workflow deploys the gateway, the executor and the Stage 12 workers,
+and the Stage 12 workflow deploys the Stage 12 workers. A later deployment from
+`main` replaces the apps it deploys, but routes and versions that it doesn't
+deploy can stay.
+
+The check reads the branch's own copy of the workflow: it stops an accidental
+branch run from promoting, not a branch that edits it. Only a branch
+restriction on the `beta` environment would enforce it, and that would also
+refuse every branch run's candidate deployment and tests, since each of the
+reusable workflow's deployment jobs runs in that environment.
 
 Deployment concurrency prevents two releases from changing the entrypoint
 service simultaneously. Promotion never targets `LATEST`.
@@ -82,10 +173,10 @@ The deployment workflow passes each environment's
 unset or empty variable deploys `0`, which records callers that lack a route's
 permission but lets them through. `1` rejects those callers with 403. Any other
 value fails the deployment before Cloud Run changes. A new value takes effect
-at the next entrypoint deployment. In `prod` that deployment is promoted to
-stable traffic. `beta` never promotes its candidate revision, so a `beta` value
-applies only to the tagged candidate that the deployment tests call. The route
-permissions are listed in `README.md`.
+at the next entrypoint deployment, which `prod`, and `beta` for a run from
+`main`, promote to stable traffic once their tests pass. A `beta` value
+therefore applies to every caller of the staging stable URL as well as to the
+deployment tests. The route permissions are listed in `README.md`.
 
 ### Auth0 prerequisites
 
@@ -117,11 +208,12 @@ variable to `1`:
 1. Deploy with the variable unset or `0`, and complete the Auth0 setup.
 2. Watch the `prod` service for `simulation_entry_permission_missing` events
    with `enforced=false`. Each one names the missing permission and the
-   caller's `client_id`. Only `prod` serves real callers such as API v1: a
-   `beta` candidate receives only the deployment tests' own requests, so `beta`
-   events cannot show a missing API v1 grant. Access tokens issued before a
-   grant do not carry it, so wait at least one access-token lifetime after the
-   last grant with no new events.
+   caller's `client_id`. Only `prod` is certain to receive requests from every
+   real caller: the staging stable URL receives requests only from the staging
+   callers configured to use it, and tagged candidates only from the
+   deployment tests, so `beta` events cannot show every missing grant. Access
+   tokens issued before a grant do not carry it, so wait at least one
+   access-token lifetime after the last grant with no new events.
 3. Set the `beta` variable to `1` and deploy. With enforcement on, the
    authenticated deployment tests also check that the test client's token is
    rejected on `GET /internal/stage12/reports/{evaluation_id}`, which requires

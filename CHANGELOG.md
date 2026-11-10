@@ -10,6 +10,175 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.8.0] - 2026-11-10
+
+### Added
+
+- A scheduled Modal function, in the new Modal application `policyengine-simulation-run-sweep`, marks the Public API's report runs and simulation runs failed when nothing will finish them: a pending or running run whose recorded Modal call has ended, or a pending run that still has no Modal call recorded ten minutes after its creation. It checks every ten minutes and is safe to run twice at once. It leaves a run alone while Modal reports its call running, or can't report it, until the run is 24 hours old, counted from its first claim or, if it was never claimed, from its creation, longer than any of its calls can run; then it fails the run whatever Modal reports. Each deployment from `main`, a main deployment or a Stage 12-only one, deploys it after every check passes, with the Stage 12 v2 default, and puts the default back if its deploy fails. It needs the Modal secret `policyengine-modal-worker-database`, which the v2 workers' deployment already requires.
+
+
+## [0.7.0] - 2026-11-09
+
+### Added
+
+- The v2 Modal report coordinator and its US and UK simulation workers can record a report's run in the Public API's run tables: when a call names a report run and its baseline and reform simulation runs, they write those runs' status, output file and economy results with the Modal worker role's credentials, from the Modal secret `policyengine-modal-worker-database`. The report run is marked succeeded in the same transaction as its result rows. On pre-emption the coordinator of such a call cancels its child calls and resumes when Modal restarts it. Comparison runs behave as before.
+
+
+## [0.6.2] - 2026-11-09
+
+### Fixed
+
+- A deployment no longer treats a Stage 12 v2 manifest that Modal expired as an empty one. A scheduled workflow reads every key of the manifest once a day in `staging` and `main`, so Modal's expiry of a Dict entry after 7 days without a read or write no longer removes it, and fails when it is missing. A deployment's worker publication now refuses a missing manifest before its checks, instead of making its unchecked worker the default and leaving out every earlier worker; an operator starts a new or lost manifest with `update_v2_version_manifest --first-publication`, which refuses a manifest that exists.
+
+
+## [0.6.1] - 2026-11-09
+
+### Changed
+
+- A deployment that publishes Stage 12 now adds its v2 worker before its checks without moving the v2 manifest's default version, and moves the default to the new worker only after every check and the Cloud Run promotion pass, writing back the manifest it replaced if a later step fails or the run is cancelled. So Stage 12 reports reach a new release's worker only after that environment's checks pass, except the first worker in an empty manifest and a redeploy of the same version, whose worker is replaced in place.
+
+
+## [0.6.0] - 2026-11-09
+
+### Added
+
+- CI checks sim's models of the tables the simulation service writes against the tables the Public API's migration chain builds at a pinned Public API commit, and that the service's role can write them; a weekly run compares them with the Public API's default branch, and opens an issue, or comments on the open one, when that comparison fails.
+- The Simulation Entrypoint connects to the Public API's database with its own role, mounted as `SIMULATION_SERVICE_DATABASE_URL` on every deploy, and models the tables it writes there (simulations, reports, their runs, budget window calculations and household jobs), with their foreign keys to the Public API's own tables. `GET /ready` reports whether it reached the database and whether its role holds every privilege it needs, the service logs any it lacks, a check that reached the database is reused for 30 seconds, and the candidate check requires them all. Every runtime secret is now resolved in its own assignment, so one that cannot be resolved stops the deploy.
+
+
+## [0.5.5] - 2026-11-09
+
+### Changed
+
+- A deployment now publishes its release's routes before its checks without moving `latest`, and moves `latest` to the release only after every check and the Cloud Run promotion pass, then checks that unpinned requests reach it and puts `latest` back if that check fails. Unpinned requests in staging and production move to a new policyengine.py version only after that environment's checks pass, and rerunning only a deployment's failed jobs now completes it without republishing its routes.
+
+### Fixed
+
+- Retried a simulation's run-time dataset download up to twice (three attempts in all), with a jittered wait that doubles, when Hugging Face's connection failed, timed out, ended the response early or answered with a 5xx status, so one CDN timeout no longer fails a run. Rejected credentials (401, 403), a missing dataset (404), other 4xx responses and a SHA-256 mismatch are never retried.
+
+
+## [0.5.4] - 2026-11-06
+
+### Changed
+
+- Updated policyengine.py from 6.12.1 to 6.16.0 in the simulation runtime.
+
+
+## [0.5.3] - 2026-11-06
+
+### Fixed
+
+- The release sentinel check keeps polling a job through HTTP 502 and 504, as it already did for 503, until its 30-minute deadline. A gateway container restart while the check is polling, which the entrypoint reports as 504 (or passes on from the gateway's proxy as 502), no longer fails a release. If the deadline passes, the check names the last status it got, and it never waits past the deadline whatever `Retry-After` asks.
+
+
+## [0.5.2] - 2026-11-05
+
+### Changed
+
+- Updated policyengine.py from 6.12.0 to 6.12.1 in the simulation runtime.
+
+
+## [0.5.1] - 2026-11-05
+
+### Changed
+
+- Rule `sim.microdata.weight-stripping-confined` is now enforced: a read of raw values from a weighted frame or column that the executor's tests find anywhere but the body of `_count_output_entities`, the function that counts entities, fails them, with no recorded exceptions. Its empty baseline, `rules/baselines/sim-microdata-weight-stripping.txt`, is deleted.
+
+
+## [0.5.0] - 2026-11-05
+
+### Changed
+
+- The manual rollback workflow's steps now run tested scripts under `.github/scripts/` instead of inline shell, with unchanged inputs, outputs and exit statuses. Rule `sim.ci.multiline-run-is-script` is now enforced with no baseline: any multi-line `run:` block in a workflow fails the quality-guards job.
+
+### Removed
+
+- US national, region-group and segmented national runs, and Stage 12 aggregation of a national report, no longer compute congressional district impacts: their `congressional_district_impact` is null, and the job-status response leaves it out. US state runs still list their own districts, from which nationwide reports now take each district; apps deployed for older policyengine.py versions are not rebuilt and still compute districts for national runs.
+
+
+## [0.4.3] - 2026-11-05
+
+### Changed
+
+- Ran the `Changelog fragment` check from its own workflow on every pull request, whatever branch it targets and including each one in a stack, so the required check is never skipped; changing a pull request's base branch runs it again.
+
+
+## [0.4.2] - 2026-11-04
+
+### Changed
+
+- The deployment workflow's routing publication steps and release-sentinel checks now run tested scripts under `.github/scripts/` instead of inline shell. Their inputs, outputs and exit statuses are unchanged.
+
+
+## [0.4.1] - 2026-11-03
+
+### Changed
+
+- Withdrew the unreleased refusal of simulation years the model cannot project its dataset to (#970), until the Public API and the app refuse those years first.
+
+
+## [0.4.0] - 2026-11-03
+
+### Added
+
+- A `breakdown=local_areas` run now fills `constituency_withheld_codes` and `local_authority_withheld_codes` on its `LocalAreaBreakdownOutput`, fields the contract and the gateway already accept. Each holds, sorted, the ONS codes of that level's areas that the run estimated (the areas with household weight) but disclosure control did not publish. That includes every estimated area when withholding cannot resolve the disclosure findings, and the list is `[]` when none were withheld. An area the run never estimated, such as one with no households in the dataset, is in neither list.
+
+  Executors deployed for older policyengine.py versions keep leaving both fields out. The beta local-area breakdown check now requires both lists, sorted and without a published area.
+
+
+## [0.3.0] - 2026-11-03
+
+### Added
+
+- UK local-area breakdown results (`LocalAreaBreakdownOutput`, the result of a `breakdown=local_areas` run) can now carry two optional fields, `constituency_withheld_codes` and `local_authority_withheld_codes`, and the contract and the gateway accept a result with or without them. Each will hold, sorted, the ONS codes of that level's areas that the run estimated but disclosure control did not publish: `[]` when none were withheld, and never an area the run did not estimate. No executor fills them yet.
+
+  A result without them still validates, and its JSON leaves both keys out rather than writing `null`. This uses field-level `exclude_if`, so the contract now requires pydantic 2.12 or later. The gateway's OpenAPI document lists both fields as optional.
+
+
+## [0.2.8] - 2026-11-03
+
+### Changed
+
+- Started no Stage 12 shadow comparison for a US state request (a `state/*` region in any case, or a bare two-letter code, which the runtime reads as a state), since the app will run every state for a nationwide report's congressional district view and Stage 12 is being replaced; the entry logs `stage12_comparison_run_skipped` with the new reason `excluded_us_state_region`, only for state requests the adapter would otherwise have compared. US national, congressional district and place requests and UK requests are compared as before, and the operator direct-submission route still accepts state regions.
+
+
+## [0.2.7] - 2026-11-03
+
+### Changed
+
+- UK constituency and local-authority records no longer have `x` or `y` fields in the contract or in the gateway's OpenAPI document. A record that carries either, even as `null`, is now refused. The contract's pydantic requirement returns to 2.0 or later, since nothing uses field-level `exclude_if` any more.
+
+
+## [0.2.6] - 2026-11-02
+
+### Changed
+
+- The executor no longer sends `x` or `y` on UK constituency and local-authority records. It no longer reads the `x` and `y` columns of policyengine.py's constituency lookup or attaches its packaged local-authority positions, and it no longer refuses a published area without a map position. Results it returns from now on carry neither key, which the contract already allows (#984). The beta integration check of a local-area breakdown now requires records without them.
+
+  The executor no longer ships `coordinates_lad22.csv` and `coordinates_lad23.csv`. Each boundary version's local-authority codes now come from `codes_lad22.csv` and `codes_lad23.csv`, which list exactly the codes the coordinate files did, so detecting LAD22 or LAD23 codes, and its checks, are unchanged. The Stage 12 static runtime file smoke test reports `lad22_codes` and `lad23_codes` instead of `lad22_coordinates` and `lad23_coordinates`.
+
+
+## [0.2.5] - 2026-11-02
+
+### Changed
+
+- Updated policyengine.py from 6.11.1 to 6.12.0 in the simulation runtime.
+
+
+## [0.2.4] - 2026-11-02
+
+### Changed
+
+- The `x` and `y` fields of UK constituency and local-authority records, each area's integer position on the hex map, are now optional in the contract, as the first of three steps that remove them. A record validates with or without them, and one without them leaves both keys out of its JSON instead of writing `null`. The executor still sends both. The gateway's OpenAPI document no longer lists them as required, and the contract now requires pydantic 2.12 or later, the first release with field-level `exclude_if`.
+
+
+## [0.2.3] - 2026-10-30
+
+### Changed
+
+- Promoted each staging deployment's tested Simulation Entrypoint revision to the staging service's stable traffic, as production deployments already do, in both the main deployment's beta job and the Stage 12 comparison path's staging deployment. The staging stable URL now serves the build that passed the staging tests; promotion runs the same stable-URL checks as production's and restores the previous revision when they fail, and the existing clean-up then deletes the staging service's older revisions except the promoted one and the one it replaced. Only a run from main promotes: a manual staging run from another branch tests its candidate but leaves the staging service's Cloud Run traffic and older revisions unchanged. The new rule sim.deploy.staging-promotes-tested-revision requires it.
+
+
 ## [0.2.2] - 2026-10-29
 
 ### Changed

@@ -21,7 +21,7 @@ dependencies = [
     "policyengine-stage12-persistence",
     # PolicyEngine.py's models extra is the only selector for core, country
     # models, and the SPM calculator. Do not duplicate those versions here.
-    "policyengine[models]==6.11.1",
+    "policyengine[models]==6.16.0",
     "tables>=3.10.2",
     "modal>=0.73.0",
     "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.4,<4",
@@ -30,6 +30,9 @@ dependencies = [
     "google-cloud-storage>=2",
     # Imported directly by the UK private-data credential verifier.
     "huggingface-hub>=1,<2",
+    # Imported directly by the run-time dataset download retry, which reads
+    # the errors policyengine.py's downloads raise.
+    "requests>=2.32,<3",
     "pyarrow>=20,<24",
 ]
 
@@ -46,7 +49,7 @@ packages = ["src/policyengine_simulation_executor"]
 # certified datasets and writes their receipt.
 [dependency-groups]
 modal-simulation-image = [
-    "policyengine[models]==6.11.1",
+    "policyengine[models]==6.16.0",
     "fastapi>=0.115.0",
     "tables>=3.10.2",
     "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.4,<4",
@@ -56,6 +59,9 @@ modal-simulation-image = [
     "google-cloud-storage>=2",
     # The CI credential-validation command imports this directly.
     "huggingface-hub>=1,<2",
+    # The run-time dataset download retries (main path and Stage 12) import
+    # this directly; it is also a transitive dependency of policyengine.
+    "requests>=2.32,<3",
     "pyarrow>=20,<24",
     # The Stage 12 coordinator and child functions use typed SQLAlchemy Core
     # DML against the API-owned temporary tables. These dependencies are

@@ -266,7 +266,14 @@ def test_main_refuses_unserialized_writes_before_accessing_modal_or_plan_files(
 
 
 @pytest.mark.parametrize(
-    "mode", ["--print-latest", "--print-identity", "--plan-out", "--dry-run"]
+    "mode",
+    [
+        "--print-latest",
+        "--print-identity",
+        "--plan-out",
+        "--plan-latest-out",
+        "--dry-run",
+    ],
 )
 def test_main_keeps_read_only_and_plan_modes_available_locally(
     monkeypatch, patched_modal, capsys, tmp_path, mode
@@ -274,10 +281,23 @@ def test_main_keeps_read_only_and_plan_modes_available_locally(
     for variable in ("GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_WORKFLOW_REF"):
         monkeypatch.delenv(variable, raising=False)
     state = published_routing_state(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    install_bundle_manifests(
+        monkeypatch, {"6.2.6": ("1.1.0", "2.1.0"), "6.3.0": ("1.1.0", "2.2.0")}
+    )
+    # 6.3.0's routes are published, as before its deployment's checks.
+    state = registry.build_routes_routing_state(
+        current_state=state,
+        deployed=registry.DeployedAppVersions(
+            app_name=versioned_app_name("6.3.0"),
+            policyengine_version="6.3.0",
+            us_version="1.1.0",
+            uk_version="2.2.0",
+        ),
+    )
     store = install_routing_store(patched_modal, state)
     args = [mode]
-    if mode in {"--plan-out", "--dry-run"}:
-        if mode == "--plan-out":
+    if mode in {"--plan-out", "--plan-latest-out", "--dry-run"}:
+        if mode != "--dry-run":
             args.append(str(tmp_path / "local-plan.json"))
         args.extend(
             [
@@ -295,10 +315,13 @@ def test_main_keeps_read_only_and_plan_modes_available_locally(
     run_registry_main(monkeypatch, *args)
     assert capsys.readouterr().out
     assert store.snapshot() == {"active": json.loads(json.dumps(state))}
-    if mode == "--plan-out":
+    if mode != "--dry-run" and mode.startswith("--plan"):
         plan = json.loads((tmp_path / "local-plan.json").read_text())
-        assert plan["before"] == state
-        assert plan["after"]["latest"]["policyengine"] == "6.3.0"
+        assert plan["before"] == json.loads(json.dumps(state))
+        # The routes plan leaves latest; the latest plan moves it.
+        assert plan["after"]["latest"]["policyengine"] == (
+            "6.3.0" if mode == "--plan-latest-out" else "6.2.6"
+        )
 
 
 def test_cli_help_explains_serialized_writes_and_has_no_lease_option(

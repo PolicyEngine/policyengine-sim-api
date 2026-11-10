@@ -1,0 +1,9 @@
+# Proof fixture: a project that installs two local libraries by path.
+[project]
+name = "fixture-entrypoint"
+version = "0.1.0"
+dependencies = ["fixture-contract", "fixture-persistence"]
+
+[tool.uv.sources]
+fixture-contract = { path = "../../libs/fixture-contract", editable = true }
+fixture-persistence = { path = "../../libs/fixture-persistence", editable = true }

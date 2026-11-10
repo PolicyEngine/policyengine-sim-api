@@ -11,9 +11,9 @@ Every uv package is type-checked with Pyright on every pull request, by the
 
 - `sim.quality.pyright-libraries-and-entry`, `sim.quality.pyright-gateway`,
   `sim.quality.pyright-executor` and `sim.quality.pyright-apis-integ`: the
-  contract, observability, Stage 12 persistence and fastapi libraries, the
-  simulation entry, the gateway, the executor and the generated-client
-  integration tests have no Pyright errors.
+  contract, observability, simulation persistence, Stage 12 persistence and
+  fastapi libraries, the simulation entry, the gateway, the executor and the
+  generated-client integration tests have no Pyright errors.
 - `sim.quality.every-package-type-checked`: a Pyright rule lists every uv
   package under `libs/` and `projects/`. When you add a package, give it a
   `[tool.pyright] include`, add it to a Pyright rule's `enforcer.projects`, and

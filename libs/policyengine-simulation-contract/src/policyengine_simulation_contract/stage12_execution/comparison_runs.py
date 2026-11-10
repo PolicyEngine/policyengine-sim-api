@@ -23,13 +23,49 @@ from policyengine_simulation_contract.stage12_execution.base import (
 )
 
 
+class ReportRunIds(StrictContractModel):
+    """The Public API's report run and simulation runs one report call records on.
+
+    The simulation service creates the three rows before it starts the
+    coordinator. The coordinator records the report run's status and results,
+    and each worker records its own simulation run's.
+    """
+
+    report_run_id: UUID
+    baseline_simulation_run_id: UUID
+    reform_simulation_run_id: UUID
+
+    @model_validator(mode="after")
+    def validate_distinct_runs(self) -> ReportRunIds:
+        """Require the report run and both simulation runs to be different rows."""
+        run_ids = {
+            self.report_run_id,
+            self.baseline_simulation_run_id,
+            self.reform_simulation_run_id,
+        }
+        if len(run_ids) != 3:  # noqa: PLR2004  # one report run and two simulation runs
+            msg = "report run IDs must name three different runs"
+            raise ValueError(msg)
+        return self
+
+    def simulation_run_id(self, role: SimulationRole) -> UUID:
+        """Return the simulation run of ``role``; a standalone role has none."""
+        if role is SimulationRole.BASELINE:
+            return self.baseline_simulation_run_id
+        if role is SimulationRole.REFORM:
+            return self.reform_simulation_run_id
+        msg = "a standalone simulation has no simulation run in a report run"
+        raise ValueError(msg)
+
+
 class Stage12InvocationContext(StrictContractModel):
     """Deployment and retention context for one comparison-run invocation.
 
     Records the originating request, the environments, the worker version and
     callable, the manifest digests and the artifact prefix. Automatic runs also
     name the production function call they are compared with. Artifacts are kept
-    for at most 30 days after ``created_at``.
+    for at most 30 days after ``created_at``. A call that also records its
+    outcome on the Public API's run tables names those runs in ``report_run``.
     """
 
     contract_version: Literal[1] = 1
@@ -51,11 +87,21 @@ class Stage12InvocationContext(StrictContractModel):
     production_function_call_id: ContractText | None = None
     created_at: datetime
     retention_expires_at: datetime
+    # Comparison runs leave it unset and record only the Stage 12 tables.
+    report_run: ReportRunIds | None = None
 
     @model_validator(mode="after")
     def validate_retention(self) -> Stage12InvocationContext:
         """Require aware timestamps and a retention window of at most 30 days."""
         _validate_retention(self.created_at, self.retention_expires_at)
+        return self
+
+    @model_validator(mode="after")
+    def validate_report_run_is_direct(self) -> Stage12InvocationContext:
+        """Reject report runs on a shadow run compared with a production call."""
+        if self.report_run is not None and self.production_function_call_id:
+            msg = "a run compared with a production function call has no report run"
+            raise ValueError(msg)
         return self
 
 

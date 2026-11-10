@@ -88,6 +88,15 @@ def _invoke(
             observability_context=_observability_context(),
         )
 
+    # The US and UK workers pass their own Modal call ID to the runtime, so the
+    # stand-in ``modal`` module needs one; a test that set its own keeps it.
+    if not hasattr(module.modal, "current_function_call_id"):
+        monkeypatch.setattr(
+            module.modal,
+            "current_function_call_id",
+            lambda: "call-1",
+            raising=False,
+        )
     monkeypatch.setattr(stage12_runtime, "run_single_simulation", implementation)
     return getattr(module, function_name)(
         {"role": "baseline"},
@@ -213,8 +222,8 @@ def test_v2_static_runtime_file_smoke_uses_exact_uk_worker_image(monkeypatch) ->
     )
     assert smoke.smoke_stage12_static_runtime_files() == {
         "names": 378,
-        "lad22_coordinates": 374,
-        "lad23_coordinates": 361,
+        "lad22_codes": 374,
+        "lad23_codes": 361,
         "installed_dataset_boundary_version": "lad22",
     }
 
@@ -344,6 +353,60 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     assert functions["coordinate_report"]["timeout"] == 5400
     assert functions["coordinate_report"]["max_containers"] == 10
     assert "asgi_app" not in vars(module)
+
+
+def test_only_report_run_writers_receive_the_modal_worker_database_secret(
+    monkeypatch,
+) -> None:
+    module = _load(monkeypatch)
+    functions = dict(module.app.function_calls)
+    worker_database_secret = {
+        "args": ("policyengine-modal-worker-database",),
+        "kwargs": {"required_keys": ["MODAL_WORKER_DATABASE_URL"]},
+    }
+
+    assert module.modal_worker_database_secret == worker_database_secret
+    for writer in (
+        "coordinate_report",
+        "run_single_simulation_us",
+        "run_single_simulation_uk",
+    ):
+        assert functions[writer]["secrets"] == [
+            *module.worker_secrets,
+            worker_database_secret,
+        ]
+    # Segments return their result to their worker, and validation records
+    # nothing, so neither holds the database credentials.
+    for other in (
+        "run_single_simulation_segment_us",
+        "validate_worker_us",
+        "validate_worker_uk",
+    ):
+        assert functions[other]["secrets"] == module.worker_secrets
+
+
+@pytest.mark.parametrize(
+    "function_name", ["run_single_simulation_us", "run_single_simulation_uk"]
+)
+def test_simulation_workers_pass_their_own_modal_call_id(
+    monkeypatch, function_name
+) -> None:
+    module = _load(monkeypatch)
+    monkeypatch.setattr(
+        module.modal,
+        "current_function_call_id",
+        lambda: "fc-simulation-worker",
+        raising=False,
+    )
+    received = {}
+
+    def implementation(*_args, **kwargs):
+        received.update(kwargs)
+        return {"role": "baseline"}
+
+    _invoke(monkeypatch, module, function_name, implementation)
+
+    assert received["modal_call_id"] == "fc-simulation-worker"
 
 
 @pytest.mark.parametrize(

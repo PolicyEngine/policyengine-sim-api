@@ -1,0 +1,44 @@
+# Proof fixture: the deployment workflow's jobs as they were before the rule.
+# "beta" deploys and tests a tagged staging candidate but passes
+# promote_entrypoint: false, so the staging stable URL keeps serving whatever
+# revision it served before, which the deployment never tested.
+name: Deploy Simulation API
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  beta:
+    name: Complete beta deployment
+    uses: ./.github/workflows/simulation-deploy.reusable.yml
+    with:
+      release_environment: beta
+      deployment_environment: staging
+      modal_environment: staging
+      entrypoint_service: policyengine-simulation-entry-staging
+      entrypoint_revision_prefix: s-
+      entrypoint_min_instances: 0
+      entrypoint_max_instances: 2
+      promote_entrypoint: false
+      run_full_integration: true
+      deploy_existing_stack: true
+    secrets: inherit
+
+  prod:
+    name: Complete prod deployment
+    needs: beta
+    uses: ./.github/workflows/simulation-deploy.reusable.yml
+    with:
+      release_environment: prod
+      deployment_environment: production
+      modal_environment: main
+      entrypoint_service: policyengine-simulation-entry
+      entrypoint_revision_prefix: p-
+      entrypoint_min_instances: 1
+      entrypoint_max_instances: 20
+      promote_entrypoint: true
+      run_full_integration: false
+      deploy_existing_stack: true
+    secrets: inherit

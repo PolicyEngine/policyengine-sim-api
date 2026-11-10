@@ -46,6 +46,15 @@ ACTIVE_MANIFEST_KEY = "active-with-cache"
 # they keep reading this key, which holds the schema version 1 form without
 # the cache fields or region datasets.
 PRE_CACHE_MANIFEST_KEY = "active"
+# Every reader's key, in the order a write writes them (newest reader first).
+# A write leaves the schema version 1 keys alone when schema version 1 can't
+# describe the manifest.
+V2_MANIFEST_KEYS = (
+    SCHEMA_2_MANIFEST_KEY,
+    REGION_DATASETS_MANIFEST_KEY,
+    ACTIVE_MANIFEST_KEY,
+    PRE_CACHE_MANIFEST_KEY,
+)
 V2_APPLICATION_PREFIX = "policyengine-simulation-v2-py"
 V1_APPLICATION_PREFIX = "policyengine-simulation-py"
 _MAX_MODAL_APPLICATION_NAME_LENGTH = 64
@@ -537,6 +546,97 @@ def build_next_v2_manifest(
     )
 
 
+def add_v2_worker(*, current: object, worker: V2WorkerVersion) -> V2VersionManifest:
+    """Return ``current`` with ``worker`` added under its bundle version.
+
+    The default version stays as it is, so requests that pin no version keep
+    reaching the same worker; only the first worker (``current`` is None)
+    becomes the default. A deployment adds its worker this way before its
+    checks, only into an existing manifest, and moves the default
+    (:func:`move_v2_default`) after them; an operator starts a missing
+    manifest with its first worker.
+    """
+    if current is None:
+        versions: dict[str, V2WorkerVersion] = {}
+        default_version = worker.bundle.policyengine_version
+    else:
+        parsed = parse_v2_manifest(current)
+        versions = deepcopy(parsed.versions)
+        default_version = parsed.default_version
+    version = worker.bundle.policyengine_version
+    versions[version] = worker
+    return V2VersionManifest(
+        generation=f"{version}:{worker.application_name}",
+        default_version=default_version,
+        versions=versions,
+    )
+
+
+def move_v2_default(
+    *, current: object, version: str, force_default: bool = False
+) -> V2VersionManifest:
+    """Return ``current`` with its default moved to an added worker ``version``.
+
+    The default moves only when ``version`` is newer by PEP 440 ordering (an
+    unparsable version never is) or ``force_default`` is set; otherwise the
+    manifest is returned as it was, generation included, so its digest (and
+    every Stage 12 identity built from it) stays. Raises ValueError when
+    ``current`` has no worker for ``version``.
+    """
+    parsed = parse_v2_manifest(current)
+    worker = parsed.versions.get(version)
+    if worker is None:
+        msg = f"the v2 manifest has no v2 worker {version!r} to make the default"
+        raise ValueError(msg)
+    if not (force_default or _is_newer(version, parsed.default_version)):
+        return parsed
+    default_version = version
+    return V2VersionManifest(
+        generation=f"default:{version}:{worker.application_name}",
+        default_version=default_version,
+        versions=deepcopy(parsed.versions),
+    )
+
+
+def read_v2_manifest(store: V2ManifestStore) -> V2VersionManifest | None:
+    """Return the stored manifest, or None before the first publish.
+
+    Reads the key a :class:`V2ManifestLoader` reads, and raises ValueError
+    for a stored value that is not a valid manifest.
+    """
+    current = _current_manifest(store)
+    if current is None:
+        return None
+    return parse_v2_manifest(current)
+
+
+def v2_manifest_copies(manifest: V2VersionManifest) -> dict[str, object]:
+    """Return each reader's key and its copy of ``manifest``, in write order.
+
+    The schema version 1 keys are included only when schema version 1 can
+    describe the manifest; otherwise a write leaves them, and their readers
+    keep the last manifest written there.
+    """
+    copies: dict[str, object] = {
+        SCHEMA_2_MANIFEST_KEY: manifest.model_dump(mode="json")
+    }
+    schema_1_copies = _schema_1_copies(manifest)
+    if schema_1_copies is not None:
+        copies.update(schema_1_copies)
+    return copies
+
+
+def write_v2_manifest(*, store: V2ManifestStore, manifest: V2VersionManifest) -> None:
+    """Write ``manifest`` under each reader's key, each as one whole document."""
+    # Each key holds one entire validated document, and a reader uses one
+    # whole document (the region dataset copy only while it matches the cache
+    # copy), so no reader observes a document assembled from several. The
+    # keys are written one after another, so a write that stops part-way
+    # leaves some keys on the previous manifest.
+    for key, copy in v2_manifest_copies(manifest).items():
+        store[key] = copy
+
+
 def publish_v2_manifest(
     *,
     store: V2ManifestStore,
@@ -545,24 +645,15 @@ def publish_v2_manifest(
 ) -> V2VersionManifest:
     """Add ``worker`` to the stored manifest, write it back and return it.
 
-    The whole manifest is written as one store value per key, so readers never
-    see a partial update. The schema version 1 keys are rewritten only when
-    schema version 1 can describe the manifest; otherwise their readers keep
-    the last manifest written there.
+    The default moves as :func:`build_next_v2_manifest` moves it, in the same
+    write (see :func:`write_v2_manifest`).
     """
     next_manifest = build_next_v2_manifest(
         current=_current_manifest(store),
         worker=worker,
         force_default=force_default,
     )
-    # Each key holds one entire validated document, and a reader uses one
-    # whole document (the region dataset copy only while it matches the cache
-    # copy), so no reader observes a partial update assembled from several.
-    store[SCHEMA_2_MANIFEST_KEY] = next_manifest.model_dump(mode="json")
-    schema_1_copies = _schema_1_copies(next_manifest)
-    if schema_1_copies is not None:
-        for key, payload in schema_1_copies.items():
-            store[key] = payload
+    write_v2_manifest(store=store, manifest=next_manifest)
     return next_manifest
 
 

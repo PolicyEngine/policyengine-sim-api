@@ -18,7 +18,8 @@ def routing_argument_parser() -> argparse.ArgumentParser:
             f"Writes require GitHub Actions in {CANONICAL_GITHUB_REPOSITORY}\n"
             "through one of these workflows:\n"
             + "\n".join(sorted(SERIALIZED_ROUTING_WORKFLOW_FILES))
-            + "\nRead-only, --dry-run and --plan-out modes are available locally."
+            + "\nRead-only views and the --dry-run, --plan-out and"
+            + "\n--plan-latest-out modes are available locally."
         ),
     )
     parser.add_argument(
@@ -80,15 +81,26 @@ def routing_argument_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help=(
-            "With publishing arguments: print a routing plan's digests; change nothing."
+            "With publishing arguments: print the digests of the plan that "
+            "--plan-out writes; change nothing."
         ),
     )
     parser.add_argument(
         "--plan-out",
         metavar="FILE",
         help=(
-            "With the publishing arguments: write the routing plan (state "
-            "before and after) to FILE and print its digests; change nothing."
+            "With the publishing arguments: write the plan (state before and "
+            "after) that adds the release's routes and bundle manifest, leaving "
+            "latest, to FILE and print its digests; change nothing."
+        ),
+    )
+    parser.add_argument(
+        "--plan-latest-out",
+        metavar="FILE",
+        help=(
+            "With the publishing arguments: write the plan that moves latest to "
+            "the release, whose routes must already be published, to FILE and "
+            "print its digests; change nothing."
         ),
     )
     parser.add_argument(
@@ -104,7 +116,10 @@ def routing_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--complete-plan",
         metavar="FILE",
-        help="Complete a recorded publication after all release gates pass.",
+        help=(
+            "Complete a recorded publication once its plan's state is live: the "
+            "routes plan after publishing it, the latest plan after its check."
+        ),
     )
     parser.add_argument(
         "--finalize-publication",
@@ -135,13 +150,17 @@ def routing_argument_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         nargs="+",
         help=(
-            "Undo a deployment's plans (one per run attempt): restore each "
-            "starting state while the live state is what that plan published."
+            "Undo a deployment's plans, given oldest first (each attempt's "
+            "routes plan, then its latest plan): restore each starting state "
+            "while the live state is what that plan published."
         ),
     )
     parser.add_argument(
         "--publication-id",
-        help="With --plan-out or --dry-run: a unique publication id (default random).",
+        help=(
+            "With --plan-out, --plan-latest-out or --dry-run: a unique "
+            "publication id (default random)."
+        ),
     )
     parser.add_argument(
         "--restore-latest",

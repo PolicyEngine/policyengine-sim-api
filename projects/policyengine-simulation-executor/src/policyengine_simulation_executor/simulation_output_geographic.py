@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -82,7 +81,7 @@ def _complete_uk_geography_output(
     code_field: str,
     name_field: str,
 ) -> GeographicImpactOutput:
-    """Require every UK geography record to contain lookup-owned metadata.
+    """Require every UK geography record to carry its code and lookup name.
 
     An empty list is valid: disclosure control may withhold every area.
     """
@@ -99,9 +98,6 @@ def _complete_uk_geography_output(
             raise ValueError(msg)
         if not isinstance(name, str) or not name.strip() or name == code:
             msg = f"UK geography {code!r} is missing a lookup name"
-            raise ValueError(msg)
-        if record_values.get("x") is None or record_values.get("y") is None:
-            msg = f"UK geography {code!r} is missing lookup coordinates"
             raise ValueError(msg)
     return output
 
@@ -223,12 +219,19 @@ def _integer_record_value(record: Mapping[str, Any], key: str) -> int | None:
 
 
 def _should_build_us_congressional_district_impact(region_code: str | None) -> bool:
-    if region_code is None:
-        return True
-    normalized_region_code = region_code.lower()
-    return normalized_region_code == "us" or normalized_region_code.startswith(
-        ("state/", "region_group/")
-    )
+    """Return whether a US run for this region computes congressional districts.
+
+    Only state runs do, such as ``state/ca`` in any case. National runs (no
+    region, or ``us``) and region-group runs compute none, so neither do
+    segmented national runs, their reduce or Stage 12 aggregation of a
+    national report: a nationwide report takes its districts from a separate
+    run of each state on that state's dataset, which gives each district the
+    same figures as its state's own report. Stage 12 aggregation of a state
+    report still computes that state's districts when the request spells the
+    region ``state/...``: that path passes the region as sent, so a bare code
+    such as ``ut`` computes none there. District and place runs compute none.
+    """
+    return region_code is not None and region_code.lower().startswith("state/")
 
 
 def build_congressional_district_impact(
@@ -238,10 +241,11 @@ def build_congressional_district_impact(
     *,
     region_code: str | None = None,
 ) -> CongressionalDistrictImpactOutput | None:
-    """Compute US congressional district impacts for national, state or group runs.
+    """Compute US congressional district impacts for a state run.
 
-    None for other countries or regions, and when the calculation fails (the
-    failure is logged; SPM selection errors still propagate).
+    None for other countries and other regions, including national and
+    region-group runs, and when the calculation fails (the failure is logged;
+    SPM selection errors still propagate).
     """
     if country != "us":
         return None
@@ -322,14 +326,22 @@ class UKAreaIncomeChange:
 class UKGeographyDisclosureOutput:
     """The published areas of each UK level, keyed by area code.
 
-    An area the disclosure check withholds is absent.
+    An area the disclosure check withholds is absent. ``estimated`` holds the
+    codes of each level's areas that the release estimated, those with
+    household weight as policyengine.py reads them; each one that is not
+    published was withheld.
     """
 
     areas: Mapping[str, Mapping[str, UKAreaIncomeChange]] = field(default_factory=dict)
+    estimated: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
     def level(self, level: str) -> Mapping[str, UKAreaIncomeChange]:
         """Return the published areas of one level."""
         return self.areas.get(level, {})
+
+    def withheld_codes(self, level: str) -> list[str]:
+        """Return the codes of one level's estimated areas not published, sorted."""
+        return sorted(self.estimated.get(level, frozenset()) - set(self.level(level)))
 
 
 def _require_uk_area_column(
@@ -636,20 +648,24 @@ def compute_uk_geography_disclosure_output(
     public = _resolved_public_table(
         impact, area_codes, year=year, inside=_uk_areas_inside(household)
     )
+    estimated = {level: frozenset(codes) for level, codes in area_codes.items()}
     if public is None:
-        return UKGeographyDisclosureOutput()
+        return UKGeographyDisclosureOutput(estimated=estimated)
     return UKGeographyDisclosureOutput(
         areas={
             level: _published_area_changes(public, level, area_codes[level])
             for level in UK_DISCLOSURE_AREA_COLUMNS
-        }
+        },
+        estimated=estimated,
     )
 
 
-def _uk_constituency_lookup(
-    lookup_csv_path: str,
-) -> dict[str, tuple[str, int | None, int | None]]:
-    """Return each constituency's name and map coordinates, in lookup order."""
+def _uk_constituency_lookup(lookup_csv_path: str) -> dict[str, str]:
+    """Return each constituency's name, in lookup order.
+
+    The lookup's other columns, such as its x and y map positions, are not
+    read: sim-api results no longer carry an area's map position.
+    """
     lookup = pd.read_csv(lookup_csv_path)
     if "code" not in lookup.columns:
         msg = (
@@ -657,28 +673,13 @@ def _uk_constituency_lookup(
             f"{lookup_csv_path}"
         )
         raise ValueError(msg)
-    entries: dict[str, tuple[str, int | None, int | None]] = {}
+    names: dict[str, str] = {}
     for row in lookup.to_dict("records"):
         code = _normalised_area_code(row.get("code"))
         if not code:
             continue
-        name = _normalised_area_code(row.get("name")) or code
-        entries[code] = (
-            name,
-            _lookup_coordinate(row.get("x")),
-            _lookup_coordinate(row.get("y")),
-        )
-    return entries
-
-
-def _lookup_coordinate(value: object) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int | float | str):
-        return None
-    try:
-        number = float(value)
-    except ValueError:
-        return None
-    return int(number) if math.isfinite(number) else None
+        names[code] = _normalised_area_code(row.get("name")) or code
+    return names
 
 
 def _require_uk_disclosure_output(
@@ -699,7 +700,7 @@ def build_uk_constituency_impact(
 
     Areas that disclosure control withholds are left out. Downloads the
     constituency lookup if needed and raises when a published area lacks a
-    lookup name or coordinates.
+    lookup name.
     """
     if country != "uk":
         return None
@@ -712,18 +713,14 @@ def build_uk_constituency_impact(
     ordered = [code for code in lookup if code in changes] + sorted(
         set(changes) - set(lookup)
     )
-    records: list[dict[str, object]] = []
-    for code in ordered:
-        name, x, y = lookup.get(code, (code, None, None))
-        records.append(
-            {
-                "constituency_code": code,
-                "constituency_name": name,
-                "x": x,
-                "y": y,
-                **changes[code].record_fields(),
-            }
-        )
+    records: list[dict[str, object]] = [
+        {
+            "constituency_code": code,
+            "constituency_name": lookup.get(code, code),
+            **changes[code].record_fields(),
+        }
+        for code in ordered
+    ]
     return _complete_uk_geography_output(
         records,
         code_field="constituency_code",
@@ -737,7 +734,7 @@ def build_uk_local_authority_impact(
     *,
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> GeographicImpactOutput | None:
-    """Return the published UK local authorities, named and placed for the boundaries.
+    """Return the published UK local authorities, named for the boundary version.
 
     None for other countries. For the UK, ``uk_local_authority_metadata`` is
     required, and a code outside its boundary version raises ``ValueError``.
@@ -757,13 +754,11 @@ def build_uk_local_authority_impact(
     )
 
     boundary_version = uk_local_authority_metadata.boundary_version
-    display_metadata = load_uk_local_authority_resources().metadata_for(
-        boundary_version
-    )
+    names = load_uk_local_authority_resources().names_for(boundary_version)
     records: list[dict[str, object]] = []
     for code in sorted(changes):
-        metadata = display_metadata.get(code)
-        if metadata is None:
+        name = names.get(code)
+        if name is None:
             msg = (
                 f"UK local-authority code {code!r} is not part of the detected "
                 f"{boundary_version.value.upper()} boundary version"
@@ -772,9 +767,7 @@ def build_uk_local_authority_impact(
         records.append(
             {
                 "local_authority_code": code,
-                "local_authority_name": metadata.name,
-                "x": metadata.x,
-                "y": metadata.y,
+                "local_authority_name": name,
                 **changes[code].record_fields(),
             }
         )

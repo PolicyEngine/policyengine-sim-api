@@ -142,8 +142,9 @@ def build_national_output(
     """Reduce the children's microdata into the full national macro output dict.
 
     Runs the existing ``SimulationOutputBuilder`` over stand-in simulations
-    with ``resolved_region_code=country`` so the national congressional
-    district table populates. No model recompute occurs.
+    with ``resolved_region_code=country``, as for any national run, so the
+    output has no congressional districts: nationwide reports take those from
+    separate state runs. No model recompute occurs.
     """
     country = inputs.country
     country_module = inputs.country_module

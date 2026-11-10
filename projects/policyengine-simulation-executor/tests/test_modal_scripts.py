@@ -168,7 +168,7 @@ class TestModalExtractVersions:
         )
 
     def test_deploy_workflow_threads_force_latest_to_routing_publisher(self):
-        """Manual rollback flag should reach the post-deployment routing job."""
+        """The manual rollback flag reaches the job that moves latest."""
         deploy_workflow = (
             REPO_ROOT / ".github" / "workflows" / "simulation-deploy.yml"
         ).read_text(encoding="utf-8")
@@ -179,9 +179,23 @@ class TestModalExtractVersions:
         assert "force_latest:" in deploy_workflow
         assert "force_latest: ${{ inputs.force_latest || false }}" in deploy_workflow
         assert "force_latest:" in reusable_workflow
-        assert "args+=(--force-latest)" in reusable_workflow
-        assert reusable_workflow.index("deploy_executor:") < reusable_workflow.index(
-            "update_routing:"
+        # The latest job's plan step passes the input to
+        # routing-plan-latest.sh, which adds --force-latest when it is true;
+        # the routes plan never moves latest, so routing-plan.sh takes no
+        # such option. test_routing_and_sentinel_scripts.py in the
+        # entrypoint project runs both scripts.
+        assert "FORCE_LATEST: ${{ inputs.force_latest }}" in reusable_workflow
+        assert "run: ../../.github/scripts/routing-plan-latest.sh" in reusable_workflow
+        assert "args+=(--force-latest)" in (
+            SCRIPTS_DIR / "routing-plan-latest.sh"
+        ).read_text(encoding="utf-8")
+        assert "--force-latest" not in (SCRIPTS_DIR / "routing-plan.sh").read_text(
+            encoding="utf-8"
+        )
+        assert (
+            reusable_workflow.index("deploy_executor:")
+            < reusable_workflow.index("update_routing:")
+            < reusable_workflow.index("publish_latest:")
         )
 
 

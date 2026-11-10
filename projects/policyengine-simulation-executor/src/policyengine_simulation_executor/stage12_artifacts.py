@@ -72,19 +72,35 @@ def comparison_run_prefix(
     )
 
 
-def input_path(*, prefix: str, role: str) -> str:
-    """Return the key of the planned execution input JSON for one simulation role."""
-    return f"{prefix}/inputs/{role}.json"
+def _content_named(name: str, content_sha256: str | None) -> str:
+    """Return ``name``, followed by ``-<content_sha256>`` when a digest is given."""
+    return name if content_sha256 is None else f"{name}-{content_sha256}"
 
 
-def simulation_path(*, prefix: str, role: str) -> str:
-    """Return the key of the Parquet output for one simulation role."""
-    return f"{prefix}/simulations/{role}.parquet"
+def input_path(*, prefix: str, role: str, content_sha256: str | None = None) -> str:
+    """Return the key of the planned execution input JSON for one simulation role.
+
+    With ``content_sha256``, the key also names the content's SHA-256.
+    """
+    return f"{prefix}/inputs/{_content_named(role, content_sha256)}.json"
 
 
-def aggregate_path(*, prefix: str) -> str:
-    """Return the key of the run's aggregate report JSON."""
-    return f"{prefix}/reports/aggregate.json"
+def simulation_path(
+    *, prefix: str, role: str, content_sha256: str | None = None
+) -> str:
+    """Return the key of the Parquet output for one simulation role.
+
+    With ``content_sha256``, the key also names the content's SHA-256.
+    """
+    return f"{prefix}/simulations/{_content_named(role, content_sha256)}.parquet"
+
+
+def aggregate_path(*, prefix: str, content_sha256: str | None = None) -> str:
+    """Return the key of the run's aggregate report JSON.
+
+    With ``content_sha256``, the key also names the content's SHA-256.
+    """
+    return f"{prefix}/reports/{_content_named('aggregate', content_sha256)}.json"
 
 
 def comparison_path(*, prefix: str) -> str:
@@ -273,16 +289,30 @@ class Stage12ArtifactStore:
     """Write-once storage for one private bucket's Stage 12 run artifacts.
 
     A write to a path already holding identical bytes succeeds; different
-    bytes raise ``RuntimeError``.
+    bytes raise ``RuntimeError``. A ``content_addressed`` store names each
+    input, simulation output and aggregate's SHA-256 in its key, so a call
+    Modal restarts can store other bytes beside its earlier attempt's, and
+    identical bytes reuse the earlier object.
     """
 
-    def __init__(self, bucket_name: str, *, store: ArtifactStore | None = None) -> None:
+    def __init__(
+        self,
+        bucket_name: str,
+        *,
+        store: ArtifactStore | None = None,
+        content_addressed: bool = False,
+    ) -> None:
         """Bind to ``bucket_name``, which must be non-empty (there is no default)."""
         if not bucket_name:
             msg = "Stage 12 requires an explicitly configured private bucket"
             raise ValueError(msg)
         self.bucket_name = bucket_name
         self._store = store or ArtifactStore(bucket_name)
+        self._content_addressed = content_addressed
+
+    def _key_digest(self, payload: bytes) -> str | None:
+        """Return the SHA-256 a content-addressed key names, else None."""
+        return sha256(payload).hexdigest() if self._content_addressed else None
 
     def _write_immutable(
         self,
@@ -316,9 +346,14 @@ class Stage12ArtifactStore:
         simulation: PlannedSimulationExecutionInput,
     ) -> ArtifactReference:
         """Store a simulation's planned execution input as canonical JSON."""
+        payload = canonical_json_bytes(simulation.model_dump(mode="json"))
         return self._write_immutable(
-            input_path(prefix=prefix, role=simulation.role.value),
-            canonical_json_bytes(simulation.model_dump(mode="json")),
+            input_path(
+                prefix=prefix,
+                role=simulation.role.value,
+                content_sha256=self._key_digest(payload),
+            ),
+            payload,
             content_type=REPORT_MEDIA_TYPE,
         )
 
@@ -338,7 +373,11 @@ class Stage12ArtifactStore:
             uk_local_authority_metadata=uk_local_authority_metadata,
         )
         artifact = self._write_immutable(
-            simulation_path(prefix=prefix, role=simulation.role.value),
+            simulation_path(
+                prefix=prefix,
+                role=simulation.role.value,
+                content_sha256=self._key_digest(payload),
+            ),
             payload,
             content_type=SIMULATION_MEDIA_TYPE,
         )
@@ -361,9 +400,13 @@ class Stage12ArtifactStore:
     ) -> ArtifactReference:
         """Validate and store the run's aggregate report."""
         validated = AggregateReportArtifactPayload.model_validate(payload)
+        encoded = canonical_json_bytes(validated.model_dump(mode="json"))
         return self._write_immutable(
-            aggregate_path(prefix=prefix),
-            canonical_json_bytes(validated.model_dump(mode="json")),
+            aggregate_path(
+                prefix=prefix,
+                content_sha256=self._key_digest(encoded),
+            ),
+            encoded,
             content_type=REPORT_MEDIA_TYPE,
         )
 
