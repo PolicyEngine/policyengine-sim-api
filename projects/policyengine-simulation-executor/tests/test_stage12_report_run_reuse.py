@@ -53,6 +53,8 @@ from stage12_runtime_support import (
 COORDINATOR_CALL_ID = "fc-coordinator"
 # Another bucket than the Stage 12 artifact bucket the fakes write to.
 OUTPUT_BUCKET = "detailed-save-outputs"
+# A catalog row the report's simulations don't use.
+OTHER_CATALOG_ID = UUID("00000000-0000-0000-0000-0000000000f1")
 # The complete SPM selection ``spm_calculation_provenance``'s receipt records.
 SPM_SELECTION = {
     "forecast_content_sha256": "f" * 64,
@@ -396,6 +398,38 @@ def test_a_reused_output_that_cannot_be_used_fails_the_report_run_uncalculated(
     assert report_runs.simulation_runs[REFORM_RUN_ID].writes == []
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_code == error_code
+
+
+@pytest.mark.parametrize(
+    ("column", "recorded"),
+    [("dataset_id", OTHER_CATALOG_ID), ("region_id", None)],
+    ids=["other-dataset", "no-region"],
+)
+def test_a_reused_run_must_share_the_dataset_and_region_of_its_report_runs_other_run(
+    column, recorded
+) -> None:
+    # The baseline and reform of one report calculate one population and
+    # geography, so the report run's two simulation runs name one catalog
+    # dataset and region.
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+    files = FakeOutputFiles()
+    _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
+    setattr(report_runs.simulation_runs[BASELINE_RUN_ID], column, recorded)
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts)
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(store, report_runs, invoker, artifacts, files)
+
+    message = report_runs.report_runs[REPORT_RUN_ID].error_message
+    assert message.startswith("reused_simulation_run_mismatch: ")
+    assert f"baseline simulation run {BASELINE_RUN_ID}" in message
+    assert f"reform simulation run {REFORM_RUN_ID}" in message
+    assert f"{column} {recorded or 'none'} instead of " in message
+    assert invoker.events == []
+    for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
+        assert report_runs.simulation_runs[run_id].writes == []
 
 
 def test_a_reused_output_without_the_resolved_spm_calculation_fails_the_report(
