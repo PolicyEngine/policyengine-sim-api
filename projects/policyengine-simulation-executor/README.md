@@ -148,6 +148,11 @@ with its own mechanism, separate from the v1 routing jobs above:
    plan's default (`--verify-plan`); and, if a later step
    fails or the run is cancelled, writes back the manifest it replaced, only
    while the stored manifest is still what it wrote (`--restore-plan`).
+   In a deployment from `main`, the same job then deploys the unversioned
+   stuck-run sweep (`src/modal/run_sweep_app.py`), whose schedule starts as
+   soon as it deploys; a failed sweep deploy, including a failed build of its
+   image, fails the job and so puts the previous default back. A deployment
+   from another branch leaves the sweep as it is.
    `deployment_ready` requires this job to succeed whenever Stage 12 was
    requested. This job does not wait for the v1 `publish_latest` job, so the
    Stage 12 default can move even when v1 `latest` does not; `deployment_ready`

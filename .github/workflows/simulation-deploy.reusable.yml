@@ -1185,6 +1185,24 @@ jobs:
           MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
         run: ../../.github/scripts/stage12-v2-default-verify.sh
 
+      # The scheduled sweep that fails report runs and simulation runs nothing
+      # will finish. Its app is unversioned and its schedule starts when it
+      # deploys, so it deploys here, after every check, with the release's
+      # Stage 12 default; if it fails, the next step puts the default back.
+      # Only from main: a dispatch from another branch, which may be behind
+      # main, leaves the environment's sweep as it is. With no status
+      # function, the condition also requires every earlier step to pass.
+      # Its database URL comes from the Modal secret
+      # policyengine-modal-worker-database, which the v2 workers' deploy in
+      # deploy_stage12_v2 already requires.
+      - name: Deploy the stuck-run sweep
+        if: ${{ github.ref == 'refs/heads/main' }}
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: uv run --frozen modal deploy --env="${{ inputs.modal_environment }}" src/modal/run_sweep_app.py
+
       # Writes back the manifest the move replaced, only while the stored
       # manifest is what the move wrote.
       - name: Put the v2 default back after a failed or cancelled step

@@ -1,9 +1,9 @@
 """SQLAlchemy mappings of the Public API's run tables that report calls update.
 
 ``policyengine-api`` owns these tables and every schema migration. The
-mappings declare only the columns the coordinator and workers read or write
-as the Modal worker role, so they can issue typed DML; runtime code never
-emits DDL.
+mappings declare only the columns the coordinator, the workers and the
+stuck-run sweep read or write as the Modal worker role, so they can issue
+typed DML; runtime code never emits DDL.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ report_runs = Table(
     "report_runs",
     metadata,
     Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
     Column("baseline_simulation_run_id", UUID(as_uuid=True), nullable=False),
     Column("reform_simulation_run_id", UUID(as_uuid=True)),
     Column("status", report_run_status_type, nullable=False),
@@ -53,6 +54,7 @@ simulation_runs = Table(
     "simulation_runs",
     metadata,
     Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
     Column("status", simulation_run_status_type, nullable=False),
     Column("modal_call_id", String(255)),
     Column("error_message", String),
