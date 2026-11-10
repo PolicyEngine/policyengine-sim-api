@@ -13,6 +13,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import partial
 from hashlib import sha256
+from importlib.metadata import version as installed_version
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -36,6 +37,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
     serialize_simulation_frames,
     simulation_row_identity,
 )
+from policyengine_simulation_executor.stage12_runtime import build_spm_result
 from policyengine_simulation_executor.stage12_runtime.reused_outputs import (
     CloudStorageOutputFiles,
 )
@@ -83,6 +85,17 @@ CERTIFIED_SPM_DEFAULTS = {
 }
 
 
+# The packages an SPM calculation receipt records the versions of.
+SPM_RUNTIME_DISTRIBUTIONS = (
+    "policyengine",
+    "policyengine-core",
+    "policyengine-us",
+    "spm-calculator",
+)
+# .py's own resolver, kept before the autouse fixture replaces it.
+INSTALLED_NORMALIZE_RUNTIME_SPM = runtime_spm.normalize_runtime_spm
+
+
 def spm_receipt(selection=CERTIFIED_SPM_DEFAULTS, *, years=("2026",)):
     """Return the receipt a worker writes for an SPM calculation under ``selection``."""
     resolved = SPMSelection(**selection)
@@ -95,10 +108,8 @@ def spm_receipt(selection=CERTIFIED_SPM_DEFAULTS, *, years=("2026",)):
             years=years,
             runtime_versions=SPMRuntimeVersions.model_validate(
                 {
-                    "policyengine": "5.2.0",
-                    "policyengine-core": "3.32.10",
-                    "policyengine-us": "1.764.6",
-                    "spm-calculator": "1.0.0",
+                    distribution: installed_version(distribution)
+                    for distribution in SPM_RUNTIME_DISTRIBUTIONS
                 }
             ),
         ),
@@ -129,6 +140,29 @@ class InstalledSpmResolution:
         if params["country"] != "us" or self.certified_defaults is None:
             return None
         return {**self.certified_defaults, **(params.get("spm") or {})}
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{}, {"spm": {"scenario": "ce_trend"}}, {"spm": {"geography_kind": "national"}}],
+    ids=["no-options", "ce-trend-scenario", "national-geography"],
+)
+def test_the_spm_stand_in_resolves_us_requests_as_the_installed_bundle_does(
+    options,
+) -> None:
+    # Fails once a .py upgrade changes the certified defaults the stand-in
+    # copies, until CERTIFIED_SPM_DEFAULTS follows it.
+    request = {
+        "country": "us",
+        "scope": "macro",
+        "time_period": "2026",
+        "region": "us",
+        **options,
+    }
+
+    assert InstalledSpmResolution().resolve(dict(request)) == (
+        INSTALLED_NORMALIZE_RUNTIME_SPM(dict(request))
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -502,6 +536,48 @@ REUSED_SIDES = {
 REPORT_OPTIONS = {"spm": {"scenario": "ce_trend"}, "include_cliffs": True}
 
 
+class ReceiptWritingCall:
+    """A fake worker's call whose descriptor carries the SPM receipt it wrote."""
+
+    def __init__(self, call, receipt) -> None:
+        self.call = call
+        self.object_id = call.object_id
+        self.receipt = receipt
+
+    def get(self, *, timeout=None):
+        descriptor = self.call.get(timeout=timeout)
+        return {
+            **descriptor,
+            "calculation_provenance": self.receipt.model_dump(
+                mode="json", by_alias=True
+            ),
+        }
+
+    def cancel(self) -> None:
+        self.call.cancel()
+
+
+class SpmReceiptWritingInvoker(ConcurrentInvoker):
+    """Fake workers that write the certified defaults' SPM receipt, as real ones do."""
+
+    def spawn(self, request):
+        return ReceiptWritingCall(super().spawn(request), WORKER_SPM_RECEIPT)
+
+
+def spm_checking_aggregator(*, report, baseline, reform, **_inputs):
+    """Combine both sides' SPM receipts as the real aggregation does, then aggregate.
+
+    ``build_spm_result`` raises unless both sides carry a receipt covering
+    the report year and the two receipts are the same.
+    """
+    build_spm_result(
+        report=report,
+        baseline_descriptor=baseline.descriptor,
+        reform_descriptor=reform.descriptor,
+    )
+    return economy_aggregate()
+
+
 @pytest.mark.parametrize(
     "reused_run_ids", list(REUSED_SIDES.values()), ids=list(REUSED_SIDES)
 )
@@ -513,7 +589,9 @@ def test_each_reused_simulations_options_country_and_year_reach_the_spm_resolver
     for run_id in reused_run_ids:
         _succeeded_with_output(report_runs, files, run_id)
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    # A side that is calculated gets the receipt a real worker would write,
+    # and the aggregation combines both sides' receipts as it really does.
+    invoker = SpmReceiptWritingInvoker(artifacts)
 
     _coordinate(
         FakeStore(),
@@ -522,6 +600,7 @@ def test_each_reused_simulations_options_country_and_year_reach_the_spm_resolver
         artifacts,
         files,
         report=_report_with_options(REPORT_OPTIONS),
+        aggregator=spm_checking_aggregator,
     )
 
     # Each reused side's request is what its worker would resolve: the
@@ -618,12 +697,31 @@ def test_an_output_with_an_spm_receipt_fails_where_no_spm_measure_is_calculated(
     assert invoker.events == []
 
 
-# SPM options a report requests, each giving another selection than the one
-# the reused files were calculated under (the certified defaults).
-OTHER_SPM_REQUESTS = {
-    "scenario": {"scenario": "zero_real"},
-    "geography_kind": {"geography_kind": "national"},
-    "county_vintage": {"county_vintage": "2010"},
+@dataclass(frozen=True)
+class SpmSelectionMismatch:
+    """A report's SPM request, and the selection its reused files record."""
+
+    spm_request: dict | None
+    stored_selection: dict
+
+
+# Each gives another selection than the reused files' receipts record. .py's
+# resolver accepts each request: only the 2020 county vintage is supported,
+# so the vintage case keeps the default request and stores a receipt
+# calculated under 2010 instead.
+OTHER_SPM_SELECTIONS = {
+    "scenario": SpmSelectionMismatch(
+        spm_request={"scenario": "zero_real"},
+        stored_selection=CERTIFIED_SPM_DEFAULTS,
+    ),
+    "geography_kind": SpmSelectionMismatch(
+        spm_request={"geography_kind": "national"},
+        stored_selection=CERTIFIED_SPM_DEFAULTS,
+    ),
+    "county_vintage": SpmSelectionMismatch(
+        spm_request=None,
+        stored_selection={**CERTIFIED_SPM_DEFAULTS, "county_vintage": "2010"},
+    ),
 }
 
 
@@ -631,20 +729,26 @@ OTHER_SPM_REQUESTS = {
     "reused_run_ids", list(REUSED_SIDES.values()), ids=list(REUSED_SIDES)
 )
 @pytest.mark.parametrize(
-    ("differing_field", "spm_request"),
-    list(OTHER_SPM_REQUESTS.items()),
-    ids=list(OTHER_SPM_REQUESTS),
+    ("differing_field", "mismatch"),
+    list(OTHER_SPM_SELECTIONS.items()),
+    ids=list(OTHER_SPM_SELECTIONS),
 )
 def test_outputs_reused_from_another_spm_selection_fail_before_any_worker_starts(
-    reused_run_ids, differing_field, spm_request
+    reused_run_ids, differing_field, mismatch
 ) -> None:
     store = FakeStore()
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
     for run_id in reused_run_ids:
-        _succeeded_with_output(report_runs, files, run_id)
+        _succeeded_with_output(
+            report_runs,
+            files,
+            run_id,
+            calculation_provenance=spm_receipt(mismatch.stored_selection),
+        )
     artifacts = FakeArtifacts()
     invoker = ConcurrentInvoker(artifacts)
+    options = {} if mismatch.spm_request is None else {"spm": mismatch.spm_request}
 
     with pytest.raises(RuntimeError, match="coordination failed"):
         _coordinate(
@@ -653,7 +757,7 @@ def test_outputs_reused_from_another_spm_selection_fail_before_any_worker_starts
             invoker,
             artifacts,
             files,
-            report=_report_with_options({"spm": spm_request}),
+            report=_report_with_options(options),
         )
 
     report_run = report_runs.report_runs[REPORT_RUN_ID]
