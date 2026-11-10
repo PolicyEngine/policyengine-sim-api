@@ -7,6 +7,7 @@ import sys
 import tomllib
 from contextlib import contextmanager
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from fixtures.fake_modal import install_fake_modal
@@ -514,7 +515,9 @@ def test_stage12_functions_raise_the_application_error_from_the_real_operation_s
         _invoke(monkeypatch, module, function_name, fail)
 
 
-def test_household_functions_run_without_datasets_or_secrets(monkeypatch) -> None:
+def test_household_functions_run_without_datasets_with_only_the_database_secret(
+    monkeypatch,
+) -> None:
     module = _load(monkeypatch)
     functions = dict(module.app.function_calls)
     image_calls = module.household_image.calls
@@ -522,7 +525,14 @@ def test_household_functions_run_without_datasets_or_secrets(monkeypatch) -> Non
     for country in ("us", "uk"):
         declaration = functions[f"calculate_household_{country}"]
         assert declaration["image"] is module.household_image
-        assert declaration["secrets"] == []
+        # Only the Modal worker role's database URL, to record the household
+        # job a call names; no bucket, Hugging Face or comparison secret.
+        assert declaration["secrets"] == [
+            {
+                "args": ("policyengine-modal-worker-database",),
+                "kwargs": {"required_keys": ["MODAL_WORKER_DATABASE_URL"]},
+            }
+        ]
         assert declaration["cpu"] == 2.0
         # 4 GiB reserved, up to 16 GiB, for large households with axes.
         assert declaration["memory"] == (4096, 16384)
@@ -530,7 +540,7 @@ def test_household_functions_run_without_datasets_or_secrets(monkeypatch) -> Non
         assert declaration["retries"] == 0
         assert declaration["max_containers"] == 20
     # The image installs the locked packages and the source, but downloads no
-    # dataset or cache, so building it needs no secret either.
+    # dataset or cache, so building it needs no secret.
     assert [call[0] for call in image_calls[:4]] == [
         "debian_slim",
         "apt_install",
@@ -614,6 +624,98 @@ def test_household_functions_calculate_their_own_country_with_telemetry(
     assert operation["attributes"] == {"country": country}
     assert operation["remote_context"]["observability_id"] == OBSERVABILITY_ID
     assert runtime.shutdown_calls == 1
+
+
+def _refuse_household_jobs(monkeypatch) -> None:
+    """Fail the test if a household function records a household job."""
+    from policyengine_simulation_executor import stage12_runtime
+
+    def refuse(*_args, **_keywords):
+        msg = "a household function given no job recorded one"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(stage12_runtime, "run_household_job", refuse)
+
+
+@pytest.mark.parametrize("country", ["us", "uk"])
+def test_household_functions_record_the_job_their_call_names(
+    monkeypatch, country
+) -> None:
+    from policyengine_simulation_executor import (
+        household_calculation,
+        stage12_runtime,
+    )
+
+    module = _load(monkeypatch)
+    runtime = RecordingRuntime()
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+    monkeypatch.setattr(
+        module.modal,
+        "current_function_call_id",
+        lambda: "fc-household",
+        raising=False,
+    )
+    calculated: list[dict] = []
+    recorded: list[dict] = []
+    outcome = object()
+
+    def calculate(request, **keywords):
+        calculated.append({"request": request, **keywords})
+        return outcome
+
+    def run_household_job(household_job_id, calculate_job, **keywords):
+        recorded.append({"household_job_id": household_job_id, **keywords})
+        assert calculate_job() is outcome
+        return {"status": "succeeded", "recorded": True}
+
+    monkeypatch.setattr(household_calculation, "calculate_household", calculate)
+    monkeypatch.setattr(stage12_runtime, "run_household_job", run_household_job)
+
+    result = getattr(module, f"calculate_household_{country}")(
+        _household_payload(country),
+        observability_context=_observability_context(),
+        household_job_id="00000000-0000-4000-8000-00000000a001",
+    )
+
+    assert result == {"status": "succeeded", "recorded": True}
+    assert recorded == [
+        {
+            "household_job_id": UUID("00000000-0000-4000-8000-00000000a001"),
+            "modal_call_id": "fc-household",
+            "runtime": runtime,
+        }
+    ]
+    (call,) = calculated
+    assert call["request"].country == country
+    assert call["required_country"] == country
+    assert call["worker"].function_name == f"calculate_household_{country}"
+    # The claim, the calculation and the record are one operation.
+    (operation,) = runtime.operations
+    assert operation["name"] == "v2_household_execution"
+    assert runtime.shutdown_calls == 1
+
+
+def test_household_functions_given_no_job_record_none(monkeypatch) -> None:
+    # Release validation calls them with validation households, and no job.
+    from policyengine_simulation_executor import household_calculation
+
+    module = _load(monkeypatch)
+    monkeypatch.setattr(
+        module, "init_process_observability", lambda **_: RecordingRuntime()
+    )
+    _refuse_household_jobs(monkeypatch)
+
+    class Outcome:
+        def model_dump(self, *, mode):
+            return {"status": "succeeded"}
+
+    monkeypatch.setattr(
+        household_calculation, "calculate_household", lambda *_, **__: Outcome()
+    )
+
+    assert module.calculate_household_us(_household_payload("us")) == {
+        "status": "succeeded"
+    }
 
 
 def test_household_functions_close_runtime_after_an_error(monkeypatch) -> None:
