@@ -3,9 +3,16 @@
 The simulation service's policy reader (``policy_reform`` in the simulation
 persistence library, which this environment doesn't install) follows .py's
 ``reform_dict_from_parameter_values`` for values without an end date. These
-tests pin .py's periods for the cases the reader's tests check; the reader
-gives the same periods, except that its last open-ended value runs to the end
-of 2200, the latest year a calculation can be for, where .py's runs to 2100.
+tests pin .py's periods for the cases the reader's tests check. The reader
+gives the same periods, in the same order, with two differences:
+
+- its last open-ended value runs to the end of 2200, the latest year a
+  calculation can be for, where .py's runs to 2100;
+- it leaves out an open-ended value whose range would end before it starts:
+  one followed the same day by a later value, or one starting after the
+  stop. .py gives that value such a range. policyengine-core applies it on
+  no day, but policyengine-uk refuses it, so a UK simulation given .py's
+  dict fails.
 """
 
 from __future__ import annotations
@@ -13,6 +20,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
 from policyengine.core import ParameterValue
 from policyengine.utils.parametric_reforms import (
     OPEN_ENDED_REFORM_STOP,
@@ -22,6 +30,7 @@ from policyengine_core.entities import build_entity
 from policyengine_core.parameters import ParameterNode
 from policyengine_core.reforms import Reform
 from policyengine_core.taxbenefitsystems import TaxBenefitSystem
+from policyengine_uk.utils.dated_reforms import read_reform_dict
 
 CTC_AMOUNT = "gov.irs.credits.ctc.amount.base[0].amount"
 STANDARD_DEDUCTION = "gov.irs.deductions.standard.amount.SINGLE"
@@ -177,6 +186,37 @@ def test_py_lets_an_open_ended_value_follow_a_bounded_one_on_the_same_day() -> N
         4_000,
         4_000,
     ]
+
+
+def test_py_lets_a_bounded_value_take_over_an_open_ended_one_the_same_day() -> None:
+    """The bounded value starts the same day; current law applies after it.
+
+    policyengine-core applies the range ending the day before it starts on
+    no day. policyengine-uk's reform dictionary reader, which a UK
+    ``Simulation(reform=...)`` uses, refuses it.
+    """
+    reform = reform_dict_from_parameter_values(
+        [
+            _value("credit.amount", 3_000, datetime(2026, 1, 1, tzinfo=UTC)),
+            _value(
+                "credit.amount",
+                4_000,
+                datetime(2026, 1, 1, 12, tzinfo=UTC),
+                datetime(2026, 12, 31, tzinfo=UTC),
+            ),
+        ]
+    )
+
+    assert list(reform["credit.amount"].items()) == [
+        ("2026-01-01.2025-12-31", 3_000),
+        ("2026-01-01.2026-12-31", 4_000),
+    ]
+    amount = _applied(reform)
+    assert [
+        amount(instant) for instant in ("2025-12-31", "2026-06-01", "2027-06-01")
+    ] == [1_000, 4_000, 1_000]
+    with pytest.raises(ValueError, match="ends before it starts"):
+        read_reform_dict(reform, lambda parameter_path: True)
 
 
 def test_py_reads_a_start_the_public_api_stored_in_utc_on_its_utc_day() -> None:
