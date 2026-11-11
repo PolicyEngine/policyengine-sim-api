@@ -495,6 +495,54 @@ async def test_a_read_sent_again_ends_within_the_gateway_read_timeout():
 
 
 @pytest.mark.asyncio
+async def test_a_third_attempt_ends_within_the_gateway_read_timeout():
+    """The read timeout counts every earlier attempt and wait, not one attempt.
+
+    Two attempts Modal answers and their waits take 1.7 seconds, so the third
+    may take only the 0.3 seconds left of a 2-second timeout, though the
+    gateway would take 5 seconds.
+    """
+    elapsed_seconds = 0.0
+    gateway_attempts = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal elapsed_seconds, gateway_attempts
+        if request.url.path == "/oauth/token":
+            return httpx.Response(
+                200, json={"access_token": "service-token", "expires_in": 3600}
+            )
+        gateway_attempts += 1
+        if gateway_attempts < 3:
+            elapsed_seconds += 0.1
+            return httpx.Response(500, content=MODAL_STOPPED_CONTAINER_BODY)
+        await asyncio.sleep(5)
+        return httpx.Response(202, content=RUNNING_JOB_REPLY.content)
+
+    async def sleep(seconds: float) -> None:
+        nonlocal elapsed_seconds
+        elapsed_seconds += seconds
+
+    backend = OldGatewayBackend(
+        make_settings(request_timeout_seconds=2.0),
+        transport=httpx.MockTransport(handler),
+        interrupted_read_retry=InterruptedReadRetry(
+            sleep=sleep, clock=lambda: elapsed_seconds
+        ),
+    )
+    await backend.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(BackendTimeoutError) as timed_out:
+            await backend.request("GET", "/jobs/fc-123")
+    finally:
+        await backend.close()
+
+    assert time.monotonic() - started < 1.5
+    assert timed_out.value.interrupted_attempts == 2
+    assert gateway_attempts == 3
+
+
+@pytest.mark.asyncio
 async def test_an_interrupted_read_waits_with_asyncio_sleep_by_default():
     gateway_requests: list[httpx.Request] = []
 

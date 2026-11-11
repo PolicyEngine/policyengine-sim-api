@@ -1237,6 +1237,9 @@ def test_a_status_poll_modal_answers_for_a_stopped_gateway_is_retryable(
     assert result.json() == {"detail": "Simulation backend stopped before it answered."}
     assert waits.seconds == [0.5, 1.0]
     records = _records(capsys.readouterr().out)
+    # policyengine-observability records every response of 500 or above at
+    # ERROR, so only a read a later attempt answers drops below it.
+    assert _record_named(records, "request.completed")["severity"] == "ERROR"
     interrupted = _record_named(records, "simulation_entry_backend_interrupted")
     assert interrupted["attributes"]["route"] == route
     assert interrupted["attributes"][identifier_key] == identifier

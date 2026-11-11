@@ -75,14 +75,14 @@ SENTINEL_CASES: tuple[dict[str, Any], ...] = (
 #: Modal preempts a gateway container mid-request, the entrypoint answers 504
 #: if its call to the gateway times out on reading. If Modal instead answers
 #: with its own ``modal-http: internal error`` 500, the entrypoint reads the
-#: job again, up to twice within 5 seconds, and answers 503 only if Modal
-#: answers every attempt. It also answers 503 when it cannot connect to the
-#: gateway or get or use its credentials for it, and passes on any 502, 503 or
-#: 504 from the proxy in front of the gateway. Neither service's code answers
-#: 502 on this route. A failed job is 500, or 400 for a rejected SPM request,
-#: and an unknown one 404; these and any other status stay final, including a
-#: 500 the gateway gives for its own unhandled error. Submitting is never
-#: retried.
+#: job again, up to twice within 5 seconds, and answers 503 if Modal answers
+#: every attempt it makes, or 504 if a later attempt runs past its 25-second
+#: read timeout. It also answers 503 when it cannot connect to the gateway or
+#: get or use its credentials for it, and passes on any 502, 503 or 504 from
+#: the proxy in front of the gateway. Neither service's code answers 502 on
+#: this route. A failed job is 500, or 400 for a rejected SPM request, and an
+#: unknown one 404; these and any other status stay final, including a 500 the
+#: gateway gives for its own unhandled error. Submitting is never retried.
 _PENDING_JOB_STATUSES = frozenset(
     {
         HTTPStatus.ACCEPTED,
