@@ -1128,7 +1128,22 @@ def _app_with_gateway_reply(status_code: int, content: bytes, *, content_type: s
     )
 
 
-def test_a_job_poll_modal_answers_for_a_stopped_gateway_is_retryable(monkeypatch):
+@pytest.mark.parametrize(
+    ("path", "route", "identifier_key", "identifier"),
+    [
+        ("/jobs/fc-123", "/jobs/{job_id}", "job_id", "fc-123"),
+        (
+            "/budget-window-jobs/batch-123",
+            "/budget-window-jobs/{batch_job_id}",
+            "batch_job_id",
+            "batch-123",
+        ),
+    ],
+    ids=["job", "budget-window-batch"],
+)
+def test_a_status_poll_modal_answers_for_a_stopped_gateway_is_retryable(
+    monkeypatch, path, route, identifier_key, identifier
+):
     """Run 42894301943: Modal preempted the gateway while it answered a job poll.
 
     The job's state is unknown rather than failed, so the poll is answered 503
@@ -1146,7 +1161,7 @@ def test_a_job_poll_modal_answers_for_a_stopped_gateway_is_retryable(monkeypatch
         runtime = client.app.state.policyengine_observability
         event = Mock(wraps=runtime.event)
         monkeypatch.setattr(runtime, "event", event)
-        result = client.get("/jobs/fc-123")
+        result = client.get(path)
 
     assert result.status_code == 503
     assert result.headers["retry-after"] == "10"
@@ -1158,8 +1173,8 @@ def test_a_job_poll_modal_answers_for_a_stopped_gateway_is_retryable(monkeypatch
         if call.args == ("simulation_entry_backend_interrupted",)
     ]
     assert len(interrupted) == 1
-    assert interrupted[0]["route"] == "/jobs/{job_id}"
-    assert interrupted[0]["job_id"] == "fc-123"
+    assert interrupted[0]["route"] == route
+    assert interrupted[0][identifier_key] == identifier
 
 
 def test_a_failed_job_poll_keeps_the_gateways_500():
