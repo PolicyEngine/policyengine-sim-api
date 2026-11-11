@@ -20,6 +20,8 @@ from pydantic import ValidationError
 from policyengine_simulation_entry.schemas import BackendServiceToken
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from policyengine_simulation_contract.json_types import JsonObject
 
     from policyengine_simulation_entry.config import Settings
@@ -46,9 +48,17 @@ MODAL_INTERNAL_ERROR_PREFIX = b"modal-http: internal error"
 class BackendUnavailableError(RuntimeError):
     """The backend could not be reached."""
 
+    #: How many earlier attempts of this read Modal answered for a stopped
+    #: gateway before this error ended it.
+    interrupted_attempts: int = 0
+
 
 class BackendTimeoutError(RuntimeError):
     """The backend did not answer within the configured timeout."""
+
+    #: How many earlier attempts of this read Modal answered for a stopped
+    #: gateway before this error ended it.
+    interrupted_attempts: int = 0
 
 
 class BackendAuthenticationError(BackendUnavailableError):
@@ -56,7 +66,46 @@ class BackendAuthenticationError(BackendUnavailableError):
 
 
 class BackendInterruptedError(BackendUnavailableError):
-    """Modal answered a read because the gateway's container stopped mid-request."""
+    """Modal answered every attempt of a read for a stopped gateway container."""
+
+    def __init__(self, message: str, *, interrupted_attempts: int) -> None:
+        """Keep how many attempts of the read Modal answered."""
+        super().__init__(message)
+        self.interrupted_attempts = interrupted_attempts
+
+
+@dataclass(frozen=True)
+class InterruptedReadRetry:
+    """How a GET that Modal answers for a stopped gateway container is sent again.
+
+    Modal answers ``modal-http: internal error`` 500 when the gateway's
+    container stops mid-request, as when Modal preempts it. Another gateway
+    container, or the one Modal starts in its place, can answer the same read,
+    so the read is sent again after each wait in ``waits_seconds``. No attempt
+    starts more than ``window_seconds`` after the read began, so the waits stay
+    far below the entry's 25-second gateway read timeout and the Public API's
+    30-second timeout for its calls to the entry.
+    """
+
+    waits_seconds: tuple[float, ...] = (0.5, 1.0)
+    window_seconds: float = 5.0
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    clock: Callable[[], float] = time.monotonic
+
+    def wait_before_next_attempt(
+        self, interrupted_attempts: int, elapsed_seconds: float
+    ) -> float | None:
+        """Return how long to wait before sending the read again, or None to stop.
+
+        ``interrupted_attempts`` counts the attempts Modal has answered so far,
+        and ``elapsed_seconds`` the time since the read began.
+        """
+        if interrupted_attempts > len(self.waits_seconds):
+            return None
+        wait_seconds = self.waits_seconds[interrupted_attempts - 1]
+        if elapsed_seconds + wait_seconds > self.window_seconds:
+            return None
+        return wait_seconds
 
 
 def _modal_answered_for_a_stopped_gateway(response: httpx.Response) -> bool:
@@ -74,20 +123,19 @@ class BackendResponse:
     status_code: int
     content: bytes
     headers: dict[str, str]
+    #: How many earlier attempts of this read Modal answered for a stopped
+    #: gateway container before this reply came.
+    interrupted_attempts: int = 0
 
 
-def _relayed_response(method: str, response: httpx.Response) -> BackendResponse:
-    """Return the gateway's response with only its safe headers kept.
-
-    Raise BackendInterruptedError when Modal answered a GET because the
-    gateway's container stopped before it answered.
-    """
-    if method == "GET" and _modal_answered_for_a_stopped_gateway(response):
-        msg = "Old gateway's container stopped before it answered."
-        raise BackendInterruptedError(msg)
+def _relayed_response(
+    response: httpx.Response, *, interrupted_attempts: int
+) -> BackendResponse:
+    """Return the gateway's response with only its safe headers kept."""
     return BackendResponse(
         status_code=response.status_code,
         content=response.content,
+        interrupted_attempts=interrupted_attempts,
         headers={
             (
                 REQUEST_ID_HEADER
@@ -204,11 +252,13 @@ class OldGatewayBackend:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         runtime: ObservabilityRuntime | None = None,
+        interrupted_read_retry: InterruptedReadRetry | None = None,
     ) -> None:
         """Configure the backend; no HTTP client exists until start is called."""
         self.settings = settings
         self.transport = transport
         self.observability = runtime
+        self.interrupted_read_retry = interrupted_read_retry or InterruptedReadRetry()
         self.client: httpx.AsyncClient | None = None
         self.token_provider: ClientCredentialsTokenProvider | None = None
 
@@ -271,13 +321,60 @@ class OldGatewayBackend:
         BackendAuthenticationError. Raise BackendUnavailableError if the client is
         not started or the gateway is unreachable, and BackendTimeoutError on timeout.
 
-        Raise BackendInterruptedError when Modal answers a GET with its own 500
-        because the gateway's container stopped: the gateway never read the job,
-        so its state is unknown, and the caller can read it again. A POST's 500
-        is returned as it came, since the gateway may have started the job.
+        When Modal answers a GET with its own 500 because the gateway's container
+        stopped, the gateway never read the job, so the GET is sent again as
+        ``interrupted_read_retry`` allows, and the first answer from the gateway
+        itself is returned. Raise BackendInterruptedError when Modal answers every
+        attempt. A POST's 500 is returned as it came, since the gateway may have
+        started the job. The reply, or the error that ends the request, records
+        how many attempts Modal answered.
+        """
+        method = method.upper()
+        read_retry = self.interrupted_read_retry
+        started = read_retry.clock()
+        interrupted_attempts = 0
+        while True:
+            try:
+                response = await self._send(
+                    method,
+                    path,
+                    json_body=json_body,
+                    request_id=request_id,
+                    observability_id=observability_id,
+                )
+            except (BackendUnavailableError, BackendTimeoutError) as error:
+                error.interrupted_attempts = interrupted_attempts
+                raise
+            if method != "GET" or not _modal_answered_for_a_stopped_gateway(response):
+                return _relayed_response(
+                    response, interrupted_attempts=interrupted_attempts
+                )
+            interrupted_attempts += 1
+            wait_seconds = read_retry.wait_before_next_attempt(
+                interrupted_attempts, read_retry.clock() - started
+            )
+            if wait_seconds is None:
+                msg = "Old gateway's container stopped before it answered."
+                raise BackendInterruptedError(
+                    msg, interrupted_attempts=interrupted_attempts
+                )
+            await read_retry.sleep(wait_seconds)
+
+    async def _send(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: JsonObject | None,
+        request_id: str | None,
+        observability_id: str | None,
+    ) -> httpx.Response:
+        """Send one attempt of a request and return the gateway's response.
+
+        A connection failure is retried once for GET only, and a 401 or 403
+        refreshes the token and replays once; see ``request``.
         """
         client, token_provider = self._runtime()
-        method = method.upper()
         connection_retries_remaining = 1 if method == "GET" else 0
         auth_refreshes_remaining = 1
 
@@ -320,4 +417,4 @@ class OldGatewayBackend:
                 msg = "Old gateway rejected refreshed service credentials."
                 raise BackendAuthenticationError(msg)
 
-            return _relayed_response(method, response)
+            return response

@@ -3,15 +3,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, Any, override
 from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
 from conftest import (
-    MODAL_STOPPED_CONTAINER_BODY,
+    MODAL_STOPPED_CONTAINER_REPLY,
+    RUNNING_JOB_REPLY,
     FakeBackend,
-    gateway_transport,
+    GatewayReply,
+    RecordedWaits,
+    gateway_transport_replying_in_turn,
     make_settings,
 )
 from fastapi import HTTPException
@@ -42,6 +45,7 @@ from stage12_fixtures import (
 )
 
 if TYPE_CHECKING:
+    import httpx
     from policyengine_simulation_contract.json_types import JsonObject
 
 
@@ -1114,21 +1118,40 @@ def test_upstream_error_status_and_body_are_preserved(client, backend, status_co
     assert "x-request-id" not in result.headers
 
 
-def _app_with_gateway_reply(status_code: int, content: bytes, *, content_type: str):
+def _app_with_gateway_replies(
+    replies: list[GatewayReply],
+    *,
+    gateway_requests: list[httpx.Request] | None = None,
+    waits: RecordedWaits | None = None,
+):
+    """Build the app on an old-gateway backend whose gateway gives ``replies``."""
     settings = make_settings()
     return create_app(
         settings=settings,
         backend=OldGatewayBackend(
             settings,
-            transport=gateway_transport(
-                status_code, content, content_type=content_type
+            transport=gateway_transport_replying_in_turn(
+                replies, gateway_requests=gateway_requests
             ),
+            interrupted_read_retry=(waits or RecordedWaits()).retry(),
         ),
         auth_dependency=lambda: None,
     )
 
 
-@pytest.mark.parametrize(
+def _records(output: str) -> list[dict[str, Any]]:
+    """Return the JSON records the observability runtime wrote to stdout."""
+    return [json.loads(line) for line in output.splitlines() if line.startswith("{")]
+
+
+def _record_named(records: list[dict[str, Any]], event_name: str) -> dict[str, Any]:
+    """Return the only record with ``event_name``."""
+    named = [record for record in records if record.get("event.name") == event_name]
+    assert len(named) == 1, [record.get("event.name") for record in records]
+    return named[0]
+
+
+STATUS_READS = pytest.mark.parametrize(
     ("path", "route", "identifier_key", "identifier"),
     [
         ("/jobs/fc-123", "/jobs/{job_id}", "job_id", "fc-123"),
@@ -1141,48 +1164,93 @@ def _app_with_gateway_reply(status_code: int, content: bytes, *, content_type: s
     ],
     ids=["job", "budget-window-batch"],
 )
-def test_a_status_poll_modal_answers_for_a_stopped_gateway_is_retryable(
-    monkeypatch, path, route, identifier_key, identifier
-):
-    """Run 42894301943: Modal preempted the gateway while it answered a job poll.
 
-    The job's state is unknown rather than failed, so the poll is answered 503
-    with Retry-After, which the deployment checks' pollers wait on.
+
+@STATUS_READS
+def test_a_status_poll_modal_answers_once_for_a_stopped_gateway_gets_the_next_answer(
+    capsys, path, route, identifier_key, identifier
+):
+    """Issue #4216: Modal preempted the gateway while it answered a job poll.
+
+    The entry reads the status again and relays that answer, so the request's
+    record is not an ERROR. A WARNING event still counts the preemption.
     """
-    app = _app_with_gateway_reply(
-        500,
-        MODAL_STOPPED_CONTAINER_BODY,
-        content_type="text/plain; charset=utf-8",
+    gateway_requests: list[httpx.Request] = []
+    app = _app_with_gateway_replies(
+        [MODAL_STOPPED_CONTAINER_REPLY, RUNNING_JOB_REPLY],
+        gateway_requests=gateway_requests,
     )
 
     from fastapi.testclient import TestClient
 
     with TestClient(app) as client:
-        runtime = client.app.state.policyengine_observability
-        event = Mock(wraps=runtime.event)
-        monkeypatch.setattr(runtime, "event", event)
+        result = client.get(path)
+
+    assert result.status_code == 202
+    assert result.json() == {"status": "running"}
+    assert len(gateway_requests) == 2
+    records = _records(capsys.readouterr().out)
+    completed = _record_named(records, "request.completed")
+    assert completed["http.response.status_code"] == 202
+    assert completed["severity"] == "INFO"
+    retried = _record_named(records, "simulation_entry_backend_read_retried")
+    assert retried["severity"] == "WARNING"
+    assert retried["attributes"]["route"] == route
+    assert retried["attributes"][identifier_key] == identifier
+    assert retried["attributes"]["attempts"] == 2
+    assert retried["attributes"]["interrupted_attempts"] == 1
+    assert retried["attributes"]["status_code"] == 202
+    # The runtime's own startup reports, that tests configure no OTLP endpoint,
+    # are ERROR records as well, and say nothing about this request.
+    assert not [
+        record
+        for record in records
+        if record["severity"] == "ERROR"
+        and record.get("event.name") != "observability.internal_failure"
+    ]
+
+
+@STATUS_READS
+def test_a_status_poll_modal_answers_for_a_stopped_gateway_is_retryable(
+    capsys, path, route, identifier_key, identifier
+):
+    """Run 42894301943: Modal preempted the gateway while it answered a job poll.
+
+    When Modal answers every attempt, the job's state is unknown rather than
+    failed, so the poll is answered 503 with Retry-After, which the deployment
+    checks' pollers wait on.
+    """
+    waits = RecordedWaits()
+    app = _app_with_gateway_replies([MODAL_STOPPED_CONTAINER_REPLY], waits=waits)
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
         result = client.get(path)
 
     assert result.status_code == 503
     assert result.headers["retry-after"] == "10"
     assert result.headers["x-policyengine-simulation-backend"] == "old_gateway"
     assert result.json() == {"detail": "Simulation backend stopped before it answered."}
-    interrupted = [
-        call.kwargs["attributes"]
-        for call in event.call_args_list
-        if call.args == ("simulation_entry_backend_interrupted",)
-    ]
-    assert len(interrupted) == 1
-    assert interrupted[0]["route"] == route
-    assert interrupted[0][identifier_key] == identifier
+    assert waits.seconds == [0.5, 1.0]
+    records = _records(capsys.readouterr().out)
+    interrupted = _record_named(records, "simulation_entry_backend_interrupted")
+    assert interrupted["attributes"]["route"] == route
+    assert interrupted["attributes"][identifier_key] == identifier
+    retried = _record_named(records, "simulation_entry_backend_read_retried")
+    assert retried["severity"] == "WARNING"
+    assert retried["attributes"][identifier_key] == identifier
+    assert retried["attributes"]["attempts"] == 3
+    assert retried["attributes"]["interrupted_attempts"] == 3
+    assert retried["attributes"]["status_code"] == 503
 
 
-def test_a_failed_job_poll_keeps_the_gateways_500():
+def test_a_failed_job_poll_keeps_the_gateways_500(capsys):
     failed_job = {"status": "failed", "error": "Simulation failed"}
-    app = _app_with_gateway_reply(
-        500,
-        json.dumps(failed_job).encode(),
-        content_type="application/json",
+    gateway_requests: list[httpx.Request] = []
+    app = _app_with_gateway_replies(
+        [GatewayReply(500, json.dumps(failed_job).encode(), "application/json")],
+        gateway_requests=gateway_requests,
     )
 
     from fastapi.testclient import TestClient
@@ -1192,6 +1260,13 @@ def test_a_failed_job_poll_keeps_the_gateways_500():
 
     assert result.status_code == 500
     assert result.json() == failed_job
+    assert len(gateway_requests) == 1
+    records = _records(capsys.readouterr().out)
+    assert not [
+        record
+        for record in records
+        if record.get("event.name") == "simulation_entry_backend_read_retried"
+    ]
 
 
 @pytest.mark.parametrize(
