@@ -4,10 +4,11 @@ import json
 
 import httpx
 import pytest
-from conftest import make_settings
+from conftest import MODAL_STOPPED_CONTAINER_BODY, gateway_transport, make_settings
 from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_simulation_entry.backend import (
     BackendAuthenticationError,
+    BackendInterruptedError,
     BackendUnavailableError,
     OldGatewayBackend,
 )
@@ -249,6 +250,81 @@ async def test_get_connection_error_is_retried_once():
 
     assert result.status_code == 200
     assert gateway_attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_a_read_modal_answers_for_a_stopped_gateway_is_interrupted():
+    """Run 42894301943: Modal preempted the gateway during a job poll."""
+    gateway_requests: list[httpx.Request] = []
+    backend = OldGatewayBackend(
+        make_settings(),
+        transport=gateway_transport(
+            500,
+            MODAL_STOPPED_CONTAINER_BODY,
+            content_type="text/plain; charset=utf-8",
+            gateway_requests=gateway_requests,
+        ),
+    )
+    await backend.start()
+    try:
+        with pytest.raises(BackendInterruptedError):
+            await backend.request("GET", "/jobs/fc-123")
+    finally:
+        await backend.close()
+
+    assert len(gateway_requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "content_type"),
+    [
+        (
+            json.dumps({"status": "failed", "error": "Simulation failed"}).encode(),
+            "application/json",
+        ),
+        (b"Internal Server Error", "text/plain; charset=utf-8"),
+    ],
+    ids=["failed-job", "gateway-unhandled-error"],
+)
+async def test_a_500_from_the_gateway_itself_is_returned(content, content_type):
+    backend = OldGatewayBackend(
+        make_settings(),
+        transport=gateway_transport(500, content, content_type=content_type),
+    )
+    await backend.start()
+    try:
+        result = await backend.request("GET", "/jobs/fc-123")
+    finally:
+        await backend.close()
+
+    assert result.status_code == 500
+    assert result.content == content
+
+
+@pytest.mark.asyncio
+async def test_a_submission_modal_answers_for_a_stopped_gateway_is_returned():
+    """The job may have started, so a caller must not take it as retryable."""
+    backend = OldGatewayBackend(
+        make_settings(),
+        transport=gateway_transport(
+            500,
+            MODAL_STOPPED_CONTAINER_BODY,
+            content_type="text/plain; charset=utf-8",
+        ),
+    )
+    await backend.start()
+    try:
+        result = await backend.request(
+            "POST",
+            "/simulate/economy/comparison",
+            json_body={"country": "us"},
+        )
+    finally:
+        await backend.close()
+
+    assert result.status_code == 500
+    assert result.content == MODAL_STOPPED_CONTAINER_BODY
 
 
 @pytest.mark.asyncio

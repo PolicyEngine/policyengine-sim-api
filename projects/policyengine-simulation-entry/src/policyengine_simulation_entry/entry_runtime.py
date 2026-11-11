@@ -19,6 +19,7 @@ from policyengine_simulation_observability.identifiers import (
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from policyengine_simulation_entry.backend import (
+    BackendInterruptedError,
     BackendResponse,
     BackendTimeoutError,
     BackendUnavailableError,
@@ -166,6 +167,11 @@ _BACKEND_TIMEOUT = _BackendFailure(
 _BACKEND_UNAVAILABLE = _BackendFailure(
     "simulation_entry_backend_unavailable", 503, "Simulation backend is unavailable."
 )
+_BACKEND_INTERRUPTED = _BackendFailure(
+    "simulation_entry_backend_interrupted",
+    503,
+    "Simulation backend stopped before it answered.",
+)
 
 
 def _backend_observability_id(headers: dict[str, str]) -> str | None:
@@ -286,8 +292,9 @@ class EntryRuntime:
     async def forward(self, request: Request, call: BackendCall) -> Response:
         """Forward ``call`` to the old gateway and relay its response.
 
-        Timeouts and an unavailable gateway become sanitized 504 and 503
-        responses; every outcome is reported as a telemetry event.
+        Timeouts become sanitized 504 responses. An unavailable gateway, and a
+        read whose gateway container stopped before it answered, become
+        sanitized 503 responses. Every outcome is reported as a telemetry event.
         """
         backend_started = time.monotonic()
         route = route_template(request)
@@ -330,6 +337,13 @@ class EntryRuntime:
         except BackendTimeoutError:
             return self._backend_failure_response(
                 request, _BACKEND_TIMEOUT, route=route, identifiers=event_identifiers
+            )
+        except BackendInterruptedError:
+            return self._backend_failure_response(
+                request,
+                _BACKEND_INTERRUPTED,
+                route=route,
+                identifiers=event_identifiers,
             )
         except BackendUnavailableError:
             return self._backend_failure_response(

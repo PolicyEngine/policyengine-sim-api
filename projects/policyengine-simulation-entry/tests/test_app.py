@@ -8,7 +8,12 @@ from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
-from conftest import FakeBackend, make_settings
+from conftest import (
+    MODAL_STOPPED_CONTAINER_BODY,
+    FakeBackend,
+    gateway_transport,
+    make_settings,
+)
 from fastapi import HTTPException
 from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_simulation_contract.stage12_execution import (
@@ -22,6 +27,7 @@ from policyengine_simulation_entry.backend import (
     BackendResponse,
     BackendTimeoutError,
     BackendUnavailableError,
+    OldGatewayBackend,
 )
 from policyengine_simulation_entry.stage12_backend import (
     TemporaryStage12DispatchFailed,
@@ -1106,6 +1112,71 @@ def test_upstream_error_status_and_body_are_preserved(client, backend, status_co
     assert result.json() == {"detail": "upstream response"}
     assert result.headers[REQUEST_ID_HEADER] == "request-upstream-error"
     assert "x-request-id" not in result.headers
+
+
+def _app_with_gateway_reply(status_code: int, content: bytes, *, content_type: str):
+    settings = make_settings()
+    return create_app(
+        settings=settings,
+        backend=OldGatewayBackend(
+            settings,
+            transport=gateway_transport(
+                status_code, content, content_type=content_type
+            ),
+        ),
+        auth_dependency=lambda: None,
+    )
+
+
+def test_a_job_poll_modal_answers_for_a_stopped_gateway_is_retryable(monkeypatch):
+    """Run 42894301943: Modal preempted the gateway while it answered a job poll.
+
+    The job's state is unknown rather than failed, so the poll is answered 503
+    with Retry-After, which the deployment checks' pollers wait on.
+    """
+    app = _app_with_gateway_reply(
+        500,
+        MODAL_STOPPED_CONTAINER_BODY,
+        content_type="text/plain; charset=utf-8",
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
+        runtime = client.app.state.policyengine_observability
+        event = Mock(wraps=runtime.event)
+        monkeypatch.setattr(runtime, "event", event)
+        result = client.get("/jobs/fc-123")
+
+    assert result.status_code == 503
+    assert result.headers["retry-after"] == "10"
+    assert result.headers["x-policyengine-simulation-backend"] == "old_gateway"
+    assert result.json() == {"detail": "Simulation backend stopped before it answered."}
+    interrupted = [
+        call.kwargs["attributes"]
+        for call in event.call_args_list
+        if call.args == ("simulation_entry_backend_interrupted",)
+    ]
+    assert len(interrupted) == 1
+    assert interrupted[0]["route"] == "/jobs/{job_id}"
+    assert interrupted[0]["job_id"] == "fc-123"
+
+
+def test_a_failed_job_poll_keeps_the_gateways_500():
+    failed_job = {"status": "failed", "error": "Simulation failed"}
+    app = _app_with_gateway_reply(
+        500,
+        json.dumps(failed_job).encode(),
+        content_type="application/json",
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
+        result = client.get("/jobs/fc-123")
+
+    assert result.status_code == 500
+    assert result.json() == failed_job
 
 
 @pytest.mark.parametrize(

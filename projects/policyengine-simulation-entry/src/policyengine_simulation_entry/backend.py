@@ -35,6 +35,13 @@ SAFE_RESPONSE_HEADERS = frozenset(
     }
 )
 
+#: How the body starts when Modal's web layer, not the gateway's code, answers
+#: 500 because the gateway's container stopped mid-request, as when Modal
+#: preempts it: ``modal-http: internal error: function was terminated by
+#: signal``. The gateway's own 500s are a JSON body or Starlette's plain
+#: ``Internal Server Error``.
+MODAL_INTERNAL_ERROR_PREFIX = b"modal-http: internal error"
+
 
 class BackendUnavailableError(RuntimeError):
     """The backend could not be reached."""
@@ -48,6 +55,18 @@ class BackendAuthenticationError(BackendUnavailableError):
     """The service could not authenticate to the backend."""
 
 
+class BackendInterruptedError(BackendUnavailableError):
+    """Modal answered a read because the gateway's container stopped mid-request."""
+
+
+def _modal_answered_for_a_stopped_gateway(response: httpx.Response) -> bool:
+    """Return whether Modal, not the gateway's code, sent this 500."""
+    return (
+        response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+        and response.content.lstrip().startswith(MODAL_INTERNAL_ERROR_PREFIX)
+    )
+
+
 @dataclass(frozen=True)
 class BackendResponse:
     """A backend reply with only the safe-to-forward response headers kept."""
@@ -55,6 +74,32 @@ class BackendResponse:
     status_code: int
     content: bytes
     headers: dict[str, str]
+
+
+def _relayed_response(method: str, response: httpx.Response) -> BackendResponse:
+    """Return the gateway's response with only its safe headers kept.
+
+    Raise BackendInterruptedError when Modal answered a GET because the
+    gateway's container stopped before it answered.
+    """
+    if method == "GET" and _modal_answered_for_a_stopped_gateway(response):
+        msg = "Old gateway's container stopped before it answered."
+        raise BackendInterruptedError(msg)
+    return BackendResponse(
+        status_code=response.status_code,
+        content=response.content,
+        headers={
+            (
+                REQUEST_ID_HEADER
+                if key.lower() == REQUEST_ID_HEADER.lower()
+                else OBSERVABILITY_ID_HEADER
+                if key.lower() == OBSERVABILITY_ID_HEADER.lower()
+                else key
+            ): value
+            for key, value in response.headers.items()
+            if key.lower() in SAFE_RESPONSE_HEADERS
+        },
+    )
 
 
 class SimulationBackend(Protocol):
@@ -86,7 +131,9 @@ class SimulationBackend(Protocol):
     ) -> BackendResponse:
         """Send one request and return the backend's response.
 
-        Raise BackendUnavailableError or BackendTimeoutError when no response arrives.
+        Raise BackendUnavailableError or BackendTimeoutError when no response
+        arrives, and BackendInterruptedError, a BackendUnavailableError, when a
+        GET's answer came from the platform because the backend stopped.
         """
         ...
 
@@ -223,6 +270,11 @@ class OldGatewayBackend:
         the token and replays once for any method, then raises
         BackendAuthenticationError. Raise BackendUnavailableError if the client is
         not started or the gateway is unreachable, and BackendTimeoutError on timeout.
+
+        Raise BackendInterruptedError when Modal answers a GET with its own 500
+        because the gateway's container stopped: the gateway never read the job,
+        so its state is unknown, and the caller can read it again. A POST's 500
+        is returned as it came, since the gateway may have started the job.
         """
         client, token_provider = self._runtime()
         method = method.upper()
@@ -268,18 +320,4 @@ class OldGatewayBackend:
                 msg = "Old gateway rejected refreshed service credentials."
                 raise BackendAuthenticationError(msg)
 
-            return BackendResponse(
-                status_code=response.status_code,
-                content=response.content,
-                headers={
-                    (
-                        REQUEST_ID_HEADER
-                        if key.lower() == REQUEST_ID_HEADER.lower()
-                        else OBSERVABILITY_ID_HEADER
-                        if key.lower() == OBSERVABILITY_ID_HEADER.lower()
-                        else key
-                    ): value
-                    for key, value in response.headers.items()
-                    if key.lower() in SAFE_RESPONSE_HEADERS
-                },
-            )
+            return _relayed_response(method, response)

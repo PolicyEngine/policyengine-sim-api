@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from policyengine_simulation_entry.app import create_app
@@ -30,6 +31,43 @@ def make_settings(**overrides) -> Settings:
     }
     values.update(overrides)
     return Settings(**values)
+
+
+# What Modal's web layer, not the gateway's code, answers when the gateway's
+# container stops mid-request, as when Modal preempted it during run
+# 42894301943.
+MODAL_STOPPED_CONTAINER_BODY = (
+    b"modal-http: internal error: function was terminated by signal"
+)
+
+
+def gateway_transport(
+    status_code: int,
+    content: bytes,
+    *,
+    content_type: str,
+    gateway_requests: list[httpx.Request] | None = None,
+) -> httpx.MockTransport:
+    """Issue a service token, and give every gateway request the same reply.
+
+    Each gateway request is appended to ``gateway_requests`` when it is given.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token":
+            return httpx.Response(
+                200,
+                json={"access_token": "service-token", "expires_in": 3600},
+            )
+        if gateway_requests is not None:
+            gateway_requests.append(request)
+        return httpx.Response(
+            status_code,
+            content=content,
+            headers={"content-type": content_type},
+        )
+
+    return httpx.MockTransport(handler)
 
 
 @dataclass(frozen=True)
