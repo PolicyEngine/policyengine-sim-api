@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Require the staging household check to have succeeded in a staging
 # deployment, and to have been skipped in any other.
 # Required env vars: REQUESTED ("true" in a staging deployment) and

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Calculate the fixed staging household through a deployed Simulation
 # Entrypoint, and require its household job to succeed.
 # Usage: simulation-staging-household-check.sh <base-url>
