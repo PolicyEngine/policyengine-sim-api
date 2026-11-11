@@ -115,7 +115,7 @@ def coordinate_report(
         invocation=invocation,
         persistence=persistence,
         artifact_storage=dependencies.artifacts
-        or artifact_store(content_addressed=report_run is not None),
+        or artifact_store(report_run=report_run is not None),
         child_invoker=dependencies.invoker or ModalChildInvoker(),
         dependencies=dependencies,
         stage_plan=(

@@ -22,6 +22,10 @@ from policyengine_simulation_executor.stage12_artifacts import (
 )
 from stage12_runtime_support import EVALUATION_ID, shared_output_plan
 
+# A report run's output files go to this bucket; every other artifact the
+# fake stores names the bucket "private".
+SIMULATION_OUTPUT_BUCKET = "private-simulation-outputs"
+
 
 class FakeStore:
     def __init__(self):
@@ -111,6 +115,8 @@ class FakeArtifacts:
         self.aggregate_writes = []
         self.comparison_writes = []
         self.input_writes = []
+        # Each report run's output write: its environment and simulation run.
+        self.simulation_run_outputs = []
         # Aggregates go through the real store, so every coordinator test
         # enforces the aggregate artifact contract that production enforces.
         self.report_store = Stage12ArtifactStore("private", store=InMemoryObjectStore())
@@ -149,12 +155,45 @@ class FakeArtifacts:
         calculation_provenance=None,
         uk_local_authority_metadata=None,
     ):
+        return self._store_simulation(
+            f"gs://private/{simulation.role.value}.parquet",
+            simulation,
+            frames,
+            calculation_provenance=calculation_provenance,
+            uk_local_authority_metadata=uk_local_authority_metadata,
+        )
+
+    # The real store's choice between the two writes below, so the tests
+    # that use this fake check where a report run's output file goes.
+    write_simulation_output = Stage12ArtifactStore.write_simulation_output
+
+    def write_simulation_run_output(self, location, *, simulation, frames, **metadata):
+        """Store a report run's output in the fake simulation output bucket."""
+        self.simulation_run_outputs.append(
+            (location.environment, location.simulation_run_id)
+        )
+        return self._store_simulation(
+            f"gs://{SIMULATION_OUTPUT_BUCKET}/{location.environment}/"
+            f"{location.simulation_run_id}.parquet",
+            simulation,
+            frames,
+            **metadata,
+        )
+
+    def _store_simulation(
+        self,
+        uri,
+        simulation,
+        frames,
+        *,
+        calculation_provenance=None,
+        uk_local_authority_metadata=None,
+    ):
         payload, row_identity = serialize_simulation_frames(
             frames,
             calculation_provenance=calculation_provenance,
             uk_local_authority_metadata=uk_local_authority_metadata,
         )
-        uri = f"gs://private/{simulation.role.value}.parquet"
         self.payloads[uri] = payload
         descriptor = SimulationArtifactDescriptor(
             evaluation_id=simulation.evaluation_id,

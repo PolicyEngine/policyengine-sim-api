@@ -8,6 +8,7 @@ set +x
 : "${STAGE12_GCP_PROJECT_ID:?STAGE12_GCP_PROJECT_ID is required}"
 : "${STAGE12_ARTIFACT_BUCKET:?STAGE12_ARTIFACT_BUCKET is required}"
 : "${STAGE12_CACHE_BUCKET:?STAGE12_CACHE_BUCKET is required}"
+: "${V2_SIMULATION_OUTPUT_BUCKET:?V2_SIMULATION_OUTPUT_BUCKET is required}"
 : "${STAGE12_ENTRYPOINT_SERVICE_ACCOUNT:?STAGE12_ENTRYPOINT_SERVICE_ACCOUNT is required}"
 : "${STAGE12_DEPLOY_SERVICE_ACCOUNT:?STAGE12_DEPLOY_SERVICE_ACCOUNT is required}"
 : "${STAGE12_MODAL_SERVICE_ACCOUNT:?STAGE12_MODAL_SERVICE_ACCOUNT is required}"
@@ -32,6 +33,17 @@ fi
 if [[ ! "${STAGE12_CACHE_BUCKET}" =~ ^[a-z0-9][a-z0-9._-]{2,61}[a-z0-9]$ ]] ||
   [[ ! "${STAGE12_CACHE_BUCKET}" =~ ${STAGE12_ENVIRONMENT} ]]; then
   echo "STAGE12_CACHE_BUCKET must be valid and identify the environment" >&2
+  exit 1
+fi
+# A report run's simulation output files are kept here, never in the
+# artifact bucket, which deletes its objects after 30 days.
+if [[ ! "${V2_SIMULATION_OUTPUT_BUCKET}" =~ ^[a-z0-9][a-z0-9._-]{2,61}[a-z0-9]$ ]] ||
+  [[ ! "${V2_SIMULATION_OUTPUT_BUCKET}" =~ ${STAGE12_ENVIRONMENT} ]]; then
+  echo "V2_SIMULATION_OUTPUT_BUCKET must be valid and identify the environment" >&2
+  exit 1
+fi
+if [[ "${V2_SIMULATION_OUTPUT_BUCKET}" == "${STAGE12_ARTIFACT_BUCKET}" ]]; then
+  echo "V2_SIMULATION_OUTPUT_BUCKET must differ from STAGE12_ARTIFACT_BUCKET" >&2
   exit 1
 fi
 for account in \
@@ -74,6 +86,7 @@ canary_source_file="$(mktemp)"
 canary_download_file="$(mktemp)"
 runtime_gcloud_config="$(mktemp -d)"
 canary_object=""
+output_canary_object=""
 cache_canary_object=""
 runtime_gcloud() {
   # The GitHub auth action exports credentials for the deployment identity.
@@ -89,6 +102,10 @@ cleanup() {
   if [[ -n "${canary_object}" ]]; then
     runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage rm \
       "${canary_object}" --quiet >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${output_canary_object}" ]]; then
+    runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage rm \
+      "${output_canary_object}" --quiet >/dev/null 2>&1 || true
   fi
   if [[ -n "${cache_canary_object}" ]]; then
     runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage rm \
@@ -175,6 +192,17 @@ runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage rm \
   "${canary_object}" --quiet
 canary_object=""
 
+# The worker's credential writes report runs' simulation output files.
+output_canary_object="gs://${V2_SIMULATION_OUTPUT_BUCKET}/simulation-runs/_deployment-validation/${STAGE12_ENVIRONMENT}/${canary_id}.txt"
+runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage cp \
+  "${canary_source_file}" "${output_canary_object}" --quiet
+runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage cp \
+  "${output_canary_object}" "${canary_download_file}" --quiet
+cmp "${canary_source_file}" "${canary_download_file}"
+runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage rm \
+  "${output_canary_object}" --quiet
+output_canary_object=""
+
 cache_canary_object="gs://${STAGE12_CACHE_BUCKET}/_deployment-validation/${STAGE12_ENVIRONMENT}/${canary_id}.txt"
 runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage cp \
   "${canary_source_file}" "${cache_canary_object}" --quiet
@@ -197,4 +225,4 @@ for lookup_object in "${uk_geography_lookup_objects[@]}"; do
   fi
 done
 
-echo "Pre-provisioned Stage 12 database, secret, report storage, cache storage, and UK geography lookup access is verified."
+echo "Pre-provisioned Stage 12 database, secret, report storage, simulation output storage, cache storage, and UK geography lookup access is verified."

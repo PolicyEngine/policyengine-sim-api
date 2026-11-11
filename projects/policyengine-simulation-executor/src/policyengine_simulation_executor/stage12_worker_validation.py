@@ -26,6 +26,9 @@ from policyengine_simulation_executor.stage12_cache.precompute import PRECOMPUTE
 from policyengine_simulation_executor.stage12_cache.precompute_planning import (
     scoped_planned_simulation,
 )
+from policyengine_simulation_executor.stage12_runtime.dependencies import (
+    SIMULATION_OUTPUT_BUCKET_ENV,
+)
 from policyengine_simulation_executor.stage12_runtime.partition import (
     US_REGION_GROUPS,
 )
@@ -46,6 +49,8 @@ REQUIRED_SECRET_ALTERNATIVES = (
     ("STAGE12_DATABASE_URL",),
     ("STAGE12_ARTIFACT_BUCKET",),
     ("STAGE12_CACHE_BUCKET",),
+    # A report run's workers keep their simulation output files there.
+    (SIMULATION_OUTPUT_BUCKET_ENV,),
 )
 
 US_VALIDATION_REFORM = {

@@ -22,30 +22,6 @@ def _store(*, content_addressed: bool = True) -> Stage12ArtifactStore:
     )
 
 
-def test_content_named_simulation_outputs_of_one_role_are_kept_apart() -> None:
-    store = _store()
-    baseline = planned_simulation(SimulationRole.BASELINE)
-
-    first = store.write_simulation(
-        prefix=PREFIX, simulation=baseline, frames=simulation_frames(100.0)
-    )
-    # A restarted call can calculate different last bits for the same role.
-    second = store.write_simulation(
-        prefix=PREFIX, simulation=baseline, frames=simulation_frames(100.000001)
-    )
-    repeated = store.write_simulation(
-        prefix=PREFIX, simulation=baseline, frames=simulation_frames(100.0)
-    )
-
-    digest = first.artifact.content_sha256
-    assert first.artifact.uri == (
-        f"gs://private-stage12/{PREFIX}/simulations/baseline-{digest}.parquet"
-    )
-    assert second.artifact.uri != first.artifact.uri
-    assert repeated.artifact == first.artifact
-    assert store.read(second.artifact.uri) != store.read(first.artifact.uri)
-
-
 def test_content_named_inputs_and_aggregates_name_their_digest() -> None:
     store = _store()
     reform = planned_simulation(SimulationRole.REFORM)

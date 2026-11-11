@@ -519,6 +519,8 @@ def run_single_simulation(
     whose context names a report run also records its simulation run's
     claim, output file and failure under ``modal_call_id``, and names its
     artifacts by their digest, so a call Modal restarts can store them again.
+    It writes the output file to the simulation output bucket, which keeps
+    it; a comparison run's stays under its artifact prefix.
     """
     dependencies = dependencies or SimulationWorkerDependencies()
     runtime = dependencies.runtime
@@ -539,7 +541,7 @@ def run_single_simulation(
         )
         persistence = recording
     artifact_storage = dependencies.artifacts or artifact_store(
-        content_addressed=context.report_run is not None
+        report_run=context.report_run is not None
     )
     child = persistence.get_simulation(simulation.simulation_execution_id)
     if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
@@ -580,8 +582,8 @@ def run_single_simulation(
         )
         validate_output_frames(calculation.frames, simulation.output_plan)
         with stage_span(Stage.STAGE12_SIMULATION_ARTIFACT_WRITE):
-            descriptor = artifact_storage.write_simulation(
-                prefix=context.artifact_prefix,
+            descriptor = artifact_storage.write_simulation_output(
+                context,
                 simulation=simulation,
                 frames=calculation.frames,
                 calculation_provenance=calculation.calculation_provenance,

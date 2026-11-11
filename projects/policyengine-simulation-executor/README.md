@@ -377,6 +377,16 @@ simulation artifacts. `segmented=false`, US subnational requests, UK requests,
 cliff analysis, and labor-supply-response calculations use the
 single-container Stage 12 path.
 
+A comparison run keeps both simulation output files in the Stage 12 artifact
+bucket (`STAGE12_ARTIFACT_BUCKET`), which deletes every object 30 days after it
+is written. A call that names a report run writes each of them to the
+simulation output bucket (`V2_SIMULATION_OUTPUT_BUCKET`) instead, under
+`simulation-runs/<environment>/<country>/<simulation_run_id>/output-<SHA-256>.parquet`,
+and records that URI as its simulation run's `output_uri`. That bucket deletes
+nothing; its lifecycle moves an object to Coldline after 90 days. A report
+run's inputs and aggregate stay in the artifact bucket. See "Where output files
+are kept" in `docs/migration/stage-12-modal-worker-foundation.md`.
+
 After dispatching both logical simulations, the coordinator checks both Modal
 calls with nonblocking result probes on every polling pass. It does not wait
 for baseline before checking reform. Both simulations share one 3,900-second
