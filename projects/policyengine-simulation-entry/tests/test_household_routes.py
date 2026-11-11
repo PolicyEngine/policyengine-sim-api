@@ -6,7 +6,7 @@ import dataclasses
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 from uuid import UUID
 
 import pytest
@@ -30,6 +30,9 @@ from policyengine_simulation_entry.household_calculations import (
 from policyengine_simulation_entry.simulation_database import SimulationDatabase
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 from policyengine_simulation_persistence import HouseholdJobRecord, HouseholdJobStatus
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 JOB_ID = UUID("00000000-0000-4000-8000-0000000000aa")
 HOUSEHOLD_ID = UUID("00000000-0000-4000-8000-0000000000bb")
@@ -79,12 +82,14 @@ def _raise_from_nested_calls(failure: Exception, depth: int) -> NoReturn:
 class FakeHouseholdCalculations:
     """Records each submission and read, and answers as told.
 
-    ``failure`` is raised from ``failure_depth`` nested calls below the
-    first call of ``_raise_from_nested_calls``.
+    ``failure`` is raised by ``raise_failure(failure, failure_depth)``: by
+    default from ``failure_depth`` nested calls below the first call of
+    ``_raise_from_nested_calls``.
     """
 
     failure: Exception | None = None
     failure_depth: int = 0
+    raise_failure: Callable[[Exception, int], NoReturn] = _raise_from_nested_calls
     stored: HouseholdJobRecord | None = None
     submissions: list[tuple[HouseholdCalculationRequest, Any]] = field(
         default_factory=list
@@ -99,7 +104,7 @@ class FakeHouseholdCalculations:
     ) -> HouseholdCalculationAccepted:
         self.submissions.append((request, observability_context))
         if self.failure is not None:
-            _raise_from_nested_calls(self.failure, self.failure_depth)
+            self.raise_failure(self.failure, self.failure_depth)
         return HouseholdCalculationAccepted(
             job_id=JOB_ID, status=HouseholdJobStatus.PENDING
         )
@@ -107,7 +112,7 @@ class FakeHouseholdCalculations:
     async def read(self, job_id: UUID) -> HouseholdJobRecord | None:
         self.reads.append(job_id)
         if self.failure is not None:
-            _raise_from_nested_calls(self.failure, self.failure_depth)
+            self.raise_failure(self.failure, self.failure_depth)
         return self.stored if self.stored and self.stored.id == job_id else None
 
 
@@ -502,13 +507,48 @@ def test_an_unexpected_failure_answers_a_json_500_without_its_values(
 SMALL_STRING_LIMIT = 600
 NESTED_CALLS = 20
 
+# Where the service's image installs packages (its virtual environment is
+# /opt/venv), and the files of a library and of the persistence library.
+IMAGE_SITE_PACKAGES = "/opt/venv/lib/python3.13/site-packages"
+LIBRARY_FILE = "sqlalchemy/engine/base.py"
+PERSISTENCE_FILE = "policyengine_simulation_persistence/household_job_store.py"
+# The library's connect raises the failure from ``depth`` nested calls of
+# itself, on its third line; the persistence library calls it.
+LIBRARY_SOURCE = """\
+def connect(failure, depth):
+    if depth == 0:
+        raise failure
+    connect(failure, depth - 1)
+"""
+LIBRARY_RAISE_LINE_NUMBER = 3
+PERSISTENCE_SOURCE = """\
+def read_household_job(failure, depth):
+    connect(failure, depth)
+"""
 
-def test_an_unexpected_failure_keeps_the_innermost_frames_that_fit_the_limit(
+
+def _defined_in_file(file_path: str, source: str, **names: Any) -> dict[str, Any]:
+    """Run ``source`` as code read from ``file_path``; return its globals.
+
+    Each function it defines then has frames with that path, as an installed
+    package's functions do. ``names`` are its globals before it runs.
+    """
+    namespace = dict(names)
+    exec(compile(source, file_path, "exec"), namespace)
+    return namespace
+
+
+def test_an_unexpected_failure_leaves_out_library_frames_before_service_frames(
     client_for, capsys, monkeypatch
 ):
-    """The outer frames are left out, and counted, so the rest is kept whole.
+    """The service's frames are kept, and the library's outer frames counted.
 
-    The limit comes from the runtime the service logs through.
+    The error is raised deep in a library that the persistence library
+    called, both at the image's paths. Each kept frame's path starts after
+    ``site-packages/`` or the checkout's ``src/``. The string holds the
+    frame that raised the error, the service's own frames, and as many of
+    the library's inner frames as fit the limit, which comes from the
+    runtime the service logs through.
     """
     build_runtime = app_module.init_simulation_observability
 
@@ -523,9 +563,16 @@ def test_an_unexpected_failure_keeps_the_innermost_frames_that_fit_the_limit(
     monkeypatch.setattr(
         app_module, "init_simulation_observability", runtime_with_a_small_limit
     )
+    library = _defined_in_file(f"{IMAGE_SITE_PACKAGES}/{LIBRARY_FILE}", LIBRARY_SOURCE)
+    persistence = _defined_in_file(
+        f"{IMAGE_SITE_PACKAGES}/{PERSISTENCE_FILE}",
+        PERSISTENCE_SOURCE,
+        connect=library["connect"],
+    )
     calculations = FakeHouseholdCalculations(
         failure=RuntimeError("a value that must not be logged"),
         failure_depth=NESTED_CALLS,
+        raise_failure=persistence["read_household_job"],
     )
 
     with client_for(calculations) as client:
@@ -536,7 +583,21 @@ def test_an_unexpected_failure_keeps_the_innermost_frames_that_fit_the_limit(
     attributes = record["attributes"]
     frames = attributes["stack_frames"].split("; ")
     assert len(attributes["stack_frames"]) <= SMALL_STRING_LIMIT
-    assert 0 < len(frames) < NESTED_CALLS
-    assert all(frame.endswith(" in _raise_from_nested_calls") for frame in frames)
-    # The handler's frame, the fake's submit, and the nested calls' frames.
-    assert len(frames) + attributes["stack_frames_omitted"] == NESTED_CALLS + 3
+    # The service's frames come last, innermost first: the persistence
+    # library's call, then the route's handler.
+    assert [frame.rsplit(" in ", 1)[1] for frame in frames[-2:]] == [
+        "read_household_job",
+        "submit_household_calculation",
+    ]
+    assert frames[-2].startswith(f"{PERSISTENCE_FILE}:")
+    assert frames[-1].startswith("policyengine_simulation_entry/household_routes.py:")
+    # Before them, the library's innermost frames, from where it raised.
+    library_frames = frames[:-2]
+    assert library_frames[0] == (
+        f"{LIBRARY_FILE}:{LIBRARY_RAISE_LINE_NUMBER} in connect"
+    )
+    assert all(frame.startswith(f"{LIBRARY_FILE}:") for frame in library_frames)
+    assert 1 < len(library_frames) < NESTED_CALLS + 1
+    # Left out: the library's outer frames and the fake's submit, of the
+    # library's NESTED_CALLS + 1, the persistence call, submit and the handler.
+    assert len(frames) + attributes["stack_frames_omitted"] == NESTED_CALLS + 4
