@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import dataclasses
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NoReturn
 from uuid import UUID
 
 import pytest
 from conftest import FakeBackend, make_settings
 from fastapi.testclient import TestClient
+from policyengine_observability import TelemetryLimits
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.household_api_models import (
@@ -65,11 +68,23 @@ def _record(**changes: Any) -> HouseholdJobRecord:
     return HouseholdJobRecord(**values)
 
 
+def _raise_from_nested_calls(failure: Exception, depth: int) -> NoReturn:
+    """Raise ``failure`` from ``depth`` calls below this one."""
+    if depth == 0:
+        raise failure
+    _raise_from_nested_calls(failure, depth - 1)
+
+
 @dataclass
 class FakeHouseholdCalculations:
-    """Records each submission and read, and answers as told."""
+    """Records each submission and read, and answers as told.
+
+    ``failure`` is raised from ``failure_depth`` nested calls below the
+    first call of ``_raise_from_nested_calls``.
+    """
 
     failure: Exception | None = None
+    failure_depth: int = 0
     stored: HouseholdJobRecord | None = None
     submissions: list[tuple[HouseholdCalculationRequest, Any]] = field(
         default_factory=list
@@ -84,7 +99,7 @@ class FakeHouseholdCalculations:
     ) -> HouseholdCalculationAccepted:
         self.submissions.append((request, observability_context))
         if self.failure is not None:
-            raise self.failure
+            _raise_from_nested_calls(self.failure, self.failure_depth)
         return HouseholdCalculationAccepted(
             job_id=JOB_ID, status=HouseholdJobStatus.PENDING
         )
@@ -92,7 +107,7 @@ class FakeHouseholdCalculations:
     async def read(self, job_id: UUID) -> HouseholdJobRecord | None:
         self.reads.append(job_id)
         if self.failure is not None:
-            raise self.failure
+            _raise_from_nested_calls(self.failure, self.failure_depth)
         return self.stored if self.stored and self.stored.id == job_id else None
 
 
@@ -423,6 +438,27 @@ UNEXPECTED_FAILURE_ANSWER = {
 }
 
 
+def _emitted_records(printed: str, message: str) -> list[dict[str, Any]]:
+    """Return the records with ``message`` the observability runtime printed.
+
+    The service's runtime writes each record to standard output as one JSON
+    object per line of text.
+    """
+    records = [
+        json.loads(printed_line)
+        for printed_line in printed.splitlines()
+        if printed_line.startswith("{")
+    ]
+    return [record for record in records if record.get("message") == message]
+
+
+# Each route's handler, the outermost frame of an error it answers.
+HANDLER_OF_METHOD = {
+    "post": "submit_household_calculation",
+    "get": "get_household_calculation",
+}
+
+
 @pytest.mark.parametrize(
     ("method", "path", "body"),
     [
@@ -431,8 +467,9 @@ UNEXPECTED_FAILURE_ANSWER = {
     ],
 )
 def test_an_unexpected_failure_answers_a_json_500_without_its_values(
-    client_for, caplog, method, path, body
+    client_for, capsys, method, path, body
 ):
+    """The record the runtime emits keeps the route, the type and the frames."""
     calculations = FakeHouseholdCalculations(
         failure=RuntimeError("a value that must not be logged")
     )
@@ -443,18 +480,63 @@ def test_an_unexpected_failure_answers_a_json_500_without_its_values(
     assert result.status_code == 500
     assert result.headers["content-type"] == "application/json"
     assert result.json() == UNEXPECTED_FAILURE_ANSWER
-    (record,) = [
-        record
-        for record in caplog.records
-        if record.getMessage() == "household_route_failed"
-    ]
-    assert record.error_type == "RuntimeError"
-    assert record.route in {"/household-calculations", STATE_TEMPLATE}
-    # The stack frames say where it failed, here in the fake service.
-    assert any(
-        "test_household_routes.py" in frame
-        and (" in submit" in frame or " in read" in frame)
-        for frame in record.stack_frames
+    printed = capsys.readouterr().out
+    (record,) = _emitted_records(printed, "household_route_failed")
+    attributes = record["attributes"]
+    assert attributes["error_type"] == "RuntimeError"
+    assert attributes["route"] in {"/household-calculations", STATE_TEMPLATE}
+    # Every attribute was kept, and every frame, innermost first: from where
+    # the fake raised the error up to the route's handler.
+    assert "attributes.omitted_count" not in record
+    assert attributes["stack_frames_omitted"] == 0
+    frames = attributes["stack_frames"].split("; ")
+    assert "test_household_routes.py" in frames[0]
+    assert frames[0].endswith(" in _raise_from_nested_calls")
+    assert frames[1].endswith((" in submit", " in read"))
+    assert frames[-1].endswith(f" in {HANDLER_OF_METHOD[method]}")
+    assert not any(key.startswith("error.") for key in record)
+    assert "a value that must not be logged" not in printed
+
+
+# A string limit that holds a few frames only, and enough calls to pass it.
+SMALL_STRING_LIMIT = 600
+NESTED_CALLS = 20
+
+
+def test_an_unexpected_failure_keeps_the_innermost_frames_that_fit_the_limit(
+    client_for, capsys, monkeypatch
+):
+    """The outer frames are left out, and counted, so the rest isn't cut off.
+
+    The limit comes from the runtime the service logs through.
+    """
+    build_runtime = app_module.init_simulation_observability
+
+    def runtime_with_a_small_limit(*arguments, **keywords):
+        runtime = build_runtime(*arguments, **keywords)
+        runtime.config = dataclasses.replace(
+            runtime.config,
+            limits=TelemetryLimits(max_string_length=SMALL_STRING_LIMIT),
+        )
+        return runtime
+
+    monkeypatch.setattr(
+        app_module, "init_simulation_observability", runtime_with_a_small_limit
     )
-    assert record.exc_info is None
-    assert "a value that must not be logged" not in str(record.__dict__)
+    calculations = FakeHouseholdCalculations(
+        failure=RuntimeError("a value that must not be logged"),
+        failure_depth=NESTED_CALLS,
+    )
+
+    with client_for(calculations) as client:
+        result = client.post("/household-calculations", json=SUBMISSION)
+
+    assert result.status_code == 500
+    (record,) = _emitted_records(capsys.readouterr().out, "household_route_failed")
+    attributes = record["attributes"]
+    frames = attributes["stack_frames"].split("; ")
+    assert len(attributes["stack_frames"]) <= SMALL_STRING_LIMIT
+    assert 0 < len(frames) < NESTED_CALLS
+    assert all(frame.endswith(" in _raise_from_nested_calls") for frame in frames)
+    # The handler's frame, the fake's submit, and the nested calls' frames.
+    assert len(frames) + attributes["stack_frames_omitted"] == NESTED_CALLS + 3
