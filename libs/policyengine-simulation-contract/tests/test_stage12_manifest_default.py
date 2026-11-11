@@ -11,6 +11,7 @@ from policyengine_simulation_contract.stage12_manifest import (
     ACTIVE_MANIFEST_KEY,
     PRE_CACHE_MANIFEST_KEY,
     REGION_DATASETS_MANIFEST_KEY,
+    SCHEMA_2_MANIFEST_KEY,
     V2_MANIFEST_KEYS,
     V2ManifestLoader,
     add_v2_worker,
@@ -19,6 +20,7 @@ from policyengine_simulation_contract.stage12_manifest import (
     pre_region_datasets_manifest_payload,
     publish_v2_manifest,
     read_v2_manifest,
+    schema_1_manifest_payload,
     v2_manifest_copies,
     write_v2_manifest,
 )
@@ -91,7 +93,8 @@ def test_writing_a_manifest_writes_each_readers_key_and_reads_back():
     write_v2_manifest(store=store, manifest=manifest)
 
     assert store.writes == [
-        (REGION_DATASETS_MANIFEST_KEY, manifest.model_dump(mode="json")),
+        (SCHEMA_2_MANIFEST_KEY, manifest.model_dump(mode="json")),
+        (REGION_DATASETS_MANIFEST_KEY, schema_1_manifest_payload(manifest)),
         (ACTIVE_MANIFEST_KEY, pre_region_datasets_manifest_payload(manifest)),
         (PRE_CACHE_MANIFEST_KEY, pre_cache_manifest_payload(manifest)),
     ]

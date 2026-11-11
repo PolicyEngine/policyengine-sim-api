@@ -1,9 +1,10 @@
-"""The Modal worker role's database credentials, which report runs are recorded with.
+"""The Modal worker role's database credentials, which runs and household jobs use.
 
 An operator creates the Modal secret in each Modal environment. The v2 Modal
 application attaches it to the coordinator and the simulation workers, which
 record the status and results of the report run and simulation runs their
-call names. The secret must exist in a Modal environment before the v2
+call names, and to the household functions, which record the household job
+their call names. The secret must exist in a Modal environment before the v2
 application deploys there: ``modal deploy`` checks its required key and fails
 without it.
 """
@@ -19,7 +20,9 @@ from policyengine_stage12_persistence import ReportRunStore
 from .database_retry import open_connection_with_retry
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from datetime import datetime
+    from typing import Any
     from uuid import UUID
 
     from policyengine_observability import ObservabilityRuntime
@@ -108,6 +111,43 @@ class ReportRunWriter(Protocol):
         self, simulation_run_id: UUID, *, error_message: str, failed_at: datetime
     ) -> RunWrite:
         """Mark a pending or running simulation run failed."""
+        ...
+
+
+class HouseholdJobWriter(Protocol):
+    """Household job writes; ``ReportRunStore`` implements it.
+
+    Each write is conditional on the job's status and recorded Modal call,
+    and returns whether it changed the job, and the job's status afterwards.
+    """
+
+    def claim_household_job(
+        self, household_job_id: UUID, *, modal_call_id: str, claimed_at: datetime
+    ) -> RunWrite:
+        """Mark a pending or running job that records no other call running."""
+        ...
+
+    def complete_household_job(
+        self,
+        household_job_id: UUID,
+        *,
+        modal_call_id: str,
+        result: Mapping[str, Any],
+        completed_at: datetime,
+    ) -> RunWrite:
+        """Mark the job succeeded with ``result`` while this call holds it."""
+        ...
+
+    def fail_household_job(
+        self,
+        household_job_id: UUID,
+        *,
+        modal_call_id: str,
+        error_message: str,
+        failed_at: datetime,
+        result: Mapping[str, Any] | None = None,
+    ) -> RunWrite:
+        """Mark the job failed while ``modal_call_id`` holds it."""
         ...
 
 

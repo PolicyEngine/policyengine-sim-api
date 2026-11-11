@@ -54,3 +54,15 @@ def test_annual_status_polls_measure_the_job_progress_read() -> None:
     annual = RUN_STAGE_REGISTRY[RunConfiguration.ANNUAL_IMPACT]
 
     assert annual.name(Stage.MODAL_JOB_PROGRESS_READ) == "modal_job_progress_read"
+
+
+def test_v2_household_plan_measures_model_load_inputs_and_each_policy() -> None:
+    household = RUN_STAGE_REGISTRY[RunConfiguration.V2_HOUSEHOLD]
+
+    assert household.stages == (
+        Stage.V2_HOUSEHOLD_EXECUTION,
+        Stage.V2_HOUSEHOLD_COUNTRY_MODEL_LOAD,
+        Stage.V2_HOUSEHOLD_INPUT_NORMALIZATION,
+        Stage.V2_HOUSEHOLD_CALCULATION,
+    )
+    assert household.name(Stage.V2_HOUSEHOLD_CALCULATION) == "v2_household_calculation"

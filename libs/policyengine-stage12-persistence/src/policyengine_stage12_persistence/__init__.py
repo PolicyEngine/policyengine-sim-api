@@ -1,4 +1,4 @@
-"""Direct DML for temporary Stage 12 comparison state and for report runs."""
+"""Direct DML for temporary Stage 12 comparison state, runs and household jobs."""
 
 from policyengine_stage12_persistence.report_run_results import (
     DistrictCodes,
