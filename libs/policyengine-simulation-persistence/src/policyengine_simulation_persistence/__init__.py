@@ -35,7 +35,6 @@ from policyengine_simulation_persistence.policy_reform import (
     PolicyReform,
     UnknownPolicyError,
     read_policy_reform,
-    reform_period,
 )
 from policyengine_simulation_persistence.tables import (
     HouseholdJobStatus,
@@ -88,7 +87,6 @@ __all__ = [
     "read_stored_household",
     "record_household_call",
     "referenced_metadata",
-    "reform_period",
     "report_runs",
     "reports",
     "service_metadata",

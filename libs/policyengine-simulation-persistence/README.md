@@ -107,9 +107,12 @@ both countries' household functions apply each form in 2200, and its
 tests check. The reader gives .py's periods, in .py's order, for the values
 in start order, with one difference besides 2200: it leaves out an
 open-ended value whose range would end before it starts (one followed the
-same day by a later value, or one starting after 2200), to which .py gives a
-range that applies on no day. Bounded values starting the same day are all
-kept, in start order, as .py keeps them.
+same day by a later value, or one starting after 2200). .py gives such a
+value a range that ends before it starts too. policyengine-core applies that
+range on no day, but policyengine-uk refuses it (its `interval_bounds`
+raises "ends before it starts"), so a UK calculation given .py's dict fails
+where one given the reader's runs. Bounded values starting the same day are
+all kept, in start order, as .py keeps them.
 
 ## Checking the models against the Public API
 

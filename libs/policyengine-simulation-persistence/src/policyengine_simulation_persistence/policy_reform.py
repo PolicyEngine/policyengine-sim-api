@@ -17,10 +17,13 @@ value ends, current law applies. The reader gives the same periods, in the
 same order, as .py does for the values in start order, except that it
 leaves out an open-ended value whose range would end before it starts:
 one followed the same day by a later value, or one starting after 2200.
-.py gives those a range that applies on no day. A range is used even for
-the last value because the countries' models read a start date alone
-differently: policyengine-core reads it as "from that day on", but
-policyengine-uk's reform dictionary as that one day.
+.py gives such a value a range that ends before it starts too.
+policyengine-core applies that range on no day, but policyengine-uk refuses
+it (its ``interval_bounds`` raises "ends before it starts"), so a UK
+calculation given .py's dict fails where one given the reader's runs. A
+range is used even for the last value because the countries' models read a
+start date alone differently: policyengine-core reads it as "from that day
+on", but policyengine-uk's reform dictionary as that one day.
 """
 
 from __future__ import annotations
@@ -67,34 +70,29 @@ class MissingPolicyParametersError(ValueError):
         )
 
 
-def _period_days(
+def _period(
     start_date: datetime,
     end_date: datetime | None,
     next_start_date: datetime | None,
-) -> tuple[date, date]:
-    """Return a value's first and last days, in UTC, by .py's rule."""
-    start_day = _utc_day(start_date)
-    if end_date is not None:
-        return start_day, _utc_day(end_date)
-    if next_start_date is not None:
-        return start_day, _utc_day(next_start_date) - timedelta(days=1)
-    return start_day, OPEN_ENDED_STOP
-
-
-def reform_period(
-    start_date: datetime,
-    end_date: datetime | None,
-    *,
-    next_start_date: datetime | None = None,
-) -> str:
-    """Return a stored value's period as the range a calculation applies.
+) -> str | None:
+    """Return a value's period by .py's rule, or None when no day is in it.
 
     The dates are read in UTC. A value without an end date stops the day
-    before ``next_start_date``, the start of the same parameter's next
-    later value, if any, and otherwise at the end of 2200, as .py's rule
-    has it (with 2100); such a range may end before it starts.
+    before ``next_start_date``, the start of the same parameter's next later
+    value, if any, and otherwise at the end of 2200. Its range would end
+    before it starts when that next value starts the same day, or when it
+    starts after 2200: then it is None.
     """
-    start_day, stop_day = _period_days(start_date, end_date, next_start_date)
+    start_day = _utc_day(start_date)
+    if end_date is not None:
+        return f"{start_day.isoformat()}.{_utc_day(end_date).isoformat()}"
+    stop_day = (
+        OPEN_ENDED_STOP
+        if next_start_date is None
+        else _utc_day(next_start_date) - timedelta(days=1)
+    )
+    if stop_day < start_day:
+        return None
     return f"{start_day.isoformat()}.{stop_day.isoformat()}"
 
 
@@ -155,13 +153,10 @@ def read_policy_reform(
             ),
             None,
         )
-        start_day, stop_day = _period_days(
-            row.start_date, row.end_date, next_start_date
-        )
-        if row.end_date is None and stop_day < start_day:
-            # .py's range for it applies on no day.
+        period = _period(row.start_date, row.end_date, next_start_date)
+        if period is None:
+            # .py gives it a range ending before it starts (module docstring).
             continue
-        period = f"{start_day.isoformat()}.{stop_day.isoformat()}"
         reform.setdefault(row.name, {})[period] = row.value_json
     return reform
 
