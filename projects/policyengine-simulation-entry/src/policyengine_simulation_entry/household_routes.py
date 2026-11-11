@@ -209,29 +209,66 @@ def _submission_failure_response(error: Exception) -> JSONResponse:
 
 # Separates the frames in the 500 log's ``stack_frames`` attribute.
 STACK_FRAME_SEPARATOR = "; "
+# The service's own packages, whose frames the 500 log keeps before others.
+SERVICE_PACKAGES = frozenset(
+    {"policyengine_simulation_entry", "policyengine_simulation_persistence"}
+)
+# The directories a package's files sit under: an installed package's, then
+# a checkout's. A frame's path is shortened to its part after one of them.
+_PACKAGE_PARENT_DIRECTORIES = ("/site-packages/", "/src/")
+
+
+def _package_path(file_path: str) -> str:
+    """Return ``file_path`` from its package's directory on.
+
+    That is its part after the last ``site-packages/``, where the image
+    installs the service and its libraries, or else after the last ``src/``,
+    where a checkout keeps the service's packages. Any other path is
+    returned whole.
+    """
+    for parent_directory in _PACKAGE_PARENT_DIRECTORIES:
+        _, found, package_path = file_path.rpartition(parent_directory)
+        if found:
+            return package_path
+    return file_path
 
 
 def _stack_frames(error: Exception, max_characters: int) -> tuple[str, int]:
     """Return the error's frames that fit ``max_characters``, and how many don't.
 
-    Each frame is ``file:line in function``, innermost first, from where the
-    error was raised out to the route's handler. The outer frames that would
-    pass ``max_characters`` are left out, so the observability runtime, which
-    keeps only the start of a longer string attribute, keeps the innermost
-    ones.
+    Each frame is ``path:line in function``, with its path from its
+    package's directory on (``_package_path``). The kept frames are written
+    innermost first, from where the error was raised out to the route's
+    handler. When they don't all fit, frames are taken in this order until
+    the next one would pass ``max_characters``: the frame that raised the
+    error, then the service's own frames (``SERVICE_PACKAGES``) from the
+    innermost out, then the others from the innermost out. So other
+    libraries' outer frames are left out first, and left-out frames may sit
+    between two kept ones. Staying within ``max_characters`` keeps the
+    string whole: the observability runtime keeps only the start of a longer
+    string attribute.
     """
-    frames = [
-        f"{frame.filename}:{frame.lineno} in {frame.name}"
-        for frame in reversed(traceback.extract_tb(error.__traceback__))
-    ]
-    kept: list[str] = []
+    frames: list[str] = []
+    from_the_service: list[bool] = []
+    for frame in reversed(traceback.extract_tb(error.__traceback__)):
+        package_path = _package_path(frame.filename)
+        frames.append(f"{package_path}:{frame.lineno} in {frame.name}")
+        from_the_service.append(package_path.split("/", 1)[0] in SERVICE_PACKAGES)
+    positions_by_priority = sorted(
+        range(len(frames)),
+        key=lambda position: (position > 0, not from_the_service[position], position),
+    )
+    kept_positions: list[int] = []
     length = 0
-    for frame in frames:
-        added = len(frame) + (len(STACK_FRAME_SEPARATOR) if kept else 0)
+    for position in positions_by_priority:
+        added = len(frames[position]) + (
+            len(STACK_FRAME_SEPARATOR) if kept_positions else 0
+        )
         if length + added > max_characters:
             break
-        kept.append(frame)
+        kept_positions.append(position)
         length += added
+    kept = [frames[position] for position in sorted(kept_positions)]
     return STACK_FRAME_SEPARATOR.join(kept), len(frames) - len(kept)
 
 
@@ -241,7 +278,7 @@ def _unexpected_failure_response(
     """Answer an unexpected failure with the JSON 500 the routes declare.
 
     The log is the fixed event ``household_route_failed`` with the route, the
-    error's type, its stack frames (file, line and function; see
+    error's type, its stack frames (path, line and function; see
     ``_stack_frames``) as one string of at most ``max_characters``, the
     observability runtime's string limit, and the number of frames left out.
     It never carries the error's message or any value, which could repeat
