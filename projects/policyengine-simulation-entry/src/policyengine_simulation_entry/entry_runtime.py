@@ -19,6 +19,7 @@ from policyengine_simulation_observability.identifiers import (
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from policyengine_simulation_entry.backend import (
+    BackendInterruptedError,
     BackendResponse,
     BackendTimeoutError,
     BackendUnavailableError,
@@ -160,11 +161,28 @@ class _BackendFailure(NamedTuple):
     detail: str
 
 
+class _ReadAttempts(NamedTuple):
+    """The attempts of one old-gateway read, and the status its caller got.
+
+    ``interrupted_attempts`` counts the attempts Modal answered for a stopped
+    gateway container.
+    """
+
+    attempts: int
+    interrupted_attempts: int
+    status_code: int
+
+
 _BACKEND_TIMEOUT = _BackendFailure(
     "simulation_entry_backend_timeout", 504, "Simulation backend timed out."
 )
 _BACKEND_UNAVAILABLE = _BackendFailure(
     "simulation_entry_backend_unavailable", 503, "Simulation backend is unavailable."
+)
+_BACKEND_INTERRUPTED = _BackendFailure(
+    "simulation_entry_backend_interrupted",
+    503,
+    "Simulation backend stopped before it answered.",
 )
 
 
@@ -286,8 +304,10 @@ class EntryRuntime:
     async def forward(self, request: Request, call: BackendCall) -> Response:
         """Forward ``call`` to the old gateway and relay its response.
 
-        Timeouts and an unavailable gateway become sanitized 504 and 503
-        responses; every outcome is reported as a telemetry event.
+        Timeouts become sanitized 504 responses. An unavailable gateway, and a
+        read whose gateway container stopped before every attempt answered,
+        become sanitized 503 responses. Every outcome is reported as a telemetry
+        event, and a read the backend sent again also as a WARNING event.
         """
         backend_started = time.monotonic()
         route = route_template(request)
@@ -325,21 +345,73 @@ class EntryRuntime:
                 "simulation_entry_backend_response",
                 attributes=attributes,
             )
+            self._report_retried_read(
+                request,
+                route=route,
+                identifiers=event_identifiers,
+                read=_ReadAttempts(
+                    attempts=result.interrupted_attempts + 1,
+                    interrupted_attempts=result.interrupted_attempts,
+                    status_code=result.status_code,
+                ),
+            )
             response = _response(result)
             set_observability_header(response, observability_id)
-        except BackendTimeoutError:
+        except BackendTimeoutError as error:
             return self._backend_failure_response(
-                request, _BACKEND_TIMEOUT, route=route, identifiers=event_identifiers
+                request,
+                _BACKEND_TIMEOUT,
+                route=route,
+                identifiers=event_identifiers,
+                error=error,
             )
-        except BackendUnavailableError:
+        except BackendInterruptedError as error:
+            return self._backend_failure_response(
+                request,
+                _BACKEND_INTERRUPTED,
+                route=route,
+                identifiers=event_identifiers,
+                error=error,
+            )
+        except BackendUnavailableError as error:
             return self._backend_failure_response(
                 request,
                 _BACKEND_UNAVAILABLE,
                 route=route,
                 identifiers=event_identifiers,
+                error=error,
             )
         else:
             return response
+
+    def _report_retried_read(
+        self,
+        request: Request,
+        *,
+        route: str,
+        identifiers: RequestIdentifiers,
+        read: _ReadAttempts,
+    ) -> None:
+        """Record, at WARNING, a read the backend sent again.
+
+        The backend sends a read again when Modal answers it for a stopped
+        gateway container. Nothing is recorded for a read sent once. The event
+        keeps the rate of gateway preemptions visible once a later attempt's
+        answer is relayed and the request itself is no longer recorded as an
+        error.
+        """
+        if read.attempts <= 1:
+            return
+        self.runtime.event(
+            "simulation_entry_backend_read_retried",
+            severity="WARNING",
+            attributes={
+                "request_id": request.state.request_id,
+                "route": route,
+                **read._asdict(),
+                **identifiers,
+            },
+        )
 
     def _backend_failure_response(
         self,
@@ -348,6 +420,7 @@ class EntryRuntime:
         *,
         route: str,
         identifiers: RequestIdentifiers,
+        error: BackendTimeoutError | BackendUnavailableError,
     ) -> JSONResponse:
         """Report a failed old-gateway call and return its sanitized response."""
         self.runtime.event(
@@ -357,6 +430,19 @@ class EntryRuntime:
                 "route": route,
                 **identifiers,
             },
+        )
+        self._report_retried_read(
+            request,
+            route=route,
+            identifiers=identifiers,
+            read=_ReadAttempts(
+                # Modal answered every attempt of an interrupted read; any other
+                # failure ended the attempt after the last one Modal answered.
+                attempts=error.interrupted_attempts
+                + (0 if isinstance(error, BackendInterruptedError) else 1),
+                interrupted_attempts=error.interrupted_attempts,
+                status_code=failure.status_code,
+            ),
         )
         return JSONResponse(
             status_code=failure.status_code,
