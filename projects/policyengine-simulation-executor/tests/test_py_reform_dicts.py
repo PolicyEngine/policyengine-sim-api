@@ -7,12 +7,14 @@ tests pin .py's periods for the cases the reader's tests check. The reader
 gives the same periods, in the same order, with two differences:
 
 - its last open-ended value runs to the end of 2200, the latest year a
-  calculation can be for, where .py's runs to 2100;
+  calculation can be for, where .py's runs to 2100. So the reader gives a
+  last value starting in 2101 to 2200 a range to the end of 2200, where
+  .py's range for it ends before it starts;
 - it leaves out an open-ended value whose range would end before it starts:
-  one followed the same day by a later value, or one starting after the
-  stop. .py gives that value such a range. policyengine-core applies it on
-  no day, but policyengine-uk refuses it, so a UK simulation given .py's
-  dict fails.
+  one followed the same day by a later value, or a last one starting after
+  2200, in 2201 or later. .py gives that value such a range.
+  policyengine-core applies it on no day, but policyengine-uk refuses it,
+  so a UK simulation given .py's dict fails.
 """
 
 from __future__ import annotations
