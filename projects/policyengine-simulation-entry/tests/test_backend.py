@@ -407,6 +407,46 @@ async def test_no_attempt_of_an_interrupted_read_starts_after_its_window():
 
 
 @pytest.mark.asyncio
+async def test_no_attempt_of_an_interrupted_read_starts_after_its_read_timeout():
+    """A shorter gateway read timeout than the window ends the retries first.
+
+    The first attempt here takes 2 seconds, so the second would start 2.5
+    seconds into a read whose timeout is 2.2 seconds.
+    """
+    elapsed_seconds = 0.0
+    gateway_requests: list[httpx.Request] = []
+    waits = RecordedWaits()
+    replies = gateway_transport_replying_in_turn(
+        [MODAL_STOPPED_CONTAINER_REPLY], gateway_requests=gateway_requests
+    )
+
+    class SlowGateway(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            nonlocal elapsed_seconds
+            if request.url.path != "/oauth/token":
+                elapsed_seconds += 2.0
+            return await replies.handle_async_request(request)
+
+    backend = OldGatewayBackend(
+        make_settings(request_timeout_seconds=2.2),
+        transport=SlowGateway(),
+        interrupted_read_retry=InterruptedReadRetry(
+            sleep=waits.sleep, clock=lambda: elapsed_seconds
+        ),
+    )
+    await backend.start()
+    try:
+        with pytest.raises(BackendInterruptedError) as interrupted:
+            await backend.request("GET", "/jobs/fc-123")
+    finally:
+        await backend.close()
+
+    assert interrupted.value.interrupted_attempts == 1
+    assert len(gateway_requests) == 1
+    assert waits.seconds == []
+
+
+@pytest.mark.asyncio
 async def test_a_read_sent_again_ends_within_the_gateway_read_timeout():
     """A read sent again never takes longer than the gateway read timeout.
 
@@ -567,6 +607,37 @@ async def test_readiness_requires_a_200_health_response(health_status, expected)
         assert await backend.ready() is expected
     finally:
         await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_readiness_sends_a_health_read_modal_answers_again():
+    """A health read is a GET, so it is sent again like a job read.
+
+    The WARNING event for a read sent again is recorded only for the routes
+    that forward to the gateway; ``/ready`` records none.
+    """
+    gateway_requests: list[httpx.Request] = []
+    backend = OldGatewayBackend(
+        make_settings(),
+        transport=gateway_transport_replying_in_turn(
+            [
+                MODAL_STOPPED_CONTAINER_REPLY,
+                GatewayReply(200, b'{"status": "healthy"}', "application/json"),
+            ],
+            gateway_requests=gateway_requests,
+        ),
+        interrupted_read_retry=RecordedWaits().retry(),
+    )
+    await backend.start()
+    try:
+        assert await backend.ready() is True
+    finally:
+        await backend.close()
+
+    assert [request.url.path for request in gateway_requests] == [
+        "/health",
+        "/health",
+    ]
 
 
 @pytest.mark.asyncio

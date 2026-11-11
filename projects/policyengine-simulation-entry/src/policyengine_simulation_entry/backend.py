@@ -82,10 +82,11 @@ class InterruptedReadRetry:
     container stops mid-request, as when Modal preempts it. Another gateway
     container, or the one Modal starts in its place, can answer the same read,
     so the read is sent again after each wait in ``waits_seconds``. No attempt
-    starts more than ``window_seconds`` after the read began, and a read sent
-    again ends within the backend's gateway read timeout (25 seconds by
-    default) of when it began, as an uninterrupted read does. That keeps it
-    below the Public API's 30-second timeout for its calls to the entry.
+    starts more than ``window_seconds`` after the read began, or once the
+    backend's gateway read timeout (25 seconds by default) has passed since
+    then, and a read sent again ends within that timeout of when it began.
+    That keeps it below the Public API's 30-second timeout for its calls to the
+    entry. The first attempt has only the HTTP client's own timeouts.
     """
 
     waits_seconds: tuple[float, ...] = (0.5, 1.0)
@@ -94,17 +95,22 @@ class InterruptedReadRetry:
     clock: Callable[[], float] = time.monotonic
 
     def wait_before_next_attempt(
-        self, interrupted_attempts: int, elapsed_seconds: float
+        self,
+        interrupted_attempts: int,
+        elapsed_seconds: float,
+        read_timeout_seconds: float,
     ) -> float | None:
         """Return how long to wait before sending the read again, or None to stop.
 
         ``interrupted_attempts`` counts the attempts Modal has answered so far,
-        and ``elapsed_seconds`` the time since the read began.
+        ``elapsed_seconds`` the time since the read began, and
+        ``read_timeout_seconds`` the time the whole read may take.
         """
         if interrupted_attempts > len(self.waits_seconds):
             return None
         wait_seconds = self.waits_seconds[interrupted_attempts - 1]
-        if elapsed_seconds + wait_seconds > self.window_seconds:
+        next_start = elapsed_seconds + wait_seconds
+        if next_start > self.window_seconds or next_start >= read_timeout_seconds:
             return None
         return wait_seconds
 
@@ -367,7 +373,9 @@ class OldGatewayBackend:
                 )
             interrupted_attempts += 1
             wait_seconds = read_retry.wait_before_next_attempt(
-                interrupted_attempts, read_retry.clock() - started
+                interrupted_attempts,
+                read_retry.clock() - started,
+                self.settings.request_timeout_seconds,
             )
             if wait_seconds is None:
                 msg = "Old gateway's container stopped before it answered."

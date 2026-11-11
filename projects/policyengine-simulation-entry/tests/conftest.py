@@ -93,23 +93,6 @@ def gateway_transport_replying_in_turn(
     return httpx.MockTransport(handler)
 
 
-def gateway_transport(
-    status_code: int,
-    content: bytes,
-    *,
-    content_type: str,
-    gateway_requests: list[httpx.Request] | None = None,
-) -> httpx.MockTransport:
-    """Issue a service token, and give every gateway request the same reply.
-
-    Each gateway request is appended to ``gateway_requests`` when it is given.
-    """
-    return gateway_transport_replying_in_turn(
-        [GatewayReply(status_code, content, content_type)],
-        gateway_requests=gateway_requests,
-    )
-
-
 class RecordedWaits:
     """Stand in for ``asyncio.sleep``: record each wait instead of waiting."""
 
