@@ -207,22 +207,54 @@ def _submission_failure_response(error: Exception) -> JSONResponse:
     )
 
 
-def _unexpected_failure_response(route: str, error: Exception) -> JSONResponse:
+# Separates the frames in the 500 log's ``stack_frames`` attribute.
+STACK_FRAME_SEPARATOR = "; "
+
+
+def _stack_frames(error: Exception, max_characters: int) -> tuple[str, int]:
+    """Return the error's frames that fit ``max_characters``, and how many don't.
+
+    Each frame is ``file:line in function``, innermost first, from where the
+    error was raised out to the route's handler. The outer frames that would
+    pass ``max_characters`` are left out, so the observability runtime, which
+    cuts a longer string attribute at its end, keeps the innermost ones.
+    """
+    frames = [
+        f"{frame.filename}:{frame.lineno} in {frame.name}"
+        for frame in reversed(traceback.extract_tb(error.__traceback__))
+    ]
+    kept: list[str] = []
+    length = 0
+    for frame in frames:
+        added = len(frame) + (len(STACK_FRAME_SEPARATOR) if kept else 0)
+        if length + added > max_characters:
+            break
+        kept.append(frame)
+        length += added
+    return STACK_FRAME_SEPARATOR.join(kept), len(frames) - len(kept)
+
+
+def _unexpected_failure_response(
+    route: str, error: Exception, *, max_characters: int
+) -> JSONResponse:
     """Answer an unexpected failure with the JSON 500 the routes declare.
 
     The log is the fixed event ``household_route_failed`` with the route, the
-    error's type and its stack frames (file, line and function), never the
-    error's message or any value, which could repeat request or stored data.
-    The fields go in ``policyengine_attributes`` too, the only extra fields
-    the observability runtime's log handler keeps.
+    error's type, its stack frames (file, line and function; see
+    ``_stack_frames``) as one string of at most ``max_characters``, the
+    observability runtime's string limit, and the number of frames left out.
+    It never carries the error's message or any value, which could repeat
+    request or stored data. The fields go in ``policyengine_attributes`` too,
+    the only extra fields the observability runtime's log handler keeps, and
+    each is a string or an integer: the runtime keeps only strings, numbers
+    and booleans.
     """
+    stack_frames, omitted_frame_count = _stack_frames(error, max_characters)
     fields = {
         "route": route,
         "error_type": type(error).__name__,
-        "stack_frames": [
-            f"{frame.filename}:{frame.lineno} in {frame.name}"
-            for frame in traceback.extract_tb(error.__traceback__)
-        ],
+        "stack_frames": stack_frames,
+        "stack_frames_omitted": omitted_frame_count,
     }
     logger.error(
         "household_route_failed",
@@ -279,6 +311,7 @@ def add_household_calculation_routes(
 ) -> None:
     """Add the household routes; without a service they answer 503."""
     router = APIRouter()
+    log_string_limit = entry.runtime.config.limits.max_string_length
 
     @router.post(
         SUBMISSION_PATH,
@@ -330,7 +363,9 @@ def add_household_calculation_routes(
             return _submission_failure_response(error)
         # Every other failure is still answered as the JSON 500 declared.
         except Exception as error:  # noqa: BLE001  # answered as internal_error
-            return _unexpected_failure_response(SUBMISSION_PATH, error)
+            return _unexpected_failure_response(
+                SUBMISSION_PATH, error, max_characters=log_string_limit
+            )
         return JSONResponse(
             accepted.model_dump(mode="json"), status_code=status.HTTP_202_ACCEPTED
         )
@@ -364,7 +399,9 @@ def add_household_calculation_routes(
             return _unavailable(error)
         # Every other failure is still answered as the JSON 500 declared.
         except Exception as error:  # noqa: BLE001  # answered as internal_error
-            return _unexpected_failure_response(JOB_PATH, error)
+            return _unexpected_failure_response(
+                JOB_PATH, error, max_characters=log_string_limit
+            )
         if state is None:
             return _error_response(
                 status.HTTP_404_NOT_FOUND,
