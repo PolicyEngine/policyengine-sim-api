@@ -10,6 +10,17 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.11.0] - 2026-11-11
+
+### Added
+
+- The v2 Modal coordinator now uses the stored output file of a report run's baseline or reform simulation run that already succeeded, instead of calculating that simulation again. It reads the file once, from whichever Cloud Storage bucket the run's `output_uri` names, and checks its SHA-256 digest, its year and versions against the report's simulation, its dataset and region against the report run's other simulation run, its planned outputs, and its SPM calculation receipt against the SPM selection a worker would resolve. A run or file it can't use fails the report run, before any worker starts, with a `reused_simulation_output_missing`, `reused_simulation_output_unreadable`, `reused_simulation_output_digest_mismatch`, `reused_simulation_output_incompatible`, `reused_simulation_spm_mismatch` or `reused_simulation_run_mismatch` error, and the coordinator never writes to a reused simulation run.
+
+### Changed
+
+- A Stage 12 call that records a report run in the Public API's `report_runs` and `simulation_runs` now writes each simulation output file to the environment's simulation output bucket, named by the new `V2_SIMULATION_OUTPUT_BUCKET` variable (`policyengine-v2-staging-simulation-outputs` or `policyengine-v2-production-simulation-outputs`), under `simulation-runs/<environment>/<country>/<simulation run ID>/output-<SHA-256>.parquet`, and records that URI as the simulation run's `output_uri`. That bucket deletes nothing, so a later report run can reuse the file; the Stage 12 artifact bucket, where these files went before, deletes objects after 30 days. Such a call fails before it claims anything when the variable is unset. Comparison runs, and a report run's inputs and aggregate, stay in the artifact bucket. The deployment copies the variable into the `stage12-evaluation-runtime` Modal secret, and its Stage 12 checks require the variable and write a canary object to the bucket.
+
+
 ## [0.10.1] - 2026-11-11
 
 ### Fixed
