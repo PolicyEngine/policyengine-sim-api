@@ -96,8 +96,32 @@ class RunWrite:
     status: RunStatus
 
 
+@dataclass(frozen=True)
+class SimulationRunState:
+    """A simulation run's status, what it calculated, and its output file.
+
+    ``dataset_id`` and ``region_id`` are the Public API's catalog rows, None
+    when the run names none. ``output_uri`` and ``output_sha256`` are None
+    until the run records an output file, and stay None for a run that
+    records none.
+    """
+
+    status: RunStatus
+    year: int
+    country_package_version: str
+    policyengine_version: str
+    dataset_id: UUID | None
+    region_id: UUID | None
+    output_uri: str | None
+    output_sha256: str | None
+
+
 class ReportRunStore:
-    """Status writes to the Public API's run tables and household jobs."""
+    """Status writes to the Public API's run tables and household jobs.
+
+    It also reads a simulation run's state, for a report run that names one
+    that already succeeded.
+    """
 
     def __init__(
         self,
@@ -154,6 +178,37 @@ class ReportRunStore:
                 f"reform {named.reform_simulation_run_id}"
             )
             raise ValueError(msg)
+
+    def get_simulation_run(self, simulation_run_id: UUID) -> SimulationRunState:
+        """Return a simulation run's status, year, versions, dataset, region and output.
+
+        It only reads the run. Raises LookupError when the run does not exist.
+        """
+        statement = select(
+            simulation_runs.c.status,
+            simulation_runs.c.year,
+            simulation_runs.c.country_package_version,
+            simulation_runs.c.policyengine_version,
+            simulation_runs.c.dataset_id,
+            simulation_runs.c.region_id,
+            simulation_runs.c.output_uri,
+            simulation_runs.c.output_sha256,
+        ).where(simulation_runs.c.id == simulation_run_id)
+        with self._transaction("get_simulation_run") as connection:
+            stored = connection.execute(statement).one_or_none()
+        if stored is None:
+            msg = f"simulation run {simulation_run_id} does not exist"
+            raise LookupError(msg)
+        return SimulationRunState(
+            status=RunStatus(stored.status),
+            year=stored.year,
+            country_package_version=stored.country_package_version,
+            policyengine_version=stored.policyengine_version,
+            dataset_id=stored.dataset_id,
+            region_id=stored.region_id,
+            output_uri=stored.output_uri,
+            output_sha256=stored.output_sha256,
+        )
 
     def claim_report_run(
         self,

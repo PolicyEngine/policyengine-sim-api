@@ -24,6 +24,11 @@ from policyengine_simulation_executor.stage12_timeouts import (
     SIMULATION_WAIT_TIMEOUT_SECONDS,
 )
 
+from .child_wait import (
+    SIMULATION_POLL_BACKOFF_FACTOR,
+    SIMULATION_POLL_INITIAL_SECONDS,
+    SIMULATION_POLL_MAX_SECONDS,
+)
 from .coordinated_simulations import (
     SIMULATION_CANCELLED_ERROR_CODE,
     cancel_pending_simulations,
@@ -39,9 +44,6 @@ from .parent_claim import (
 )
 from .report_claims import claim_report
 from .report_coordination import (
-    SIMULATION_POLL_BACKOFF_FACTOR,
-    SIMULATION_POLL_INITIAL_SECONDS,
-    SIMULATION_POLL_MAX_SECONDS,
     CoordinatorDependencies,
     CoordinatorInvocation,
     ReportCoordination,
@@ -78,13 +80,15 @@ def coordinate_report(
     """Run one Stage 12 comparison report end to end; return its aggregate descriptor.
 
     Claims the parent report (one already running or finished returns a
-    ``deduplicated`` summary instead), starts or reattaches the baseline and
-    reform child simulations within one shared wait window, and aggregates
-    their digest-checked artifacts; shadow runs are then compared with the
-    production result. A dispatch context that disagrees with the report
-    raises ``ValueError`` before the claim; any later failure stops the
-    unfinished children, marks the report FAILED and raises a
-    ``RuntimeError`` that carries no calculation detail.
+    ``deduplicated`` summary instead). A call that names a report run uses
+    the stored output of each of its simulation runs that already succeeded;
+    each other simulation's child is started or reattached within one shared
+    wait window. The digest-checked baseline and reform outputs are then
+    aggregated; shadow runs are compared with the production result. A
+    dispatch context that disagrees with the report raises ``ValueError``
+    before the claim; any later failure stops the unfinished children, marks
+    the report FAILED and raises a ``RuntimeError`` that carries no
+    calculation detail.
     """
     dependencies = dependencies or CoordinatorDependencies()
     # Open the shared child-wait window before any setup work.

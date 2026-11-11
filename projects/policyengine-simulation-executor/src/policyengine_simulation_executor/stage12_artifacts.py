@@ -132,6 +132,18 @@ def comparison_path(*, prefix: str) -> str:
     return f"{prefix}/reports/comparison.json"
 
 
+def _identifier_column(entity: str, frame: pd.DataFrame) -> str:
+    """Return ``frame``'s ``<entity>_id`` column, which must exist and be unique."""
+    identifier = PARQUET_CONTRACT.identifier_column_template.format(entity=entity)
+    if identifier not in frame.columns:
+        msg = f"simulation output entity {entity!r} has no {identifier}"
+        raise ValueError(msg)
+    if frame[identifier].duplicated().any():
+        msg = f"simulation output entity {entity!r} has duplicate IDs"
+        raise ValueError(msg)
+    return identifier
+
+
 def _frame_payload(
     frames: Mapping[str, pd.DataFrame],
 ) -> tuple[pd.DataFrame, dict[str, dict[str, str]], dict[str, list[str]]]:
@@ -141,13 +153,7 @@ def _frame_payload(
     for entity in sorted(frames):
         source = frames[entity].copy()
         source = source.reindex(sorted(source.columns), axis=1)
-        identifier = PARQUET_CONTRACT.identifier_column_template.format(entity=entity)
-        if identifier not in source.columns:
-            msg = f"simulation output entity {entity!r} has no {identifier}"
-            raise ValueError(msg)
-        if source[identifier].duplicated().any():
-            msg = f"simulation output entity {entity!r} has duplicate IDs"
-            raise ValueError(msg)
+        identifier = _identifier_column(entity, source)
         source = source.sort_values(identifier, kind="stable").reset_index(drop=True)
         dtypes[entity] = {column: str(dtype) for column, dtype in source.dtypes.items()}
         identifier_values[entity] = [
@@ -176,6 +182,41 @@ def _frame_payload(
     return combined.reindex(columns=columns), dtypes, identifier_values
 
 
+def _row_identity(identifier_values: Mapping[str, list[str]]) -> RowIdentity:
+    """Fingerprint each entity's sorted row identifiers."""
+    return RowIdentity(
+        identifier_columns=tuple(
+            f"{entity}.{entity}_id" for entity in sorted(identifier_values)
+        ),
+        row_count=sum(len(values) for values in identifier_values.values()),
+        identity_sha256=sha256(canonical_json_bytes(identifier_values)).hexdigest(),
+    )
+
+
+def simulation_row_identity(frames: Mapping[str, pd.DataFrame]) -> RowIdentity:
+    """Return the row identity ``serialize_simulation_frames`` records for ``frames``.
+
+    Frames decoded from an artifact give the identity it was written with.
+    Only the identifier columns are read and sorted. Raises the same
+    ``ValueError`` for a missing or repeated row identifier, or no entity.
+    """
+    identifier_values: dict[str, list[str]] = {}
+    for entity in sorted(frames):
+        frame = frames[entity]
+        identifier = _identifier_column(entity, frame)
+        # Sorted as serialize_simulation_frames sorts the entity's rows.
+        identifier_frame = frame.reindex(columns=[identifier]).sort_values(
+            identifier, kind="stable"
+        )
+        identifier_values[entity] = [
+            str(value) for value in identifier_frame[identifier].tolist()
+        ]
+    if not identifier_values:
+        msg = "simulation output contains no entity tables"
+        raise ValueError(msg)
+    return _row_identity(identifier_values)
+
+
 def serialize_simulation_frames(
     frames: Mapping[str, pd.DataFrame],
     *,
@@ -189,14 +230,7 @@ def serialize_simulation_frames(
     local authority metadata travel in the Parquet schema metadata.
     """
     combined, dtypes, identifier_values = _frame_payload(frames)
-    identity_payload = canonical_json_bytes(identifier_values)
-    row_identity = RowIdentity(
-        identifier_columns=tuple(
-            f"{entity}.{entity}_id" for entity in sorted(identifier_values)
-        ),
-        row_count=sum(len(values) for values in identifier_values.values()),
-        identity_sha256=sha256(identity_payload).hexdigest(),
-    )
+    row_identity = _row_identity(identifier_values)
     table = pa.Table.from_pandas(combined, preserve_index=False)
     metadata = dict(table.schema.metadata or {})
     metadata[PARQUET_CONTRACT.schema_version_metadata_key.encode()] = str(
@@ -307,6 +341,22 @@ def deserialize_uk_local_authority_metadata(
     if raw is None:
         return None
     return UKLocalAuthorityMetadata.model_validate_json(raw)
+
+
+@dataclass(frozen=True)
+class DecodedSimulationOutput:
+    """One simulation output file's entity frames and UK local authority metadata."""
+
+    frames: dict[str, pd.DataFrame]
+    uk_local_authority_metadata: UKLocalAuthorityMetadata | None
+
+
+def decode_simulation_output(payload: bytes) -> DecodedSimulationOutput:
+    """Decode a simulation output file's frames and UK local authority metadata."""
+    return DecodedSimulationOutput(
+        frames=deserialize_simulation_frames(payload),
+        uk_local_authority_metadata=deserialize_uk_local_authority_metadata(payload),
+    )
 
 
 class Stage12ArtifactStore:

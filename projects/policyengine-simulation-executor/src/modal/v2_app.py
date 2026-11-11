@@ -471,7 +471,11 @@ def coordinate_report(
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    """Run one Stage 12 report: fan out both simulations, aggregate, and persist.
+    """Run one Stage 12 report: reuse or fan out its simulations, aggregate, persist.
+
+    A call whose ``context`` names a report run uses the stored output of each
+    of its simulation runs that already succeeded, and starts a worker only
+    for each other simulation.
 
     A ``production_function_call_id`` in ``context`` marks a shadow run whose
     result is compared with that production job's. A report another

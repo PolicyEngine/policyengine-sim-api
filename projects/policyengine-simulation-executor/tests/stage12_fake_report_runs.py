@@ -10,9 +10,16 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
-from policyengine_simulation_contract.stage12_execution import ReportRunIds
-from policyengine_stage12_persistence import RunStatus, RunWrite
-from stage12_runtime_support import aggregate_payload, invocation_context
+from policyengine_simulation_contract.stage12_execution import (
+    ReportRunIds,
+    SimulationRole,
+)
+from policyengine_stage12_persistence import RunStatus, RunWrite, SimulationRunState
+from stage12_runtime_support import (
+    aggregate_payload,
+    invocation_context,
+    simulation_execution_input,
+)
 
 REPORT_RUN_ID = UUID("00000000-0000-0000-0000-0000000000a1")
 BASELINE_RUN_ID = UUID("00000000-0000-0000-0000-0000000000b1")
@@ -23,6 +30,11 @@ REPORT_RUN_IDS = ReportRunIds(
     reform_simulation_run_id=REFORM_RUN_ID,
 )
 ACTIVE = (RunStatus.PENDING, RunStatus.RUNNING)
+# What the shared report's simulations calculate, which its simulation runs
+# record: its year and bundle versions, and one catalog dataset and region.
+SHARED_SIMULATION = simulation_execution_input(SimulationRole.BASELINE)
+SHARED_DATASET_ID = UUID("00000000-0000-0000-0000-0000000000d1")
+SHARED_REGION_ID = UUID("00000000-0000-0000-0000-0000000000e1")
 
 
 def report_run_context():
@@ -37,7 +49,11 @@ def economy_aggregate(**_values):
 
 @dataclass
 class FakeRun:
-    """One report run's or simulation run's mutable columns."""
+    """One report run's or simulation run's mutable columns.
+
+    A simulation run also records what it calculates, by default the shared
+    report's simulation.
+    """
 
     status: RunStatus = RunStatus.PENDING
     modal_call_id: str | None = None
@@ -46,6 +62,11 @@ class FakeRun:
     output_sha256: str | None = None
     result: object | None = None
     writes: list[str] = field(default_factory=list)
+    year: int = SHARED_SIMULATION.year
+    country_package_version: str = SHARED_SIMULATION.bundle.country_package_version
+    policyengine_version: str = SHARED_SIMULATION.bundle.policyengine_version
+    dataset_id: UUID | None = SHARED_DATASET_ID
+    region_id: UUID | None = SHARED_REGION_ID
 
 
 class FakeReportRuns:
@@ -76,6 +97,20 @@ class FakeReportRuns:
                 f"reform {reform_run_id}"
             )
             raise ValueError(msg)
+
+    def get_simulation_run(self, simulation_run_id):
+        """Read a simulation run; a read is not a write, so it records nothing."""
+        run = self._run(self.simulation_runs, simulation_run_id, "simulation run")
+        return SimulationRunState(
+            status=run.status,
+            year=run.year,
+            country_package_version=run.country_package_version,
+            policyengine_version=run.policyengine_version,
+            dataset_id=run.dataset_id,
+            region_id=run.region_id,
+            output_uri=run.output_uri,
+            output_sha256=run.output_sha256,
+        )
 
     def claim_report_run(self, report_run_id, *, modal_call_id, claimed_at):
         run = self._run(self.report_runs, report_run_id, "report run")

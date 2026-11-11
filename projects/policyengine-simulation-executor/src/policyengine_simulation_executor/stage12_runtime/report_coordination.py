@@ -1,4 +1,4 @@
-"""One claimed report's coordination: start, wait for and aggregate its simulations."""
+"""One claimed report's coordination: reuse or calculate, then aggregate its outputs."""
 
 from __future__ import annotations
 
@@ -28,10 +28,10 @@ from policyengine_simulation_observability.stages import Stage, StagePlan
 from policyengine_stage12_persistence import RunStatus
 
 from policyengine_simulation_executor.stage12_artifacts import (
+    DecodedSimulationOutput,
     Stage12ArtifactStore,
+    decode_simulation_output,
     deserialize_calculation_provenance,
-    deserialize_simulation_frames,
-    deserialize_uk_local_authority_metadata,
 )
 from policyengine_simulation_executor.stage12_timeouts import (
     SIMULATION_WAIT_TIMEOUT_SECONDS,
@@ -43,11 +43,11 @@ from .aggregation import (
     validate_aligned_outputs,
     validate_uk_local_authority_metadata,
 )
+from .child_wait import wait_for_children
 from .comparison import ComparisonServices, compare_completed_report
 from .coordinated_simulations import (
     cancel_pending_simulations,
     cancellation,
-    child_failure_detail,
     child_record,
     logger,
     record_child_failure,
@@ -64,7 +64,6 @@ from .failure_recording import (
     FailureSite,
     persist_failure_record,
     report_failure,
-    report_original_failure,
 )
 from .failures import Stage12ExecutionError, Stage12FailureDetail
 from .output_planning import (
@@ -73,6 +72,7 @@ from .output_planning import (
     validate_output_frames,
 )
 from .report_run_recording import SimulationRunRecordingStore
+from .reused_outputs import reused_outputs, simulations_to_calculate
 from .simulation import descriptor_from_record
 
 if TYPE_CHECKING:
@@ -84,17 +84,7 @@ if TYPE_CHECKING:
 
     from .report_run_access import ReportRunWriter
     from .report_run_recording import ReportRunRecorder
-
-SIMULATION_POLL_INITIAL_SECONDS = 0.25
-SIMULATION_POLL_MAX_SECONDS = 1.0
-SIMULATION_POLL_BACKOFF_FACTOR = 2.0
-
-
-def _next_poll_interval(current: float) -> float:
-    return min(
-        current * SIMULATION_POLL_BACKOFF_FACTOR,
-        SIMULATION_POLL_MAX_SECONDS,
-    )
+    from .reused_outputs import OutputFileReader, ReusedSimulationOutput
 
 
 def _require_artifact_digest(
@@ -123,8 +113,9 @@ class CoordinatorDependencies:
     The defaults are the Stage 12 database store, the private artifact
     bucket, Modal child invocation, the standard aggregate builder and output
     plan resolution, no telemetry runtime, the real clock and sleep, the
-    standard child wait window, and the report run store, which only a call
-    that names a report run uses.
+    standard child wait window, and the report run store and the Cloud
+    Storage reader of reused output files, which only a call that names a
+    report run uses.
     """
 
     store: ComparisonStore | None = None
@@ -139,6 +130,7 @@ class CoordinatorDependencies:
     monotonic: Callable[[], float] = time.monotonic
     wait_timeout_seconds: float = SIMULATION_WAIT_TIMEOUT_SECONDS
     report_runs: ReportRunWriter | None = None
+    output_files: OutputFileReader | None = None
 
 
 @dataclass
@@ -168,6 +160,8 @@ class ReportCoordination:
     )
     # The report run the call names, when it records one.
     report_run: ReportRunRecorder | None = None
+    # Each reused simulation run's checked output by role, in place of a child.
+    reused: dict[str, ReusedSimulationOutput] = dataclasses.field(default_factory=dict)
 
     @property
     def runtime(self) -> ObservabilityRuntime | None:
@@ -198,16 +192,20 @@ class ReportCoordination:
         )
 
     def run(self, parent: ComparisonReportRecord) -> dict[str, Any]:
-        """Plan, start and await both children, then aggregate and complete."""
+        """Plan, reuse or start and await both outputs, then aggregate them."""
         output_plan, planned_simulations = self._prepare(parent)
         self.simulations = {
             simulation.role.value: simulation for simulation in planned_simulations
         }
-        children = self._create_children(planned_simulations)
-        descriptors, calls = self._start_children(planned_simulations, children)
+        self.descriptors.update(
+            {role: output.descriptor for role, output in self.reused.items()}
+        )
+        calculated = simulations_to_calculate(planned_simulations, self.reused)
+        children = self._create_children(calculated)
+        descriptors, calls = self._start_children(calculated, children)
         # Every required call has been started before the coordinator observes
         # baseline and reform together through nonblocking result probes.
-        self._wait_for_children(calls, descriptors)
+        wait_for_children(self, calls, descriptors)
         return self._aggregate_and_complete(parent, output_plan, descriptors)
 
     def _prepare(
@@ -245,6 +243,12 @@ class ReportCoordination:
                     {"simulation_role": simulation.role.value},
                 ):
                     simulations.append(plan_simulation_input(simulation, output_plan))
+            self.reused = reused_outputs(
+                simulations,
+                report_run=self.report_run,
+                files=self.dependencies.output_files,
+                span=self.span,
+            )
         return output_plan, tuple(simulations)
 
     def _create_children(
@@ -436,101 +440,6 @@ class ReportCoordination:
         )
         return call
 
-    def _wait_for_children(
-        self,
-        calls: dict[str, ChildCall],
-        descriptors: dict[str, SimulationArtifactDescriptor],
-    ) -> None:
-        """Observe every started child together until each has a descriptor.
-
-        A child's failure, or the shared wait window closing, stops the
-        unfinished children and raises Stage12ExecutionError.
-        """
-        with self.span(Stage.STAGE12_CHILD_WAIT):
-            self._observe_children(calls, descriptors)
-
-    def _observe_children(
-        self,
-        calls: dict[str, ChildCall],
-        descriptors: dict[str, SimulationArtifactDescriptor],
-    ) -> None:
-        """Probe every unfinished child, without blocking, until each finishes.
-
-        Between passes the coordinator sleeps, backing off while no child
-        finishes, and never past the shared wait window.
-        """
-        wait_stage_name = self.stage_plan.name(Stage.STAGE12_CHILD_WAIT)
-        timeout_seconds = self.dependencies.wait_timeout_seconds
-        pending = set(calls)
-        poll_interval = SIMULATION_POLL_INITIAL_SECONDS
-
-        while pending:
-            progress_made = False
-            for role in sorted(pending):
-                call = calls[role]
-                try:
-                    # The probe records the child's role, so a failure names it.
-                    with self.progress.stage(wait_stage_name, role=role):
-                        result = call.get(timeout=0)
-                        descriptor = SimulationArtifactDescriptor.model_validate(result)
-                except TimeoutError:
-                    continue
-                except Exception as error:  # noqa: BLE001  # a child call's failure can be any exception type; it is recorded and stops the other child
-                    detail = child_failure_detail(
-                        error=error,
-                        simulation=self.simulations[role],
-                        store=self.persistence,
-                        runtime=self.runtime,
-                        progress=self.progress,
-                    )
-                    cancel_pending_simulations(
-                        calls=calls,
-                        simulations=self.simulations,
-                        roles=pending - {role},
-                        store=self.persistence,
-                        detail=cancellation(f"the {role} simulation failed"),
-                    )
-                    raise Stage12ExecutionError(detail) from None
-                descriptors[role] = descriptor
-                pending.remove(role)
-                progress_made = True
-
-            if not pending:
-                return
-            remaining_seconds = self.child_wait_deadline - self.dependencies.monotonic()
-            if remaining_seconds <= 0:
-                detail = Stage12FailureDetail(
-                    error_code="simulation_wait_timeout",
-                    error_summary=(
-                        "Stage 12 simulations did not finish within "
-                        f"{timeout_seconds:g} seconds of the report coordinator "
-                        "starting."
-                    ),
-                )
-                wait_timeout = Stage12ExecutionError(detail)
-                report_original_failure(
-                    wait_timeout,
-                    runtime=self.runtime,
-                    failure_scope="child_wait_timeout",
-                )
-                cancel_pending_simulations(
-                    calls=calls,
-                    simulations=self.simulations,
-                    roles=pending,
-                    store=self.persistence,
-                    detail=cancellation(
-                        f"the {timeout_seconds:g}-second wait window closed"
-                    ),
-                )
-                raise wait_timeout
-            # Never sleep past the deadline, so the window closes on time.
-            self.dependencies.sleep(min(poll_interval, remaining_seconds))
-            poll_interval = (
-                SIMULATION_POLL_INITIAL_SECONDS
-                if progress_made
-                else _next_poll_interval(poll_interval)
-            )
-
     def _read_retained_outputs(
         self,
         output_plan: Stage12OutputPlan,
@@ -541,36 +450,56 @@ class ReportCoordination:
         RetainedSimulationOutput,
         UKLocalAuthorityMetadata | None,
     ]:
-        """Read, digest-check and validate both children's retained artifacts."""
+        """Read, digest-check and validate the baseline and reform outputs.
+
+        A worker's artifact is read and decoded here; a reused output was
+        read, checked and decoded while the report was prepared.
+        """
         validate_aligned_outputs(self.report, output_plan, baseline, reform)
         with self.span(Stage.STAGE12_ARTIFACT_READ):
-            baseline_payload = self.artifact_storage.read(baseline.artifact.uri)
-            reform_payload = self.artifact_storage.read(reform.artifact.uri)
-        _require_artifact_digest(
-            baseline_payload,
-            baseline.artifact.content_sha256,
-            mismatch_message="baseline artifact digest mismatch",
-        )
-        _require_artifact_digest(
-            reform_payload,
-            reform.artifact.content_sha256,
-            mismatch_message="reform artifact digest mismatch",
-        )
-        baseline_frames = deserialize_simulation_frames(baseline_payload)
-        reform_frames = deserialize_simulation_frames(reform_payload)
+            payloads = {
+                descriptor.role.value: self.artifact_storage.read(
+                    descriptor.artifact.uri
+                )
+                for descriptor in (baseline, reform)
+                if descriptor.role.value not in self.reused
+            }
+        baseline_output = self._decoded_output(baseline, payloads)
+        reform_output = self._decoded_output(reform, payloads)
         uk_local_authority_metadata = validate_uk_local_authority_metadata(
             self.report.baseline.geography.country,
-            deserialize_uk_local_authority_metadata(baseline_payload),
-            deserialize_uk_local_authority_metadata(reform_payload),
+            baseline_output.uk_local_authority_metadata,
+            reform_output.uk_local_authority_metadata,
             region_code=self.report.baseline.geography.region,
         )
-        validate_output_frames(baseline_frames, output_plan)
-        validate_output_frames(reform_frames, output_plan)
+        validate_output_frames(baseline_output.frames, output_plan)
+        validate_output_frames(reform_output.frames, output_plan)
         return (
-            RetainedSimulationOutput(baseline_frames, baseline),
-            RetainedSimulationOutput(reform_frames, reform),
+            RetainedSimulationOutput(baseline_output.frames, baseline),
+            RetainedSimulationOutput(reform_output.frames, reform),
             uk_local_authority_metadata,
         )
+
+    def _decoded_output(
+        self,
+        descriptor: SimulationArtifactDescriptor,
+        payloads: Mapping[str, bytes],
+    ) -> DecodedSimulationOutput:
+        """Return a reused output as decoded, or digest-check and decode a worker's.
+
+        Raises ValueError when the bytes a worker's artifact holds differ from
+        its digest.
+        """
+        reused = self.reused.get(descriptor.role.value)
+        if reused is not None:
+            return reused.decoded
+        payload = payloads[descriptor.role.value]
+        _require_artifact_digest(
+            payload,
+            descriptor.artifact.content_sha256,
+            mismatch_message=f"{descriptor.role.value} artifact digest mismatch",
+        )
+        return decode_simulation_output(payload)
 
     def _aggregate_and_complete(
         self,
@@ -659,13 +588,17 @@ class ReportCoordination:
             )
 
     def reconcile_simulation_runs(self) -> None:
-        """Give each simulation run of the report its child record's outcome."""
+        """Give each simulation run of the report its child record's outcome.
+
+        A reused run already succeeded, and nothing writes to it.
+        """
         if not isinstance(self.persistence, SimulationRunRecordingStore):
             return
         for simulation in (self.report.baseline, self.report.reform):
-            self.persistence.reconcile_simulation_run(
-                simulation.simulation_execution_id
-            )
+            if simulation.role.value not in self.reused:
+                self.persistence.reconcile_simulation_run(
+                    simulation.simulation_execution_id
+                )
 
     def fail_running_children(self, detail: Stage12FailureDetail) -> None:
         """Fail every child record of a report run that is still running.

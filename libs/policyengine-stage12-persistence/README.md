@@ -15,12 +15,14 @@ revisions and live schema. This package never changes a schema.
   the v2 household functions write a household job's status and result
   document, for a call that names the job; and the scheduled stuck-run sweep
   fails the runs and household jobs nothing will finish, as the same role.
-  The mappings declare only the columns those statements read or write, and
-  each `UPDATE` sets only columns the role may update. Every status write is
-  one `UPDATE` conditional on the row's status and, for a claim, completion
-  or failure by a call, on its recorded Modal call; a report run's completion
-  sets its own result columns and inserts its result rows in the same
-  transaction.
+  The coordinator also reads a simulation run's status, year, versions,
+  dataset, region and output file, so a report run can use a run that
+  already succeeded instead of calculating it again. The mappings declare
+  only the columns those statements read or write, and each `UPDATE` sets
+  only columns the role may update. Every status write is one `UPDATE`
+  conditional on the row's status and, for a claim, completion or failure by
+  a call, on its recorded Modal call; a report run's completion sets its own
+  result columns and inserts its result rows in the same transaction.
 
 ## Tests
 
