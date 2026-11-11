@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -300,7 +302,7 @@ async def _read_job_with_replies(
 
 @pytest.mark.asyncio
 async def test_a_read_modal_answers_for_a_stopped_gateway_is_sent_again():
-    """Issue #4216: Modal preempted the gateway during a job poll.
+    """PolicyEngine/policyengine-api#4216: Modal preempted the gateway in a job poll.
 
     Another gateway container answers the same read, and that answer is
     relayed.
@@ -402,6 +404,68 @@ async def test_no_attempt_of_an_interrupted_read_starts_after_its_window():
     assert interrupted.value.interrupted_attempts == 2
     assert len(gateway_requests) == 2
     assert waits.seconds == [0.5]
+
+
+@pytest.mark.asyncio
+async def test_a_read_sent_again_ends_within_the_gateway_read_timeout():
+    """A read sent again never takes longer than the gateway read timeout.
+
+    The first attempt here takes 4.4 seconds before Modal answers, so the
+    second starts 4.9 seconds into the read and may take only the 0.3 seconds
+    left of a 5.2-second timeout, though the gateway would take 5 seconds.
+    """
+    elapsed_seconds = 0.0
+    gateway_attempts = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal elapsed_seconds, gateway_attempts
+        if request.url.path == "/oauth/token":
+            return httpx.Response(
+                200, json={"access_token": "service-token", "expires_in": 3600}
+            )
+        gateway_attempts += 1
+        if gateway_attempts == 1:
+            elapsed_seconds += 4.4
+            return httpx.Response(500, content=MODAL_STOPPED_CONTAINER_BODY)
+        await asyncio.sleep(5)
+        return httpx.Response(202, content=RUNNING_JOB_REPLY.content)
+
+    async def sleep(seconds: float) -> None:
+        nonlocal elapsed_seconds
+        elapsed_seconds += seconds
+
+    backend = OldGatewayBackend(
+        make_settings(request_timeout_seconds=5.2),
+        transport=httpx.MockTransport(handler),
+        interrupted_read_retry=InterruptedReadRetry(
+            sleep=sleep, clock=lambda: elapsed_seconds
+        ),
+    )
+    await backend.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(BackendTimeoutError) as timed_out:
+            await backend.request("GET", "/jobs/fc-123")
+    finally:
+        await backend.close()
+
+    assert time.monotonic() - started < 2
+    assert timed_out.value.interrupted_attempts == 1
+    assert gateway_attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_an_interrupted_read_waits_with_asyncio_sleep_by_default():
+    gateway_requests: list[httpx.Request] = []
+
+    result = await _read_job_with_replies(
+        [MODAL_STOPPED_CONTAINER_REPLY, RUNNING_JOB_REPLY],
+        gateway_requests=gateway_requests,
+        interrupted_read_retry=InterruptedReadRetry(waits_seconds=(0.01,)),
+    )
+
+    assert result.status_code == 202
+    assert len(gateway_requests) == 2
 
 
 @pytest.mark.asyncio

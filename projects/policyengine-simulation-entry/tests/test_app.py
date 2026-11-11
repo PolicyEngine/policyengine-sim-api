@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, override
 from unittest.mock import Mock
 from uuid import UUID
 
+import httpx
 import pytest
 from conftest import (
     MODAL_STOPPED_CONTAINER_REPLY,
@@ -30,6 +31,7 @@ from policyengine_simulation_entry.backend import (
     BackendResponse,
     BackendTimeoutError,
     BackendUnavailableError,
+    InterruptedReadRetry,
     OldGatewayBackend,
 )
 from policyengine_simulation_entry.stage12_backend import (
@@ -45,7 +47,6 @@ from stage12_fixtures import (
 )
 
 if TYPE_CHECKING:
-    import httpx
     from policyengine_simulation_contract.json_types import JsonObject
 
 
@@ -1119,10 +1120,10 @@ def test_upstream_error_status_and_body_are_preserved(client, backend, status_co
 
 
 def _app_with_gateway_replies(
-    replies: list[GatewayReply],
+    replies: list[GatewayReply | Exception],
     *,
     gateway_requests: list[httpx.Request] | None = None,
-    waits: RecordedWaits | None = None,
+    interrupted_read_retry: InterruptedReadRetry | None = None,
 ):
     """Build the app on an old-gateway backend whose gateway gives ``replies``."""
     settings = make_settings()
@@ -1133,7 +1134,7 @@ def _app_with_gateway_replies(
             transport=gateway_transport_replying_in_turn(
                 replies, gateway_requests=gateway_requests
             ),
-            interrupted_read_retry=(waits or RecordedWaits()).retry(),
+            interrupted_read_retry=interrupted_read_retry or RecordedWaits().retry(),
         ),
         auth_dependency=lambda: None,
     )
@@ -1170,7 +1171,7 @@ STATUS_READS = pytest.mark.parametrize(
 def test_a_status_poll_modal_answers_once_for_a_stopped_gateway_gets_the_next_answer(
     capsys, path, route, identifier_key, identifier
 ):
-    """Issue #4216: Modal preempted the gateway while it answered a job poll.
+    """PolicyEngine/policyengine-api#4216: Modal preempted the gateway in a job poll.
 
     The entry reads the status again and relays that answer, so the request's
     record is not an ERROR. A WARNING event still counts the preemption.
@@ -1221,7 +1222,9 @@ def test_a_status_poll_modal_answers_for_a_stopped_gateway_is_retryable(
     checks' pollers wait on.
     """
     waits = RecordedWaits()
-    app = _app_with_gateway_replies([MODAL_STOPPED_CONTAINER_REPLY], waits=waits)
+    app = _app_with_gateway_replies(
+        [MODAL_STOPPED_CONTAINER_REPLY], interrupted_read_retry=waits.retry()
+    )
 
     from fastapi.testclient import TestClient
 
@@ -1243,6 +1246,62 @@ def test_a_status_poll_modal_answers_for_a_stopped_gateway_is_retryable(
     assert retried["attributes"]["attempts"] == 3
     assert retried["attributes"]["interrupted_attempts"] == 3
     assert retried["attributes"]["status_code"] == 503
+
+
+def test_a_status_poll_modal_answers_too_late_to_read_again_records_no_retry(capsys):
+    """A read not sent again, because no wait fits the window, isn't a retry."""
+    gateway_requests: list[httpx.Request] = []
+    app = _app_with_gateway_replies(
+        [MODAL_STOPPED_CONTAINER_REPLY, RUNNING_JOB_REPLY],
+        gateway_requests=gateway_requests,
+        interrupted_read_retry=InterruptedReadRetry(
+            window_seconds=0.1, sleep=RecordedWaits().sleep
+        ),
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
+        result = client.get("/jobs/fc-123")
+
+    assert result.status_code == 503
+    assert len(gateway_requests) == 1
+    records = _records(capsys.readouterr().out)
+    _record_named(records, "simulation_entry_backend_interrupted")
+    assert not [
+        record
+        for record in records
+        if record.get("event.name") == "simulation_entry_backend_read_retried"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("failure", "status_code"),
+    [
+        (httpx.ReadTimeout("gateway read"), 504),
+        (httpx.ConnectError("gateway connection"), 503),
+    ],
+    ids=["timeout", "connection-failure"],
+)
+def test_a_status_poll_that_fails_after_modal_answered_records_the_retry(
+    capsys, failure, status_code
+):
+    app = _app_with_gateway_replies([MODAL_STOPPED_CONTAINER_REPLY, failure])
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
+        result = client.get("/jobs/fc-123")
+
+    assert result.status_code == status_code
+    retried = _record_named(
+        _records(capsys.readouterr().out), "simulation_entry_backend_read_retried"
+    )
+    assert retried["severity"] == "WARNING"
+    assert retried["attributes"]["job_id"] == "fc-123"
+    assert retried["attributes"]["attempts"] == 2
+    assert retried["attributes"]["interrupted_attempts"] == 1
+    assert retried["attributes"]["status_code"] == status_code
 
 
 def test_a_failed_job_poll_keeps_the_gateways_500(capsys):

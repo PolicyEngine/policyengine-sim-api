@@ -392,13 +392,15 @@ class EntryRuntime:
         identifiers: RequestIdentifiers,
         read: _ReadAttempts,
     ) -> None:
-        """Record, at WARNING, a read Modal answered for a stopped gateway container.
+        """Record, at WARNING, a read the backend sent again.
 
-        Nothing is recorded when Modal answered no attempt. The event keeps the
-        rate of gateway preemptions visible once a later attempt's answer is
-        relayed and the request itself is no longer recorded as an error.
+        The backend sends a read again when Modal answers it for a stopped
+        gateway container. Nothing is recorded for a read sent once. The event
+        keeps the rate of gateway preemptions visible once a later attempt's
+        answer is relayed and the request itself is no longer recorded as an
+        error.
         """
-        if not read.interrupted_attempts:
+        if read.attempts <= 1:
             return
         self.runtime.event(
             "simulation_entry_backend_read_retried",

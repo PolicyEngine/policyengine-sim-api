@@ -82,9 +82,10 @@ class InterruptedReadRetry:
     container stops mid-request, as when Modal preempts it. Another gateway
     container, or the one Modal starts in its place, can answer the same read,
     so the read is sent again after each wait in ``waits_seconds``. No attempt
-    starts more than ``window_seconds`` after the read began, so the waits stay
-    far below the entry's 25-second gateway read timeout and the Public API's
-    30-second timeout for its calls to the entry.
+    starts more than ``window_seconds`` after the read began, and a read sent
+    again ends within the backend's gateway read timeout (25 seconds by
+    default) of when it began, as an uninterrupted read does. That keeps it
+    below the Public API's 30-second timeout for its calls to the entry.
     """
 
     waits_seconds: tuple[float, ...] = (0.5, 1.0)
@@ -324,24 +325,39 @@ class OldGatewayBackend:
         When Modal answers a GET with its own 500 because the gateway's container
         stopped, the gateway never read the job, so the GET is sent again as
         ``interrupted_read_retry`` allows, and the first answer from the gateway
-        itself is returned. Raise BackendInterruptedError when Modal answers every
-        attempt. A POST's 500 is returned as it came, since the gateway may have
-        started the job. The reply, or the error that ends the request, records
-        how many attempts Modal answered.
+        itself is returned. An attempt sent again gets only what is left of the
+        gateway read timeout, counted from when the read began, and raises
+        BackendTimeoutError when that runs out. Raise BackendInterruptedError
+        when Modal answers every attempt. A POST's 500 is returned as it came,
+        since the gateway may have started the job. The reply, or the error that
+        ends the request, records how many attempts Modal answered.
         """
         method = method.upper()
         read_retry = self.interrupted_read_retry
         started = read_retry.clock()
         interrupted_attempts = 0
         while True:
+            # The first attempt keeps the client's own timeouts; an attempt
+            # sent again gets only what is left of the read timeout.
+            time_left = (
+                started + self.settings.request_timeout_seconds - read_retry.clock()
+                if interrupted_attempts
+                else None
+            )
             try:
-                response = await self._send(
-                    method,
-                    path,
-                    json_body=json_body,
-                    request_id=request_id,
-                    observability_id=observability_id,
-                )
+                async with asyncio.timeout(time_left):
+                    response = await self._send(
+                        method,
+                        path,
+                        json_body=json_body,
+                        request_id=request_id,
+                        observability_id=observability_id,
+                    )
+            except TimeoutError as exc:
+                msg = "Old gateway timed out."
+                timed_out = BackendTimeoutError(msg)
+                timed_out.interrupted_attempts = interrupted_attempts
+                raise timed_out from exc
             except (BackendUnavailableError, BackendTimeoutError) as error:
                 error.interrupted_attempts = interrupted_attempts
                 raise
