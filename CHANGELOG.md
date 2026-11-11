@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.9.0] - 2026-11-10
+
+### Added
+
+- Added `calculate_household_us` and `calculate_household_uk` to the v2 Modal application. Each call calculates one household, with optional axes, for one year under one policy, the way the Public API calculates households, in an image without datasets; a baseline and its reform are two calls. Given a household job's ID, a function claims that job under its Modal call ID and records its result, or its failure document with a one-line summary, as the Modal worker role, whose database secret is the functions' only secret; a call that names no job touches no database. The stuck-run sweep also fails household jobs nothing will finish. Version manifest schema version 2 records each country's capabilities, and the Simulation Entrypoint's comparison runs accept only economy-capable countries. Nothing calls the household functions yet. The pre-merge Modal image check now builds every v2 image.
+
+
 ## [0.8.4] - 2026-11-10
 
 ### Changed

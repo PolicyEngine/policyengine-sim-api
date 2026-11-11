@@ -28,8 +28,12 @@ in the project dependencies and `modal-simulation-image`, then run `uv lock`.
 The automated updater changes only those wrapper requirements; it reads the
 wrapper's release manifest to verify and report the selected component and data
 versions. Other image dependencies belong in `modal-simulation-image`. PRs
-touching image inputs run an in-image import smoke (`src/modal/smoke_app.py` via
-`.github/workflows/pr-image-smoke.yml`). Note that any change to the
+touching image inputs run in-image import smokes through
+`.github/workflows/pr-image-smoke.yml`: `src/modal/smoke_app.py` for the v1
+worker image, and `src/modal/v2_image_smoke.py` for every v2 image (the report
+coordinator, the country simulation workers, the US one without its Stage 12
+cache layer, and the household functions, where it also calculates a
+household). Note that any change to the
 group or lock invalidates the image layer cache, including the artifact
 fetch layer below.
 
@@ -149,8 +153,9 @@ with its own mechanism, separate from the v1 routing jobs above:
    fails or the run is cancelled, writes back the manifest it replaced, only
    while the stored manifest is still what it wrote (`--restore-plan`).
    In a deployment from `main`, the same job then deploys the unversioned
-   stuck-run sweep (`src/modal/run_sweep_app.py`), whose schedule starts as
-   soon as it deploys; a failed sweep deploy, including a failed build of its
+   stuck-run sweep (`src/modal/run_sweep_app.py`), which fails the report
+   runs, simulation runs and household jobs nothing will finish, and whose
+   schedule starts as soon as it deploys; a failed sweep deploy, including a failed build of its
    image, fails the job and so puts the previous default back. A deployment
    from another branch leaves the sweep as it is.
    `deployment_ready` requires this job to succeed whenever Stage 12 was

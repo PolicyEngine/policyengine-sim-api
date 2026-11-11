@@ -44,6 +44,8 @@ SEEDED_TABLES = (
     "congressional_district_impacts",
     "constituency_impacts",
     "local_authority_impacts",
+    "households",
+    "household_jobs",
 )
 NOW = datetime(2026, 11, 4, tzinfo=UTC)
 VERSIONS = {"country_package_version": "1.0.0", "policyengine_version": "6.12.0"}
@@ -63,6 +65,15 @@ class SeededReportRun:
 
     run_ids: ReportRunIds
     simulation_ids: tuple[UUID, UUID]
+    model_id: UUID
+
+
+@dataclass(frozen=True)
+class SeededHouseholdJob:
+    """A pending household job and the household it calculates."""
+
+    job_id: UUID
+    household_id: UUID
     model_id: UUID
 
 
@@ -142,6 +153,62 @@ class ReportRunSeeder:
         return SeededReportRun(
             run_ids=run_ids, simulation_ids=simulation_ids, model_id=model_id
         )
+
+    def seed_household_job(self) -> SeededHouseholdJob:
+        """Insert a pending household job with no Modal call, as the service does."""
+        model_id, version_id, dataset_id = uuid4(), uuid4(), uuid4()
+        household_id, job_id = uuid4(), uuid4()
+        with self.engine.begin() as connection:
+            self._insert_catalog(connection, model_id, version_id, dataset_id)
+            connection.execute(
+                insert(self.table("households")).values(
+                    id=household_id,
+                    household_data={"people": {"you": {"age": {"2026": 40}}}},
+                    country_id="us",
+                    default_year=2026,
+                    canonicalization_version=1,
+                    # Unique per household: households are deduplicated by it.
+                    content_hash=household_id.hex * 2,
+                )
+            )
+            connection.execute(
+                insert(self.table("household_jobs")).values(
+                    id=job_id,
+                    country="us",
+                    household_id=household_id,
+                    year=2026,
+                    request_data={"household_id": str(household_id)},
+                    tax_benefit_model_version_id=version_id,
+                    status="pending",
+                    **VERSIONS,
+                )
+            )
+        return SeededHouseholdJob(
+            job_id=job_id, household_id=household_id, model_id=model_id
+        )
+
+    def remove_household_job(self, seeded: SeededHouseholdJob) -> None:
+        """Delete the seeded job, its household and its catalog rows."""
+        jobs = self.table("household_jobs")
+        households = self.table("households")
+        datasets = self.table("datasets")
+        versions = self.table("tax_benefit_model_versions")
+        models = self.table("tax_benefit_models")
+        version_ids = select(versions.c.id).where(
+            versions.c.model_id == seeded.model_id
+        )
+        with self.engine.begin() as connection:
+            connection.execute(delete(jobs).where(jobs.c.id == seeded.job_id))
+            connection.execute(
+                delete(households).where(households.c.id == seeded.household_id)
+            )
+            connection.execute(
+                delete(datasets).where(
+                    datasets.c.tax_benefit_model_version_id.in_(version_ids)
+                )
+            )
+            # Deleting the model removes its versions.
+            connection.execute(delete(models).where(models.c.id == seeded.model_id))
 
     def _insert_catalog(
         self, connection: Connection, model_id: UUID, version_id: UUID, dataset_id: UUID

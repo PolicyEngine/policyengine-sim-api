@@ -140,27 +140,71 @@ def test_the_sweep_lists_runs_older_than_its_minimum_age() -> None:
         minimum_age=timedelta(minutes=15),
     )
 
-    assert store.cutoffs == [NOW - timedelta(minutes=15)] * 2
+    # Report runs, simulation runs and household jobs.
+    assert store.cutoffs == [NOW - timedelta(minutes=15)] * 3
 
 
 def test_report_runs_are_swept_before_simulation_runs_are_listed() -> None:
     # A simulation run is listed only once no report run naming it is
     # running, so failing a dead coordinator's report run first lets the same
-    # sweep reach its children.
+    # sweep reach its children. Household jobs, which no run names, follow.
     report_run = _run("fc-coordinator", RunKind.REPORT_RUN)
     simulation_run = _run("fc-worker")
-    store = FakeSweepStore([simulation_run, report_run])
+    household_job = _run("fc-household", RunKind.HOUSEHOLD_JOB)
+    store = FakeSweepStore([household_job, simulation_run, report_run])
 
     sweep_stuck_runs(store, call_state=lambda _: CallState.ENDED, now=NOW)
 
     assert store.events == [
         "list-expired:report_run",
         "list-expired:simulation_run",
+        "list-expired:household_job",
         "list:report_run",
         "fail:report_run",
         "list:simulation_run",
         "fail:simulation_run",
+        "list:household_job",
+        "fail:household_job",
     ]
+
+
+def test_household_jobs_are_judged_as_runs_are() -> None:
+    # The simulation service stopped before starting the call.
+    never_started = _run(None, RunKind.HOUSEHOLD_JOB, RunStatus.PENDING)
+    # It started the call and recorded it, but the call ended unclaimed.
+    ended_unclaimed = _run("fc-ended-pending", RunKind.HOUSEHOLD_JOB, RunStatus.PENDING)
+    # The function ran out of memory after claiming the job.
+    ended_running = _run("fc-ended", RunKind.HOUSEHOLD_JOB)
+    still_running = _run("fc-running", RunKind.HOUSEHOLD_JOB)
+    # Created more than a day ago, whatever Modal reports.
+    expired = _run("fc-old", RunKind.HOUSEHOLD_JOB)
+    store = FakeSweepStore(
+        [never_started, ended_unclaimed, ended_running, still_running],
+        expired=[expired],
+    )
+    states = {
+        "fc-ended-pending": CallState.ENDED,
+        "fc-ended": CallState.ENDED,
+        "fc-running": CallState.RUNNING,
+    }
+
+    summary = sweep_stuck_runs(store, call_state=states.__getitem__, now=NOW)
+
+    failed = {run: message for run, message, _ in store.failed}
+    assert set(failed) == {expired, never_started, ended_unclaimed, ended_running}
+    assert failed[expired].startswith("run_exceeded_maximum_age: ")
+    assert failed[never_started].startswith("run_not_started: ")
+    assert failed[ended_unclaimed].startswith("modal_call_ended: ")
+    assert failed[ended_running].startswith("modal_call_ended: ")
+    assert summary == SweepSummary(
+        checked=4,
+        failed=2,
+        running=1,
+        unknown=0,
+        left=0,
+        failed_for_age=1,
+        failed_without_call=1,
+    )
 
 
 def test_a_call_running_several_runs_is_asked_once() -> None:
@@ -368,15 +412,16 @@ def test_the_age_limit_is_checked_first_with_its_own_cutoff() -> None:
         maximum_age=timedelta(hours=24),
     )
 
-    assert store.expired_cutoffs == [NOW - timedelta(hours=24)] * 2
-    assert store.cutoffs == [NOW - timedelta(minutes=10)] * 2
-    # Both kinds' age checks come before any lookup.
+    assert store.expired_cutoffs == [NOW - timedelta(hours=24)] * 3
+    assert store.cutoffs == [NOW - timedelta(minutes=10)] * 3
+    # Every kind's age check comes before any lookup.
     assert asked == [
         (
             "fc-1",
             [
                 "list-expired:report_run",
                 "list-expired:simulation_run",
+                "list-expired:household_job",
                 "list:report_run",
             ],
         )
