@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
 
 if TYPE_CHECKING:
-    from sqlalchemy import Engine
+    from collections.abc import Iterator
+
+    from sqlalchemy import Connection, Engine
 
 CONNECT_TIMEOUT_SECONDS = 5
 # Each Cloud Run instance serves up to 80 concurrent requests. Each database
@@ -58,3 +61,28 @@ def create_simulation_engine(database_url: str) -> Engine:
             "prepare_threshold": None,
         },
     )
+
+
+@contextmanager
+def bounded_transaction(
+    engine: Engine, *, statement_timeout_milliseconds: int
+) -> Iterator[Connection]:
+    """Yield a connection in a transaction whose statements the database bounds.
+
+    The transaction commits when the block ends and rolls back when it
+    raises. ``statement_timeout`` is set with ``set_config`` local to the
+    transaction, so it works through Supabase's transaction pooler and never
+    stays on the pooled connection; a statement that runs longer raises the
+    database's cancellation as an OperationalError.
+    """
+    with engine.begin() as connection:
+        connection.execute(
+            select(
+                func.set_config(
+                    "statement_timeout",
+                    str(statement_timeout_milliseconds),
+                    True,  # noqa: FBT003  # set_config's is_local argument
+                )
+            )
+        )
+        yield connection

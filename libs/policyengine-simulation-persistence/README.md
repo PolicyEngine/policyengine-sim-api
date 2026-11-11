@@ -47,6 +47,73 @@ household report with only a baseline). A report with a `budget_window_size`
 is calculated as a `budget_window_runs` row with one report run per year; each
 year's report run names that row and its year, and belongs to the same report.
 
+## Input tables
+
+`input_tables.py` holds read-only models of the Public API's tables a
+calculation is read from: `households`, `policies`, `parameters`,
+`parameter_values`, `tax_benefit_models` and `tax_benefit_model_versions`, in
+`input_metadata`. The service only reads them, with `SELECT`. Each names only
+the columns the service reads, so they are not models of the whole tables,
+and they are kept apart from the models of the tables the service writes
+(`service_metadata`) and from the tables those name by `id` alone
+(`referenced_metadata`).
+
+## Household jobs
+
+`household_job_records.py` holds the simulation service's reads and writes
+for a household calculation, one `household_jobs` row. The service finds the
+catalog version by country and .py version (`read_catalog_version_id`) and
+the stored household in its country (`read_stored_household`), creates the
+job `pending` with no Modal call ID and no dynamic (`insert_household_job`),
+starts the household function's call, then records the call's ID
+(`record_household_call`), or fails the job at once when Modal refuses the
+call (`fail_unstarted_household_job`). Both updates apply only while the job
+is still `pending` with no call ID, and set `updated_at` themselves. A job
+naming a household, policy or catalog version that does not exist is refused
+by its foreign key with SQLSTATE `23503`; `HouseholdJobReferenceError` names
+the column. Each function takes a connection, so the caller chooses the
+transactions. `HouseholdJobStore` runs them as the Simulation Entrypoint
+does, each step in a transaction of its own: `read_inputs` reads the catalog
+version, the household and the policy's reform values together, and
+`create_job`, `record_call`, `fail_unstarted` and `read` each write or read
+the job. `HouseholdJobStore.from_engine` opens each with `bounded_transaction`,
+which commits when its block ends and sets `statement_timeout` with
+`set_config`, local to the transaction, so the database ends a statement that
+runs too long and the limit never stays on a pooled connection.
+
+## Reading a policy
+
+`read_policy_reform` (`policy_reform.py`) reads a stored policy as the reform
+values a calculation applies, `{parameter name: {period: value}}`: the shape
+of the Public API's policy JSON, which the household functions' contract and
+the economy requests take. The Public API stores a policy's values against
+the parameters of the catalog version it was saved on, so a calculation on
+any catalog version applies them by name; a parameter the calculation's
+version lacks raises `MissingPolicyParametersError`, naming each one, and a
+policy the country doesn't have raises `UnknownPolicyError`.
+
+Each period is a range, `YYYY-MM-DD.YYYY-MM-DD`, with the stored dates read
+in UTC. A value with no end date follows .py's own rule
+(`reform_dict_from_parameter_values`): it stops the day before the same
+parameter's next later value starts, so once a later bounded value ends
+current law applies, and otherwise runs to 31 December 2200, the latest year
+a household job or simulation run can be for, where .py stops at 2100. A
+start date alone would not do for that last value: policyengine-core reads it
+as "from that day on", but policyengine-uk's reform dictionary reads it as
+that one day. The executor's
+`test_reform_periods_apply_in_2200_only_through_a_stop_in_2200` shows how
+both countries' household functions apply each form in 2200, and its
+`test_py_reform_dicts.py` pins .py's own periods for the cases the reader's
+tests check. The reader gives .py's periods, in .py's order, for the values
+in start order, with one difference besides 2200: it leaves out an
+open-ended value whose range would end before it starts (one followed the
+same day by a later value, or one starting after 2200). .py gives such a
+value a range that ends before it starts too. policyengine-core applies that
+range on no day, but policyengine-uk refuses it (its `interval_bounds`
+raises "ends before it starts"), so a UK calculation given .py's dict fails
+where one given the reader's runs. Bounded values starting the same day are
+all kept, in start order, as .py keeps them.
+
 ## Checking the models against the Public API
 
 Rule `sim.persistence.models-match-public-api`. The PR workflow's
@@ -60,8 +127,12 @@ tables their keys name (`referenced_metadata`, by `id` alone), and compares
 the models' tables with the Public API's through PostgreSQL's catalog
 (`tests/schema_comparison.py`): every column's type, nullability and default,
 every constraint and index by name and definition, and every enum's values
-must match. `test_service_writes` creates a row in every modelled table as
-the service's role. Another test, outside the rule, requires the modelled
+must match. `test_the_input_models_match_the_public_api_columns` builds
+the read-only input models' tables in another disposable database and
+requires every column they name to exist in the Public API's table with the
+same type and nullability; their other columns, defaults, constraints and
+indexes are the Public API's alone. `test_service_writes` creates a row in every modelled
+table as the service's role. Another test, outside the rule, requires the modelled
 tables' foreign keys to the Public API's users, policies, dynamics,
 households, datasets, regions and model catalog tables to be exactly the 20
 in `tests/public_api_keys.py`, each by its own table, its name and the table

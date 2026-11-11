@@ -16,6 +16,7 @@ from schema_comparison import (
     describe_tables,
     foreign_key_targets,
     foreign_keys_to,
+    read_column_differences,
     schema_differences,
     schema_from_json,
     schema_to_json,
@@ -425,3 +426,74 @@ def test_a_description_round_trips_through_json(tmp_path) -> None:
     path.write_text(schema_to_json(described), encoding="utf-8")
 
     assert schema_from_json(path) == described
+
+
+def _households(**column_changes: ColumnShape) -> SchemaShape:
+    """Return a households table as the Public API builds it, changed as given."""
+    columns = {
+        "id": ColumnShape("uuid", nullable=False, default=None),
+        "created_at": ColumnShape(
+            "timestamp with time zone", nullable=False, default="now()"
+        ),
+        "household_data": ColumnShape("jsonb", nullable=False, default=None),
+        "default_year": ColumnShape("integer", nullable=True, default=None),
+        **column_changes,
+    }
+    return SchemaShape(
+        tables={
+            "households": TableShape(
+                columns=columns,
+                constraints={"pk_households": "PRIMARY KEY (id)"},
+                indexes={},
+            )
+        },
+        enums={},
+    )
+
+
+def test_input_models_may_leave_out_columns_defaults_and_constraints() -> None:
+    """A read-only model names only the columns the service reads."""
+    real = _households()
+    models = SchemaShape(
+        tables={
+            "households": TableShape(
+                columns={
+                    "id": ColumnShape("uuid", nullable=False, default=None),
+                    "default_year": ColumnShape("integer", nullable=True, default=None),
+                },
+                constraints={},
+                indexes={},
+            )
+        },
+        enums={},
+    )
+
+    assert read_column_differences(models, real) == []
+
+
+def test_input_models_differ_where_a_column_they_read_differs() -> None:
+    real = _households()
+    models = SchemaShape(
+        tables={
+            **_households(
+                default_year=ColumnShape("bigint", nullable=True, default=None),
+                household_data=ColumnShape("jsonb", nullable=True, default=None),
+                label=ColumnShape(
+                    "character varying(255)", nullable=True, default=None
+                ),
+            ).tables,
+            "parameters": TableShape(
+                columns={"id": ColumnShape("uuid", nullable=False, default=None)},
+                constraints={},
+                indexes={},
+            ),
+        },
+        enums={},
+    )
+
+    assert read_column_differences(models, real) == [
+        "households.household_data: the model allows null, the Public API's refuses it",
+        "households.default_year: the model is bigint, the Public API's is integer",
+        "households.label: the Public API's table has no such column",
+        "parameters: the Public API has no such table",
+    ]

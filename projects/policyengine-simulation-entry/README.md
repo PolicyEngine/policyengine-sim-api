@@ -40,6 +40,8 @@ Auth0 permission:
 | `GET /budget-window-jobs/{batch_job_id}` | `simulation:read` |
 | `POST /internal/stage12/reports` | `stage12:operate` |
 | `GET /internal/stage12/reports/{evaluation_id}` | `stage12:operate` |
+| `POST /household-calculations` | `simulation:submit` |
+| `GET /household-calculations/{household_job_id}` | `simulation:read` |
 
 `GET /health`, `GET /ready`, `GET /versions`, `GET /versions/{kind}` and
 `POST /ping` stay public. The entrypoint answers `GET /health` and `POST /ping`
@@ -66,3 +68,37 @@ Any other value stops the service from starting. When caller authentication is
 disabled (`SIMULATION_ENTRYPOINT_AUTH_REQUIRED=0`, which production refuses),
 there is no caller identity and every protected route is allowed. The Auth0
 setup required before enforcement is described in `DEPLOYMENT.md`.
+
+## Household calculations
+
+`POST /household-calculations` names a stored household, and optionally a
+stored policy, of the Public API: `country`, `household_id`, `policy_id`,
+`add_missing_variables`, `axes` (within the household contract's limits)
+and `spm` (SPM settings as an object; omit it to use the household's saved
+selection, since null is refused). The service reads the rows itself,
+calculates the household's `default_year` on the v2 version manifest's
+default worker, creates a `household_jobs` row and starts the household
+function's call with `spawn`, answering 202 with the job's `job_id` and
+`status`. Each submission creates a new job.
+`GET /household-calculations/{household_job_id}` returns the job's status,
+the household function's `result` document once it has one, and its
+`error_message`.
+
+A submission is refused before anything is written: with 400 and a `code`
+when the household, policy or catalog version for the default worker's .py
+version is missing, or the default worker has no household function for the
+country; with 422, one reason per field, when the stored household has no
+default year, the policy sets parameters that catalog version lacks, or the
+household contract refuses the stored data. A job naming a row deleted
+since the reads is refused by the database's foreign keys, also with 400.
+The routes answer 503 with `Retry-After` when the manifest or the database
+can't be read. When Modal refuses the call, or doesn't confirm it within ten
+seconds, the job is failed at once and the 503 (`modal_call_refused`) names
+it; a job the household function claimed meanwhile is answered with 202 as
+it stands, and a job whose state couldn't then be recorded or read with 202
+`pending`, to be read rather than submitted again (the stuck-run sweep fails
+it if no call ever starts). Every 500 of either route, from an unexpected
+failure or a request the service built and the household contract refuses,
+is the JSON error with code `internal_error`. `DEPLOYMENT.md` describes the deployment settings and the
+staging check.
+

@@ -97,6 +97,11 @@ class Settings:
     # API's tables. Empty outside deployed environments; nothing on the
     # old-gateway or Stage 12 paths reads it.
     simulation_database_url: str = ""
+    # The household routes' own v2 manifest settings, apart from the Stage 12
+    # ones: the Modal environment that holds the v2 workers and their
+    # manifest, and the manifest's name. Empty outside deployed environments.
+    v2_modal_environment: str = ""
+    v2_manifest_name: str = V2_VERSION_MANIFEST_NAME
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -148,6 +153,10 @@ class Settings:
             stage12_artifact_bucket=os.getenv("STAGE12_ARTIFACT_BUCKET", ""),
             stage12_retention_days=int(os.getenv("STAGE12_RETENTION_DAYS", "30")),
             simulation_database_url=os.getenv("SIMULATION_SERVICE_DATABASE_URL", ""),
+            v2_modal_environment=os.getenv("SIMULATION_V2_MODAL_ENVIRONMENT", ""),
+            v2_manifest_name=os.getenv(
+                "SIMULATION_V2_MANIFEST_NAME", V2_VERSION_MANIFEST_NAME
+            ),
         )
 
     @property
@@ -166,6 +175,11 @@ class Settings:
             )
         )
 
+    @property
+    def household_calculations_configured(self) -> bool:
+        """Whether the database and the v2 Modal environment are both set."""
+        return bool(self.simulation_database_url and self.v2_modal_environment)
+
     def validate(self) -> None:
         """Raise ConfigurationError unless the service can start safely.
 
@@ -177,6 +191,7 @@ class Settings:
         self._validate_old_gateway()
         self._validate_stage12()
         self.validate_simulation_database()
+        self._validate_v2_manifest()
 
     def _validate_caller_auth(self) -> None:
         """Require caller authentication in production, with an HTTPS issuer."""
@@ -274,6 +289,16 @@ class Settings:
         ):
             msg = "STAGE12_DATABASE_URL must use the canonical postgresql:// scheme."
             raise ConfigurationError(msg)
+
+    def _validate_v2_manifest(self) -> None:
+        """Keep the household routes' v2 manifest apart from v1 routing state."""
+        try:
+            assert_separate_manifest_names(
+                v1_name=V1_ROUTING_STATE_NAME,
+                v2_name=self.v2_manifest_name,
+            )
+        except ValueError as error:
+            raise ConfigurationError(str(error)) from error
 
     def validate_simulation_database(self) -> None:
         """Require a complete canonical URL for the service role, when set.

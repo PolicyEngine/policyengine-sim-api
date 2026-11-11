@@ -41,6 +41,7 @@ from policyengine_simulation_observability.identifiers import (
 from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
+from policyengine_simulation_persistence import HouseholdJobStore
 from starlette.datastructures import MutableHeaders
 
 from policyengine_simulation_entry.auth import (
@@ -63,6 +64,17 @@ from policyengine_simulation_entry.entry_runtime import (
     request_identifiers,
     route_template,
     set_observability_header,
+)
+from policyengine_simulation_entry.household_calculations import (
+    HouseholdCalculationService,
+)
+from policyengine_simulation_entry.household_routes import (
+    HouseholdCalculations,
+    add_household_calculation_routes,
+)
+from policyengine_simulation_entry.household_workers import (
+    ManifestHouseholdWorkers,
+    ModalHouseholdFunctionCaller,
 )
 from policyengine_simulation_entry.schemas import (
     SimulationEntrypointReadinessResponse,
@@ -96,6 +108,8 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS = 3.0
+# The database ends each statement of a household route that runs longer.
+HOUSEHOLD_STATEMENT_TIMEOUT_MILLISECONDS = 5000
 
 
 def _temporary_submission_payload(
@@ -469,6 +483,46 @@ def _register_simulation_routes(
         )
 
 
+def _register_household_calculation_routes(
+    app: FastAPI,
+    entry: EntryRuntime,
+    calculations: HouseholdCalculations | None,
+    *,
+    submitter: AuthorizationDependency,
+    reader: AuthorizationDependency,
+) -> None:
+    """Add the routes that submit household calculations and read their jobs."""
+    add_household_calculation_routes(
+        app, entry, calculations, submitter=submitter, reader=reader
+    )
+
+
+def household_calculations_for(
+    settings: Settings, database: SimulationDatabaseConnection | None
+) -> HouseholdCalculations | None:
+    """Build the household calculation service when the service is configured.
+
+    It needs the simulation database and the v2 Modal environment; without
+    them the household routes answer 503. Nothing is read from Modal until
+    the first submission.
+    """
+    if not settings.household_calculations_configured or not isinstance(
+        database, SimulationDatabase
+    ):
+        return None
+    return HouseholdCalculationService(
+        store=HouseholdJobStore.from_engine(
+            database.engine,
+            statement_timeout_milliseconds=HOUSEHOLD_STATEMENT_TIMEOUT_MILLISECONDS,
+        ),
+        workers=ManifestHouseholdWorkers.from_modal(
+            manifest_name=settings.v2_manifest_name,
+            environment=settings.v2_modal_environment,
+        ),
+        caller=ModalHouseholdFunctionCaller(settings.v2_modal_environment),
+    )
+
+
 def _register_service_routes(app: FastAPI, entry: EntryRuntime) -> None:
     """Add the public version, health, readiness and ping routes."""
     database_readiness = (
@@ -614,6 +668,13 @@ def create_app(
     _register_simulation_routes(
         app,
         entry,
+        submitter=simulation_submitter,
+        reader=simulation_reader,
+    )
+    _register_household_calculation_routes(
+        app,
+        entry,
+        household_calculations_for(runtime_settings, runtime_database),
         submitter=simulation_submitter,
         reader=simulation_reader,
     )

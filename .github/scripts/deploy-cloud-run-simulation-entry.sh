@@ -100,6 +100,8 @@ required_variables=(
   OLD_GATEWAY_AUTH_CLIENT_ID_VALUE
   OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME
   SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME
+  MODAL_TOKEN_ID_SECRET_NAME
+  MODAL_TOKEN_SECRET_SECRET_NAME
   OBSERVABILITY_SERVICE_NAMESPACE
   OBSERVABILITY_TRACE_PROJECT_ID
   OTEL_EXPORTER_OTLP_ENDPOINT
@@ -144,13 +146,17 @@ add_runtime_secret OLD_GATEWAY_AUTH_CLIENT_SECRET \
 # API's tables, on every deploy whatever the Stage 12 setting.
 add_runtime_secret SIMULATION_SERVICE_DATABASE_URL \
   "${SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME}"
+# The Modal token the household routes call the v2 workers' household
+# functions with, on every deploy whatever the Stage 12 setting. The Modal
+# client reads it from MODAL_TOKEN_ID and MODAL_TOKEN_SECRET, so the Stage 12
+# comparison path, in the same process, uses this mount too.
+add_runtime_secret MODAL_TOKEN_ID "${MODAL_TOKEN_ID_SECRET_NAME}"
+add_runtime_secret MODAL_TOKEN_SECRET "${MODAL_TOKEN_SECRET_SECRET_NAME}"
 
 if [[ "${DEPLOY_STAGE12_V2}" == "true" ]]; then
   stage12_variables=(
     STAGE12_ENABLED_VALUE
     STAGE12_ARTIFACT_BUCKET_VALUE
-    MODAL_TOKEN_ID_SECRET_NAME
-    MODAL_TOKEN_SECRET_SECRET_NAME
     STAGE12_DATABASE_URL_SECRET_NAME
   )
   for variable_name in "${stage12_variables[@]}"; do
@@ -162,8 +168,6 @@ if [[ "${DEPLOY_STAGE12_V2}" == "true" ]]; then
     || fail "STAGE12_ARTIFACT_BUCKET_VALUE is invalid"
   validate_secret_reference "${STAGE12_DATABASE_URL_SECRET_NAME}"
 
-  add_stage12_runtime_secret MODAL_TOKEN_ID "${MODAL_TOKEN_ID_SECRET_NAME}"
-  add_stage12_runtime_secret MODAL_TOKEN_SECRET "${MODAL_TOKEN_SECRET_SECRET_NAME}"
   add_stage12_runtime_secret STAGE12_DATABASE_URL "${STAGE12_DATABASE_URL_SECRET_NAME}"
 fi
 
@@ -189,6 +193,8 @@ jq -n '
     OTEL_METRICS_EXPORTER: "otlp",
     OTEL_TRACES_SAMPLER_ARG: "1.0",
     POLICYENGINE_OTEL_GOOGLE_AUDIENCE: env.POLICYENGINE_OTEL_GOOGLE_AUDIENCE,
+    SIMULATION_V2_MODAL_ENVIRONMENT: env.MODAL_ENVIRONMENT,
+    SIMULATION_V2_MANIFEST_NAME: "simulation-api-v2-version-manifest",
     STAGE12_ENABLED: (
       if env.DEPLOY_STAGE12_V2 == "true" then env.STAGE12_ENABLED_VALUE else "0" end
     )

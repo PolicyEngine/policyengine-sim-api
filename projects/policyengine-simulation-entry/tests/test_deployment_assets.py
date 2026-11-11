@@ -213,11 +213,12 @@ def _assert_beta_then_prod_release(
 
 def _assert_deployment_environment_settings(reusable_workflow: str) -> None:
     assert (
-        # Every job but stage12_v2_ready declares the release environment;
-        # the job that moves latest after the checks reads the prod
-        # environment's custom-hostname variable, and the job that moves the
-        # Stage 12 v2 default after them is the seventeenth.
-        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 17
+        # Every job but stage12_v2_ready declares the release environment.
+        # The job that moves latest after the checks reads the prod
+        # environment's custom-hostname variable, and the staging household
+        # check reads the beta variable SIMULATION_STAGING_HOUSEHOLD_ID and
+        # the environment's auth secrets.
+        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 18
     )
     assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow
