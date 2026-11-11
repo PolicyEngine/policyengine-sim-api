@@ -217,7 +217,8 @@ def _stack_frames(error: Exception, max_characters: int) -> tuple[str, int]:
     Each frame is ``file:line in function``, innermost first, from where the
     error was raised out to the route's handler. The outer frames that would
     pass ``max_characters`` are left out, so the observability runtime, which
-    cuts a longer string attribute at its end, keeps the innermost ones.
+    keeps only the start of a longer string attribute, keeps the innermost
+    ones.
     """
     frames = [
         f"{frame.filename}:{frame.lineno} in {frame.name}"

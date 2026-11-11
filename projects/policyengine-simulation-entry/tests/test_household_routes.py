@@ -506,7 +506,7 @@ NESTED_CALLS = 20
 def test_an_unexpected_failure_keeps_the_innermost_frames_that_fit_the_limit(
     client_for, capsys, monkeypatch
 ):
-    """The outer frames are left out, and counted, so the rest isn't cut off.
+    """The outer frames are left out, and counted, so the rest is kept whole.
 
     The limit comes from the runtime the service logs through.
     """
