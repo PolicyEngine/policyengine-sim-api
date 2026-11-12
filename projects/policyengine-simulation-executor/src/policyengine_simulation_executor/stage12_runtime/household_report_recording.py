@@ -314,33 +314,26 @@ class _ReportRunCall:
             return recorded.status
         return status
 
-    def fail_unfinished(
-        self, error: BaseException, *, claimed: UUID | None, unfinished: list[UUID]
-    ) -> None:
+    def fail_unfinished(self, error: BaseException, *, unfinished: list[UUID]) -> None:
         """Fail every run this call left unfinished, logging rather than raising.
 
-        The side it was calculating is failed under its call; a side it had
-        not claimed yet is failed while still active; then the report run.
+        Each of the report run's simulation runs this call hasn't finished is
+        failed while still active, whether this call holds it or its claim
+        rolled back: household simulation runs are never shared, so no other
+        call works on them. Then the report run is failed while this call
+        holds it.
         """
         summary = unexpected_failure_summary(error)
         for run_id in unfinished:
-            if run_id == claimed:
-                write = partial(
-                    self.writer.fail_household_simulation_run,
-                    run_id,
-                    modal_call_id=self.modal_call_id,
-                    error_message=summary,
-                    failed_at=datetime.now(UTC),
-                )
-            else:
-                write = partial(
+            persist_failure_record(
+                partial(
                     self.writer.fail_simulation_run,
                     run_id,
                     error_message=summary,
                     failed_at=datetime.now(UTC),
-                )
-            persist_failure_record(
-                write, runtime=self.runtime, failure_scope="household_simulation_run"
+                ),
+                runtime=self.runtime,
+                failure_scope="household_simulation_run",
             )
         persist_failure_record(
             partial(
@@ -396,11 +389,13 @@ def run_household_report(  # noqa: PLR0913  # the run, its payload and the call'
     each side's status, or, for a report run another call holds or one
     already finished, a summary of the report run without calculating.
     ``writer`` defaults to the store the Modal worker role's database URL
-    names. An error or Modal's cancellation, the claim's own included (it
-    may have committed before the error), fails the report run and every one
-    of its simulation runs, as the database names them, that the call left
-    unfinished, with a generic summary, then propagates; a pre-emption
-    doesn't, because Modal runs the call again under the same call ID.
+    names. An error or Modal's cancellation fails the report run, and each
+    of its simulation runs the call left unfinished, with a generic summary,
+    then propagates; a pre-emption doesn't, because Modal runs the call
+    again under the same call ID. The simulation runs are known once the
+    call has read them, so an error in the report run's claim (which may
+    have committed before the error) or in that read fails the report run
+    alone, and leaves its simulation runs to the stuck-run sweep.
     Raises RuntimeError, before any write, when ``modal_call_id`` is None.
     """
     if modal_call_id is None:
@@ -415,7 +410,6 @@ def run_household_report(  # noqa: PLR0913  # the run, its payload and the call'
     # The report run's simulation runs this call may still have to fail if
     # it stops, as the database names them.
     unfinished: list[UUID] = []
-    calculating: UUID | None = None
     try:
         claimed = call.writer.claim_report_run(
             report_run_id, modal_call_id=modal_call_id, claimed_at=datetime.now(UTC)
@@ -433,14 +427,13 @@ def run_household_report(  # noqa: PLR0913  # the run, its payload and the call'
         _require_named_runs(report_run_id, named, calculation)
         outcomes = []
         for side, request in sides:
-            calculating = request.calculation_id
             outcomes.append(call.side(side, request, calculate, unfinished))
         status = call.finish(outcomes)
     except KeyboardInterrupt:
         # Pre-emption: Modal runs the call again, and it resumes its claims.
         raise
     except BaseException as error:
-        call.fail_unfinished(error, claimed=calculating, unfinished=unfinished)
+        call.fail_unfinished(error, unfinished=unfinished)
         raise
     return {
         "report_run_id": str(report_run_id),

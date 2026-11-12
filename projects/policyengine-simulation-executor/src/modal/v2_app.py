@@ -3,10 +3,11 @@
 
 Besides the Stage 12 report coordinator and simulation workers, it defines a
 household function for each country, ``calculate_household_us`` and
-``calculate_household_uk``, which calculates one household under one policy
-in an image without datasets. A call that names a household job
-records it with the Modal worker role's database secret, the functions' only
-secret.
+``calculate_household_uk``, in an image without datasets. A call calculates
+one household under one policy, and records it on the household job it
+names; or it calculates a household report run's baseline and reform, and
+records them on the report run and its simulation runs. Both record with
+the Modal worker role's database secret, the functions' only secret.
 
 This module defines additional resources. It does not rename or modify the
 existing ``policyengine-simulation-py{version}`` applications.
@@ -537,10 +538,12 @@ def coordinate_report(
 
 
 # Household function sizing. A call holds one country model and a simulation
-# of the household, under its one policy, at every axis point. Each container
+# of the household, under one policy, at every axis point; a household report
+# run's call calculates its baseline and then its reform, with no axes. Each container
 # reserves 4 GiB and may use up to 16 GiB before Modal stops it, so a large
 # household calculated with every variable at many axis points still fits.
-# The timeout is three times the Public API's 300-second request timeout.
+# The timeout is three times the Public API's 300-second request timeout; a
+# report run's two calculations, without axes, take a small part of it.
 HOUSEHOLD_FUNCTION_CPU = 2.0
 HOUSEHOLD_FUNCTION_MEMORY_MIB = (4096, 16384)
 HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS = 900

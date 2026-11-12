@@ -666,11 +666,12 @@ computed because no file existed.
 ## v2 household functions
 
 The versioned v2 application also defines a household function for each
-country, `calculate_household_us` and `calculate_household_uk`. Each call
-calculates one household, in the Public API's situation shape and with
+country, `calculate_household_us` and `calculate_household_uk`. A household
+calculation is one household, in the Public API's situation shape and with
 optional axes, for one year under one policy, as a household job or a
-household simulation run is one household, one year and one policy. It
-takes a `HouseholdExecutionRequest`
+household simulation run is one household, one year and one policy. A call
+for a household job, or for deployment validation, makes one calculation:
+it takes a `HouseholdExecutionRequest`
 and returns a `HouseholdExecutionResult`, which holds the calculated
 household with its warnings and SPM receipt, or a typed
 `HouseholdExecutionFailure`, from
@@ -731,7 +732,9 @@ report run's ID and its status, without calculating. A restarted call keeps a
 side it already recorded. An error, a refused payload included, or Modal's
 cancellation fails the report run and each of its simulation runs left
 unfinished, with a summary naming only the error's type, then propagates; a
-pre-emption records nothing.
+pre-emption records nothing. An error in the report run's claim, or in the
+read of its simulation runs, fails the report run alone, and leaves its
+simulation runs to the stuck-run sweep.
 
 The stuck-run sweep (`src/modal/run_sweep_app.py`) fails household jobs
 nothing will finish by the rule it applies to report runs and simulation
