@@ -184,6 +184,55 @@ def insert_dynamic(
     return dynamic_id
 
 
+def insert_dataset(
+    connection: Connection, catalog: CatalogVersion, name: str, *, year: int = 2024
+) -> UUID:
+    """Insert a dataset of ``catalog`` with this name."""
+    dataset_id = uuid4()
+    connection.execute(
+        text(
+            "INSERT INTO public.datasets (id, name, year, is_output_dataset, "
+            "tax_benefit_model_version_id) "
+            "VALUES (:id, :name, :year, false, :version_id)"
+        ),
+        {
+            "id": dataset_id,
+            "name": name,
+            "year": year,
+            "version_id": catalog.version_id,
+        },
+    )
+    return dataset_id
+
+
+def insert_region(
+    connection: Connection,
+    catalog: CatalogVersion,
+    code: str,
+    *,
+    default_dataset_id: UUID,
+    region_type: str = "national",
+) -> UUID:
+    """Insert a region of ``catalog`` with this code and default dataset."""
+    region_id = uuid4()
+    connection.execute(
+        text(
+            "INSERT INTO public.regions (id, code, label, region_type, "
+            "requires_filter, default_dataset_id, tax_benefit_model_version_id) "
+            "VALUES (:id, :code, :code, CAST(:region_type AS v2_region_type), "
+            "false, :dataset_id, :version_id)"
+        ),
+        {
+            "id": region_id,
+            "code": code,
+            "region_type": region_type,
+            "dataset_id": default_dataset_id,
+            "version_id": catalog.version_id,
+        },
+    )
+    return region_id
+
+
 def insert_household(
     connection: Connection,
     *,
