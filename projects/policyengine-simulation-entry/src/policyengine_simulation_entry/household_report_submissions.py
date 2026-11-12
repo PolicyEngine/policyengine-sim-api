@@ -46,7 +46,7 @@ from policyengine_simulation_contract.household_report_execution import (
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
-    HouseholdReportSide,
+    HouseholdReportSimulation,
     HouseholdReportStore,
     MissingPolicyParametersError,
     NewHouseholdReport,
@@ -448,8 +448,8 @@ class HouseholdReportSubmissionService:
         household = inputs.household
         situation, year = _household_situation(request, household)
         report_id, run_id = self._new_id(), self._new_id()
-        sides: dict[ReportSide, HouseholdReportSide] = {
-            side: HouseholdReportSide(
+        sides: dict[ReportSide, HouseholdReportSimulation] = {
+            side: HouseholdReportSimulation(
                 simulation_id=self._new_id(),
                 simulation_run_id=self._new_id(),
                 policy_id=policy_id,

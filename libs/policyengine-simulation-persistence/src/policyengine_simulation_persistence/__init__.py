@@ -77,7 +77,7 @@ from policyengine_simulation_persistence.household_job_store import (
 )
 from policyengine_simulation_persistence.household_report_records import (
     HOUSEHOLD_REPORT_TYPE,
-    HouseholdReportSide,
+    HouseholdReportSimulation,
     NewHouseholdReport,
     insert_household_report,
 )
@@ -134,7 +134,7 @@ __all__ = [
     "HouseholdJobStatus",
     "HouseholdJobStore",
     "HouseholdReportInputs",
-    "HouseholdReportSide",
+    "HouseholdReportSimulation",
     "HouseholdReportStore",
     "MissingPolicyParametersError",
     "NewEconomyReport",

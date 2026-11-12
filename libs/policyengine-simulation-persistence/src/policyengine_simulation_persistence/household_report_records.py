@@ -55,7 +55,7 @@ HOUSEHOLD_REPORT_TYPE: Final = "household"
 
 
 @dataclass(frozen=True)
-class HouseholdReportSide:
+class HouseholdReportSimulation:
     """The new household simulation and run one side of a report creates.
 
     ``policy_id`` is the side's stored policy, or None for current law.
@@ -85,11 +85,11 @@ class NewHouseholdReport:
     year: int
     versions: RunVersions
     inputs: dict[str, Any]
-    baseline: HouseholdReportSide
-    reform: HouseholdReportSide | None
+    baseline: HouseholdReportSimulation
+    reform: HouseholdReportSimulation | None
 
     @property
-    def sides(self) -> tuple[HouseholdReportSide, ...]:
+    def sides(self) -> tuple[HouseholdReportSimulation, ...]:
         """Return each side the report calculates, the baseline's first."""
         return (self.baseline,) if self.reform is None else (self.baseline, self.reform)
 
@@ -149,7 +149,7 @@ def insert_household_report(connection: Connection, report: NewHouseholdReport) 
 
 
 def _insert_household_simulation(
-    connection: Connection, report: NewHouseholdReport, side: HouseholdReportSide
+    connection: Connection, report: NewHouseholdReport, side: HouseholdReportSimulation
 ) -> None:
     """Create one side's household simulation and its first run, pending."""
     connection.execute(

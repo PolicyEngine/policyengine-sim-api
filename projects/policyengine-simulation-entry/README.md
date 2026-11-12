@@ -184,8 +184,10 @@ simulation and simulation run.
 Refusals and outages answer as an economy report's do, with three more
 codes: 400 `unknown_household` and `no_household_function` (the default
 worker has no household function for the country), and 422
-`household_not_calculable` when the household has no default year, cannot
-be read, or the household contract refuses it, located at `household_id`.
+`household_not_calculable` when the household has no default year or
+cannot be read, located at `household_id`, or when the household contract
+refuses what the report would calculate, located at the field it traces to:
+`household_id`, a side's `policy_id`, or `add_missing_variables`.
 A policy setting parameters the catalog version lacks is 422
 `missing_parameters`, located at that side's `policy_id`.
 

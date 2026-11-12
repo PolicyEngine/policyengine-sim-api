@@ -69,8 +69,10 @@ EconomyRefusalCode = Literal[CallerRowRefusalCode, ServiceStateRefusalCode]
 EconomyUnprocessableCode = Literal[
     "missing_parameters",
     "overlapping_parameters",
-    # A household report's stored household has no default year, cannot be
-    # read, or is refused by the household functions' contract.
+    # A household report's stored household has no default year or cannot
+    # be read, or the household functions' contract refuses what the report
+    # would calculate: located at the household, a side's policy or the
+    # option the contract refuses.
     "household_not_calculable",
 ]
 # Why a route cannot answer now (503); retry after ``Retry-After`` seconds.
