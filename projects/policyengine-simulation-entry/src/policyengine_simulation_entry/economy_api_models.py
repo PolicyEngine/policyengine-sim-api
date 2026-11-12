@@ -84,7 +84,7 @@ EconomyErrorCode = Literal[
 ]
 
 
-def _omit_null_default(schema: dict[str, Any]) -> None:
+def omit_null_default(schema: dict[str, Any]) -> None:
     """Leave out a field's null default: the field is omitted rather than null."""
     schema.pop("default", None)
 
@@ -137,7 +137,7 @@ class EconomyReportRequest(_Request):
     reform: PolicyChoice
     include_cliffs: StrictBool = False
     spm: SPMSelection | SkipJsonSchema[None] = Field(
-        default=None, json_schema_extra=_omit_null_default
+        default=None, json_schema_extra=omit_null_default
     )
 
     @field_validator("spm", mode="before")
@@ -291,5 +291,5 @@ class EconomyRequestUnprocessable(_Answer):
 
     detail: list[EconomyRequestReason]
     code: EconomyUnprocessableCode | SkipJsonSchema[None] = Field(
-        default=None, json_schema_extra=_omit_null_default
+        default=None, json_schema_extra=omit_null_default
     )

@@ -87,10 +87,20 @@ class YearToStart:
     run_ids: ReportRunIds
 
 
+class YearStartDeferred(Exception):  # noqa: N818  # it names an outcome, not a fault
+    """A starter left this year, and the later ones, for a later advance.
+
+    Raising it starts nothing more in this advance and fails nothing: the
+    years stay waiting, and the coordinator of a year already under way
+    starts them when its year ends.
+    """
+
+
 class YearStarter(Protocol):
     """Starts a year's coordinator call and returns the call's Modal ID.
 
-    It raises when Modal refuses the call.
+    It raises when Modal refuses the call, or ``YearStartDeferred`` to leave
+    the year waiting.
     """
 
     def __call__(self, year_to_start: YearToStart, /) -> str:
@@ -431,7 +441,8 @@ def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the sta
     A start that raises fails that year and the window, and starts nothing
     more, unless the year's own call claimed it meanwhile (Modal accepted
     the call after the starter stopped waiting): that year is under way, and
-    the next ones start.
+    the next ones start. A start deferred with ``YearStartDeferred`` leaves
+    that year and the later ones waiting.
     """
     started: list[int] = []
     for year in [year for year in years if year.waiting][: max(free_places, 0)]:
@@ -439,6 +450,8 @@ def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the sta
             modal_call_id = start_year(
                 YearToStart(year=year.year, run_ids=year.run_ids)
             )
+        except YearStartDeferred:
+            break
         except Exception as error:  # noqa: BLE001  # any refusal to start the call fails the year and so the window
             # The error's text may hold connection details; its type is logged.
             logger.warning(

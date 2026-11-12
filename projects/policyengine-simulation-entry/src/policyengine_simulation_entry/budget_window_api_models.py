@@ -16,6 +16,7 @@ from uuid import UUID
 from policyengine_simulation_contract.spm import SPMSelection
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_persistence import (
+    LAST_RUN_YEAR,
     MAX_BUDGET_WINDOW_YEARS,
     ReportRunStatus,
 )
@@ -28,10 +29,9 @@ from policyengine_simulation_entry.economy_api_models import (
     ReportDescription,
     ReportLabel,
     SimulationYear,
+    omit_null_default,
 )
 
-# The last year any run may calculate, as the tables' checks allow.
-LAST_WINDOW_YEAR = 2200
 BudgetWindowSize = Annotated[
     int,
     Field(
@@ -40,11 +40,6 @@ BudgetWindowSize = Annotated[
         description="How many years the window compares, from its first",
     ),
 ]
-
-
-def _omit_null_default(schema: dict[str, Any]) -> None:
-    """Leave out a field's null default: the field is omitted rather than null."""
-    schema.pop("default", None)
 
 
 class BudgetWindowReportRequest(BaseModel):
@@ -70,7 +65,7 @@ class BudgetWindowReportRequest(BaseModel):
     baseline: PolicyChoice
     reform: PolicyChoice
     spm: SPMSelection | SkipJsonSchema[None] = Field(
-        default=None, json_schema_extra=_omit_null_default
+        default=None, json_schema_extra=omit_null_default
     )
 
     @field_validator("spm", mode="before")
@@ -85,8 +80,8 @@ class BudgetWindowReportRequest(BaseModel):
     @model_validator(mode="after")
     def refuse_years_past_the_last(self) -> BudgetWindowReportRequest:
         """Refuse a window whose last year is after 2200."""
-        if self.year + self.budget_window_size - 1 > LAST_WINDOW_YEAR:
-            msg = f"a budget window must end by {LAST_WINDOW_YEAR}"
+        if self.year + self.budget_window_size - 1 > LAST_RUN_YEAR:
+            msg = f"a budget window must end by {LAST_RUN_YEAR}"
             raise ValueError(msg)
         return self
 

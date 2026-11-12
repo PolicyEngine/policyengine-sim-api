@@ -58,15 +58,6 @@ class BudgetWindowYear:
     baseline: ReportSimulation
     reform: ReportSimulation
 
-    @property
-    def new_simulation_run_ids(self) -> tuple[UUID, ...]:
-        """Return the IDs of the simulation runs created for the year."""
-        return tuple(
-            side.simulation_run_id
-            for side in (self.baseline, self.reform)
-            if not side.reused
-        )
-
 
 @dataclass(frozen=True)
 class NewBudgetWindowReport:

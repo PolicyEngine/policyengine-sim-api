@@ -7,6 +7,7 @@ from policyengine_simulation_persistence.access import (
     read_missing_table_privileges,
 )
 from policyengine_simulation_persistence.budget_window_records import (
+    LAST_RUN_YEAR,
     MAX_BUDGET_WINDOW_YEARS,
     BudgetWindowYear,
     NewBudgetWindowReport,
@@ -110,6 +111,7 @@ from policyengine_simulation_persistence.tables import (
 )
 
 __all__ = [
+    "LAST_RUN_YEAR",
     "MAX_BUDGET_WINDOW_YEARS",
     "SERVICE_TABLE_PRIVILEGES",
     "SERVICE_UPDATABLE_COLUMNS",

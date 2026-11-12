@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -36,7 +37,7 @@ from policyengine_simulation_persistence import (
     RunReuse,
     SimulationChoice,
 )
-from policyengine_stage12_persistence import RunStatus
+from policyengine_stage12_persistence import RunStatus, YearStartDeferred
 from sqlalchemy.exc import SQLAlchemyError
 
 from policyengine_simulation_entry.budget_window_api_models import (
@@ -54,6 +55,7 @@ from policyengine_simulation_entry.economy_submissions import (
     calculation_scope,
     call_refused,
     economy_request_for,
+    simulation_choice,
 )
 
 if TYPE_CHECKING:
@@ -74,7 +76,6 @@ if TYPE_CHECKING:
     from policyengine_simulation_entry.budget_window_api_models import (
         BudgetWindowReportRequest,
     )
-    from policyengine_simulation_entry.economy_api_models import PolicyChoice
     from policyengine_simulation_entry.economy_calculation_inputs import (
         RunCalculation,
     )
@@ -177,8 +178,8 @@ class ReportSubmissionService(EconomySubmissionService):
         inputs = await self._read_inputs(
             lambda: self._window_store.read_budget_window_inputs(
                 economy_request,
-                baseline=_choice_of(request.baseline),
-                reform=_choice_of(request.reform),
+                baseline=simulation_choice(request.baseline),
+                reform=simulation_choice(request.reform),
                 reuse=reuse,
                 years=request.years,
             ),
@@ -269,14 +270,20 @@ class ReportSubmissionService(EconomySubmissionService):
         except SQLAlchemyError as error:
             logger.warning(
                 "budget_window_not_started",
-                extra={"report_id": str(report.id), "error_type": type(error).__name__},
+                extra={
+                    "record": "report",
+                    "record_id": str(report.id),
+                    "error_type": type(error).__name__,
+                },
             )
             return ReportRunStatus.PENDING
         if advance.status is RunStatus.FAILED:
+            # The budget-window store logs the refused call's error type.
             logger.error(
                 "budget_window_call_unconfirmed",
                 extra={
-                    "report_id": str(report.id),
+                    "record": "report",
+                    "record_id": str(report.id),
                     "started_years": list(advance.started_years),
                 },
             )
@@ -290,8 +297,13 @@ class _YearStarts:
 
     The first year's call takes the input built for it; each later year's is
     derived from the first's. The call starts on the service's event loop,
-    which waits for the advance meanwhile, and any failure, or Modal not
-    confirming it in time, raises, so the advance fails the year.
+    which waits for the advance meanwhile. All the years share one wait for
+    Modal, as long as one call's, so the request never waits longer than an
+    economy report's would. Any failure of the first year's call, or Modal
+    not confirming it in time, raises, so the advance fails the year and the
+    window. A later year not confirmed within the shared wait is deferred
+    (``YearStartDeferred``): it waits, with the years after it, for a started
+    year's coordinator to start it.
     """
 
     def __init__(  # noqa: PLR0913  # what each year's call is started with
@@ -313,11 +325,15 @@ class _YearStarts:
         self._first_calculation = first_calculation
         self._observability_context = observability_context
         self._loop = loop
-        self._timeout_seconds = timeout_seconds
         self._clock = clock
+        self._wait_ends_at = time.monotonic() + timeout_seconds
 
     def __call__(self, year_to_start: YearToStart, /) -> str:
         """Start the year's coordinator and return its Modal call ID."""
+        later_year = year_to_start.year != self._first_year
+        remaining_seconds = self._wait_ends_at - time.monotonic()
+        if later_year and remaining_seconds <= 0:
+            raise YearStartDeferred
         payload, context = self._calculation(year_to_start)
         started = asyncio.run_coroutine_threadsafe(
             self._caller.start_report_run(
@@ -329,7 +345,12 @@ class _YearStarts:
             self._loop,
         )
         try:
-            return started.result(timeout=self._timeout_seconds)
+            return started.result(timeout=max(remaining_seconds, 0))
+        except TimeoutError:
+            started.cancel()
+            if later_year:
+                raise YearStartDeferred from None
+            raise
         except BaseException:
             started.cancel()
             raise
@@ -348,10 +369,6 @@ class _YearStarts:
             created_at=self._clock(),
         )
         return year_report.model_dump(mode="json"), year_context.model_dump(mode="json")
-
-
-def _choice_of(policy: PolicyChoice) -> SimulationChoice:
-    return SimulationChoice(policy_id=policy.policy_id, dynamic_id=policy.dynamic_id)
 
 
 def _with_reusable(

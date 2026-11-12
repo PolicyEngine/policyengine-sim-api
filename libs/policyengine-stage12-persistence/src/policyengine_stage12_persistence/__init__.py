@@ -4,6 +4,7 @@ from policyengine_stage12_persistence.budget_window_store import (
     BUDGET_WINDOW_MAX_RUNNING_YEARS,
     BudgetWindowStore,
     WindowAdvance,
+    YearStartDeferred,
     YearStarter,
     YearToStart,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "Stage12PersistenceStore",
     "Stage12RuntimeAccessError",
     "WindowAdvance",
+    "YearStartDeferred",
     "YearStarter",
     "YearToStart",
     "create_stage12_engine",

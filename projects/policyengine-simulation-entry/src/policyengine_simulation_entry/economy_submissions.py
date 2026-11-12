@@ -209,7 +209,8 @@ def _database_unavailable() -> EconomySubmissionUnavailableError:
     )
 
 
-def _choice(policy: PolicyChoice) -> SimulationChoice:
+def simulation_choice(policy: PolicyChoice) -> SimulationChoice:
+    """Return a request side's stored policy and dynamic."""
     return SimulationChoice(policy_id=policy.policy_id, dynamic_id=policy.dynamic_id)
 
 
@@ -273,8 +274,8 @@ class EconomySubmissionService:
         inputs = await self._read_inputs(
             lambda: self._store.read_report_inputs(
                 economy_request,
-                baseline=_choice(request.baseline),
-                reform=_choice(request.reform),
+                baseline=simulation_choice(request.baseline),
+                reform=simulation_choice(request.reform),
                 reuse=reuse,
             ),
             request=economy_request,

@@ -3,7 +3,10 @@
 - ``POST /reports`` (permission ``simulation:submit``) creates an economy
   report, its simulations and its first run, and starts the report run's
   coordinator, answering 201 with the report's ID, its run's ID and status,
-  and each side's simulation and simulation run.
+  and each side's simulation and simulation run. With ``report_type``
+  ``budget_window`` it creates a budget-window report with a report run per
+  year and starts its first five years, answering 201 with the report, the
+  first year's run, the window run, its status and every year's runs.
 - ``POST /simulations`` (``simulation:submit``) creates a standalone
   economy simulation and its first run, and starts the run's simulation
   function, answering 201 with the simulation's ID, its run's ID and status.
@@ -61,6 +64,7 @@ from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionUnavailableError,
     EconomySubmissionUnprocessableError,
 )
+from policyengine_simulation_entry.report_request_errors import ReportRequestRoute
 from policyengine_simulation_entry.route_support import (
     log_unexpected_failure,
     observability_context,
@@ -165,7 +169,7 @@ def _unavailable_description(record: RecordName) -> dict[str, Any]:
 
 
 class EconomySubmissions(Protocol):
-    """Create economy reports and simulations (``EconomySubmissionService``)."""
+    """Create reports and simulations (``ReportSubmissionService``)."""
 
     async def submit_report(
         self,
@@ -407,8 +411,10 @@ def _submission_routes(
 ) -> APIRouter:
     """Return the router of ``POST /reports`` and ``POST /simulations``."""
     router = APIRouter()
+    # A refused report body is located as an economy report's was.
+    report_router = APIRouter(route_class=ReportRequestRoute)
 
-    @router.post(
+    @report_router.post(
         REPORTS_PATH,
         summary="Create an economy or budget-window report",
         description=(
@@ -466,6 +472,8 @@ def _submission_routes(
         return JSONResponse(
             created.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
         )
+
+    router.include_router(report_router)
 
     @router.post(
         SIMULATIONS_PATH,

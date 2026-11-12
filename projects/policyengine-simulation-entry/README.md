@@ -173,6 +173,11 @@ seconds, fails the window, its waiting years and their new simulation runs,
 and the 503 (`modal_call_refused`) names the report. The window run's
 status needs the update grant on `budget_window_runs` that the Public API
 gives the service (PolicyEngine/policyengine-api#4267); `/ready` checks it.
+The first years share one ten-second wait for Modal: a later year not
+confirmed within it waits for a started year's coordinator to start it.
+`GET /reports/{report_id}` answers a window with one of its years' runs;
+the window's own status is in `budget_window_runs`, which the Public API
+reads.
 
 `GET /reports/{report_id}` and `GET /simulations/{simulation_id}` return the
 record and its newest run (created last, ties to the larger ID): its status,
