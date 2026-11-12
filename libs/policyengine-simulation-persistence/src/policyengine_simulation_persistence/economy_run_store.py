@@ -443,6 +443,29 @@ def _simulation_inputs(
     choice: SimulationChoice,
 ) -> SimulationInputs:
     """Read one simulation's policy and dynamic values, combined."""
+    return SimulationInputs(
+        choice=choice,
+        reform=read_simulation_reform(
+            connection,
+            country=country,
+            catalog_version_id=catalog_version_id,
+            choice=choice,
+        ),
+    )
+
+
+def read_simulation_reform(
+    connection: Connection,
+    *,
+    country: str,
+    catalog_version_id: UUID,
+    choice: SimulationChoice,
+) -> PolicyReform:
+    """Read a simulation's policy and dynamic values on a catalog version, combined.
+
+    A submission and a restart of its run read them this way. Raise the
+    policy reader's errors, or OverlappingReformError.
+    """
     policy_reform = (
         {}
         if choice.policy_id is None
@@ -462,6 +485,4 @@ def _simulation_inputs(
             catalog_version_id=catalog_version_id,
         )
     )
-    return SimulationInputs(
-        choice=choice, reform=combine_reforms(policy_reform, dynamic_reform)
-    )
+    return combine_reforms(policy_reform, dynamic_reform)

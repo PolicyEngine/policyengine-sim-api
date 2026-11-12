@@ -32,6 +32,7 @@ restart, and how each restart ended, can be counted.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from collections import Counter
 from contextlib import nullcontext
@@ -69,6 +70,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CALL_START_TIMEOUT_SECONDS",
+    "CHECK_TIME_LIMIT",
     "RESTARTS_PER_CHECK",
     "RESTART_AFTER",
     "RESTART_UNTIL",
@@ -90,31 +92,35 @@ RESTART_AFTER: Final = timedelta(minutes=3)
 # A row older than this is left to the stuck-run sweep, which fails it at 15
 # minutes, so a restart has time to record its call before the sweep judges it.
 RESTART_UNTIL: Final = timedelta(minutes=12)
-# At most this many rows are restarted by one check; the next takes the rest.
-# With every call waited on for its full time, a check still ends within the
-# scheduled function's five-minute timeout, so no row it marks is left
-# without its call.
+# At most this many rows are listed by one check; the next takes the rest.
 RESTARTS_PER_CHECK: Final = 20
 # How long the check waits for Modal to accept a restarted call.
 CALL_START_TIMEOUT_SECONDS: Final = 10.0
+# No row is marked once a check has run this long: the rest are left unmarked
+# for the next check. A marked row then needs only its call's start and a few
+# bounded statements, so the check ends within the scheduled function's
+# timeout and no row it marks is left without its call.
+CHECK_TIME_LIMIT: Final = timedelta(minutes=3)
 _NOT_STARTED: Final = (
     "run_not_started: The run stayed pending with no Modal call recorded for it"
 )
-_PENDING: Final = "pending"
 
 
 class RestartOutcome(StrEnum):
     """How the check ended for one listed row.
 
-    ``restarted``: its new call started and the call's ID was recorded.
-    ``call_not_recorded``: its new call started, but the ID couldn't be
-    recorded; the call claims the row itself. ``started_meanwhile``: another
-    call claimed the row after the check started its own, which that call
-    then can't claim. ``left``: the row was gone, or changed before the check
-    started a call; also a row whose failure couldn't be written, which the
+    ``restarted``: its new call started, and the row records that call.
+    ``call_not_recorded``: its new call started, but the check couldn't
+    record or read the call's ID; the call claims the row itself.
+    ``started_meanwhile``: the row records another call, which claimed it
+    after the check marked it (or the check's own call, accepted after the
+    check stopped waiting for it); the other call then can't claim it.
+    ``left``: the row was gone, changed before the check started a call, or
+    failed meanwhile; also a row whose failure couldn't be written, which the
     sweep fails later. ``deferred``: its rows or the manifest couldn't be
-    read, so it is left unmarked for the next check. ``failed``: it couldn't
-    be started again and was failed with ``run_not_started``.
+    read, or the check's time ran out, so it is left unmarked for the next
+    check. ``failed``: it couldn't be started again and was failed with
+    ``run_not_started``.
     """
 
     RESTARTED = "restarted"
@@ -231,8 +237,9 @@ class RestartStores:
 class RunRestartService:
     """Start the calls of the runs and household jobs whose call never started.
 
-    The store reads and writes are synchronous: the check is a batch job of
-    its own, so nothing else waits on its event loop.
+    A call is rebuilt on a thread: the reads, Modal's manifest read included,
+    are synchronous. The check's other database writes are short and run on
+    its own event loop, which only the check uses.
     """
 
     def __init__(  # noqa: PLR0913  # each seam tests replace
@@ -244,6 +251,7 @@ class RunRestartService:
         settings: RestartSettings,
         telemetry: RestartTelemetry | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        timer: Callable[[], float] = time.monotonic,
         call_start_timeout_seconds: float = CALL_START_TIMEOUT_SECONDS,
         new_request_id: Callable[[], str] = lambda: f"run-restart-{uuid.uuid4()}",
     ) -> None:
@@ -259,13 +267,18 @@ class RunRestartService:
         )
         self._telemetry = telemetry or NoRestartTelemetry()
         self._clock = clock
+        self._timer = timer
         self._call_start_timeout_seconds = call_start_timeout_seconds
+        self._deadline = 0.0
 
     async def restart_unstarted_runs(self) -> RestartSummary:
         """Start once more each row created 3 to 12 minutes ago with no call.
 
-        Raise the store's error when the rows can't be listed.
+        Rows the check has no time left for are counted ``deferred``, with no
+        telemetry scope, since the next check lists them again. Raise the
+        store's error when the rows can't be listed.
         """
+        self._deadline = self._timer() + CHECK_TIME_LIMIT.total_seconds()
         now = self._clock()
         runs = self._stores.restarts.list_unstarted(
             created_after=now - RESTART_UNTIL,
@@ -273,7 +286,10 @@ class RunRestartService:
             limit=RESTARTS_PER_CHECK,
         )
         outcomes: Counter[RestartOutcome] = Counter()
-        for run in runs:
+        for position, run in enumerate(runs):
+            if self._out_of_time():
+                outcomes[RestartOutcome.DEFERRED] += len(runs) - position
+                break
             age_seconds = (now - run.created_at).total_seconds()
             with self._telemetry.restart_scope(run, age_seconds=age_seconds):
                 outcome, error_type = await self._restart(run)
@@ -284,10 +300,13 @@ class RunRestartService:
             **{outcome.value: count for outcome, count in outcomes.items()},
         )
 
+    def _out_of_time(self) -> bool:
+        return self._timer() >= self._deadline
+
     async def _restart(self, run: UnstartedRun) -> tuple[RestartOutcome, str | None]:
         """Start the row's call once more; return how it ended and any error type."""
         try:
-            rebuilt = self._calls.build(run)
+            rebuilt = await asyncio.to_thread(self._calls.build, run)
         except DeferredRestartError as deferred:
             return RestartOutcome.DEFERRED, str(deferred)
         except CallNotRebuiltError as cannot:
@@ -314,6 +333,8 @@ class RunRestartService:
         simulation_run_ids: tuple[UUID, ...],
     ) -> tuple[RestartOutcome, str | None]:
         """Mark the row, then start its call and record the call's ID."""
+        if self._out_of_time():
+            return RestartOutcome.DEFERRED, None
         try:
             if not self._stores.restarts.mark_restart(run):
                 return RestartOutcome.LEFT, None
@@ -332,29 +353,42 @@ class RunRestartService:
                 f"again ({type(error).__name__})."
             )
             failed = self._fail(run, message, simulation_run_ids)
-            # A failure that changed nothing means another call claimed the
-            # row; one that couldn't be written leaves the row to the sweep.
-            outcome = {
-                True: RestartOutcome.FAILED,
-                False: RestartOutcome.STARTED_MEANWHILE,
-                None: RestartOutcome.LEFT,
-            }[failed]
+            # A failure that changed nothing means a call holds the row now,
+            # or something failed it; one that couldn't be written leaves the
+            # row to the sweep.
+            if failed is None:
+                outcome = RestartOutcome.LEFT
+            elif failed:
+                outcome = RestartOutcome.FAILED
+            else:
+                outcome = self._held_since(run, call_id=None)
             return outcome, type(error).__name__
-        return self._recorded(run, call_id)
-
-    def _recorded(
-        self, run: UnstartedRun, call_id: str
-    ) -> tuple[RestartOutcome, str | None]:
-        """Record the started call's ID; return how the restart ended."""
         try:
-            status = self._record(run, call_id)
+            self._record(run, call_id)
         except SQLAlchemyError as error:
             return RestartOutcome.CALL_NOT_RECORDED, type(error).__name__
-        if status is None:
-            return RestartOutcome.LEFT, None
-        if status == _PENDING:
-            return RestartOutcome.RESTARTED, None
-        return RestartOutcome.STARTED_MEANWHILE, None
+        return self._held_since(run, call_id=call_id), None
+
+    def _held_since(self, run: UnstartedRun, *, call_id: str | None) -> RestartOutcome:
+        """Return how the restart ended, from the call the row records now.
+
+        ``call_id`` is the check's own call, or None when Modal didn't
+        confirm one. The record write keeps a call recorded or claimed
+        before it, so whose call the row records says whose start counts.
+        """
+        try:
+            held = self._stores.restarts.read_call(run)
+        except SQLAlchemyError:
+            return (
+                RestartOutcome.LEFT
+                if call_id is None
+                else RestartOutcome.CALL_NOT_RECORDED
+            )
+        if held is None or held.modal_call_id is None:
+            return RestartOutcome.LEFT
+        if held.modal_call_id == call_id:
+            return RestartOutcome.RESTARTED
+        return RestartOutcome.STARTED_MEANWHILE
 
     def _fail(
         self, run: UnstartedRun, message: str, simulation_run_ids: tuple[UUID, ...]
@@ -378,12 +412,11 @@ class RunRestartService:
             return None
         return failed
 
-    def _record(self, run: UnstartedRun, call_id: str) -> str | None:
-        """Record the call's ID while the row is unstarted; return its status after."""
+    def _record(self, run: UnstartedRun, call_id: str) -> None:
+        """Record the call's ID while the row is pending with no call."""
         if run.kind is RestartKind.REPORT_RUN:
-            status = self._stores.economy.record_report_call(run.run_id, call_id)
+            self._stores.economy.record_report_call(run.run_id, call_id)
         elif run.kind is RestartKind.SIMULATION_RUN:
-            status = self._stores.economy.record_simulation_call(run.run_id, call_id)
+            self._stores.economy.record_simulation_call(run.run_id, call_id)
         else:
-            status = self._stores.households.record_call(run.run_id, call_id)
-        return None if status is None else str(status)
+            self._stores.households.record_call(run.run_id, call_id)

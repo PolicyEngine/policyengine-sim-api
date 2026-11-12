@@ -145,7 +145,12 @@ the run tables and their inputs, and `UPDATE` of `updated_at`,
   catalog version, the region, dataset and year the run records, the
   report's options and the run's versions. `StoredRunUnreadableError` says
   the rows no longer describe one calculation: a side's region or dataset
-  is gone, or the two sides differ.
+  is gone, or the two sides differ. The values are read with
+  `read_simulation_reform`, the reader a submission uses.
+- `read_report_run_simulation_run_ids` returns the simulation runs a report
+  run names, so one that can't be rebuilt is failed with them, and
+  `read_run_call` returns a row's status and recorded call, which says whose
+  call holds it after a restart.
 
 `RunRestartStore` runs each in a transaction of its own. The check records
 a call, or fails a row, with `EconomyRunStore`'s and `HouseholdJobStore`'s

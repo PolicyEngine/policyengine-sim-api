@@ -11,7 +11,8 @@ function, starts such a run's call once more:
    (``updated_at`` still equals ``created_at``): household jobs, report runs,
    and standalone simulation runs, which no report run names. A report run's
    own simulation runs are its coordinator's to start. Budget-window years
-   and household simulations are left out: their own tasks restart them.
+   and household simulations are left out: the check can't rebuild their
+   calls yet.
 2. ``mark_restart`` sets the row's ``updated_at`` before the check starts its
    call, so the row is never listed again and is restarted at most once. It
    uses the statement's clock rather than the transaction's, so the mark
@@ -40,17 +41,15 @@ from policyengine_simulation_persistence.economy_run_records import (
     RunVersions,
     SimulationChoice,
 )
+from policyengine_simulation_persistence.economy_run_store import (
+    read_simulation_reform,
+)
 from policyengine_simulation_persistence.input_tables import (
     MODEL_NAME_PREFIX,
     datasets,
     regions,
     tax_benefit_model_versions,
     tax_benefit_models,
-)
-from policyengine_simulation_persistence.policy_reform import (
-    combine_reforms,
-    read_dynamic_reform,
-    read_policy_reform,
 )
 from policyengine_simulation_persistence.tables import (
     SimulationStatus,
@@ -100,6 +99,14 @@ class UnstartedRun:
 
 class StoredRunUnreadableError(LookupError):
     """A run's stored rows no longer describe one calculation to start."""
+
+
+@dataclass(frozen=True)
+class RunCall:
+    """A row's status and the Modal call it records, if any."""
+
+    status: str
+    modal_call_id: str | None
 
 
 @dataclass(frozen=True)
@@ -256,6 +263,40 @@ def mark_restart(connection: Connection, run: UnstartedRun) -> bool:
     return marked is not None
 
 
+def read_run_call(connection: Connection, run: UnstartedRun) -> RunCall | None:
+    """Return the row's status and recorded call, or None when it is gone."""
+    table = RESTART_TABLES[run.kind]
+    row = connection.execute(
+        select(table.c.status, table.c.modal_call_id).where(table.c.id == run.run_id)
+    ).one_or_none()
+    if row is None:
+        return None
+    return RunCall(status=str(row.status), modal_call_id=row.modal_call_id)
+
+
+def read_report_run_simulation_run_ids(
+    connection: Connection, report_run_id: UUID
+) -> tuple[UUID, ...]:
+    """Return the simulation runs the report run names, baseline first.
+
+    Return no IDs when there is no such run. A report run the check can't
+    rebuild is failed with them, as its submission would fail it.
+    """
+    row = connection.execute(
+        select(
+            report_runs.c.baseline_simulation_run_id,
+            report_runs.c.reform_simulation_run_id,
+        ).where(report_runs.c.id == report_run_id)
+    ).one_or_none()
+    if row is None:
+        return ()
+    return tuple(
+        run_id
+        for run_id in (row.baseline_simulation_run_id, row.reform_simulation_run_id)
+        if run_id is not None
+    )
+
+
 def _side_rows(connection: Connection, simulation_run_id: UUID) -> Row[Any] | None:
     """Return a simulation run's scope and its simulation's policy and dynamic."""
     return connection.execute(
@@ -312,29 +353,15 @@ def _side(
     Raise the policy reader's errors, or OverlappingReformError.
     """
     choice = SimulationChoice(policy_id=side.policy_id, dynamic_id=side.dynamic_id)
-    policy_reform = (
-        {}
-        if choice.policy_id is None
-        else read_policy_reform(
-            connection,
-            country=country,
-            policy_id=choice.policy_id,
-            catalog_version_id=scope.catalog_version_id,
-        )
-    )
-    dynamic_reform = (
-        {}
-        if choice.dynamic_id is None
-        else read_dynamic_reform(
-            connection,
-            dynamic_id=choice.dynamic_id,
-            catalog_version_id=scope.catalog_version_id,
-        )
-    )
     return StoredEconomySide(
         simulation_run_id=side.id,
         choice=choice,
-        reform=combine_reforms(policy_reform, dynamic_reform),
+        reform=read_simulation_reform(
+            connection,
+            country=country,
+            catalog_version_id=scope.catalog_version_id,
+            choice=choice,
+        ),
     )
 
 

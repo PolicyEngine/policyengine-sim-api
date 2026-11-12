@@ -713,32 +713,6 @@ recorded 15 minutes after its creation, a pending or running job once
 Modal reports its recorded call ended, and any job still unfinished 24 hours
 after its creation, whatever Modal reports.
 
-**Restarting a run whose call never started.** The same Modal application
-runs a restart check every two minutes, as the Modal worker role. It lists
-the household jobs, report runs and standalone simulation runs created 3 to
-12 minutes ago that are still pending with no call recorded and that
-nothing has changed since their insert, as when the Simulation Entrypoint
-stopped between creating a run and starting its call. For each, it reads
-back what the entrypoint built the call from, builds the same call with the
-entrypoint's own builders on the worker of the .py version the row records,
-sets the row's `updated_at` so it is never restarted twice, starts the call
-and records its ID while the row is still pending with none. A row it can't
-start again (its worker left the manifest, its stored rows changed, or Modal
-refuses the call) is failed with `run_not_started`; one whose rows or
-manifest it can't read now is left for the next check. The sweep's 15
-minutes come after that window, so a second miss is still failed with
-`run_not_started`. The restart code is the simulation service's
-(`policyengine_simulation_entry.run_restarts`, `run_restart_calls` and
-`run_restart_check`, on `policyengine_simulation_persistence`), which the
-image adds as source.
-
-It leaves alone the report runs of a budget window and the runs of
-household simulations, whose own calls start them. Each check is a
-`v2_run_restart_check` operation and each listed row a `v2_run_restart`
-operation, with the row's kind, ID, age and outcome, and each outcome is
-also logged as a `v2_run_restart_outcome` event, so the operation count
-metric and the events say how often runs need a restart and how each ended.
-
 - Image: the CA store, the frozen `modal-simulation-image` dependency group
   and the source packages, without the bundle's datasets or the Stage 12
   cache. Building it needs no secret.
@@ -764,6 +738,35 @@ its function was validated. A failed household validation fails v2 worker
 validation like any other validation failure: the manifest is not published,
 and, as described under "Release and deployment constraints", the deployment
 does not promote the new Simulation Entrypoint revision.
+
+**Restarting a run whose call never started.** The stuck-run sweep's Modal
+application also runs a restart check every two minutes, as the Modal worker
+role. It lists, at most 20 a check, the household jobs, report runs and
+standalone simulation runs created 3 to 12 minutes ago that are still pending
+with no call recorded and that nothing has changed since their insert, as
+when the Simulation Entrypoint stopped between creating a run and starting
+its call. For each, on a thread, it reads back what the entrypoint built the
+call from and builds the same call with the entrypoint's own builders, on the
+worker of the .py version the row records. It then sets the row's
+`updated_at`, so the row is never restarted twice, starts the call and
+records its ID while the row is still pending with none. A row it can't start
+again (its worker left the manifest, its stored rows changed, or Modal
+refuses the call) is failed with `run_not_started`, a report run with its
+pending simulation runs; one whose rows or manifest it can't read now is left
+for the next check. After three minutes a check marks no more rows, so it
+ends within its five-minute timeout without leaving a marked row with no
+call. The sweep's 15 minutes come after the restart window, so a second miss
+is still failed with `run_not_started`. The restart code is the simulation
+service's (`policyengine_simulation_entry.run_restarts`, `run_restart_calls`
+and `run_restart_check`, on `policyengine_simulation_persistence`), which the
+image adds as source.
+
+It leaves alone a budget window's report runs and household simulations'
+runs: it can't rebuild their calls yet. Each check is a
+`v2_run_restart_check` operation and each listed row a `v2_run_restart`
+operation, with the row's kind, ID, age and outcome, and each outcome is
+also logged as a `v2_run_restart_outcome` event, so the operation count
+metric and the events say how often runs need a restart and how each ended.
 
 ## Temporary direct runner endpoint
 

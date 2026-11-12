@@ -120,7 +120,8 @@ runs it every two minutes as the Modal worker role.
 - It takes the rows created 3 to 12 minutes ago that are still `pending`
   with no call and that nothing has changed since their insert, at most 20
   a check, oldest first. A budget window's report runs and household
-  simulations' runs are left out.
+  simulations' runs are left out. After three minutes a check marks no more
+  rows and leaves the rest for the next.
 - It rebuilds each call with this service's own builders
   (`report_run_calculation`, `simulation_run_calculation`,
   `prepare_household_job`) from the stored rows, on the manifest's worker
@@ -129,11 +130,14 @@ runs it every two minutes as the Modal worker role.
   (`run-restart-<uuid>`), and its creation time is the row's.
 - It sets the row's `updated_at` before starting the call, so a row is
   restarted at most once, then records the call's ID with the submission's
-  own conditional write.
+  own conditional write. The restart counts as done when the row then
+  records its call; a row recording another call was claimed by that call
+  first.
 - A row whose call can't be rebuilt, or whose restart Modal refuses or
   doesn't confirm within ten seconds, is failed with
   `run_not_started: The run stayed pending with no Modal call recorded for
-  it, and …`. A row whose rows or manifest can't be read now is left
+  it, and …`; a report run is failed with its simulation runs still pending
+  with no call. A row whose rows or manifest can't be read now is left
   unmarked for the next check.
 - Each check, each row and each outcome are telemetry; see
   `run_restart_check`'s docstring for the operations and event.

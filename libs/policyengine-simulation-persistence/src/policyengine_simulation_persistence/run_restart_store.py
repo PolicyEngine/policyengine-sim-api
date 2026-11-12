@@ -14,6 +14,8 @@ from policyengine_simulation_persistence.engine import bounded_transaction
 from policyengine_simulation_persistence.run_restart_records import (
     list_unstarted_runs,
     mark_restart,
+    read_report_run_simulation_run_ids,
+    read_run_call,
     read_unstarted_report_run,
     read_unstarted_simulation_run,
 )
@@ -27,6 +29,7 @@ if TYPE_CHECKING:
     from sqlalchemy import Connection, Engine
 
     from policyengine_simulation_persistence.run_restart_records import (
+        RunCall,
         StoredReportRun,
         StoredSimulationRun,
         UnstartedRun,
@@ -83,3 +86,15 @@ class RunRestartStore:
         """Return what the standalone simulation run's call is built from, or None."""
         with self._transaction() as connection:
             return read_unstarted_simulation_run(connection, simulation_run_id)
+
+    def read_call(self, run: UnstartedRun) -> RunCall | None:
+        """Return the row's status and recorded call, or None when it is gone."""
+        with self._transaction() as connection:
+            return read_run_call(connection, run)
+
+    def read_report_run_simulation_run_ids(
+        self, report_run_id: UUID
+    ) -> tuple[UUID, ...]:
+        """Return the simulation runs the report run names, baseline first."""
+        with self._transaction() as connection:
+            return read_report_run_simulation_run_ids(connection, report_run_id)

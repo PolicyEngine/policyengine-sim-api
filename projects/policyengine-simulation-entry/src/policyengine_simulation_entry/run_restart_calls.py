@@ -68,6 +68,7 @@ if TYPE_CHECKING:
         HouseholdJobRecord,
         HouseholdJobStatus,
         NewHouseholdJob,
+        RunCall,
         RunVersions,
         StoredReportRun,
         StoredSimulationRun,
@@ -139,6 +140,16 @@ class UnstartedRunSource(Protocol):
         self, simulation_run_id: UUID
     ) -> StoredSimulationRun | None:
         """Return what the standalone simulation run's call is built from."""
+        ...
+
+    def read_report_run_simulation_run_ids(
+        self, report_run_id: UUID
+    ) -> tuple[UUID, ...]:
+        """Return the simulation runs the report run names, baseline first."""
+        ...
+
+    def read_call(self, run: UnstartedRun) -> RunCall | None:
+        """Return the row's status and recorded call, or None when it is gone."""
         ...
 
 
@@ -367,11 +378,26 @@ class RestartCallBuilder:
         except (SQLAlchemyError, VersionManifestUnavailableError) as error:
             raise DeferredRestartError(type(error).__name__) from error
         except _REBUILD_ERRORS as error:
+            if run.kind is RestartKind.REPORT_RUN and not simulation_run_ids:
+                simulation_run_ids = self._report_simulation_run_ids(run.run_id)
             raise CallNotRebuiltError(
                 _rebuild_reason(error),
                 error_type=type(error).__name__,
                 simulation_run_ids=simulation_run_ids,
             ) from error
+
+    def _report_simulation_run_ids(self, report_run_id: UUID) -> tuple[UUID, ...]:
+        """Return the simulation runs a report run its rows can't rebuild names.
+
+        It is failed with them, as its submission fails it with the simulation
+        runs created for it; only those still pending with no call are failed.
+        When even they can't be read, it is failed alone, and the sweep fails
+        them later.
+        """
+        try:
+            return self._restarts.read_report_run_simulation_run_ids(report_run_id)
+        except SQLAlchemyError:
+            return ()
 
     def _economy_worker(self, country: str, versions: RunVersions) -> EconomyWorker:
         """Return the worker of the run's .py version, which must match its versions."""
