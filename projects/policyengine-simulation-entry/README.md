@@ -176,8 +176,8 @@ report run's ID (`household_report_run_id`) and each side's household
 contract request, whose calculation ID is the side's simulation run, and
 records the call's ID. The household function claims the report run and each
 simulation run under its own call, writes each run's result or failure
-document to `household_result`, and marks the report run succeeded, or
-failed with the first failed side's summary. The answer is 201 with the
+document to `household_result`, and marks the report run succeeded only if
+every side's run did; otherwise it fails with the first such side's reason. The answer is 201 with the
 report's and its run's IDs, the run's status, the `year` and each side's
 simulation and simulation run.
 

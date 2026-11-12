@@ -5,9 +5,10 @@ optionally, a reform: each side is a household simulation run, and the
 report run names them. One household function call calculates the whole
 report run, as the Modal worker role. It claims the report run and each
 simulation run with ``ReportRunStore``'s claims, under its own Modal call
-ID, then records each run's ``HouseholdExecutionResult`` or
-``HouseholdExecutionFailure`` document in ``household_result``, and marks
-the report run succeeded or failed. Each write applies only while the call
+ID, reads which simulation runs the report run names, then records each
+run's ``HouseholdExecutionResult`` or ``HouseholdExecutionFailure``
+document in ``household_result``, and marks the report run succeeded or
+failed. Each write applies only while the call
 still holds its row running, as every other run write does.
 """
 
@@ -38,38 +39,24 @@ if TYPE_CHECKING:
 class HouseholdReportRunStore(ReportRunStore):
     """A report run store that also records household simulation runs' results."""
 
-    def require_household_report_runs(
-        self,
-        report_run_id: UUID,
-        *,
-        baseline_simulation_run_id: UUID,
-        reform_simulation_run_id: UUID | None,
-    ) -> None:
-        """Check the report run names exactly the call's simulation runs.
+    def household_report_simulation_runs(
+        self, report_run_id: UUID
+    ) -> tuple[UUID, UUID | None]:
+        """Return the baseline and reform simulation runs the report run names.
 
-        ``reform_simulation_run_id`` is None for a report of the baseline
-        alone. Raises LookupError when the report run does not exist, and
-        ValueError when it names other simulation runs.
+        The reform's is None for a report of the baseline alone. Raises
+        LookupError when the report run does not exist.
         """
         statement = select(
             report_runs.c.baseline_simulation_run_id,
             report_runs.c.reform_simulation_run_id,
         ).where(report_runs.c.id == report_run_id)
-        with self._transaction("require_household_report_runs") as connection:
+        with self._transaction("household_report_simulation_runs") as connection:
             named = connection.execute(statement).one_or_none()
         if named is None:
             msg = f"report run {report_run_id} does not exist"
             raise LookupError(msg)
-        if (
-            named.baseline_simulation_run_id != baseline_simulation_run_id
-            or named.reform_simulation_run_id != reform_simulation_run_id
-        ):
-            msg = (
-                f"report run {report_run_id} names other simulation runs than "
-                f"its call: baseline {named.baseline_simulation_run_id} and "
-                f"reform {named.reform_simulation_run_id}"
-            )
-            raise ValueError(msg)
+        return named.baseline_simulation_run_id, named.reform_simulation_run_id
 
     def complete_household_simulation_run(
         self,

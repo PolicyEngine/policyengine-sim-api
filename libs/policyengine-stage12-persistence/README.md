@@ -34,8 +34,9 @@ revisions and live schema. This package never changes a schema.
   one household function call claims a household report run and each of
   its simulation runs, the baseline's and any reform's, records each run's
   household result or failure document in `simulation_runs.household_result`,
-  and then marks the report run succeeded or failed. It checks first that the
-  report run names exactly the call's simulation runs.
+  and then marks the report run succeeded or failed. It reads first which
+  simulation runs the report run names, to check them against its payload
+  and to fail them if it stops.
 
 ## Tests
 
