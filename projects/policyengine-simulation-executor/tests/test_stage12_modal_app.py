@@ -345,14 +345,14 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
         functions["run_single_simulation_segment_us"]["image"] is module.us_worker_image
     )
     assert functions["run_single_simulation_segment_us"]["timeout"] == 3600
-    assert functions["run_single_simulation_segment_us"]["max_containers"] == 300
+    assert functions["run_single_simulation_segment_us"]["max_containers"] == 1000
     assert functions["run_single_simulation_us"]["timeout"] == 3900
     assert functions["run_single_simulation_uk"]["timeout"] == 3000
-    assert functions["run_single_simulation_us"]["max_containers"] == 10
-    assert functions["run_single_simulation_uk"]["max_containers"] == 10
+    assert functions["run_single_simulation_us"]["max_containers"] == 50
+    assert functions["run_single_simulation_uk"]["max_containers"] == 50
     assert functions["coordinate_report"]["image"] is module.coordinator_image
     assert functions["coordinate_report"]["timeout"] == 5400
-    assert functions["coordinate_report"]["max_containers"] == 10
+    assert functions["coordinate_report"]["max_containers"] == 25
     assert "asgi_app" not in vars(module)
 
 
