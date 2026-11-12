@@ -3,15 +3,17 @@
 The simulation service may name, as a report run's baseline or reform, a
 simulation run that already succeeded for the same simulation, year and
 versions. The coordinator never claims, starts or calculates that run again.
-While it prepares the report (or, for a run a pre-empted attempt's worker
-finished, when it restarts it), it reads the run's status, year, versions,
+While it prepares the report, it reads the run's status, year, versions,
 dataset, region, output URI and digest from the database, and checks them
 against the simulation input and the report run's other simulation run. It
 reads the file from whichever ``gs://`` bucket the URI names, checks its
 SHA-256 digest, decodes it once, and checks the outputs the report plans and
-the SPM calculation receipt a worker would write now. It describes the file
-as a worker describes the one it writes, and the aggregation uses the
-decoded frames in place of a worker's artifact.
+the SPM calculation receipt a worker would write now. (A run a pre-empted
+attempt's worker finished just before the restarted coordinator released it
+is read the same way, with ``checked_output``, without the dataset and
+region check, since this report's own worker calculated it.) It describes
+the file as a worker describes the one it writes, and the aggregation uses
+the decoded frames in place of a worker's artifact.
 
 No worker runs for a reused run. The coordinator writes nothing to it, so
 report runs that reuse it at the same time leave each other unaffected, and

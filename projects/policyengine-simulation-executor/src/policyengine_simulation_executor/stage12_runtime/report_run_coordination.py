@@ -386,14 +386,17 @@ class ReportRunCoordination(CoordinationCore):
     ) -> Stage12FailureDetail:
         """Describe a run this report must calculate that already failed.
 
-        The summary ends with the failure the run recorded.
+        It is the failure the run recorded, as when its worker fails during
+        the report, whole, so its correlation ID stays; a run that recorded
+        none gives ``simulation_run_failed``.
         """
-        recorded = f": {state.error_message}" if state.error_message else ""
+        if state.error_message:
+            return run_failure_detail(state.error_message)
         return failure_detail_from_record(
             error_code=SIMULATION_RUN_FAILED,
             error_summary=(
                 f"The {role} simulation run {self.simulation_run_id(role)} "
-                f"already failed{recorded}"
+                "already failed."
             ),
         )
 
@@ -637,9 +640,10 @@ class ReportRunCoordination(CoordinationCore):
 
         A report run's unfinished simulation runs are its coordinator's: the
         simulation service starts no worker on them, and the stuck-run sweep
-        leaves them to it while the report run is unfinished. A run last read
-        as succeeded or failed is never written: other report runs may reuse
-        a succeeded one.
+        leaves them to it while the report run is unfinished. A run read as
+        succeeded or failed while preparing, or at its release, is not
+        written: other report runs may reuse a succeeded one. Any other is
+        failed only while it is still pending or running.
         """
         for role in ROLES:
             state = self.run_states.get(role.value)
