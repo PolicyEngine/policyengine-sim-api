@@ -644,4 +644,5 @@ def cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
         "SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME": (
             "simulation-staging-service-database-url"
         ),
+        "V2_SIMULATION_OUTPUT_BUCKET_VALUE": "policyengine-v2-outputs-staging",
     }
