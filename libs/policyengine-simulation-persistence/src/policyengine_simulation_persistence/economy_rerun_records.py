@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 from sqlalchemy import func, insert, literal, select
 
 from policyengine_simulation_persistence.economy_run_records import (
+    ECONOMY_REPORT_TYPE,
     SimulationChoice,
     insert_simulation_run,
     references_checked,
@@ -69,8 +70,7 @@ if TYPE_CHECKING:
 # report or simulation, or anything else, such as a simulation of a filtered
 # population.
 type RecordKind = Literal["economy", "budget_window", "household", "unsupported"]
-# A report's type, as the Public API and the service write it.
-_ECONOMY_TYPE: Final = "economy"
+# A household report's type, as the household reports' service writes it.
 _HOUSEHOLD_TYPE: Final = "household"
 # Both run tables' statuses use these values for a run under way.
 _UNDER_WAY: Final = (SimulationStatus.PENDING.value, SimulationStatus.RUNNING.value)
@@ -236,7 +236,7 @@ def _report_kind(
 ) -> RecordKind:
     if household_id is not None or report_type == _HOUSEHOLD_TYPE:
         return "household"
-    if report_type != _ECONOMY_TYPE:
+    if report_type != ECONOMY_REPORT_TYPE:
         return "unsupported"
     return "economy" if budget_window_size is None else "budget_window"
 

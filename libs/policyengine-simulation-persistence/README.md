@@ -137,13 +137,17 @@ version, dataset and region it calculates on.
   record calculates: its kind (`economy`, `budget_window`, `household` or
   `unsupported`), country, year, its region's code and dataset's name, and
   each simulation's policy and dynamic.
-- `find_reusable_run_of` is `find_reusable_run` limited to one simulation's
-  runs, with the catalog version, dataset and region compared on the run.
+- `find_reusable_run_of` searches one simulation's runs, by its ID, under
+  `find_reusable_run`'s conditions on a run (versions, the run's own catalog
+  version, dataset, region and year, the output file, a succeeded report run
+  with the same options, no refused reuse); it doesn't compare the
+  simulation row, which keeps the catalog rows it was created on.
 - `insert_report_rerun` creates a report's new run, trigger `manual`, and a
   new run of each side's simulation that reuses none;
   `insert_simulation_rerun` creates a simulation's new run. Each refuses with
   `RunInProgressError`, naming the run, while the record has a run `pending`
-  or `running`, and first takes `lock_reruns_of`, a transaction-level
+  or `running` (for a report, a report run; for a simulation, any of its
+  runs), and first takes `lock_reruns_of`, a transaction-level
   advisory lock on the record's ID, so concurrent re-runs of one record
   wait for each other.
 

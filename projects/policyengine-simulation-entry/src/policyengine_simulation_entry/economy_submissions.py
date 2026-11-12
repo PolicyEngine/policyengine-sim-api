@@ -212,17 +212,18 @@ def _choice(policy: PolicyChoice) -> SimulationChoice:
     return SimulationChoice(policy_id=policy.policy_id, dynamic_id=policy.dynamic_id)
 
 
-class EconomySubmissionService:
+class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
     """Create economy reports and simulations, and start their calls.
 
     The database and the manifest are read on threads, so the event loop
-    never waits on them.
+    never waits on them. ``Store`` is the store's type, which a subclass
+    reading more of the database widens.
     """
 
     def __init__(  # noqa: PLR0913  # each seam tests replace
         self,
         *,
-        store: EconomyRuns,
+        store: Store,
         workers: EconomyWorkerSource,
         caller: EconomyRunCaller,
         settings: ServiceSettings,
@@ -473,19 +474,24 @@ class EconomySubmissionService:
             raise refusal from None
 
     async def _create(
-        self, record: RecordName, create: Callable[[], None], *, rerun: bool = False
+        self,
+        record: RecordName,
+        create: Callable[[], None],
+        *,
+        rerun: bool = False,
+        source: RefusalSource = REQUEST_BODY,
     ) -> None:
         """Create the rows; answer a refusal, an unknown outcome or an outage.
 
         A commit that failed after the rows were inserted may have written
         them, so it is never answered as unavailable, which would tell the
         caller nothing was created. ``rerun`` says the rows are a stored
-        record's new run.
+        record's new run, and ``source`` what names a refused row.
         """
         try:
             await asyncio.to_thread(create)
         except EconomyRecordReferenceError as error:
-            raise reference_refusal(error) from None
+            raise reference_refusal(error, source) from None
         except EconomyRecordOutcomeUnknownError as error:
             # The route logs it, with the commit error's type.
             raise EconomySubmissionOutcomeUnknownError(

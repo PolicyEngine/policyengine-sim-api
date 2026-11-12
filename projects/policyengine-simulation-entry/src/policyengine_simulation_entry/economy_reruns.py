@@ -32,13 +32,12 @@ submission.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final, Protocol, get_args
-from uuid import UUID, uuid4
 
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_simulation_persistence import (
+    EconomyRecordReferenceError,
     EconomyRequest,
     NewReportRerun,
     NewSimulationRerun,
@@ -67,13 +66,13 @@ from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionRefusedError,
 )
 from policyengine_simulation_entry.economy_submissions import (
-    CALL_START_TIMEOUT_SECONDS,
     EconomyRuns,
     EconomySubmissionService,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from uuid import UUID
 
     from policyengine_simulation_persistence import (
         EconomyCatalogRows,
@@ -88,12 +87,12 @@ if TYPE_CHECKING:
     from policyengine_simulation_entry.economy_api_models import (
         ReportRerunRequest,
     )
-    from policyengine_simulation_entry.economy_submission_errors import RecordName
-    from policyengine_simulation_entry.economy_submissions import ServiceSettings
+    from policyengine_simulation_entry.economy_submission_errors import (
+        RecordName,
+        RefusalSource,
+    )
     from policyengine_simulation_entry.economy_workers import (
-        EconomyRunCaller,
         EconomyWorker,
-        EconomyWorkerSource,
     )
 
 # How a refusal names each kind of stored record this service does not re-run
@@ -106,6 +105,11 @@ _NOT_RERUN: Final[dict[RecordKind, str]] = {
 _COUNTRIES: Final[tuple[CountryId, ...]] = get_args(CountryId)
 _REPORT: Final[RecordName] = "report"
 _SIMULATION: Final[RecordName] = "simulation"
+# The table and column of a re-run's new run whose key names the record itself.
+_OWN_KEYS: Final[dict[RecordName, tuple[str, str]]] = {
+    "report": ("report_runs", "report_id"),
+    "simulation": ("simulation_runs", "simulation_id"),
+}
 
 
 class EconomyRerunRuns(EconomyRuns, Protocol):
@@ -141,31 +145,8 @@ class EconomyRerunRuns(EconomyRuns, Protocol):
         ...
 
 
-class EconomyRerunService(EconomySubmissionService):
+class EconomyRerunService(EconomySubmissionService[EconomyRerunRuns]):
     """Create and re-run economy reports and simulations, and start their calls."""
-
-    def __init__(  # noqa: PLR0913  # each seam tests replace
-        self,
-        *,
-        store: EconomyRerunRuns,
-        workers: EconomyWorkerSource,
-        caller: EconomyRunCaller,
-        settings: ServiceSettings,
-        call_start_timeout_seconds: float = CALL_START_TIMEOUT_SECONDS,
-        new_id: Callable[[], UUID] = uuid4,
-        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
-    ) -> None:
-        """Use these seams, as ``EconomySubmissionService`` does."""
-        super().__init__(
-            store=store,
-            workers=workers,
-            caller=caller,
-            settings=settings,
-            call_start_timeout_seconds=call_start_timeout_seconds,
-            new_id=new_id,
-            clock=clock,
-        )
-        self._reruns = store
 
     async def rerun_report(
         self,
@@ -183,7 +164,7 @@ class EconomyRerunService(EconomySubmissionService):
         run as well as the report.
         """
         definition = await self._read_state(
-            lambda: self._reruns.read_report_definition(report_id)
+            lambda: self._store.read_report_definition(report_id)
         )
         if definition is None:
             raise EconomyRecordNotFoundError(_REPORT)
@@ -206,7 +187,7 @@ class EconomyRerunService(EconomySubmissionService):
             )
         )
         inputs = await self._read_inputs(
-            lambda: self._reruns.read_report_rerun_inputs(
+            lambda: self._store.read_report_rerun_inputs(
                 economy_request,
                 baseline=stored.baseline,
                 reform=stored.reform,
@@ -242,7 +223,9 @@ class EconomyRerunService(EconomySubmissionService):
             reform_policy=inputs.reform.reform,
         )
         await self._create_rerun(
-            _REPORT, lambda: self._reruns.create_report_rerun(rerun)
+            _REPORT,
+            lambda: self._store.create_report_rerun(rerun),
+            source=STORED_REPORT,
         )
         status = await self._start_report_run(
             worker,
@@ -279,7 +262,7 @@ class EconomyRerunService(EconomySubmissionService):
         naming the simulation.
         """
         definition = await self._read_state(
-            lambda: self._reruns.read_simulation_definition(simulation_id)
+            lambda: self._store.read_simulation_definition(simulation_id)
         )
         if definition is None:
             raise EconomyRecordNotFoundError(_SIMULATION)
@@ -315,7 +298,9 @@ class EconomyRerunService(EconomySubmissionService):
             policy=inputs.simulation.reform,
         )
         await self._create_rerun(
-            _SIMULATION, lambda: self._reruns.create_simulation_rerun(rerun)
+            _SIMULATION,
+            lambda: self._store.create_simulation_rerun(rerun),
+            source=STORED_SIMULATION,
         )
         status = await self._start_simulation_run(
             worker,
@@ -348,11 +333,31 @@ class EconomyRerunService(EconomySubmissionService):
         )
 
     async def _create_rerun(
-        self, record: RecordName, create: Callable[[], None]
+        self,
+        record: RecordName,
+        create: Callable[[], None],
+        *,
+        source: RefusalSource,
     ) -> None:
-        """Create the re-run's rows; refuse it while the record has a run under way."""
+        """Create the re-run's rows; refuse it while the record has a run under way.
+
+        A record deleted after its reads is answered as not found: the
+        database refuses the new run's key to it (``report_runs.report_id``
+        or ``simulation_runs.simulation_id``). Any other row it refuses is
+        named as ``source``'s.
+        """
+        own_key = _OWN_KEYS[record]
+
+        def create_unless_deleted() -> None:
+            try:
+                create()
+            except EconomyRecordReferenceError as error:
+                if (error.table_name, error.column_name) == own_key:
+                    raise EconomyRecordNotFoundError(record) from None
+                raise
+
         try:
-            await self._create(record, create, rerun=True)
+            await self._create(record, create_unless_deleted, rerun=True, source=source)
         except RunInProgressError as error:
             raise EconomyRerunConflictError(
                 code="run_in_progress",

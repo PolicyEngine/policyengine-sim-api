@@ -12,9 +12,10 @@ Answers the Public API reads:
 - 201 with the created record's ID and its first run's ID, or, for a
   re-run, the record's ID and its new run's ID;
 - 400 with ``code`` and ``detail``: one of ``CallerRowRefusalCode`` when
-  the region, dataset or a dynamic the request names does not exist, or
-  another code for the service's own state, such as a catalog version
-  missing while a release deploys. Nothing is written;
+  the region, dataset or a dynamic the request names (or, for a re-run, the
+  stored record names) does not exist, or another code for the service's own
+  state, such as a catalog version missing while a release deploys. Nothing
+  is written;
 - 404 ``unknown_report`` or ``unknown_simulation`` when a re-run names no
   stored record;
 - 409 with ``code`` and ``detail`` when a stored record is not re-run now:
@@ -53,7 +54,9 @@ ReportLabel = Annotated[str, Field(min_length=1, max_length=255)]
 ReportDescription = Annotated[str, Field(max_length=10_000)]
 
 # Why a request is refused (400), naming a row the caller chose that doesn't
-# exist: the Public API answers these as its caller's error.
+# exist: the Public API answers these as its caller's error. On a re-run they
+# name the stored record's own region, dataset or dynamic, which the current
+# catalog version lacks or which was deleted.
 CallerRowRefusalCode = Literal["unknown_region", "unknown_dataset", "unknown_dynamic"]
 # Why a request is refused (400) for the service's own state, or a row the
 # Public API checks before asking.

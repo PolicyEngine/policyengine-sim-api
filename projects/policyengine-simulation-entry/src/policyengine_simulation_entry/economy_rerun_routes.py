@@ -106,8 +106,9 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
                 f"The stored {record}'s region, dataset, policy or dynamic is "
                 "missing from the catalog version of the default worker's .py "
                 "version, or a function it needs is missing; nothing was "
-                "written. Each code is the stored record's or the service's "
-                "state, never the caller's"
+                "written. unknown_region, unknown_dataset and unknown_dynamic "
+                f"name the stored {record}'s own rows; any other code is the "
+                "service's state"
             ),
             **ERROR_ANSWER,
         },

@@ -44,9 +44,12 @@ if TYPE_CHECKING:
 
 # Each column whose foreign key can refuse a submission's rows: the code the
 # refusal answers with and the row it names. A region, dataset or dynamic is
-# the caller's own choice; any other row is one the Public API checked first,
-# or one the service chose, so its refusal is the service's state.
+# the caller's own choice, or on a re-run the stored record's; any other row
+# is one the Public API checked first, or one the service chose, so its
+# refusal is the service's state. A simulation is refused only on a re-run,
+# whose new runs name the report's stored simulations.
 REFERENCE_REFUSALS: dict[str, tuple[EconomyRefusalCode, str]] = {
+    "simulation_id": ("missing_reference", "simulation"),
     "region_id": ("unknown_region", "region"),
     "dataset_id": ("unknown_dataset", "dataset"),
     "dynamic_id": ("unknown_dynamic", "dynamic"),
@@ -299,15 +302,16 @@ def _unprocessable(
 
 
 def reference_refusal(
-    error: EconomyRecordReferenceError,
+    error: EconomyRecordReferenceError, source: RefusalSource = REQUEST_BODY
 ) -> EconomySubmissionRefusedError:
     """Return the refusal of rows the database refused for naming a missing row.
 
-    It names the kind of row, never its ID, which the caller sent.
+    It names the kind of row, never its ID, which the caller sent, and what
+    named it: the request, or the stored record a re-run reads.
     """
     code, row = REFERENCE_REFUSALS.get(
         error.column_name or "", ("missing_reference", "row")
     )
     return EconomySubmissionRefusedError(
-        code=code, detail=f"a {row} the request names no longer exists"
+        code=code, detail=f"a {row} {source.named_by} names no longer exists"
     )
