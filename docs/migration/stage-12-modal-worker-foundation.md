@@ -340,9 +340,11 @@ trigger `manual`) and, for a report, a new `simulation_runs` row of each side's
 own simulation, or names that simulation's run that already succeeded on the
 same versions, unless the re-run is forced. The new runs record the catalog
 version, dataset and region of the current .py version's catalog; the
-`simulations` and `reports` rows are unchanged. The coordinator and workers
-claim and calculate them as they would a new record's: nothing on the Modal
-side tells a re-run apart.
+`simulations` and `reports` rows are unchanged. A budget-window report's
+re-run is a new `budget_window_runs` row (trigger `manual`) with a report run
+per year, each on its year's own simulations, started as a new window's
+first years are. The coordinator and workers claim and calculate them as
+they would a new record's: nothing on the Modal side tells a re-run apart.
 
 **Each worker** claims its simulation run under its own Modal call ID: a pending
 or running run that records no call or its own. It records its output file, or

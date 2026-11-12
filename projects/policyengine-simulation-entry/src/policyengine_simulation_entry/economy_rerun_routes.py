@@ -6,6 +6,9 @@
   new run's ID and status, and each side's simulation and simulation run.
   ``{"force": true}`` calculates both simulations again; otherwise a side
   reuses a run of its own simulation that succeeded on the same versions.
+  A budget-window report's new run is a budget-window run with a report run
+  per year, of which the first five are started; it answers as the
+  budget-window create does, naming the window run and every year's runs.
 - ``POST /simulations/{simulation_id}/runs`` (``simulation:submit``) creates
   the stored simulation's new run and starts its simulation function,
   answering 201 with the simulation's ID, the new run's ID and its status.

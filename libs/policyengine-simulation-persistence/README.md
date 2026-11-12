@@ -153,11 +153,20 @@ version, dataset and region it calculates on.
   record itself, the record was deleted after it was read:
   `RerunRecordDeletedError`.
 
+A budget window's definition also names its newest budget-window run's
+years (`WindowYearDefinition`): each year's sides are the simulations of the
+runs that year's report run names. `insert_window_rerun` creates the
+window's new budget-window run (trigger `manual`, `recalculate` set), a
+report run per year and each year's new runs of its own simulations. Every
+report re-run is refused while a budget-window run or a report run of the
+report is `pending` or `running`.
+
 `EconomyRunStore.read_report_rerun_inputs` reads a re-run's catalog rows by
 the stored region code and dataset name, and each side's values and
 reusable run of its own simulation, never giving both sides the same run.
-`create_report_rerun` and `create_simulation_rerun` run the inserts in a
-transaction of their own.
+`read_window_rerun_inputs` does the same for each year of a window.
+`create_report_rerun`, `create_window_rerun` and `create_simulation_rerun`
+run the inserts in a transaction of their own.
 
 ## Reading a policy
 

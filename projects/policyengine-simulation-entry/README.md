@@ -203,6 +203,13 @@ both again. The new report run's trigger is `manual`. The service reads the
 report's region code and dataset name, finds the rows with that code and
 name in the catalog version of the default worker's .py version, and reads
 each simulation's stored policy and dynamic on it.
+A budget-window report's re-run is a new budget-window run, trigger
+`manual`, with `recalculate` set by `force`, and a report run per year. Each
+year's sides are the simulations that year's report run of the report's
+newest window run names (a year that reused another report's run names that
+report's simulation), and each reuses a run of them as a single-year side
+does. The first five years start as a new window's do; it answers 201 with
+the budget-window create's fields, naming the window run and every year.
 `POST /simulations/{simulation_id}/runs`, with no body, creates and starts
 a stored economy simulation's new run, which is always calculated. Each
 answers 201 with the same fields as the create, naming the new run.
@@ -210,10 +217,11 @@ answers 201 with the same fields as the create, naming the new run.
 A re-run is refused before anything is written: 404 (`unknown_report`,
 `unknown_simulation`) for a record that doesn't exist; 409
 `run_in_progress`, naming the run in `run_id`, while the record has a run
-pending or running; 409 `rerun_not_supported` for a budget-window or
-household record, which this service does not re-run yet, or one that
-names no region, dataset, year, simulation or country the service
-calculates; and the create's 400 and 422
+pending or running (for a report, a report run or a budget-window run);
+409 `rerun_not_supported` for a household record, which this service does
+not re-run yet, a budget window whose newest window run lacks a year, or a
+record that names no region, dataset, year, simulation or country the
+service calculates; and the create's 400 and 422
 codes when the stored rows can't be calculated on the current catalog
 version, worded for the stored record (a 422 reason's `loc` starts with
 `report` or `simulation`). The check for a run under way and the inserts

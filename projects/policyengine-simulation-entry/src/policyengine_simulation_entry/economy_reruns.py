@@ -23,10 +23,12 @@ default worker, as a new run, and keeps every earlier run. The service:
    coordinator, or the simulation function, by run ID (C1 · 8's
    coordination), failing the new runs when Modal refuses the call.
 
-Whatever is missing or cannot be calculated is refused in steps 1 and 2,
-before anything is written. A budget-window report and a household report
-or simulation are refused for now; each gets its re-run with its own
-submission.
+A budget-window report's re-run is a new budget-window run with a report
+run per year, each year on the simulations that year's report run of the
+report's newest window run names; its first years start as a new window's
+do. Whatever is missing or cannot be calculated is refused in steps 1 and
+2, before anything is written. A household report or simulation is refused
+for now; it gets its re-run with its own submission.
 """
 
 from __future__ import annotations
