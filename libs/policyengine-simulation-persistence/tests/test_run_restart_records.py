@@ -25,6 +25,8 @@ from economy_rows import (
     insert_reusable_run,
 )
 from policyengine_simulation_persistence import (
+    BudgetWindowYear,
+    NewBudgetWindowReport,
     NewEconomyReport,
     NewEconomySimulation,
     NewHouseholdJob,
@@ -37,12 +39,16 @@ from policyengine_simulation_persistence import (
     SimulationType,
     StoredRunUnreadableError,
     UnstartedRun,
+    WaitingYear,
     budget_window_runs,
+    insert_budget_window_report,
     insert_economy_report,
     insert_economy_simulation,
     insert_household_job,
+    list_idle_budget_windows,
     list_unstarted_runs,
     mark_restart,
+    read_earliest_waiting_year,
     read_report_run_simulation_run_ids,
     read_run_call,
     read_unstarted_report_run,
@@ -530,6 +536,146 @@ def test_a_rows_status_and_recorded_call_are_read_back(connection) -> None:
     assert read_run_call(connection, missing) is None
 
 
+def _new_window(economy: EconomyCatalog, years: int = 3) -> NewBudgetWindowReport:
+    return NewBudgetWindowReport(
+        id=uuid4(),
+        window_run_id=uuid4(),
+        country="us",
+        label="Three-year budget window",
+        description=None,
+        tax_benefit_model_id=economy.catalog.model_id,
+        population=economy.population(year=2026),
+        versions=VERSIONS,
+        inputs=REPORT_OPTIONS,
+        years=tuple(
+            BudgetWindowYear(
+                year=2026 + offset,
+                report_run_id=uuid4(),
+                baseline=_new_side(),
+                reform=_new_side(),
+            )
+            for offset in range(years)
+        ),
+    )
+
+
+def _idle_windows(
+    connection: Connection, *, around: datetime
+) -> tuple[UnstartedRun, ...]:
+    """List the idle windows whose last change is within a second of ``around``."""
+    return list_idle_budget_windows(
+        connection,
+        idle_after=around - timedelta(seconds=1),
+        idle_before=around + timedelta(seconds=1),
+        limit=LISTING_LIMIT,
+    )
+
+
+def test_an_idle_window_with_years_waiting_is_listed_for_a_restart(
+    connection,
+) -> None:
+    """A window whose first years the service never started waits for nothing."""
+    economy = insert_economy_catalog(connection)
+    window = _new_window(economy)
+    insert_budget_window_report(connection, window)
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+
+    assert _idle_windows(connection, around=created_at) == (
+        UnstartedRun(
+            kind=RestartKind.BUDGET_WINDOW,
+            run_id=window.window_run_id,
+            created_at=created_at,
+        ),
+    )
+    # Its years are never listed as report runs of their own.
+    assert _listed(connection, around=created_at) == ()
+
+
+def test_a_window_with_a_year_under_way_or_finished_is_not_listed(
+    connection,
+) -> None:
+    economy = insert_economy_catalog(connection)
+    started = _new_window(economy)
+    insert_budget_window_report(connection, started)
+    record_report_run_call(
+        connection,
+        report_run_id=started.years[0].report_run_id,
+        modal_call_id="fc-year",
+    )
+    finished = _new_window(economy)
+    insert_budget_window_report(connection, finished)
+    connection.execute(
+        update(budget_window_runs)
+        .where(budget_window_runs.c.id == finished.window_run_id)
+        .values(status="failed", completed_at=func.now())
+    )
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+
+    assert _idle_windows(connection, around=created_at) == ()
+
+
+def test_a_window_whose_earliest_waiting_year_was_marked_is_not_listed(
+    connection,
+) -> None:
+    """A window is restarted at most once for each time it stops."""
+    economy = insert_economy_catalog(connection)
+    window = _new_window(economy)
+    insert_budget_window_report(connection, window)
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+    first_year = UnstartedRun(
+        kind=RestartKind.REPORT_RUN,
+        run_id=window.years[0].report_run_id,
+        created_at=created_at,
+    )
+
+    assert mark_restart(connection, first_year) is True
+    marked_at = connection.execute(
+        select(report_runs.c.updated_at).where(report_runs.c.id == first_year.run_id)
+    ).scalar_one()
+    assert _idle_windows(connection, around=created_at) == ()
+    assert _idle_windows(connection, around=marked_at) == ()
+
+
+def test_a_window_idle_outside_the_listings_bounds_is_not_listed(
+    connection,
+) -> None:
+    economy = insert_economy_catalog(connection)
+    insert_budget_window_report(connection, _new_window(economy))
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+
+    too_recent = list_idle_budget_windows(
+        connection,
+        idle_after=created_at - timedelta(minutes=10),
+        idle_before=created_at - timedelta(minutes=3),
+        limit=LISTING_LIMIT,
+    )
+
+    assert too_recent == ()
+
+
+def test_the_earliest_unmarked_waiting_year_of_a_window_is_read_back(
+    connection,
+) -> None:
+    economy = insert_economy_catalog(connection)
+    window = _new_window(economy)
+    insert_budget_window_report(connection, window)
+    record_report_run_call(
+        connection,
+        report_run_id=window.years[0].report_run_id,
+        modal_call_id="fc-first-year",
+    )
+    act_as_the_modal_worker(connection)
+
+    assert read_earliest_waiting_year(connection, window.window_run_id) == (
+        WaitingYear(report_run_id=window.years[1].report_run_id, year=2027)
+    )
+    assert read_earliest_waiting_year(connection, uuid4()) is None
+
+
 @pytest.fixture
 def savepoint_store(connection) -> RunRestartStore:
     """Return a store whose every transaction is a savepoint of ``connection``."""
@@ -550,6 +696,8 @@ def test_the_store_lists_marks_and_reads_in_transactions_of_its_own(
     insert_economy_report(connection, report)
     simulation = _new_simulation(economy)
     insert_economy_simulation(connection, simulation)
+    window = _new_window(economy)
+    insert_budget_window_report(connection, window)
     created_at = _transaction_start(connection)
     act_as_the_modal_worker(connection)
 
@@ -563,10 +711,20 @@ def test_the_store_lists_marks_and_reads_in_transactions_of_its_own(
     simulation_run = savepoint_store.read_simulation_run(simulation.run_id)
     marked = savepoint_store.mark_restart(by_kind[RestartKind.REPORT_RUN])
     call = savepoint_store.read_call(by_kind[RestartKind.SIMULATION_RUN])
+    windows = savepoint_store.list_idle_windows(
+        idle_after=created_at - timedelta(seconds=1),
+        idle_before=created_at + timedelta(seconds=1),
+        limit=LISTING_LIMIT,
+    )
+    waiting = savepoint_store.read_earliest_waiting_year(window.window_run_id)
     sides = savepoint_store.read_report_run_simulation_run_ids(report.run_id)
 
     assert set(by_kind) == {RestartKind.REPORT_RUN, RestartKind.SIMULATION_RUN}
     assert call == RunCall(status="pending", modal_call_id=None)
+    assert [run.run_id for run in windows] == [window.window_run_id]
+    assert waiting == WaitingYear(
+        report_run_id=window.years[0].report_run_id, year=2026
+    )
     assert sides == (
         report.baseline.simulation_run_id,
         report.reform.simulation_run_id,

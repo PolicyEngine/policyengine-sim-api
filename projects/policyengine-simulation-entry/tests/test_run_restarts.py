@@ -32,6 +32,7 @@ from economy_service_fakes import (
     simulation_request,
 )
 from household_fixtures import manifest_store
+from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_simulation_entry.economy_workers import ManifestEconomyWorkers
 from policyengine_simulation_entry.household_api_models import (
     HouseholdCalculationRequest,
@@ -69,6 +70,12 @@ from policyengine_simulation_persistence import (
     StoredRunUnreadableError,
     StoredSimulationRun,
     UnstartedRun,
+    WaitingYear,
+)
+from policyengine_stage12_persistence import (
+    RunStatus,
+    WindowAdvance,
+    YearToStart,
 )
 from sqlalchemy.exc import OperationalError
 
@@ -130,9 +137,20 @@ class FakeRestartStore:
     # Each row's status and call as stored, by run ID; a row not named here is
     # as the rig's other fakes left it (``holder``).
     held: dict[UUID, RunCall | None] = field(default_factory=dict)
+    idle_windows: tuple[UnstartedRun, ...] = ()
+    waiting_years: dict[UUID, WaitingYear] = field(default_factory=dict)
     holder: Callable[[UnstartedRun], RunCall | None] | None = None
-    windows: list[tuple[datetime, datetime, int]] = field(default_factory=list)
+    listings: list[tuple[datetime, datetime, int]] = field(default_factory=list)
     marked: list[UnstartedRun] = field(default_factory=list)
+
+    def list_idle_windows(
+        self, *, idle_after: datetime, idle_before: datetime, limit: int
+    ) -> tuple[UnstartedRun, ...]:
+        self.listings.append((idle_after, idle_before, limit))
+        return self.idle_windows
+
+    def read_earliest_waiting_year(self, window_run_id: UUID) -> WaitingYear | None:
+        return self.waiting_years.get(window_run_id)
 
     def read_call(self, run: UnstartedRun) -> RunCall | None:
         if run.run_id in self.held:
@@ -147,7 +165,7 @@ class FakeRestartStore:
     def list_unstarted(
         self, *, created_after: datetime, created_before: datetime, limit: int
     ) -> tuple[UnstartedRun, ...]:
-        self.windows.append((created_after, created_before, limit))
+        self.listings.append((created_after, created_before, limit))
         return self.unstarted
 
     def mark_restart(self, run: UnstartedRun) -> bool:
@@ -262,6 +280,37 @@ class FakeHouseholdCaller:
 
 
 @dataclass
+class FakeWindows:
+    """Advances a window as ``BudgetWindowStore`` does: its waiting years in order.
+
+    Each waiting year is offered to the starter; the advance ends with
+    ``status``, or failed when a start raises.
+    """
+
+    waiting: tuple[YearToStart, ...] = ()
+    status: RunStatus = RunStatus.PENDING
+    advanced: list[UUID] = field(default_factory=list)
+    started_calls: list[str] = field(default_factory=list)
+
+    def advance_window(
+        self, window_run_id: UUID, *, now: datetime, start_year: Any = None
+    ) -> WindowAdvance:
+        self.advanced.append(window_run_id)
+        started = []
+        for year in self.waiting:
+            try:
+                self.started_calls.append(start_year(year))
+            except Exception:  # noqa: BLE001  # as the store fails a refused year
+                return WindowAdvance(
+                    status=RunStatus.FAILED, changed=True, started_years=tuple(started)
+                )
+            started.append(year.year)
+        return WindowAdvance(
+            status=self.status, changed=False, started_years=tuple(started)
+        )
+
+
+@dataclass
 class RecordingTelemetry:
     """Records each restart scope and outcome the check reports."""
 
@@ -293,6 +342,7 @@ class RestartRig:
     """The restart service and every fake it was built with."""
 
     restarts: FakeRestartStore
+    windows: FakeWindows
     economy: FakeStore
     households: FakeHouseholdJobs
     economy_caller: FakeCaller
@@ -313,8 +363,10 @@ def _rig(  # noqa: PLR0913  # each fake a test may replace
     household_caller: FakeHouseholdCaller | None = None,
     manifest: object | None = None,
     timer: Callable[[], float] | None = None,
+    windows: FakeWindows | None = None,
 ) -> RestartRig:
     restarts = restarts or FakeRestartStore()
+    windows = windows or FakeWindows()
     economy = economy or FakeStore()
     households = households or FakeHouseholdJobs()
     economy_caller = economy_caller or FakeCaller()
@@ -332,7 +384,12 @@ def _rig(  # noqa: PLR0913  # each fake a test may replace
     if restarts.holder is None:
         restarts.holder = holder
     restart_service = RunRestartService(
-        stores=RestartStores(restarts=restarts, economy=economy, households=households),
+        stores=RestartStores(
+            restarts=restarts,
+            economy=economy,
+            households=households,
+            windows=windows,
+        ),
         workers=RestartWorkers(
             economy=ManifestEconomyWorkers(store),
             households=ManifestHouseholdWorkers(store),
@@ -347,6 +404,7 @@ def _rig(  # noqa: PLR0913  # each fake a test may replace
     )
     return RestartRig(
         restarts=restarts,
+        windows=windows,
         economy=economy,
         households=households,
         economy_caller=economy_caller,
@@ -461,9 +519,11 @@ def test_the_check_lists_runs_created_three_to_ten_minutes_ago() -> None:
 
     summary = rig.restart()
 
-    assert rig.restarts.windows == [
-        (NOW - RESTART_UNTIL, NOW - RESTART_AFTER, RESTARTS_PER_CHECK)
-    ]
+    # Rows, then idle budget windows.
+    assert (
+        rig.restarts.listings
+        == [(NOW - RESTART_UNTIL, NOW - RESTART_AFTER, RESTARTS_PER_CHECK)] * 2
+    )
     assert (
         timedelta(minutes=3),
         timedelta(minutes=10),
@@ -1000,3 +1060,134 @@ def test_an_unexpected_rebuild_error_defers_its_run_and_the_check_goes_on(
         "run_kind": "report_run",
         "run_id": str(broken_run_id),
     }
+
+
+WINDOW_RUN_ID = UUID("00000000-0000-4000-8000-0000000000f1")
+
+
+def _idle_window_rig(**options: Any) -> tuple[RestartRig, StoredReportRun, dict]:
+    """Return a rig with one idle window whose earliest waiting year was submitted.
+
+    Its second waiting year is the following year, on runs of its own.
+    """
+    stored, (payload, _context) = _submitted_report()
+    first_year = YearToStart(
+        year=2026,
+        run_ids=ReportRunIds(
+            report_run_id=stored.report_run_id,
+            baseline_simulation_run_id=stored.baseline.simulation_run_id,
+            reform_simulation_run_id=stored.reform.simulation_run_id,
+        ),
+    )
+    second_year = YearToStart(
+        year=2027,
+        run_ids=ReportRunIds(
+            report_run_id=UUID(int=2027),
+            baseline_simulation_run_id=UUID(int=20271),
+            reform_simulation_run_id=UUID(int=20272),
+        ),
+    )
+    restarts = options.pop("restarts", None) or FakeRestartStore(
+        idle_windows=(
+            UnstartedRun(
+                kind=RestartKind.BUDGET_WINDOW,
+                run_id=WINDOW_RUN_ID,
+                created_at=CREATED_AT,
+            ),
+        ),
+        report_runs={stored.report_run_id: stored},
+        waiting_years={
+            WINDOW_RUN_ID: WaitingYear(report_run_id=stored.report_run_id, year=2026)
+        },
+    )
+    windows = options.pop("windows", None) or FakeWindows(
+        waiting=(first_year, second_year)
+    )
+    return _rig(restarts=restarts, windows=windows, **options), stored, payload
+
+
+def test_an_idle_window_is_restarted_from_its_earliest_waiting_year() -> None:
+    """Its first years start as the service starts them, from its first year's call."""
+    rig, stored, payload = _idle_window_rig()
+
+    summary = rig.restart()
+
+    assert rig.windows.advanced == [WINDOW_RUN_ID]
+    assert [run.run_id for run in rig.restarts.marked] == [stored.report_run_id]
+    first_call, second_call = rig.economy_caller.report_runs
+    assert first_call[1] == payload
+    assert second_call[1]["evaluation_id"] == str(UUID(int=2027))
+    assert second_call[1]["baseline"]["year"] == 2027
+    assert summary == RestartSummary(listed=1, restarted=1)
+    assert rig.telemetry.outcomes == [
+        (RestartKind.BUDGET_WINDOW, WINDOW_RUN_ID, RestartOutcome.RESTARTED, None)
+    ]
+
+
+def test_the_check_lists_idle_windows_in_the_same_window_of_time() -> None:
+    rig, _stored, _payload = _idle_window_rig()
+
+    rig.restart()
+
+    assert (
+        rig.restarts.listings
+        == [(NOW - RESTART_UNTIL, NOW - RESTART_AFTER, RESTARTS_PER_CHECK)] * 2
+    )
+
+
+def test_a_window_whose_restarted_year_modal_refuses_counts_as_failed() -> None:
+    rig, _stored, _payload = _idle_window_rig(
+        economy_caller=FakeCaller(failure=ConnectionError("Modal is down"))
+    )
+
+    summary = rig.restart()
+
+    assert summary == RestartSummary(listed=1, failed=1)
+
+
+def test_a_window_no_longer_waiting_is_left_unmarked() -> None:
+    rig, _stored, _payload = _idle_window_rig(
+        restarts=FakeRestartStore(
+            idle_windows=(
+                UnstartedRun(
+                    kind=RestartKind.BUDGET_WINDOW,
+                    run_id=WINDOW_RUN_ID,
+                    created_at=CREATED_AT,
+                ),
+            )
+        )
+    )
+
+    summary = rig.restart()
+
+    assert rig.restarts.marked == []
+    assert rig.windows.advanced == []
+    assert summary == RestartSummary(listed=1, left=1)
+
+
+def test_a_window_another_check_marked_first_is_left_without_an_advance() -> None:
+    rig, stored, _payload = _idle_window_rig()
+    rig.restarts.marked_elsewhere = True
+
+    summary = rig.restart()
+
+    assert rig.windows.advanced == []
+    assert summary == RestartSummary(listed=1, left=1)
+    assert stored.report_run_id not in [run.run_id for run in rig.restarts.marked]
+
+
+def test_a_window_whose_first_years_call_cannot_be_rebuilt_is_left_to_the_sweep() -> (
+    None
+):
+    """It is marked, so no later check tries again; the sweep fails it as stalled."""
+    rig, stored, _payload = _idle_window_rig()
+    rig.restarts.read_failures[stored.report_run_id] = StoredRunUnreadableError(
+        "report run names no region"
+    )
+
+    summary = rig.restart()
+
+    assert [run.run_id for run in rig.restarts.marked] == [stored.report_run_id]
+    assert rig.windows.advanced == []
+    assert summary == RestartSummary(listed=1, left=1)
+    assert rig.telemetry.outcomes[0][3] == "StoredRunUnreadableError"
