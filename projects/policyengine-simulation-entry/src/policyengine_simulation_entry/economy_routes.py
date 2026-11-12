@@ -32,12 +32,17 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any, Final, Protocol
+from typing import TYPE_CHECKING, Annotated, Any, Final, Protocol
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
+from pydantic import Field
 
+from policyengine_simulation_entry.budget_window_api_models import (
+    BudgetWindowReportCreated,
+    BudgetWindowReportRequest,
+)
 from policyengine_simulation_entry.economy_api_models import (
     EconomyError,
     EconomyReportCreated,
@@ -170,6 +175,16 @@ class EconomySubmissions(Protocol):
         observability_context: dict[str, Any] | None,
     ) -> EconomyReportCreated:
         """Create the report and its runs and start its coordinator."""
+        ...
+
+    async def submit_budget_window(
+        self,
+        request: BudgetWindowReportRequest,
+        *,
+        request_id: str,
+        observability_context: dict[str, Any] | None,
+    ) -> BudgetWindowReportCreated:
+        """Create the window's report and its years' runs, and start its first years."""
         ...
 
     async def submit_simulation(
@@ -395,18 +410,22 @@ def _submission_routes(
 
     @router.post(
         REPORTS_PATH,
-        summary="Create an economy report",
+        summary="Create an economy or budget-window report",
         description=(
             "Create an economy report comparing a baseline and a reform "
             "simulation of one region's data for one year, on the v2 version "
             "manifest's default worker, and start its first run. A side whose "
-            "simulation already succeeded on the same versions reuses that run."
+            "simulation already succeeded on the same versions reuses that run. "
+            "A budget-window report (report_type budget_window) compares them "
+            "in each year of a window of 1 to 75 years, with a report run per "
+            "year, at most five running at once; each year reuses its own "
+            "year's runs."
         ),
         operation_id="create_report",
         status_code=status.HTTP_201_CREATED,
-        response_model=EconomyReportCreated,
+        response_model=EconomyReportCreated | BudgetWindowReportCreated,
         responses={
-            201: {"description": "The report and its first run were created"},
+            201: {"description": "The report and its first runs were created"},
             400: _REFUSED,
             403: _FORBIDDEN,
             422: _UNPROCESSABLE,
@@ -416,17 +435,27 @@ def _submission_routes(
         dependencies=[Depends(submitter)],
     )
     async def create_report(
-        body: EconomyReportRequest, request: Request
+        body: Annotated[
+            EconomyReportRequest | BudgetWindowReportRequest,
+            Field(discriminator="report_type"),
+        ],
+        request: Request,
     ) -> JSONResponse:
         if submissions is None:
             return _not_configured()
         observability_id = entry.start_workflow_observability(request)
         try:
-            created = await submissions.submit_report(
-                body,
-                request_id=call_request_id_for(request),
-                observability_context=observability_context(entry, observability_id),
-            )
+            call_request_id = call_request_id_for(request)
+            context = observability_context(entry, observability_id)
+            created: EconomyReportCreated | BudgetWindowReportCreated
+            if isinstance(body, BudgetWindowReportRequest):
+                created = await submissions.submit_budget_window(
+                    body, request_id=call_request_id, observability_context=context
+                )
+            else:
+                created = await submissions.submit_report(
+                    body, request_id=call_request_id, observability_context=context
+                )
         except _SUBMISSION_FAILURES as error:
             return _submission_failure_response(error, "report")
         # Every other failure is still answered as the JSON 500 declared.
