@@ -43,6 +43,7 @@ from policyengine_simulation_entry.economy_submission_errors import (
 from policyengine_simulation_persistence import (
     CatalogDataset,
     EconomyRecordOutcomeUnknownError,
+    EconomyRecordReferenceError,
     MissingPolicyParametersError,
     NewReportRerun,
     NewSimulationRerun,
@@ -437,3 +438,46 @@ def test_a_simulations_stored_policy_is_located_on_the_simulation() -> None:
 
     ((reason,),) = (refused.value.reasons,)
     assert reason.loc == ("simulation", "dynamic_id", "gov.old.elasticity")
+
+
+@pytest.mark.parametrize(
+    ("record", "deleted"),
+    [
+        ("report", EconomyRecordReferenceError("report_runs", "report_id")),
+        ("simulation", EconomyRecordReferenceError("simulation_runs", "simulation_id")),
+    ],
+)
+def test_a_record_deleted_after_its_reads_is_not_found(record, deleted) -> None:
+    service = rerun_service(FakeRerunStore(rerun_failure=deleted))
+    rerun = _rerun_report if record == "report" else _rerun_simulation
+
+    with pytest.raises(EconomyRecordNotFoundError) as missing:
+        rerun(service)
+
+    assert missing.value.record == record
+
+
+@pytest.mark.parametrize(
+    ("deleted", "code", "detail"),
+    [
+        (
+            EconomyRecordReferenceError("simulation_runs", "dataset_id"),
+            "unknown_dataset",
+            "a dataset the report names no longer exists",
+        ),
+        (
+            EconomyRecordReferenceError("simulation_runs", "simulation_id"),
+            "missing_reference",
+            "a simulation the report names no longer exists",
+        ),
+    ],
+)
+def test_a_row_deleted_after_a_reruns_reads_is_refused_naming_the_report(
+    deleted, code, detail
+) -> None:
+    store = FakeRerunStore(rerun_failure=deleted)
+
+    with pytest.raises(EconomySubmissionRefusedError) as refused:
+        _rerun_report(rerun_service(store))
+
+    assert (refused.value.code, refused.value.detail) == (code, detail)

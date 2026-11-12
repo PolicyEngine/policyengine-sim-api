@@ -26,6 +26,7 @@ from economy_rows import (
     LATER_VERSIONS,
     OPTIONS,
     OUTPUT_BUCKET_PREFIX,
+    VERSIONS,
     EconomyCatalog,
     ReportRunOutcome,
     RunShape,
@@ -55,23 +56,27 @@ from policyengine_simulation_persistence import (
     SimulationChoice,
     SimulationDefinition,
     SimulationStatus,
+    SimulationType,
     UnknownDatasetError,
     UnknownRegionError,
+    find_reusable_run,
     find_reusable_run_of,
     insert_report_rerun,
     insert_simulation_rerun,
     lock_reruns_of,
     read_report_definition,
     read_simulation_definition,
+    simulations,
 )
 from public_api_rows import (
     StoredValue,
+    insert_catalog_version,
     insert_dataset,
     insert_household,
     insert_policy,
     insert_region,
 )
-from sqlalchemy import text
+from sqlalchemy import insert, text
 from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
@@ -720,3 +725,133 @@ def test_a_rerun_and_its_runs_are_created_through_the_store(
     assert definition.id == stored.report_id
     assert simulation is not None
     assert simulation.id == simulation_rerun.simulation_id
+
+
+def test_a_run_on_another_catalog_version_is_not_reused_by_a_new_report(
+    public_api_database_url,
+) -> None:
+    """Only the run's own catalog version differs from the request's.
+
+    It is also the newest run, so it would be found without that condition.
+    """
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        later = insert_later_catalog(connection, economy)
+        stored = _stored_report(connection, economy)
+        connection.execute(
+            text(
+                "UPDATE public.simulation_runs "
+                "SET tax_benefit_model_version_id = :later, "
+                "completed_at = completed_at + interval '1 day' WHERE id = :id"
+            ),
+            {
+                "later": later.catalog.version_id,
+                "id": stored.baseline.simulation_run_id,
+            },
+        )
+        act_as_the_service(connection)
+
+        found = find_reusable_run(
+            connection,
+            choice=CURRENT_LAW,
+            population=economy.population(),
+            versions=VERSIONS,
+            inputs=OPTIONS,
+            output_uri_prefix=OUTPUT_BUCKET_PREFIX,
+        )
+
+    # The reform's run, the same simulation definition on the right catalog
+    # version, is the only one left to reuse.
+    assert found == ReusableRun(
+        simulation_id=stored.reform.simulation_id,
+        simulation_run_id=stored.reform.simulation_run_id,
+    )
+
+
+def test_a_household_or_filtered_simulation_and_another_model_are_read_as_such(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        household_id = insert_household(
+            connection, country="us", default_year=2026, document={"people": {}}
+        )
+        household_simulation_id = uuid4()
+        filtered_simulation_id = uuid4()
+        connection.execute(
+            insert(simulations).values(
+                id=household_simulation_id,
+                simulation_type=SimulationType.HOUSEHOLD,
+                household_id=household_id,
+                tax_benefit_model_version_id=economy.catalog.version_id,
+                year=2026,
+            )
+        )
+        connection.execute(
+            insert(simulations).values(
+                id=filtered_simulation_id,
+                simulation_type=SimulationType.ECONOMY,
+                dataset_id=economy.dataset_id,
+                region_id=economy.region_id,
+                tax_benefit_model_version_id=economy.catalog.version_id,
+                year=2026,
+                filter_field="state_code",
+                filter_value="CA",
+            )
+        )
+        other_model_id = uuid4()
+        connection.execute(
+            text(
+                "INSERT INTO public.tax_benefit_models (id, name) VALUES (:id, :name)"
+            ),
+            {"id": other_model_id, "name": "another-model"},
+        )
+        other = _insert_catalog_of(connection, other_model_id)
+        other_simulation = insert_simulation_run(connection, other.population())
+        act_as_the_service(connection)
+
+        household = read_simulation_definition(connection, household_simulation_id)
+        filtered = read_simulation_definition(connection, filtered_simulation_id)
+        of_another_model = read_simulation_definition(
+            connection, other_simulation.simulation_id
+        )
+
+    assert household is not None
+    assert (household.kind, household.country) == ("household", "us")
+    assert (household.region_code, household.dataset_name) == (None, None)
+    assert filtered is not None
+    assert filtered.kind == "unsupported"
+    assert of_another_model is not None
+    assert (of_another_model.kind, of_another_model.country) == ("economy", None)
+
+
+def _insert_catalog_of(connection: Connection, model_id: UUID) -> EconomyCatalog:
+    catalog = insert_catalog_version(
+        connection,
+        country="xx",
+        model_id=model_id,
+        policyengine_version=LATER_POLICYENGINE_VERSION,
+    )
+    dataset_id = insert_dataset(connection, catalog, "another_dataset")
+    region_id = insert_region(
+        connection, catalog, "everywhere", default_dataset_id=dataset_id
+    )
+    return EconomyCatalog(catalog=catalog, dataset_id=dataset_id, region_id=region_id)
+
+
+def test_a_report_of_another_type_is_read_as_unsupported(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        stored = _stored_report(connection, economy)
+        connection.execute(
+            text("UPDATE public.reports SET type = 'custom_total' WHERE id = :id"),
+            {"id": stored.report_id},
+        )
+        act_as_the_service(connection)
+
+        definition = read_report_definition(connection, stored.report_id)
+
+    assert definition is not None
+    assert definition.kind == "unsupported"
