@@ -173,6 +173,11 @@ case "$*" in
       "${spec}" >/dev/null; then
       exit 0
     fi
+    if jq -e --arg listing "${listing}" '.listing_outputs | has($listing)' \
+      "${spec}" >/dev/null; then
+      jq -r --arg listing "${listing}" '.listing_outputs[$listing]' "${spec}"
+      exit 0
+    fi
     # A stopped container is never listed again.
     stopped="$(find "${FAKE_STATE}" -name 'stopped-*' -exec basename {} \; \
       | sed 's/^stopped-//' | jq -R . | jq -s .)"
@@ -360,6 +365,8 @@ class ModalContainers:
     failed_listings: tuple[int, ...] = ()
     unreadable_listings: tuple[int, ...] = ()
     empty_listings: tuple[int, ...] = ()
+    # What some listings print instead, by their number.
+    listing_outputs: dict[int, str] = field(default_factory=dict)
 
 
 @pytest.fixture
@@ -439,6 +446,10 @@ def _run(
         "failed_listings": list(containers.failed_listings),
         "unreadable_listings": list(containers.unreadable_listings),
         "empty_listings": list(containers.empty_listings),
+        "listing_outputs": {
+            str(listing): output
+            for listing, output in containers.listing_outputs.items()
+        },
     }
     (state / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
     environment = {
@@ -655,6 +666,64 @@ def test_an_empty_listing_is_asked_again(fakes, tmp_path):
     assert _listings_before_the_first_stop(fakes) == 2
     assert "readably" in result.stderr
     assert "is not listed" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "output",
+    ["{}", "null", json.dumps([{"ID": CONTAINERS[0]}])],
+    ids=["object", "null", "renamed-column"],
+)
+def test_a_listing_that_is_not_a_list_of_containers_is_asked_again(
+    fakes, tmp_path, output
+):
+    """A change in Modal's output must not read as the container having gone."""
+    result, _ = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [_household_attempt(0)],
+        containers=ModalContainers(listing_outputs={1: output}),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _stops(fakes) == [CONTAINERS[0]]
+    assert _listings_before_the_first_stop(fakes) == 2
+    assert "readably" in result.stderr
+    assert "is not listed" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("failed_listings", "last_note", "earlier_note"),
+    [
+        ((1,), "is not listed", "Modal could not list"),
+        ((2,), "Modal could not list", "is not listed"),
+    ],
+    ids=["unlisted-after-a-failure", "failure-after-unlisted"],
+)
+def test_a_missed_attempts_reason_names_only_the_last_lookups_outcome(
+    fakes, tmp_path, failed_listings, last_note, earlier_note
+):
+    """Modal lists no containers, after or before a listing that fails."""
+    attempt = _household_attempt(0, proves=False)
+    attempt.reads_before_stop = [
+        _household(JOB_IDS[0], "pending", CALL_IDS[0]),
+        _household(JOB_IDS[0], "pending", CALL_IDS[0]),
+        _household(JOB_IDS[0], "succeeded", CALL_IDS[0]),
+    ]
+
+    result, _ = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [attempt],
+        containers=ModalContainers(listed=(), failed_listings=failed_listings),
+        PREEMPTION_CHECK_ATTEMPTS="1",
+    )
+
+    assert result.returncode == 1
+    last_reason = result.stderr.split("the last: ")[-1]
+    assert last_note in last_reason
+    assert earlier_note not in last_reason
 
 
 def test_a_container_found_after_a_failed_listing_clears_its_note(fakes, tmp_path):
