@@ -1,175 +1,157 @@
-"""The Stage 12 coordinator records the status of the report run its call names."""
+"""A report run's coordinator works on the run tables alone.
+
+The simulation service starts the coordinator with a report run's ID. The
+coordinator claims that run under its own Modal call ID and starts a worker
+for each simulation run it doesn't reuse; each worker claims its own
+simulation run under its own call ID. No call creates or claims a Stage 12
+evaluation record: every test here hands the coordinator a comparison store
+that fails on any use.
+"""
 
 from __future__ import annotations
-
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fixtures.fake_object_store import InMemoryObjectStore
 from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
-from policyengine_simulation_contract.stage12_execution import (
-    ComparisonRunLifecycleStatus,
-    SimulationRole,
-)
+from policyengine_simulation_contract.stage12_execution import SimulationRole
 from policyengine_simulation_executor import stage12_artifacts
 from policyengine_simulation_executor.stage12_artifacts import (
     SimulationOutputBucket,
     Stage12ArtifactStore,
 )
 from policyengine_simulation_executor.stage12_runtime import (
-    SimulationWorkerDependencies,
-    run_single_simulation,
-)
-from policyengine_simulation_executor.stage12_runtime import (
-    coordination as coordination_module,
+    report_run_coordination as report_run_coordination_module,
 )
 from policyengine_stage12_persistence import RunStatus
-from stage12_child_call_support import (
-    ConcurrentInvoker,
-    FutureCall,
-    InjectedChildFaults,
-)
+from stage12_child_call_support import ConcurrentInvoker
 from stage12_fake_report_runs import (
     BASELINE_RUN_ID,
     REFORM_RUN_ID,
     REPORT_RUN_ID,
+    REPORT_RUN_PREFIX,
+    SIMULATION_RUN_IDS,
+    ComparisonStoreNotUsed,
     FakeReportRuns,
     economy_aggregate,
     report_run_context,
+    report_run_input,
 )
-from stage12_fake_stores import (
-    SIMULATION_OUTPUT_BUCKET,
-    FakeArtifacts,
-    FakeStore,
-    simulation_frames,
-)
+from stage12_fake_stores import SIMULATION_OUTPUT_BUCKET, FakeArtifacts, FakeStore
+from stage12_run_worker_support import RunWorkerInvoker
 from stage12_runtime_support import (
-    child_record,
     coordinate_report,
+    invocation_context,
     parent_record,
-    planned_simulation,
     report_execution_input,
 )
 
 COORDINATOR_CALL_ID = "fc-coordinator"
+# A worker's longest recorded failure: a 64-character code, and a summary of
+# 512 characters that ends with its correlation ID.
+LONG_RECORDED_FAILURE = (
+    "simulation_execution_failed: "
+    + "x" * (512 - len(" (correlation_id=" + "c" * 32 + ")"))
+    + " (correlation_id="
+    + "c" * 32
+    + ")"
+)
 
 
-class RecordingInvoker(ConcurrentInvoker):
-    """Run both children concurrently, keeping the context each one received."""
-
-    def __init__(self, artifacts, **options):
-        super().__init__(artifacts, **options)
-        self.contexts = []
-
-    def spawn(self, request):
-        self.contexts.append(request.context)
-        return super().spawn(request)
-
-
-def _coordinate(store, report_runs, invoker, artifacts, *, context=None):
-    context = context or report_run_context()
+def _coordinate(report_runs, invoker, artifacts, *, report=None, **seams):
+    context = seams.pop("context", report_run_context())
     return coordinate_report(
-        report_execution_input().model_dump(mode="json"),
+        (report or report_run_input()).model_dump(mode="json"),
         context.model_dump(mode="json"),
-        parent_record().model_dump(mode="json"),
         application_name=context.modal_application,
         coordinator_invocation_id=COORDINATOR_CALL_ID,
-        store=store,
+        store=ComparisonStoreNotUsed(),
         artifacts=artifacts,
         invoker=invoker,
-        aggregator=economy_aggregate,
+        aggregator=seams.pop("aggregator", economy_aggregate),
         report_runs=report_runs,
+        **seams,
     )
 
 
-def _recording_report_writes(store, events):
-    replace_report = store.replace_report
-
-    def recording_replace_report(record):
-        events.append(f"stage12:{record.status.value}")
-        return replace_report(record)
-
-    store.replace_report = recording_replace_report
-    return store
+def _run_through_workers(report_runs=None, **invoker_options):
+    report_runs = report_runs or FakeReportRuns()
+    artifacts = FakeArtifacts()
+    invoker = RunWorkerInvoker(report_runs, artifacts, **invoker_options)
+    return report_runs, artifacts, invoker
 
 
-def test_coordinator_claims_its_report_run_first_and_completes_it_after_stage12() -> (
+def test_the_coordinator_claims_its_report_run_and_each_worker_its_simulation_run() -> (
     None
 ):
-    events: list[str] = []
-    store = _recording_report_writes(FakeStore(), events)
-    report_runs = FakeReportRuns(events)
-    artifacts = FakeArtifacts()
-    invoker = RecordingInvoker(artifacts)
+    report_runs, artifacts, invoker = _run_through_workers()
 
-    result = _coordinate(store, report_runs, invoker, artifacts)
+    result = _coordinate(report_runs, invoker, artifacts)
 
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
     run = report_runs.report_runs[REPORT_RUN_ID]
-    assert run.status is RunStatus.SUCCEEDED
-    assert run.modal_call_id == COORDINATOR_CALL_ID
-    assert result["evaluation_id"] == str(report_execution_input().evaluation_id)
-    # The report run is claimed first and completed last, so a call Modal
-    # restarts between the two success writes finds its Stage 12 report
-    # succeeded, and completes the report run from the stored aggregate.
-    assert events == ["claim_report_run", "stage12:succeeded", "complete_report_run"]
-    assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
-    assert [context["report_run"] for context in invoker.contexts] == [
-        report_run_context().report_run.model_dump(mode="json")
-    ] * 2
+    assert (run.status, run.modal_call_id) == (RunStatus.SUCCEEDED, COORDINATOR_CALL_ID)
+    assert run.writes == ["claim_report_run", "complete_report_run"]
+    worker_calls = dict(
+        zip(
+            (simulation["role"] for simulation in invoker.simulations),
+            invoker.call_ids,
+            strict=True,
+        )
+    )
+    for role, run_id in (("baseline", BASELINE_RUN_ID), ("reform", REFORM_RUN_ID)):
+        simulation_run = report_runs.simulation_runs[run_id]
+        assert simulation_run.status is RunStatus.SUCCEEDED
+        # The worker's own call claimed and completed its run.
+        assert simulation_run.modal_call_id == worker_calls[role]
+        assert simulation_run.writes == [
+            "claim_simulation_run",
+            "complete_simulation_run",
+        ]
+        assert simulation_run.output_uri == (
+            f"gs://{SIMULATION_OUTPUT_BUCKET}/staging/{run_id}.parquet"
+        )
+    # Both simulation runs succeeded before the report run did.
+    assert report_runs.events[-1] == "complete_report_run"
+
+
+def test_each_worker_is_started_with_only_its_own_simulation_run() -> None:
+    report_runs, artifacts, invoker = _run_through_workers()
+
+    _coordinate(report_runs, invoker, artifacts)
+
+    assert sorted(simulation["role"] for simulation in invoker.simulations) == [
+        "baseline",
+        "reform",
+    ]
+    for simulation, context in zip(invoker.simulations, invoker.contexts, strict=True):
+        run_id = SIMULATION_RUN_IDS[SimulationRole(simulation["role"])]
+        assert context.simulation_run_id == run_id
+        assert context.report_run is None
+        assert context.artifact_prefix == REPORT_RUN_PREFIX
+        assert simulation["simulation_execution_id"] == str(run_id)
+        assert simulation["evaluation_id"] == str(REPORT_RUN_ID)
+        assert "output_plan" in simulation
 
 
 def test_coordinator_completes_its_report_run_with_the_economy_output_as_rows() -> None:
-    report_runs = FakeReportRuns()
-    artifacts = FakeArtifacts()
+    report_runs, artifacts, invoker = _run_through_workers()
 
-    _coordinate(FakeStore(), report_runs, RecordingInvoker(artifacts), artifacts)
+    _coordinate(report_runs, invoker, artifacts)
 
     result = report_runs.report_runs[REPORT_RUN_ID].result
     rows = {rows.table.name: rows.rows for rows in result.rows}
     budget = {row["variable_name"]: row for row in rows["budget_summary"]}
     assert budget["household_tax"]["change"] == 100.0
     assert budget["household_tax"]["report_run_id"] == REPORT_RUN_ID
+    assert budget["household_tax"]["baseline_simulation_run_id"] == BASELINE_RUN_ID
     # The shared report is a US one, so its poverty rows use the SPM types.
     assert {row["poverty_type"] for row in rows["poverty"]} == {"spm", "spm_deep"}
-    # The report run's own columns: the output has no cliff impact or SPM
-    # receipt, so only the data version is set.
-    assert result.report_run_columns == {
-        "baseline_cliff_gap": None,
-        "baseline_cliff_share": None,
-        "reform_cliff_gap": None,
-        "reform_cliff_share": None,
-        "spm_provenance": None,
-        "data_version": CURRENT_SINGLE_YEAR_MACRO_RESULT["data_version"],
-    }
-    (labor_supply,) = rows["labor_supply_responses"]
-    assert labor_supply["report_run_id"] == REPORT_RUN_ID
     assert (
-        labor_supply["total_earnings_change"]
-        == (CURRENT_SINGLE_YEAR_MACRO_RESULT["labor_supply_response"]["total_change"])
+        result.report_run_columns["data_version"]
+        == (CURRENT_SINGLE_YEAR_MACRO_RESULT["data_version"])
     )
-    # The output reports no labour supply response by decile.
-    assert rows["labor_supply_decile_responses"] == ()
-    # Alabama's first district, by .py's state FIPS codes.
     (district,) = rows["congressional_district_impacts"]
     assert (district["state_fips"], district["district_number"]) == (1, 1)
-    assert district["district_geoid"] == 101
-
-
-def test_comparison_children_receive_the_context_they_received_before() -> None:
-    artifacts = FakeArtifacts()
-    invoker = RecordingInvoker(artifacts)
-    report_runs = FakeReportRuns()
-
-    _coordinate(
-        FakeStore(),
-        report_runs,
-        invoker,
-        artifacts,
-        context=report_run_context().model_copy(update={"report_run": None}),
-    )
-
-    assert all("report_run" not in context for context in invoker.contexts)
-    assert report_runs.events == []
 
 
 @pytest.mark.parametrize(
@@ -185,296 +167,331 @@ def test_comparison_children_receive_the_context_they_received_before() -> None:
 def test_a_report_run_that_cannot_be_claimed_starts_nothing(
     status, modal_call_id
 ) -> None:
-    store = FakeStore()
-    report_runs = FakeReportRuns()
+    report_runs, artifacts, invoker = _run_through_workers()
     run = report_runs.report_runs[REPORT_RUN_ID]
     run.status, run.modal_call_id = status, modal_call_id
-    artifacts = FakeArtifacts()
-    invoker = RecordingInvoker(artifacts)
 
-    result = _coordinate(store, report_runs, invoker, artifacts)
+    result = _coordinate(report_runs, invoker, artifacts)
 
     assert result == {
         "deduplicated": True,
         "report_run_id": str(REPORT_RUN_ID),
         "status": status.value,
     }
-    assert invoker.events == []
-    assert store.parent is None
+    assert invoker.call_ids == []
     assert run.writes == ["claim_report_run"]
+    assert all(not run.writes for run in report_runs.simulation_runs.values())
 
 
-def test_a_report_run_must_name_the_simulation_runs_its_call_names() -> None:
-    store = FakeStore()
-    report_runs = FakeReportRuns()
-    report_runs.simulation_run_pairs[REPORT_RUN_ID] = (REFORM_RUN_ID, BASELINE_RUN_ID)
-    artifacts = FakeArtifacts()
-    invoker = RecordingInvoker(artifacts)
-
-    with pytest.raises(ValueError, match="names other simulation runs"):
-        _coordinate(store, report_runs, invoker, artifacts)
-
-    assert invoker.events == []
-    assert store.parent is None
-    assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.PENDING
-
-
-def test_a_failed_report_fails_its_report_run_and_the_failed_simulation_run() -> None:
-    store = FakeStore()
-    report_runs = FakeReportRuns()
-    artifacts = FakeArtifacts()
-    invoker = RecordingInvoker(
-        artifacts, faults=InjectedChildFaults(fail_role="reform")
-    )
-
-    with pytest.raises(RuntimeError, match="coordination failed"):
-        _coordinate(store, report_runs, invoker, artifacts)
-
-    run = report_runs.report_runs[REPORT_RUN_ID]
-    assert run.status is RunStatus.FAILED
-    assert run.error_message.startswith("simulation_invocation_failed: ")
-    reform = report_runs.simulation_runs[REFORM_RUN_ID]
-    assert reform.status is RunStatus.FAILED
-    assert reform.error_message == run.error_message
-    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
-
-
-def test_a_failed_report_records_its_stage12_failure_before_its_report_run() -> None:
-    events: list[str] = []
-    store = _recording_report_writes(FakeStore(), events)
-    report_runs = FakeReportRuns(events)
-    artifacts = FakeArtifacts()
-    invoker = RecordingInvoker(
-        artifacts, faults=InjectedChildFaults(fail_role="reform")
-    )
-
-    with pytest.raises(RuntimeError, match="coordination failed"):
-        _coordinate(store, report_runs, invoker, artifacts)
-
-    assert [
-        event for event in events if event in {"stage12:failed", "fail_report_run"}
-    ] == ["stage12:failed", "fail_report_run"]
-
-
-def test_a_stage12_claim_that_fails_fails_the_report_run() -> None:
-    store = FakeStore()
-    report_runs = FakeReportRuns()
-
-    def unreachable(_record):
-        msg = "the Stage 12 database refused the connection"
-        raise ConnectionError(msg)
-
-    store.create_or_resolve_report = unreachable
-    artifacts = FakeArtifacts()
-    invoker = RecordingInvoker(artifacts)
-
-    with pytest.raises(ConnectionError):
-        _coordinate(store, report_runs, invoker, artifacts)
-
-    run = report_runs.report_runs[REPORT_RUN_ID]
-    assert run.status is RunStatus.FAILED
-    assert run.error_message.startswith("report_claim_failed: ")
-    assert "refused the connection" not in run.error_message
-    assert invoker.events == []
-
-
-def test_a_stage12_report_another_call_finished_fails_the_report_run() -> None:
-    store = FakeStore()
-    store.parent = parent_record().model_copy(
+def _with_evaluation_id(report):
+    # The report and both simulations name another evaluation together.
+    return report.model_copy(
         update={
-            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
-            "coordinator_invocation_id": "fc-another-coordinator",
-        }
-    )
-    report_runs = FakeReportRuns()
-    artifacts = FakeArtifacts()
-    invoker = RecordingInvoker(artifacts)
-
-    result = _coordinate(store, report_runs, invoker, artifacts)
-
-    assert result["deduplicated"] is True
-    run = report_runs.report_runs[REPORT_RUN_ID]
-    assert run.status is RunStatus.FAILED
-    assert run.error_message == (
-        "report_already_claimed: This report's Stage 12 record is succeeded "
-        "under another call."
-    )
-    assert invoker.events == []
-
-
-class LosingOneFailureWrite(FakeReportRuns):
-    """Lose the first write that fails a simulation run, as a dropped connection."""
-
-    def __init__(self):
-        super().__init__()
-        self.lost_failure_writes = 0
-
-    def fail_simulation_run(self, simulation_run_id, *, error_message, failed_at):
-        if not self.lost_failure_writes:
-            self.lost_failure_writes += 1
-            msg = "the connection dropped"
-            raise ConnectionError(msg)
-        return super().fail_simulation_run(
-            simulation_run_id, error_message=error_message, failed_at=failed_at
-        )
-
-
-def test_a_lost_simulation_run_failure_is_written_when_the_report_fails() -> None:
-    store = FakeStore()
-    report_runs = LosingOneFailureWrite()
-    artifacts = FakeArtifacts()
-    invoker = RecordingInvoker(
-        artifacts, faults=InjectedChildFaults(fail_role="reform")
-    )
-
-    with pytest.raises(RuntimeError, match="coordination failed"):
-        _coordinate(store, report_runs, invoker, artifacts)
-
-    assert report_runs.lost_failure_writes == 1
-    reform = report_runs.simulation_runs[REFORM_RUN_ID]
-    assert reform.status is RunStatus.FAILED
-    assert reform.error_message.startswith("simulation_invocation_failed: ")
-
-
-def test_a_reused_succeeded_child_completes_its_simulation_run() -> None:
-    # A worker marked its child record succeeded, then stopped before it
-    # completed its simulation run; a later call reuses that child's output.
-    store = FakeStore()
-    artifacts = FakeArtifacts()
-    baseline = planned_simulation(SimulationRole.BASELINE)
-    descriptor = artifacts.add_simulation(baseline)
-    store.children[baseline.simulation_execution_id] = child_record(
-        baseline
-    ).model_copy(
-        update={
-            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
-            "output_uri": descriptor.artifact.uri,
-            "output_sha256": descriptor.artifact.content_sha256,
-            "output_schema_version": 1,
-            "row_identity_columns": descriptor.row_identity.identifier_columns,
-            "row_count": descriptor.row_identity.row_count,
-            "row_identity_sha256": descriptor.row_identity.identity_sha256,
-            "completed_at": child_record(baseline).created_at,
-        }
-    )
-    report_runs = FakeReportRuns()
-    report_runs.simulation_runs[BASELINE_RUN_ID].status = RunStatus.RUNNING
-    invoker = RecordingInvoker(artifacts)
-
-    _coordinate(store, report_runs, invoker, artifacts)
-
-    assert invoker.events == ["spawn:reform"]
-    run = report_runs.simulation_runs[BASELINE_RUN_ID]
-    assert run.status is RunStatus.SUCCEEDED
-    assert run.output_uri == descriptor.artifact.uri
-    # The simulation runs are recorded before the report run succeeds.
-    assert report_runs.events.index("complete_simulation_run") < (
-        report_runs.events.index("complete_report_run")
-    )
-
-
-class WorkerInvoker:
-    """Run each child through the real worker code, sharing the coordinator's stores."""
-
-    def __init__(self, store, artifacts, report_runs):
-        self.store = store
-        self.artifacts = artifacts
-        self.report_runs = report_runs
-        self.executor = ThreadPoolExecutor(max_workers=2)
-
-    def spawn(self, request):
-        role = request.simulation["role"]
-        frames = simulation_frames(100.0 if role == "baseline" else 120.0)
-        future = self.executor.submit(
-            run_single_simulation,
-            request.simulation,
-            request.context,
-            required_country="us",
-            modal_call_id=f"fc-{role}-worker",
-            dependencies=SimulationWorkerDependencies(
-                store=self.store,
-                artifacts=self.artifacts,
-                calculator=lambda _simulation: frames,
-                report_runs=self.report_runs,
+            "evaluation_id": BASELINE_RUN_ID,
+            "baseline": report.baseline.model_copy(
+                update={"evaluation_id": BASELINE_RUN_ID}
             ),
-        )
-        return FutureCall(f"fc-{role}-worker", future)
-
-    def restore(self, invocation_id):
-        msg = f"unexpected restored invocation {invocation_id}"
-        raise AssertionError(msg)
-
-
-def test_a_report_run_through_real_workers_records_every_run_once() -> None:
-    store = FakeStore()
-    artifacts = FakeArtifacts()
-    report_runs = FakeReportRuns()
-
-    report = report_execution_input()
-    # A reform the real worker accepts: an effective period with dates.
-    report = report.model_copy(
-        update={
             "reform": report.reform.model_copy(
-                update={"policy": {"reform": {"2026-01-01.2026-12-31": 1}}}
+                update={"evaluation_id": BASELINE_RUN_ID}
+            ),
+        }
+    )
+
+
+def _with_baseline_execution_id(report):
+    return report.model_copy(
+        update={
+            "baseline": report.baseline.model_copy(
+                update={"simulation_execution_id": REPORT_RUN_ID}
             )
         }
     )
 
+
+def _with_runs_swapped(report):
+    return report.model_copy(
+        update={
+            "baseline": report.baseline.model_copy(
+                update={"simulation_execution_id": REFORM_RUN_ID}
+            ),
+            "reform": report.reform.model_copy(
+                update={"simulation_execution_id": BASELINE_RUN_ID}
+            ),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "named_otherwise",
+    [_with_evaluation_id, _with_baseline_execution_id, _with_runs_swapped],
+)
+def test_a_report_input_naming_other_runs_fails_the_report_run_before_any_worker(
+    named_otherwise,
+) -> None:
+    report_runs, artifacts, invoker = _run_through_workers()
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(
+            report_runs, invoker, artifacts, report=named_otherwise(report_run_input())
+        )
+
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message.startswith("report_run_input_mismatch: ")
+    assert invoker.call_ids == []
+    # Runs the call's input doesn't match are not this coordinator's to fail.
+    assert all(not run.writes for run in report_runs.simulation_runs.values())
+
+
+def test_a_report_run_naming_other_simulation_runs_fails_and_leaves_them() -> None:
+    report_runs, artifacts, invoker = _run_through_workers()
+    report_runs.simulation_run_pairs[REPORT_RUN_ID] = (REFORM_RUN_ID, BASELINE_RUN_ID)
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(report_runs, invoker, artifacts)
+
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message.startswith("report_run_input_mismatch: ")
+    assert "names other simulation runs" in run.error_message
+    assert invoker.call_ids == []
+    assert all(not run.writes for run in report_runs.simulation_runs.values())
+
+
+def test_a_malformed_report_input_fails_the_claimed_report_run() -> None:
+    report_runs, artifacts, invoker = _run_through_workers()
+    malformed = report_run_input().model_dump(mode="json")
+    malformed["requested_aggregates"] = []
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        coordinate_report(
+            malformed,
+            report_run_context().model_dump(mode="json"),
+            application_name=report_run_context().modal_application,
+            coordinator_invocation_id=COORDINATOR_CALL_ID,
+            store=ComparisonStoreNotUsed(),
+            artifacts=artifacts,
+            invoker=invoker,
+            report_runs=report_runs,
+        )
+
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message.startswith("report_coordination_failed: ")
+    assert invoker.call_ids == []
+
+
+@pytest.mark.parametrize(
+    ("recorded", "report_failure"),
+    [
+        # The report run records the run's own failure, as when its worker
+        # fails during the report.
+        (
+            "run_exceeded_maximum_age: The run was still unfinished.",
+            "run_exceeded_maximum_age: The run was still unfinished.",
+        ),
+        (
+            None,
+            f"simulation_run_failed: The reform simulation run {REFORM_RUN_ID} "
+            "already failed.",
+        ),
+        # Repeated whole, so the correlation ID that ends it stays.
+        (LONG_RECORDED_FAILURE, LONG_RECORDED_FAILURE),
+    ],
+    ids=["recorded-failure", "no-recorded-failure", "longest-recorded-failure"],
+)
+def test_a_simulation_run_that_already_failed_fails_the_report_run_unstarted(
+    recorded, report_failure
+) -> None:
+    report_runs, artifacts, invoker = _run_through_workers()
+    reform = report_runs.simulation_runs[REFORM_RUN_ID]
+    reform.status = RunStatus.FAILED
+    reform.error_message = recorded
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(report_runs, invoker, artifacts)
+
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message == report_failure
+    assert invoker.call_ids == []
+    # The baseline was never started; it fails with its report run.
+    baseline = report_runs.simulation_runs[BASELINE_RUN_ID]
+    assert baseline.status is RunStatus.FAILED
+    assert baseline.error_message == (
+        "simulation_cancelled: Cancelled after the report failed."
+    )
+    assert reform.error_message == recorded
+    # A run that already failed is not written again.
+    assert reform.writes == []
+
+
+def test_a_failed_worker_fails_the_report_run_with_its_own_cause() -> None:
+    report_runs, artifacts, invoker = _run_through_workers(
+        failing_role="reform", held_roles=("baseline",)
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="coordination failed"):
+            _coordinate(report_runs, invoker, artifacts)
+    finally:
+        invoker.release_held.set()
+        invoker.executor.shutdown(wait=True)
+
+    reform = report_runs.simulation_runs[REFORM_RUN_ID]
+    assert reform.status is RunStatus.FAILED
+    assert reform.error_message.startswith("simulation_execution_failed: ")
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message == reform.error_message
+    # The coordinator stopped the baseline, which then could not succeed.
+    baseline = report_runs.simulation_runs[BASELINE_RUN_ID]
+    assert baseline.status is RunStatus.FAILED
+    assert baseline.error_message == (
+        "simulation_cancelled: Cancelled after the reform simulation failed."
+    )
+
+
+def test_a_planning_failure_fails_the_report_run_and_its_unstarted_runs() -> None:
+    report_runs, artifacts, invoker = _run_through_workers()
+
+    def unplannable(_report):
+        msg = "the country model could not be loaded"
+        raise RuntimeError(msg)
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(report_runs, invoker, artifacts, output_plan_resolver=unplannable)
+
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message.startswith("report_coordination_failed: ")
+    assert invoker.call_ids == []
+    assert all(
+        simulation_run.status is RunStatus.FAILED
+        and simulation_run.error_message
+        == "simulation_cancelled: Cancelled after the report failed."
+        for simulation_run in report_runs.simulation_runs.values()
+    )
+
+
+def test_an_aggregation_failure_keeps_the_simulation_runs_that_succeeded() -> None:
+    report_runs, artifacts, invoker = _run_through_workers()
+
+    def failing_aggregator(**_values):
+        msg = "aggregation failed"
+        raise ValueError(msg)
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(report_runs, invoker, artifacts, aggregator=failing_aggregator)
+
+    assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.FAILED
+    # Their outputs stay usable: a later report run can reuse them.
+    assert all(
+        simulation_run.status is RunStatus.SUCCEEDED
+        for simulation_run in report_runs.simulation_runs.values()
+    )
+
+
+def test_a_call_naming_a_report_run_and_a_parent_is_refused_unwritten() -> None:
+    report_runs, artifacts, invoker = _run_through_workers()
+
+    with pytest.raises(ValueError, match="no evaluation record"):
+        coordinate_report(
+            report_run_input().model_dump(mode="json"),
+            report_run_context().model_dump(mode="json"),
+            parent_record().model_dump(mode="json"),
+            application_name=report_run_context().modal_application,
+            coordinator_invocation_id=COORDINATOR_CALL_ID,
+            store=ComparisonStoreNotUsed(),
+            artifacts=artifacts,
+            invoker=invoker,
+            report_runs=report_runs,
+        )
+
+    assert report_runs.events == []
+    assert invoker.call_ids == []
+
+
+def test_a_comparison_call_needs_its_evaluation_record() -> None:
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+
+    with pytest.raises(ValueError, match="evaluation record"):
+        coordinate_report(
+            report_execution_input().model_dump(mode="json"),
+            invocation_context().model_dump(mode="json"),
+            application_name=invocation_context().modal_application,
+            coordinator_invocation_id=COORDINATOR_CALL_ID,
+            store=store,
+            artifacts=FakeArtifacts(),
+            invoker=ConcurrentInvoker(FakeArtifacts()),
+            report_runs=report_runs,
+        )
+
+    assert store.parent is None
+    assert report_runs.events == []
+
+
+def test_a_comparison_call_records_no_run_and_gives_its_children_the_same_context() -> (
+    None
+):
+    store = FakeStore()
+    report_runs = FakeReportRuns()
+    artifacts = FakeArtifacts()
+    contexts = []
+    invoker = ConcurrentInvoker(artifacts)
+    spawn = invoker.spawn
+
+    def recording_spawn(request):
+        contexts.append(request.context)
+        return spawn(request)
+
+    invoker.spawn = recording_spawn
+
     coordinate_report(
-        report.model_dump(mode="json"),
-        report_run_context().model_dump(mode="json"),
+        report_execution_input().model_dump(mode="json"),
+        invocation_context().model_dump(mode="json"),
         parent_record().model_dump(mode="json"),
-        application_name=report_run_context().modal_application,
+        application_name=invocation_context().modal_application,
         coordinator_invocation_id=COORDINATOR_CALL_ID,
         store=store,
         artifacts=artifacts,
-        invoker=WorkerInvoker(store, artifacts, report_runs),
+        invoker=invoker,
         aggregator=economy_aggregate,
         report_runs=report_runs,
     )
 
-    assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
-    for role, run_id in (("baseline", BASELINE_RUN_ID), ("reform", REFORM_RUN_ID)):
-        run = report_runs.simulation_runs[run_id]
-        (child,) = [child for child in store.children.values() if child.role == role]
-        assert run.status is RunStatus.SUCCEEDED
-        assert run.modal_call_id == f"fc-{role}-worker"
-        assert run.output_uri == child.output_uri
-        assert run.output_uri == (
-            f"gs://{SIMULATION_OUTPUT_BUCKET}/staging/{run_id}.parquet"
-        )
-        assert run.writes.count("complete_simulation_run") >= 1
-    assert report_runs.report_runs[REPORT_RUN_ID].writes == [
-        "claim_report_run",
-        "complete_report_run",
-    ]
-    # Each worker wrote its output file to the simulation output bucket.
-    assert sorted(artifacts.simulation_run_outputs) == [
-        ("staging", BASELINE_RUN_ID),
-        ("staging", REFORM_RUN_ID),
-    ]
+    assert report_runs.events == []
+    # The workers deployed now accept exactly the fields they accepted before.
+    assert all(
+        "report_run" not in context and "simulation_run_id" not in context
+        for context in contexts
+    )
+    assert store.parent.aggregate_output_uri is not None
 
 
-def test_report_run_coordinator_names_its_aggregate_by_digest(monkeypatch) -> None:
+def test_report_run_coordinator_names_its_artifacts_by_digest(monkeypatch) -> None:
     built = []
-    artifacts = FakeArtifacts()
+    report_runs, artifacts, invoker = _run_through_workers()
 
     def recording_artifact_store(*, report_run=False):
         built.append(report_run)
         return artifacts
 
-    monkeypatch.setattr(coordination_module, "artifact_store", recording_artifact_store)
+    monkeypatch.setattr(
+        report_run_coordination_module, "artifact_store", recording_artifact_store
+    )
 
+    context = report_run_context()
     coordinate_report(
-        report_execution_input().model_dump(mode="json"),
-        report_run_context().model_dump(mode="json"),
-        parent_record().model_dump(mode="json"),
-        application_name=report_run_context().modal_application,
+        report_run_input().model_dump(mode="json"),
+        context.model_dump(mode="json"),
+        application_name=context.modal_application,
         coordinator_invocation_id=COORDINATOR_CALL_ID,
-        store=FakeStore(),
-        invoker=RecordingInvoker(artifacts),
+        store=ComparisonStoreNotUsed(),
+        invoker=invoker,
         aggregator=economy_aggregate,
-        report_runs=FakeReportRuns(),
+        report_runs=report_runs,
     )
 
     assert built == [True]
@@ -485,7 +502,6 @@ def test_a_report_run_reads_its_workers_outputs_from_the_simulation_output_bucke
 ):
     artifact_bucket = "policyengine-stage12-staging-artifacts"
     output_bucket = "policyengine-v2-staging-simulation-outputs"
-    store = FakeStore()
     report_runs = FakeReportRuns()
     artifact_objects = InMemoryObjectStore()
     output_objects = InMemoryObjectStore()
@@ -495,28 +511,8 @@ def test_a_report_run_reads_its_workers_outputs_from_the_simulation_output_bucke
         content_addressed=True,
         simulation_outputs=SimulationOutputBucket(output_bucket, store=output_objects),
     )
-    report = report_execution_input()
-    # A reform the real worker accepts: an effective period with dates.
-    report = report.model_copy(
-        update={
-            "reform": report.reform.model_copy(
-                update={"policy": {"reform": {"2026-01-01.2026-12-31": 1}}}
-            )
-        }
-    )
 
-    coordinate_report(
-        report.model_dump(mode="json"),
-        report_run_context().model_dump(mode="json"),
-        parent_record().model_dump(mode="json"),
-        application_name=report_run_context().modal_application,
-        coordinator_invocation_id=COORDINATOR_CALL_ID,
-        store=store,
-        artifacts=artifacts,
-        invoker=WorkerInvoker(store, artifacts, report_runs),
-        aggregator=economy_aggregate,
-        report_runs=report_runs,
-    )
+    _coordinate(report_runs, RunWorkerInvoker(report_runs, artifacts), artifacts)
 
     assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
     for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
@@ -527,9 +523,14 @@ def test_a_report_run_reads_its_workers_outputs_from_the_simulation_output_bucke
             output_uri.removeprefix(f"gs://{output_bucket}/") in output_objects.objects
         )
     assert len(output_objects.objects) == 2
-    # The inputs and the aggregate stay in the Stage 12 artifact bucket.
-    assert store.parent.aggregate_output_uri.startswith(f"gs://{artifact_bucket}/")
-    assert not any(path.endswith(".parquet") for path in artifact_objects.objects)
+    # Only the planned inputs go to the Stage 12 artifact bucket, under the
+    # report run's prefix; the result is in the result tables, so no
+    # aggregate file is written.
+    assert len(artifact_objects.objects) == 2
+    assert all(
+        path.startswith(f"{REPORT_RUN_PREFIX}/inputs/")
+        for path in artifact_objects.objects
+    )
 
 
 def test_a_report_run_coordinator_without_an_output_bucket_fails_before_its_claim(
@@ -543,25 +544,21 @@ def test_a_report_run_coordinator_without_an_output_bucket_fails_before_its_clai
     monkeypatch.setattr(
         stage12_artifacts, "ArtifactStore", lambda _bucket_name: InMemoryObjectStore()
     )
-    store = FakeStore()
-    report_runs = FakeReportRuns()
-    invoker = RecordingInvoker(FakeArtifacts())
+    report_runs, _artifacts, invoker = _run_through_workers()
+    context = report_run_context()
 
     with pytest.raises(ValueError, match="V2_SIMULATION_OUTPUT_BUCKET"):
         coordinate_report(
-            report_execution_input().model_dump(mode="json"),
-            report_run_context().model_dump(mode="json"),
-            parent_record().model_dump(mode="json"),
-            application_name=report_run_context().modal_application,
+            report_run_input().model_dump(mode="json"),
+            context.model_dump(mode="json"),
+            application_name=context.modal_application,
             coordinator_invocation_id=COORDINATOR_CALL_ID,
-            store=store,
+            store=ComparisonStoreNotUsed(),
             invoker=invoker,
             aggregator=economy_aggregate,
             report_runs=report_runs,
         )
 
-    assert store.parent is None
-    assert store.children == {}
-    assert invoker.events == []
+    assert invoker.call_ids == []
     report_run = report_runs.report_runs[REPORT_RUN_ID]
     assert (report_run.status, report_run.writes) == (RunStatus.PENDING, [])

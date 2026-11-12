@@ -101,8 +101,8 @@ def _planning_simulation(
     )
 
 
-def _include_cliff_impacts(report: ReportExecutionInput) -> bool:
-    value = report.baseline.options.get("include_cliffs", False)
+def _include_cliff_impacts(simulation: SimulationExecutionInput) -> bool:
+    value = simulation.options.get("include_cliffs", False)
     if not isinstance(value, bool):
         msg = "include_cliffs must be a boolean"
         raise TypeError(msg)
@@ -164,14 +164,50 @@ def resolve_report_output_plan(
     stage_scope: StageScope = _unmonitored_stage_scope,
 ) -> Stage12OutputPlan:
     """Resolve one country-owned output schema for both report simulations."""
-    country = report.baseline.geography.country
+    return _resolve_output_plan(
+        report.baseline,
+        report.reform,
+        aggregates=report.requested_aggregates,
+        stage_scope=stage_scope,
+    )
+
+
+def resolve_simulation_output_plan(
+    simulation: SimulationExecutionInput,
+    *,
+    stage_scope: StageScope = _unmonitored_stage_scope,
+) -> Stage12OutputPlan:
+    """Resolve the output schema of a simulation calculated on its own.
+
+    It is the schema of a report comparing the simulation with itself, with
+    every aggregate, so the output holds what such a report reads. A report
+    whose other simulation needs more, such as a reform that turns on labour
+    supply responses, plans more columns than this output holds.
+    """
+    return _resolve_output_plan(
+        simulation,
+        simulation,
+        aggregates=tuple(ReportAggregate),
+        stage_scope=stage_scope,
+    )
+
+
+def _resolve_output_plan(
+    baseline_input: SimulationExecutionInput,
+    reform_input: SimulationExecutionInput,
+    *,
+    aggregates: tuple[ReportAggregate, ...],
+    stage_scope: StageScope,
+) -> Stage12OutputPlan:
+    """Resolve one country-owned output schema for a baseline and a reform."""
+    country = baseline_input.geography.country
     stage_attributes = {"country": country}
     with stage_scope(Stage.STAGE12_COUNTRY_MODEL_LOAD, stage_attributes):
         model = _country_model(country)
     with stage_scope(Stage.STAGE12_OUTPUT_CONFIGURATION, stage_attributes):
-        baseline = _planning_simulation(report.baseline, model=model)
-        reform = _planning_simulation(report.reform, model=model)
-        include_cliff_impacts = _include_cliff_impacts(report)
+        baseline = _planning_simulation(baseline_input, model=model)
+        reform = _planning_simulation(reform_input, model=model)
+        include_cliff_impacts = _include_cliff_impacts(baseline_input)
         labor_supply_active = _configure_country_outputs(
             country=country,
             baseline=baseline,
@@ -179,7 +215,7 @@ def resolve_report_output_plan(
             include_cliff_impacts=include_cliff_impacts,
         )
         requirements = ReportOutputRequirements(
-            aggregates=report.requested_aggregates,
+            aggregates=aggregates,
             include_cliff_impacts=include_cliff_impacts,
             labor_supply_response_active=labor_supply_active,
         )
@@ -188,7 +224,7 @@ def resolve_report_output_plan(
         reform_variables = model.resolve_entity_variables(reform)
         dataset_variables = _required_dataset_variables(
             country=country,
-            region=report.baseline.geography.region,
+            region=baseline_input.geography.region,
             aggregates=requirements.aggregates,
         )
         entities = []

@@ -1,23 +1,33 @@
-"""An in-memory stand-in for the report run store, for Stage 12 runtime tests.
+"""In-memory run tables, and the inputs of a detailed-save call, for runtime tests.
 
-It applies the same conditions as ``ReportRunStore``'s conditional updates,
-which the persistence library tests against Postgres.
+``FakeReportRuns`` applies the same conditions as ``ReportRunStore``'s
+conditional updates, which the persistence library tests against Postgres.
+A detailed-save call names its runs by their IDs: its report input's
+evaluation ID is the report run's, and each simulation's execution ID is
+its simulation run's.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from threading import Lock
 from uuid import UUID
 
 from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_contract.stage12_execution import (
+    PlannedSimulationExecutionInput,
+    ReportExecutionInput,
     ReportRunIds,
+    SimulationExecutionInput,
     SimulationRole,
+    Stage12InvocationContext,
 )
 from policyengine_stage12_persistence import RunStatus, RunWrite, SimulationRunState
 from stage12_runtime_support import (
     aggregate_payload,
     invocation_context,
+    report_execution_input,
+    shared_output_plan,
     simulation_execution_input,
 )
 
@@ -29,6 +39,12 @@ REPORT_RUN_IDS = ReportRunIds(
     baseline_simulation_run_id=BASELINE_RUN_ID,
     reform_simulation_run_id=REFORM_RUN_ID,
 )
+SIMULATION_RUN_IDS = {
+    SimulationRole.BASELINE: BASELINE_RUN_ID,
+    SimulationRole.REFORM: REFORM_RUN_ID,
+}
+# Where a detailed-save call's planned inputs go in the artifact bucket.
+REPORT_RUN_PREFIX = f"stage-12-runs/staging/2026/09/{REPORT_RUN_ID}"
 ACTIVE = (RunStatus.PENDING, RunStatus.RUNNING)
 # What the shared report's simulations calculate, which its simulation runs
 # record: its year and bundle versions, and one catalog dataset and region.
@@ -37,14 +53,74 @@ SHARED_DATASET_ID = UUID("00000000-0000-0000-0000-0000000000d1")
 SHARED_REGION_ID = UUID("00000000-0000-0000-0000-0000000000e1")
 
 
-def report_run_context():
-    """Return the shared invocation context, naming the report run and its runs."""
-    return invocation_context().model_copy(update={"report_run": REPORT_RUN_IDS})
+# A reform the real worker accepts: an effective period with dates.
+DATED_REFORM_POLICY = {"reform": {"2026-01-01.2026-12-31": 1}}
+
+
+def report_run_simulation(role: SimulationRole) -> SimulationExecutionInput:
+    """Return the shared report's ``role`` simulation, named by its runs."""
+    simulation = simulation_execution_input(role)
+    return simulation.model_copy(
+        update={
+            "evaluation_id": REPORT_RUN_ID,
+            "simulation_execution_id": SIMULATION_RUN_IDS[role],
+            "policy": (
+                DATED_REFORM_POLICY
+                if role is SimulationRole.REFORM
+                else simulation.policy
+            ),
+        }
+    )
+
+
+def report_run_input() -> ReportExecutionInput:
+    """Return the shared report, named by its report run and simulation runs."""
+    return report_execution_input().model_copy(
+        update={
+            "evaluation_id": REPORT_RUN_ID,
+            "baseline": report_run_simulation(SimulationRole.BASELINE),
+            "reform": report_run_simulation(SimulationRole.REFORM),
+        }
+    )
+
+
+def report_run_planned_simulation(
+    role: SimulationRole,
+) -> PlannedSimulationExecutionInput:
+    """Return the input a report run's coordinator gives its ``role`` worker."""
+    return PlannedSimulationExecutionInput.model_validate(
+        {
+            **report_run_simulation(role).model_dump(mode="json"),
+            "output_plan": shared_output_plan().model_dump(mode="json"),
+        }
+    )
+
+
+def report_run_context() -> Stage12InvocationContext:
+    """Return the coordinator's context, naming the report run and its runs."""
+    return invocation_context().model_copy(
+        update={"report_run": REPORT_RUN_IDS, "artifact_prefix": REPORT_RUN_PREFIX}
+    )
+
+
+def simulation_run_context(run_id: UUID = BASELINE_RUN_ID) -> Stage12InvocationContext:
+    """Return a worker's context, naming the simulation run its call claims."""
+    return invocation_context().model_copy(
+        update={"simulation_run_id": run_id, "artifact_prefix": REPORT_RUN_PREFIX}
+    )
 
 
 def economy_aggregate(**_values):
     """Aggregate the report into a complete single-year economy output."""
     return aggregate_payload(result=CURRENT_SINGLE_YEAR_MACRO_RESULT)
+
+
+class ComparisonStoreNotUsed:
+    """A comparison store that fails any use: detailed-save calls write none."""
+
+    def __getattr__(self, name):
+        msg = f"a detailed-save call used the comparison store's {name}"
+        raise AssertionError(msg)
 
 
 @dataclass
@@ -79,6 +155,8 @@ class FakeReportRuns:
         self.simulation_run_pairs = {REPORT_RUN_ID: (BASELINE_RUN_ID, REFORM_RUN_ID)}
         # Shared with other fakes when a test checks the order of writes.
         self.events = events if events is not None else []
+        # Workers write from their own threads.
+        self.lock = Lock()
 
     def require_simulation_runs(self, run_ids: ReportRunIds) -> None:
         if run_ids.report_run_id not in self.simulation_run_pairs:
@@ -110,26 +188,26 @@ class FakeReportRuns:
             region_id=run.region_id,
             output_uri=run.output_uri,
             output_sha256=run.output_sha256,
+            modal_call_id=run.modal_call_id,
+            error_message=run.error_message,
         )
 
     def claim_report_run(self, report_run_id, *, modal_call_id, claimed_at):
         run = self._run(self.report_runs, report_run_id, "report run")
-        claimable = run.status in ACTIVE and run.modal_call_id in {None, modal_call_id}
         return self._apply(
             run,
             "claim_report_run",
-            changed=claimable,
+            condition=lambda: self._claimable(run, modal_call_id),
             status=RunStatus.RUNNING,
             modal_call_id=modal_call_id,
         )
 
     def complete_report_run(self, run_ids, *, modal_call_id, completed_at, result=None):
         run = self._run(self.report_runs, run_ids.report_run_id, "report run")
-        holds_it = self._holds(run, modal_call_id)
         return self._apply(
             run,
             "complete_report_run",
-            changed=holds_it,
+            condition=lambda: self._holds(run, modal_call_id),
             status=RunStatus.SUCCEEDED,
             result=result,
         )
@@ -138,11 +216,10 @@ class FakeReportRuns:
         self, report_run_id, *, modal_call_id, error_message, failed_at
     ):
         run = self._run(self.report_runs, report_run_id, "report run")
-        holds_it = self._holds(run, modal_call_id)
         return self._apply(
             run,
             "fail_report_run",
-            changed=holds_it,
+            condition=lambda: self._holds(run, modal_call_id),
             status=RunStatus.FAILED,
             error_message=error_message,
         )
@@ -152,33 +229,61 @@ class FakeReportRuns:
         return self._apply(
             run,
             "claim_simulation_run",
-            changed=run.status in ACTIVE,
+            condition=lambda: self._claimable(run, modal_call_id),
             status=RunStatus.RUNNING,
             modal_call_id=modal_call_id,
         )
 
     def complete_simulation_run(
-        self, simulation_run_id, *, output_uri, output_sha256, completed_at
+        self,
+        simulation_run_id,
+        *,
+        modal_call_id,
+        output_uri,
+        output_sha256,
+        completed_at,
     ):
         run = self._run(self.simulation_runs, simulation_run_id, "simulation run")
         return self._apply(
             run,
             "complete_simulation_run",
-            changed=run.status is RunStatus.RUNNING,
+            condition=lambda: self._holds(run, modal_call_id),
             status=RunStatus.SUCCEEDED,
             output_uri=output_uri,
             output_sha256=output_sha256,
         )
 
-    def fail_simulation_run(self, simulation_run_id, *, error_message, failed_at):
+    def fail_simulation_run(
+        self, simulation_run_id, *, error_message, failed_at, modal_call_id=None
+    ):
         run = self._run(self.simulation_runs, simulation_run_id, "simulation run")
         return self._apply(
             run,
             "fail_simulation_run",
-            changed=run.status in ACTIVE,
+            condition=lambda: (
+                run.status in ACTIVE
+                if modal_call_id is None
+                else self._holds(run, modal_call_id)
+            ),
             status=RunStatus.FAILED,
             error_message=error_message,
         )
+
+    def release_simulation_run(self, simulation_run_id, *, modal_call_id, released_at):
+        run = self._run(self.simulation_runs, simulation_run_id, "simulation run")
+        return self._apply(
+            run,
+            "release_simulation_run",
+            condition=lambda: (
+                run.status in ACTIVE and run.modal_call_id == modal_call_id
+            ),
+            status=RunStatus.PENDING,
+            modal_call_id=None,
+        )
+
+    @staticmethod
+    def _claimable(run: FakeRun, modal_call_id: str) -> bool:
+        return run.status in ACTIVE and run.modal_call_id in {None, modal_call_id}
 
     @staticmethod
     def _holds(run: FakeRun, modal_call_id: str) -> bool:
@@ -191,10 +296,13 @@ class FakeReportRuns:
             raise LookupError(msg)
         return runs[run_id]
 
-    def _apply(self, run: FakeRun, operation: str, *, changed: bool, **values):
-        run.writes.append(operation)
-        self.events.append(operation)
-        if changed:
-            for name, value in values.items():
-                setattr(run, name, value)
-        return RunWrite(changed=changed, status=run.status)
+    def _apply(self, run: FakeRun, operation: str, *, condition, **values):
+        """Apply ``values`` if ``condition`` holds, checked under the lock."""
+        with self.lock:
+            changed = condition()
+            run.writes.append(operation)
+            self.events.append(operation)
+            if changed:
+                for name, value in values.items():
+                    setattr(run, name, value)
+            return RunWrite(changed=changed, status=run.status)

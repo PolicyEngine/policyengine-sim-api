@@ -1,8 +1,10 @@
 """Coordination of a Stage 12 report's baseline and reform simulations.
 
-coordinate_report runs one report; report_coordination,
-coordinated_simulations and parent_claim hold its steps, and this module
-re-exports their public names.
+coordinate_report runs one report. A detailed-save call names its report
+run and passes no evaluation record; report_run_coordination runs it on the
+run tables. A comparison-path call passes its evaluation record;
+report_coordination, coordinated_simulations and parent_claim hold its
+steps. This module re-exports their public names.
 """
 
 from __future__ import annotations
@@ -31,13 +33,10 @@ from .child_wait import (
 )
 from .coordinated_simulations import (
     SIMULATION_CANCELLED_ERROR_CODE,
-    cancel_pending_simulations,
-    cancellation,
     logger,
 )
 from .dependencies import ModalChildInvoker, artifact_store, runtime_store
 from .failure_causes import StageProgress
-from .failures import Stage12ExecutionError, Stage12FailureDetail
 from .parent_claim import (
     validate_dispatch_context,
     validate_submitted_parent,
@@ -48,13 +47,7 @@ from .report_coordination import (
     CoordinatorInvocation,
     ReportCoordination,
 )
-from .report_run_access import report_run_store
-from .report_run_recording import ReportRunRecorder, SimulationRunRecordingStore
-
-CANCELLED_DETAIL = Stage12FailureDetail(
-    error_code="report_cancelled",
-    error_summary="Modal cancelled the report's coordinator call.",
-)
+from .report_run_coordination import coordinate_report_run
 
 __all__ = [
     "SIMULATION_CANCELLED_ERROR_CODE",
@@ -72,29 +65,61 @@ __all__ = [
 def coordinate_report(
     payload: object,
     context_payload: object,
-    parent_payload: object,
+    parent_payload: object | None = None,
     *,
     invocation: CoordinatorInvocation,
     dependencies: CoordinatorDependencies | None = None,
 ) -> dict[str, Any]:
-    """Run one Stage 12 comparison report end to end; return its aggregate descriptor.
+    """Run one Stage 12 report end to end; return its outcome.
 
-    Claims the parent report (one already running or finished returns a
-    ``deduplicated`` summary instead). A call that names a report run uses
-    the stored output of each of its simulation runs that already succeeded;
-    each other simulation's child is started or reattached within one shared
-    wait window. The digest-checked baseline and reform outputs are then
-    aggregated; shadow runs are compared with the production result. A
-    dispatch context that disagrees with the report raises ``ValueError``
-    before the claim; any later failure stops the unfinished children, marks
-    the report FAILED and raises a ``RuntimeError`` that carries no
-    calculation detail.
+    A detailed-save call's context names its report run, and it passes no
+    evaluation record: ``coordinate_report_run`` claims and records that
+    run on the run tables alone. A comparison-path call passes its
+    evaluation record, and this claims it (one already running or finished
+    returns a ``deduplicated`` summary instead), starts or reattaches each
+    child within one shared wait window, aggregates the digest-checked
+    outputs, compares a shadow run with the production result, and returns
+    the aggregate's descriptor. A comparison dispatch context that disagrees
+    with the report raises ``ValueError`` before the claim; any later
+    failure stops the unfinished children, marks the report FAILED and
+    raises a ``RuntimeError`` that carries no calculation detail.
     """
     dependencies = dependencies or CoordinatorDependencies()
+    context = Stage12InvocationContext.model_validate(context_payload)
+    if context.simulation_run_id is not None:
+        msg = "a coordinator's call names a report run, not a simulation run"
+        raise ValueError(msg)
+    if context.report_run is not None:
+        if parent_payload is not None:
+            msg = "a report run's call passes no evaluation record"
+            raise ValueError(msg)
+        return coordinate_report_run(
+            payload, context, invocation=invocation, dependencies=dependencies
+        )
+    if parent_payload is None:
+        msg = "a comparison call needs its evaluation record"
+        raise ValueError(msg)
+    return _coordinate_comparison(
+        payload,
+        context,
+        parent_payload,
+        invocation=invocation,
+        dependencies=dependencies,
+    )
+
+
+def _coordinate_comparison(
+    payload: object,
+    context: Stage12InvocationContext,
+    parent_payload: object,
+    *,
+    invocation: CoordinatorInvocation,
+    dependencies: CoordinatorDependencies,
+) -> dict[str, Any]:
+    """Run one comparison-path report on its evaluation records."""
     # Open the shared child-wait window before any setup work.
     child_wait_deadline = dependencies.monotonic() + dependencies.wait_timeout_seconds
     report = ReportExecutionInput.model_validate(payload)
-    context = Stage12InvocationContext.model_validate(context_payload)
     submitted_parent = ComparisonReportRecord.model_validate(parent_payload)
     validate_dispatch_context(report, context, invocation.application_name)
     validate_submitted_parent(
@@ -103,23 +128,12 @@ def coordinate_report(
         parent=submitted_parent,
     )
     persistence = dependencies.store or runtime_store(dependencies.runtime)
-    report_run = None
-    if context.report_run is not None:
-        report_run = ReportRunRecorder(
-            writer=dependencies.report_runs or report_run_store(dependencies.runtime),
-            run_ids=context.report_run,
-            modal_call_id=invocation.invocation_id,
-        )
-        persistence = SimulationRunRecordingStore(
-            persistence, report_run.writer, context.report_run
-        )
     coordination = ReportCoordination(
         report=report,
         context=context,
         invocation=invocation,
         persistence=persistence,
-        artifact_storage=dependencies.artifacts
-        or artifact_store(report_run=report_run is not None),
+        artifact_storage=dependencies.artifacts or artifact_store(),
         child_invoker=dependencies.invoker or ModalChildInvoker(),
         dependencies=dependencies,
         stage_plan=(
@@ -129,7 +143,6 @@ def coordinate_report(
         ),
         progress=StageProgress(),
         child_wait_deadline=child_wait_deadline,
-        report_run=report_run,
     )
     with coordination.span(Stage.STAGE12_COORDINATOR_CLAIM):
         parent, summary = claim_report(coordination, submitted=submitted_parent)
@@ -140,52 +153,8 @@ def coordinate_report(
     # Persist a redacted cause for any coordinator, child-call, aggregation, or
     # artifact failure before returning a stable exception to Modal.
     except Exception as error:  # noqa: BLE001  # every failure is persisted before a stable exception returns to Modal
-        _fail_unless_cancelled(coordination, parent, error)
+        coordination.fail(parent, error)
         msg = "Stage 12 report coordination failed"
         raise RuntimeError(msg) from None
-    except KeyboardInterrupt:
-        # Modal pre-empts a call with SIGINT and runs it again under the same
-        # call ID. A report run's coordinator stops its unfinished children
-        # and records nothing, so the restarted call starts them again.
-        if report_run is not None:
-            coordination.stop_children()
-        raise
-    except BaseException:
-        # Modal cancels a call with InputCancellation, which is not an
-        # Exception, and never runs it again: a report run's coordinator
-        # records its report, report run and unfinished children as failed.
-        if report_run is not None:
-            _record_cancellation(coordination, parent)
-        raise
-
-
-def _fail_unless_cancelled(
-    coordination: ReportCoordination,
-    parent: ComparisonReportRecord,
-    error: Exception,
-) -> None:
-    """Record ``error``; if Modal cancels the call meanwhile, still fail the run."""
-    try:
-        coordination.fail(parent, error)
-    except KeyboardInterrupt:
-        raise
-    except BaseException:
-        if coordination.report_run is not None:
-            coordination.report_run.fail_quietly(
-                CANCELLED_DETAIL, runtime=coordination.runtime
-            )
-        raise
-
-
-def _record_cancellation(
-    coordination: ReportCoordination, parent: ComparisonReportRecord
-) -> None:
-    """Stop and fail the unfinished children, then fail the report and its run."""
-    cancel_pending_simulations(
-        calls=coordination.calls,
-        simulations=coordination.simulations,
-        roles=set(coordination.calls) - set(coordination.descriptors),
-        store=coordination.persistence,
-        detail=cancellation("the coordinator's call was cancelled"),
-    )
-    coordination.fail(parent, Stage12ExecutionError(CANCELLED_DETAIL))
+    # A pre-emption or cancellation records nothing: a comparison run's
+    # restarted call reattaches to its running children.
