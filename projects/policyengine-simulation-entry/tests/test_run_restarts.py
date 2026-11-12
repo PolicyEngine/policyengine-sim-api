@@ -958,8 +958,13 @@ def test_a_runs_call_is_rebuilt_off_the_event_loop() -> None:
     assert not any(manifest.read_on_event_loop)
 
 
-def test_an_unexpected_rebuild_error_defers_its_run_and_the_check_goes_on() -> None:
-    """One row the check can't rebuild for an unforeseen reason holds up no other."""
+def test_an_unexpected_rebuild_error_defers_its_run_and_the_check_goes_on(
+    caplog,
+) -> None:
+    """One row the check can't rebuild for an unforeseen reason holds up no other.
+
+    The error is logged with its traceback, so it can be diagnosed.
+    """
     broken_run_id = UUID(int=9)
     stored, _call = _submitted_report()
     rig = _rig(
@@ -983,3 +988,11 @@ def test_an_unexpected_rebuild_error_defers_its_run_and_the_check_goes_on() -> N
     )
     assert [run.run_id for run in rig.restarts.marked] == [stored.report_run_id]
     assert summary == RestartSummary(listed=2, restarted=1, deferred=1)
+    (logged,) = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "v2_run_restart_unexpected_error"
+    ]
+    assert logged.exc_info is not None
+    assert isinstance(logged.exc_info[1], RuntimeError)
+    assert (logged.run_kind, logged.run_id) == ("report_run", str(broken_run_id))

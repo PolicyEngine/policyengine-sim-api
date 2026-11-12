@@ -200,14 +200,14 @@ def test_a_run_created_outside_the_window_is_not_listed(connection) -> None:
 
     too_new = list_unstarted_runs(
         connection,
-        created_after=created_at - timedelta(minutes=12),
+        created_after=created_at - timedelta(minutes=10),
         created_before=created_at - timedelta(minutes=3),
         limit=LISTING_LIMIT,
     )
     too_old = list_unstarted_runs(
         connection,
         created_after=created_at + timedelta(minutes=3),
-        created_before=created_at + timedelta(minutes=12),
+        created_before=created_at + timedelta(minutes=10),
         limit=LISTING_LIMIT,
     )
 

@@ -4,20 +4,27 @@ The sweep's Modal image installs the executor's locked
 ``modal-simulation-image`` group alone, and Modal adds its own client; the
 restart check's code comes in as local sources. The scheduled function
 imports that code only when it runs, so ``modal deploy`` would not notice a
-package the image lacks. Here the import runs in a process that refuses
-every other installed distribution's modules.
+package the image lacks. Here the import runs in a process that refuses the
+top-level modules only other installed distributions provide, then every
+module it loaded must come from the standard library, a local source, or a
+distribution the image installs: a module under a namespace that an image
+distribution shares, or from an editable install, is caught there.
 """
 
 from __future__ import annotations
 
+import json
 import re
+import site
 import subprocess
 import sys
+import sysconfig
 import tomllib
 from importlib import metadata
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
+REPOSITORY = PROJECT.parents[1]
 IMAGE_GROUP = "modal-simulation-image"
 # Modal installs its client into every image it builds.
 MODAL_CLIENT = "modal"
@@ -32,6 +39,25 @@ LOCAL_SOURCES = frozenset(
         "policyengine-simulation-entry",
     }
 )
+# Where each local source's package lies in the repository.
+LOCAL_SOURCE_DIRECTORIES = (
+    PROJECT / "src" / "policyengine_simulation_executor",
+    REPOSITORY
+    / "projects/policyengine-simulation-entry/src/policyengine_simulation_entry",
+    *(
+        REPOSITORY / "libs" / library / "src" / library.replace("-", "_")
+        for library in (
+            "policyengine-simulation-observability",
+            "policyengine-simulation-contract",
+            "policyengine-stage12-persistence",
+            "policyengine-simulation-persistence",
+        )
+    ),
+)
+# The modules the test's own process loads that are not the restart check's:
+# its script (also named ``__mp_main__`` once multiprocessing is imported) and
+# the virtual environment's start-up module.
+NOT_THE_RESTART_CHECK = ("__main__", "__mp_main__", "_virtualenv")
 # What the scheduled function's body imports.
 RESTART_MODULES = (
     "policyengine_simulation_entry.run_restart_check",
@@ -88,6 +114,32 @@ def _top_level_modules(distribution: metadata.Distribution) -> set[str]:
     return modules
 
 
+def _image_files() -> set[Path]:
+    """Return every file the image's distributions install here."""
+    allowed = _image_distributions()
+    return {
+        Path(str(distribution.locate_file(installed_file))).resolve()
+        for distribution in metadata.distributions()
+        if _normalized(distribution.metadata["Name"]) in allowed
+        for installed_file in distribution.files or ()
+    }
+
+
+def _from_the_image(module_file: Path, image_files: set[Path]) -> bool:
+    """Return whether a loaded module's file is one the sweep's image has."""
+    site_packages = [Path(path).resolve() for path in site.getsitepackages()]
+    standard_library = [
+        Path(sysconfig.get_paths()[name]).resolve() for name in ("stdlib", "platstdlib")
+    ]
+    if module_file in image_files:
+        return True
+    if any(module_file.is_relative_to(source) for source in LOCAL_SOURCE_DIRECTORIES):
+        return True
+    return any(
+        module_file.is_relative_to(library) for library in standard_library
+    ) and not any(module_file.is_relative_to(packages) for packages in site_packages)
+
+
 def _refused_modules() -> set[str]:
     """Return the modules only distributions outside the image install."""
     allowed = _image_distributions() | LOCAL_SOURCES
@@ -109,6 +161,7 @@ def test_the_restart_check_imports_with_only_the_sweep_images_packages(
     # The executor's own environment holds packages the image doesn't.
     assert {"jwt", "uvicorn"} <= refused
     script = tmp_path / "import_restart_check.py"
+    loaded_list = tmp_path / "loaded_module_files.json"
     script.write_text(
         "import importlib, sys\n"
         f"refused = {sorted(refused)!r}\n"
@@ -118,7 +171,12 @@ def test_the_restart_check_imports_with_only_the_sweep_images_packages(
         "            raise ImportError(f'not in the sweep image: {name}')\n"
         "sys.meta_path.insert(0, Refuse())\n"
         f"for module in {list(RESTART_MODULES)!r}:\n"
-        "    importlib.import_module(module)\n",
+        "    importlib.import_module(module)\n"
+        "import json\n"
+        "loaded = sorted({getattr(module, '__file__', None) or ''\n"
+        "                 for name, module in list(sys.modules.items())\n"
+        f"                 if name not in {list(NOT_THE_RESTART_CHECK)!r}}} - {{''}})\n"
+        f"open({str(loaded_list)!r}, 'w').write(json.dumps(loaded))\n",
         encoding="utf-8",
     )
 
@@ -130,3 +188,15 @@ def test_the_restart_check_imports_with_only_the_sweep_images_packages(
     )
 
     assert completed.returncode == 0, completed.stderr
+    image_files = _image_files()
+    loaded = [Path(name).resolve() for name in json.loads(loaded_list.read_text())]
+    assert any(
+        module_file.is_relative_to(LOCAL_SOURCE_DIRECTORIES[1])
+        for module_file in loaded
+    )
+    outside_the_image = [
+        str(module_file)
+        for module_file in loaded
+        if not _from_the_image(module_file, image_files)
+    ]
+    assert outside_the_image == []
