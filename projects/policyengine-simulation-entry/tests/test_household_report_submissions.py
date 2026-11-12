@@ -38,6 +38,10 @@ from policyengine_simulation_entry.economy_submission_errors import (
 from policyengine_simulation_entry.household_report_api_models import (
     HouseholdReportCreated,
 )
+from policyengine_simulation_entry.household_report_submissions import (
+    HouseholdReportSideInputs,
+    household_report_calculation,
+)
 from policyengine_simulation_entry.household_workers import (
     HouseholdFunctionUnavailableError,
     VersionManifestUnavailableError,
@@ -49,6 +53,7 @@ from policyengine_simulation_persistence import (
     ReportRunStatus,
     ReportSideError,
     RunVersions,
+    StoredHousehold,
     UnknownCatalogVersionError,
     UnknownHouseholdError,
     UnknownPolicyError,
@@ -426,3 +431,83 @@ def test_the_answer_is_the_report_runs_status_once_its_call_is_recorded(store, s
     created = _submit(household_report_service(store))
 
     assert created.status.value == status
+
+
+def _stored_household(document: dict | None = None) -> StoredHousehold:
+    return StoredHousehold(
+        id=HOUSEHOLD_ID,
+        country="us",
+        default_year=2026,
+        document=STORED_DOCUMENT if document is None else document,
+    )
+
+
+def test_a_report_runs_calculation_is_built_from_its_stored_inputs_alone():
+    # A restart rebuilds the call from the stored report: its own year, not
+    # the household's default year now, and its stored option.
+    worker = manifest_household_worker("us")
+
+    calculation = household_report_calculation(
+        country="us",
+        household=_stored_household(),
+        year=2027,
+        add_missing_variables=False,
+        sides={
+            "baseline": HouseholdReportSideInputs(
+                simulation_run_id=BASELINE_RUN_ID, reform={}
+            ),
+            "reform": HouseholdReportSideInputs(
+                simulation_run_id=REFORM_RUN_ID, reform=REFORM
+            ),
+        },
+        worker=worker,
+    )
+
+    payload = calculation.model_dump(mode="json")
+    for side, run_id, parameters in (
+        ("baseline", BASELINE_RUN_ID, {}),
+        ("reform", REFORM_RUN_ID, REFORM),
+    ):
+        expected = {
+            **_side_request(run_id, parameters),
+            "year": "2027",
+            "add_missing_variables": False,
+        }
+        assert payload[side] == expected
+
+
+def test_a_calculation_of_the_baseline_alone_has_no_reform():
+    calculation = household_report_calculation(
+        country="us",
+        household=_stored_household(),
+        year=2026,
+        add_missing_variables=True,
+        sides={
+            "baseline": HouseholdReportSideInputs(
+                simulation_run_id=BASELINE_RUN_ID, reform=REFORM
+            )
+        },
+        worker=manifest_household_worker("us"),
+    )
+
+    assert calculation.reform is None
+    assert calculation.baseline.calculation_id == BASELINE_RUN_ID
+
+
+def test_a_stored_household_the_builder_cannot_read_is_not_calculable():
+    with pytest.raises(EconomySubmissionUnprocessableError) as raised:
+        household_report_calculation(
+            country="us",
+            household=_stored_household({"people": "not a list of people"}),
+            year=2026,
+            add_missing_variables=False,
+            sides={
+                "baseline": HouseholdReportSideInputs(
+                    simulation_run_id=BASELINE_RUN_ID, reform={}
+                )
+            },
+            worker=manifest_household_worker("us"),
+        )
+
+    assert raised.value.code == "household_not_calculable"
+    assert [reason.type for reason in raised.value.reasons] == ["household_unreadable"]
