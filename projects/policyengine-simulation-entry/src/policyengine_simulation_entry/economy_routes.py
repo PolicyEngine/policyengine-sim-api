@@ -330,6 +330,7 @@ def _report_state(stored: StoredReport) -> EconomyReportState:
             completed_at=run.completed_at,
             baseline_simulation_run_id=run.baseline_simulation_run_id,
             reform_simulation_run_id=run.reform_simulation_run_id,
+            modal_call_id=run.modal_call_id,
         ),
     )
 

@@ -242,6 +242,7 @@ def _state(record: HouseholdJobRecord) -> HouseholdCalculationState:
         year=record.year,
         policyengine_version=record.policyengine_version,
         country_package_version=record.country_package_version,
+        modal_call_id=record.modal_call_id,
         result=record.result,
         error_message=record.error_message,
         created_at=record.created_at,

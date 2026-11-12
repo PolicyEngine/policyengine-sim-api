@@ -44,7 +44,11 @@ class SimulationRunState:
 
 @dataclass(frozen=True)
 class ReportRunState:
-    """A report run's state, and the simulation runs it compares."""
+    """A report run's state, the simulation runs it compares, and its call.
+
+    ``modal_call_id`` is the coordinator's Modal call recorded on the run,
+    or None before the service has recorded one.
+    """
 
     id: UUID
     status: ReportRunStatus
@@ -56,6 +60,7 @@ class ReportRunState:
     completed_at: datetime | None
     baseline_simulation_run_id: UUID
     reform_simulation_run_id: UUID | None
+    modal_call_id: str | None
 
 
 @dataclass(frozen=True)
@@ -104,6 +109,7 @@ def read_economy_report(
                 report_runs.c.completed_at,
                 report_runs.c.baseline_simulation_run_id,
                 report_runs.c.reform_simulation_run_id,
+                report_runs.c.modal_call_id,
             )
             .where(report_runs.c.report_id == report_id)
             .order_by(report_runs.c.created_at.desc(), report_runs.c.id.desc())
@@ -178,4 +184,5 @@ def _report_run_state(run: RowMapping) -> ReportRunState:
         completed_at=run["completed_at"],
         baseline_simulation_run_id=run["baseline_simulation_run_id"],
         reform_simulation_run_id=run["reform_simulation_run_id"],
+        modal_call_id=run["modal_call_id"],
     )

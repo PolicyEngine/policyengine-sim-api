@@ -215,7 +215,12 @@ class SimulationRunRead(_Answer):
 
 
 class ReportRunRead(_Answer):
-    """A report run's state, and the simulation runs it compares."""
+    """A report run's state, the simulation runs it compares, and its call.
+
+    ``modal_call_id`` is the coordinator's Modal call recorded on the run,
+    or null before the service has recorded one. Modal runs a pre-empted
+    call again under the same ID.
+    """
 
     run_id: UUID
     status: ReportRunStatus
@@ -227,6 +232,7 @@ class ReportRunRead(_Answer):
     completed_at: datetime | None
     baseline_simulation_run_id: UUID
     reform_simulation_run_id: UUID | None
+    modal_call_id: str | None
 
 
 class EconomyReportState(_Answer):
