@@ -3,7 +3,7 @@
 It claims the report run under its Modal call ID, then each of the report
 run's simulation runs, the baseline's and then the reform's: it calculates
 each, records each run's household document, and then marks the report run
-succeeded, or failed when a side's calculation failed. A report run another
+succeeded only if every side's run did, else failed. A report run another
 call holds, or one already finished, is not calculated again, and a side a
 restarted call already finished keeps its outcome. Modal pre-empts a call
 with SIGINT, which a synchronous function receives as ``KeyboardInterrupt``,
@@ -129,6 +129,8 @@ class FakeHouseholdReportRuns:
     report_record_result: RunWrite | None = None
     simulation_claims: dict[UUID, RunWrite] = field(default_factory=dict)
     simulation_states: dict[UUID, SimulationRunState] = field(default_factory=dict)
+    # Simulation runs whose claim raises, by run ID.
+    simulation_claim_errors: dict[UUID, Exception] = field(default_factory=dict)
     record_result: RunWrite | None = None
     writes: list[dict[str, Any]] = field(default_factory=list)
 
@@ -150,6 +152,8 @@ class FakeHouseholdReportRuns:
         self.writes.append(
             {"write": "claim", "run": simulation_run_id, "call": modal_call_id}
         )
+        if simulation_run_id in self.simulation_claim_errors:
+            raise self.simulation_claim_errors[simulation_run_id]
         return self.simulation_claims.get(simulation_run_id, CHANGED["running"])
 
     def get_simulation_run(self, simulation_run_id):
@@ -447,16 +451,60 @@ def test_an_unexpected_error_fails_every_unfinished_run_then_propagates(
     with pytest.raises(type(error)):
         _run(runs, calculate)
 
-    # The error names only its type: its text may repeat the household.
-    (failed_side,) = runs.of("fail")
-    assert (failed_side["run"], failed_side["call"]) == (BASELINE_RUN_ID, CALL_ID)
-    assert failed_side["error_message"] == summary
-    assert failed_side["household_result"] is None
-    (unfinished,) = runs.of("fail_unfinished")
-    assert unfinished["run"] == REFORM_RUN_ID
-    assert unfinished["error_message"] == summary
+    # The error names only its type: its text may repeat the household. Each
+    # unfinished run is failed while still active, held by this call or not.
+    assert runs.of("fail") == []
+    unfinished = runs.of("fail_unfinished")
+    assert [write["run"] for write in unfinished] == [BASELINE_RUN_ID, REFORM_RUN_ID]
+    assert {write["error_message"] for write in unfinished} == {summary}
+    assert {write["call"] for write in unfinished} == {None}
     (failed_report,) = runs.of("fail_report")
     assert (failed_report["call"], failed_report["error_message"]) == (CALL_ID, summary)
+
+
+def test_a_side_whose_claim_raises_is_failed_though_this_call_may_not_hold_it() -> None:
+    # The claim may have rolled back, leaving the run pending with no call.
+    runs = FakeHouseholdReportRuns(
+        simulation_claim_errors={BASELINE_RUN_ID: ConnectionError("lost")}
+    )
+
+    with pytest.raises(ConnectionError):
+        _run(runs, _succeeded)
+
+    assert runs.kinds == [
+        "claim_report",
+        "read_runs",
+        "claim",
+        "fail_unfinished",
+        "fail_unfinished",
+        "fail_report",
+    ]
+    assert [write["run"] for write in runs.of("fail_unfinished")] == [
+        BASELINE_RUN_ID,
+        REFORM_RUN_ID,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("named_runs", "with_reform"),
+    [((BASELINE_RUN_ID, None), True), ((BASELINE_RUN_ID, REFORM_RUN_ID), False)],
+    ids=["payload-adds-a-reform", "payload-leaves-out-the-reform"],
+)
+def test_a_payload_whose_reform_differs_from_the_report_runs_is_refused(
+    named_runs: tuple[UUID, UUID | None], *, with_reform: bool
+) -> None:
+    runs = FakeHouseholdReportRuns(named_runs=named_runs)
+
+    def calculate(request: HouseholdExecutionRequest) -> HouseholdExecutionResult:
+        pytest.fail("a payload naming other runs is not calculated")
+
+    with pytest.raises(ValueError, match="names other simulation runs"):
+        _run(runs, calculate, with_reform=with_reform)
+
+    assert [write["run"] for write in runs.of("fail_unfinished")] == [
+        run_id for run_id in named_runs if run_id is not None
+    ]
+    assert len(runs.of("fail_report")) == 1
 
 
 def test_a_preemption_records_nothing_and_propagates() -> None:
