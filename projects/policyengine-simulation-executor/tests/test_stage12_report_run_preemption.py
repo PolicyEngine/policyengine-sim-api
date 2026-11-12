@@ -11,7 +11,13 @@ fails its report run and the simulation runs it left unfinished.
 
 from __future__ import annotations
 
+from hashlib import sha256
+
 import pytest
+from policyengine_simulation_executor import spm as runtime_spm
+from policyengine_simulation_executor.stage12_artifacts import (
+    serialize_simulation_frames,
+)
 from policyengine_simulation_executor.stage12_runtime import (
     report_run_coordination as report_run_coordination_module,
 )
@@ -27,7 +33,7 @@ from stage12_fake_report_runs import (
     report_run_context,
     report_run_input,
 )
-from stage12_fake_stores import FakeArtifacts, FakeStore
+from stage12_fake_stores import FakeArtifacts, FakeStore, simulation_frames
 from stage12_run_worker_support import EarlierCall, RunWorkerInvoker
 from stage12_runtime_support import (
     coordinate_report,
@@ -210,7 +216,7 @@ class StartedWorkerCalls(TimeoutInvoker):
 
 
 class ChangedBeforeRelease(FakeReportRuns):
-    """Finish the reform run under its earlier worker just before its release."""
+    """Fail the reform run under its earlier worker just before its release."""
 
     def release_simulation_run(self, simulation_run_id, **values):
         if simulation_run_id == REFORM_RUN_ID:
@@ -238,9 +244,10 @@ def test_a_run_changed_before_its_release_stops_the_workers_already_started(
     with pytest.raises(RuntimeError, match="coordination failed"):
         _coordinate(report_runs, invoker)
 
+    # The report run fails with the earlier worker's own cause.
     run = report_runs.report_runs[REPORT_RUN_ID]
     assert run.status is RunStatus.FAILED
-    assert run.error_message.startswith("simulation_run_changed: ")
+    assert run.error_message == "simulation_execution_failed: the earlier worker"
     # The baseline worker already started is stopped, and its run fails.
     (baseline_call,) = invoker.calls
     assert baseline_call.cancelled == 1
@@ -248,6 +255,65 @@ def test_a_run_changed_before_its_release_stops_the_workers_already_started(
     assert baseline.error_message == (
         "simulation_cancelled: Cancelled after the reform simulation failed."
     )
+
+
+class OutputFiles:
+    """Stored output files by URI, as Cloud Storage holds them."""
+
+    def __init__(self) -> None:
+        self.payloads: dict[str, bytes] = {}
+
+    def read(self, uri: str) -> bytes:
+        if uri not in self.payloads:
+            raise FileNotFoundError(uri)
+        return self.payloads[uri]
+
+
+class SucceededBeforeRelease(FakeReportRuns):
+    """Complete the reform run under its earlier worker just before its release."""
+
+    def __init__(self, files: OutputFiles) -> None:
+        super().__init__()
+        payload, _row_identity = serialize_simulation_frames(simulation_frames(120.0))
+        self.reform_output_uri = "gs://private-simulation-outputs/earlier.parquet"
+        self.reform_output_sha256 = sha256(payload).hexdigest()
+        files.payloads[self.reform_output_uri] = payload
+
+    def release_simulation_run(self, simulation_run_id, **values):
+        if simulation_run_id == REFORM_RUN_ID:
+            self.complete_simulation_run(
+                REFORM_RUN_ID,
+                modal_call_id="fc-reform-earlier",
+                output_uri=self.reform_output_uri,
+                output_sha256=self.reform_output_sha256,
+                completed_at=None,
+            )
+        return super().release_simulation_run(simulation_run_id, **values)
+
+
+def test_a_run_its_earlier_worker_completes_before_its_release_is_used_as_stored(
+    monkeypatch,
+) -> None:
+    # The stored file has no SPM receipt; neither does the report's request.
+    monkeypatch.setattr(runtime_spm, "normalize_runtime_spm", lambda _params: None)
+    files = OutputFiles()
+    report_runs = SucceededBeforeRelease(files)
+    _claimed_by_earlier_workers(report_runs)
+    artifacts = FakeArtifacts()
+    invoker = RunWorkerInvoker(report_runs, artifacts)
+
+    result = _coordinate(report_runs, invoker, artifacts, output_files=files)
+
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
+    # Only the baseline is calculated again; the reform's earlier worker
+    # finished it, and the coordinator uses that output.
+    assert invoker.events == ["spawn:baseline"]
+    reform = report_runs.simulation_runs[REFORM_RUN_ID]
+    assert (reform.status, reform.output_uri) == (
+        RunStatus.SUCCEEDED,
+        report_runs.reform_output_uri,
+    )
+    assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
 
 
 STALE_CALL_ID = "fc-baseline-stale"

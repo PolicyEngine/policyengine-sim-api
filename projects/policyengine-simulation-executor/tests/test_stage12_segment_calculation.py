@@ -330,3 +330,23 @@ def test_merge_rejects_an_entity_without_its_identifier(monkeypatch) -> None:
         ValueError, match=r"^Stage 12 segment entity 'household' has no identifier$"
     ):
         merge_segment_results(simulation, _results(simulation))
+
+
+def test_a_simulation_run_on_its_own_is_segmented_and_merged_like_a_report_side() -> (
+    None
+):
+    # A US national simulation run started on its own takes the segmented
+    # path, as a report's baseline or reform does.
+    simulation = planned_simulation(SimulationRole.BASELINE).model_copy(
+        update={"role": SimulationRole.STANDALONE}
+    )
+
+    segments = build_segment_inputs(simulation)
+    merged = merge_segment_results(simulation, _results(simulation))
+
+    assert should_segment_simulation(simulation)
+    assert len(segments) == 20
+    assert {segment.simulation.role for segment in segments} == {
+        SimulationRole.STANDALONE
+    }
+    assert set(merged.frames) == {"household", "person"}
