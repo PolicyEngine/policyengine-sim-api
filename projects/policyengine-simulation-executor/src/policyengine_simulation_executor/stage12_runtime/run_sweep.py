@@ -6,14 +6,16 @@ report run, or on a simulation run it starts a worker on directly. If that
 call ends without recording the run's outcome, for example because its
 container ran out of memory, the run stays pending or running. The sweep
 asks Modal for the status of each recorded call and marks the run failed
-once the call has ended. A pending run with no call recorded soon after its
-creation is failed without asking Modal: usually the simulation service
-stopped before starting its call. If it started the call but failed to
-record it, that call's claim is refused once the run has failed, so it
-finishes nothing. The sweep also fails a run still unfinished long after it
-was created or started, longer than any Modal call of it can run, whatever
-Modal reports and with or without a recorded call, so a run Modal can't
-decide doesn't stay unfinished for good.
+once the call has ended. A pending run with no call recorded 15 minutes
+after its creation is failed without asking Modal: usually the simulation
+service stopped before starting its call, and the restart check, which
+starts such a run's call once more 3 to 12 minutes after its creation, could
+not start it either. If a call was started but not recorded, its claim is
+refused once the run has failed, so it finishes nothing. The sweep also
+fails a run still unfinished long after it was created or started, longer
+than any Modal call of it can run, whatever Modal reports and with or
+without a recorded call, so a run Modal can't decide doesn't stay
+unfinished for good.
 
 Modal restarts a pre-empted call under the same call ID and reports it
 pending meanwhile, so a pre-empted coordinator's or worker's run is never
@@ -49,8 +51,10 @@ logger = logging.getLogger(__name__)
 # A run must have been unfinished at least this long, counted from its first
 # claim or, while it is pending, from its creation (a household job's from its
 # creation), before the sweep judges it; a pending run with no call recorded
-# by then is failed.
-DEFAULT_MINIMUM_AGE = timedelta(minutes=10)
+# by then is failed. It is longer than the restart check's window (3 to 12
+# minutes after creation), so a run that check started again is judged by
+# its call.
+DEFAULT_MINIMUM_AGE = timedelta(minutes=15)
 ENDED_CALL_MESSAGE = (
     "modal_call_ended: The Modal call recorded for this run ended without "
     "recording the run's outcome."

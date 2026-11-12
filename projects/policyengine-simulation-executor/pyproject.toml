@@ -19,6 +19,10 @@ dependencies = [
     "policyengine-simulation-observability",
     "policyengine-simulation-contract[modal]",
     "policyengine-stage12-persistence",
+    # The restart check in the stuck-run sweep's Modal app runs the
+    # simulation service's own restart code on its persistence library.
+    "policyengine-simulation-entry",
+    "policyengine-simulation-persistence",
     # PolicyEngine.py's models extra is the only selector for core, country
     # models, and the SPM calculator. Do not duplicate those versions here.
     "policyengine[models]==6.17.1",
@@ -80,6 +84,8 @@ policyengine-fastapi = { path = "../../libs/policyengine-fastapi", editable = tr
 policyengine-simulation-observability = { path = "../../libs/policyengine-simulation-observability", editable = true }
 policyengine-simulation-contract = { path = "../../libs/policyengine-simulation-contract", editable = true }
 policyengine-stage12-persistence = { path = "../../libs/policyengine-stage12-persistence", editable = true }
+policyengine-simulation-entry = { path = "../policyengine-simulation-entry", editable = true }
+policyengine-simulation-persistence = { path = "../../libs/policyengine-simulation-persistence", editable = true }
 policyengine-simulation-gateway = { path = "../policyengine-simulation-gateway", editable = true }
 
 [project.optional-dependencies]
