@@ -162,8 +162,10 @@ runs that call (`src/modal/utils/describe_call_inputs.py`), and stops that
 container with `modal container stop`. Modal sends the container SIGINT and
 gives the input to another container under the same call ID, as it does
 after a pre-emption. The check requires the record to succeed under that
-call, and the call graph to show the call's input finished in another
-container. Run again, the household function or coordinator resumes its
+call, with a completion time after the stop, and the call graph to show the
+call's input finished in another container. A record that completed before
+the stop proves nothing: Modal's rerun finds it finished and only returns
+its summary, so that attempt counts as missed. Run again, the household function or coordinator resumes its
 claim. The report's simulation runs are reused, so its coordinator
 starts no worker, and the check doesn't cover a coordinator starting its
 workers again.
@@ -173,12 +175,14 @@ a warm container, proves nothing, so the check submits a new one, up to
 three attempts. Before each new attempt it waits, up to three minutes, for
 Modal to stop listing the last attempt's container (Modal stops an idle
 container after 60 seconds), so the next calculation starts in a new
-container. A record that fails, or doesn't finish within its deadline (10
-minutes for the household, 15 for the report, per attempt), fails the check
-at once. Modal refuses to stop a container that has ended; the check then
-doesn't stop it again or submit another calculation, but follows the record
-to its end, so a record left running by a container that ended for another
-reason, such as running out of memory, fails the check at its deadline.
+container, including a container it first saw only after it had finished
+the calculation. A record that fails, or doesn't finish within its deadline
+(10 minutes for the household, 15 for the report, per attempt), fails the
+check at once. Modal refuses to stop a container that has ended; when a
+stop fails, the check doesn't stop it again or submit another calculation,
+but follows the record to its end, so a record left running by a container
+that ended for another reason, such as running out of memory, fails the
+check at its deadline. Every Modal command may take 60 seconds.
 
 It uses the repository's Modal token (the repository secrets
 `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`), which must be allowed to read

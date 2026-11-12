@@ -27,14 +27,22 @@ import argparse
 import json
 import sys
 from importlib import import_module
-from typing import Any
+from typing import Any, TypedDict
+
+
+class CallInput(TypedDict):
+    """One input of a call, as printed: the shell check reads these keys."""
+
+    input_id: str
+    container_id: str
+    status: str
 
 
 def call_inputs(
     modal_call_id: str,
     *,
     modal_module: Any = None,  # noqa: ANN401  # the modal module, or a stand-in for it
-) -> list[dict[str, str]]:
+) -> list[CallInput]:
     """Return each input of call ``modal_call_id``, in the graph's order.
 
     The graph is walked depth first, each input before the calls spawned
@@ -42,17 +50,17 @@ def call_inputs(
     """
     modal = modal_module if modal_module is not None else import_module("modal")
     graph = modal.FunctionCall.from_id(modal_call_id).get_call_graph()
-    found: list[dict[str, str]] = []
+    found: list[CallInput] = []
     waiting = list(reversed(graph))
     while waiting:
         input_info = waiting.pop()
         if input_info.function_call_id == modal_call_id:
             found.append(
-                {
-                    "input_id": input_info.input_id,
-                    "container_id": input_info.task_id,
-                    "status": input_info.status.name,
-                }
+                CallInput(
+                    input_id=input_info.input_id,
+                    container_id=input_info.task_id,
+                    status=input_info.status.name,
+                )
             )
         waiting.extend(reversed(input_info.children))
     return found

@@ -18,17 +18,19 @@
 # environment. `modal container stop` sends it SIGINT, and Modal gives the
 # call's input to another container under the same call ID, as it does
 # after a pre-emption. The check passes once the record succeeds under that
-# call and the call graph shows the call's input finished in another
-# container. A calculation that finishes before its container is stopped
+# call, completed after the stop, and the call graph shows the call's input
+# finished in another container. A record completed before the stop proves
+# nothing: Modal's rerun then finds it finished and only returns its
+# summary. A calculation that finishes before its container is stopped
 # proves nothing, so a new one is submitted, up to PREEMPTION_CHECK_ATTEMPTS
 # times, once Modal no longer lists the last attempt's container: on that
 # warm container the calculation would finish too fast to stop. A record
 # that fails, or doesn't finish within the deadline, fails the check at
-# once. A stop Modal refuses, as it does for a container that has ended, is
-# not tried again: the check follows the record to its end, so a record
+# once. A stop that fails, as Modal's does for a container that has ended,
+# is not tried again: the check follows the record to its end, so a record
 # left running by a container that ended for another reason, such as
 # running out of memory, fails at its deadline rather than being submitted
-# again.
+# again. Every Modal command may take 60 seconds.
 #
 # Required env vars: the test client's SIMULATION_TEST_AUTH_ISSUER,
 # SIMULATION_TEST_AUTH_AUDIENCE, SIMULATION_TEST_AUTH_CLIENT_ID and
@@ -71,6 +73,7 @@ rerun_seconds="${PREEMPTION_CHECK_RERUN_SECONDS:-120}"
 scaledown_seconds="${PREEMPTION_CHECK_SCALEDOWN_SECONDS:-180}"
 request_timeout_seconds=30
 submission_timeout_seconds=60
+modal_command_timeout_seconds=60
 uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 call_id_pattern='^fc-[0-9A-Za-z]+$'
 container_id_pattern='^ta-[0-9A-Za-z]+$'
@@ -130,17 +133,23 @@ access_token="$(jq -r '.access_token // empty' "${work_directory}/token.json")"
 authorization_header="${work_directory}/authorization-header"
 printf 'Authorization: Bearer %s\n' "${access_token}" > "${authorization_header}"
 
+# Run a command in the executor's environment, which has the Modal client,
+# allowing it modal_command_timeout_seconds.
+modal_command() {
+  timeout "${modal_command_timeout_seconds}" uv run --frozen "$@"
+}
+
 # Print the inputs of Modal call <call-id> as JSON; fail when Modal can't be
 # asked (src/modal/utils/describe_call_inputs.py).
 call_inputs() {
-  uv run --frozen python -m src.modal.utils.describe_call_inputs "$1"
+  modal_command python -m src.modal.utils.describe_call_inputs "$1"
 }
 
 # Succeed when Modal lists container <container-id> as running in
 # MODAL_ENVIRONMENT.
 container_listed() {
   local listing
-  listing="$(uv run --frozen modal container list --env "${MODAL_ENVIRONMENT}" --json)" \
+  listing="$(modal_command modal container list --env "${MODAL_ENVIRONMENT}" --json)" \
     || return 1
   jq -e --arg container_id "$1" 'any(.[]; .["Container ID"] == $container_id)' \
     <<<"${listing}" >/dev/null
@@ -201,8 +210,9 @@ submit() {
   fi
 }
 
-# Read the record once. Sets record_status, record_call_id, record_error and
-# last_read; leaves record_status empty when the service can't answer now.
+# Read the record once. Sets record_status, record_call_id, record_error,
+# record_completed_at and last_read; leaves record_status empty when the
+# service can't answer now.
 read_record() {
   local record="${work_directory}/record.json"
   local read_status
@@ -234,6 +244,7 @@ read_record() {
   record_status="$(jq -r "${record_filter}.status" "${record}")"
   record_call_id="$(jq -r "${record_filter}.modal_call_id // empty" "${record}")"
   record_error="$(jq -r "${record_filter}.error_message // \"no error message\"" "${record}")"
+  record_completed_at="$(jq -r "${record_filter}.completed_at // empty" "${record}")"
   if [[ -n "${record_call_id}" && ! "${record_call_id}" =~ ${call_id_pattern} ]]; then
     fail "${record_label} names Modal call '${record_call_id}', which is not a Modal call ID"
   fi
@@ -269,6 +280,42 @@ find_container() {
     unlisted_note="container ${candidate} is not listed in Modal environment ${MODAL_ENVIRONMENT}"
     printf '%s; asking again\n' "${unlisted_note}" >&2
   fi
+}
+
+# When container_id is empty, set it to a container the call graph says ran
+# an input of the record's call, so the next attempt can wait for it to
+# leave: a warm container may finish the calculation before the check sees
+# it running.
+remember_finished_container() {
+  local inputs candidate
+  if [[ -n "${container_id}" || -z "${record_call_id}" ]]; then
+    return 0
+  fi
+  inputs="$(call_inputs "${record_call_id}")" || return 0
+  candidate="$(
+    jq -r '[.[] | select(.container_id != "")] | first | .container_id // empty' <<<"${inputs}"
+  )" || return 0
+  if [[ "${candidate}" =~ ${container_id_pattern} ]]; then
+    container_id="${candidate}"
+  fi
+}
+
+# Return 0 when the record completed after its container was stopped, so
+# its success comes from the rerun; otherwise set attempt_outcome to missed.
+completed_after_the_stop() {
+  local completed_epoch
+  [[ -n "${record_completed_at}" ]] \
+    || fail "${record_label} succeeded with no completion time"
+  completed_epoch="$(
+    jq -rn --arg completed_at "${record_completed_at}" \
+      '$completed_at | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601'
+  )" || fail "${record_label}'s completion time ${record_completed_at} is not a UTC time"
+  if ((completed_epoch > stopped_at_epoch)); then
+    return 0
+  fi
+  attempt_outcome="missed"
+  miss_reason="${record_label} completed at ${record_completed_at}, before its container ${stopped_container_id} was stopped, so Modal's rerun of call ${stopped_call_id} found it finished"
+  return 1
 }
 
 # Wait until Modal no longer lists container <container-id>, at most
@@ -327,8 +374,9 @@ attempt_once() {
   container_id=""
   stopped_container_id=""
   stopped_call_id=""
+  stopped_at_epoch=0
   unlisted_note=""
-  stop_refusal=""
+  stop_failure=""
   last_read="nothing yet"
   local started_at="${SECONDS}"
   while true; do
@@ -342,20 +390,24 @@ attempt_once() {
       succeeded)
         if [[ -z "${stopped_container_id}" ]]; then
           attempt_outcome="missed"
-          miss_reason="${record_label} finished before its container was stopped${unlisted_note:+ (${unlisted_note})}${stop_refusal:+ (${stop_refusal})}"
-        else
+          miss_reason="${record_label} finished before its container was stopped${unlisted_note:+ (${unlisted_note})}${stop_failure:+ (${stop_failure})}"
+          remember_finished_container
+        elif completed_after_the_stop; then
           confirm_rerun
         fi
         return 0
         ;;
       failed)
-        fail "${record_label} failed${stopped_container_id:+ after its container ${stopped_container_id} was stopped}${stop_refusal:+ after ${stop_refusal}}: ${record_error}"
+        fail "${record_label} failed${stopped_container_id:+ after its container ${stopped_container_id} was stopped}${stop_failure:+ after ${stop_failure}}: ${record_error}"
         ;;
       pending | running)
-        if [[ -z "${stopped_container_id}" && -z "${stop_refusal}" && -n "${record_call_id}" ]]; then
+        if [[ -z "${stopped_container_id}" && -z "${stop_failure}" && -n "${record_call_id}" ]]; then
           [[ -n "${container_id}" ]] || find_container
           if [[ "${record_status}" == "running" && -n "${container_id}" ]]; then
-            if uv run --frozen modal container stop --yes "${container_id}"; then
+            local stop_status=0
+            modal_command modal container stop --yes "${container_id}" || stop_status=$?
+            if ((stop_status == 0)); then
+              stopped_at_epoch="$(date -u +%s)"
               stopped_container_id="${container_id}"
               stopped_call_id="${record_call_id}"
               printf 'Stopped container %s while %s was running; waiting for Modal to run call %s again\n' \
@@ -364,8 +416,8 @@ attempt_once() {
               # Modal refuses to stop a container that has ended. The
               # check doesn't stop it again or submit another calculation
               # while this one may still be running.
-              stop_refusal="modal container stop refused to stop container ${container_id} while ${record_label} was running"
-              printf '%s; following it to its end\n' "${stop_refusal}" >&2
+              stop_failure="modal container stop failed for container ${container_id} (exit status ${stop_status}) while ${record_label} was running"
+              printf '%s; following it to its end\n' "${stop_failure}" >&2
             fi
           fi
         fi
@@ -373,7 +425,7 @@ attempt_once() {
       *) fail "${record_label} has an unknown status: ${record_status}" ;;
     esac
     ((SECONDS - started_at < deadline_seconds)) \
-      || fail "${record_label} did not finish within ${deadline_seconds} seconds (last read: ${last_read})${stop_refusal:+; ${stop_refusal}}"
+      || fail "${record_label} did not finish within ${deadline_seconds} seconds (last read: ${last_read})${stop_failure:+; ${stop_failure}}"
     sleep "${poll_seconds}"
   done
 }
@@ -389,4 +441,4 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
     wait_for_container_to_leave "${container_id}"
   fi
 done
-fail "no attempt in ${attempts} stopped the container of a running ${kind} calculation; the last: ${miss_reason}"
+fail "no attempt in ${attempts} showed a ${kind} calculation finishing in another container after its container was stopped; the last: ${miss_reason}"
