@@ -20,6 +20,7 @@ from uuid import uuid4
 
 import pytest
 from budget_window_database import BudgetWindowSeeder, SeededWindow
+from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_stage12_persistence import (
     BUDGET_WINDOW_MAX_RUNNING_YEARS,
     ActiveRun,
@@ -28,6 +29,7 @@ from policyengine_stage12_persistence import (
     RunKind,
     RunStatus,
     WindowAdvance,
+    YearToStart,
 )
 from report_run_database import NOW, worker_database_url
 
@@ -42,20 +44,22 @@ ALL_YEARS = range(2026, 2033)
 
 
 class RecordingStarter:
-    """Starts a year by recording its report run and returning a new call ID.
+    """Starts a year by recording it and returning a new call ID.
 
-    A report run in ``refused`` raises, as Modal does when it refuses a call.
-    ``during_start`` runs before the call ID is returned.
+    A year whose report run is in ``refused`` raises, as Modal does when it
+    refuses a call. ``during_start`` runs before the call ID is returned.
     """
 
     def __init__(self, *, refused=(), delay_seconds=0.0, during_start=None):
         self.started: list[UUID] = []
+        self.years: list[YearToStart] = []
         self.refused = set(refused)
         self.delay_seconds = delay_seconds
         self.during_start = during_start
         self._lock = threading.Lock()
 
-    def __call__(self, report_run_id: UUID) -> str:
+    def __call__(self, year_to_start: YearToStart) -> str:
+        report_run_id = year_to_start.run_ids.report_run_id
         if report_run_id in self.refused:
             msg = "Modal refused the call"
             raise RuntimeError(msg)
@@ -64,6 +68,7 @@ class RecordingStarter:
             self.during_start(report_run_id)
         with self._lock:
             self.started.append(report_run_id)
+            self.years.append(year_to_start)
             return f"fc-started-{len(self.started)}"
 
 
@@ -136,6 +141,26 @@ def test_the_first_advance_starts_the_five_earliest_years(
     assert {rows[year]["status"] for year in ALL_YEARS} == {"pending"}
     assert [rows[year]["updated_at"] for year in range(2026, 2031)] == [LATER] * 5
     assert windows.window_row(window)["status"] == "pending"
+
+
+def test_the_starter_is_given_each_year_and_its_runs(store, window) -> None:
+    starter = RecordingStarter()
+
+    store.advance_window(
+        window.window_run_id, now=LATER, start_year=starter, max_running_years=2
+    )
+
+    assert starter.years == [
+        YearToStart(
+            year=year,
+            run_ids=ReportRunIds(
+                report_run_id=window.year(year).report_run_id,
+                baseline_simulation_run_id=window.year(year).baseline_simulation_run_id,
+                reform_simulation_run_id=window.year(year).reform_simulation_run_id,
+            ),
+        )
+        for year in (2026, 2027)
+    ]
 
 
 def test_an_advance_fills_only_the_free_places(store, windows, window) -> None:

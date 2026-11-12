@@ -15,6 +15,10 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from policyengine_simulation_contract.stage12_execution import (
+    ReportRunIds,
+    year_calculation,
+)
 from policyengine_simulation_executor.stage12_runtime import (
     budget_window_scheduling,
 )
@@ -23,7 +27,9 @@ from policyengine_simulation_executor.stage12_runtime.budget_window_scheduling i
     advance_window_of_year,
     start_window_of_year,
 )
-from policyengine_stage12_persistence import RunStatus, WindowAdvance
+from policyengine_stage12_persistence import RunStatus, WindowAdvance, YearToStart
+from stage12_fake_report_runs import report_run_context
+from stage12_runtime_support import report_execution_input
 
 NOW = datetime(2026, 11, 12, 12, tzinfo=UTC)
 
@@ -55,7 +61,7 @@ class FakeWindowStore:
         )
 
 
-def test_the_year_starter_starts_the_coordinator_by_report_run_id(
+def test_the_year_starter_starts_this_application_s_coordinator_for_the_year(
     monkeypatch,
 ) -> None:
     calls = []
@@ -76,23 +82,35 @@ def test_the_year_starter_starts_the_coordinator_by_report_run_id(
         return fake_modal
 
     monkeypatch.setattr(budget_window_scheduling, "import_module", import_modal)
-    report_run_id = uuid4()
+    report, context = report_execution_input(), report_run_context()
+    next_year_runs = ReportRunIds(
+        report_run_id=uuid4(),
+        baseline_simulation_run_id=uuid4(),
+        reform_simulation_run_id=uuid4(),
+    )
     starter = ModalYearStarter(
-        application_name="policyengine-simulation-v2-6-17-1",
-        environment="staging",
+        report=report,
+        context=context,
         observability_context={"traceparent": "trace"},
+        clock=lambda: NOW,
     )
 
-    assert starter(report_run_id) == "fc-next-year"
+    assert starter(YearToStart(year=2029, run_ids=next_year_runs)) == "fc-next-year"
+    expected_report, expected_context = year_calculation(
+        report, context, year=2029, run_ids=next_year_runs, created_at=NOW
+    )
     assert calls == [
         (
             "from_name",
-            ("policyengine-simulation-v2-6-17-1", "coordinate_report"),
-            {"environment_name": "staging"},
+            (context.modal_application, "coordinate_report"),
+            {"environment_name": context.modal_environment},
         ),
         (
             "spawn",
-            (str(report_run_id),),
+            (
+                expected_report.model_dump(mode="json"),
+                expected_context.model_dump(mode="json"),
+            ),
             {"observability_context": {"traceparent": "trace"}},
         ),
     ]
