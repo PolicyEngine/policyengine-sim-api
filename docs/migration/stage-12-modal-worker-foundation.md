@@ -368,6 +368,51 @@ functions and the household functions, not the coordinator or the economy
 workers, so it does not catch such a mismatch; a staging economy report run on
 each staging deployment would.
 
+### Budget windows
+
+A budget-window report compares the same baseline and reform in each year of a
+window of 1 to 75 consecutive years. It is an economy report whose
+`budget_window_size` is the window's length. Its calculation is one
+`budget_window_runs` row, and each year is a report run naming that row and
+the year, with its own simulation runs of that year, so a year can reuse a
+single-year report's runs, and the reverse.
+
+- **Creating and starting.** The simulation service creates every year's runs
+  in one transaction, all pending with no call, then starts the earliest
+  years. The contract's `year_calculation` derives each year's coordinator
+  input and context from the first year's: only the year, its three runs, the
+  artifact prefix (`report_run_artifact_prefix`) and the call's creation time
+  differ.
+- **At most five at once.** `BudgetWindowStore.advance_window` locks the
+  window run's row, then starts the earliest waiting years (pending with no
+  call) until five are under way (running, or started with a call recorded),
+  recording each call while the year is still pending with no call. The lock
+  makes advances that run at once start each year once; a year a duplicate
+  call reaches is claimed by only one call.
+- **Each year's coordinator.** `coordinate_report` runs every call through
+  `coordinate_window_year`. It looks the year's window up once, marks the
+  window running before the coordinator runs, and advances the window once the
+  coordinator returns, fails or is cancelled. The advance starts the next
+  years in the same application, by `ModalYearStarter`, or finishes the
+  window. A pre-emption advances nothing; the restarted call advances when it
+  ends, even when it finds its year already finished. A report run outside any
+  window makes no window writes, and no window write ever changes the year's
+  own outcome.
+- **The window's outcome.** A failed year, or a start Modal refuses, fails the
+  window, its waiting years and their unstarted simulation runs, and no
+  further year starts; years already started run to their end. Once every
+  year has succeeded the window succeeds.
+- **The stuck-run sweep.** It leaves a waiting year of an unfinished window to
+  the window, counts a year started later from when its call was recorded,
+  fails the window when it fails one of its years, and settles a window that
+  nothing has changed for ten minutes with no year under way: from its years
+  when they have all ended, or as stalled (`budget_window_stalled`) when years
+  are still waiting.
+
+The coordinator may run 25 calls at once (three windows at five years, and ten
+other reports), so each simulation worker may run 50 and the US segment
+function 1,000.
+
 ## Report output planning
 
 Before starting either child simulation, the Modal report coordinator resolves
@@ -929,9 +974,9 @@ This application registers no periodic cleanup function and does not delete the
 temporary PostgreSQL rows. Those rows remain restricted operational history
 until Stage 14 removes the temporary schema.
 
-Household computation, budget-window computation, public response fields,
-public identifiers, and production persistence are outside this companion
-change.
+Household computation, public response fields, public identifiers, and
+production persistence are outside this companion change; budget windows on
+the detailed-save path are described under "Budget windows" above.
 
 ## Numerical qualification
 

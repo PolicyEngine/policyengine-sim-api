@@ -30,6 +30,7 @@ from policyengine_simulation_contract.stage12_execution.base import (
 )
 from policyengine_simulation_contract.stage12_execution.budget_window_years import (
     report_run_artifact_prefix,
+    require_artifact_environment,
     year_calculation,
 )
 from policyengine_simulation_contract.stage12_execution.comparison_runs import (
@@ -117,6 +118,7 @@ __all__ = [
     "UKLocalAuthorityBoundaryVersion",
     "UKLocalAuthorityMetadata",
     "report_run_artifact_prefix",
+    "require_artifact_environment",
     "stage12_output_plan_sha256",
     "year_calculation",
 ]

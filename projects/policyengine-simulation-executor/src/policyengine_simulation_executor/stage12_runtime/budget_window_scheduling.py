@@ -2,8 +2,8 @@
 
 A budget window's years are report runs naming its budget-window run. The
 simulation service creates every year and starts the first ones. A year's
-coordinator marks the window running when it claims its year and, once the
-year has ended, advances the window: it starts the earliest waiting years
+coordinator call marks the window running before it claims its year and,
+once the year has ended, advances the window: it starts the earliest waiting years
 in its own Modal application, so that at most five are under way, or marks
 the window failed or succeeded (see ``BudgetWindowStore``).
 
@@ -120,39 +120,65 @@ def coordinate_window_year[CoordinatorResult](
 ) -> CoordinatorResult:
     """Run one coordinator call, starting and advancing its year's window.
 
-    A call naming a report run marks the run's window running before
-    ``coordinate`` runs, and advances it once ``coordinate`` returns, raises
-    or is cancelled, starting waiting years in this application. A
-    pre-emption advances nothing: Modal runs the call again, and the
-    restarted call advances when it ends, even when it finds its year
-    already finished. Advancing more than once is safe, because an advance
-    starts only waiting years and never more than five under way. A call
-    naming no report run, or a store that cannot be built, touches no
-    window.
+    A call naming a report run looks its window up once. A window's year
+    marks the window running before ``coordinate`` runs, and advances it
+    once ``coordinate`` returns, raises or is cancelled, starting waiting
+    years in this application. A pre-emption advances nothing: Modal runs
+    the call again, and the restarted call advances when it ends, even when
+    it finds its year already finished. Advancing more than once is safe,
+    because an advance starts only waiting years and never more than five
+    under way. A report run outside any window, a call naming no report run,
+    or a store that cannot be built makes no window writes. When the lookup
+    itself fails, nothing is marked and the window is looked up again once
+    the year ends.
     """
     report_run_id = _report_run_named_by(context)
     window_store = None if report_run_id is None else _built(windows)
     if report_run_id is None or window_store is None:
         return coordinate()
-    start_window_of_year(window_store, report_run_id)
+    lookup = _window_lookup(window_store, report_run_id)
+    if lookup.read and lookup.window_run_id is None:
+        return coordinate()
+    if lookup.read:
+        start_window_of_year(window_store, report_run_id)
     try:
         result = coordinate()
     except KeyboardInterrupt:
         raise
     except BaseException:
         _advance_after_year(
-            window_store, report_run_id, payload, context, observability_context
+            window_store, report_run_id, lookup, payload, context, observability_context
         )
         raise
     _advance_after_year(
-        window_store, report_run_id, payload, context, observability_context
+        window_store, report_run_id, lookup, payload, context, observability_context
     )
     return result
 
 
-def _advance_after_year(
+@dataclass(frozen=True)
+class _WindowLookup:
+    """Whether a year's window was read, and the window it names, if any."""
+
+    read: bool
+    window_run_id: UUID | None = None
+
+
+def _window_lookup(windows: YearWindowWriter, report_run_id: UUID) -> _WindowLookup:
+    """Look the report run's window up; log a failure and say it wasn't read."""
+    try:
+        return _WindowLookup(
+            read=True, window_run_id=windows.window_of_year(report_run_id)
+        )
+    except Exception as error:  # noqa: BLE001  # the year runs whether or not its window can be read
+        _log_failed_write("read the budget window of", report_run_id, error)
+        return _WindowLookup(read=False)
+
+
+def _advance_after_year(  # noqa: PLR0913  # the store, the year, its window and the call's inputs
     windows: YearWindowWriter,
     report_run_id: UUID,
+    lookup: _WindowLookup,
     payload: Mapping[str, Any],
     context: Mapping[str, Any],
     observability_context: Callable[[], dict[str, Any] | None],
@@ -164,9 +190,25 @@ def _advance_after_year(
         start_year=ModalYearStarter(
             payload=payload,
             context=context,
-            observability_context=observability_context(),
+            observability_context=_captured(observability_context),
         ),
+        window_run_id=lookup.window_run_id,
     )
+
+
+def _captured(
+    observability_context: Callable[[], dict[str, Any] | None],
+) -> dict[str, Any] | None:
+    """Capture the call's observability context for the next years, or None."""
+    try:
+        return observability_context()
+    except Exception as error:  # noqa: BLE001  # the next years start without a trace link
+        logger.warning(
+            "Could not capture the observability context for a budget window's "
+            "next years (%s)",
+            type(error).__name__,
+        )
+        return None
 
 
 def _report_run_named_by(context: Mapping[str, Any]) -> UUID | None:
@@ -198,7 +240,7 @@ def start_window_of_year(
     *,
     now: datetime | None = None,
 ) -> None:
-    """Mark the window of a year this call just claimed running; never raise.
+    """Mark the window of a year this call is about to claim running; never raise.
 
     A report run that is no window's year changes nothing.
     """
@@ -214,14 +256,17 @@ def advance_window_of_year(
     *,
     start_year: YearStarter,
     now: datetime | None = None,
+    window_run_id: UUID | None = None,
 ) -> WindowAdvance | None:
     """Advance the window of a year that has ended; never raise.
 
-    Returns what the advance did, or None when the report run is no window's
-    year or the advance failed.
+    ``window_run_id`` is the year's window when the caller has read it;
+    otherwise it is looked up. Returns what the advance did, or None when
+    the report run is no window's year or the advance failed.
     """
     try:
-        window_run_id = windows.window_of_year(report_run_id)
+        if window_run_id is None:
+            window_run_id = windows.window_of_year(report_run_id)
         if window_run_id is None:
             return None
         advance = windows.advance_window(

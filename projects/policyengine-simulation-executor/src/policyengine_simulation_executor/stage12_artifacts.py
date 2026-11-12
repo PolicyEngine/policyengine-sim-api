@@ -23,6 +23,7 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationArtifactDescriptor,
     Stage12InvocationContext,
     report_run_artifact_prefix,
+    require_artifact_environment,
     stage12_output_plan_sha256,
 )
 from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
@@ -51,13 +52,6 @@ def canonical_json_bytes(value: object) -> bytes:
         ensure_ascii=False,
         allow_nan=False,
     ).encode("utf-8")
-
-
-def _require_environment_segment(environment: str) -> None:
-    """Raise ``ValueError`` for an environment that could escape its key prefix."""
-    if not environment or "/" in environment or ".." in environment:
-        msg = "invalid Stage 12 artifact environment"
-        raise ValueError(msg)
 
 
 def comparison_run_prefix(
@@ -108,7 +102,7 @@ def simulation_run_output_path(
     attempt's. Raises ``ValueError`` for an environment that could escape the
     prefix.
     """
-    _require_environment_segment(environment)
+    require_artifact_environment(environment)
     return (
         f"simulation-runs/{environment}/{country}/{simulation_run_id}/"
         f"output-{content_sha256}.parquet"

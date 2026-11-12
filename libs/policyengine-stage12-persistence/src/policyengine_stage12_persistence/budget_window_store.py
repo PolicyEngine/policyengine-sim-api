@@ -15,9 +15,9 @@ The lock is held across those Modal calls; claims and the window's start
 are separate one-statement transactions that never wait on each other, so
 other years' coordinators wait only for the lock to be released.
 The Modal worker role and the simulation service role may both advance a
-window: each may update the columns written here. Only a coordinator's claim
-marks a window running, because only the Modal worker role may set its
-start time.
+window: each may update the columns written here. Only a year's coordinator
+call marks a window running, before it claims its year, because only the
+Modal worker role may set the window's start time.
 """
 
 from __future__ import annotations
@@ -70,7 +70,8 @@ WINDOW_FAILED_MESSAGE = (
     "this year started."
 )
 CALL_REFUSED_MESSAGE = (
-    "modal_call_refused: Modal refused the call that would have started this year."
+    "modal_call_refused: The call that would have started this year could not "
+    "be started ({error_type})."
 )
 WINDOW_STALLED_MESSAGE = (
     "budget_window_stalled: No year of the budget window was under way to "
@@ -321,7 +322,13 @@ class BudgetWindowStore:
             finished = _finish_ended_window(connection, window_run_id, years, now=now)
             if finished is not None:
                 return finished
-            _fail_window(connection, window_run_id, WINDOW_STALLED_MESSAGE, now=now)
+            _fail_window(
+                connection,
+                window_run_id,
+                WINDOW_STALLED_MESSAGE,
+                now=now,
+                waiting_years_message=WINDOW_STALLED_MESSAGE,
+            )
             return WindowAdvance(status=RunStatus.FAILED, changed=True)
 
 
@@ -441,7 +448,7 @@ def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the sta
             _fail_waiting_years(
                 connection,
                 window_run_id,
-                CALL_REFUSED_MESSAGE,
+                CALL_REFUSED_MESSAGE.format(error_type=type(error).__name__),
                 now=now,
                 only=year.report_run_id,
             )
@@ -469,8 +476,13 @@ def _fail_window(
     error_message: str,
     *,
     now: datetime,
+    waiting_years_message: str = WINDOW_FAILED_MESSAGE,
 ) -> None:
-    """Fail the window run, then its waiting years and their own simulation runs."""
+    """Fail the window run, then its waiting years and their own simulation runs.
+
+    The window records ``error_message``, and its waiting years
+    ``waiting_years_message``: by default, that another year failed.
+    """
     connection.execute(
         update(budget_window_runs)
         .where(
@@ -484,7 +496,7 @@ def _fail_window(
             updated_at=now,
         )
     )
-    _fail_waiting_years(connection, window_run_id, WINDOW_FAILED_MESSAGE, now=now)
+    _fail_waiting_years(connection, window_run_id, waiting_years_message, now=now)
 
 
 def _fail_waiting_years(

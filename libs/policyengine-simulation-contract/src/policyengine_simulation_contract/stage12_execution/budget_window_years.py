@@ -31,6 +31,13 @@ if TYPE_CHECKING:
     )
 
 
+def require_artifact_environment(environment: str) -> None:
+    """Raise ValueError for an environment that could leave its artifact prefix."""
+    if not environment or "/" in environment or ".." in environment:
+        msg = "invalid Stage 12 artifact environment"
+        raise ValueError(msg)
+
+
 def report_run_artifact_prefix(
     environment: str, created_at: datetime, run_id: UUID
 ) -> str:
@@ -40,9 +47,7 @@ def report_run_artifact_prefix(
     ValueError for an environment that could leave the prefix, or a
     ``created_at`` without a time zone.
     """
-    if not environment or "/" in environment or ".." in environment:
-        msg = "invalid Stage 12 artifact environment"
-        raise ValueError(msg)
+    require_artifact_environment(environment)
     if created_at.tzinfo is None:
         msg = "Stage 12 artifact timestamp must include a timezone"
         raise ValueError(msg)
