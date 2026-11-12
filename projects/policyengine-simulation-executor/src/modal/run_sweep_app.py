@@ -11,7 +11,7 @@ after it was created or started, longer than any Modal call of it can run,
 whatever Modal reports. Its result counts runs and household jobs together.
 
 The restart check runs every two minutes. It starts once more the call of
-each run or household job created 3 to 12 minutes ago that is still pending
+each run or household job created 3 to 10 minutes ago that is still pending
 with no call recorded, as when the simulation service stopped between
 creating it and starting its call; the simulation service's own restart code
 (``policyengine_simulation_entry.run_restart_check``) rebuilds the call from

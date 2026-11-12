@@ -190,7 +190,7 @@ def test_the_scheduled_function_sweeps_with_the_report_run_store(monkeypatch) ->
 def test_the_restart_check_runs_every_two_minutes_with_the_worker_database_secret(
     monkeypatch,
 ) -> None:
-    """It restarts runs 3 to 12 minutes old, so each is seen several times."""
+    """It restarts runs 3 to 10 minutes old, so each is seen several times."""
     module = _load(monkeypatch)
     options = _functions(module)["restart_unstarted_runs"]
 

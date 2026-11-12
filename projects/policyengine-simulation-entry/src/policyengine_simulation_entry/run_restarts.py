@@ -8,7 +8,7 @@ nothing records a call, and the stuck-run sweep would fail the run 15
 minutes after its creation. The restart check, a scheduled Modal function
 beside the sweep, starts such a row's call once more:
 
-1. it lists the rows created 3 to 12 minutes ago that are still pending with
+1. it lists the rows created 3 to 10 minutes ago that are still pending with
    no call and that nothing has changed since their insert;
 2. for each, it reads back what the service built the call from and builds
    the same call, on the worker of the .py version the row records;
@@ -90,8 +90,10 @@ __all__ = [
 # is far longer than a submission takes to start and record its call.
 RESTART_AFTER: Final = timedelta(minutes=3)
 # A row older than this is left to the stuck-run sweep, which fails it at 15
-# minutes, so a restart has time to record its call before the sweep judges it.
-RESTART_UNTIL: Final = timedelta(minutes=12)
+# minutes. A row listed just under this age may be marked as late as the
+# check's time limit allows, and its call still starts and is recorded
+# minutes before the sweep judges it.
+RESTART_UNTIL: Final = timedelta(minutes=10)
 # At most this many rows are listed by one check; the next takes the rest.
 RESTARTS_PER_CHECK: Final = 20
 # How long the check waits for Modal to accept a restarted call.
@@ -272,7 +274,7 @@ class RunRestartService:
         self._deadline = 0.0
 
     async def restart_unstarted_runs(self) -> RestartSummary:
-        """Start once more each row created 3 to 12 minutes ago with no call.
+        """Start once more each row created 3 to 10 minutes ago with no call.
 
         Rows the check has no time left for are counted ``deferred``, with no
         telemetry scope, since the next check lists them again. Raise the
@@ -322,6 +324,10 @@ class RunRestartService:
                 None: RestartOutcome.DEFERRED,
             }[failed]
             return outcome, cannot.error_type
+        # Any other error leaves this row unmarked for the next check, and
+        # the check goes on to the next row.
+        except Exception as error:  # noqa: BLE001  # one row's unforeseen error holds up no other
+            return RestartOutcome.DEFERRED, type(error).__name__
         if rebuilt is None:
             return RestartOutcome.LEFT, None
         return await self._start_marked(run, rebuilt.start, rebuilt.simulation_run_ids)

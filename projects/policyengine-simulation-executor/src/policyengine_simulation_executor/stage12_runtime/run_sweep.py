@@ -9,7 +9,7 @@ asks Modal for the status of each recorded call and marks the run failed
 once the call has ended. A pending run with no call recorded 15 minutes
 after its creation is failed without asking Modal: usually the simulation
 service stopped before starting its call, and the restart check, which
-starts such a run's call once more 3 to 12 minutes after its creation, could
+starts such a run's call once more 3 to 10 minutes after its creation, could
 not start it either. If a call was started but not recorded, its claim is
 refused once the run has failed, so it finishes nothing. The sweep also
 fails a run still unfinished long after it was created or started, longer
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 # A run must have been unfinished at least this long, counted from its first
 # claim or, while it is pending, from its creation (a household job's from its
 # creation), before the sweep judges it; a pending run with no call recorded
-# by then is failed. It is longer than the restart check's window (3 to 12
+# by then is failed. It is longer than the restart check's window (3 to 10
 # minutes after creation), so a run that check started again is judged by
 # its call.
 DEFAULT_MINIMUM_AGE = timedelta(minutes=15)

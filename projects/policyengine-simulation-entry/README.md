@@ -101,7 +101,7 @@ seconds, the job is failed at once and the 503 (`modal_call_refused`) names
 it; a job the household function claimed meanwhile is answered with 202 as
 it stands, and a job whose state couldn't then be recorded or read with 202
 `pending`, to be read rather than submitted again (the restart check starts
-its call once more 3 to 12 minutes after its creation, and the stuck-run
+its call once more 3 to 10 minutes after its creation, and the stuck-run
 sweep fails it if no call ever starts). Every 500 of either route, from an unexpected
 failure or a request the service built and the household contract refuses,
 is the JSON error with code `internal_error`. `DEPLOYMENT.md` describes the deployment settings and the
@@ -117,7 +117,7 @@ this service: the stuck-run sweep's Modal application
 (`projects/policyengine-simulation-executor/src/modal/run_sweep_app.py`)
 runs it every two minutes as the Modal worker role.
 
-- It takes the rows created 3 to 12 minutes ago that are still `pending`
+- It takes the rows created 3 to 10 minutes ago that are still `pending`
   with no call and that nothing has changed since their insert, at most 20
   a check, oldest first. A budget window's report runs and household
   simulations' runs are left out. After three minutes a check marks no more

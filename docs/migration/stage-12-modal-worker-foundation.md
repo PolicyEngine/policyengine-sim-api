@@ -742,7 +742,7 @@ does not promote the new Simulation Entrypoint revision.
 **Restarting a run whose call never started.** The stuck-run sweep's Modal
 application also runs a restart check every two minutes, as the Modal worker
 role. It lists, at most 20 a check, the household jobs, report runs and
-standalone simulation runs created 3 to 12 minutes ago that are still pending
+standalone simulation runs created 3 to 10 minutes ago that are still pending
 with no call recorded and that nothing has changed since their insert, as
 when the Simulation Entrypoint stopped between creating a run and starting
 its call. For each, on a thread, it reads back what the entrypoint built the
@@ -763,10 +763,12 @@ image adds as source.
 
 It leaves alone a budget window's report runs and household simulations'
 runs: it can't rebuild their calls yet. Each check is a
-`v2_run_restart_check` operation and each listed row a `v2_run_restart`
-operation, with the row's kind, ID, age and outcome, and each outcome is
-also logged as a `v2_run_restart_outcome` event, so the operation count
-metric and the events say how often runs need a restart and how each ended.
+`v2_run_restart_check` operation and each row it takes up a
+`v2_run_restart` operation, with the row's kind, ID, age and outcome, and
+each outcome is also logged as a `v2_run_restart_outcome` event. A deferred
+row is taken up again by the next check, so the runs that needed a restart
+are the distinct run IDs, or the outcomes other than `deferred`; the events
+say how each ended.
 
 ## Temporary direct runner endpoint
 
