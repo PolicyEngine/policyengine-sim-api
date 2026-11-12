@@ -18,6 +18,7 @@ from policyengine_simulation_executor.stage12_runtime import (
     CoordinatorInvocation,
     coordinated_simulations,
     coordination,
+    coordination_core,
     parent_claim,
     report_coordination,
 )
@@ -425,7 +426,8 @@ def test_default_output_plan_resolver_measures_its_own_stages(monkeypatch):
             resolved.append(report.evaluation_id)
         return shared_output_plan()
 
-    monkeypatch.setattr(report_coordination, "resolve_report_output_plan", resolve)
+    # Both coordinators plan their outputs in the shared coordination core.
+    monkeypatch.setattr(coordination_core, "resolve_report_output_plan", resolve)
 
     coordinate_report_impl(
         report_execution_input().model_dump(mode="json"),

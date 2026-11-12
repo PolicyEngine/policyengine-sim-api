@@ -304,6 +304,21 @@ def test_the_deadline_failure_says_what_the_last_read_found(
     assert f"last read: {last_read}" in result.stderr
 
 
+def test_the_deadline_failure_names_the_latest_read_not_the_first(fakes, tmp_path):
+    """A running run, then the service answering 503 until the deadline.
+
+    Bash counts the deadline in whole seconds, so a 2-second deadline can't be
+    reached on the first read, whenever its second starts.
+    """
+    unavailable = '503 {"code": "database_unavailable", "detail": "x"}'
+    answers = [f"200 {_report('running')}", *([unavailable] * 5000)]
+
+    result, _ = _run(fakes, tmp_path, answers, ECONOMY_CHECK_DEADLINE_SECONDS="2")
+
+    assert result.returncode == 1
+    assert "(last read: it answered 503)" in result.stderr
+
+
 def test_a_run_that_does_not_finish_in_time_fails_the_check(fakes, tmp_path):
     result, _ = _run(
         fakes,

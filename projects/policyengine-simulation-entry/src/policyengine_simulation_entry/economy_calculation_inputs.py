@@ -163,13 +163,18 @@ def _simulation_input(  # noqa: PLR0913  # the run, its role, its policy and wha
 
 
 def _context(
-    worker: EconomyWorker,
-    origin: CallOrigin,
-    *,
-    run_id: UUID,
-    report_run: ReportRunIds | None,
-    simulation_run_id: UUID | None = None,
+    worker: EconomyWorker, origin: CallOrigin, *, runs: ReportRunIds | UUID
 ) -> Stage12InvocationContext:
+    """Return the call's context, naming ``runs``.
+
+    ``runs`` is a report run's IDs, for its coordinator, or a standalone
+    simulation run's ID, for its simulation function. The artifact prefix
+    names that report run or simulation run, so the two can't differ.
+    """
+    if isinstance(runs, ReportRunIds):
+        report_run, simulation_run_id, run_id = runs, None, runs.report_run_id
+    else:
+        report_run, simulation_run_id, run_id = None, runs, runs
     created_at = origin.created_at
     return Stage12InvocationContext(
         request_id=origin.request_id,
@@ -222,7 +227,7 @@ def report_run_calculation(  # noqa: PLR0913  # the runs, both policies and what
         ),
         requested_aggregates=REPORT_AGGREGATES,
     )
-    context = _context(worker, origin, run_id=report_run_id, report_run=run_ids)
+    context = _context(worker, origin, runs=run_ids)
     return RunCalculation(
         payload=report.model_dump(mode="json"),
         context=context.model_dump(mode="json"),
@@ -249,13 +254,7 @@ def simulation_run_calculation(
         role=SimulationRole.STANDALONE,
         policy=policy,
     )
-    context = _context(
-        worker,
-        origin,
-        run_id=simulation_run_id,
-        report_run=None,
-        simulation_run_id=simulation_run_id,
-    )
+    context = _context(worker, origin, runs=simulation_run_id)
     return RunCalculation(
         payload=simulation.model_dump(mode="json"),
         context=context.model_dump(mode="json"),
