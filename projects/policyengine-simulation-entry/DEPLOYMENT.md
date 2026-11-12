@@ -116,6 +116,32 @@ be a US household stored in the staging Public API with a default year; each
 run adds one `household_jobs` row for it. An empty or malformed variable
 fails the check.
 
+## Economy reports and simulations
+
+`POST /reports` and `POST /simulations`, and their reads, use the same
+database, Modal token and v2 manifest settings as the household routes, and
+the deploy's `V2_SIMULATION_OUTPUT_BUCKET`, the `beta` or `prod` variable of
+that name: the bucket that keeps v2 simulation output files for good. A
+report reuses only a succeeded simulation run whose file is in it; the
+service compares output URIs with it and never reads the bucket, so it needs
+no storage permission. A missing or invalid bucket name stops the deploy.
+The coordinator and workers get the same bucket from the Modal secret the
+Stage 12 secret sync writes.
+
+### The staging economy check
+
+Every staging deployment runs `staging_economy_check` when the household
+check runs: `.github/scripts/simulation-staging-economy-check.sh` creates a
+small report, current law against current law for `country/wales` in 2026,
+through the candidate's tagged URL with the authenticated tests' client
+credentials, follows it through `GET /reports/{report_id}`, and requires its
+run to succeed within 30 minutes. `deployment_ready` requires the check to
+pass in staging, so a failure stops the production deployment. Each run adds
+a report and its runs to the staging database. Once a .py version's first
+check has succeeded, later checks on that version reuse its simulation runs,
+so they check the coordinator's use of stored outputs rather than the
+workers', which the v2 deployment's own validation calls.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`

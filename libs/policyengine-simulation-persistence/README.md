@@ -50,9 +50,9 @@ year's report run names that row and its year, and belongs to the same report.
 ## Input tables
 
 `input_tables.py` holds read-only models of the Public API's tables a
-calculation is read from: `households`, `policies`, `parameters`,
-`parameter_values`, `tax_benefit_models` and `tax_benefit_model_versions`, in
-`input_metadata`. The service only reads them, with `SELECT`. Each names only
+calculation is read from: `households`, `policies`, `dynamics`, `parameters`,
+`parameter_values`, `regions`, `datasets`, `tax_benefit_models` and
+`tax_benefit_model_versions`, in `input_metadata`. The service only reads them, with `SELECT`. Each names only
 the columns the service reads, so they are not models of the whole tables,
 and they are kept apart from the models of the tables the service writes
 (`service_metadata`) and from the tables those name by `id` alone
@@ -81,6 +81,46 @@ which commits when its block ends and sets `statement_timeout` with
 `set_config`, local to the transaction, so the database ends a statement that
 runs too long and the limit never stays on a pooled connection.
 
+## Economy simulations and reports
+
+`economy_run_records.py` holds the simulation service's reads and writes for
+an economy report, or a standalone economy simulation. It reads the
+country's model (`read_model_id`) and a catalog version's region by code
+(`read_region`) and dataset by name or ID (`read_dataset`,
+`read_dataset_by_id`). `insert_economy_report` creates, in the caller's
+transaction, each side's new simulation and first run, the report naming
+both simulations and the reform's policy with its options in `inputs`, and
+its first report run, trigger `initial`; every run is `pending` with no
+Modal call ID. A side may instead name a run that already succeeded
+(`ReportSimulation.reused`), for which nothing is created.
+`insert_economy_simulation` creates a standalone simulation and its first
+run. A row naming one that does not exist is refused by its foreign key with
+SQLSTATE `23503`; `EconomyRecordReferenceError` names the table and column.
+
+`find_reusable_run` returns the run a new report's side may reuse: the
+newest, by completion, of the same economy simulation (policy, dynamic,
+catalog version, dataset, region and year) that succeeded on the same
+country package and .py versions, whose output file is under the output
+bucket's `gs://<bucket>/`, that a succeeded report run with the same options
+used, and that no report run refused to reuse (an error message starting
+`reused_simulation_`). So a submission after a refused reuse calculates the
+simulation again.
+
+`record_report_run_call` and `record_simulation_run_call` record a Modal
+call's ID, and `fail_unstarted_report_run` and
+`fail_unstarted_simulation_run` fail a run at once, each only while it is
+`pending` with no call ID; failing a report run also fails the simulation
+runs created for it. `economy_run_reads.py` reads a report, or a simulation,
+with its newest run's state.
+
+`EconomyRunStore` runs them as the Simulation Entrypoint does, each step in
+a transaction of its own: `read_report_inputs` reads the catalog version,
+model, region and dataset, each side's policy and dynamic values, and each
+side's reusable run together, never giving both sides the same run;
+`read_simulation_inputs` does the same for one simulation; the writes and
+reads each take their own. A missing region or dataset raises
+`UnknownRegionError` or `UnknownDatasetError`.
+
 ## Reading a policy
 
 `read_policy_reform` (`policy_reform.py`) reads a stored policy as the reform
@@ -91,6 +131,9 @@ the parameters of the catalog version it was saved on, so a calculation on
 any catalog version applies them by name; a parameter the calculation's
 version lacks raises `MissingPolicyParametersError`, naming each one, and a
 policy the country doesn't have raises `UnknownPolicyError`.
+`read_dynamic_reform` reads a stored dynamic the same way (`UnknownDynamicError`
+for none), and `combine_reforms` joins a simulation's policy and dynamic
+values, refusing a parameter both set (`OverlappingReformError`).
 
 Each period is a range, `YYYY-MM-DD.YYYY-MM-DD`, with the stored dates read
 in UTC. A value with no end date follows .py's own rule
