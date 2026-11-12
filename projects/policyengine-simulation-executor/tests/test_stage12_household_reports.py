@@ -123,9 +123,12 @@ class FakeHouseholdReportRuns:
 
     report_claim: RunWrite = CHANGED["running"]
     claim_error: Exception | None = None
+    # The baseline and reform simulation runs the report run names.
+    named_runs: tuple[UUID, UUID | None] = (BASELINE_RUN_ID, REFORM_RUN_ID)
+    read_error: Exception | None = None
+    report_record_result: RunWrite | None = None
     simulation_claims: dict[UUID, RunWrite] = field(default_factory=dict)
     simulation_states: dict[UUID, SimulationRunState] = field(default_factory=dict)
-    require_error: Exception | None = None
     record_result: RunWrite | None = None
     writes: list[dict[str, Any]] = field(default_factory=list)
 
@@ -137,18 +140,11 @@ class FakeHouseholdReportRuns:
             raise self.claim_error
         return self.report_claim
 
-    def require_household_report_runs(
-        self, report_run_id, *, baseline_simulation_run_id, reform_simulation_run_id
-    ):
-        self.writes.append(
-            {
-                "write": "require",
-                "run": report_run_id,
-                "runs": (baseline_simulation_run_id, reform_simulation_run_id),
-            }
-        )
-        if self.require_error is not None:
-            raise self.require_error
+    def household_report_simulation_runs(self, report_run_id):
+        self.writes.append({"write": "read_runs", "run": report_run_id})
+        if self.read_error is not None:
+            raise self.read_error
+        return self.named_runs
 
     def claim_simulation_run(self, simulation_run_id, *, modal_call_id, claimed_at):
         self.writes.append(
@@ -211,7 +207,7 @@ class FakeHouseholdReportRuns:
         self.writes.append(
             {"write": "complete_report", "run": report_run_id, "call": modal_call_id}
         )
-        return CHANGED["succeeded"]
+        return self.report_record_result or CHANGED["succeeded"]
 
     def fail_report_run(
         self, report_run_id, *, modal_call_id, error_message, failed_at
@@ -261,14 +257,13 @@ def test_both_sides_are_calculated_and_recorded_then_the_report_run_succeeds() -
     assert calculated == [BASELINE_RUN_ID, REFORM_RUN_ID]
     assert runs.kinds == [
         "claim_report",
-        "require",
+        "read_runs",
         "claim",
         "complete",
         "claim",
         "complete",
         "complete_report",
     ]
-    assert runs.of("require")[0]["runs"] == (BASELINE_RUN_ID, REFORM_RUN_ID)
     assert all(write["call"] == CALL_ID for write in runs.writes if "call" in write)
     completed = runs.of("complete")
     assert [write["run"] for write in completed] == [BASELINE_RUN_ID, REFORM_RUN_ID]
@@ -294,18 +289,17 @@ def test_both_sides_are_calculated_and_recorded_then_the_report_run_succeeds() -
 
 
 def test_a_report_of_the_baseline_alone_calculates_one_side() -> None:
-    runs = FakeHouseholdReportRuns()
+    runs = FakeHouseholdReportRuns(named_runs=(BASELINE_RUN_ID, None))
 
     answer = _run(runs, _succeeded, with_reform=False)
 
     assert runs.kinds == [
         "claim_report",
-        "require",
+        "read_runs",
         "claim",
         "complete",
         "complete_report",
     ]
-    assert runs.of("require")[0]["runs"] == (BASELINE_RUN_ID, None)
     assert answer["status"] == "succeeded"
     assert len(answer["simulation_runs"]) == 1
 
@@ -474,26 +468,56 @@ def test_a_preemption_records_nothing_and_propagates() -> None:
     with pytest.raises(KeyboardInterrupt):
         _run(runs, calculate)
 
-    assert runs.kinds == ["claim_report", "require", "claim"]
+    assert runs.kinds == ["claim_report", "read_runs", "claim"]
 
 
-def test_a_report_run_naming_other_simulation_runs_is_failed_without_calculating() -> (
-    None
-):
-    runs = FakeHouseholdReportRuns(
-        require_error=ValueError("report run names other simulation runs")
+def test_a_report_run_naming_other_simulation_runs_fails_with_its_own_runs() -> None:
+    own_runs = (
+        UUID("00000000-0000-4000-8000-0000000000d1"),
+        UUID("00000000-0000-4000-8000-0000000000d2"),
     )
+    runs = FakeHouseholdReportRuns(named_runs=own_runs)
 
     def calculate(request: HouseholdExecutionRequest) -> HouseholdExecutionResult:
         pytest.fail("a report run naming other simulation runs is not calculated")
 
-    with pytest.raises(ValueError, match="other simulation runs"):
+    with pytest.raises(ValueError, match="names other simulation runs"):
         _run(runs, calculate)
 
-    assert runs.kinds == ["claim_report", "require", "fail_report"]
-    assert runs.of("fail_report")[0]["error_message"] == (
-        "household_function_error: The household function raised ValueError."
+    summary = "household_function_error: The household function raised ValueError."
+    assert runs.kinds == [
+        "claim_report",
+        "read_runs",
+        "fail_unfinished",
+        "fail_unfinished",
+        "fail_report",
+    ]
+    # The report run's own runs are failed, never the payload's.
+    assert [write["run"] for write in runs.of("fail_unfinished")] == list(own_runs)
+    assert {write["error_message"] for write in runs.of("fail_unfinished")} == {summary}
+    assert runs.of("fail_report")[0]["error_message"] == summary
+
+
+def test_a_report_run_whose_runs_cannot_be_read_is_failed_alone() -> None:
+    runs = FakeHouseholdReportRuns(read_error=ConnectionError("connection lost"))
+
+    with pytest.raises(ConnectionError):
+        _run(runs, _succeeded)
+
+    assert runs.kinds == ["claim_report", "read_runs", "fail_report"]
+
+
+def test_a_report_run_another_writer_finished_is_answered_as_it_stands(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runs = FakeHouseholdReportRuns(
+        report_record_result=RunWrite(changed=False, status=RunStatus.FAILED)
     )
+
+    answer = _run(runs, _succeeded)
+
+    assert answer["status"] == "failed"
+    assert f"Report run {REPORT_RUN_ID} was failed before" in caplog.text
 
 
 def test_a_call_without_a_modal_call_id_writes_nothing() -> None:
@@ -510,7 +534,8 @@ def test_a_side_whose_record_changes_nothing_fails_the_report_run(
 ) -> None:
     # Another writer finished the run this call held before its record.
     runs = FakeHouseholdReportRuns(
-        record_result=RunWrite(changed=False, status=RunStatus.FAILED)
+        named_runs=(BASELINE_RUN_ID, None),
+        record_result=RunWrite(changed=False, status=RunStatus.FAILED),
     )
 
     answer = _run(runs, _succeeded, with_reform=False)
@@ -559,10 +584,20 @@ def test_a_payload_the_contract_refuses_fails_the_report_run_it_claimed() -> Non
             writer=runs,
         )
 
-    assert runs.kinds == ["claim_report", "fail_report"]
-    assert runs.of("fail_report")[0]["error_message"] == (
-        "household_function_error: The household function raised ValidationError."
-    )
+    summary = "household_function_error: The household function raised ValidationError."
+    # The report run's own simulation runs fail with it, read from the database.
+    assert runs.kinds == [
+        "claim_report",
+        "read_runs",
+        "fail_unfinished",
+        "fail_unfinished",
+        "fail_report",
+    ]
+    assert [write["run"] for write in runs.of("fail_unfinished")] == [
+        BASELINE_RUN_ID,
+        REFORM_RUN_ID,
+    ]
+    assert runs.of("fail_report")[0]["error_message"] == summary
 
 
 def test_a_claim_that_raises_fails_the_report_run_it_may_hold_then_propagates() -> None:

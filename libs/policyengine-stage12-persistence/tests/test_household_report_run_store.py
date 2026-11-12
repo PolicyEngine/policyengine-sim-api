@@ -134,47 +134,24 @@ def _result_is_null(seeder: ReportRunSeeder, simulation_run_id: UUID) -> bool:
         )
 
 
-def test_a_household_report_run_must_name_the_calls_simulation_runs(
+def test_a_household_report_runs_simulation_runs_are_read(
     store: HouseholdReportRunStore,
     seeded_report: SeededHouseholdReportRun,
     seeded_baseline_only: SeededHouseholdReportRun,
 ) -> None:
-    store.require_household_report_runs(
-        seeded_report.report_run_id,
-        baseline_simulation_run_id=seeded_report.baseline_simulation_run_id,
-        reform_simulation_run_id=seeded_report.reform_simulation_run_id,
-    )
-    store.require_household_report_runs(
-        seeded_baseline_only.report_run_id,
-        baseline_simulation_run_id=seeded_baseline_only.baseline_simulation_run_id,
-        reform_simulation_run_id=None,
+    both = store.household_report_simulation_runs(seeded_report.report_run_id)
+    baseline_only = store.household_report_simulation_runs(
+        seeded_baseline_only.report_run_id
     )
 
-    with pytest.raises(ValueError, match="names other simulation runs"):
-        store.require_household_report_runs(
-            seeded_report.report_run_id,
-            baseline_simulation_run_id=seeded_report.baseline_simulation_run_id,
-            reform_simulation_run_id=None,
-        )
-    with pytest.raises(ValueError, match="names other simulation runs"):
-        store.require_household_report_runs(
-            seeded_baseline_only.report_run_id,
-            baseline_simulation_run_id=seeded_baseline_only.baseline_simulation_run_id,
-            reform_simulation_run_id=seeded_report.reform_simulation_run_id,
-        )
-    with pytest.raises(ValueError, match="names other simulation runs"):
-        store.require_household_report_runs(
-            seeded_report.report_run_id,
-            baseline_simulation_run_id=uuid4(),
-            reform_simulation_run_id=seeded_report.reform_simulation_run_id,
-        )
+    assert both == (
+        seeded_report.baseline_simulation_run_id,
+        seeded_report.reform_simulation_run_id,
+    )
+    assert baseline_only == (seeded_baseline_only.baseline_simulation_run_id, None)
     missing_run_id = uuid4()
     with pytest.raises(LookupError, match=f"report run {missing_run_id}"):
-        store.require_household_report_runs(
-            missing_run_id,
-            baseline_simulation_run_id=seeded_report.baseline_simulation_run_id,
-            reform_simulation_run_id=None,
-        )
+        store.household_report_simulation_runs(missing_run_id)
 
 
 def test_a_household_simulation_run_records_its_result_only_while_its_call_holds_it(
