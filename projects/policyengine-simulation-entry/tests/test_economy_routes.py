@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any, NoReturn
 from uuid import UUID
 
@@ -21,6 +22,7 @@ from policyengine_simulation_entry.economy_api_models import (
     EconomySimulationCreated,
     EconomySimulationRequest,
 )
+from policyengine_simulation_entry.economy_routes import call_request_id_for
 from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionOutcomeUnknownError,
     EconomySubmissionRefusedError,
@@ -571,20 +573,38 @@ def test_a_create_whose_commit_is_unconfirmed_answers_a_500(
     assert _emitted_records(printed, "economy_records_outcome_unknown") == []
 
 
+@pytest.mark.parametrize(("path", "body"), ROUTES)
 @pytest.mark.parametrize(
-    "request_id",
-    ["r" * 256, "has spaces in it", ""],
-    ids=["too-long", "spaces", "empty"],
+    ("request_id", "kept"),
+    [
+        ("r" * 128, True),
+        ("r" * 129, False),
+        ("r" * 256, False),
+        ("has spaces in it", False),
+    ],
+    ids=["128-kept", "129-replaced", "256-replaced", "spaces-replaced"],
 )
-def test_a_request_id_the_call_cannot_carry_is_replaced(client_for, request_id) -> None:
+def test_a_request_id_the_call_cannot_carry_is_replaced(
+    client_for, path, body, request_id, kept
+) -> None:
     """The call's context takes 1 to 128 of the observability runtime's characters."""
     submissions = FakeEconomySubmissions()
 
     with client_for(submissions) as client:
-        result = client.post(
-            "/reports", json=REPORT_BODY, headers={REQUEST_ID_HEADER: request_id}
-        )
+        result = client.post(path, json=body, headers={REQUEST_ID_HEADER: request_id})
 
     assert result.status_code == 201
-    ((_, call_request_id, _),) = submissions.reports
+    ((_, call_request_id, _),) = submissions.reports or submissions.simulations
+    if kept:
+        assert call_request_id == request_id
+    else:
+        assert str(UUID(call_request_id)) == call_request_id
+
+
+@pytest.mark.parametrize("state", [{"request_id": ""}, {"request_id": None}, {}])
+def test_a_request_without_a_usable_id_gets_a_new_one(state) -> None:
+    request = SimpleNamespace(state=SimpleNamespace(**state))
+
+    call_request_id = call_request_id_for(request)
+
     assert str(UUID(call_request_id)) == call_request_id

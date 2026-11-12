@@ -236,6 +236,16 @@ def test_a_refused_submission_fails_the_check_with_its_answer(
     assert not (state / "polls").exists()
 
 
+@pytest.mark.parametrize("status", ["429", "500", "502", "504"])
+def test_a_read_cloud_run_answers_in_the_services_place_is_asked_again(
+    fakes, tmp_path, status
+):
+    result, _ = _run(fakes, tmp_path, [f"{status} {{}}", f"200 {_report('succeeded')}"])
+
+    assert result.returncode == 0, result.stderr
+    assert status in result.stderr
+
+
 def test_an_unavailable_read_is_asked_again(fakes, tmp_path):
     unavailable = json.dumps({"code": "database_unavailable", "detail": "x"})
 

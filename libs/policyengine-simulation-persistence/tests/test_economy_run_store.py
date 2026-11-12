@@ -11,7 +11,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 from uuid import uuid4
 
 import pytest
@@ -26,6 +26,9 @@ from economy_rows import (
     insert_reusable_run,
 )
 from policyengine_simulation_persistence import (
+    CatalogDataset,
+    CatalogRegion,
+    EconomyCatalogRows,
     EconomyPopulation,
     EconomyRecordOutcomeUnknownError,
     EconomyRequest,
@@ -39,6 +42,7 @@ from policyengine_simulation_persistence import (
     ReportSimulation,
     ReusableRun,
     RunReuse,
+    SideRefusal,
     SimulationChoice,
     SimulationStatus,
     UnknownCatalogVersionError,
@@ -46,6 +50,7 @@ from policyengine_simulation_persistence import (
     UnknownDynamicError,
     UnknownPolicyError,
     UnknownRegionError,
+    economy_run_store,
 )
 from public_api_rows import StoredValue, insert_dataset, insert_dynamic, insert_policy
 from sqlalchemy import text
@@ -506,3 +511,38 @@ def test_a_create_whose_statement_fails_is_not_written() -> None:
 
     with pytest.raises(OperationalError):
         store.create_report(_new_report())
+
+
+def test_every_side_refusal_is_raised_with_its_side(monkeypatch) -> None:
+    """Every error the side refusal type names is wrapped; none slips through."""
+    catalog = EconomyCatalogRows(
+        catalog_version_id=uuid4(),
+        model_id=uuid4(),
+        region=CatalogRegion(id=uuid4(), code="us", default_dataset_id=uuid4()),
+        dataset=CatalogDataset(id=uuid4(), name="populace_us_2024"),
+    )
+    monkeypatch.setattr(economy_run_store, "_catalog_rows", lambda *_: catalog)
+    refusals = {
+        UnknownPolicyError: UnknownPolicyError("no policy"),
+        UnknownDynamicError: UnknownDynamicError("no dynamic"),
+        MissingPolicyParametersError: MissingPolicyParametersError(["gov.a"]),
+        OverlappingReformError: OverlappingReformError(["gov.a"]),
+    }
+    assert set(get_args(SideRefusal.__value__)) == set(refusals)
+
+    @contextmanager
+    def no_database():
+        yield None
+
+    store = EconomyRunStore(no_database)
+    for refusal in refusals.values():
+
+        def refuse(*_, refusal=refusal):
+            raise refusal
+
+        monkeypatch.setattr(economy_run_store, "_simulation_inputs", refuse)
+        with pytest.raises(ReportSideError) as raised:
+            store.read_report_inputs(
+                REQUEST, baseline=CURRENT_LAW, reform=CURRENT_LAW, reuse=None
+            )
+        assert (raised.value.side, raised.value.error) == ("baseline", refusal)
