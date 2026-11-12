@@ -48,6 +48,11 @@ READ_TABLES = (
 CALL_START_COLUMNS = frozenset(
     {"status", "modal_call_id", "error_message", "completed_at", "updated_at"}
 )
+# A budget-window run has no Modal call of its own: the service fails it when
+# Modal refuses one of the first years it starts.
+WINDOW_FAILURE_COLUMNS = frozenset(
+    {"status", "error_message", "completed_at", "updated_at"}
+)
 
 
 def test_the_service_may_create_and_read_rows_in_every_table_it_writes() -> None:
@@ -62,11 +67,15 @@ def test_the_service_only_reads_the_rows_a_run_needs() -> None:
 
 
 def test_the_service_updates_only_the_call_state_of_each_run() -> None:
-    """It records a Modal call's ID, or fails a run Modal refuses, and no more."""
+    """It records a Modal call's ID, or fails a run Modal refuses, and no more.
+
+    It fails a budget window when Modal refuses one of its first years.
+    """
     assert dict(SERVICE_UPDATABLE_COLUMNS) == {
         "simulation_runs": CALL_START_COLUMNS,
         "report_runs": CALL_START_COLUMNS,
         "household_jobs": CALL_START_COLUMNS,
+        "budget_window_runs": WINDOW_FAILURE_COLUMNS,
     }
 
 
