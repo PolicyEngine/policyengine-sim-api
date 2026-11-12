@@ -49,7 +49,12 @@ from .failure_causes import (
     tracked_stage,
 )
 from .failure_recording import FailureSite, persist_failure_record, report_failure
-from .failures import Stage12ExecutionError, Stage12FailureDetail, Stage12InputError
+from .failures import (
+    Stage12ExecutionError,
+    Stage12FailureDetail,
+    Stage12InputError,
+    failure_detail_from_record,
+)
 from .parent_claim import validate_dispatch_context
 from .partition import should_segment_simulation
 from .report_run_access import report_run_store
@@ -372,23 +377,35 @@ class ReportRunCoordination(CoordinationCore):
         """Raise before any worker starts if a run to calculate already failed."""
         for simulation in simulations:
             role = simulation.role.value
-            if self.run_states[role].status is RunStatus.FAILED:
-                raise Stage12ExecutionError(
-                    Stage12FailureDetail(
-                        error_code=SIMULATION_RUN_FAILED,
-                        error_summary=(
-                            f"The {role} simulation run "
-                            f"{self.simulation_run_id(role)} already failed."
-                        ),
-                    )
-                )
+            state = self.run_states[role]
+            if state.status is RunStatus.FAILED:
+                raise Stage12ExecutionError(self._already_failed(role, state))
+
+    def _already_failed(
+        self, role: str, state: SimulationRunState
+    ) -> Stage12FailureDetail:
+        """Describe a run this report must calculate that already failed.
+
+        The summary ends with the failure the run recorded.
+        """
+        recorded = f": {state.error_message}" if state.error_message else ""
+        return failure_detail_from_record(
+            error_code=SIMULATION_RUN_FAILED,
+            error_summary=(
+                f"The {role} simulation run {self.simulation_run_id(role)} "
+                f"already failed{recorded}"
+            ),
+        )
 
     def _start_worker(self, simulation: PlannedSimulationExecutionInput) -> None:
-        """Start the worker that claims the simulation's run.
+        """Start the worker that claims the simulation's run, unless none is needed.
 
         A run an earlier attempt's worker holds is released first, after
-        that worker is asked to stop. A failed start fails the run, stops
-        every started peer and raises ``Stage12ExecutionError``.
+        that worker is asked to stop; one it finished meanwhile is used as
+        stored, and one another call holds is waited for, with no new
+        worker (see ``_release_from_earlier_worker``). A failed start fails
+        the run, stops every started peer and raises
+        ``Stage12ExecutionError``.
         """
         role = simulation.role.value
         run_id = self.simulation_run_id(role)
@@ -456,15 +473,18 @@ class ReportRunCoordination(CoordinationCore):
         if released.changed:
             return True
         state = self.writer.get_simulation_run(run_id)
+        # Later failures leave a run read as succeeded or failed unwritten.
+        self.run_states[role] = state
         if state.status is RunStatus.SUCCEEDED:
-            reused = checked_output(
-                simulation, run_id, state, files=self._output_files()
-            )
+            with self.span(Stage.STAGE12_ARTIFACT_READ, {"simulation_role": role}):
+                reused = checked_output(
+                    simulation, run_id, state, files=self._output_files()
+                )
             self.reused[role] = reused
             self.descriptors[role] = reused.descriptor
             return False
-        if state.status is RunStatus.FAILED and state.error_message:
-            raise Stage12ExecutionError(run_failure_detail(state.error_message))
+        if state.status is RunStatus.FAILED:
+            raise Stage12ExecutionError(self._already_failed(role, state))
         if state.status is RunStatus.RUNNING and state.modal_call_id is not None:
             self.calls[role] = self.child_invoker.restore(state.modal_call_id)
             return False
@@ -617,12 +637,16 @@ class ReportRunCoordination(CoordinationCore):
 
         A report run's unfinished simulation runs are its coordinator's: the
         simulation service starts no worker on them, and the stuck-run sweep
-        leaves them to it while the report run is unfinished. A run read as
-        succeeded is never written: other report runs may reuse it.
+        leaves them to it while the report run is unfinished. A run last read
+        as succeeded or failed is never written: other report runs may reuse
+        a succeeded one.
         """
         for role in ROLES:
             state = self.run_states.get(role.value)
-            if state is not None and state.status is RunStatus.SUCCEEDED:
+            if state is not None and state.status in {
+                RunStatus.SUCCEEDED,
+                RunStatus.FAILED,
+            }:
                 continue
             self._fail_run(role.value, detail)
 

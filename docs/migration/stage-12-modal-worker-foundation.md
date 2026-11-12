@@ -477,7 +477,11 @@ cliff analysis or labor-supply responses. `segmented=false` selects the
 single-container calculation explicitly. UK calculations, subnational US
 calculations, cliff analysis, and labor-supply-response calculations also use
 the single-container path. `segmented=true` is accepted, but it does not
-override those numerical eligibility conditions.
+override those numerical eligibility conditions. A US national simulation run
+started on its own (role `standalone`) is segmented by the same rule. It never
+uses the precomputed baseline files, which serve only a report's current-law
+baseline under that report's output plan, so it calculates all 20 region
+groups.
 
 The Stage 12 coordinator still persists only two logical simulation records:
 one baseline and one reform. Each eligible logical simulation call performs

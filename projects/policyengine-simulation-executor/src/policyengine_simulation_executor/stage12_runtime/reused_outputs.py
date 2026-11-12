@@ -3,7 +3,8 @@
 The simulation service may name, as a report run's baseline or reform, a
 simulation run that already succeeded for the same simulation, year and
 versions. The coordinator never claims, starts or calculates that run again.
-While it prepares the report, it reads the run's status, year, versions,
+While it prepares the report (or, for a run a pre-empted attempt's worker
+finished, when it restarts it), it reads the run's status, year, versions,
 dataset, region, output URI and digest from the database, and checks them
 against the simulation input and the report run's other simulation run. It
 reads the file from whichever ``gs://`` bucket the URI names, checks its

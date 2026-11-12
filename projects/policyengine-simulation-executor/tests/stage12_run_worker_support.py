@@ -27,9 +27,12 @@ CALCULATION_FAILURE = "the reform calculation failed"
 
 
 class EarlierCall:
-    """An earlier attempt's child, which a restarted coordinator only cancels.
+    """An earlier attempt's cancelled child, which returns no result.
 
-    Each cancellation is recorded in ``events``, beside the run tables' writes.
+    A restarted coordinator cancels it before releasing its run, and waits
+    for no result from it. Each cancellation is recorded in ``events``,
+    beside the run tables' writes. A test of an earlier worker that keeps
+    running restores a real worker call instead.
     """
 
     def __init__(self, object_id: str, events: list[str]) -> None:
@@ -38,7 +41,7 @@ class EarlierCall:
         self.cancelled = 0
 
     def get(self, *, timeout=None):
-        msg = "a restarted coordinator never waits for an earlier attempt's child"
+        msg = "a cancelled earlier worker returns no result"
         raise AssertionError(msg)
 
     def cancel(self) -> None:

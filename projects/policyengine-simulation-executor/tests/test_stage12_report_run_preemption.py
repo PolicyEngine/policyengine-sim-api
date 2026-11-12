@@ -71,7 +71,7 @@ def _coordinate(report_runs, invoker, artifacts=None, **seams):
         store=ComparisonStoreNotUsed(),
         artifacts=artifacts or FakeArtifacts(),
         invoker=invoker,
-        aggregator=economy_aggregate,
+        aggregator=seams.pop("aggregator", economy_aggregate),
         report_runs=report_runs,
         **seams,
     )
