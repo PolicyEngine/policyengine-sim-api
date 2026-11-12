@@ -165,10 +165,11 @@ def _simulation_input(  # noqa: PLR0913  # the run, its role, its policy and wha
 def _context(
     worker: EconomyWorker, origin: CallOrigin, *, runs: ReportRunIds | UUID
 ) -> Stage12InvocationContext:
-    """Return the call's context, naming ``runs``: a report run's, or one run.
+    """Return the call's context, naming ``runs``.
 
-    The artifact prefix names the report run, or the standalone simulation
-    run, that the context names, so the two can't differ.
+    ``runs`` is a report run's IDs, for its coordinator, or a standalone
+    simulation run's ID, for its simulation function. The artifact prefix
+    names that report run or simulation run, so the two can't differ.
     """
     if isinstance(runs, ReportRunIds):
         report_run, simulation_run_id, run_id = runs, None, runs.report_run_id

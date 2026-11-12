@@ -305,7 +305,7 @@ def test_the_deadline_failure_says_what_the_last_read_found(
 
 
 def test_the_deadline_failure_names_the_latest_read_not_the_first(fakes, tmp_path):
-    """A running run, then a front end answering 503 until the deadline.
+    """A running run, then the service answering 503 until the deadline.
 
     Bash counts the deadline in whole seconds, so a 2-second deadline can't be
     reached on the first read, whenever its second starts.
