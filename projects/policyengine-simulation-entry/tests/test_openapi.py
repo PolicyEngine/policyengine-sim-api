@@ -37,8 +37,10 @@ EXPECTED_ROUTES = {
     ("GET", "/versions/{kind}"),
     ("POST", "/household-calculations"),
     ("POST", "/ping"),
+    ("POST", "/reports"),
     ("POST", "/simulate/economy/budget-window"),
     ("POST", "/simulate/economy/comparison"),
+    ("POST", "/simulations"),
 }
 
 
@@ -77,11 +79,28 @@ HOUSEHOLD_SCHEMAS = (
 )
 
 
+# The economy report and simulation routes, which only the Cloud Run
+# entrypoint has.
+ECONOMY_PATHS = ("/reports", "/simulations")
+ECONOMY_SCHEMAS = (
+    "EconomyError",
+    "EconomyReportCreated",
+    "EconomyReportRequest",
+    "EconomyRequestReason",
+    "EconomyRequestUnprocessable",
+    "EconomySimulationCreated",
+    "EconomySimulationRequest",
+    "PolicyChoice",
+    "ReportRunStatus",
+    "SimulationStatus",
+)
+
+
 def normalized_compatibility_paths(spec: OpenAPIDocument) -> OpenAPIPathMap:
     """Remove intentional Cloud Run and additive SPM error documentation."""
     paths = deepcopy(spec["paths"])
     paths.pop("/ready", None)
-    for path in HOUSEHOLD_PATHS:
+    for path in (*HOUSEHOLD_PATHS, *ECONOMY_PATHS):
         paths.pop(path, None)
     for operations in paths.values():
         for method, operation in operations.items():
@@ -212,7 +231,7 @@ def test_normalized_contract_matches_old_gateway():
     cloud_run_schemas.pop("SimulationEntrypointReadinessResponse")
     cloud_run_schemas.pop("SimulationDatabaseReadiness")
     cloud_run_schemas.pop("SimulationErrorResponse")
-    for schema_name in HOUSEHOLD_SCHEMAS:
+    for schema_name in (*HOUSEHOLD_SCHEMAS, *ECONOMY_SCHEMAS):
         cloud_run_schemas.pop(schema_name)
     assert cloud_run_schemas == gateway_spec["components"]["schemas"]
     gateway_operation_ids = operation_ids(gateway_spec)
@@ -323,3 +342,84 @@ def test_a_household_calculation_request_names_its_fields_only():
         "succeeded",
         "failed",
     ]
+
+
+def test_economy_routes_declare_every_answer():
+    spec = create_app().openapi()
+    error = {"$ref": "#/components/schemas/EconomyError"}
+    unprocessable = {"$ref": "#/components/schemas/EconomyRequestUnprocessable"}
+
+    for path, created in (
+        ("/reports", "EconomyReportCreated"),
+        ("/simulations", "EconomySimulationCreated"),
+    ):
+        responses = _responses(spec, "post", path)
+        assert set(responses) == {"201", "400", "403", "422", "500", "503"}
+        assert _response_schema(responses["201"]) == {
+            "$ref": f"#/components/schemas/{created}"
+        }
+        for status_code in ("400", "500", "503"):
+            assert _response_schema(responses[status_code]) == error
+        assert _response_schema(responses["422"]) == unprocessable
+        record = path.removeprefix("/").removesuffix("s")
+        assert f"{record}_id" in responses["503"]["description"]
+        assert "nothing was written" in responses["400"]["description"]
+    error_properties = spec["components"]["schemas"]["EconomyError"]["properties"]
+    assert {"code", "detail", "report_id", "simulation_id"} == set(error_properties)
+    codes = set(error_properties["code"]["enum"])
+    assert {
+        "unknown_region",
+        "unknown_dataset",
+        "unknown_dynamic",
+        "unknown_catalog_version",
+        "modal_call_refused",
+        "internal_error",
+    } <= codes
+
+
+def test_every_economy_503_declares_its_retry_after_header():
+    spec = create_app().openapi()
+
+    for path in ECONOMY_PATHS:
+        headers = _responses(spec, "post", path)["503"]["headers"]
+        assert headers["Retry-After"]["schema"] == {"type": "integer"}
+
+
+def test_economy_routes_name_their_operations():
+    names = operation_ids(cast("OpenAPIDocument", create_app().openapi()))
+
+    assert names[("POST", "/reports")] == "create_report"
+    assert names[("POST", "/simulations")] == "create_simulation"
+
+
+def test_economy_requests_name_no_version_and_no_record_id():
+    """The service runs its default worker's version and chooses every ID."""
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    assert set(schemas["EconomyReportRequest"]["properties"]) == {
+        "country",
+        "report_type",
+        "label",
+        "description",
+        "year",
+        "region_code",
+        "dataset_name",
+        "baseline",
+        "reform",
+        "include_cliffs",
+        "spm",
+    }
+    assert set(schemas["EconomySimulationRequest"]["properties"]) == {
+        "country",
+        "simulation_type",
+        "year",
+        "region_code",
+        "dataset_name",
+        "policy_id",
+        "dynamic_id",
+    }
+    # Omitted, not null, when the caller gives no SPM settings.
+    spm = schemas["EconomyReportRequest"]["properties"]["spm"]
+    assert spm["$ref"] == "#/components/schemas/SPMSelection"
+    assert "default" not in spm
+    assert "spm" not in schemas["EconomyReportRequest"].get("required", [])
