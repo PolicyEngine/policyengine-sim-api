@@ -7,8 +7,9 @@
   ``{"force": true}`` calculates both simulations again; otherwise a side
   reuses a run of its own simulation that succeeded on the same versions.
   A budget-window report's new run is a budget-window run with a report run
-  per year, of which the first five are started; it answers as the
-  budget-window create does, naming the window run and every year's runs.
+  per year, up to five of them started at once as a new window's are; it
+  answers as the budget-window create does, naming the window run and every
+  year's runs.
 - ``POST /simulations/{simulation_id}/runs`` (``simulation:submit``) creates
   the stored simulation's new run and starts its simulation function,
   answering 201 with the simulation's ID, the new run's ID and its status.
@@ -103,6 +104,11 @@ class EconomyService(EconomySubmissions, EconomyReruns, Protocol):
     """Create, read and re-run economy reports and simulations."""
 
 
+# The run a 409 run_in_progress names, by the record re-run.
+_RUN_UNDER_WAY: dict[RecordName, str] = {
+    "report": "the report's budget-window run, or else its report run",
+    "simulation": "the simulation's run",
+}
 # The 400 codes that name a stored record's own rows on its re-run: a
 # report's re-run also names its stored simulations (missing_reference).
 _STORED_ROW_CODES: dict[RecordName, str] = {
@@ -136,8 +142,8 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
         409: {
             "description": (
                 f"The {record} is not re-run now, and nothing was written: it "
-                "has a run pending or running (run_in_progress, named by "
-                "run_id), or the service does not re-run it "
+                "has a run pending or running (run_in_progress; run_id names "
+                f"{_RUN_UNDER_WAY[record]}), or the service does not re-run it "
                 "(rerun_not_supported)"
             ),
             **ERROR_ANSWER,

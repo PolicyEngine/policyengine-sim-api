@@ -68,6 +68,7 @@ if TYPE_CHECKING:
         EconomyRequest,
         ReusableRun,
         SimulationInputs,
+        WindowRerunYear,
     )
     from policyengine_stage12_persistence import (
         WindowAdvance,
@@ -155,7 +156,6 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
             clock=clock,
         )
         self._windows = windows
-        self._window_store = store
 
     async def submit_budget_window(
         self,
@@ -183,7 +183,7 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
         )
         economy_request = economy_request_for(request, worker)
         inputs = await self._read_inputs(
-            lambda: self._window_store.read_budget_window_inputs(
+            lambda: self._store.read_budget_window_inputs(
                 economy_request,
                 baseline=simulation_choice(request.baseline),
                 reform=simulation_choice(request.reform),
@@ -214,7 +214,7 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
             reform_policy=inputs.reform.reform,
         )
         await self._create(
-            "report", lambda: self._window_store.create_budget_window_report(report)
+            "report", lambda: self._store.create_budget_window_report(report)
         )
         status = await self._start_first_years(
             worker,
@@ -229,7 +229,7 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
             report_run_id=first_year.report_run_id,
             budget_window_run_id=report.window_run_id,
             status=status,
-            years=[_year_created(window_year) for window_year in report.years],
+            years=[year_created(window_year) for window_year in report.years],
         )
 
     def _window_year(self, inputs: BudgetWindowInputs, year: int) -> BudgetWindowYear:
@@ -419,7 +419,10 @@ def _run_ids(window_year: BudgetWindowYear) -> ReportRunIds:
     )
 
 
-def _year_created(window_year: BudgetWindowYear) -> BudgetWindowYearCreated:
+def year_created(
+    window_year: BudgetWindowYear | WindowRerunYear,
+) -> BudgetWindowYearCreated:
+    """Return a new window's year, or a re-run's, as the answer lists it."""
     return BudgetWindowYearCreated(
         year=window_year.year,
         report_run_id=window_year.report_run_id,

@@ -52,11 +52,11 @@ from policyengine_simulation_persistence import (
 
 from policyengine_simulation_entry.budget_window_api_models import (
     BudgetWindowReportCreated,
-    BudgetWindowYearCreated,
 )
 from policyengine_simulation_entry.budget_window_submissions import (
     BudgetWindowRuns,
     ReportSubmissionService,
+    year_created,
 )
 from policyengine_simulation_entry.economy_api_models import (
     EconomyReportCreated,
@@ -388,7 +388,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                 window.economy_request,
                 baseline=stored.baseline.choice,
                 reform=stored.reform.choice,
-                years=[year.definition for year in window.years],
+                years=window.years,
                 reuse=window.reuse,
             ),
             request=window.economy_request,
@@ -441,11 +441,11 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             report_run_id=first_year.report_run_id,
             budget_window_run_id=window_run_id,
             status=status,
-            years=[_rerun_year_created(window_year) for window_year in rerun.years],
+            years=[year_created(window_year) for window_year in rerun.years],
         )
 
     def _window_rerun_year(
-        self, year: _CompleteWindowYear, inputs: BudgetWindowInputs
+        self, year: WindowYearDefinition, inputs: BudgetWindowInputs
     ) -> WindowRerunYear:
         """Return a year naming its own simulations' reusable runs, or new runs."""
         baseline_run, reform_run = inputs.reusable_runs[year.year]
@@ -583,26 +583,12 @@ def _rerunnable_report(definition: ReportDefinition) -> _StoredReportRows:
 
 
 @dataclass(frozen=True)
-class _CompleteWindowYear:
-    """A year of a stored window's newest calculation, with both sides' simulations."""
-
-    definition: WindowYearDefinition
-    baseline_simulation_id: UUID
-    reform_simulation_id: UUID
-
-    @property
-    def year(self) -> int:
-        """The year."""
-        return self.definition.year
-
-
-@dataclass(frozen=True)
 class _WindowRerunRequest:
     """What a budget window's re-run calculates, as the service has read it."""
 
     stored: _StoredReportRows
     options: dict[str, Any]
-    years: tuple[_CompleteWindowYear, ...]
+    years: tuple[WindowYearDefinition, ...]
     economy_request: EconomyRequest
     reuse: RunReuse | None
     recalculate: bool
@@ -610,11 +596,12 @@ class _WindowRerunRequest:
 
 def _complete_window_years(
     definition: ReportDefinition,
-) -> tuple[_CompleteWindowYear, ...]:
+) -> tuple[WindowYearDefinition, ...]:
     """Return the stored window's years, or refuse a window that lacks one.
 
     Its newest calculation must have a report run naming both sides in each
-    year of its window, from the report's first year.
+    year of its window, from the report's first year; the definition leaves
+    out a year naming no reform.
     """
     expected = (
         ()
@@ -623,16 +610,8 @@ def _complete_window_years(
             range(definition.year, definition.year + definition.budget_window_size)
         )
     )
-    complete = tuple(
-        _CompleteWindowYear(
-            definition=year,
-            baseline_simulation_id=year.baseline_simulation_id,
-            reform_simulation_id=year.reform_simulation_id,
-        )
-        for year in definition.window_years
-        if year.reform_simulation_id is not None
-    )
-    if not expected or tuple(year.year for year in complete) != expected:
+    years = definition.window_years
+    if not expected or tuple(year.year for year in years) != expected:
         raise EconomyRerunConflictError(
             code="rerun_not_supported",
             detail=(
@@ -641,20 +620,7 @@ def _complete_window_years(
                 "it cannot be re-run."
             ),
         )
-    return complete
-
-
-def _rerun_year_created(window_year: WindowRerunYear) -> BudgetWindowYearCreated:
-    return BudgetWindowYearCreated(
-        year=window_year.year,
-        report_run_id=window_year.report_run_id,
-        baseline_simulation_id=window_year.baseline.simulation_id,
-        baseline_simulation_run_id=window_year.baseline.simulation_run_id,
-        baseline_reused=window_year.baseline.reused,
-        reform_simulation_id=window_year.reform.simulation_id,
-        reform_simulation_run_id=window_year.reform.simulation_run_id,
-        reform_reused=window_year.reform.reused,
-    )
+    return years
 
 
 def _rerunnable_simulation(definition: SimulationDefinition) -> _StoredSimulationRows:

@@ -10,13 +10,16 @@ service runs now, as a new run, and keeps every earlier run. The service:
 - creates, in one transaction, the new run and, for each report side not
   reusing a run of its own simulation, a new ``simulation_runs`` row of that
   simulation, all ``pending`` with no Modal call ID. A report's new run has
-  trigger ``manual``.
+  trigger ``manual``. A budget window's new run is a ``budget_window_runs``
+  row with a report run per year, each year on the simulations its report
+  run in the report's newest window run names.
 
 The record itself is never changed: the service may not update ``reports``
 or ``simulations``, so a report keeps naming the simulations it was created
 with, and each new run records the catalog version, dataset and region it
 calculates on. Nothing is created while the record has a run that is
-``pending`` or ``running``; a transaction-level advisory lock on the
+``pending`` or ``running`` (for a report, a budget-window run or a report
+run of it); a transaction-level advisory lock on the
 record's ID makes concurrent re-runs of one record wait for each other, as
 a row lock on ``reports`` would need ``UPDATE`` on it.
 
@@ -32,6 +35,10 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 
 from sqlalchemy import func, insert, literal, select
 
+from policyengine_simulation_persistence.budget_window_records import (
+    check_window_years,
+    year_run_row,
+)
 from policyengine_simulation_persistence.economy_run_records import (
     ECONOMY_REPORT_TYPE,
     EconomyRecordReferenceError,
@@ -76,7 +83,8 @@ if TYPE_CHECKING:
 type RecordKind = Literal["economy", "budget_window", "household", "unsupported"]
 # A household report's type, as the household reports' service writes it.
 _HOUSEHOLD_TYPE: Final = "household"
-# Both run tables' statuses use these values for a run under way.
+# Every run table's statuses (simulation, report and budget-window runs) use
+# these values for a run under way.
 _UNDER_WAY: Final = (SimulationStatus.PENDING.value, SimulationStatus.RUNNING.value)
 
 
@@ -94,12 +102,12 @@ class WindowYearDefinition:
 
     They are the simulations of the runs that year's report run names: a
     year that reused a run names that run's simulation, which may be another
-    report's. ``reform_simulation_id`` is None for a year naming no reform.
+    report's.
     """
 
     year: int
     baseline_simulation_id: UUID
-    reform_simulation_id: UUID | None
+    reform_simulation_id: UUID
 
 
 @dataclass(frozen=True)
@@ -111,7 +119,8 @@ class ReportDefinition:
     row it named was deleted). ``baseline`` and ``reform`` are None when the
     report names no such simulation; a budget window's are its first
     year's. A budget window's ``window_years`` are the years of its newest
-    budget-window run, earliest first, empty when it has none.
+    budget-window run whose report run names both sides, earliest first,
+    empty when it has none.
     """
 
     id: UUID
@@ -204,6 +213,10 @@ class NewWindowRerun:
     versions: RunVersions
     recalculate: bool
     years: tuple[WindowRerunYear, ...]
+
+    def __post_init__(self) -> None:
+        """Refuse years that aren't 1 to 75 consecutive ones from the first."""
+        check_window_years(self.population.year, [year.year for year in self.years])
 
     def population_in(self, year: int) -> EconomyPopulation:
         """Return what the window's simulations of ``year`` calculate on."""
@@ -321,9 +334,7 @@ def _window_years(
         .join(
             baseline_run, baseline_run.c.id == report_runs.c.baseline_simulation_run_id
         )
-        .outerjoin(
-            reform_run, reform_run.c.id == report_runs.c.reform_simulation_run_id
-        )
+        .join(reform_run, reform_run.c.id == report_runs.c.reform_simulation_run_id)
         .where(report_runs.c.budget_window_run_id == newest_window_run)
         .order_by(report_runs.c.year)
     )
@@ -528,27 +539,17 @@ def insert_window_rerun(connection: Connection, rerun: NewWindowRerun) -> None:
                     )
         connection.execute(
             insert(report_runs),
-            [_year_run_row(rerun, window_year) for window_year in rerun.years],
+            [
+                year_run_row(
+                    window_year,
+                    report_id=rerun.report_id,
+                    window_run_id=rerun.window_run_id,
+                    versions=rerun.versions,
+                    trigger=ReportRunTrigger.MANUAL,
+                )
+                for window_year in rerun.years
+            ],
         )
-
-
-def _year_run_row(
-    rerun: NewWindowRerun, window_year: WindowRerunYear
-) -> dict[str, Any]:
-    """Return a year's new report run, pending with no call, as inserted."""
-    return {
-        "id": window_year.report_run_id,
-        "report_id": rerun.report_id,
-        "baseline_simulation_run_id": window_year.baseline.simulation_run_id,
-        "reform_simulation_run_id": window_year.reform.simulation_run_id,
-        "budget_window_run_id": rerun.window_run_id,
-        "year": window_year.year,
-        "country_package_version": rerun.versions.country_package_version,
-        "policyengine_version": rerun.versions.policyengine_version,
-        "status": ReportRunStatus.PENDING,
-        "trigger": ReportRunTrigger.MANUAL,
-        "modal_call_id": None,
-    }
 
 
 def _refuse_while_report_runs(connection: Connection, report_id: UUID) -> None:

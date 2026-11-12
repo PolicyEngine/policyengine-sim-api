@@ -40,9 +40,14 @@ from policyengine_simulation_persistence.tables import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
     from sqlalchemy import Connection
+
+    from policyengine_simulation_persistence.economy_rerun_records import (
+        WindowRerunYear,
+    )
 
 
 @dataclass(frozen=True)
@@ -78,20 +83,7 @@ class NewBudgetWindowReport:
 
     def __post_init__(self) -> None:
         """Refuse years that aren't 1 to 75 consecutive ones from the first."""
-        first_year = self.population.year
-        expected = tuple(range(first_year, first_year + len(self.years)))
-        if (
-            not self.years
-            or len(self.years) > MAX_BUDGET_WINDOW_YEARS
-            or tuple(year.year for year in self.years) != expected
-            or expected[-1] > LATEST_YEAR
-        ):
-            msg = (
-                "a budget window's years must be 1 to "
-                f"{MAX_BUDGET_WINDOW_YEARS} consecutive years from its first, "
-                f"ending by {LATEST_YEAR}"
-            )
-            raise ValueError(msg)
+        check_window_years(self.population.year, [year.year for year in self.years])
 
     @property
     def first_year(self) -> BudgetWindowYear:
@@ -101,6 +93,23 @@ class NewBudgetWindowReport:
     def population_in(self, year: int) -> EconomyPopulation:
         """Return what the window's simulations of ``year`` calculate on."""
         return replace(self.population, year=year)
+
+
+def check_window_years(first_year: int, years: Sequence[int]) -> None:
+    """Raise ValueError unless ``years`` are 1 to 75 in a row from ``first_year``."""
+    expected = tuple(range(first_year, first_year + len(years)))
+    if (
+        not years
+        or len(years) > MAX_BUDGET_WINDOW_YEARS
+        or tuple(years) != expected
+        or expected[-1] > LATEST_YEAR
+    ):
+        msg = (
+            "a budget window's years must be 1 to "
+            f"{MAX_BUDGET_WINDOW_YEARS} consecutive years from its first, "
+            f"ending by {LATEST_YEAR}"
+        )
+        raise ValueError(msg)
 
 
 def insert_budget_window_report(
@@ -159,24 +168,42 @@ def insert_budget_window_report(
         )
         connection.execute(
             insert(report_runs),
-            [_year_run_row(report, window_year) for window_year in report.years],
+            [
+                year_run_row(
+                    window_year,
+                    report_id=report.id,
+                    window_run_id=report.window_run_id,
+                    versions=report.versions,
+                    trigger=ReportRunTrigger.INITIAL,
+                )
+                for window_year in report.years
+            ],
         )
 
 
-def _year_run_row(
-    report: NewBudgetWindowReport, window_year: BudgetWindowYear
+def year_run_row(
+    window_year: BudgetWindowYear | WindowRerunYear,
+    *,
+    report_id: UUID,
+    window_run_id: UUID,
+    versions: RunVersions,
+    trigger: ReportRunTrigger,
 ) -> dict[str, Any]:
-    """Return a year's report run, pending with no call, as inserted."""
+    """Return a year's report run in a window run, pending with no call, as inserted.
+
+    ``window_year`` is a new window's year or a re-run's; ``trigger`` says
+    which.
+    """
     return {
         "id": window_year.report_run_id,
-        "report_id": report.id,
+        "report_id": report_id,
         "baseline_simulation_run_id": window_year.baseline.simulation_run_id,
         "reform_simulation_run_id": window_year.reform.simulation_run_id,
-        "budget_window_run_id": report.window_run_id,
+        "budget_window_run_id": window_run_id,
         "year": window_year.year,
-        "country_package_version": report.versions.country_package_version,
-        "policyengine_version": report.versions.policyengine_version,
+        "country_package_version": versions.country_package_version,
+        "policyengine_version": versions.policyengine_version,
         "status": ReportRunStatus.PENDING,
-        "trigger": ReportRunTrigger.INITIAL,
+        "trigger": trigger,
         "modal_call_id": None,
     }

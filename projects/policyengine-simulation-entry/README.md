@@ -208,8 +208,10 @@ A budget-window report's re-run is a new budget-window run, trigger
 year's sides are the simulations that year's report run of the report's
 newest window run names (a year that reused another report's run names that
 report's simulation), and each reuses a run of them as a single-year side
-does. The first five years start as a new window's do; it answers 201 with
-the budget-window create's fields, naming the window run and every year.
+does. Up to five years start at once, as a new window's do (a later year
+Modal doesn't confirm in time waits for an earlier year's coordinator); it
+answers 201 with the budget-window create's fields, naming the window run
+and every year.
 `POST /simulations/{simulation_id}/runs`, with no body, creates and starts
 a stored economy simulation's new run, which is always calculated. Each
 answers 201 with the same fields as the create, naming the new run.
@@ -233,7 +235,10 @@ calculated separately. A simulation's re-run checks every run of the
 simulation, including those reports created. A report or simulation
 deleted after the re-run read it answers 404. A report deleted with its
 simulations answers 400 `missing_reference`, naming a simulation, when a
-side gets a new run, and 404 when both sides reuse a run. When Modal
+side gets a new run, and 404 when both sides reuse a run; a deleted
+budget-window report always answers 404, as its window run is created
+first. A 409 `run_in_progress` names the report's budget-window run under
+way, or else its report run, or the simulation's run. When Modal
 refuses the new
 run's call, the run is failed and the 503 `modal_call_refused` names the
 record and the run (`run_id`).

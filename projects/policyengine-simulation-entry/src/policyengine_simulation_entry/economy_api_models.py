@@ -77,7 +77,9 @@ EconomyRefusalCode = Literal[CallerRowRefusalCode, ServiceStateRefusalCode]
 EconomyUnprocessableCode = Literal["missing_parameters", "overlapping_parameters"]
 # Why a stored record is not re-run now (409).
 EconomyConflictCode = Literal[
-    # The record has a run pending or running; ``run_id`` names it.
+    # The record has a run pending or running; ``run_id`` names it: for a
+    # report, its budget-window run, or else its report run; for a
+    # simulation, its simulation run.
     "run_in_progress",
     # The service does not re-run this kind of record, or the record lacks a
     # row it calculates on.
@@ -290,8 +292,10 @@ class EconomyError(_Answer):
     ``/simulations``) is set only with ``modal_call_refused``: it names the
     record the service created or re-ran, whose new run it failed because
     Modal refused the call or didn't accept it in time. ``run_id`` names
-    that new run on a re-run, and with ``run_in_progress`` the record's run
-    that is pending or running.
+    that new run on a re-run (a budget window's: its budget-window run),
+    and with ``run_in_progress`` the record's run that is pending or
+    running: a report's budget-window run, or else its report run, or a
+    simulation's run.
     """
 
     code: EconomyErrorCode

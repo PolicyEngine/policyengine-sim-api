@@ -66,7 +66,7 @@ from policyengine_simulation_persistence.policy_reform import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
     from contextlib import AbstractContextManager
     from uuid import UUID
 
@@ -382,38 +382,30 @@ class EconomyRunStore:
         """
         with self._transaction() as connection:
             catalog = _catalog_rows(connection, request)
-            baseline_inputs = _side_inputs(
-                connection, request, catalog, "baseline", baseline
-            )
-            reform_inputs = _side_inputs(connection, request, catalog, "reform", reform)
-            reusable_runs: dict[int, tuple[ReusableRun | None, ReusableRun | None]] = {}
-            for window_year in years:
-                baseline_run = reform_run = None
-                if reuse is not None and window_year.reform_simulation_id is not None:
-                    search = _search_own_runs(
-                        connection,
-                        catalog.population(window_year.year),
-                        reuse,
-                        {
-                            "baseline": window_year.baseline_simulation_id,
-                            "reform": window_year.reform_simulation_id,
-                        },
-                    )
-                    baseline_run = search("baseline", baseline, None)
-                    reform_run = search(
-                        "reform",
-                        reform,
+            return _window_inputs(
+                connection,
+                request,
+                catalog,
+                baseline=baseline,
+                reform=reform,
+                searches=(
+                    (
+                        window_year.year,
                         None
-                        if baseline_run is None
-                        else baseline_run.simulation_run_id,
+                        if reuse is None
+                        else _search_own_runs(
+                            connection,
+                            catalog.population(window_year.year),
+                            reuse,
+                            {
+                                "baseline": window_year.baseline_simulation_id,
+                                "reform": window_year.reform_simulation_id,
+                            },
+                        ),
                     )
-                reusable_runs[window_year.year] = (baseline_run, reform_run)
-        return BudgetWindowInputs(
-            catalog=catalog,
-            baseline=baseline_inputs,
-            reform=reform_inputs,
-            reusable_runs=reusable_runs,
-        )
+                    for window_year in years
+                ),
+            )
 
     def create_window_rerun(self, rerun: NewWindowRerun) -> None:
         """Create the window's new run and its years' runs; see ``insert_window_rerun``.
@@ -455,43 +447,24 @@ class EconomyRunStore:
         """
         with self._transaction() as connection:
             catalog = _catalog_rows(connection, request)
-            baseline_inputs = _side_inputs(
-                connection, request, catalog, "baseline", baseline
-            )
-            reform_inputs = _side_inputs(connection, request, catalog, "reform", reform)
-            reusable_runs: dict[int, tuple[ReusableRun | None, ReusableRun | None]] = {}
-            for year in years:
-                baseline_run = reform_run = None
-                if reuse is not None:
-                    population = catalog.population(year)
-                    baseline_run = find_reusable_run(
-                        connection,
-                        choice=baseline,
-                        population=population,
-                        versions=reuse.versions,
-                        inputs=reuse.inputs,
-                        output_uri_prefix=reuse.output_uri_prefix,
-                    )
-                    reform_run = find_reusable_run(
-                        connection,
-                        choice=reform,
-                        population=population,
-                        versions=reuse.versions,
-                        inputs=reuse.inputs,
-                        output_uri_prefix=reuse.output_uri_prefix,
-                        excluded_run_id=(
-                            None
-                            if baseline_run is None
-                            else baseline_run.simulation_run_id
+            return _window_inputs(
+                connection,
+                request,
+                catalog,
+                baseline=baseline,
+                reform=reform,
+                searches=(
+                    (
+                        year,
+                        None
+                        if reuse is None
+                        else _search_by_definition(
+                            connection, catalog.population(year), reuse
                         ),
                     )
-                reusable_runs[year] = (baseline_run, reform_run)
-        return BudgetWindowInputs(
-            catalog=catalog,
-            baseline=baseline_inputs,
-            reform=reform_inputs,
-            reusable_runs=reusable_runs,
-        )
+                    for year in years
+                ),
+            )
 
     def create_budget_window_report(self, report: NewBudgetWindowReport) -> None:
         """Create the window's report, its budget-window run and each year's runs.
@@ -725,6 +698,41 @@ def _report_inputs(  # noqa: PLR0913  # the request's rows, both sides and the s
             inputs = replace(inputs, reusable_run=reusable_run)
         sides.append(inputs)
     return EconomyReportInputs(catalog=catalog, baseline=sides[0], reform=sides[1])
+
+
+def _window_inputs(  # noqa: PLR0913  # the request's rows, both sides and each year's search
+    connection: Connection,
+    request: EconomyRequest,
+    catalog: EconomyCatalogRows,
+    *,
+    baseline: SimulationChoice,
+    reform: SimulationChoice,
+    searches: Iterable[tuple[int, ReusableRunSearch | None]],
+) -> BudgetWindowInputs:
+    """Read both sides' values, and each year's reusable runs with its search.
+
+    A year without a search reuses nothing; in each year the reform never
+    gets the run the baseline reuses.
+    """
+    baseline_inputs = _side_inputs(connection, request, catalog, "baseline", baseline)
+    reform_inputs = _side_inputs(connection, request, catalog, "reform", reform)
+    reusable_runs: dict[int, tuple[ReusableRun | None, ReusableRun | None]] = {}
+    for year, search in searches:
+        baseline_run = reform_run = None
+        if search is not None:
+            baseline_run = search("baseline", baseline, None)
+            reform_run = search(
+                "reform",
+                reform,
+                None if baseline_run is None else baseline_run.simulation_run_id,
+            )
+        reusable_runs[year] = (baseline_run, reform_run)
+    return BudgetWindowInputs(
+        catalog=catalog,
+        baseline=baseline_inputs,
+        reform=reform_inputs,
+        reusable_runs=reusable_runs,
+    )
 
 
 def _search_by_definition(
