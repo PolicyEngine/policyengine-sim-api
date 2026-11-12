@@ -26,9 +26,13 @@ from household_report_fakes import (
     household_report_service,
     manifest_household_worker,
 )
+from policyengine_simulation_contract.household_execution import (
+    HouseholdExecutionRequest,
+)
 from policyengine_simulation_contract.household_report_execution import (
     HouseholdReportRunCalculation,
 )
+from policyengine_simulation_entry import household_report_submissions
 from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionOutcomeUnknownError,
     EconomySubmissionRefusedError,
@@ -59,6 +63,7 @@ from policyengine_simulation_persistence import (
     UnknownHouseholdError,
     UnknownPolicyError,
 )
+from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 
 # The service's IDs, in the order it takes them: the report, its run, then
@@ -511,3 +516,17 @@ def test_two_sides_recording_one_simulation_run_are_built_wrong():
             reform=side,
             worker=manifest_household_worker("us"),
         )
+
+
+def test_a_refusal_of_the_missing_variables_option_is_the_services_fault():
+    # A household report sets the option itself, so a refusal of it names no
+    # field the caller sent.
+    refused_request = {
+        **_side_request(BASELINE_RUN_ID, {}),
+        "add_missing_variables": [1],
+    }
+    with pytest.raises(ValidationError) as refused:
+        HouseholdExecutionRequest.model_validate(refused_request)
+
+    with pytest.raises(HouseholdReportBuildError, match="add_missing_variables"):
+        household_report_submissions._contract_reasons(refused.value, "baseline")
