@@ -13,9 +13,11 @@ How often runs need a restart is the check's telemetry:
 - each row it takes up is one ``v2_run_restart`` operation, with the row's
   kind, ID and age. A row left ``deferred`` is taken up again by the next
   check, so the operation count metric counts restart attempts, and the
-  runs whose call never started are the distinct ``run_id`` values. (A
-  count of the outcomes other than ``deferred`` leaves out the rows deferred
-  in every check, which the sweep then fails.)
+  distinct ``run_id`` values are the runs whose call never started that a
+  check took up. A row no check took up (more rows at once than the checks
+  in its window had time for) is failed by the sweep with
+  ``run_not_started`` instead; a count of the outcomes other than
+  ``deferred`` also leaves out the rows deferred in every check.
 - each row's outcome is set on its operation (``restart_outcome``, with
   ``restart_error_type`` when an error ended it) and logged as a
   ``v2_run_restart_outcome`` event, at WARNING when the row could not be

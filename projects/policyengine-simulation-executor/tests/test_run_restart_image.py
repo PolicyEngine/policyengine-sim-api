@@ -54,10 +54,9 @@ LOCAL_SOURCE_DIRECTORIES = (
         )
     ),
 )
-# The modules the test's own process loads that are not the restart check's:
-# its script (also named ``__mp_main__`` once multiprocessing is imported) and
-# the virtual environment's start-up module.
-NOT_THE_RESTART_CHECK = ("__main__", "__mp_main__", "_virtualenv")
+# The script's own module, which multiprocessing, once imported, also names
+# ``__mp_main__``; it is not the restart check's.
+NOT_THE_RESTART_CHECK = ("__mp_main__",)
 # What the scheduled function's body imports.
 RESTART_MODULES = (
     "policyengine_simulation_entry.run_restart_check",
@@ -164,6 +163,8 @@ def test_the_restart_check_imports_with_only_the_sweep_images_packages(
     loaded_list = tmp_path / "loaded_module_files.json"
     script.write_text(
         "import importlib, sys\n"
+        # Only what the import adds is checked, not what started the process.
+        "loaded_before = set(sys.modules)\n"
         f"refused = {sorted(refused)!r}\n"
         "class Refuse:\n"
         "    def find_spec(self, name, path=None, target=None):\n"
@@ -175,7 +176,9 @@ def test_the_restart_check_imports_with_only_the_sweep_images_packages(
         "import json\n"
         "loaded = sorted({getattr(module, '__file__', None) or ''\n"
         "                 for name, module in list(sys.modules.items())\n"
-        f"                 if name not in {list(NOT_THE_RESTART_CHECK)!r}}} - {{''}})\n"
+        "                 if name not in loaded_before\n"
+        f"                 and name not in {list(NOT_THE_RESTART_CHECK)!r}}}\n"
+        "         - {''})\n"
         f"open({str(loaded_list)!r}, 'w').write(json.dumps(loaded))\n",
         encoding="utf-8",
     )
