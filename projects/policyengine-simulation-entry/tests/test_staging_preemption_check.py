@@ -164,9 +164,18 @@ case "$*" in
       printf 'Error: the Modal server did not answer\n' >&2
       exit 1
     fi
-    # A container with a departure count is listed only that many times.
-    jq --argjson listing "${listing}" \
-      '[.listed[] as $id | select((.departures[$id] // $listing) >= $listing)
+    if jq -e --argjson listing "${listing}" '.unreadable_listings | index($listing)' \
+      "${spec}" >/dev/null; then
+      printf 'Active Containers in environment: staging\n'
+      exit 0
+    fi
+    # A stopped container is never listed again, and one with a departure
+    # count only that many times.
+    stopped="$(find "${FAKE_STATE}" -name 'stopped-*' -exec basename {} \; \
+      | sed 's/^stopped-//' | jq -R . | jq -s .)"
+    jq --argjson listing "${listing}" --argjson stopped "${stopped}" \
+      '[.listed[] as $id | select(($stopped | index($id)) == null)
+        | select((.departures[$id] // $listing) >= $listing)
         | {"Container ID": $id, "App ID": "ap-01V2", "App Name": "policyengine-v2",
            "Start Time": "2026-11-13T12:00:00+00:00"}]' "${spec}"
     ;;
@@ -344,8 +353,10 @@ class ModalContainers:
     listed: tuple[str, ...] = (*CONTAINERS, RERUN_CONTAINER)
     refused_stops: tuple[str, ...] = ()
     timed_out_stops: tuple[str, ...] = ()
-    # Which listings, counted from 1, fail as if Modal didn't answer.
+    # Which listings, counted from 1, fail as if Modal didn't answer, or
+    # print something other than JSON.
     failed_listings: tuple[int, ...] = ()
+    unreadable_listings: tuple[int, ...] = ()
     # How many listings name each container before Modal scales it down.
     departures: dict[str, int] = field(default_factory=dict)
 
@@ -425,6 +436,7 @@ def _run(
         "refused_stops": list(containers.refused_stops),
         "timed_out_stops": list(containers.timed_out_stops),
         "failed_listings": list(containers.failed_listings),
+        "unreadable_listings": list(containers.unreadable_listings),
         "departures": containers.departures,
     }
     (state / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
@@ -461,6 +473,15 @@ def _stops(fakes: FakeCommands) -> list[str]:
         for call in fakes.calls("uv")
         if call[1:6] == ["run", "--frozen", "modal", "container", "stop"]
     ]
+
+
+def _listings_before_the_first_stop(fakes: FakeCommands) -> int:
+    listings = 0
+    for call in fakes.calls("uv"):
+        if "stop" in call:
+            return listings
+        listings += "list" in call
+    return listings
 
 
 def _submissions(state: Path) -> list[dict]:
@@ -661,8 +682,56 @@ def test_a_failed_listing_is_asked_again_rather_than_taken_for_an_absent_contain
 
     assert result.returncode == 0, result.stderr
     assert _stops(fakes) == [CONTAINERS[0]]
+    # Only a listing Modal answered may confirm the container.
+    assert _listings_before_the_first_stop(fakes) == 2
     assert "Modal could not list" in result.stderr
     assert "is not listed" not in result.stderr
+
+
+def test_an_unreadable_listing_is_asked_again(fakes, tmp_path):
+    result, _ = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [_household_attempt(0)],
+        containers=ModalContainers(unreadable_listings=(1,)),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _stops(fakes) == [CONTAINERS[0]]
+    assert _listings_before_the_first_stop(fakes) == 2
+    assert "readably" in result.stderr
+    assert "is not listed" not in result.stderr
+
+
+def test_a_job_finished_while_modal_could_not_list_says_so(fakes, tmp_path):
+    result, _ = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [_household_attempt(0, proves=False)],
+        containers=ModalContainers(failed_listings=tuple(range(1, 10))),
+        PREEMPTION_CHECK_ATTEMPTS="1",
+    )
+
+    assert result.returncode == 1
+    assert "the last: " in result.stderr
+    last_reason = result.stderr.split("the last: ")[-1]
+    assert "Modal could not list" in last_reason
+
+
+def test_a_wait_modal_cannot_answer_ends_at_its_time_limit(fakes, tmp_path):
+    result, state = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [_household_attempt(0, proves=False), _household_attempt(1)],
+        containers=ModalContainers(failed_listings=(2,)),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert len(_submissions(state)) == 2
+    assert "could not say within 0 seconds" in result.stderr
 
 
 def test_the_wait_asks_again_after_a_failed_listing(fakes, tmp_path):
@@ -713,6 +782,7 @@ def test_a_stop_that_runs_out_of_time_is_followed_like_a_failed_one(fakes, tmp_p
     assert len(_submissions(state)) == 2
     assert _stops(fakes) == [CONTAINERS[0], CONTAINERS[1]]
     assert "exit status 124" in result.stderr
+    assert "finished after modal container stop failed" in result.stderr
 
 
 def test_a_container_still_listed_after_the_wait_does_not_hold_the_check(
@@ -875,6 +945,44 @@ def test_a_completion_moments_after_the_stop_is_taken_for_the_stopped_containers
 
     assert result.returncode == (0 if proves else 1), result.stderr
     assert ("too soon" in result.stderr) is not proves
+
+
+def test_after_a_too_soon_completion_the_next_attempt_waits_for_the_rerun_container(
+    fakes, tmp_path
+):
+    """Modal's rerun ran in a container that is now idle and warm."""
+    first = _household_attempt(0)
+    first.reads_after_stop = [
+        _household(
+            JOB_IDS[0], "succeeded", CALL_IDS[0], completed_at="2026-11-13T12:00:02Z"
+        )
+    ]
+
+    result, _ = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [first, _household_attempt(1)],
+        containers=ModalContainers(departures={RERUN_CONTAINER: 2}),
+        PREEMPTION_CHECK_SCALEDOWN_SECONDS="120",
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = fakes.calls()
+    listings = [
+        index for index, call in enumerate(calls) if call[0] == "uv" and "list" in call
+    ]
+    submissions = [
+        index
+        for index, call in enumerate(calls)
+        if call[0] == "curl" and call[-1].endswith("/household-calculations")
+    ]
+    # The first attempt's lookup; then, waiting, one listing naming the
+    # rerun's container and one without it; then the second attempt's lookup.
+    assert len(listings) == 4
+    assert listings[2] < submissions[1] < listings[3]
+    assert f"waiting for container {RERUN_CONTAINER}" in result.stdout
+    assert "too soon" in result.stderr
 
 
 def test_a_record_that_names_no_call_after_the_stop_fails(fakes, tmp_path):
