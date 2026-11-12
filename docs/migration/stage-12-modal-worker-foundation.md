@@ -207,23 +207,20 @@ correlation metadata but does not include it in either simulation input.
 
 | Files | Bucket, named by the GitHub environment variable | Object key | Retention |
 | --- | --- | --- | --- |
-| Every artifact of a comparison run; the planned inputs and aggregate of a report run | `STAGE12_ARTIFACT_BUCKET`: `policyengine-stage12-staging-artifacts`, `policyengine-stage12-production-artifacts` | `stage-12-runs/<environment>/<YYYY>/<MM>/<evaluation_id>/...` | Deleted 30 days after it is written |
-| The simulation output files of a report run | `V2_SIMULATION_OUTPUT_BUCKET`: `policyengine-v2-staging-simulation-outputs`, `policyengine-v2-production-simulation-outputs` | `simulation-runs/<environment>/<country>/<simulation_run_id>/output-<SHA-256>.parquet` | Never deleted; moved to Coldline 90 days after it is written |
+| Every artifact of a comparison run; the planned inputs of a detailed-save call | `STAGE12_ARTIFACT_BUCKET`: `policyengine-stage12-staging-artifacts`, `policyengine-stage12-production-artifacts` | `<artifact_prefix>/...`; a comparison run's prefix is `stage-12-runs/<environment>/<YYYY>/<MM>/<evaluation_id>` | Deleted 30 days after it is written |
+| The simulation output files of a detailed-save call | `V2_SIMULATION_OUTPUT_BUCKET`: `policyengine-v2-staging-simulation-outputs`, `policyengine-v2-production-simulation-outputs` | `simulation-runs/<environment>/<country>/<simulation_run_id>/output-<SHA-256>.parquet` | Never deleted; moved to Coldline 90 days after it is written |
 
-A report run is a call whose invocation context names the Public API's report
-run and its baseline and reform simulation runs (`report_run`); the
-detailed-save API's reports are calculated this way. Each of its workers writes
-its simulation output file to the simulation output bucket, keyed by its
-simulation run, and records that URI as the `output_uri` of both its simulation
-run in `simulation_runs` and its temporary Stage 12 child record. The
+A detailed-save call names the Public API's runs instead of evaluation records
+(see "Detailed-save calls on the run tables"). Each of its workers writes its
+simulation output file to the simulation output bucket, keyed by its
+simulation run, and records that URI as its simulation run's `output_uri`. The
 coordinator reads the file back from there to aggregate it, and a later report
 run can reuse a succeeded simulation run's file. The key names the file's
 SHA-256, so a worker Modal restarts can store other bytes beside its earlier
-attempt's file, and identical bytes reuse the object. The child record's
-`retention_expires_at` still describes the artifact bucket; the file it names
-outlasts it.
+attempt's file, and identical bytes reuse the object. A report run writes no
+aggregate file: its result is in the result tables.
 
-A report run's coordinator or worker without `V2_SIMULATION_OUTPUT_BUCKET`
+A detailed-save coordinator or worker without `V2_SIMULATION_OUTPUT_BUCKET`
 fails with a `ValueError` naming the variable before it claims anything; it
 never writes the file to the artifact bucket, which would delete it after 30
 days, and the store refuses a simulation output bucket equal to the artifact
@@ -279,6 +276,88 @@ Runs that succeeded before this change, and report runs in the cases above,
 name files in the artifact bucket. So a succeeded simulation run can name a
 file that no longer exists: reusing succeeded simulation runs' output files
 must treat a run whose file is gone as not reusable.
+
+## Detailed-save calls on the run tables
+
+The detailed-save API's reports and simulations are calculated on the Public
+API's run tables alone, as the Modal worker role: no detailed-save call
+creates or claims a `stage12_evaluation_*` record. Only comparison-path calls,
+which pass an evaluation record, write those, until the comparison path is
+removed. The household functions work the same way on `household_jobs`.
+
+**A report run.** The simulation service creates, in one transaction, the
+`simulations` and `reports` rows, a `simulation_runs` row for the baseline and
+one for the reform (pending, with no `modal_call_id`; or a run that already
+succeeded, to reuse it), and the `report_runs` row naming both (pending, with no
+`modal_call_id`). It then starts the manifest's `report_coordinator_callable`
+(`coordinate_report`) with two arguments and no evaluation record:
+
+- the report input, a `ReportExecutionInput` whose `evaluation_id` is the report
+  run's ID and whose baseline and reform `simulation_execution_id`s are their
+  simulation runs' IDs;
+- a `Stage12InvocationContext` whose `report_run` names the report run and both
+  simulation runs, whose `simulation_callable` is the country's
+  `single_simulation_callable`, and whose `artifact_prefix` names the report run.
+
+Once Modal accepts the call, the service records its call ID on the report run
+while it is still pending with no call, and fails the run if Modal refuses the
+call. The service never records a call on, or starts a worker for, a simulation
+run that a pending or running report run names: those are the coordinator's.
+
+The coordinator claims the report run under its own Modal call ID, then checks
+the input against it: a report input or prefix naming other runs, or a report
+run row naming other simulation runs, fails the report run with
+`report_run_input_mismatch`. It uses the stored output of each simulation run
+that already succeeded (see the reuse of succeeded runs above), fails the
+report run with `simulation_run_failed` if a run it must calculate already
+failed, and starts a worker for each other one with a context naming only that
+simulation run (`simulation_run_id`). It aggregates both outputs and completes
+the report run with its result rows. It returns
+`{"report_run_id", "status"}`, or the same marked `deduplicated` without running
+when another call holds the report run or it has finished.
+
+**A simulation run on its own.** The service creates the `simulations` row and
+its `simulation_runs` row (pending, no call), starts the country's
+`single_simulation_callable` with a `SimulationExecutionInput` (role
+`standalone`, no output plan, `evaluation_id` and `simulation_execution_id`
+both the run's ID) and a context naming the run in `simulation_run_id`, and
+records the call as for a report run. The worker plans the simulation's outputs
+as for a report comparing it with itself, so a report whose plan needs more
+columns, for example a reform that turns on labour supply responses, can't
+reuse it and fails with `reused_simulation_output_incompatible`.
+
+**Each worker** claims its simulation run under its own Modal call ID: a pending
+or running run that records no call or its own. It records its output file, or
+its failure, only while it holds the run running. It returns the output's
+`SimulationArtifactDescriptor`; for a run that already succeeded it returns the
+stored output's descriptor without calculating, and for a run another call
+holds, or one that failed, it returns `{"deduplicated": true,
+"simulation_run_id", "status"}`.
+
+**Pre-emption and cancellation.** Modal runs a pre-empted call again under the
+same call ID, and each claim lets that call resume. A pre-empted coordinator
+cancels its unfinished workers and records nothing; the restarted coordinator
+asks each worker its earlier attempt started to stop, releases that worker's
+simulation run (pending, no call, keeping its first start) and starts a new
+worker on it. A failed or cancelled coordinator fails its report run and the
+simulation runs it left unfinished, never one that succeeded. The stuck-run
+sweep judges the run tables only, leaves a report run's simulation runs to its
+coordinator while the report run is unfinished, and never fails a run whose
+call Modal still reports pending, which includes a pre-empted one, before the
+run's maximum age of 24 hours.
+
+**Applications deployed before this change** reject both calls before writing
+anything: their `coordinate_report` requires an evaluation record, and their
+context model refuses `simulation_run_id`. Modal accepts the call, which fails
+at once, and the run stays pending with its call recorded until the sweep fails
+it (`modal_call_ended`), at least ten minutes after its creation. A call
+reaches such an application only while the manifest's default, or
+`STAGE12_V2_WORKER_VERSION`, names one: during the deployment of this change,
+if it adds a newer .py version, until it moves the default to it, or while a
+pinned version names an older application. The release validation calls the worker images' validation
+functions and the household functions, not the coordinator or the economy
+workers, so it does not catch such a mismatch; a staging economy report run on
+each staging deployment would.
 
 ## Report output planning
 

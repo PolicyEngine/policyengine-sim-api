@@ -9,20 +9,24 @@ revisions and live schema. This package never changes a schema.
 - **The Public API's run tables** (`ReportRunStore`): `report_runs`, which
   names its baseline and reform simulation runs and holds the cliff impact,
   SPM receipts and data version, `simulation_runs`, the result tables, the
-  two labour supply tables included, and `household_jobs`. The v2 Modal
-  coordinator and workers write the runs and results as the Modal worker
-  role (`policyengine_v2_modal_worker`), for a call that names a report run;
-  the v2 household functions write a household job's status and result
-  document, for a call that names the job; and the scheduled stuck-run sweep
-  fails the runs and household jobs nothing will finish, as the same role.
+  two labour supply tables included, and `household_jobs`. As the Modal
+  worker role (`policyengine_v2_modal_worker`), the v2 Modal coordinator
+  claims and records the report run its call names, each v2 worker claims
+  and records the one simulation run its call names, the v2 household
+  functions record the household job their call names, and the scheduled
+  stuck-run sweep fails the runs and household jobs nothing will finish.
   The coordinator also reads a simulation run's status, year, versions,
-  dataset, region and output file, so a report run can use a run that
-  already succeeded instead of calculating it again. The mappings declare
-  only the columns those statements read or write, and each `UPDATE` sets
-  only columns the role may update. Every status write is one `UPDATE`
-  conditional on the row's status and, for a claim, completion or failure by
-  a call, on its recorded Modal call; a report run's completion sets its own
-  result columns and inserts its result rows in the same transaction.
+  dataset, region, output file, recorded call and failure, so a report run
+  can use a run that already succeeded instead of calculating it again, and
+  a restarted coordinator can release a run its earlier worker holds. The
+  mappings declare only the columns those statements read or write, and
+  each `UPDATE` sets only columns the role may update. Every status write is
+  one `UPDATE` conditional on the row's status and, for a call's claim,
+  completion or failure, on its recorded Modal call: a call claims a
+  pending or running row that records no call or its own, and completes or
+  fails it only while it holds it running. A report run's completion sets
+  its own result columns and inserts its result rows in the same
+  transaction.
 
 ## Tests
 
