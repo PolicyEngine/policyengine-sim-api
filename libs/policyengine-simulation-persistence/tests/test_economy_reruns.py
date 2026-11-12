@@ -869,11 +869,11 @@ def test_a_rerun_of_a_deleted_report_or_simulation_says_the_record_is_gone(
         stored = _stored_report(connection, economy, run_status=ReportRunStatus.FAILED)
         act_as_the_service(connection)
 
-        with connection.begin_nested(), pytest.raises(RerunRecordDeletedError):
+        with pytest.raises(RerunRecordDeletedError), connection.begin_nested():
             insert_report_rerun(
                 connection, replace(_rerun_of(stored, later), report_id=uuid4())
             )
-        with connection.begin_nested(), pytest.raises(RerunRecordDeletedError):
+        with pytest.raises(RerunRecordDeletedError), connection.begin_nested():
             insert_simulation_rerun(
                 connection,
                 NewSimulationRerun(
@@ -891,8 +891,8 @@ def test_a_rerun_of_a_deleted_report_or_simulation_says_the_record_is_gone(
             ),
         )
         with (
-            connection.begin_nested(),
             pytest.raises(EconomyRecordReferenceError) as refused,
+            connection.begin_nested(),
         ):
             insert_report_rerun(connection, gone_side)
 

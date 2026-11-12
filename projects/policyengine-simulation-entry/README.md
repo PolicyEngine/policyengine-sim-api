@@ -190,8 +190,10 @@ re-runs of one record never both create a run. A report's re-run checks only
 the report's own runs: a side whose simulation has a run under way for
 another report, or for the simulation's own re-run, still gets a new run,
 calculated separately. A simulation's re-run checks every run of the
-simulation, including those reports created. A record deleted after the
-re-run read it answers 404. When Modal refuses the new
+simulation, including those reports created. A report or simulation
+deleted after the re-run read it answers 404; a report deleted with its
+simulations answers 400 `missing_reference`, naming a simulation. When Modal
+refuses the new
 run's call, the run is failed and the 503 `modal_call_refused` names the
 record and the run (`run_id`).
 

@@ -37,10 +37,10 @@ from typing import TYPE_CHECKING, Any, Final, Protocol, get_args
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_simulation_persistence import (
-    EconomyRecordReferenceError,
     EconomyRequest,
     NewReportRerun,
     NewSimulationRerun,
+    RerunRecordDeletedError,
     RerunSide,
     RunInProgressError,
     RunReuse,
@@ -105,11 +105,6 @@ _NOT_RERUN: Final[dict[RecordKind, str]] = {
 _COUNTRIES: Final[tuple[CountryId, ...]] = get_args(CountryId)
 _REPORT: Final[RecordName] = "report"
 _SIMULATION: Final[RecordName] = "simulation"
-# The table and column of a re-run's new run whose key names the record itself.
-_OWN_KEYS: Final[dict[RecordName, tuple[str, str]]] = {
-    "report": ("report_runs", "report_id"),
-    "simulation": ("simulation_runs", "simulation_id"),
-}
 
 
 class EconomyRerunRuns(EconomyRuns, Protocol):
@@ -341,23 +336,14 @@ class EconomyRerunService(EconomySubmissionService[EconomyRerunRuns]):
     ) -> None:
         """Create the re-run's rows; refuse it while the record has a run under way.
 
-        A record deleted after its reads is answered as not found: the
-        database refuses the new run's key to it (``report_runs.report_id``
-        or ``simulation_runs.simulation_id``). Any other row it refuses is
-        named as ``source``'s.
+        A record deleted after its reads is answered as not found. Any other
+        row the database refuses is named as ``source``'s; for a report,
+        that includes a side's simulation deleted with it.
         """
-        own_key = _OWN_KEYS[record]
-
-        def create_unless_deleted() -> None:
-            try:
-                create()
-            except EconomyRecordReferenceError as error:
-                if (error.table_name, error.column_name) == own_key:
-                    raise EconomyRecordNotFoundError(record) from None
-                raise
-
         try:
-            await self._create(record, create_unless_deleted, rerun=True, source=source)
+            await self._create(record, create, rerun=True, source=source)
+        except RerunRecordDeletedError:
+            raise EconomyRecordNotFoundError(record) from None
         except RunInProgressError as error:
             raise EconomyRerunConflictError(
                 code="run_in_progress",

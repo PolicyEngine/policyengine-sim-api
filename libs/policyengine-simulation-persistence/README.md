@@ -149,7 +149,9 @@ version, dataset and region it calculates on.
   or `running` (for a report, a report run; for a simulation, any of its
   runs), and first takes `lock_reruns_of`, a transaction-level
   advisory lock on the record's ID, so concurrent re-runs of one record
-  wait for each other.
+  wait for each other. When the database refuses the new run's key to the
+  record itself, the record was deleted after it was read:
+  `RerunRecordDeletedError`.
 
 `EconomyRunStore.read_report_rerun_inputs` reads a re-run's catalog rows by
 the stored region code and dataset name, and each side's values and

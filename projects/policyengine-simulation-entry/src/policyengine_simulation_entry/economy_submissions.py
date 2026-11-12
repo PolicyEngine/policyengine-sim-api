@@ -216,8 +216,8 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
     """Create economy reports and simulations, and start their calls.
 
     The database and the manifest are read on threads, so the event loop
-    never waits on them. ``Store`` is the store's type, which a subclass
-    reading more of the database widens.
+    never waits on them. ``Store`` is the store's type: a subclass that
+    reads more of the database names a protocol with more methods.
     """
 
     def __init__(  # noqa: PLR0913  # each seam tests replace

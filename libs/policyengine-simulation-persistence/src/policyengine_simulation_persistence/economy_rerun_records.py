@@ -26,6 +26,7 @@ record's (``economy_run_records``).
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Literal
 
@@ -33,6 +34,7 @@ from sqlalchemy import func, insert, literal, select
 
 from policyengine_simulation_persistence.economy_run_records import (
     ECONOMY_REPORT_TYPE,
+    EconomyRecordReferenceError,
     SimulationChoice,
     insert_simulation_run,
     references_checked,
@@ -56,9 +58,10 @@ from policyengine_simulation_persistence.tables import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from uuid import UUID
 
-    from sqlalchemy import ColumnElement, Connection, RowMapping, Table
+    from sqlalchemy import Column, ColumnElement, Connection, RowMapping, Table
 
     from policyengine_simulation_persistence.economy_run_records import (
         EconomyPopulation,
@@ -165,6 +168,14 @@ class NewSimulationRerun:
     run_id: UUID
     population: EconomyPopulation
     versions: RunVersions
+
+
+class RerunRecordDeletedError(LookupError):
+    """The re-run's report or simulation was deleted after the re-run read it.
+
+    The database refused the new run's key to the record itself; nothing was
+    created.
+    """
 
 
 class RunInProgressError(Exception):
@@ -347,9 +358,11 @@ def insert_report_rerun(connection: Connection, rerun: NewReportRerun) -> None:
     """Create the report's new run and its sides' new simulation runs, pending.
 
     Take the report's re-run lock first. Raise RunInProgressError, creating
-    nothing, when the report has a run pending or running, and
-    EconomyRecordReferenceError when the database refuses a row the new
-    runs name; that refusal ends the caller's transaction, or its savepoint.
+    nothing, when the report has a run pending or running;
+    RerunRecordDeletedError when the report no longer exists; and
+    EconomyRecordReferenceError when the database refuses another row the
+    new runs name, such as a side's simulation. A refusal ends the caller's
+    transaction, or its savepoint.
     """
     lock_reruns_of(connection, rerun.report_id)
     under_way = _run_under_way(
@@ -357,7 +370,7 @@ def insert_report_rerun(connection: Connection, rerun: NewReportRerun) -> None:
     )
     if under_way is not None:
         raise RunInProgressError(under_way)
-    with references_checked():
+    with _record_checked(report_runs.c.report_id), references_checked():
         for side in (rerun.baseline, rerun.reform):
             if not side.reused:
                 insert_simulation_run(
@@ -389,7 +402,8 @@ def insert_simulation_rerun(connection: Connection, rerun: NewSimulationRerun) -
 
     Take the simulation's re-run lock first. Raise RunInProgressError,
     creating nothing, when the simulation has a run pending or running, and
-    EconomyRecordReferenceError as ``insert_report_rerun`` does.
+    RerunRecordDeletedError or EconomyRecordReferenceError as
+    ``insert_report_rerun`` does.
     """
     lock_reruns_of(connection, rerun.simulation_id)
     under_way = _run_under_way(
@@ -399,7 +413,7 @@ def insert_simulation_rerun(connection: Connection, rerun: NewSimulationRerun) -
     )
     if under_way is not None:
         raise RunInProgressError(under_way)
-    with references_checked():
+    with _record_checked(simulation_runs.c.simulation_id), references_checked():
         insert_simulation_run(
             connection,
             run_id=rerun.run_id,
@@ -407,3 +421,18 @@ def insert_simulation_rerun(connection: Connection, rerun: NewSimulationRerun) -
             population=rerun.population,
             versions=rerun.versions,
         )
+
+
+@contextmanager
+def _record_checked(own_key: Column[Any]) -> Iterator[None]:
+    """Turn a refusal of the new run's key to the record into RerunRecordDeletedError.
+
+    ``own_key`` is that key's column; a refusal of any other row propagates
+    unchanged.
+    """
+    try:
+        yield
+    except EconomyRecordReferenceError as error:
+        if (error.table_name, error.column_name) == (own_key.table.name, own_key.key):
+            raise RerunRecordDeletedError from None
+        raise
