@@ -562,6 +562,13 @@ def test_a_window_rerun_of_a_deleted_report_or_year_simulation_is_refused(
 
         with pytest.raises(RerunRecordDeletedError), connection.begin_nested():
             insert_window_rerun(connection, replace(rerun, report_id=uuid4()))
+        # A report deleted with a year's simulation: the window run is
+        # inserted first, so the report's own key refuses it.
+        with pytest.raises(RerunRecordDeletedError), connection.begin_nested():
+            insert_window_rerun(
+                connection,
+                replace(rerun, report_id=uuid4(), years=(*rerun.years[:2], gone_year)),
+            )
         with (
             pytest.raises(EconomyRecordReferenceError) as refused,
             connection.begin_nested(),

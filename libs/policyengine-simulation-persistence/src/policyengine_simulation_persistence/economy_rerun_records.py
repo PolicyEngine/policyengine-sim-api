@@ -313,7 +313,10 @@ def read_report_definition(
 def _window_years(
     connection: Connection, report_id: UUID
 ) -> tuple[WindowYearDefinition, ...]:
-    """Return the years of the report's newest budget-window run, earliest first."""
+    """Return the years of the report's newest budget-window run, earliest first.
+
+    A year whose report run names no reform is left out.
+    """
     newest_window_run = (
         select(budget_window_runs.c.id)
         .where(budget_window_runs.c.report_id == report_id)

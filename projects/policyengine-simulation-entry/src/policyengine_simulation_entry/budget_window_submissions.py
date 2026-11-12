@@ -68,7 +68,7 @@ if TYPE_CHECKING:
         EconomyRequest,
         ReusableRun,
         SimulationInputs,
-        WindowRerunYear,
+        WindowYearRuns,
     )
     from policyengine_stage12_persistence import (
         WindowAdvance,
@@ -419,9 +419,7 @@ def _run_ids(window_year: BudgetWindowYear) -> ReportRunIds:
     )
 
 
-def year_created(
-    window_year: BudgetWindowYear | WindowRerunYear,
-) -> BudgetWindowYearCreated:
+def year_created(window_year: WindowYearRuns) -> BudgetWindowYearCreated:
     """Return a new window's year, or a re-run's, as the answer lists it."""
     return BudgetWindowYearCreated(
         year=window_year.year,

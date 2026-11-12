@@ -17,7 +17,7 @@ starts the first years; each year's coordinator starts the next ones (see
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from sqlalchemy import insert
 
@@ -45,9 +45,52 @@ if TYPE_CHECKING:
 
     from sqlalchemy import Connection
 
-    from policyengine_simulation_persistence.economy_rerun_records import (
-        WindowRerunYear,
-    )
+
+class WindowSide(Protocol):
+    """A window year's side: its simulation and the run the year names."""
+
+    @property
+    def simulation_id(self) -> UUID:
+        """The side's simulation."""
+        ...
+
+    @property
+    def simulation_run_id(self) -> UUID:
+        """The run of it the year names."""
+        ...
+
+    @property
+    def reused(self) -> bool:
+        """Whether the run already succeeded, rather than being created."""
+        ...
+
+
+class WindowYearRuns(Protocol):
+    """A year of a window run: its year, its report run and each side.
+
+    A new window's ``BudgetWindowYear`` and a re-run's ``WindowRerunYear``
+    are both one.
+    """
+
+    @property
+    def year(self) -> int:
+        """The year."""
+        ...
+
+    @property
+    def report_run_id(self) -> UUID:
+        """The year's report run."""
+        ...
+
+    @property
+    def baseline(self) -> WindowSide:
+        """The baseline side."""
+        ...
+
+    @property
+    def reform(self) -> WindowSide:
+        """The reform side."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -96,7 +139,10 @@ class NewBudgetWindowReport:
 
 
 def check_window_years(first_year: int, years: Sequence[int]) -> None:
-    """Raise ValueError unless ``years`` are 1 to 75 in a row from ``first_year``."""
+    """Raise ValueError unless ``years`` are 1 to 75 in a row from ``first_year``.
+
+    The last of them must also be no later than the tables' latest year.
+    """
     expected = tuple(range(first_year, first_year + len(years)))
     if (
         not years
@@ -182,7 +228,7 @@ def insert_budget_window_report(
 
 
 def year_run_row(
-    window_year: BudgetWindowYear | WindowRerunYear,
+    window_year: WindowYearRuns,
     *,
     report_id: UUID,
     window_run_id: UUID,

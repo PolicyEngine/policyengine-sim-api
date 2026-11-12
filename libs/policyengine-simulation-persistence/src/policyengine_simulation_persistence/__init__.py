@@ -9,6 +9,8 @@ from policyengine_simulation_persistence.access import (
 from policyengine_simulation_persistence.budget_window_records import (
     BudgetWindowYear,
     NewBudgetWindowReport,
+    WindowSide,
+    WindowYearRuns,
     insert_budget_window_report,
 )
 from policyengine_simulation_persistence.economy_rerun_records import (
@@ -195,7 +197,9 @@ __all__ = [
     "UnknownPolicyError",
     "UnknownRegionError",
     "WindowRerunYear",
+    "WindowSide",
     "WindowYearDefinition",
+    "WindowYearRuns",
     "bounded_transaction",
     "budget_window_runs",
     "combine_reforms",

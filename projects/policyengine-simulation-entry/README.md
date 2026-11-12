@@ -219,7 +219,8 @@ answers 201 with the same fields as the create, naming the new run.
 A re-run is refused before anything is written: 404 (`unknown_report`,
 `unknown_simulation`) for a record that doesn't exist; 409
 `run_in_progress`, naming the run in `run_id`, while the record has a run
-pending or running (for a report, a report run or a budget-window run);
+pending or running (for a report, its budget-window run, or else its report
+run);
 409 `rerun_not_supported` for a household record, which this service does
 not re-run yet, a budget window whose newest window run lacks a year, or a
 record that names no region, dataset, year, simulation or country the
@@ -237,8 +238,7 @@ deleted after the re-run read it answers 404. A report deleted with its
 simulations answers 400 `missing_reference`, naming a simulation, when a
 side gets a new run, and 404 when both sides reuse a run; a deleted
 budget-window report always answers 404, as its window run is created
-first. A 409 `run_in_progress` names the report's budget-window run under
-way, or else its report run, or the simulation's run. When Modal
+first. When Modal
 refuses the new
 run's call, the run is failed and the 503 `modal_call_refused` names the
 record and the run (`run_id`).
