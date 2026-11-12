@@ -193,8 +193,11 @@ def test_the_input_models_are_tables_the_service_reads() -> None:
     assert {table.name for table in input_metadata.tables.values()} == {
         "households",
         "policies",
+        "dynamics",
         "parameters",
         "parameter_values",
+        "regions",
+        "datasets",
         "tax_benefit_models",
         "tax_benefit_model_versions",
     }

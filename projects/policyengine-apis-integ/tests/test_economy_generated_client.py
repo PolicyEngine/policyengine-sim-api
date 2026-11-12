@@ -189,6 +189,8 @@ def test_a_report_and_a_simulation_are_read_with_their_newest_runs():
     )
 
     assert isinstance(report_response.parsed, EconomyReportState)
-    assert report_response.parsed.run.status is ReportRunStatus.SUCCEEDED
+    run = report_response.parsed.run
+    assert run is not None
+    assert run.status is ReportRunStatus.SUCCEEDED
     assert isinstance(simulation_response.parsed, EconomySimulationState)
     assert simulation_response.parsed.to_dict() == simulation
