@@ -355,7 +355,10 @@ def test_the_v2_coordinator_runs_each_call_as_a_window_year(monkeypatch) -> None
     coordinator_trace = {"traceparent": "00-coordinator-trace-01"}
 
     class TracedRuntime(RecordingRuntime):
-        """Captures the trace of the coordinator's open operation, as the real one."""
+        """Records whether an operation is open when the trace is captured.
+
+        The real runtime captures the trace of the operation that is open.
+        """
 
         operation_open = False
 
