@@ -281,39 +281,44 @@ def _contract_reasons(
 class HouseholdReportSideInputs:
     """One side of a household report run: the simulation run it records.
 
-    ``reform`` holds the side's policy values by parameter name and period,
-    empty for current law, as ``HouseholdReportStore.read_inputs`` reads them.
+    ``policy_values`` holds the side's policy values by parameter name and
+    period, empty for current law, as ``HouseholdReportStore.read_inputs``
+    reads them into ``reforms``.
     """
 
     simulation_run_id: UUID
-    reform: PolicyReform
+    policy_values: PolicyReform
 
 
 def household_report_calculation(  # noqa: PLR0913  # the report's stored inputs and its worker
     *,
-    country: str,
     household: StoredHousehold,
     year: int,
     add_missing_variables: bool,
-    sides: Mapping[ReportSide, HouseholdReportSideInputs],
+    baseline: HouseholdReportSideInputs,
+    reform: HouseholdReportSideInputs | None = None,
     worker: HouseholdWorker,
 ) -> HouseholdReportRunCalculation:
     """Build a household report run's household function payload from its inputs.
 
-    ``sides`` names the baseline and, for a report with one, the reform.
-    Each side's request calculates ``household`` for ``year`` with the
-    household's saved SPM selection, on ``worker``'s bundle, and its
-    calculation ID is the side's simulation run. Creating a report passes
-    the household's default year; a restart or re-run passes the stored
-    report's year and ``add_missing_variables``, so the call calculates what
-    was created.
+    Each side's request calculates the stored ``household``, in its
+    country, for ``year`` with the household's saved SPM selection, on
+    ``worker``'s bundle, and its calculation ID is the side's simulation
+    run; ``reform`` is None for a report of the baseline alone. Creating a
+    report passes the household's default year. A restart or re-run passes
+    the stored report's year and ``add_missing_variables``, and the
+    household and policy values as they are now read.
 
     Raise EconomySubmissionUnprocessableError (``household_not_calculable``)
     when the stored household cannot be read, or the household contract
-    refuses what would be calculated, located at the request field it traces
-    to; and HouseholdReportBuildError when it refuses a field the service
-    builds.
+    refuses what would be calculated, the baseline's checked first. Its
+    reasons are located at a report request's fields (``household_id``, a
+    side's ``policy_id``); a caller rebuilding a stored run reads them as
+    its own. Raise HouseholdReportBuildError when the contract refuses a
+    field the service builds, two sides recording one simulation run
+    included.
     """
+    country = household.country
     try:
         situation = household_situation(country, household.document)
     except UnreadableHouseholdError:
@@ -324,29 +329,36 @@ def household_report_calculation(  # noqa: PLR0913  # the report's stored inputs
                 type="household_unreadable",
             )
         ) from None
+    sides: dict[ReportSide, HouseholdReportSideInputs] = {"baseline": baseline}
+    if reform is not None:
+        sides["reform"] = reform
     requests = {
         side: _side_request(
             side,
-            inputs,
-            country=country,
+            side_inputs,
             year=year,
             situation=situation,
             add_missing_variables=add_missing_variables,
             household=household,
             worker=worker,
         )
-        for side, inputs in sides.items()
+        for side, side_inputs in sides.items()
     }
-    return HouseholdReportRunCalculation(
-        baseline=requests["baseline"], reform=requests.get("reform")
-    )
+    try:
+        return HouseholdReportRunCalculation(
+            baseline=requests["baseline"], reform=requests.get("reform")
+        )
+    except ValidationError as error:
+        msg = "the household report run's calculation was built wrong: " + "; ".join(
+            str(item["msg"]) for item in error.errors()
+        )
+        raise HouseholdReportBuildError(msg) from None
 
 
 def _side_request(  # noqa: PLR0913  # the side and what it calculates
     side: ReportSide,
-    inputs: HouseholdReportSideInputs,
+    side_inputs: HouseholdReportSideInputs,
     *,
-    country: str,
     year: int,
     situation: dict[str, Any],
     add_missing_variables: bool,
@@ -357,12 +369,12 @@ def _side_request(  # noqa: PLR0913  # the side and what it calculates
     try:
         return HouseholdExecutionRequest.model_validate(
             {
-                "calculation_id": inputs.simulation_run_id,
-                "country": country,
+                "calculation_id": side_inputs.simulation_run_id,
+                "country": household.country,
                 # The report's year, as a situation's period key.
                 "year": str(year),
                 "household": situation,
-                **job_policy_fields(reform=inputs.reform),
+                **job_policy_fields(reform=side_inputs.policy_values),
                 "add_missing_variables": add_missing_variables,
                 "bundle": worker.bundle,
                 **_spm_fields(household.document),
@@ -510,18 +522,19 @@ class HouseholdReportSubmissionService:
             )
             for side, policy_id in _policy_ids(request).items()
         }
+        side_inputs = {
+            side: HouseholdReportSideInputs(
+                simulation_run_id=created.simulation_run_id,
+                policy_values=inputs.reforms[side],
+            )
+            for side, created in sides.items()
+        }
         calculation = household_report_calculation(
-            country=request.country,
             household=household,
             year=year,
             add_missing_variables=request.add_missing_variables,
-            sides={
-                side: HouseholdReportSideInputs(
-                    simulation_run_id=created.simulation_run_id,
-                    reform=inputs.reforms[side],
-                )
-                for side, created in sides.items()
-            },
+            baseline=side_inputs["baseline"],
+            reform=side_inputs.get("reform"),
             worker=worker,
         )
         report = NewHouseholdReport(
