@@ -11,6 +11,7 @@ PostgreSQL in the persistence libraries.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -53,6 +54,7 @@ from policyengine_stage12_persistence import (
     BUDGET_WINDOW_MAX_RUNNING_YEARS,
     RunStatus,
     WindowAdvance,
+    YearStartDeferred,
     YearToStart,
 )
 from sqlalchemy.exc import OperationalError
@@ -105,6 +107,7 @@ class FakeAdvancer:
     failure: Exception | None = None
     advances: list[UUID] = field(default_factory=list)
     started: list[tuple[YearToStart, str]] = field(default_factory=list)
+    deferred: list[int] = field(default_factory=list)
 
     def advance_window(self, window_run_id, *, now, start_year):
         self.advances.append(window_run_id)
@@ -123,6 +126,10 @@ class FakeAdvancer:
             )
             try:
                 call_id = start_year(year_to_start)
+            except YearStartDeferred:
+                # As the store, the year and the later ones wait.
+                self.deferred.append(window_year.year)
+                break
             except Exception:  # noqa: BLE001  # as the store, any failed start fails the window
                 return WindowAdvance(
                     status=RunStatus.FAILED,
@@ -288,3 +295,38 @@ def test_a_window_whose_advance_cannot_be_written_is_answered_created() -> None:
 
     assert created.status is ReportRunStatus.PENDING
     assert created.report_id == store.windows[0].id
+
+
+@dataclass
+class SlowAfterFirstCaller(FakeCaller):
+    """Starts the first call at once, then waits past any limit for the rest."""
+
+    def __post_init__(self) -> None:
+        self.calls = 0
+
+    async def start_report_run(self, worker, report_payload, context_payload, **kwargs):
+        self.calls += 1
+        if self.calls > 1:
+            await asyncio.sleep(60)
+        return await super().start_report_run(
+            worker, report_payload, context_payload, **kwargs
+        )
+
+
+def test_the_first_years_share_one_wait_for_modal() -> None:
+    # A request starting five years one after another never waits more than
+    # one call's limit: a later year not started in time is left for the
+    # started year's coordinator to start.
+    store = FakeWindowStore()
+    caller = SlowAfterFirstCaller()
+    advancer = FakeAdvancer(store)
+    started_at = time.monotonic()
+
+    created = _submit(
+        _service(store, caller=caller, advancer=advancer), budget_window_size=5
+    )
+
+    assert time.monotonic() - started_at < 0.5
+    assert created.status is ReportRunStatus.PENDING
+    assert [year_to_start.year for year_to_start, _ in advancer.started] == [2026]
+    assert advancer.deferred == [2027]

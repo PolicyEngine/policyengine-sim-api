@@ -135,3 +135,46 @@ def test_an_economy_report_body_still_reaches_the_report_service(client_for) -> 
 
     assert len(submissions.reports) == 1
     assert submissions.windows == []
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        (
+            {**REPORT_BODY, "year": 1800},
+            {"loc": ["body", "year"], "type": "greater_than_equal"},
+        ),
+        (
+            {
+                name: value
+                for name, value in REPORT_BODY.items()
+                if name != "report_type"
+            },
+            {"loc": ["body", "report_type"], "type": "missing"},
+        ),
+        (
+            {**REPORT_BODY, "report_type": "household"},
+            {"loc": ["body", "report_type"], "type": "literal_error"},
+        ),
+        (
+            {**WINDOW_BODY, "budget_window_size": 0},
+            {"loc": ["body", "budget_window_size"], "type": "greater_than_equal"},
+        ),
+        (
+            {**WINDOW_BODY, "year": 2195},
+            {"loc": ["body"], "type": "value_error"},
+        ),
+    ],
+    ids=["economy-field", "no-type", "unknown-type", "window-field", "window-years"],
+)
+def test_a_refused_report_names_its_fields_as_an_economy_report_did(
+    client_for, body, expected
+) -> None:
+    # Telling the two request types apart adds nothing to a refused field's
+    # location: the Public API passes the locations to its callers.
+    with client_for(FakeSubmissions()) as client:
+        result = client.post("/reports", json=body)
+
+    assert result.status_code == 422
+    (error,) = result.json()["detail"]
+    assert {"loc": error["loc"], "type": error["type"]} == expected

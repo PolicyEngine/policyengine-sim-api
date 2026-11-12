@@ -31,6 +31,7 @@ from policyengine_stage12_persistence import (
     RunKind,
     RunStatus,
     WindowAdvance,
+    YearStartDeferred,
     YearToStart,
     budget_window_store,
 )
@@ -396,6 +397,35 @@ def test_a_start_that_fails_after_its_call_claimed_the_year_keeps_the_year(
     )
     rows = windows.year_rows(window)
     assert (rows[2026]["status"], rows[2026]["modal_call_id"]) == ("running", "fc-late")
+    assert windows.window_row(window)["status"] == "pending"
+
+
+def test_a_deferred_start_leaves_that_year_and_the_later_ones_waiting(
+    store, windows, window
+) -> None:
+    def defer_from_2028(year_to_start: YearToStart) -> str:
+        if year_to_start.year >= 2028:
+            raise YearStartDeferred
+        return f"fc-{year_to_start.year}"
+
+    advance = store.advance_window(
+        window.window_run_id, now=LATER, start_year=defer_from_2028
+    )
+
+    assert advance == WindowAdvance(
+        status=RunStatus.PENDING, changed=False, started_years=(2026, 2027)
+    )
+    rows = windows.year_rows(window)
+    assert {rows[year]["status"] for year in ALL_YEARS} == {"pending"}
+    assert [rows[year]["modal_call_id"] for year in ALL_YEARS] == [
+        "fc-2026",
+        "fc-2027",
+        None,
+        None,
+        None,
+        None,
+        None,
+    ]
     assert windows.window_row(window)["status"] == "pending"
 
 
