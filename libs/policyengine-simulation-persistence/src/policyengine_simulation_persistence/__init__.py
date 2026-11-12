@@ -32,8 +32,12 @@ from policyengine_simulation_persistence.household_job_store import (
 from policyengine_simulation_persistence.input_tables import input_metadata
 from policyengine_simulation_persistence.policy_reform import (
     MissingPolicyParametersError,
+    OverlappingReformError,
     PolicyReform,
+    UnknownDynamicError,
     UnknownPolicyError,
+    combine_reforms,
+    read_dynamic_reform,
     read_policy_reform,
 )
 from policyengine_simulation_persistence.tables import (
@@ -62,6 +66,7 @@ __all__ = [
     "HouseholdJobStore",
     "MissingPolicyParametersError",
     "NewHouseholdJob",
+    "OverlappingReformError",
     "PolicyReform",
     "ReportRunStatus",
     "ReportRunTrigger",
@@ -69,10 +74,12 @@ __all__ = [
     "SimulationType",
     "StoredHousehold",
     "UnknownCatalogVersionError",
+    "UnknownDynamicError",
     "UnknownHouseholdError",
     "UnknownPolicyError",
     "bounded_transaction",
     "budget_window_runs",
+    "combine_reforms",
     "create_simulation_engine",
     "fail_unstarted_household_job",
     "household_jobs",
@@ -81,6 +88,7 @@ __all__ = [
     "missing_table_privileges",
     "normalized_database_url",
     "read_catalog_version_id",
+    "read_dynamic_reform",
     "read_household_job",
     "read_missing_table_privileges",
     "read_policy_reform",
