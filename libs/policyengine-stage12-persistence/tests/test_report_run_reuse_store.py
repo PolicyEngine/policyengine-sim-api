@@ -87,8 +87,10 @@ def _read_before_and_after_success(store, seeder, run_id, region_id) -> None:
 
     pending = store.get_simulation_run(run_id)
     store.claim_simulation_run(run_id, modal_call_id="fc-worker", claimed_at=NOW)
+    running = store.get_simulation_run(run_id)
     store.complete_simulation_run(
         run_id,
+        modal_call_id="fc-worker",
         output_uri=OUTPUT_URI,
         output_sha256=OUTPUT_SHA256,
         completed_at=LATER,
@@ -107,7 +109,12 @@ def _read_before_and_after_success(store, seeder, run_id, region_id) -> None:
         region_id=region_id,
         output_uri=None,
         output_sha256=None,
+        modal_call_id=None,
+        error_message=None,
     )
+    # A running run names the call that holds it, for a restarted coordinator.
+    assert running.status is RunStatus.RUNNING
+    assert running.modal_call_id == "fc-worker"
     assert succeeded == SimulationRunState(
         status=RunStatus.SUCCEEDED,
         year=2026,
@@ -117,6 +124,8 @@ def _read_before_and_after_success(store, seeder, run_id, region_id) -> None:
         region_id=region_id,
         output_uri=OUTPUT_URI,
         output_sha256=OUTPUT_SHA256,
+        modal_call_id="fc-worker",
+        error_message=None,
     )
     assert read_again == succeeded
     # Reading a run changes nothing about it.

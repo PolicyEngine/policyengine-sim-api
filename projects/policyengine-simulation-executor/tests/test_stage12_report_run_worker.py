@@ -1,18 +1,29 @@
-"""A Stage 12 worker records its simulation run's status and output file."""
+"""A worker claims the simulation run its call names, under its own Modal call ID.
+
+The worker records that run's status and output file on the run tables
+alone: every test here hands it a comparison store that fails on any use. A
+report run's coordinator starts it with a planned simulation; the simulation
+service may start it on a simulation run of its own, which the worker plans
+by itself.
+"""
 
 from __future__ import annotations
+
+from hashlib import sha256
 
 import pytest
 from fixtures.fake_object_store import InMemoryObjectStore
 from policyengine_simulation_contract.stage12_execution import (
-    ComparisonRunLifecycleStatus,
     PlannedSimulationExecutionInput,
     SimulationRole,
+    stage12_output_plan_sha256,
 )
+from policyengine_simulation_executor import spm as runtime_spm
 from policyengine_simulation_executor import stage12_artifacts
 from policyengine_simulation_executor.stage12_artifacts import (
     SimulationOutputBucket,
     Stage12ArtifactStore,
+    serialize_simulation_frames,
 )
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationWorkerDependencies,
@@ -24,275 +35,315 @@ from policyengine_simulation_executor.stage12_runtime import (
 from policyengine_stage12_persistence import RunStatus
 from stage12_fake_report_runs import (
     BASELINE_RUN_ID,
+    REFORM_RUN_ID,
+    ComparisonStoreNotUsed,
     FakeReportRuns,
     report_run_context,
+    report_run_planned_simulation,
+    report_run_simulation,
+    simulation_run_context,
 )
-from stage12_fake_stores import (
-    SIMULATION_OUTPUT_BUCKET,
-    FakeArtifacts,
-    FakeStore,
-    simulation_frames,
-)
+from stage12_fake_stores import FakeArtifacts, FakeStore, simulation_frames
 from stage12_runtime_support import (
     child_record,
     invocation_context,
     planned_simulation,
+    shared_output_plan,
 )
 
+WORKER_CALL_ID = "fc-baseline-worker"
 ARTIFACT_BUCKET = "policyengine-stage12-staging-artifacts"
 OUTPUT_BUCKET = "policyengine-v2-staging-simulation-outputs"
+STANDALONE_PREFIX = f"stage-12-runs/staging/2026/09/{BASELINE_RUN_ID}"
 
 
-def _seeded_store(simulation, events=None):
-    store = FakeStore()
-    store.children[simulation.simulation_execution_id] = child_record(simulation)
-    if events is not None:
-        replace = store.replace_simulation_if_status
+class OutputFiles:
+    """Stored output files by URI, as Cloud Storage holds them."""
 
-        def recording_replace(record, *, expected_status):
-            events.append(f"stage12:{record.status.value}")
-            return replace(record, expected_status=expected_status)
+    def __init__(self) -> None:
+        self.payloads: dict[str, bytes] = {}
 
-        store.replace_simulation_if_status = recording_replace
-    return store
+    def read(self, uri: str) -> bytes:
+        if uri not in self.payloads:
+            raise FileNotFoundError(uri)
+        return self.payloads[uri]
 
 
-def _run_worker(simulation, store, report_runs, *, context=None, calculator=None):
+def _run_worker(report_runs, *, simulation=None, context=None, **dependencies):
+    simulation = simulation or report_run_planned_simulation(SimulationRole.BASELINE)
+    dependencies.setdefault("store", ComparisonStoreNotUsed())
+    dependencies.setdefault("artifacts", FakeArtifacts())
+    dependencies.setdefault("calculator", lambda _simulation: simulation_frames())
     return run_single_simulation(
         simulation.model_dump(mode="json"),
-        (context or report_run_context()).model_dump(mode="json"),
-        required_country="us",
-        modal_call_id="fc-baseline-worker",
-        dependencies=SimulationWorkerDependencies(
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=calculator or (lambda _: simulation_frames()),
-            report_runs=report_runs,
-        ),
-    )
-
-
-def _run_worker_over(artifacts, simulation, store, report_runs, *, context):
-    """Run the simulation's worker over ``artifacts``, a real two-bucket store."""
-    return run_single_simulation(
-        simulation.model_dump(mode="json"),
-        context.model_dump(mode="json"),
+        (context or simulation_run_context()).model_dump(mode="json"),
         required_country=simulation.geography.country,
-        modal_call_id="fc-baseline-worker",
+        modal_call_id=dependencies.pop("modal_call_id", WORKER_CALL_ID),
         dependencies=SimulationWorkerDependencies(
-            store=store,
-            artifacts=artifacts,
-            calculator=lambda _simulation: simulation_frames(),
-            report_runs=report_runs,
+            report_runs=report_runs, **dependencies
         ),
     )
 
 
-def test_worker_records_its_simulation_run_after_its_stage12_record() -> None:
-    events: list[str] = []
-    simulation = planned_simulation(SimulationRole.BASELINE)
-    store = _seeded_store(simulation, events)
-    report_runs = FakeReportRuns(events)
+def test_a_worker_claims_its_simulation_run_and_completes_it_with_its_output() -> None:
+    report_runs = FakeReportRuns()
 
-    result = _run_worker(simulation, store, report_runs)
+    result = _run_worker(report_runs)
 
     run = report_runs.simulation_runs[BASELINE_RUN_ID]
     assert run.status is RunStatus.SUCCEEDED
-    assert run.modal_call_id == "fc-baseline-worker"
+    assert run.modal_call_id == WORKER_CALL_ID
+    assert run.writes == ["claim_simulation_run", "complete_simulation_run"]
     assert run.output_uri == result["artifact"]["uri"]
-    assert run.output_uri == (
-        f"gs://{SIMULATION_OUTPUT_BUCKET}/staging/{BASELINE_RUN_ID}.parquet"
-    )
     assert run.output_sha256 == result["artifact"]["content_sha256"]
-    # The simulation run succeeds last, so a worker Modal restarts between
-    # the two writes finds its Stage 12 record succeeded and completes the
-    # simulation run from it, with the same output file.
-    assert events == [
-        "stage12:running",
-        "claim_simulation_run",
-        "stage12:succeeded",
-        "complete_simulation_run",
-    ]
+    assert result["simulation_execution_id"] == str(BASELINE_RUN_ID)
+    # The other simulation run is not this worker's.
+    assert report_runs.simulation_runs[REFORM_RUN_ID].writes == []
 
 
-def test_worker_failure_marks_its_simulation_run_failed() -> None:
-    simulation = planned_simulation(SimulationRole.BASELINE)
-    store = _seeded_store(simulation)
+def test_a_failed_calculation_fails_the_workers_simulation_run() -> None:
     report_runs = FakeReportRuns()
 
-    def failing_calculator(_simulation):
-        msg = "calculation failed"
-        raise ValueError(msg)
+    def failing_calculation(_simulation):
+        msg = "the calculation ran out of memory"
+        raise RuntimeError(msg)
 
     with pytest.raises(RuntimeError, match="execution failed"):
-        _run_worker(simulation, store, report_runs, calculator=failing_calculator)
+        _run_worker(report_runs, calculator=failing_calculation)
 
     run = report_runs.simulation_runs[BASELINE_RUN_ID]
     assert run.status is RunStatus.FAILED
-    assert run.error_message.startswith("simulation_execution_failed: ValueError")
-    child = store.children[simulation.simulation_execution_id]
-    assert child.status is ComparisonRunLifecycleStatus.FAILED
+    assert run.writes == ["claim_simulation_run", "fail_simulation_run"]
+    assert run.error_message.startswith("simulation_execution_failed: ")
+    assert "out of memory" not in run.error_message
 
 
-def test_worker_refuses_a_simulation_run_that_was_already_failed() -> None:
-    simulation = planned_simulation(SimulationRole.BASELINE)
-    store = _seeded_store(simulation)
+def test_an_invalid_policy_fails_the_simulation_run_with_its_reason() -> None:
     report_runs = FakeReportRuns()
-    report_runs.simulation_runs[BASELINE_RUN_ID].status = RunStatus.FAILED
-    calculated = []
+    simulation = report_run_planned_simulation(SimulationRole.REFORM).model_copy(
+        update={"policy": {"reform": {"2026": 1}}}
+    )
 
-    with pytest.raises(RuntimeError, match="cancelled"):
+    with pytest.raises(RuntimeError, match="execution failed"):
         _run_worker(
-            simulation,
-            store,
             report_runs,
-            calculator=lambda value: calculated.append(value) or simulation_frames(),
+            simulation=simulation,
+            context=simulation_run_context(REFORM_RUN_ID),
         )
 
-    assert calculated == []
-    assert report_runs.simulation_runs[BASELINE_RUN_ID].output_uri is None
+    run = report_runs.simulation_runs[REFORM_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message.startswith("invalid_policy_period: ")
 
 
-def test_restarted_worker_completes_its_run_from_its_succeeded_stage12_record() -> None:
-    simulation = planned_simulation(SimulationRole.BASELINE)
-    store = _seeded_store(simulation)
+@pytest.mark.parametrize(
+    ("status", "modal_call_id"),
+    [
+        # The simulation service recorded another call it started.
+        (RunStatus.PENDING, "fc-other-worker"),
+        (RunStatus.RUNNING, "fc-other-worker"),
+        (RunStatus.FAILED, None),
+    ],
+)
+def test_a_run_another_call_holds_or_that_failed_is_not_calculated(
+    status, modal_call_id
+) -> None:
     report_runs = FakeReportRuns()
-    # The earlier attempt marked its Stage 12 record succeeded, then Modal
-    # pre-empted it before it completed its simulation run.
-    store.children[simulation.simulation_execution_id] = store.children[
-        simulation.simulation_execution_id
-    ].model_copy(
-        update={
-            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
-            "output_uri": "gs://private/earlier-attempt.parquet",
-            "output_sha256": "e" * 64,
-            "output_schema_version": 1,
-            "row_identity_columns": ("household.household_id",),
-            "row_count": 1,
-            "row_identity_sha256": "f" * 64,
-            "completed_at": child_record(simulation).created_at,
-        }
-    )
     run = report_runs.simulation_runs[BASELINE_RUN_ID]
-    run.status, run.modal_call_id = RunStatus.RUNNING, "fc-baseline-worker"
+    run.status, run.modal_call_id = status, modal_call_id
     calculated = []
 
     result = _run_worker(
-        simulation,
-        store,
         report_runs,
-        calculator=lambda value: calculated.append(value) or simulation_frames(),
+        calculator=lambda simulation: (
+            calculated.append(simulation) or simulation_frames()
+        ),
+    )
+
+    assert result == {
+        "deduplicated": True,
+        "simulation_run_id": str(BASELINE_RUN_ID),
+        "status": status.value,
+    }
+    assert calculated == []
+    assert run.writes == ["claim_simulation_run"]
+
+
+def test_a_restarted_worker_resumes_its_own_claim() -> None:
+    # Modal runs a pre-empted worker again under the same call ID.
+    report_runs = FakeReportRuns()
+    run = report_runs.simulation_runs[BASELINE_RUN_ID]
+    run.status, run.modal_call_id = RunStatus.RUNNING, WORKER_CALL_ID
+
+    _run_worker(report_runs)
+
+    assert run.status is RunStatus.SUCCEEDED
+    assert run.writes == ["claim_simulation_run", "complete_simulation_run"]
+
+
+def test_a_run_that_already_succeeded_returns_its_stored_output_uncalculated(
+    monkeypatch,
+) -> None:
+    # A pre-empted worker completed its run before Modal ran it again.
+    monkeypatch.setattr(runtime_spm, "normalize_runtime_spm", lambda _params: None)
+    report_runs = FakeReportRuns()
+    files = OutputFiles()
+    payload, _row_identity = serialize_simulation_frames(simulation_frames())
+    stored_uri = f"gs://{OUTPUT_BUCKET}/simulation-runs/staging/us/run.parquet"
+    files.payloads[stored_uri] = payload
+    run = report_runs.simulation_runs[BASELINE_RUN_ID]
+    run.status, run.modal_call_id = RunStatus.SUCCEEDED, WORKER_CALL_ID
+    run.output_uri, run.output_sha256 = stored_uri, sha256(payload).hexdigest()
+    calculated = []
+
+    result = _run_worker(
+        report_runs,
+        output_files=files,
+        calculator=lambda simulation: (
+            calculated.append(simulation) or simulation_frames()
+        ),
     )
 
     assert calculated == []
-    assert result["artifact"]["uri"] == "gs://private/earlier-attempt.parquet"
-    assert run.status is RunStatus.SUCCEEDED
-    assert run.output_uri == "gs://private/earlier-attempt.parquet"
-    assert run.output_sha256 == "e" * 64
-
-
-def test_a_restarted_worker_returns_its_result_if_completing_its_run_fails() -> None:
-    simulation = planned_simulation(SimulationRole.BASELINE)
-    store = _seeded_store(simulation)
-    store.children[simulation.simulation_execution_id] = store.children[
-        simulation.simulation_execution_id
-    ].model_copy(
-        update={
-            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
-            "output_uri": "gs://private/earlier-attempt.parquet",
-            "output_sha256": "e" * 64,
-            "output_schema_version": 1,
-            "row_identity_columns": ("household.household_id",),
-            "row_count": 1,
-            "row_identity_sha256": "f" * 64,
-            "completed_at": child_record(simulation).created_at,
-        }
+    assert result["artifact"]["uri"] == stored_uri
+    assert result["artifact"]["content_sha256"] == run.output_sha256
+    assert result["output_plan_sha256"] == stage12_output_plan_sha256(
+        shared_output_plan()
     )
+    assert run.writes == ["claim_simulation_run"]
+
+
+@pytest.mark.parametrize("taken_by", ["coordinator-failure", "next-worker"])
+def test_a_worker_that_lost_its_run_records_nothing(taken_by) -> None:
     report_runs = FakeReportRuns()
-    report_runs.simulation_runs[BASELINE_RUN_ID].status = RunStatus.RUNNING
+    run = report_runs.simulation_runs[BASELINE_RUN_ID]
 
-    def dropped(*_args, **_kwargs):
-        msg = "the connection dropped"
-        raise ConnectionError(msg)
+    def calculation_meanwhile(_simulation):
+        if taken_by == "coordinator-failure":
+            report_runs.fail_simulation_run(
+                BASELINE_RUN_ID,
+                error_message="simulation_cancelled: Cancelled after a failure.",
+                failed_at=None,
+            )
+        else:
+            report_runs.release_simulation_run(
+                BASELINE_RUN_ID, modal_call_id=WORKER_CALL_ID, released_at=None
+            )
+            report_runs.claim_simulation_run(
+                BASELINE_RUN_ID, modal_call_id="fc-next-worker", claimed_at=None
+            )
+        return simulation_frames()
 
-    report_runs.complete_simulation_run = dropped
+    with pytest.raises(RuntimeError, match="cancelled"):
+        _run_worker(report_runs, calculator=calculation_meanwhile)
 
-    result = _run_worker(simulation, store, report_runs)
+    assert run.output_uri is None
+    # The worker's completion was refused, and it failed nothing afterwards.
+    assert run.writes[-1] == "complete_simulation_run"
+    if taken_by == "next-worker":
+        assert (run.status, run.modal_call_id) == (RunStatus.RUNNING, "fc-next-worker")
+    else:
+        assert run.error_message.startswith("simulation_cancelled: ")
 
-    assert result["artifact"]["uri"] == "gs://private/earlier-attempt.parquet"
 
-
-def test_a_simulation_run_another_report_recorded_keeps_its_output() -> None:
-    simulation = planned_simulation(SimulationRole.BASELINE)
-    store = _seeded_store(simulation)
+def test_a_segmented_worker_learns_its_run_was_taken_from_it(monkeypatch) -> None:
+    monkeypatch.setattr(simulation_module, "should_segment_simulation", lambda _: True)
     report_runs = FakeReportRuns()
-    # Another report run, sharing this simulation run, already recorded it.
-    store.children[simulation.simulation_execution_id] = store.children[
-        simulation.simulation_execution_id
-    ].model_copy(update={"status": ComparisonRunLifecycleStatus.RUNNING})
-    earlier = report_runs.simulation_runs[BASELINE_RUN_ID]
-    earlier.status = RunStatus.SUCCEEDED
-    earlier.output_uri = "gs://private/earlier-attempt.parquet"
-    earlier.output_sha256 = "e" * 64
+    checks = []
 
-    result = _run_worker(simulation, store, report_runs)
+    def segmented(_simulation, cancellation_requested):
+        checks.append(cancellation_requested())
+        report_runs.fail_simulation_run(
+            BASELINE_RUN_ID, error_message="simulation_cancelled: x", failed_at=None
+        )
+        checks.append(cancellation_requested())
+        return simulation_module.SimulationCalculation(frames=simulation_frames())
 
-    assert earlier.output_uri == "gs://private/earlier-attempt.parquet"
-    assert earlier.writes == ["claim_simulation_run", "complete_simulation_run"]
-    child = store.children[simulation.simulation_execution_id]
-    assert child.status is ComparisonRunLifecycleStatus.SUCCEEDED
-    assert child.output_uri == result["artifact"]["uri"]
+    with pytest.raises(RuntimeError, match="cancelled"):
+        _run_worker(report_runs, segmented_calculator=segmented)
+
+    assert checks == [False, True]
 
 
-def test_a_lost_simulation_run_success_still_returns_the_workers_result() -> None:
-    # The child record already succeeded; the coordinator completes the run
-    # from it, so a failed second write must not fail the worker.
-    simulation = planned_simulation(SimulationRole.BASELINE)
-    store = _seeded_store(simulation)
-    report_runs = FakeReportRuns()
-
-    def dropped(*_args, **_kwargs):
-        msg = "the connection dropped"
-        raise ConnectionError(msg)
-
-    report_runs.complete_simulation_run = dropped
-
-    result = _run_worker(simulation, store, report_runs)
-
-    child = store.children[simulation.simulation_execution_id]
-    assert child.status is ComparisonRunLifecycleStatus.SUCCEEDED
-    assert child.output_uri == result["artifact"]["uri"]
-    assert report_runs.simulation_runs[BASELINE_RUN_ID].status is RunStatus.RUNNING
-
-
-def test_comparison_worker_records_no_simulation_run() -> None:
-    simulation = planned_simulation(SimulationRole.BASELINE)
-    store = _seeded_store(simulation)
+def test_a_detailed_save_worker_needs_its_modal_call_id() -> None:
     report_runs = FakeReportRuns()
 
-    _run_worker(simulation, store, report_runs, context=invocation_context())
+    with pytest.raises(ValueError, match="Modal call ID"):
+        _run_worker(report_runs, modal_call_id=None)
 
     assert report_runs.events == []
 
 
-def test_report_run_worker_needs_its_modal_call_id() -> None:
-    simulation = planned_simulation(SimulationRole.BASELINE)
+def test_a_worker_input_naming_another_simulation_run_fails_the_claimed_run() -> None:
+    report_runs = FakeReportRuns()
 
-    with pytest.raises(ValueError, match="Modal call ID"):
-        run_single_simulation(
-            simulation.model_dump(mode="json"),
-            report_run_context().model_dump(mode="json"),
-            required_country="us",
-            dependencies=SimulationWorkerDependencies(
-                store=_seeded_store(simulation),
-                artifacts=FakeArtifacts(),
-                report_runs=FakeReportRuns(),
-            ),
+    with pytest.raises(RuntimeError, match="execution failed"):
+        _run_worker(
+            report_runs,
+            simulation=report_run_planned_simulation(SimulationRole.REFORM),
+            context=simulation_run_context(BASELINE_RUN_ID),
         )
+
+    run = report_runs.simulation_runs[BASELINE_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message.startswith("simulation_run_input_mismatch: ")
+    assert report_runs.simulation_runs[REFORM_RUN_ID].writes == []
+
+
+def test_a_worker_context_naming_a_report_run_is_refused_unwritten() -> None:
+    report_runs = FakeReportRuns()
+
+    with pytest.raises(ValueError, match="simulation run"):
+        _run_worker(report_runs, context=report_run_context())
+
+    assert report_runs.events == []
+
+
+def test_a_standalone_simulation_run_is_planned_and_calculated_on_its_own() -> None:
+    report_runs = FakeReportRuns()
+    planned = []
+    standalone = report_run_simulation(SimulationRole.BASELINE).model_copy(
+        update={"role": SimulationRole.STANDALONE, "evaluation_id": BASELINE_RUN_ID}
+    )
+    context = simulation_run_context(BASELINE_RUN_ID).model_copy(
+        update={"artifact_prefix": STANDALONE_PREFIX}
+    )
+
+    def planner(simulation):
+        planned.append(simulation)
+        return shared_output_plan()
+
+    result = _run_worker(
+        report_runs,
+        simulation=standalone,
+        context=context,
+        output_plan_resolver=planner,
+    )
+
+    assert planned == [standalone]
+    assert result["role"] == "standalone"
+    assert result["output_plan_sha256"] == stage12_output_plan_sha256(
+        shared_output_plan()
+    )
+    run = report_runs.simulation_runs[BASELINE_RUN_ID]
+    assert (run.status, run.modal_call_id) == (RunStatus.SUCCEEDED, WORKER_CALL_ID)
+    assert run.output_uri == result["artifact"]["uri"]
+
+
+def test_a_comparison_worker_records_no_simulation_run() -> None:
+    simulation = planned_simulation(SimulationRole.BASELINE)
+    store = FakeStore()
+    store.children[simulation.simulation_execution_id] = child_record(simulation)
+    report_runs = FakeReportRuns()
+
+    _run_worker(
+        report_runs, simulation=simulation, context=invocation_context(), store=store
+    )
+
+    assert report_runs.events == []
 
 
 def test_report_run_worker_names_its_artifacts_by_digest(monkeypatch) -> None:
-    simulation = planned_simulation(SimulationRole.BASELINE)
     built = []
     artifacts = FakeArtifacts()
 
@@ -301,16 +352,18 @@ def test_report_run_worker_names_its_artifacts_by_digest(monkeypatch) -> None:
         return artifacts
 
     monkeypatch.setattr(simulation_module, "artifact_store", recording_artifact_store)
+    report_runs = FakeReportRuns()
+    simulation = report_run_planned_simulation(SimulationRole.BASELINE)
 
     run_single_simulation(
         simulation.model_dump(mode="json"),
-        report_run_context().model_dump(mode="json"),
+        simulation_run_context().model_dump(mode="json"),
         required_country="us",
-        modal_call_id="fc-baseline-worker",
+        modal_call_id=WORKER_CALL_ID,
         dependencies=SimulationWorkerDependencies(
-            store=_seeded_store(simulation),
+            store=ComparisonStoreNotUsed(),
             calculator=lambda _: simulation_frames(),
-            report_runs=FakeReportRuns(),
+            report_runs=report_runs,
         ),
     )
 
@@ -319,30 +372,26 @@ def test_report_run_worker_names_its_artifacts_by_digest(monkeypatch) -> None:
     assert artifacts.simulation_run_outputs == [("staging", BASELINE_RUN_ID)]
 
 
-def _two_bucket_artifacts(*, content_addressed):
+def _two_bucket_artifacts():
     """Return a store over in-memory artifact and simulation output buckets."""
     artifact_objects = InMemoryObjectStore()
     output_objects = InMemoryObjectStore()
     artifacts = Stage12ArtifactStore(
         ARTIFACT_BUCKET,
         store=artifact_objects,
-        content_addressed=content_addressed,
+        content_addressed=True,
         simulation_outputs=SimulationOutputBucket(OUTPUT_BUCKET, store=output_objects),
     )
     return artifacts, artifact_objects, output_objects
 
 
-def test_a_report_run_worker_keeps_its_output_in_the_simulation_output_bucket() -> None:
-    simulation = planned_simulation(SimulationRole.BASELINE)
-    store = _seeded_store(simulation)
+def test_a_detailed_save_worker_keeps_its_output_in_the_simulation_output_bucket() -> (
+    None
+):
     report_runs = FakeReportRuns()
-    artifacts, artifact_objects, output_objects = _two_bucket_artifacts(
-        content_addressed=True
-    )
+    artifacts, artifact_objects, output_objects = _two_bucket_artifacts()
 
-    result = _run_worker_over(
-        artifacts, simulation, store, report_runs, context=report_run_context()
-    )
+    result = _run_worker(report_runs, artifacts=artifacts)
 
     digest = result["artifact"]["content_sha256"]
     path = f"simulation-runs/staging/us/{BASELINE_RUN_ID}/output-{digest}.parquet"
@@ -350,34 +399,13 @@ def test_a_report_run_worker_keeps_its_output_in_the_simulation_output_bucket() 
     assert result["artifact"]["uri"] == output_uri
     run = report_runs.simulation_runs[BASELINE_RUN_ID]
     assert (run.output_uri, run.output_sha256) == (output_uri, digest)
-    child = store.children[simulation.simulation_execution_id]
-    assert (child.output_uri, child.output_sha256) == (output_uri, digest)
     assert list(output_objects.objects) == [path]
-    # The planned input stays with the run's other artifacts, under its prefix.
+    # The planned input stays in the artifact bucket, under the call's prefix.
     (input_path,) = artifact_objects.objects
-    assert input_path.startswith(f"{report_run_context().artifact_prefix}/inputs/")
+    assert input_path.startswith(f"{simulation_run_context().artifact_prefix}/inputs/")
 
 
-def test_a_comparison_worker_keeps_its_output_under_its_artifact_prefix() -> None:
-    simulation = planned_simulation(SimulationRole.BASELINE)
-    store = _seeded_store(simulation)
-    report_runs = FakeReportRuns()
-    artifacts, artifact_objects, output_objects = _two_bucket_artifacts(
-        content_addressed=False
-    )
-
-    result = _run_worker_over(
-        artifacts, simulation, store, report_runs, context=invocation_context()
-    )
-
-    path = f"{invocation_context().artifact_prefix}/simulations/baseline.parquet"
-    assert result["artifact"]["uri"] == f"gs://{ARTIFACT_BUCKET}/{path}"
-    assert path in artifact_objects.objects
-    assert output_objects.objects == {}
-    assert report_runs.events == []
-
-
-def test_a_report_run_worker_without_an_output_bucket_fails_before_its_claim(
+def test_a_detailed_save_worker_without_an_output_bucket_fails_before_its_claim(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("STAGE12_ARTIFACT_BUCKET", ARTIFACT_BUCKET)
@@ -386,62 +414,48 @@ def test_a_report_run_worker_without_an_output_bucket_fails_before_its_claim(
     monkeypatch.setattr(
         stage12_artifacts, "ArtifactStore", lambda _bucket_name: InMemoryObjectStore()
     )
-    simulation = planned_simulation(SimulationRole.BASELINE)
-    store = _seeded_store(simulation)
     report_runs = FakeReportRuns()
-    calculated = []
+    simulation = report_run_planned_simulation(SimulationRole.BASELINE)
 
     with pytest.raises(ValueError, match="V2_SIMULATION_OUTPUT_BUCKET"):
         run_single_simulation(
             simulation.model_dump(mode="json"),
-            report_run_context().model_dump(mode="json"),
+            simulation_run_context().model_dump(mode="json"),
             required_country="us",
-            modal_call_id="fc-baseline-worker",
+            modal_call_id=WORKER_CALL_ID,
             dependencies=SimulationWorkerDependencies(
-                store=store,
-                calculator=lambda value: (
-                    calculated.append(value) or simulation_frames()
-                ),
+                store=ComparisonStoreNotUsed(),
+                calculator=lambda _: simulation_frames(),
                 report_runs=report_runs,
             ),
         )
 
-    assert calculated == []
-    child = store.children[simulation.simulation_execution_id]
-    assert child.status is ComparisonRunLifecycleStatus.PENDING
-    assert report_runs.simulation_runs[BASELINE_RUN_ID].status is RunStatus.PENDING
+    assert report_runs.events == []
 
 
 def _uk_planned_simulation():
-    """Return the baseline planned simulation, for the whole of the UK."""
-    payload = planned_simulation(SimulationRole.BASELINE).model_dump(mode="json")
+    """Return the baseline report run simulation, for the whole of the UK."""
+    payload = report_run_planned_simulation(SimulationRole.BASELINE).model_dump(
+        mode="json"
+    )
     payload["geography"] = {"country": "uk", "region": "uk"}
     payload["output_plan"]["country"] = "uk"
     payload["bundle"]["country_package_name"] = "policyengine-uk"
     return PlannedSimulationExecutionInput.model_validate(payload)
 
 
-def test_a_uk_report_run_worker_keeps_its_output_in_the_simulation_output_bucket() -> (
-    None
-):
-    simulation = _uk_planned_simulation()
-    store = _seeded_store(simulation)
+def test_a_uk_worker_keeps_its_output_in_the_simulation_output_bucket() -> None:
     report_runs = FakeReportRuns()
-    artifacts, artifact_objects, output_objects = _two_bucket_artifacts(
-        content_addressed=True
-    )
+    artifacts, artifact_objects, output_objects = _two_bucket_artifacts()
 
-    result = _run_worker_over(
-        artifacts, simulation, store, report_runs, context=report_run_context()
+    result = _run_worker(
+        report_runs, simulation=_uk_planned_simulation(), artifacts=artifacts
     )
 
     digest = result["artifact"]["content_sha256"]
     path = f"simulation-runs/staging/uk/{BASELINE_RUN_ID}/output-{digest}.parquet"
     assert result["artifact"]["uri"] == f"gs://{OUTPUT_BUCKET}/{path}"
     assert list(output_objects.objects) == [path]
-    assert report_runs.simulation_runs[BASELINE_RUN_ID].output_uri == (
-        f"gs://{OUTPUT_BUCKET}/{path}"
-    )
     assert not any(
         stored_path.endswith(".parquet") for stored_path in artifact_objects.objects
     )

@@ -26,10 +26,7 @@ from policyengine_simulation_contract.spm import (
     build_spm_provenance,
     validate_spm_calculation_provenance,
 )
-from policyengine_simulation_contract.stage12_execution import (
-    ComparisonRunLifecycleStatus,
-    ReportRunIds,
-)
+from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_simulation_executor import spm as runtime_spm
 from policyengine_simulation_executor import stage12_artifacts
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -42,29 +39,21 @@ from policyengine_simulation_executor.stage12_runtime.reused_outputs import (
     CloudStorageOutputFiles,
 )
 from policyengine_stage12_persistence import RunStatus
-from stage12_child_call_support import (
-    ConcurrentInvoker,
-    InjectedChildFaults,
-    TimeoutInvoker,
-)
+from stage12_child_call_support import TimeoutInvoker
 from stage12_fake_report_runs import (
     BASELINE_RUN_ID,
     REFORM_RUN_ID,
     REPORT_RUN_ID,
+    ComparisonStoreNotUsed,
     FakeReportRuns,
     FakeRun,
     economy_aggregate,
     report_run_context,
+    report_run_input,
 )
-from stage12_fake_stores import FakeArtifacts, FakeStore, simulation_frames
-from stage12_runtime_support import (
-    BASELINE_ID,
-    NOW,
-    REFORM_ID,
-    coordinate_report,
-    parent_record,
-    report_execution_input,
-)
+from stage12_fake_stores import FakeArtifacts, simulation_frames
+from stage12_run_worker_support import RunWorkerInvoker
+from stage12_runtime_support import coordinate_report
 
 COORDINATOR_CALL_ID = "fc-coordinator"
 # Another bucket than the Stage 12 artifact bucket the fakes write to.
@@ -228,8 +217,15 @@ def _succeeded_with_output(
     return stored
 
 
+def _assert_failed_with_its_report(simulation_run) -> None:
+    """Check a simulation run the report never started failed with the report."""
+    assert simulation_run.status is RunStatus.FAILED
+    assert simulation_run.error_message == (
+        "simulation_cancelled: Cancelled after the report failed."
+    )
+
+
 def _coordinate(  # noqa: PLR0913  # the stores, the seams and the call's identity
-    store,
     report_runs,
     invoker,
     artifacts,
@@ -241,15 +237,14 @@ def _coordinate(  # noqa: PLR0913  # the stores, the seams and the call's identi
     aggregator=economy_aggregate,
     **seams,
 ):
-    report = report or report_execution_input()
+    report = report or report_run_input()
     context = context or report_run_context()
     return coordinate_report(
         report.model_dump(mode="json"),
         context.model_dump(mode="json"),
-        parent_record().model_dump(mode="json"),
         application_name=context.modal_application,
         coordinator_invocation_id=coordinator_call_id,
-        store=store,
+        store=ComparisonStoreNotUsed(),
         artifacts=artifacts,
         invoker=invoker,
         aggregator=aggregator,
@@ -262,7 +257,6 @@ def _coordinate(  # noqa: PLR0913  # the stores, the seams and the call's identi
 def test_a_succeeded_baseline_run_is_aggregated_from_its_output_without_a_worker() -> (
     None
 ):
-    store = FakeStore()
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
     stored = _succeeded_with_output(
@@ -272,7 +266,7 @@ def test_a_succeeded_baseline_run_is_aggregated_from_its_output_without_a_worker
         frames=simulation_frames(90.0),
     )
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    invoker = RunWorkerInvoker(report_runs, artifacts)
     aggregated = []
 
     def recording_aggregator(**inputs):
@@ -280,7 +274,7 @@ def test_a_succeeded_baseline_run_is_aggregated_from_its_output_without_a_worker
         return economy_aggregate()
 
     result = _coordinate(
-        store, report_runs, invoker, artifacts, files, aggregator=recording_aggregator
+        report_runs, invoker, artifacts, files, aggregator=recording_aggregator
     )
 
     # Only the reform is calculated; the baseline run is never claimed again.
@@ -297,23 +291,19 @@ def test_a_succeeded_baseline_run_is_aggregated_from_its_output_without_a_worker
         stored.uri,
         stored.sha256,
     )
-    # No worker coordinates the reused run, so it has no Stage 12 child record.
-    assert set(store.children) == {REFORM_ID}
     assert files.reads == [stored.uri]
     (inputs,) = aggregated
     reused = inputs["baseline"]
-    assert reused.descriptor.simulation_execution_id == BASELINE_ID
+    assert reused.descriptor.simulation_execution_id == BASELINE_RUN_ID
     assert reused.descriptor.artifact.uri == stored.uri
     assert reused.descriptor.artifact.content_sha256 == stored.sha256
     pd.testing.assert_frame_equal(
         reused.frames["household"], stored.frames["household"]
     )
-    assert result["baseline_artifact_sha256"] == stored.sha256
-    assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
 
 
 def test_a_report_run_whose_two_runs_succeeded_starts_no_worker() -> None:
-    store = FakeStore()
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
     baseline = _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
@@ -324,12 +314,11 @@ def test_a_report_run_whose_two_runs_succeeded_starts_no_worker() -> None:
         frames=simulation_frames(120.0),
     )
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    invoker = RunWorkerInvoker(report_runs, artifacts)
 
-    result = _coordinate(store, report_runs, invoker, artifacts, files)
+    result = _coordinate(report_runs, invoker, artifacts, files)
 
     assert invoker.events == []
-    assert store.children == {}
     assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
     assert report_runs.report_runs[REPORT_RUN_ID].writes == [
         "claim_report_run",
@@ -338,8 +327,7 @@ def test_a_report_run_whose_two_runs_succeeded_starts_no_worker() -> None:
     for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
         assert report_runs.simulation_runs[run_id].writes == []
     assert sorted(files.reads) == sorted([baseline.uri, reform.uri])
-    assert result["baseline_artifact_sha256"] == baseline.sha256
-    assert result["reform_artifact_sha256"] == reform.sha256
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
 
 
 @pytest.mark.parametrize("status", [RunStatus.PENDING, RunStatus.RUNNING])
@@ -348,9 +336,9 @@ def test_a_pending_or_running_simulation_run_is_calculated_as_before(status) -> 
     report_runs.simulation_runs[BASELINE_RUN_ID].status = status
     files = FakeOutputFiles()
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    invoker = RunWorkerInvoker(report_runs, artifacts)
 
-    _coordinate(FakeStore(), report_runs, invoker, artifacts, files)
+    _coordinate(report_runs, invoker, artifacts, files)
 
     assert sorted(invoker.events) == ["spawn:baseline", "spawn:reform"]
     assert files.reads == []
@@ -462,27 +450,25 @@ UNUSABLE_OUTPUTS = {
 def test_a_reused_output_that_cannot_be_used_fails_the_report_run_uncalculated(
     make_unusable, error_code
 ) -> None:
-    store = FakeStore()
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
     make_unusable(report_runs, files)
     baseline_before = deepcopy(report_runs.simulation_runs[BASELINE_RUN_ID])
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    invoker = RunWorkerInvoker(report_runs, artifacts)
 
     with pytest.raises(RuntimeError, match="coordination failed"):
-        _coordinate(store, report_runs, invoker, artifacts, files)
+        _coordinate(report_runs, invoker, artifacts, files)
 
     report_run = report_runs.report_runs[REPORT_RUN_ID]
     assert report_run.status is RunStatus.FAILED
     assert report_run.error_message.startswith(f"{error_code}: ")
     assert f"baseline simulation run {BASELINE_RUN_ID}" in report_run.error_message
-    # Nothing is calculated, and neither simulation run is written.
+    # Nothing is calculated, and the reused run is not written; the reform
+    # was never started, and fails with its report run.
     assert invoker.events == []
     assert report_runs.simulation_runs[BASELINE_RUN_ID] == baseline_before
-    assert report_runs.simulation_runs[REFORM_RUN_ID].writes == []
-    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
-    assert store.parent.error_code == error_code
+    _assert_failed_with_its_report(report_runs.simulation_runs[REFORM_RUN_ID])
 
 
 @pytest.mark.parametrize(
@@ -496,16 +482,15 @@ def test_a_reused_run_must_share_the_dataset_and_region_of_its_report_runs_other
     # The baseline and reform of one report calculate one population and
     # geography, so the report run's two simulation runs name one catalog
     # dataset and region.
-    store = FakeStore()
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
     _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
     setattr(report_runs.simulation_runs[BASELINE_RUN_ID], column, recorded)
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    invoker = RunWorkerInvoker(report_runs, artifacts)
 
     with pytest.raises(RuntimeError, match="coordination failed"):
-        _coordinate(store, report_runs, invoker, artifacts, files)
+        _coordinate(report_runs, invoker, artifacts, files)
 
     message = report_runs.report_runs[REPORT_RUN_ID].error_message
     assert message.startswith("reused_simulation_run_mismatch: ")
@@ -513,13 +498,13 @@ def test_a_reused_run_must_share_the_dataset_and_region_of_its_report_runs_other
     assert f"reform simulation run {REFORM_RUN_ID}" in message
     assert f"{column} {recorded or 'none'} instead of " in message
     assert invoker.events == []
-    for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
-        assert report_runs.simulation_runs[run_id].writes == []
+    assert report_runs.simulation_runs[BASELINE_RUN_ID].writes == []
+    _assert_failed_with_its_report(report_runs.simulation_runs[REFORM_RUN_ID])
 
 
 def _report_with_options(options):
     """Return the shared report with ``options`` on both of its simulations."""
-    report = report_execution_input()
+    report = report_run_input()
     return report.model_copy(
         update={
             "baseline": report.baseline.model_copy(update={"options": options}),
@@ -536,32 +521,11 @@ REUSED_SIDES = {
 REPORT_OPTIONS = {"spm": {"scenario": "ce_trend"}, "include_cliffs": True}
 
 
-class ReceiptWritingCall:
-    """A fake worker's call whose descriptor carries the SPM receipt it wrote."""
-
-    def __init__(self, call, receipt) -> None:
-        self.call = call
-        self.object_id = call.object_id
-        self.receipt = receipt
-
-    def get(self, *, timeout=None):
-        descriptor = self.call.get(timeout=timeout)
-        return {
-            **descriptor,
-            "calculation_provenance": self.receipt.model_dump(
-                mode="json", by_alias=True
-            ),
-        }
-
-    def cancel(self) -> None:
-        self.call.cancel()
-
-
-class SpmReceiptWritingInvoker(ConcurrentInvoker):
-    """Fake workers that write the certified defaults' SPM receipt, as real ones do."""
-
-    def spawn(self, request):
-        return ReceiptWritingCall(super().spawn(request), WORKER_SPM_RECEIPT)
+def spm_receipt_writing_invoker(report_runs, artifacts):
+    """Start real workers that write the certified defaults' SPM receipt."""
+    return RunWorkerInvoker(
+        report_runs, artifacts, calculation_provenance=WORKER_SPM_RECEIPT
+    )
 
 
 def spm_checking_aggregator(*, report, baseline, reform, **_inputs):
@@ -591,10 +555,9 @@ def test_each_reused_simulations_options_country_and_year_reach_the_spm_resolver
     artifacts = FakeArtifacts()
     # A side that is calculated gets the receipt a real worker would write,
     # and the aggregation combines both sides' receipts as it really does.
-    invoker = SpmReceiptWritingInvoker(artifacts)
+    invoker = spm_receipt_writing_invoker(report_runs, artifacts)
 
     _coordinate(
-        FakeStore(),
         report_runs,
         invoker,
         artifacts,
@@ -627,7 +590,6 @@ def test_each_reused_simulations_options_country_and_year_reach_the_spm_resolver
 def test_two_reused_runs_naming_different_datasets_or_regions_fail_the_report(
     column,
 ) -> None:
-    store = FakeStore()
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
     for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
@@ -635,10 +597,10 @@ def test_two_reused_runs_naming_different_datasets_or_regions_fail_the_report(
     baseline_value = getattr(report_runs.simulation_runs[BASELINE_RUN_ID], column)
     setattr(report_runs.simulation_runs[REFORM_RUN_ID], column, OTHER_CATALOG_ID)
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    invoker = RunWorkerInvoker(report_runs, artifacts)
 
     with pytest.raises(RuntimeError, match="coordination failed"):
-        _coordinate(store, report_runs, invoker, artifacts, files)
+        _coordinate(report_runs, invoker, artifacts, files)
 
     message = report_runs.report_runs[REPORT_RUN_ID].error_message
     assert message.startswith("reused_simulation_run_mismatch: ")
@@ -650,7 +612,6 @@ def test_two_reused_runs_naming_different_datasets_or_regions_fail_the_report(
     assert invoker.events == []
     for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
         assert report_runs.simulation_runs[run_id].writes == []
-    assert store.parent.error_code == "reused_simulation_run_mismatch"
 
 
 def test_a_reused_output_without_the_resolved_spm_calculation_fails_the_report() -> (
@@ -658,17 +619,16 @@ def test_a_reused_output_without_the_resolved_spm_calculation_fails_the_report()
 ):
     # A US request with no SPM option takes the certified defaults, so a
     # worker would calculate an SPM measure and write its receipt.
-    store = FakeStore()
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
     _succeeded_with_output(
         report_runs, files, BASELINE_RUN_ID, calculation_provenance=None
     )
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    invoker = RunWorkerInvoker(report_runs, artifacts)
 
     with pytest.raises(RuntimeError, match="coordination failed"):
-        _coordinate(store, report_runs, invoker, artifacts, files)
+        _coordinate(report_runs, invoker, artifacts, files)
 
     report_run = report_runs.report_runs[REPORT_RUN_ID]
     assert report_run.error_message.startswith("reused_simulation_spm_mismatch: ")
@@ -686,10 +646,10 @@ def test_an_output_with_an_spm_receipt_fails_where_no_spm_measure_is_calculated(
     files = FakeOutputFiles()
     _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    invoker = RunWorkerInvoker(report_runs, artifacts)
 
     with pytest.raises(RuntimeError, match="coordination failed"):
-        _coordinate(FakeStore(), report_runs, invoker, artifacts, files)
+        _coordinate(report_runs, invoker, artifacts, files)
 
     report_run = report_runs.report_runs[REPORT_RUN_ID]
     assert report_run.error_message.startswith("reused_simulation_spm_mismatch: ")
@@ -736,7 +696,6 @@ OTHER_SPM_SELECTIONS = {
 def test_outputs_reused_from_another_spm_selection_fail_before_any_worker_starts(
     reused_run_ids, differing_field, mismatch
 ) -> None:
-    store = FakeStore()
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
     for run_id in reused_run_ids:
@@ -747,12 +706,11 @@ def test_outputs_reused_from_another_spm_selection_fail_before_any_worker_starts
             calculation_provenance=spm_receipt(mismatch.stored_selection),
         )
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    invoker = RunWorkerInvoker(report_runs, artifacts)
     options = {} if mismatch.spm_request is None else {"spm": mismatch.spm_request}
 
     with pytest.raises(RuntimeError, match="coordination failed"):
         _coordinate(
-            store,
             report_runs,
             invoker,
             artifacts,
@@ -764,11 +722,15 @@ def test_outputs_reused_from_another_spm_selection_fail_before_any_worker_starts
     assert report_run.status is RunStatus.FAILED
     assert report_run.error_message.startswith("reused_simulation_spm_mismatch: ")
     assert f"SPM receipt {differing_field} differs" in report_run.error_message
-    # Neither simulation is calculated, and no simulation run is written.
+    # Neither simulation is calculated, and no reused run is written; a run
+    # that was not reused was never started, and fails with its report run.
     assert invoker.events == []
     for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
-        assert report_runs.simulation_runs[run_id].writes == []
-    assert store.parent.error_code == "reused_simulation_spm_mismatch"
+        simulation_run = report_runs.simulation_runs[run_id]
+        if run_id in reused_run_ids:
+            assert simulation_run.writes == []
+        else:
+            _assert_failed_with_its_report(simulation_run)
 
 
 def test_an_output_whose_spm_receipt_lacks_the_report_year_fails_the_report() -> None:
@@ -781,10 +743,10 @@ def test_an_output_whose_spm_receipt_lacks_the_report_year_fails_the_report() ->
         calculation_provenance=spm_receipt(years=("2027",)),
     )
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    invoker = RunWorkerInvoker(report_runs, artifacts)
 
     with pytest.raises(RuntimeError, match="coordination failed"):
-        _coordinate(FakeStore(), report_runs, invoker, artifacts, files)
+        _coordinate(report_runs, invoker, artifacts, files)
 
     report_run = report_runs.report_runs[REPORT_RUN_ID]
     assert report_run.error_message.startswith("reused_simulation_spm_mismatch: ")
@@ -802,7 +764,7 @@ def test_an_output_with_the_resolved_spm_selection_is_reused(options) -> None:
     files = FakeOutputFiles()
     _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    invoker = RunWorkerInvoker(report_runs, artifacts)
     aggregated = []
 
     def recording_aggregator(**inputs):
@@ -810,7 +772,6 @@ def test_an_output_with_the_resolved_spm_selection_is_reused(options) -> None:
         return economy_aggregate()
 
     _coordinate(
-        FakeStore(),
         report_runs,
         invoker,
         artifacts,
@@ -832,16 +793,9 @@ SECOND_REFORM_RUN_ID = UUID("00000000-0000-0000-0000-0000000000c2")
 def test_two_report_runs_reusing_one_succeeded_run_at_once_leave_it_unchanged() -> None:
     """Two report runs share one succeeded baseline run and its output file.
 
-    Each report run has its own Stage 12 report: in production its own
-    evaluation, with its own parent and child rows, which never interact with
-    another evaluation's. So each coordinator gets its own Stage 12 store,
-    standing in for those separate rows of one database; the test inputs give
-    both reports the same evaluation ID, which one shared store would treat
-    as one report claimed twice. What the two report runs do share, the run
-    tables and the output file, is shared: the fake report run store and the
-    output file reader. The check is that reusing, succeeding and failing in
-    one report run writes nothing to the shared run and doesn't change the
-    other report run.
+    Both coordinators work on one set of run tables and read one output file.
+    The check is that reusing, succeeding and failing in one report run
+    writes nothing to the shared run and doesn't change the other report run.
     """
     report_runs = FakeReportRuns()
     report_runs.report_runs[SECOND_REPORT_RUN_ID] = FakeRun()
@@ -859,20 +813,37 @@ def test_two_report_runs_reusing_one_succeeded_run_at_once_leave_it_unchanged() 
                 report_run_id=SECOND_REPORT_RUN_ID,
                 baseline_simulation_run_id=BASELINE_RUN_ID,
                 reform_simulation_run_id=SECOND_REFORM_RUN_ID,
-            )
+            ),
+            "artifact_prefix": (
+                f"stage-12-runs/staging/2026/09/{SECOND_REPORT_RUN_ID}"
+            ),
+        }
+    )
+    first_report = report_run_input()
+    second_report = first_report.model_copy(
+        update={
+            "evaluation_id": SECOND_REPORT_RUN_ID,
+            "baseline": first_report.baseline.model_copy(
+                update={"evaluation_id": SECOND_REPORT_RUN_ID}
+            ),
+            "reform": first_report.reform.model_copy(
+                update={
+                    "evaluation_id": SECOND_REPORT_RUN_ID,
+                    "simulation_execution_id": SECOND_REFORM_RUN_ID,
+                }
+            ),
         }
     )
     first_artifacts, second_artifacts = FakeArtifacts(), FakeArtifacts()
-    first_invoker = ConcurrentInvoker(first_artifacts)
+    first_invoker = RunWorkerInvoker(report_runs, first_artifacts)
     # The second report's reform fails; that failure is its report run's alone.
-    second_invoker = ConcurrentInvoker(
-        second_artifacts, faults=InjectedChildFaults(fail_role="reform")
+    second_invoker = RunWorkerInvoker(
+        report_runs, second_artifacts, failing_role="reform"
     )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         first = executor.submit(
             _coordinate,
-            FakeStore(),
             report_runs,
             first_invoker,
             first_artifacts,
@@ -881,11 +852,11 @@ def test_two_report_runs_reusing_one_succeeded_run_at_once_leave_it_unchanged() 
         )
         second = executor.submit(
             _coordinate,
-            FakeStore(),
             report_runs,
             second_invoker,
             second_artifacts,
             files,
+            report=second_report,
             context=second_context,
             coordinator_call_id="fc-second-coordinator",
         )
@@ -893,7 +864,10 @@ def test_two_report_runs_reusing_one_succeeded_run_at_once_leave_it_unchanged() 
         with pytest.raises(RuntimeError, match="coordination failed"):
             second.result()
 
-    assert first_result["baseline_artifact_sha256"] == shared.sha256
+    assert first_result == {
+        "report_run_id": str(REPORT_RUN_ID),
+        "status": "succeeded",
+    }
     assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
     assert report_runs.report_runs[SECOND_REPORT_RUN_ID].status is RunStatus.FAILED
     assert report_runs.simulation_runs[SECOND_REFORM_RUN_ID].status is RunStatus.FAILED
@@ -905,38 +879,22 @@ def test_two_report_runs_reusing_one_succeeded_run_at_once_leave_it_unchanged() 
 
 
 def test_a_succeeded_reform_run_is_reused_while_its_baseline_is_calculated() -> None:
-    store = FakeStore()
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
     stored = _succeeded_with_output(
         report_runs, files, REFORM_RUN_ID, frames=simulation_frames(120.0)
     )
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    invoker = RunWorkerInvoker(report_runs, artifacts)
 
-    result = _coordinate(store, report_runs, invoker, artifacts, files)
+    result = _coordinate(report_runs, invoker, artifacts, files)
 
     assert invoker.events == ["spawn:baseline"]
-    assert set(store.children) == {BASELINE_ID}
     assert report_runs.simulation_runs[REFORM_RUN_ID].writes == []
+    assert report_runs.simulation_runs[BASELINE_RUN_ID].status is RunStatus.SUCCEEDED
     assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
-    assert result["reform_artifact_sha256"] == stored.sha256
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
     assert files.reads == [stored.uri]
-
-
-class RestartInvoker(ConcurrentInvoker):
-    """Start new children; an earlier attempt's restored child can only be cancelled."""
-
-    def __init__(self, artifacts):
-        super().__init__(artifacts)
-        self.cancelled: list[str] = []
-
-    def restore(self, invocation_id):
-        self.events.append(f"restore:{invocation_id}")
-        return SimpleNamespace(
-            object_id=invocation_id,
-            cancel=partial(self.cancelled.append, invocation_id),
-        )
 
 
 def _preempt(_seconds):
@@ -944,53 +902,29 @@ def _preempt(_seconds):
 
 
 def test_a_restarted_call_reuses_the_output_its_own_baseline_worker_recorded() -> None:
-    store = FakeStore()
     report_runs = FakeReportRuns()
     files = FakeOutputFiles()
     artifacts = FakeArtifacts()
     # The first attempt starts both children, then Modal pre-empts it.
     with pytest.raises(KeyboardInterrupt):
-        _coordinate(
-            store, report_runs, TimeoutInvoker(), artifacts, files, sleep=_preempt
-        )
+        _coordinate(report_runs, TimeoutInvoker(), artifacts, files, sleep=_preempt)
     # Before the pre-empted call cancelled it, the baseline's worker wrote its
-    # output and recorded its child record and simulation run as succeeded.
-    payload, row_identity = serialize_simulation_frames(
-        simulation_frames(), calculation_provenance=WORKER_SPM_RECEIPT
-    )
-    output_uri = "gs://private/simulations/baseline.parquet"
-    output_sha256 = sha256(payload).hexdigest()
-    artifacts.payloads[output_uri] = payload
-    files.payloads[output_uri] = payload
-    store.children[BASELINE_ID] = store.children[BASELINE_ID].model_copy(
-        update={
-            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
-            "output_uri": output_uri,
-            "output_sha256": output_sha256,
-            "output_schema_version": 1,
-            "row_identity_columns": row_identity.identifier_columns,
-            "row_count": row_identity.row_count,
-            "row_identity_sha256": row_identity.identity_sha256,
-            "completed_at": NOW,
-        }
-    )
+    # output and completed its simulation run; the reform's never claimed its
+    # run.
+    stored = _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
     baseline_run = report_runs.simulation_runs[BASELINE_RUN_ID]
-    baseline_run.status = RunStatus.SUCCEEDED
     baseline_run.modal_call_id = "fc-baseline-worker"
-    baseline_run.output_uri = output_uri
-    baseline_run.output_sha256 = output_sha256
     baseline_before = deepcopy(baseline_run)
-    restart_invoker = RestartInvoker(artifacts)
+    restart_invoker = RunWorkerInvoker(report_runs, artifacts)
 
-    result = _coordinate(store, report_runs, restart_invoker, artifacts, files)
+    result = _coordinate(report_runs, restart_invoker, artifacts, files)
 
-    # Only the reform starts again, after its earlier call is cancelled.
-    assert restart_invoker.events == ["restore:call-reform", "spawn:reform"]
-    assert restart_invoker.cancelled == ["call-reform"]
-    assert files.reads == [output_uri]
-    assert result["baseline_artifact_sha256"] == output_sha256
+    # Only the reform starts again; no earlier call holds its run.
+    assert restart_invoker.events == ["spawn:reform"]
+    assert restart_invoker.restored == {}
+    assert files.reads == [stored.uri]
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
     assert report_runs.simulation_runs[BASELINE_RUN_ID] == baseline_before
-    assert store.children[BASELINE_ID].status is ComparisonRunLifecycleStatus.SUCCEEDED
     report_run = report_runs.report_runs[REPORT_RUN_ID]
     assert report_run.status is RunStatus.SUCCEEDED
     assert report_run.writes == [
@@ -1018,9 +952,7 @@ def test_a_reused_output_file_is_read_and_decoded_once(monkeypatch) -> None:
     stored = _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
     artifacts = FakeArtifacts()
 
-    _coordinate(
-        FakeStore(), report_runs, ConcurrentInvoker(artifacts), artifacts, files
-    )
+    _coordinate(report_runs, RunWorkerInvoker(report_runs, artifacts), artifacts, files)
 
     assert files.reads == [stored.uri]
     assert decoded_digests.count(stored.sha256) == 1
