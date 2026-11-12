@@ -148,6 +148,42 @@ def insert_policy(
     return policy_id
 
 
+def insert_dynamic(
+    connection: Connection,
+    catalog: CatalogVersion,
+    values: Iterable[StoredValue] = (),
+) -> UUID:
+    """Insert a dynamic and the values it sets on ``catalog``'s parameters.
+
+    A dynamic belongs to no country; each value names a parameter of that
+    catalog version by name.
+    """
+    dynamic_id = uuid4()
+    connection.execute(
+        text("INSERT INTO public.dynamics (id, name) VALUES (:id, :name)"),
+        {"id": dynamic_id, "name": f"dynamic {dynamic_id}"},
+    )
+    parameter_ids = _parameter_ids(connection, catalog.version_id)
+    insert_value = text(
+        "INSERT INTO public.parameter_values "
+        "(id, parameter_id, value_json, start_date, end_date, dynamic_id) "
+        "VALUES (:id, :parameter_id, :value, :start_date, :end_date, :dynamic_id)"
+    ).bindparams(bindparam("value", type_=JSONB))
+    for stored in values:
+        connection.execute(
+            insert_value,
+            {
+                "id": uuid4(),
+                "parameter_id": parameter_ids[stored.parameter_name],
+                "value": stored.value,
+                "start_date": stored.start_date,
+                "end_date": stored.end_date,
+                "dynamic_id": dynamic_id,
+            },
+        )
+    return dynamic_id
+
+
 def insert_household(
     connection: Connection,
     *,
