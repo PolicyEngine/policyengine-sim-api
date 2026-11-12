@@ -10,7 +10,7 @@ reads and writes of ``economy_run_records`` and ``policy_reform`` that way.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -85,12 +85,8 @@ type SideRefusal = (
     | MissingPolicyParametersError
     | OverlappingReformError
 )
-_SIDE_ERRORS = (
-    UnknownPolicyError,
-    UnknownDynamicError,
-    MissingPolicyParametersError,
-    OverlappingReformError,
-)
+# Caught by the type itself, so the two never name different errors.
+_SIDE_ERRORS: tuple[type[SideRefusal], ...] = get_args(SideRefusal.__value__)
 
 
 class UnknownRegionError(LookupError):

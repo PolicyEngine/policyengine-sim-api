@@ -18,12 +18,14 @@ names, cannot be calculated), and writes nothing. Either route answers 503
 with ``Retry-After`` when it is not configured or a dependency cannot be
 read, before writing anything, or when Modal refused the run's call: then
 the record was created and its run failed, and the answer names it. Every
-500 is the JSON error with code ``internal_error``, and may follow a write.
+500 the routes answer is the JSON error with code ``internal_error``, and may
+follow a write; a failure before a route's handler runs gets the request
+middleware's own plain-text 500, which the Public API reads alike.
 
 A request gets its observability ID from the caller's header, or a new one,
 and passes it to the Modal call it starts in the observability context; the
-call's ``request_id`` is the request's own ``X-Request-ID``, or a new UUID
-when that doesn't fit the call's context.
+call's ``request_id`` is the request's own ``X-PolicyEngine-Request-Id``,
+or a new UUID when that doesn't fit the call's context.
 """
 
 from __future__ import annotations
@@ -245,10 +247,13 @@ def _submission_failure_response(error: Exception, record: RecordName) -> JSONRe
     )
 
 
-def _call_request_id(request: Request) -> str:
+def call_request_id_for(request: Request) -> str:
     """Return the request's ID for the Modal call, or a new one that fits it.
 
-    The request middleware keeps the caller's ``X-Request-ID`` unchecked.
+    The request middleware keeps the caller's ``X-PolicyEngine-Request-Id``
+    unchecked. A replaced ID matches none of the request's own log records;
+    the observability ID, which the call's observability context carries,
+    still joins them.
     """
     request_id = getattr(request.state, "request_id", "")
     if isinstance(request_id, str) and CALL_REQUEST_ID.fullmatch(request_id):
@@ -419,7 +424,7 @@ def _submission_routes(
         try:
             created = await submissions.submit_report(
                 body,
-                request_id=_call_request_id(request),
+                request_id=call_request_id_for(request),
                 observability_context=observability_context(entry, observability_id),
             )
         except _SUBMISSION_FAILURES as error:
@@ -463,7 +468,7 @@ def _submission_routes(
         try:
             created = await submissions.submit_simulation(
                 body,
-                request_id=_call_request_id(request),
+                request_id=call_request_id_for(request),
                 observability_context=observability_context(entry, observability_id),
             )
         except _SUBMISSION_FAILURES as error:

@@ -11,8 +11,8 @@
 # The access token is sent from a file and the client secret on standard
 # input, so neither appears on a command line. The submission, which isn't
 # asked again, may take 60 seconds, Cloud Run's own limit; every other
-# request 30. A read that gets no answer is asked again, as a 503 is, until
-# the deadline.
+# request 30. A read that gets no answer, a 429 or any 5xx is asked again
+# until the deadline.
 
 set -euo pipefail
 
@@ -119,7 +119,10 @@ while true; do
       pending | running) ;;
       *) fail "report run ${report_run_id} has an unknown status: ${run_status}" ;;
     esac
-  elif [[ "${read_status}" != "503" ]]; then
+  elif [[ "${read_status}" == "429" || "${read_status}" == 5?? ]]; then
+    # The service, or Cloud Run's front end in its place, can't answer now.
+    printf 'GET /reports/%s answered %s; asking again\n' "${report_id}" "${read_status}" >&2
+  else
     fail "GET /reports/${report_id} answered ${read_status}: $(cat "${report_body}")"
   fi
   ((SECONDS - started_at < deadline_seconds)) \
