@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import and_, exists, func, insert, or_, select, update
+from sqlalchemy import and_, case, exists, func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from policyengine_stage12_persistence.report_run_tables import (
@@ -510,13 +510,13 @@ class ReportRunStore:
         pending or running budget-window run that is still pending with no
         call recorded is waiting for an earlier year to end, and is listed
         only once its window has finished: the window is judged as a whole.
+        A window's year counts, before its first claim, from its last change
+        rather than its creation: an earlier year's coordinator may record
+        its call long after the service created it, and nothing else changes
+        a year that is pending with a call.
         """
         table = RUN_TABLES[kind]
-        active_since = (
-            table.c.created_at
-            if kind is RunKind.HOUSEHOLD_JOB
-            else func.coalesce(table.c.started_at, table.c.created_at)
-        )
+        active_since = _active_since(kind)
         conditions = [
             table.c.status.in_(ACTIVE_STATUSES),
             active_since < active_since_before,
@@ -654,6 +654,27 @@ def _running_under_call(table: Table, modal_call_id: str) -> ColumnElement[bool]
         table.c.status == RunStatus.RUNNING.value,
         table.c.modal_call_id == modal_call_id,
     )
+
+
+def _active_since(kind: RunKind) -> ColumnElement[datetime]:
+    """Return when a run of ``kind`` became active, for the sweep's ages.
+
+    A household job counts from its creation. A run counts from its first
+    claim or, before it, from its creation, except a budget window's year,
+    which counts from its last change: when its call was recorded.
+    """
+    table = RUN_TABLES[kind]
+    if kind is RunKind.HOUSEHOLD_JOB:
+        return table.c.created_at
+    unclaimed_since = (
+        case(
+            (table.c.budget_window_run_id.is_not(None), table.c.updated_at),
+            else_=table.c.created_at,
+        )
+        if kind is RunKind.REPORT_RUN
+        else table.c.created_at
+    )
+    return func.coalesce(table.c.started_at, unclaimed_since)
 
 
 def _waiting_window_year() -> ColumnElement[bool]:

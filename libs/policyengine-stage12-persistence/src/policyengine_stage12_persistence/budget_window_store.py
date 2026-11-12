@@ -11,6 +11,9 @@ marked succeeded.
 
 Each advance locks the budget-window run's row while it starts years and
 records their calls, so coordinators ending at once start each year once.
+The lock is held across those Modal calls; claims and the window's start
+are separate one-statement transactions that never wait on each other, so
+other years' coordinators wait only for the lock to be released.
 The Modal worker role and the simulation service role may both advance a
 window: each may update the columns written here. Only a coordinator's claim
 marks a window running, because only the Modal worker role may set its
@@ -19,6 +22,7 @@ start time.
 
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
@@ -49,6 +53,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy import ColumnElement, Engine
     from sqlalchemy.engine import Connection
+
+logger = logging.getLogger(__name__)
 
 # The most years of one budget window under way at once: running, or started
 # with a Modal call recorded and waiting for Modal to run it.
@@ -424,7 +430,14 @@ def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the sta
             modal_call_id = start_year(
                 YearToStart(year=year.year, run_ids=year.run_ids)
             )
-        except Exception:  # noqa: BLE001  # any refusal to start the call fails the year and so the window
+        except Exception as error:  # noqa: BLE001  # any refusal to start the call fails the year and so the window
+            # The error's text may hold connection details; its type is logged.
+            logger.warning(
+                "Could not start budget-window year %s, report run %s (%s)",
+                year.year,
+                year.report_run_id,
+                type(error).__name__,
+            )
             _fail_waiting_years(
                 connection,
                 window_run_id,
@@ -484,9 +497,10 @@ def _fail_waiting_years(
 ) -> None:
     """Fail the window's waiting years (or only one) and their unstarted simulations.
 
-    A simulation run is failed only while it is pending with no call and no
-    pending or running report run names it, so a run another report shares
-    is left to that report.
+    Each failed year's simulation runs get the same message. A simulation run
+    is failed only while it is pending with no call and no pending or running
+    report run names it, so a run another report shares is left to that
+    report.
     """
     conditions = [report_runs.c.budget_window_run_id == window_run_id, _waiting()]
     if only is not None:
@@ -523,7 +537,7 @@ def _fail_waiting_years(
         )
         .values(
             status=RunStatus.FAILED.value,
-            error_message=WINDOW_FAILED_MESSAGE,
+            error_message=error_message,
             completed_at=now,
             updated_at=now,
         )

@@ -34,7 +34,18 @@ if TYPE_CHECKING:
 def report_run_artifact_prefix(
     environment: str, created_at: datetime, run_id: UUID
 ) -> str:
-    """Return where a run's Stage 12 artifacts go, by environment, month and run."""
+    """Return where a run's Stage 12 artifacts go, by environment, month and run.
+
+    The prefix is ``stage-12-runs/<environment>/<YYYY>/<MM>/<run_id>``. Raises
+    ValueError for an environment that could leave the prefix, or a
+    ``created_at`` without a time zone.
+    """
+    if not environment or "/" in environment or ".." in environment:
+        msg = "invalid Stage 12 artifact environment"
+        raise ValueError(msg)
+    if created_at.tzinfo is None:
+        msg = "Stage 12 artifact timestamp must include a timezone"
+        raise ValueError(msg)
     return f"stage-12-runs/{environment}/{created_at:%Y}/{created_at:%m}/{run_id}"
 
 

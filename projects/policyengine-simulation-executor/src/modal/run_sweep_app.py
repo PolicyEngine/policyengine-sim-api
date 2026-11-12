@@ -2,8 +2,9 @@
 
 Every ten minutes it lists the Public API's report runs, simulation runs and
 household jobs that have been pending or running for at least ten minutes,
-counted from a run's first claim or, while it is pending, from its creation,
-and from a household job's creation. It asks Modal for the status of each
+counted from a run's first claim or, while it is pending, from its creation
+(a budget window's year from when its call was recorded), and from a
+household job's creation. It asks Modal for the status of each
 recorded call and marks a run or job failed once its call has ended, and
 fails a pending one that has no call recorded, because nothing will run it.
 It also fails any still unfinished 24 hours after it was created or started,
