@@ -21,14 +21,25 @@ from datetime import UTC, datetime
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, Protocol
 
+from policyengine_simulation_contract.stage12_execution import year_calculation
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from uuid import UUID
 
-    from policyengine_stage12_persistence import WindowAdvance, YearStarter
+    from policyengine_simulation_contract.stage12_execution import (
+        ReportExecutionInput,
+        Stage12InvocationContext,
+    )
+    from policyengine_stage12_persistence import (
+        WindowAdvance,
+        YearStarter,
+        YearToStart,
+    )
 
 logger = logging.getLogger(__name__)
 
-# The v2 application's coordinator function, which takes a report run's ID.
+# The v2 application's coordinator function.
 COORDINATOR_FUNCTION_NAME = "coordinate_report"
 
 
@@ -59,24 +70,34 @@ class ModalYearStarter:
     """Starts a year's coordinator call in this coordinator's Modal application.
 
     Every year of a window runs on the same .py version, so the next year's
-    coordinator is this application's ``coordinate_report``, called with the
-    year's report run ID alone.
+    coordinator is this application's ``coordinate_report``. Its input is
+    derived from this coordinator's own ``report`` and ``context``: only the
+    year, its runs, its artifact prefix and its call's creation time differ.
     """
 
-    application_name: str
-    environment: str | None
+    report: ReportExecutionInput
+    context: Stage12InvocationContext
     observability_context: dict[str, Any] | None = None
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
-    def __call__(self, report_run_id: UUID, /) -> str:
+    def __call__(self, year_to_start: YearToStart, /) -> str:
         """Spawn the year's coordinator call and return its Modal call ID."""
+        year_report, year_context = year_calculation(
+            self.report,
+            self.context,
+            year=year_to_start.year,
+            run_ids=year_to_start.run_ids,
+            created_at=self.clock(),
+        )
         modal: Any = import_module("modal")
         function = modal.Function.from_name(
-            self.application_name,
+            self.context.modal_application,
             COORDINATOR_FUNCTION_NAME,
-            environment_name=self.environment,
+            environment_name=self.context.modal_environment,
         )
         call = function.spawn(
-            str(report_run_id),
+            year_report.model_dump(mode="json"),
+            year_context.model_dump(mode="json"),
             observability_context=self.observability_context,
         )
         return call.object_id

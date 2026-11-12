@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from sqlalchemy import and_, exists, func, or_, select, update
 
 from policyengine_stage12_persistence.report_run_store import (
@@ -71,13 +72,21 @@ WINDOW_STALLED_MESSAGE = (
 )
 
 
+@dataclass(frozen=True)
+class YearToStart:
+    """A waiting year of a window: its year and the three runs it records on."""
+
+    year: int
+    run_ids: ReportRunIds
+
+
 class YearStarter(Protocol):
-    """Starts a year's coordinator by its report run's ID; returns the call's ID.
+    """Starts a year's coordinator call and returns the call's Modal ID.
 
     It raises when Modal refuses the call.
     """
 
-    def __call__(self, report_run_id: UUID, /) -> str:
+    def __call__(self, year_to_start: YearToStart, /) -> str:
         """Start the year's coordinator call and return its Modal call ID."""
         ...
 
@@ -100,11 +109,16 @@ class WindowAdvance:
 class _WindowYear:
     """One year of a window as its report run records it."""
 
-    report_run_id: UUID
+    run_ids: ReportRunIds
     year: int
     status: RunStatus
     modal_call_id: str | None
     updated_at: datetime
+
+    @property
+    def report_run_id(self) -> UUID:
+        """The year's report run."""
+        return self.run_ids.report_run_id
 
     @property
     def waiting(self) -> bool:
@@ -323,6 +337,8 @@ def _window_years(connection: Connection, window_run_id: UUID) -> list[_WindowYe
     statement = (
         select(
             report_runs.c.id,
+            report_runs.c.baseline_simulation_run_id,
+            report_runs.c.reform_simulation_run_id,
             report_runs.c.year,
             report_runs.c.status,
             report_runs.c.modal_call_id,
@@ -333,7 +349,11 @@ def _window_years(connection: Connection, window_run_id: UUID) -> list[_WindowYe
     )
     return [
         _WindowYear(
-            report_run_id=row.id,
+            run_ids=ReportRunIds(
+                report_run_id=row.id,
+                baseline_simulation_run_id=row.baseline_simulation_run_id,
+                reform_simulation_run_id=row.reform_simulation_run_id,
+            ),
             year=row.year,
             status=RunStatus(row.status),
             modal_call_id=row.modal_call_id,
@@ -401,7 +421,9 @@ def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the sta
     started: list[int] = []
     for year in [year for year in years if year.waiting][: max(free_places, 0)]:
         try:
-            modal_call_id = start_year(year.report_run_id)
+            modal_call_id = start_year(
+                YearToStart(year=year.year, run_ids=year.run_ids)
+            )
         except Exception:  # noqa: BLE001  # any refusal to start the call fails the year and so the window
             _fail_waiting_years(
                 connection,

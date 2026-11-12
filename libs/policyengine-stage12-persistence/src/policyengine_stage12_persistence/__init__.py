@@ -5,6 +5,7 @@ from policyengine_stage12_persistence.budget_window_store import (
     BudgetWindowStore,
     WindowAdvance,
     YearStarter,
+    YearToStart,
 )
 from policyengine_stage12_persistence.report_run_results import (
     DistrictCodes,
@@ -46,6 +47,7 @@ __all__ = [
     "Stage12RuntimeAccessError",
     "WindowAdvance",
     "YearStarter",
+    "YearToStart",
     "create_stage12_engine",
     "normalized_database_url",
     "report_run_result",
