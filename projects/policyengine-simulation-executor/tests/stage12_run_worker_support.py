@@ -27,10 +27,14 @@ CALCULATION_FAILURE = "the reform calculation failed"
 
 
 class EarlierCall:
-    """An earlier attempt's child, which a restarted coordinator only cancels."""
+    """An earlier attempt's child, which a restarted coordinator only cancels.
 
-    def __init__(self, object_id: str) -> None:
+    Each cancellation is recorded in ``events``, beside the run tables' writes.
+    """
+
+    def __init__(self, object_id: str, events: list[str]) -> None:
         self.object_id = object_id
+        self.events = events
         self.cancelled = 0
 
     def get(self, *, timeout=None):
@@ -39,6 +43,7 @@ class EarlierCall:
 
     def cancel(self) -> None:
         self.cancelled += 1
+        self.events.append(f"cancel:{self.object_id}")
 
 
 class RunWorkerInvoker:
@@ -81,6 +86,11 @@ class RunWorkerInvoker:
         self.events.append(f"spawn:{role}")
         self.contexts.append(Stage12InvocationContext.model_validate(request.context))
         self.simulations.append(request.simulation)
+        return self.worker_call(request, call_id)
+
+    def worker_call(self, request, call_id: str) -> FutureCall:
+        """Run the real worker for ``request`` under ``call_id``, in a thread."""
+        role = request.simulation["role"]
 
         def calculate(_simulation):
             if role in self.held_roles:
@@ -108,6 +118,6 @@ class RunWorkerInvoker:
         return FutureCall(call_id, future)
 
     def restore(self, invocation_id: str) -> EarlierCall:
-        call = EarlierCall(invocation_id)
+        call = EarlierCall(invocation_id, self.report_runs.events)
         self.restored[invocation_id] = call
         return call

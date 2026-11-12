@@ -25,7 +25,7 @@ from stage12_fake_report_runs import (
     report_run_input,
 )
 from stage12_fake_stores import FakeArtifacts, FakeStore
-from stage12_run_worker_support import RunWorkerInvoker
+from stage12_run_worker_support import EarlierCall, RunWorkerInvoker
 from stage12_runtime_support import (
     coordinate_report,
     invocation_context,
@@ -115,6 +115,10 @@ def test_a_restart_releases_each_earlier_workers_run_and_starts_it_again() -> No
     # Each earlier worker was asked to stop before its run was released.
     assert sorted(invoker.restored) == ["fc-baseline-earlier", "fc-reform-earlier"]
     assert all(call.cancelled == 1 for call in invoker.restored.values())
+    events = report_runs.events
+    for role in ("baseline", "reform"):
+        cancelled_at = events.index(f"cancel:fc-{role}-earlier")
+        assert events[cancelled_at + 1] == "release_simulation_run"
     for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
         simulation_run = report_runs.simulation_runs[run_id]
         assert simulation_run.status is RunStatus.SUCCEEDED
@@ -166,12 +170,126 @@ def test_an_earlier_worker_that_cannot_be_cancelled_still_loses_its_run() -> Non
 
     _coordinate(report_runs, invoker, artifacts)
 
-    # Released, the run takes no write from the earlier worker's call.
     assert all(
         simulation_run.status is RunStatus.SUCCEEDED
         and simulation_run.modal_call_id in invoker.call_ids
         for simulation_run in report_runs.simulation_runs.values()
     )
+    # Released, the run takes no write from the earlier worker's call.
+    late = report_runs.complete_simulation_run(
+        BASELINE_RUN_ID,
+        modal_call_id="fc-baseline-earlier",
+        output_uri="gs://private/late.parquet",
+        output_sha256="d" * 64,
+        completed_at=None,
+    )
+    assert late.changed is False
+    assert report_runs.simulation_runs[BASELINE_RUN_ID].output_uri != (
+        "gs://private/late.parquet"
+    )
+
+
+class StartedWorkerCalls(TimeoutInvoker):
+    """Start workers that never finish; an earlier attempt's worker only cancels."""
+
+    def __init__(self, events):
+        super().__init__()
+        self.calls = []
+        self.run_events = events
+
+    def spawn(self, request):
+        call = super().spawn(request)
+        self.calls.append(call)
+        return call
+
+    def restore(self, invocation_id):
+        return EarlierCall(invocation_id, self.run_events)
+
+
+class ChangedBeforeRelease(FakeReportRuns):
+    """Finish the reform run under its earlier worker just before its release."""
+
+    def release_simulation_run(self, simulation_run_id, **values):
+        if simulation_run_id == REFORM_RUN_ID:
+            run = self.simulation_runs[REFORM_RUN_ID]
+            run.status = RunStatus.FAILED
+            run.error_message = "simulation_execution_failed: the earlier worker"
+        return super().release_simulation_run(simulation_run_id, **values)
+
+
+def test_a_run_changed_before_its_release_stops_the_workers_already_started() -> None:
+    report_runs = ChangedBeforeRelease()
+    _claimed_by_earlier_workers(report_runs)
+    # The baseline's earlier worker never claimed its run, so it starts first.
+    baseline = report_runs.simulation_runs[BASELINE_RUN_ID]
+    baseline.status, baseline.modal_call_id = RunStatus.PENDING, None
+    invoker = StartedWorkerCalls(report_runs.events)
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(report_runs, invoker)
+
+    run = report_runs.report_runs[REPORT_RUN_ID]
+    assert run.status is RunStatus.FAILED
+    assert run.error_message.startswith("simulation_run_changed: ")
+    # The baseline worker already started is stopped, and its run fails.
+    (baseline_call,) = invoker.calls
+    assert baseline_call.cancelled == 1
+    assert baseline.status is RunStatus.FAILED
+    assert baseline.error_message == (
+        "simulation_cancelled: Cancelled after the reform simulation failed."
+    )
+
+
+STALE_CALL_ID = "fc-baseline-stale"
+
+
+class UncancelledEarlierWorker(RunWorkerInvoker):
+    """The earlier attempt's baseline worker, never cancelled, claims its run first.
+
+    It claims as the restarted coordinator's new worker starts, so that worker
+    finds the run held by another call; the earlier worker then calculates it.
+    """
+
+    def __init__(self, report_runs, artifacts):
+        super().__init__(report_runs, artifacts)
+        self.earlier_request = None
+
+    def spawn(self, request):
+        if request.simulation["role"] == "baseline" and self.earlier_request is None:
+            self.earlier_request = request
+            self.report_runs.claim_simulation_run(
+                BASELINE_RUN_ID, modal_call_id=STALE_CALL_ID, claimed_at=None
+            )
+        return super().spawn(request)
+
+    def restore(self, invocation_id):
+        if invocation_id == STALE_CALL_ID:
+            self.restored[invocation_id] = invocation_id
+            return self.worker_call(self.earlier_request, STALE_CALL_ID)
+        return super().restore(invocation_id)
+
+
+def test_a_restart_waits_for_an_earlier_worker_that_holds_its_run() -> None:
+    report_runs = FakeReportRuns()
+    _claimed_by_earlier_workers(report_runs)
+    # The earlier attempt started the baseline worker, but it hadn't claimed
+    # its run, and its cancellation didn't reach it.
+    baseline = report_runs.simulation_runs[BASELINE_RUN_ID]
+    baseline.status, baseline.modal_call_id = RunStatus.PENDING, None
+    artifacts = FakeArtifacts()
+    invoker = UncancelledEarlierWorker(report_runs, artifacts)
+
+    result = _coordinate(report_runs, invoker, artifacts)
+
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
+    # The new worker found the run held, so the coordinator waited for the
+    # earlier worker, which completed it.
+    assert STALE_CALL_ID in invoker.restored
+    assert (baseline.status, baseline.modal_call_id) == (
+        RunStatus.SUCCEEDED,
+        STALE_CALL_ID,
+    )
+    assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
 
 
 def test_a_cancelled_coordinator_fails_its_report_run_and_unfinished_runs() -> None:
