@@ -40,9 +40,11 @@ EXPECTED_ROUTES = {
     ("POST", "/household-calculations"),
     ("POST", "/ping"),
     ("POST", "/reports"),
+    ("POST", "/reports/{report_id}/runs"),
     ("POST", "/simulate/economy/budget-window"),
     ("POST", "/simulate/economy/comparison"),
     ("POST", "/simulations"),
+    ("POST", "/simulations/{simulation_id}/runs"),
 }
 
 
@@ -86,8 +88,10 @@ HOUSEHOLD_SCHEMAS = (
 ECONOMY_PATHS = (
     "/reports",
     "/reports/{report_id}",
+    "/reports/{report_id}/runs",
     "/simulations",
     "/simulations/{simulation_id}",
+    "/simulations/{simulation_id}/runs",
 )
 ECONOMY_SCHEMAS = (
     "EconomyError",
@@ -100,6 +104,7 @@ ECONOMY_SCHEMAS = (
     "EconomySimulationRequest",
     "EconomySimulationState",
     "PolicyChoice",
+    "ReportRerunRequest",
     "ReportRunRead",
     "ReportRunStatus",
     "SimulationRunRead",
@@ -376,7 +381,9 @@ def test_economy_routes_declare_every_answer():
         assert f"{record}_id" in responses["503"]["description"]
         assert "nothing was written" in responses["400"]["description"]
     error_properties = spec["components"]["schemas"]["EconomyError"]["properties"]
-    assert {"code", "detail", "report_id", "simulation_id"} == set(error_properties)
+    assert {"code", "detail", "report_id", "simulation_id", "run_id"} == set(
+        error_properties
+    )
     codes = set(error_properties["code"]["enum"])
     assert {
         "unknown_region",
@@ -395,6 +402,48 @@ def test_every_economy_503_declares_its_retry_after_header():
         method = "get" if path.endswith("}") else "post"
         headers = _responses(spec, method, path)["503"]["headers"]
         assert headers["Retry-After"]["schema"] == {"type": "integer"}
+
+
+def test_rerun_routes_declare_every_answer():
+    spec = create_app().openapi()
+    error = {"$ref": "#/components/schemas/EconomyError"}
+    unprocessable = {"$ref": "#/components/schemas/EconomyRequestUnprocessable"}
+
+    for path, rerun in (
+        ("/reports/{report_id}/runs", "EconomyReportCreated"),
+        ("/simulations/{simulation_id}/runs", "EconomySimulationCreated"),
+    ):
+        responses = _responses(spec, "post", path)
+        assert set(responses) == {
+            "201",
+            "400",
+            "403",
+            "404",
+            "409",
+            "422",
+            "500",
+            "503",
+        }
+        assert _response_schema(responses["201"]) == {
+            "$ref": f"#/components/schemas/{rerun}"
+        }
+        for status_code in ("400", "404", "409", "500", "503"):
+            assert _response_schema(responses[status_code]) == error
+        assert _response_schema(responses["422"]) == unprocessable
+        assert "run_id" in responses["409"]["description"]
+        assert "run_id" in responses["503"]["description"]
+    codes = set(
+        spec["components"]["schemas"]["EconomyError"]["properties"]["code"]["enum"]
+    )
+    assert {"run_in_progress", "rerun_not_supported"} <= codes
+    report_rerun = spec["components"]["schemas"]["ReportRerunRequest"]
+    assert set(report_rerun["properties"]) == {"force"}
+    assert (
+        "requestBody" not in spec["paths"]["/simulations/{simulation_id}/runs"]["post"]
+    )
+    names = operation_ids(cast("OpenAPIDocument", spec))
+    assert names[("POST", "/reports/{report_id}/runs")] == "rerun_report"
+    assert names[("POST", "/simulations/{simulation_id}/runs")] == "rerun_simulation"
 
 
 def test_economy_routes_name_their_operations():
