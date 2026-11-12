@@ -378,6 +378,9 @@ def _run(
         "MODAL_TOKEN_SECRET": "as-test",
         "MODAL_ENVIRONMENT": "staging",
         "STAGING_HOUSEHOLD_ID": HOUSEHOLD_ID,
+        # The fake sleep returns at once, so a record that never finishes
+        # fails the test within this many seconds.
+        "PREEMPTION_CHECK_DEADLINE_SECONDS": "20",
         "FAKE_STATE": str(state),
         "FAKE_BASE_URL": BASE_URL,
         "FAKE_ACCESS_TOKEN": ACCESS_TOKEN,
@@ -454,11 +457,17 @@ def test_the_container_is_checked_to_run_in_the_staging_environment(fakes, tmp_p
 
 
 def test_a_container_modal_does_not_list_in_staging_is_never_stopped(fakes, tmp_path):
+    attempt = _household_attempt(0)
+    attempt.reads_before_stop = [
+        *attempt.reads_before_stop,
+        _household(JOB_IDS[0], "succeeded", CALL_IDS[0]),
+    ]
+
     result, _ = _run(
         fakes,
         tmp_path,
         "household",
-        [_household_attempt(0)],
+        [attempt],
         containers=ModalContainers(listed=()),
         PREEMPTION_CHECK_ATTEMPTS="1",
     )
