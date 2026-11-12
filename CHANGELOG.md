@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.12.0] - 2026-11-12
+
+### Added
+
+- The Simulation Entrypoint creates economy reports and simulations through `POST /reports` and `POST /simulations`, in the Public API's run tables, and starts their calculation on the v2 coordinator and workers by run ID; a report reuses a matching simulation run that already succeeded. `GET /reports/{report_id}` and `GET /simulations/{simulation_id}` return each record's newest run, and every staging deploy checks a small economy report.
+
+
 ## [0.11.1] - 2026-11-12
 
 ### Changed
