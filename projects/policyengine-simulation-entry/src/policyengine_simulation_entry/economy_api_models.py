@@ -10,7 +10,7 @@ and chooses every ID.
 Answers the Public API reads:
 
 - 201 with the created record's ID and its first run's ID;
-- 400 with ``code`` and ``detail``: one of ``CALLER_ROW_REFUSAL_CODES`` when
+- 400 with ``code`` and ``detail``: one of ``CallerRowRefusalCode`` when
   the region, dataset or a dynamic the request names does not exist, or
   another code for the service's own state, such as a catalog version
   missing while a release deploys. Nothing is written;
@@ -169,9 +169,9 @@ class EconomySimulationCreated(_Answer):
     """The simulation a request created, its first run and that run's status.
 
     The status is the run's when its call's ID was recorded: ``pending``, or
-    ``running`` when the simulation function had claimed it first. A run
-    whose call Modal didn't confirm, or whose call's ID couldn't be
-    recorded, is answered ``pending``.
+    whatever the simulation function had made it by then if it claimed the
+    run first. A run whose call Modal didn't confirm, or whose call's ID
+    couldn't be recorded, is answered ``pending``.
     """
 
     simulation_id: UUID
@@ -183,9 +183,9 @@ class EconomyReportCreated(_Answer):
     """The report a request created, its first run and that run's status.
 
     The status is the run's when its call's ID was recorded: ``pending``, or
-    ``running`` when the coordinator had claimed it first. A run whose call
-    Modal didn't confirm, or whose call's ID couldn't be recorded, is
-    answered ``pending``. Each side names its
+    whatever the coordinator had made it by then if it claimed the run
+    first. A run whose call Modal didn't confirm, or whose call's ID couldn't
+    be recorded, is answered ``pending``. Each side names its
     simulation and simulation run; ``…_reused`` is true for a side that
     names a run that already succeeded, rather than a new one.
     """

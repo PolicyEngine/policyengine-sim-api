@@ -119,7 +119,11 @@ model, region and dataset, each side's policy and dynamic values, and each
 side's reusable run together, never giving both sides the same run;
 `read_simulation_inputs` does the same for one simulation; the writes and
 reads each take their own. A missing region or dataset raises
-`UnknownRegionError` or `UnknownDatasetError`.
+`UnknownRegionError` or `UnknownDatasetError`, and a report side's refused
+policy or dynamic raises `ReportSideError`, naming the side. A create whose
+commit fails after its rows were inserted raises
+`EconomyRecordOutcomeUnknownError`: PostgreSQL may have applied the commit,
+so the rows may exist.
 
 ## Reading a policy
 

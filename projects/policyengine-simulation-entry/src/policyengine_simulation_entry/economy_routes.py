@@ -22,14 +22,16 @@ the record was created and its run failed, and the answer names it. Every
 
 A request gets its observability ID from the caller's header, or a new one,
 and passes it to the Modal call it starts in the observability context; the
-call's ``request_id`` is the request's own ``X-Request-ID``.
+call's ``request_id`` is the request's own ``X-Request-ID``, or a new UUID
+when that doesn't fit the call's context.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Protocol
-from uuid import UUID
+import re
+from typing import TYPE_CHECKING, Any, Final, Protocol
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
@@ -75,6 +77,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# The request IDs the observability runtime accepts, which a Modal call's
+# context also carries (``Stage12InvocationContext.request_id`` takes at most
+# 255 characters). Any other request ID is replaced by a new one for the call.
+CALL_REQUEST_ID: Final = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 REPORTS_PATH = "/reports"
 REPORT_PATH = "/reports/{report_id}"
 SIMULATIONS_PATH = "/simulations"
@@ -239,6 +245,17 @@ def _submission_failure_response(error: Exception, record: RecordName) -> JSONRe
     )
 
 
+def _call_request_id(request: Request) -> str:
+    """Return the request's ID for the Modal call, or a new one that fits it.
+
+    The request middleware keeps the caller's ``X-Request-ID`` unchecked.
+    """
+    request_id = getattr(request.state, "request_id", "")
+    if isinstance(request_id, str) and CALL_REQUEST_ID.fullmatch(request_id):
+        return request_id
+    return str(uuid4())
+
+
 def _outcome_unknown_response(
     error: EconomySubmissionOutcomeUnknownError,
 ) -> JSONResponse:
@@ -248,7 +265,7 @@ def _outcome_unknown_response(
     it nothing was created. The log is the fixed event
     ``economy_record_outcome_unknown``.
     """
-    fields = {"record": error.record}
+    fields = {"record": error.record, "error_type": error.error_type}
     logger.error(
         "economy_record_outcome_unknown",
         extra={**fields, "policyengine_attributes": fields},
@@ -402,7 +419,7 @@ def _submission_routes(
         try:
             created = await submissions.submit_report(
                 body,
-                request_id=request.state.request_id,
+                request_id=_call_request_id(request),
                 observability_context=observability_context(entry, observability_id),
             )
         except _SUBMISSION_FAILURES as error:
@@ -446,7 +463,7 @@ def _submission_routes(
         try:
             created = await submissions.submit_simulation(
                 body,
-                request_id=request.state.request_id,
+                request_id=_call_request_id(request),
                 observability_context=observability_context(entry, observability_id),
             )
         except _SUBMISSION_FAILURES as error:

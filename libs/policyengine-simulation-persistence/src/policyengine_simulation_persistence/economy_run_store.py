@@ -79,6 +79,12 @@ type TransactionFactory = Callable[[], AbstractContextManager[Connection]]
 # Which of a report's simulations a value belongs to.
 type ReportSide = Literal["baseline", "reform"]
 # The errors a simulation's own policy or dynamic can raise.
+type SideRefusal = (
+    UnknownPolicyError
+    | UnknownDynamicError
+    | MissingPolicyParametersError
+    | OverlappingReformError
+)
 _SIDE_ERRORS = (
     UnknownPolicyError,
     UnknownDynamicError,
@@ -103,7 +109,7 @@ class ReportSideError(Exception):
     OverlappingReformError.
     """
 
-    def __init__(self, side: ReportSide, error: Exception) -> None:
+    def __init__(self, side: ReportSide, error: SideRefusal) -> None:
         """Keep the side and the refusal."""
         super().__init__(f"the report's {side}: {error}")
         self.side: ReportSide = side

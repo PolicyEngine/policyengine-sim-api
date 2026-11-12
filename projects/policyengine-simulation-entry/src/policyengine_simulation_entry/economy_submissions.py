@@ -247,10 +247,12 @@ class EconomySubmissionService:
         """Create the report and its runs and start its coordinator.
 
         Raise EconomySubmissionRefusedError (400) or
-        EconomySubmissionUnprocessableError (422) before writing anything,
-        and EconomySubmissionUnavailableError (503) when the manifest or
+        EconomySubmissionUnprocessableError (422) before writing anything;
+        EconomySubmissionUnavailableError (503) when the manifest or
         database cannot be read, or, naming the report, when Modal doesn't
-        confirm the call and the report run was failed.
+        confirm the call and the report run was failed; and
+        EconomySubmissionOutcomeUnknownError (500) when the create's commit
+        failed after its rows were inserted.
         """
         worker = await self._default_worker(request.country)
         options = request.options()
@@ -470,14 +472,10 @@ class EconomySubmissionService:
         except EconomyRecordReferenceError as error:
             raise reference_refusal(error) from None
         except EconomyRecordOutcomeUnknownError as error:
-            logger.warning(
-                "economy_records_outcome_unknown",
-                extra={
-                    "record": record,
-                    "error_type": type(error.__cause__).__name__,
-                },
-            )
-            raise EconomySubmissionOutcomeUnknownError(record) from None
+            # The route logs it, with the commit error's type.
+            raise EconomySubmissionOutcomeUnknownError(
+                record, error_type=type(error.__cause__).__name__
+            ) from None
         except SQLAlchemyError as error:
             logger.warning(
                 "economy_records_not_created",

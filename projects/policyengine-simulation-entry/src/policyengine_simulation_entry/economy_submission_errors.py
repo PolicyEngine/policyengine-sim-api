@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence import (
         EconomyRecordReferenceError,
         EconomyRequest,
+        ReportSide,
     )
 
     from policyengine_simulation_entry.economy_api_models import (
@@ -100,10 +101,11 @@ class EconomySubmissionOutcomeUnknownError(Exception):
     which it reads as nothing created.
     """
 
-    def __init__(self, record: RecordName) -> None:
-        """Keep what the submission creates."""
+    def __init__(self, record: RecordName, *, error_type: str) -> None:
+        """Keep what the submission creates, and the commit error's type."""
         super().__init__(f"the {record} may have been created")
         self.record: RecordName = record
+        self.error_type = error_type
 
 
 class EconomySubmissionUnavailableError(Exception):
@@ -138,7 +140,7 @@ def read_refusal(
     (ReportSideError) is located on that side's fields. Every detail is
     written from ``request``, never from the error's text.
     """
-    side = None
+    side: ReportSide | None = None
     if isinstance(error, ReportSideError):
         side, error = error.side, error.error
     return _missing_row_refusal(error, request, side) or _unprocessable(
@@ -147,7 +149,7 @@ def read_refusal(
 
 
 def _missing_row_refusal(
-    error: Exception, request: EconomyRequest, side: str | None
+    error: Exception, request: EconomyRequest, side: ReportSide | None
 ) -> EconomySubmissionRefusedError | None:
     """Return the 400 a missing row means, or None for another error."""
     catalog = (
@@ -187,7 +189,7 @@ def _missing_row_refusal(
 
 
 def _unprocessable(
-    error: Exception, request: EconomyRequest, side: str | None
+    error: Exception, request: EconomyRequest, side: ReportSide | None
 ) -> EconomySubmissionUnprocessableError | None:
     """Return the 422 refused values mean, or None for another error.
 

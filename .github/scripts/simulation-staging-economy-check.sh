@@ -9,9 +9,10 @@
 # Optional: ECONOMY_CHECK_DEADLINE_SECONDS (1800) and
 # ECONOMY_CHECK_POLL_SECONDS (15).
 # The access token is sent from a file and the client secret on standard
-# input, so neither appears on a command line. Each request is given
-# REQUEST_TIMEOUT_SECONDS; a read that gets no answer is asked again, as a
-# 503 is, until the deadline.
+# input, so neither appears on a command line. The submission, which isn't
+# asked again, may take 60 seconds, Cloud Run's own limit; every other
+# request 30. A read that gets no answer is asked again, as a 503 is, until
+# the deadline.
 
 set -euo pipefail
 
@@ -25,6 +26,7 @@ base_url="${base_url%/}"
 deadline_seconds="${ECONOMY_CHECK_DEADLINE_SECONDS:-1800}"
 poll_seconds="${ECONOMY_CHECK_POLL_SECONDS:-15}"
 request_timeout_seconds=30
+submission_timeout_seconds=60
 uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 
 for variable_name in SIMULATION_TEST_AUTH_ISSUER SIMULATION_TEST_AUTH_AUDIENCE \
@@ -40,12 +42,13 @@ work_directory="$(mktemp -d)"
 trap 'rm -rf "${work_directory}"' EXIT
 chmod 700 "${work_directory}"
 
-# Send one request; write its body to <name>.json and print its HTTP status.
-# It fails, printing nothing, when no answer arrives.
+# Send one request, allowing it <seconds>; write its body to <name>.json and
+# print its HTTP status. It fails when no answer arrives.
 send() {
   local name="$1"
-  shift
-  curl --silent --show-error --max-time "${request_timeout_seconds}" \
+  local seconds="$2"
+  shift 2
+  curl --silent --show-error --max-time "${seconds}" \
     --output "${work_directory}/${name}.json" --write-out '%{http_code}' "$@"
 }
 
@@ -55,7 +58,7 @@ token_status="$(
     --arg client_secret "${SIMULATION_TEST_AUTH_CLIENT_SECRET}" \
     --arg audience "${SIMULATION_TEST_AUTH_AUDIENCE}" \
     '{client_id: $client_id, client_secret: $client_secret, audience: $audience, grant_type: "client_credentials"}' \
-    | send token --request POST --header 'Content-Type: application/json' \
+    | send token "${request_timeout_seconds}" --request POST --header 'Content-Type: application/json' \
       --data @- "${SIMULATION_TEST_AUTH_ISSUER%/}/oauth/token"
 )" || fail "the token request got no answer"
 [[ "${token_status}" == "200" ]] || fail "the token request answered ${token_status}"
@@ -75,7 +78,7 @@ submission_status="$(
       reform: {policy_id: null, dynamic_id: null},
       include_cliffs: false
     }' \
-    | send submission --request POST --header "@${authorization_header}" \
+    | send submission "${submission_timeout_seconds}" --request POST --header "@${authorization_header}" \
       --header 'Content-Type: application/json' --data @- \
       "${base_url}/reports"
 )" || fail "POST /reports got no answer; it may have created a report"
@@ -94,7 +97,8 @@ started_at="${SECONDS}"
 while true; do
   report_body="${work_directory}/report.json"
   if ! read_status="$(
-    send report --header "@${authorization_header}" "${base_url}/reports/${report_id}"
+    send report "${request_timeout_seconds}" --header "@${authorization_header}" \
+      "${base_url}/reports/${report_id}"
   )"; then
     printf 'GET /reports/%s got no answer; asking again\n' "${report_id}" >&2
   elif [[ "${read_status}" == "200" ]]; then
