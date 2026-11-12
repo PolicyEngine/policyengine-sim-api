@@ -53,7 +53,7 @@ def require_worker_context(
         msg = "single-simulation bundle digest does not match its context"
         raise ValueError(msg)
     if str(simulation.evaluation_id) not in context.artifact_prefix:
-        msg = "single-simulation artifact prefix names another comparison run"
+        msg = "single-simulation artifact prefix names another run"
         raise ValueError(msg)
     if simulation.output_plan.country != required_country:
         msg = "single-simulation output plan names another country"

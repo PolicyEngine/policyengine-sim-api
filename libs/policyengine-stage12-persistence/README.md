@@ -24,9 +24,12 @@ revisions and live schema. This package never changes a schema.
   one `UPDATE` conditional on the row's status and, for a call's claim,
   completion or failure, on its recorded Modal call: a call claims a
   pending or running row that records no call or its own, and completes or
-  fails it only while it holds it running. A report run's completion sets
-  its own result columns and inserts its result rows in the same
-  transaction.
+  fails it only while it holds it running. A report run's coordinator also
+  fails its unfinished simulation runs, whatever call they record, when the
+  report run fails, and releases one its pre-empted attempt's worker holds
+  back to pending with no call (`release_simulation_run`). A report run's
+  completion sets its own result columns and inserts its result rows in the
+  same transaction.
 
 ## Tests
 

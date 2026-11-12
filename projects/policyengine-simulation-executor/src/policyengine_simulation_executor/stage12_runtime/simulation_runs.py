@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from policyengine_simulation_contract.stage12_execution import (
     PlannedSimulationExecutionInput,
@@ -46,6 +46,7 @@ from .worker_inputs import require_worker_context
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
 
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.stage12_bundle import CountryId
@@ -63,11 +64,27 @@ if TYPE_CHECKING:
     from .reused_outputs import OutputFileReader
     from .simulation import SimulationCalculation
 
-    # Calculates a planned simulation, given its stage progress, its stage
-    # spans and a check of whether it was stopped.
-    PlannedCalculation = Callable[..., SimulationCalculation]
-
 logger = logging.getLogger(__name__)
+
+
+class PlannedCalculation(Protocol):
+    """Calculates a planned simulation; ``simulation._calculate`` implements it."""
+
+    def __call__(
+        self,
+        simulation: PlannedSimulationExecutionInput,
+        *,
+        progress: StageProgress,
+        stage_span: Callable[[Stage], AbstractContextManager[object]],
+        cancellation_requested: Callable[[], bool],
+    ) -> SimulationCalculation:
+        """Return the calculation, timing each stage with ``stage_span``.
+
+        ``cancellation_requested`` says whether the run was taken from the
+        call, which a segmented calculation checks between polls.
+        """
+        ...
+
 
 # The worker's input names another simulation run than its call claimed.
 SIMULATION_RUN_INPUT_MISMATCH = "simulation_run_input_mismatch"

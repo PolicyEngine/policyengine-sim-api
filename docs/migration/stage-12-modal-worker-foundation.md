@@ -307,7 +307,9 @@ run that a pending or running report run names: those are the coordinator's.
 The coordinator claims the report run under its own Modal call ID, then checks
 the input against it: a report input or prefix naming other runs, or a report
 run row naming other simulation runs, fails the report run with
-`report_run_input_mismatch`. It uses the stored output of each simulation run
+`report_run_input_mismatch`. If a worker it starts finds its run held by a
+worker an earlier attempt started, which Modal never cancelled, the coordinator
+waits for that worker instead. It uses the stored output of each simulation run
 that already succeeded (see the reuse of succeeded runs above), fails the
 report run with `simulation_run_failed` if a run it must calculate already
 failed, and starts a worker for each other one with a context naming only that
@@ -320,8 +322,10 @@ when another call holds the report run or it has finished.
 its `simulation_runs` row (pending, no call), starts the country's
 `single_simulation_callable` with a `SimulationExecutionInput` (role
 `standalone`, no output plan, `evaluation_id` and `simulation_execution_id`
-both the run's ID) and a context naming the run in `simulation_run_id`, and
-records the call as for a report run. The worker plans the simulation's outputs
+both the run's ID) and a context naming the run in `simulation_run_id`, with
+an `artifact_prefix` that contains the run's ID (for example
+`stage-12-runs/<environment>/<YYYY>/<MM>/<simulation_run_id>`), and records the
+call as for a report run. A prefix without it fails the run. The worker plans the simulation's outputs
 as for a report comparing it with itself, so a report whose plan needs more
 columns, for example a reform that turns on labour supply responses, can't
 reuse it and fails with `reused_simulation_output_incompatible`.
