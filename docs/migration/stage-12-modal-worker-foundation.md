@@ -752,7 +752,8 @@ worker of the .py version the row records. It then sets the row's
 records its ID while the row is still pending with none. A row it can't start
 again (its worker left the manifest, its stored rows changed, or Modal
 refuses the call) is failed with `run_not_started`, a report run with its
-pending simulation runs; one whose rows or manifest it can't read now is left
+pending simulation runs; one whose rows or manifest it can't read now, or
+whose rebuild raises an unexpected error (logged with its traceback), is left
 for the next check. After three minutes a check marks no more rows, so it
 ends within its five-minute timeout without leaving a marked row with no
 call. The sweep's 15 minutes come after the restart window, so a second miss
@@ -767,8 +768,9 @@ runs: it can't rebuild their calls yet. Each check is a
 `v2_run_restart` operation, with the row's kind, ID, age and outcome, and
 each outcome is also logged as a `v2_run_restart_outcome` event. A deferred
 row is taken up again by the next check, so the runs that needed a restart
-are the distinct run IDs, or the outcomes other than `deferred`; the events
-say how each ended.
+are the distinct run IDs (the outcomes other than `deferred` leave out a row
+deferred in every check, which the sweep then fails); the events say how
+each ended.
 
 ## Temporary direct runner endpoint
 

@@ -12,13 +12,16 @@ How often runs need a restart is the check's telemetry:
   and the rest) set on it;
 - each row it takes up is one ``v2_run_restart`` operation, with the row's
   kind, ID and age. A row left ``deferred`` is taken up again by the next
-  check, so the operation count metric counts restart attempts; the runs
-  whose call never started are the distinct ``run_id`` values, or the
-  operations with any outcome but ``deferred``;
+  check, so the operation count metric counts restart attempts, and the
+  runs whose call never started are the distinct ``run_id`` values. (A
+  count of the outcomes other than ``deferred`` leaves out the rows deferred
+  in every check, which the sweep then fails.)
 - each row's outcome is set on its operation (``restart_outcome``, with
   ``restart_error_type`` when an error ended it) and logged as a
   ``v2_run_restart_outcome`` event, at WARNING when the row could not be
-  started again or its rows could not be read.
+  started again or its rows could not be read; an unexpected error
+  rebuilding a row's call is also logged with its traceback
+  (``v2_run_restart_unexpected_error``).
 
 This module imports none of the web service, so the sweep's image, which
 has none of its packages, can run it.

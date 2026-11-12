@@ -137,7 +137,8 @@ runs it every two minutes as the Modal worker role.
   doesn't confirm within ten seconds, is failed with
   `run_not_started: The run stayed pending with no Modal call recorded for
   it, and …`; a report run is failed with its simulation runs still pending
-  with no call. A row whose rows or manifest can't be read now is left
+  with no call. A row whose rows or manifest can't be read now, or whose
+  rebuild raises an unexpected error (logged with its traceback), is left
   unmarked for the next check.
 - Each check, each row and each outcome are telemetry; see
   `run_restart_check`'s docstring for the operations and event.
