@@ -290,11 +290,10 @@ class HouseholdReportSideInputs:
     policy_values: PolicyReform
 
 
-def household_report_calculation(  # noqa: PLR0913  # the report's stored inputs and its worker
+def household_report_calculation(
     *,
     household: StoredHousehold,
     year: int,
-    add_missing_variables: bool,
     baseline: HouseholdReportSideInputs,
     reform: HouseholdReportSideInputs | None = None,
     worker: HouseholdWorker,
@@ -304,10 +303,11 @@ def household_report_calculation(  # noqa: PLR0913  # the report's stored inputs
     Each side's request calculates the stored ``household``, in its
     country, for ``year`` with the household's saved SPM selection, on
     ``worker``'s bundle, and its calculation ID is the side's simulation
-    run; ``reform`` is None for a report of the baseline alone. Creating a
-    report passes the household's default year. A restart or re-run passes
-    the stored report's year and ``add_missing_variables``, and the
-    household and policy values as they are now read.
+    run; ``reform`` is None for a report of the baseline alone. Every side
+    adds the household's missing variables, so a household report holds
+    every value. Creating a report passes the household's default year. A
+    restart or re-run passes the stored report's year, and the household
+    and policy values as they are now read.
 
     Raise EconomySubmissionUnprocessableError (``household_not_calculable``)
     when the stored household cannot be read, or the household contract
@@ -338,7 +338,6 @@ def household_report_calculation(  # noqa: PLR0913  # the report's stored inputs
             side_inputs,
             year=year,
             situation=situation,
-            add_missing_variables=add_missing_variables,
             household=household,
             worker=worker,
         )
@@ -361,7 +360,6 @@ def _side_request(  # noqa: PLR0913  # the side and what it calculates
     *,
     year: int,
     situation: dict[str, Any],
-    add_missing_variables: bool,
     household: StoredHousehold,
     worker: HouseholdWorker,
 ) -> HouseholdExecutionRequest:
@@ -375,7 +373,9 @@ def _side_request(  # noqa: PLR0913  # the side and what it calculates
                 "year": str(year),
                 "household": situation,
                 **job_policy_fields(reform=side_inputs.policy_values),
-                "add_missing_variables": add_missing_variables,
+                # A household report holds every value, as the Public API's
+                # stored-household route gives it.
+                "add_missing_variables": True,
                 "bundle": worker.bundle,
                 **_spm_fields(household.document),
             }
@@ -532,7 +532,6 @@ class HouseholdReportSubmissionService:
         calculation = household_report_calculation(
             household=household,
             year=year,
-            add_missing_variables=request.add_missing_variables,
             baseline=side_inputs["baseline"],
             reform=side_inputs.get("reform"),
             worker=worker,

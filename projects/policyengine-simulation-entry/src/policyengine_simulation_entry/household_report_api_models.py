@@ -18,7 +18,7 @@ from uuid import UUID
 
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_persistence import ReportRunStatus
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import BaseModel, ConfigDict
 
 from policyengine_simulation_entry.economy_api_models import (
     ReportDescription,
@@ -40,12 +40,12 @@ class HouseholdReportRequest(_Request):
     """A household report: one stored household under a baseline and a reform.
 
     ``reform`` is null, or omitted, for a report of the baseline alone. The
-    report calculates the household's ``default_year``. With
-    ``add_missing_variables``, each side's calculation adds every yearly,
-    monthly and eternal variable the household lacks, as the Public API's
-    ``/calculate-full`` route does; otherwise it fills in only the values the
-    household asks for. A household's saved SPM selection is applied, or
-    the bundle's certified defaults without one.
+    report calculates the household's ``default_year``. Each side's
+    calculation adds every yearly, monthly and eternal variable the
+    household lacks, as the Public API's stored-household route does, so the
+    report holds every value; a household report has no option for it. A
+    household's saved SPM selection is applied, or the bundle's certified
+    defaults without one.
     """
 
     country: CountryId
@@ -55,11 +55,13 @@ class HouseholdReportRequest(_Request):
     household_id: UUID
     baseline: HouseholdPolicyChoice
     reform: HouseholdPolicyChoice | None = None
-    add_missing_variables: StrictBool = False
 
     def options(self) -> dict[str, Any]:
-        """Return the report's options as it stores them (``reports.inputs``)."""
-        return {"add_missing_variables": self.add_missing_variables}
+        """Return the report's options as it stores them (``reports.inputs``).
+
+        A household report has none: the column must hold an object.
+        """
+        return {}
 
 
 class HouseholdReportCreated(BaseModel):
