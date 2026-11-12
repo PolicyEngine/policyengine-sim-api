@@ -80,13 +80,46 @@ def default_household_worker(
     Raise HouseholdFunctionUnavailableError when it has none.
     """
     version = manifest.default_version
+    return _household_worker(
+        manifest,
+        country,
+        version,
+        described_as=f"the default v2 worker, .py {version},",
+    )
+
+
+def household_worker_for_version(
+    manifest: V2VersionManifest, country: str, policyengine_version: str
+) -> HouseholdWorker:
+    """Return the household function of the manifest's worker for a .py version.
+
+    A household job is calculated by the worker of the .py version it
+    records, which may no longer be the default. Raise
+    HouseholdFunctionUnavailableError when the manifest no longer holds that
+    worker, or it has no household function for the country.
+    """
+    if policyengine_version not in manifest.versions:
+        msg = f"the v2 version manifest has no worker for .py {policyengine_version}"
+        raise HouseholdFunctionUnavailableError(msg)
+    return _household_worker(
+        manifest,
+        country,
+        policyengine_version,
+        described_as=f"the v2 worker for .py {policyengine_version}",
+    )
+
+
+def _household_worker(
+    manifest: V2VersionManifest, country: str, version: str, *, described_as: str
+) -> HouseholdWorker:
+    """Return the household function of the manifest's worker ``version``.
+
+    ``described_as`` names the worker in the error raised when it has none.
+    """
     worker = manifest.versions[version]
     country_worker = worker.household_worker(country)
     if country_worker is None or country_worker.household_callable is None:
-        msg = (
-            f"the default v2 worker, .py {version}, has no household function "
-            f"for {country}"
-        )
+        msg = f"{described_as} has no household function for {country}"
         raise HouseholdFunctionUnavailableError(msg)
     return HouseholdWorker(
         application_name=worker.application_name,
@@ -128,13 +161,27 @@ class ManifestHouseholdWorkers:
         Raise HouseholdFunctionUnavailableError when it has none, and
         VersionManifestUnavailableError when the manifest cannot be read.
         """
+        return default_household_worker(self._manifest(), country)
+
+    def worker_for_version(
+        self, country: str, policyengine_version: str
+    ) -> HouseholdWorker:
+        """Return the household function of the worker for a .py version.
+
+        Raise HouseholdFunctionUnavailableError when the manifest has none,
+        and VersionManifestUnavailableError when it cannot be read.
+        """
+        return household_worker_for_version(
+            self._manifest(), country, policyengine_version
+        )
+
+    def _manifest(self) -> V2VersionManifest:
         try:
-            manifest = self._loader.load()
+            return self._loader.load()
         # Modal raises its own errors, and any of them means the same here.
         except Exception as error:
             msg = "the v2 version manifest could not be read"
             raise VersionManifestUnavailableError(msg) from error
-        return default_household_worker(manifest, country)
 
 
 class ModalHouseholdFunctionCaller:
