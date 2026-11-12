@@ -85,8 +85,10 @@ default worker, creates a `household_jobs` row and starts the household
 function's call with `spawn`, answering 202 with the job's `job_id` and
 `status`. Each submission creates a new job.
 `GET /household-calculations/{household_job_id}` returns the job's status,
-the household function's `result` document once it has one, and its
-`error_message`.
+the household function's `result` document once it has one, its
+`error_message`, and `modal_call_id`, the household function's Modal call
+recorded on the job (null until the service records one). Modal runs a
+pre-empted call again under the same ID.
 
 A submission is refused before anything is written: with 400 and a `code`
 when the household, policy or catalog version for the default worker's .py
@@ -153,6 +155,7 @@ exception's text.
 
 `GET /reports/{report_id}` and `GET /simulations/{simulation_id}` return the
 record and its newest run (created last, ties to the larger ID): its status,
-versions, error message and times, and a report run's simulation runs. The
-Public API reads results from the tables itself.
+versions, error message and times, and a report run's simulation runs and
+`modal_call_id`, the coordinator's Modal call recorded on it (null until the
+service records one). The Public API reads results from the tables itself.
 

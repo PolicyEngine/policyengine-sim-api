@@ -142,6 +142,47 @@ check has succeeded, later checks on that version reuse its simulation runs,
 so they check the coordinator's use of stored outputs rather than the
 workers', which the v2 deployment's own validation calls.
 
+### The staging preemption check
+
+Every staging deployment runs `staging_preemption_check` once the economy
+check has succeeded. `.github/scripts/simulation-staging-preemption-check.sh`
+runs twice, from the executor project, whose environment has the Modal
+client:
+
+- `household` calculates the staging household that
+  `SIMULATION_STAGING_HOUSEHOLD_ID` names, as the household check does;
+- `report` creates the economy check's report again (labelled "Staging
+  preemption check"), whose simulation runs reuse that check's, so it costs
+  no new simulation.
+
+Once the household job or report run is `running`, that is once the
+household function or coordinator has claimed it, the check takes the
+`modal_call_id` its read answers, asks Modal's call graph which container
+runs that call (`src/modal/utils/describe_call_inputs.py`), and stops that
+container with `modal container stop`. Modal sends the container SIGINT and
+gives the input to another container under the same call ID, as it does
+after a pre-emption. The check requires the record to succeed under that
+call, and the call graph to show the call's input finished in another
+container. Run again, the household function or coordinator resumes its
+claim. The report's simulation runs are reused, so its coordinator
+starts no worker, and the check doesn't cover a coordinator starting its
+workers again.
+
+A calculation that finishes before its container is stopped, for example on
+a warm container, proves nothing, so the check submits a new one, up to
+three attempts. A record that fails, or doesn't finish within its deadline
+(10 minutes for the household, 15 for the report, per attempt), fails the
+check at once.
+
+The check refuses any `MODAL_ENVIRONMENT` but `staging`, and stops only a
+container that `modal container list --env staging` lists. It uses the
+`beta` environment's Modal token (`MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`),
+which must be allowed to read call graphs and to list and stop containers,
+and the authenticated tests' client credentials. `deployment_ready` requires
+the check to pass in staging, so a failure stops the production deployment.
+Each attempt adds a household job, or a report and its run, to the staging
+database.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`
