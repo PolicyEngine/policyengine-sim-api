@@ -11,6 +11,10 @@ from conftest import FakeBackend, make_settings
 from fastapi.testclient import TestClient
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
+from policyengine_simulation_entry.budget_window_api_models import (
+    BudgetWindowReportCreated,
+    BudgetWindowYearCreated,
+)
 from policyengine_simulation_entry.economy_api_models import (
     EconomyReportCreated,
     EconomySimulationCreated,
@@ -59,6 +63,7 @@ class FakeEconomyReruns:
     """Records each re-run, and answers as told."""
 
     failure: Exception | None = None
+    report_answer: EconomyReportCreated | BudgetWindowReportCreated = RERUN_REPORT
     report_reruns: list[tuple[UUID, ReportRerunRequest, str, Any]] = field(
         default_factory=list
     )
@@ -71,13 +76,13 @@ class FakeEconomyReruns:
         *,
         request_id: str,
         observability_context: dict[str, Any] | None,
-    ) -> EconomyReportCreated:
+    ) -> EconomyReportCreated | BudgetWindowReportCreated:
         self.report_reruns.append(
             (report_id, request, request_id, observability_context)
         )
         if self.failure is not None:
             _raise(self.failure)
-        return RERUN_REPORT
+        return self.report_answer
 
     async def rerun_simulation(
         self,
@@ -137,6 +142,34 @@ def test_a_report_rerun_answers_201_with_its_new_run(client_for) -> None:
     assert (report_id, request) == (RECORD_ID, ReportRerunRequest(force=True))
     assert request_id != OBSERVABILITY_ID
     assert context["observability_id"] == OBSERVABILITY_ID
+
+
+def test_a_budget_window_rerun_answers_201_with_its_new_window_run(client_for) -> None:
+    window = BudgetWindowReportCreated(
+        report_id=RECORD_ID,
+        report_run_id=RUN_ID,
+        budget_window_run_id=SIDE_IDS[0],
+        status=ReportRunStatus.PENDING,
+        years=[
+            BudgetWindowYearCreated(
+                year=2026,
+                report_run_id=RUN_ID,
+                baseline_simulation_id=SIDE_IDS[1],
+                baseline_simulation_run_id=SIDE_IDS[2],
+                baseline_reused=False,
+                reform_simulation_id=SIDE_IDS[3],
+                reform_simulation_run_id=SIDE_IDS[0],
+                reform_reused=False,
+            )
+        ],
+    )
+    reruns = FakeEconomyReruns(report_answer=window)
+
+    with client_for(reruns) as client:
+        result = client.post(REPORT_RUNS, json={})
+
+    assert result.status_code == 201
+    assert result.json() == window.model_dump(mode="json")
 
 
 def test_a_report_rerun_without_force_reuses_runs(client_for) -> None:

@@ -18,6 +18,7 @@ from policyengine_api_simulation_client.api.default import (
     rerun_simulation,
 )
 from policyengine_api_simulation_client.models import (
+    BudgetWindowReportCreated,
     EconomyError,
     EconomyReportCreated,
     EconomyReportRequest,
@@ -273,3 +274,33 @@ def test_a_refused_rerun_is_read_with_its_code_and_any_run(status_code, body):
 
     assert isinstance(response.parsed, EconomyError)
     assert response.parsed.to_dict() == body
+
+
+def test_a_budget_window_rerun_is_read_with_its_new_window_run():
+    window = {
+        "report_id": REPORT_ID,
+        "report_run_id": RUN_ID,
+        "budget_window_run_id": SIDE_IDS[0],
+        "status": "pending",
+        "years": [
+            {
+                "year": 2026,
+                "report_run_id": RUN_ID,
+                "baseline_simulation_id": SIDE_IDS[1],
+                "baseline_simulation_run_id": SIDE_IDS[2],
+                "baseline_reused": False,
+                "reform_simulation_id": SIDE_IDS[3],
+                "reform_simulation_run_id": SIDE_IDS[0],
+                "reform_reused": True,
+            }
+        ],
+    }
+
+    response = rerun_report.sync_detailed(
+        UUID(REPORT_ID),
+        client=_client_answering(201, window),
+        body=ReportRerunRequest(),
+    )
+
+    assert isinstance(response.parsed, BudgetWindowReportCreated)
+    assert response.parsed.to_dict() == window

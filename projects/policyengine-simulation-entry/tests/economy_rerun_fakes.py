@@ -17,13 +17,13 @@ from economy_service_fakes import (
     POLICY_ID,
     REFORM,
     FakeCaller,
-    FakeStore,
     FakeWorkers,
     numbered_ids,
 )
 from policyengine_simulation_entry.economy_reruns import EconomyRerunService
 from policyengine_simulation_entry.economy_submissions import ServiceSettings
 from policyengine_simulation_persistence import (
+    BudgetWindowInputs,
     EconomyReportInputs,
     EconomySimulationInputs,
     ReportDefinition,
@@ -31,13 +31,18 @@ from policyengine_simulation_persistence import (
     SimulationChoice,
     SimulationDefinition,
     SimulationInputs,
+    WindowYearDefinition,
 )
+from test_budget_window_submissions import FakeAdvancer, FakeWindowStore
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from policyengine_simulation_persistence import (
         EconomyRequest,
         NewReportRerun,
         NewSimulationRerun,
+        NewWindowRerun,
         RunReuse,
     )
 
@@ -63,6 +68,38 @@ STORED_REPORT = ReportDefinition(
     baseline=SideDefinition(simulation_id=BASELINE_SIMULATION_ID, choice=CURRENT_LAW),
     reform=SideDefinition(simulation_id=REFORM_SIMULATION_ID, choice=REFORM_CHOICE),
 )
+# A stored budget window of three years, each with its own simulations.
+WINDOW_SIMULATION_IDS = {
+    year: (
+        UUID(f"00000000-0000-4000-8000-00000000{year}"),
+        UUID(f"00000000-0000-4000-8000-00000001{year}"),
+    )
+    for year in (2026, 2027, 2028)
+}
+STORED_WINDOW = ReportDefinition(
+    id=REPORT_ID,
+    country="us",
+    kind="budget_window",
+    year=2026,
+    region_code="us",
+    dataset_name="populace_us_2024",
+    inputs=STORED_OPTIONS,
+    baseline=SideDefinition(
+        simulation_id=WINDOW_SIMULATION_IDS[2026][0], choice=CURRENT_LAW
+    ),
+    reform=SideDefinition(
+        simulation_id=WINDOW_SIMULATION_IDS[2026][1], choice=REFORM_CHOICE
+    ),
+    budget_window_size=3,
+    window_years=tuple(
+        WindowYearDefinition(
+            year=year,
+            baseline_simulation_id=baseline_id,
+            reform_simulation_id=reform_id,
+        )
+        for year, (baseline_id, reform_id) in WINDOW_SIMULATION_IDS.items()
+    ),
+)
 STORED_SIMULATION = SimulationDefinition(
     id=SIMULATION_ID,
     country="us",
@@ -75,8 +112,11 @@ STORED_SIMULATION = SimulationDefinition(
 
 
 @dataclass
-class FakeRerunStore(FakeStore):
+class FakeRerunStore(FakeWindowStore):
     """Records the re-run reads and writes, and answers as told.
+
+    A budget window's re-run is read with ``reusable_by_year``, as a new
+    window is, and recorded in ``windows``, where the fake advancer finds it.
 
     ``inputs_failure`` is raised by a re-run's read of its inputs, and
     ``rerun_failure`` by its create instead of recording it.
@@ -138,6 +178,35 @@ class FakeRerunStore(FakeStore):
             raise self.inputs_failure
         return super().read_simulation_inputs(request, choice)
 
+    def read_window_rerun_inputs(
+        self,
+        request: EconomyRequest,
+        *,
+        baseline: SimulationChoice,
+        reform: SimulationChoice,
+        years: Sequence[WindowYearDefinition],
+        reuse: RunReuse | None,
+    ) -> BudgetWindowInputs:
+        self.rerun_reads.append((request, (baseline, reform, tuple(years), reuse)))
+        if self.inputs_failure is not None:
+            raise self.inputs_failure
+        return BudgetWindowInputs(
+            catalog=self.catalog,
+            baseline=SimulationInputs(choice=baseline, reform={}),
+            reform=SimulationInputs(choice=reform, reform=REFORM),
+            reusable_runs={
+                year.year: (None, None)
+                if reuse is None
+                else self.reusable_by_year.get(year.year, (None, None))
+                for year in years
+            },
+        )
+
+    def create_window_rerun(self, rerun: NewWindowRerun) -> None:
+        if self.rerun_failure is not None:
+            raise self.rerun_failure
+        self.windows.append(rerun)
+
     def create_report_rerun(self, rerun: NewReportRerun) -> None:
         if self.rerun_failure is not None:
             raise self.rerun_failure
@@ -150,7 +219,7 @@ class FakeRerunStore(FakeStore):
 
 
 class UnusedAdvancer:
-    """A window advancer a single-year re-run never asks to start a year."""
+    """A window advancer a test of a single-year re-run never expects to be used."""
 
     def advance_window(self, window_run_id: UUID, **_: Any) -> NoReturn:
         msg = f"a single-year re-run advanced window {window_run_id}"
@@ -163,9 +232,10 @@ def rerun_service(
     workers: FakeWorkers | None = None,
     caller: FakeCaller | None = None,
     output_bucket: str | None = OUTPUT_BUCKET,
+    advancer: FakeAdvancer | None = None,
 ) -> EconomyRerunService:
     return EconomyRerunService(
-        windows=UnusedAdvancer(),
+        windows=advancer or UnusedAdvancer(),
         store=store,
         workers=workers or FakeWorkers(),
         caller=caller or FakeCaller(),

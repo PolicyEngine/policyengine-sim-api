@@ -16,6 +16,8 @@ from economy_rerun_fakes import (
     STORED_OPTIONS,
     STORED_REPORT,
     STORED_SIMULATION,
+    STORED_WINDOW,
+    WINDOW_SIMULATION_IDS,
     FakeRerunStore,
     rerun_service,
 )
@@ -59,12 +61,17 @@ from policyengine_simulation_persistence import (
     UnknownRegionError,
 )
 from sqlalchemy.exc import OperationalError
+from test_budget_window_submissions import FakeAdvancer
 
 DATABASE_ERROR = OperationalError("SELECT 1", {}, Exception("server closed"))
 VERSIONS = RunVersions(
     country_package_version="2.2.1", policyengine_version=POLICYENGINE_VERSION
 )
 OBSERVED = {"observability_id": "observed"}
+REUSED_2027 = ReusableRun(
+    simulation_id=UUID("00000000-0000-4000-8000-000000002027"),
+    simulation_run_id=UUID("00000000-0000-4000-8000-0000000000b2"),
+)
 REUSED_BASELINE = ReusableRun(
     simulation_id=BASELINE_SIMULATION_ID,
     simulation_run_id=UUID("00000000-0000-4000-8000-0000000000b1"),
@@ -191,11 +198,7 @@ def test_an_unknown_report_or_simulation_is_not_found() -> None:
 
 @pytest.mark.parametrize(
     ("kind", "named"),
-    [
-        ("budget_window", "budget-window"),
-        ("household", "household"),
-        ("unsupported", "this type of"),
-    ],
+    [("household", "household"), ("unsupported", "this type of")],
 )
 def test_a_report_kind_the_service_does_not_rerun_yet_is_refused(kind, named) -> None:
     store = FakeRerunStore(report_definition=replace(STORED_REPORT, kind=kind))
@@ -476,3 +479,147 @@ def test_a_row_deleted_after_a_reruns_reads_is_refused_naming_the_report(
         _rerun_report(rerun_service(store))
 
     assert (refused.value.code, refused.value.detail) == (code, detail)
+
+
+def test_a_budget_window_is_rerun_as_a_new_window_run_and_its_first_years_started():
+    store = FakeRerunStore(
+        report_definition=STORED_WINDOW, reusable_by_year={2027: (REUSED_2027, None)}
+    )
+    caller = FakeCaller()
+    advancer = FakeAdvancer(store)
+
+    rerun = _rerun_report(rerun_service(store, caller=caller, advancer=advancer))
+
+    ((request, (baseline, reform, years, reuse)),) = store.rerun_reads
+    assert (request.policyengine_version, request.year) == (POLICYENGINE_VERSION, 2026)
+    assert (request.region_code, request.dataset_name) == ("us", "populace_us_2024")
+    assert (baseline, reform, years) == (
+        STORED_WINDOW.baseline.choice,
+        STORED_WINDOW.reform.choice,
+        STORED_WINDOW.window_years,
+    )
+    assert reuse == RunReuse(
+        versions=VERSIONS,
+        inputs=STORED_OPTIONS,
+        output_uri_prefix=f"gs://{OUTPUT_BUCKET}/",
+    )
+    (window,) = store.windows
+    assert (window.report_id, window.window_run_id, window.recalculate) == (
+        REPORT_ID,
+        UUID(int=1),
+        False,
+    )
+    assert (window.population, window.versions) == (CATALOG.population(2026), VERSIONS)
+    assert [window_year.year for window_year in window.years] == [2026, 2027, 2028]
+    for window_year in window.years:
+        baseline_id, reform_id = WINDOW_SIMULATION_IDS[window_year.year]
+        assert window_year.baseline.simulation_id == baseline_id
+        assert window_year.reform.simulation_id == reform_id
+    year_2027 = window.years[1]
+    assert (year_2027.baseline.simulation_run_id, year_2027.baseline.reused) == (
+        REUSED_2027.simulation_run_id,
+        True,
+    )
+    assert advancer.advances == [window.window_run_id]
+    assert len(caller.report_runs) == 3
+    for (year_to_start, _), (_, payload, context, observed) in zip(
+        advancer.started, caller.report_runs, strict=True
+    ):
+        report = ReportExecutionInput.model_validate(payload)
+        assert report.baseline.year == report.reform.year == year_to_start.year
+        assert report.reform.policy == REFORM
+        assert report.reform.options == STORED_OPTIONS
+        assert Stage12InvocationContext.model_validate(context).report_run == (
+            year_to_start.run_ids
+        )
+        assert observed == OBSERVED
+    assert rerun.model_dump() == {
+        "report_id": REPORT_ID,
+        "report_run_id": window.years[0].report_run_id,
+        "budget_window_run_id": window.window_run_id,
+        "status": ReportRunStatus.PENDING,
+        "years": [
+            {
+                "year": window_year.year,
+                "report_run_id": window_year.report_run_id,
+                "baseline_simulation_id": window_year.baseline.simulation_id,
+                "baseline_simulation_run_id": window_year.baseline.simulation_run_id,
+                "baseline_reused": window_year.baseline.reused,
+                "reform_simulation_id": window_year.reform.simulation_id,
+                "reform_simulation_run_id": window_year.reform.simulation_run_id,
+                "reform_reused": False,
+            }
+            for window_year in window.years
+        ],
+    }
+
+
+def test_a_forced_window_rerun_recalculates_every_year() -> None:
+    store = FakeRerunStore(
+        report_definition=STORED_WINDOW, reusable_by_year={2027: (REUSED_2027, None)}
+    )
+
+    rerun = _rerun_report(
+        rerun_service(store, advancer=FakeAdvancer(store)),
+        ReportRerunRequest(force=True),
+    )
+
+    assert store.rerun_reads[0][1][3] is None
+    (window,) = store.windows
+    assert window.recalculate is True
+    assert not any(window_year.baseline.reused for window_year in window.years)
+    assert not any(year.baseline_reused for year in rerun.years)
+
+
+def test_a_window_rerun_whose_first_year_modal_refuses_names_the_window_run() -> None:
+    store = FakeRerunStore(report_definition=STORED_WINDOW)
+    caller = FakeCaller(failure=RuntimeError("Modal is unavailable"))
+
+    with pytest.raises(EconomySubmissionUnavailableError) as refused:
+        _rerun_report(rerun_service(store, caller=caller, advancer=FakeAdvancer(store)))
+
+    error = refused.value
+    (window,) = store.windows
+    assert (error.code, error.record_id, error.run_id) == (
+        "modal_call_refused",
+        REPORT_ID,
+        window.window_run_id,
+    )
+    assert "the report's new run" in error.detail
+
+
+@pytest.mark.parametrize(
+    ("changes", "named"),
+    [
+        ({"window_years": ()}, "budget-window calculation"),
+        ({"budget_window_size": 4}, "budget-window calculation"),
+        (
+            {
+                "window_years": (
+                    STORED_WINDOW.window_years[0],
+                    STORED_WINDOW.window_years[2],
+                    STORED_WINDOW.window_years[1],
+                )
+            },
+            "budget-window calculation",
+        ),
+        (
+            {
+                "window_years": (
+                    *STORED_WINDOW.window_years[:2],
+                    replace(STORED_WINDOW.window_years[2], reform_simulation_id=None),
+                )
+            },
+            "budget-window calculation",
+        ),
+    ],
+)
+def test_a_window_whose_years_cannot_be_rerun_is_refused(changes, named) -> None:
+    store = FakeRerunStore(report_definition=replace(STORED_WINDOW, **changes))
+
+    with pytest.raises(EconomyRerunConflictError) as refused:
+        _rerun_report(rerun_service(store, advancer=FakeAdvancer(store)))
+
+    assert refused.value.code == "rerun_not_supported"
+    assert named in refused.value.detail
+    assert (store.rerun_reads, store.windows) == ([], [])

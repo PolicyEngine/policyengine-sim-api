@@ -414,8 +414,11 @@ def test_rerun_routes_declare_every_answer():
     unprocessable = {"$ref": "#/components/schemas/EconomyRequestUnprocessable"}
 
     for path, rerun in (
-        ("/reports/{report_id}/runs", "EconomyReportCreated"),
-        ("/simulations/{simulation_id}/runs", "EconomySimulationCreated"),
+        (
+            "/reports/{report_id}/runs",
+            ("EconomyReportCreated", "BudgetWindowReportCreated"),
+        ),
+        ("/simulations/{simulation_id}/runs", ("EconomySimulationCreated",)),
     ):
         responses = _responses(spec, "post", path)
         assert set(responses) == {
@@ -428,9 +431,10 @@ def test_rerun_routes_declare_every_answer():
             "500",
             "503",
         }
-        assert _response_schema(responses["201"]) == {
-            "$ref": f"#/components/schemas/{rerun}"
-        }
+        rerun_schema = _response_schema(responses["201"])
+        assert rerun_schema.get("anyOf", [rerun_schema]) == [
+            {"$ref": f"#/components/schemas/{name}"} for name in rerun
+        ]
         for status_code in ("400", "404", "409", "500", "503"):
             assert _response_schema(responses[status_code]) == error
         assert _response_schema(responses["422"]) == unprocessable
