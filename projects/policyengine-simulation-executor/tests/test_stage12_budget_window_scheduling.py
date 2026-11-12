@@ -345,16 +345,27 @@ def test_a_window_store_that_cannot_be_built_leaves_the_year_to_run(caplog) -> N
 
 def test_the_v2_coordinator_runs_each_call_as_a_window_year(monkeypatch) -> None:
     from policyengine_simulation_executor import stage12_runtime
-    from test_stage12_modal_app import _load
+    from test_stage12_modal_app import RecordingRuntime, _load
 
     module = _load(monkeypatch)
     monkeypatch.setattr(
         module.modal, "current_function_call_id", lambda: "fc-1", raising=False
     )
+    coordinator_trace = {"traceparent": "00-coordinator-trace-01"}
+
+    class TracedRuntime(RecordingRuntime):
+        def capture_context(self) -> dict:
+            return coordinator_trace
+
+    monkeypatch.setattr(
+        module, "init_process_observability", lambda **_: TracedRuntime()
+    )
     received = []
 
     def window_year(coordinate, *, payload, context, windows, observability_context):
-        received.append((payload, context))
+        # The next years' calls carry the coordinator's trace, captured
+        # only when they are started.
+        received.append((payload, context, observability_context()))
         return coordinate()
 
     monkeypatch.setattr(stage12_runtime, "coordinate_window_year", window_year)
@@ -369,7 +380,7 @@ def test_the_v2_coordinator_runs_each_call_as_a_window_year(monkeypatch) -> None
     )
 
     assert result == {"status": "succeeded"}
-    assert received == [({"report": 1}, {"context": 1})]
+    assert received == [({"report": 1}, {"context": 1}, coordinator_trace)]
 
 
 class NoWindow(RecordingWindows):
