@@ -75,6 +75,16 @@ from policyengine_simulation_persistence.household_job_store import (
     UnknownCatalogVersionError,
     UnknownHouseholdError,
 )
+from policyengine_simulation_persistence.household_report_records import (
+    HOUSEHOLD_REPORT_TYPE,
+    HouseholdReportSide,
+    NewHouseholdReport,
+    insert_household_report,
+)
+from policyengine_simulation_persistence.household_report_store import (
+    HouseholdReportInputs,
+    HouseholdReportStore,
+)
 from policyengine_simulation_persistence.input_tables import input_metadata
 from policyengine_simulation_persistence.policy_reform import (
     MissingPolicyParametersError,
@@ -103,6 +113,7 @@ from policyengine_simulation_persistence.tables import (
 )
 
 __all__ = [
+    "HOUSEHOLD_REPORT_TYPE",
     "SERVICE_TABLE_PRIVILEGES",
     "SERVICE_UPDATABLE_COLUMNS",
     "CatalogDataset",
@@ -122,10 +133,14 @@ __all__ = [
     "HouseholdJobReferenceError",
     "HouseholdJobStatus",
     "HouseholdJobStore",
+    "HouseholdReportInputs",
+    "HouseholdReportSide",
+    "HouseholdReportStore",
     "MissingPolicyParametersError",
     "NewEconomyReport",
     "NewEconomySimulation",
     "NewHouseholdJob",
+    "NewHouseholdReport",
     "OverlappingReformError",
     "PolicyReform",
     "ReportRunState",
@@ -163,6 +178,7 @@ __all__ = [
     "insert_economy_report",
     "insert_economy_simulation",
     "insert_household_job",
+    "insert_household_report",
     "missing_table_privileges",
     "normalized_database_url",
     "read_catalog_version_id",
