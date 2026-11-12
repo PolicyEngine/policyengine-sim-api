@@ -589,37 +589,27 @@ def test_a_window_rerun_whose_first_year_modal_refuses_names_the_window_run() ->
 
 
 @pytest.mark.parametrize(
-    ("changes", "named"),
+    "changes",
     [
-        ({"window_years": ()}, "budget-window calculation"),
-        ({"budget_window_size": 4}, "budget-window calculation"),
-        (
-            {
-                "window_years": (
-                    STORED_WINDOW.window_years[0],
-                    STORED_WINDOW.window_years[2],
-                    STORED_WINDOW.window_years[1],
-                )
-            },
-            "budget-window calculation",
-        ),
-        (
-            {
-                "window_years": (
-                    *STORED_WINDOW.window_years[:2],
-                    replace(STORED_WINDOW.window_years[2], reform_simulation_id=None),
-                )
-            },
-            "budget-window calculation",
-        ),
+        {"window_years": ()},
+        {"budget_window_size": 4},
+        # A year missing from the newest window run, as one naming no reform is.
+        {"window_years": STORED_WINDOW.window_years[::2]},
+        {
+            "window_years": (
+                STORED_WINDOW.window_years[0],
+                STORED_WINDOW.window_years[2],
+                STORED_WINDOW.window_years[1],
+            )
+        },
     ],
 )
-def test_a_window_whose_years_cannot_be_rerun_is_refused(changes, named) -> None:
+def test_a_window_whose_years_cannot_be_rerun_is_refused(changes) -> None:
     store = FakeRerunStore(report_definition=replace(STORED_WINDOW, **changes))
 
     with pytest.raises(EconomyRerunConflictError) as refused:
         _rerun_report(rerun_service(store, advancer=FakeAdvancer(store)))
 
     assert refused.value.code == "rerun_not_supported"
-    assert named in refused.value.detail
+    assert "complete budget-window calculation" in refused.value.detail
     assert (store.rerun_reads, store.windows) == ([], [])

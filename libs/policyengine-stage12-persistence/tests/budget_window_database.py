@@ -10,6 +10,7 @@ inserts them; tests then set each year's status as a scenario needs.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -145,6 +146,86 @@ class BudgetWindowSeeder:
             years=years,
             simulation_ids=simulation_ids,
             model_id=model_id,
+        )
+
+    def seed_window_rerun(self, window: SeededWindow) -> SeededWindow:
+        """Insert a later pending window run of ``window``'s report, as a re-run.
+
+        Each year gets a new report run and two new runs of the report's
+        simulations; the earlier window run and its years are left as they are.
+        """
+        table = self.seeder.table
+        with self.engine.connect() as connection:
+            first_run = connection.execute(
+                select(table("simulation_runs")).where(
+                    table("simulation_runs").c.id
+                    == window.years[0].baseline_simulation_run_id
+                )
+            ).one()
+        window_run_id = uuid4()
+        years = tuple(
+            SeededYear(
+                year=seeded.year,
+                report_run_id=uuid4(),
+                baseline_simulation_run_id=uuid4(),
+                reform_simulation_run_id=uuid4(),
+            )
+            for seeded in window.years
+        )
+        later = {"created_at": NOW + timedelta(minutes=1), "updated_at": NOW}
+        with self.engine.begin() as connection:
+            connection.execute(
+                insert(table("budget_window_runs")).values(
+                    id=window_run_id,
+                    report_id=window.report_id,
+                    tax_benefit_model_version_id=first_run.tax_benefit_model_version_id,
+                    trigger="manual",
+                    recalculate=True,
+                    status="pending",
+                    **later,
+                )
+            )
+            for seeded in years:
+                for run_id, simulation_id in zip(
+                    (
+                        seeded.baseline_simulation_run_id,
+                        seeded.reform_simulation_run_id,
+                    ),
+                    window.simulation_ids,
+                    strict=True,
+                ):
+                    connection.execute(
+                        insert(table("simulation_runs")).values(
+                            id=run_id,
+                            simulation_id=simulation_id,
+                            year=seeded.year,
+                            tax_benefit_model_version_id=first_run.tax_benefit_model_version_id,
+                            dataset_id=first_run.dataset_id,
+                            status="pending",
+                            **later,
+                            **VERSIONS,
+                        )
+                    )
+                connection.execute(
+                    insert(table("report_runs")).values(
+                        id=seeded.report_run_id,
+                        report_id=window.report_id,
+                        baseline_simulation_run_id=seeded.baseline_simulation_run_id,
+                        reform_simulation_run_id=seeded.reform_simulation_run_id,
+                        budget_window_run_id=window_run_id,
+                        year=seeded.year,
+                        status="pending",
+                        trigger="manual",
+                        **later,
+                        **VERSIONS,
+                    )
+                )
+        return SeededWindow(
+            window_run_id=window_run_id,
+            report_id=window.report_id,
+            years=years,
+            simulation_ids=window.simulation_ids,
+            model_id=window.model_id,
         )
 
     def set_years(

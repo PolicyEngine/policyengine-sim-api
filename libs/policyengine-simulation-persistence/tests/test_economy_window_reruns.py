@@ -35,6 +35,8 @@ from economy_rows import (
 )
 from policyengine_simulation_persistence import (
     BudgetWindowYear,
+    EconomyPopulation,
+    EconomyRecordReferenceError,
     EconomyRequest,
     EconomyRunStore,
     NewBudgetWindowReport,
@@ -43,6 +45,7 @@ from policyengine_simulation_persistence import (
     ReportRunStatus,
     ReportRunTrigger,
     ReportSimulation,
+    RerunRecordDeletedError,
     RerunSide,
     ReusableRun,
     RunInProgressError,
@@ -482,3 +485,117 @@ def test_a_window_rerun_is_created_through_the_store(public_api_database_url) ->
             "trigger"
         ] == (ReportRunTrigger.MANUAL)
     assert refused.value.run_id == rerun.window_run_id
+
+
+def test_a_window_rerun_refuses_years_that_are_not_its_window() -> None:
+    """Its years run one at a time from its first year, at most 75 of them."""
+    year = WindowRerunYear(
+        year=2026,
+        report_run_id=uuid4(),
+        baseline=RerunSide(
+            simulation_id=uuid4(), simulation_run_id=uuid4(), reused=False
+        ),
+        reform=RerunSide(
+            simulation_id=uuid4(), simulation_run_id=uuid4(), reused=False
+        ),
+    )
+    rerun = NewWindowRerun(
+        report_id=uuid4(),
+        window_run_id=uuid4(),
+        population=EconomyPopulation(
+            tax_benefit_model_version_id=uuid4(),
+            region_id=uuid4(),
+            dataset_id=uuid4(),
+            year=2026,
+        ),
+        versions=LATER_VERSIONS,
+        recalculate=False,
+        years=(year,),
+    )
+
+    for years in (
+        (),
+        (replace(year, year=2027),),
+        (year, replace(year, year=2028)),
+        tuple(replace(year, year=2026 + offset) for offset in range(76)),
+    ):
+        with pytest.raises(ValueError, match="consecutive years"):
+            replace(rerun, years=years)
+
+
+def test_a_year_naming_no_reform_is_left_out_of_a_windows_definition(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        stored = _stored_window(connection, economy)
+        connection.execute(
+            text(
+                "UPDATE public.report_runs SET reform_simulation_run_id = NULL "
+                "WHERE id = :id"
+            ),
+            {"id": stored.years[1].report_run_id},
+        )
+        act_as_the_service(connection)
+
+        definition = read_report_definition(connection, stored.report_id)
+
+    assert definition is not None
+    assert [year.year for year in definition.window_years] == [2026, 2028]
+
+
+def test_a_window_rerun_of_a_deleted_report_or_year_simulation_is_refused(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        later = insert_later_catalog(connection, economy)
+        stored = _stored_window(connection, economy)
+        act_as_the_service(connection)
+        rerun = _window_rerun_of(stored, later)
+        gone_year = replace(
+            rerun.years[2],
+            reform=RerunSide(
+                simulation_id=uuid4(), simulation_run_id=uuid4(), reused=False
+            ),
+        )
+
+        with pytest.raises(RerunRecordDeletedError), connection.begin_nested():
+            insert_window_rerun(connection, replace(rerun, report_id=uuid4()))
+        with (
+            pytest.raises(EconomyRecordReferenceError) as refused,
+            connection.begin_nested(),
+        ):
+            insert_window_rerun(
+                connection, replace(rerun, years=(*rerun.years[:2], gone_year))
+            )
+
+    assert (refused.value.table_name, refused.value.column_name) == (
+        "simulation_runs",
+        "simulation_id",
+    )
+
+
+def test_a_window_rerun_is_refused_while_a_year_still_runs_after_its_window_ended(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        later = insert_later_catalog(connection, economy)
+        stored = _stored_window(
+            connection, economy, window_status=ReportRunStatus.FAILED
+        )
+        still_running = stored.years[2].report_run_id
+        connection.execute(
+            text(
+                "UPDATE public.report_runs SET status = 'running', "
+                "started_at = now(), completed_at = NULL WHERE id = :id"
+            ),
+            {"id": still_running},
+        )
+        act_as_the_service(connection)
+
+        with pytest.raises(RunInProgressError) as refused:
+            insert_window_rerun(connection, _window_rerun_of(stored, later))
+
+    assert refused.value.run_id == still_running
