@@ -28,6 +28,10 @@ class RecordingRuntime:
     def set_context(self, **attributes) -> None:
         self.contexts.append(attributes)
 
+    def capture_context(self) -> dict:
+        # The coordinator passes it on to start a budget window's next years.
+        return {}
+
     @contextmanager
     def operation(self, name, **kwargs):
         self.operations.append({"name": name, **kwargs})
