@@ -19,7 +19,7 @@ from conftest import act_as_the_service, rolled_back_transaction
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
-    HouseholdReportSide,
+    HouseholdReportSimulation,
     HouseholdReportStore,
     MissingPolicyParametersError,
     NewHouseholdReport,
@@ -114,11 +114,11 @@ def _new_report(
         year=2026,
         versions=VERSIONS,
         inputs=OPTIONS,
-        baseline=HouseholdReportSide(
+        baseline=HouseholdReportSimulation(
             simulation_id=uuid4(), simulation_run_id=uuid4(), policy_id=None
         ),
         reform=(
-            HouseholdReportSide(
+            HouseholdReportSimulation(
                 simulation_id=uuid4(),
                 simulation_run_id=uuid4(),
                 policy_id=reform_policy_id,
@@ -442,7 +442,7 @@ def test_a_create_whose_commit_fails_may_have_been_written() -> None:
                 year=2026,
                 versions=VERSIONS,
                 inputs=OPTIONS,
-                baseline=HouseholdReportSide(uuid4(), uuid4(), None),
+                baseline=HouseholdReportSimulation(uuid4(), uuid4(), None),
                 reform=None,
             )
         )
