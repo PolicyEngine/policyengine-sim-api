@@ -765,10 +765,11 @@ def test_household_functions_record_the_report_run_their_call_names(
         calculated.append({"request": request, **keywords})
         return request.calculation_id
 
-    def run_household_report(report_run_id, calculation, calculate_side, **keywords):
+    def run_household_report(report_run_id, payload, calculate_side, **keywords):
         recorded.append(
-            {"report_run_id": report_run_id, "calculation": calculation, **keywords}
+            {"report_run_id": report_run_id, "payload": payload, **keywords}
         )
+        calculation = HouseholdReportRunCalculation.model_validate(payload)
         outcomes = [calculate_side(request) for _, request in calculation.sides()]
         return {"status": "succeeded", "outcomes": [str(item) for item in outcomes]}
 
@@ -790,9 +791,9 @@ def test_household_functions_record_the_report_run_their_call_names(
     }
     (report,) = recorded
     assert report["report_run_id"] == UUID("00000000-0000-4000-8000-00000000a002")
-    assert report["calculation"] == HouseholdReportRunCalculation.model_validate(
-        _household_report_payload(country)
-    )
+    # The payload reaches the recording code as sent, which validates it once
+    # the call holds the report run.
+    assert report["payload"] == _household_report_payload(country)
     assert report["modal_call_id"] == "fc-household-report"
     assert report["runtime"] is runtime
     assert [call["required_country"] for call in calculated] == [country, country]

@@ -29,6 +29,7 @@ from policyengine_simulation_contract.household_report_execution import (
 )
 from policyengine_simulation_executor.stage12_runtime import household_report_recording
 from policyengine_stage12_persistence import RunStatus, RunWrite, SimulationRunState
+from pydantic import ValidationError
 
 REPORT_RUN_ID = UUID("00000000-0000-4000-8000-00000000a001")
 BASELINE_RUN_ID = UUID("00000000-0000-4000-8000-0000000000b1")
@@ -121,6 +122,7 @@ class FakeHouseholdReportRuns:
     """
 
     report_claim: RunWrite = CHANGED["running"]
+    claim_error: Exception | None = None
     simulation_claims: dict[UUID, RunWrite] = field(default_factory=dict)
     simulation_states: dict[UUID, SimulationRunState] = field(default_factory=dict)
     require_error: Exception | None = None
@@ -131,6 +133,8 @@ class FakeHouseholdReportRuns:
         self.writes.append(
             {"write": "claim_report", "run": report_run_id, "call": modal_call_id}
         )
+        if self.claim_error is not None:
+            raise self.claim_error
         return self.report_claim
 
     def require_household_report_runs(
@@ -237,7 +241,7 @@ class InputCancelledForTest(BaseException):
 def _run(runs, calculate, *, with_reform: bool = True, modal_call_id=CALL_ID):
     return household_report_recording.run_household_report(
         REPORT_RUN_ID,
-        _calculation(with_reform=with_reform),
+        _calculation(with_reform=with_reform).model_dump(mode="json"),
         calculate,
         modal_call_id=modal_call_id,
         writer=runs,
@@ -501,9 +505,10 @@ def test_a_call_without_a_modal_call_id_writes_nothing() -> None:
     assert runs.writes == []
 
 
-def test_a_record_that_changes_nothing_is_logged_and_the_call_still_answers(
+def test_a_side_whose_record_changes_nothing_fails_the_report_run(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    # Another writer finished the run this call held before its record.
     runs = FakeHouseholdReportRuns(
         record_result=RunWrite(changed=False, status=RunStatus.FAILED)
     )
@@ -512,3 +517,60 @@ def test_a_record_that_changes_nothing_is_logged_and_the_call_still_answers(
 
     assert answer["simulation_runs"][0]["status"] == "failed"
     assert f"Simulation run {BASELINE_RUN_ID} was failed before" in caplog.text
+    assert "complete_report" not in runs.kinds
+    (failed_report,) = runs.of("fail_report")
+    assert failed_report["error_message"] == (
+        "household_simulation_run_unavailable: The baseline simulation run was "
+        "failed before its calculation was recorded."
+    )
+    assert answer["status"] == "failed"
+
+
+def test_a_side_found_failed_with_no_recorded_failure_fails_the_report_run() -> None:
+    runs = FakeHouseholdReportRuns(
+        simulation_claims={
+            REFORM_RUN_ID: RunWrite(changed=False, status=RunStatus.FAILED)
+        },
+        simulation_states={REFORM_RUN_ID: _state(RunStatus.FAILED)},
+    )
+
+    answer = _run(runs, _succeeded)
+
+    (failed_report,) = runs.of("fail_report")
+    assert failed_report["error_message"] == (
+        "household_calculation_failed: The reform simulation run failed: "
+        "no failure was recorded"
+    )
+    assert answer["status"] == "failed"
+
+
+def test_a_payload_the_contract_refuses_fails_the_report_run_it_claimed() -> None:
+    runs = FakeHouseholdReportRuns()
+
+    def calculate(request: HouseholdExecutionRequest) -> HouseholdExecutionResult:
+        pytest.fail("a refused payload is not calculated")
+
+    with pytest.raises(ValidationError):
+        household_report_recording.run_household_report(
+            REPORT_RUN_ID,
+            {"baseline": {"calculation_id": "not a request"}},
+            calculate,
+            modal_call_id=CALL_ID,
+            writer=runs,
+        )
+
+    assert runs.kinds == ["claim_report", "fail_report"]
+    assert runs.of("fail_report")[0]["error_message"] == (
+        "household_function_error: The household function raised ValidationError."
+    )
+
+
+def test_a_claim_that_raises_fails_the_report_run_it_may_hold_then_propagates() -> None:
+    # The claim's commit may have applied before its connection failed.
+    runs = FakeHouseholdReportRuns(claim_error=ConnectionError("connection lost"))
+
+    with pytest.raises(ConnectionError):
+        _run(runs, _succeeded)
+
+    assert runs.kinds == ["claim_report", "fail_report"]
+    assert runs.of("fail_report")[0]["call"] == CALL_ID
