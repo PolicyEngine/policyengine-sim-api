@@ -91,7 +91,10 @@ RESTART_AFTER: Final = timedelta(minutes=3)
 # minutes, so a restart has time to record its call before the sweep judges it.
 RESTART_UNTIL: Final = timedelta(minutes=12)
 # At most this many rows are restarted by one check; the next takes the rest.
-RESTARTS_PER_CHECK: Final = 50
+# With every call waited on for its full time, a check still ends within the
+# scheduled function's five-minute timeout, so no row it marks is left
+# without its call.
+RESTARTS_PER_CHECK: Final = 20
 # How long the check waits for Modal to accept a restarted call.
 CALL_START_TIMEOUT_SECONDS: Final = 10.0
 _NOT_STARTED: Final = (
