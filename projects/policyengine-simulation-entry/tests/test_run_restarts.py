@@ -995,4 +995,8 @@ def test_an_unexpected_rebuild_error_defers_its_run_and_the_check_goes_on(
     ]
     assert logged.exc_info is not None
     assert isinstance(logged.exc_info[1], RuntimeError)
-    assert (logged.run_kind, logged.run_id) == ("report_run", str(broken_run_id))
+    # The observability runtime's log handler writes only these attributes.
+    assert logged.policyengine_attributes == {
+        "run_kind": "report_run",
+        "run_id": str(broken_run_id),
+    }
