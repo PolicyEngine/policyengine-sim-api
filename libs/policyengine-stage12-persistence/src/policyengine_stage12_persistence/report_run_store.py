@@ -20,6 +20,7 @@ from sqlalchemy import and_, exists, func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from policyengine_stage12_persistence.report_run_tables import (
+    budget_window_runs,
     household_jobs,
     report_runs,
     simulation_runs,
@@ -80,12 +81,15 @@ class ActiveRun:
     """A pending or running run or household job, and its recorded Modal call.
 
     ``modal_call_id`` is None for a run with no call recorded.
+    ``budget_window_run_id`` is the budget-window run a report run is a year
+    of, and None for any other run.
     """
 
     kind: RunKind
     run_id: UUID
     status: RunStatus
     modal_call_id: str | None
+    budget_window_run_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -502,7 +506,10 @@ class ReportRunStore:
         no pending or running report run names it as its baseline or reform:
         that report run's coordinator starts its children's calls, records
         their outcomes, and stops and starts them again when Modal restarts
-        it, so they are its to judge until it has finished.
+        it, so they are its to judge until it has finished. A year of a
+        pending or running budget-window run that is still pending with no
+        call recorded is waiting for an earlier year to end, and is listed
+        only once its window has finished: the window is judged as a whole.
         """
         table = RUN_TABLES[kind]
         active_since = (
@@ -514,12 +521,14 @@ class ReportRunStore:
             table.c.status.in_(ACTIVE_STATUSES),
             active_since < active_since_before,
         ]
+        columns = [table.c.id, table.c.status, table.c.modal_call_id]
         if kind is RunKind.SIMULATION_RUN:
-            conditions.append(_no_active_report_run_names(table))
+            conditions.append(no_active_report_run_names(table))
+        if kind is RunKind.REPORT_RUN:
+            conditions.append(~_waiting_window_year())
+            columns.append(table.c.budget_window_run_id)
         statement = (
-            select(table.c.id, table.c.status, table.c.modal_call_id)
-            .where(*conditions)
-            .order_by(active_since, table.c.id)
+            select(*columns).where(*conditions).order_by(active_since, table.c.id)
         )
         with self._transaction("list_active_runs") as connection:
             return tuple(
@@ -528,6 +537,9 @@ class ReportRunStore:
                     run_id=row.id,
                     status=RunStatus(row.status),
                     modal_call_id=row.modal_call_id,
+                    budget_window_run_id=(
+                        row.budget_window_run_id if kind is RunKind.REPORT_RUN else None
+                    ),
                 )
                 for row in connection.execute(statement)
             )
@@ -564,7 +576,7 @@ class ReportRunStore:
                 table.c.status == run.status.value,
                 same_call,
                 *(
-                    (_no_active_report_run_names(table),)
+                    (no_active_report_run_names(table),)
                     if run.kind is RunKind.SIMULATION_RUN
                     else ()
                 ),
@@ -644,7 +656,23 @@ def _running_under_call(table: Table, modal_call_id: str) -> ColumnElement[bool]
     )
 
 
-def _no_active_report_run_names(table: Table) -> ColumnElement[bool]:
+def _waiting_window_year() -> ColumnElement[bool]:
+    """Return the condition that a report run is a year waiting in its window.
+
+    It is pending with no call recorded, in a pending or running budget-window
+    run, so an earlier year's coordinator will start it.
+    """
+    return and_(
+        report_runs.c.status == RunStatus.PENDING.value,
+        report_runs.c.modal_call_id.is_(None),
+        exists().where(
+            budget_window_runs.c.id == report_runs.c.budget_window_run_id,
+            budget_window_runs.c.status.in_(ACTIVE_STATUSES),
+        ),
+    )
+
+
+def no_active_report_run_names(table: Table) -> ColumnElement[bool]:
     """Return the condition that no pending or running report run names the run.
 
     A report run names its simulation runs as its baseline and its reform.
