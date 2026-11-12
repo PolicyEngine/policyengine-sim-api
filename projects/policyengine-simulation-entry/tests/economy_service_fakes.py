@@ -31,7 +31,9 @@ from policyengine_simulation_persistence import (
     CatalogRegion,
     EconomyCatalogRows,
     EconomyReportInputs,
+    EconomyReportState,
     EconomySimulationInputs,
+    EconomySimulationState,
     ReportRunStatus,
     ReusableRun,
     SimulationInputs,
@@ -128,6 +130,8 @@ class FakeStore:
     record_failure: Exception | None = None
     fail_failure: Exception | None = None
     claimed: bool = False
+    stored_report: EconomyReportState | None = None
+    stored_simulation: EconomySimulationState | None = None
     report_reads: list[tuple[EconomyRequest, Any]] = field(default_factory=list)
     simulation_reads: list[tuple[EconomyRequest, Any]] = field(default_factory=list)
     reports: list[NewEconomyReport] = field(default_factory=list)
@@ -167,6 +171,18 @@ class FakeStore:
             catalog=self.catalog,
             simulation=SimulationInputs(choice=choice, reform=REFORM),
         )
+
+    def read_report(self, report_id: UUID) -> EconomyReportState | None:
+        if self.read_failure is not None:
+            raise self.read_failure
+        stored = self.stored_report
+        return stored if stored is not None and stored.id == report_id else None
+
+    def read_simulation(self, simulation_id: UUID) -> EconomySimulationState | None:
+        if self.read_failure is not None:
+            raise self.read_failure
+        stored = self.stored_simulation
+        return stored if stored is not None and stored.id == simulation_id else None
 
     def create_report(self, report: NewEconomyReport) -> None:
         if self.create_failure is not None:

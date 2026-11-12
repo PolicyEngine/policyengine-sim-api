@@ -33,6 +33,8 @@ EXPECTED_ROUTES = {
     ("GET", "/health"),
     ("GET", "/jobs/{job_id}"),
     ("GET", "/ready"),
+    ("GET", "/reports/{report_id}"),
+    ("GET", "/simulations/{simulation_id}"),
     ("GET", "/versions"),
     ("GET", "/versions/{kind}"),
     ("POST", "/household-calculations"),
@@ -81,17 +83,26 @@ HOUSEHOLD_SCHEMAS = (
 
 # The economy report and simulation routes, which only the Cloud Run
 # entrypoint has.
-ECONOMY_PATHS = ("/reports", "/simulations")
+ECONOMY_PATHS = (
+    "/reports",
+    "/reports/{report_id}",
+    "/simulations",
+    "/simulations/{simulation_id}",
+)
 ECONOMY_SCHEMAS = (
     "EconomyError",
     "EconomyReportCreated",
     "EconomyReportRequest",
+    "EconomyReportState",
     "EconomyRequestReason",
     "EconomyRequestUnprocessable",
     "EconomySimulationCreated",
     "EconomySimulationRequest",
+    "EconomySimulationState",
     "PolicyChoice",
+    "ReportRunRead",
     "ReportRunStatus",
+    "SimulationRunRead",
     "SimulationStatus",
 )
 
@@ -381,7 +392,8 @@ def test_every_economy_503_declares_its_retry_after_header():
     spec = create_app().openapi()
 
     for path in ECONOMY_PATHS:
-        headers = _responses(spec, "post", path)["503"]["headers"]
+        method = "get" if path.endswith("}") else "post"
+        headers = _responses(spec, method, path)["503"]["headers"]
         assert headers["Retry-After"]["schema"] == {"type": "integer"}
 
 
@@ -423,3 +435,24 @@ def test_economy_requests_name_no_version_and_no_record_id():
     assert spm["$ref"] == "#/components/schemas/SPMSelection"
     assert "default" not in spm
     assert "spm" not in schemas["EconomyReportRequest"].get("required", [])
+
+
+def test_economy_reads_declare_every_answer():
+    spec = create_app().openapi()
+    error = {"$ref": "#/components/schemas/EconomyError"}
+
+    for path, state in (
+        ("/reports/{report_id}", "EconomyReportState"),
+        ("/simulations/{simulation_id}", "EconomySimulationState"),
+    ):
+        responses = _responses(spec, "get", path)
+        assert set(responses) == {"200", "403", "404", "422", "500", "503"}
+        assert _response_schema(responses["200"]) == {
+            "$ref": f"#/components/schemas/{state}"
+        }
+        for status_code in ("404", "500", "503"):
+            assert _response_schema(responses[status_code]) == error
+        assert "Modal" not in responses["503"]["description"]
+    names = operation_ids(cast("OpenAPIDocument", spec))
+    assert names[("GET", "/reports/{report_id}")] == "get_report"
+    assert names[("GET", "/simulations/{simulation_id}")] == "get_simulation"

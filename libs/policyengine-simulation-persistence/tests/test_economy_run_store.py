@@ -322,3 +322,42 @@ def test_a_simulation_is_created_then_its_call_recorded_or_its_run_failed(
     assert (status, failed) == (SimulationStatus.PENDING, True)
     assert recorded_state == ("pending", "fc-worker")
     assert refused_state == ("failed", None)
+
+
+def test_a_report_and_a_simulation_are_read_as_they_stand(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        act_as_the_service(connection)
+        store = _store_on(connection)
+        report = NewEconomyReport(
+            id=uuid4(),
+            run_id=uuid4(),
+            country="us",
+            label="Read back",
+            description=None,
+            tax_benefit_model_id=economy.catalog.model_id,
+            population=economy.population(),
+            versions=VERSIONS,
+            inputs=OPTIONS,
+            baseline=ReportSimulation(uuid4(), uuid4(), CURRENT_LAW, reused=False),
+            reform=ReportSimulation(uuid4(), uuid4(), CURRENT_LAW, reused=False),
+        )
+        store.create_report(report)
+        store.record_report_call(report.run_id, "fc-coordinator")
+
+        stored_report = store.read_report(report.id)
+        stored_simulation = store.read_simulation(report.baseline.simulation_id)
+        missing = (store.read_report(uuid4()), store.read_simulation(uuid4()))
+
+    assert missing == (None, None)
+    assert stored_report is not None
+    assert stored_report.run is not None
+    assert (stored_report.run.id, stored_report.run.status) == (
+        report.run_id,
+        ReportRunStatus.PENDING,
+    )
+    assert stored_simulation is not None
+    assert stored_simulation.run is not None
+    assert stored_simulation.run.id == report.baseline.simulation_run_id

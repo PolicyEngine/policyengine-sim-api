@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, NoReturn
 from uuid import UUID
 
@@ -30,7 +31,13 @@ from policyengine_simulation_entry.economy_submissions import (
 )
 from policyengine_simulation_entry.simulation_database import SimulationDatabase
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
-from policyengine_simulation_persistence import ReportRunStatus, SimulationStatus
+from policyengine_simulation_persistence import (
+    EconomyReportState,
+    EconomySimulationState,
+    ReportRunState,
+    ReportRunStatus,
+    SimulationStatus,
+)
 
 OBSERVABILITY_ID = "6e1f3d4c-0a5b-4c39-9d2e-7f8a9b0c1d2e"
 RECORD_ID = UUID("00000000-0000-4000-8000-0000000000e1")
@@ -65,6 +72,8 @@ class FakeEconomySubmissions:
     """Records each submission, and answers as told."""
 
     failure: Exception | None = None
+    stored_report: EconomyReportState | None = None
+    stored_simulation: EconomySimulationState | None = None
     reports: list[tuple[EconomyReportRequest, str, Any]] = field(default_factory=list)
     simulations: list[tuple[EconomySimulationRequest, str, Any]] = field(
         default_factory=list
@@ -93,6 +102,20 @@ class FakeEconomySubmissions:
         if self.failure is not None:
             _raise(self.failure)
         return CREATED_SIMULATION
+
+    async def read_report(self, report_id: UUID) -> EconomyReportState | None:
+        if self.failure is not None:
+            _raise(self.failure)
+        stored = self.stored_report
+        return stored if stored is not None and stored.id == report_id else None
+
+    async def read_simulation(
+        self, simulation_id: UUID
+    ) -> EconomySimulationState | None:
+        if self.failure is not None:
+            _raise(self.failure)
+        stored = self.stored_simulation
+        return stored if stored is not None and stored.id == simulation_id else None
 
 
 @pytest.fixture
@@ -370,3 +393,118 @@ def test_without_its_database_and_v2_environment_none_is_built(settings_changes)
         database.dispose()
 
     assert submissions is None
+
+
+READ_AT = "2026-11-12T15:00:00Z"
+STORED_REPORT = EconomyReportState(
+    id=RECORD_ID,
+    country="uk",
+    baseline_simulation_id=SIDE_IDS[0],
+    reform_simulation_id=SIDE_IDS[2],
+    run=ReportRunState(
+        id=RUN_ID,
+        status=ReportRunStatus.FAILED,
+        country_package_version="2.174.1",
+        policyengine_version="6.17.1",
+        error_message="simulation_failed: the reform failed",
+        created_at=datetime.fromisoformat(READ_AT),
+        started_at=datetime.fromisoformat(READ_AT),
+        completed_at=datetime.fromisoformat(READ_AT),
+        baseline_simulation_run_id=SIDE_IDS[1],
+        reform_simulation_run_id=SIDE_IDS[3],
+    ),
+)
+STORED_SIMULATION = EconomySimulationState(id=RECORD_ID, run=None)
+
+
+def test_a_report_is_read_with_its_newest_runs_status(client_for) -> None:
+    submissions = FakeEconomySubmissions(stored_report=STORED_REPORT)
+
+    with client_for(submissions) as client:
+        result = client.get(f"/reports/{RECORD_ID}")
+        missing = client.get(f"/reports/{RUN_ID}")
+
+    assert result.status_code == 200
+    assert result.json() == {
+        "report_id": str(RECORD_ID),
+        "country": "uk",
+        "baseline_simulation_id": str(SIDE_IDS[0]),
+        "reform_simulation_id": str(SIDE_IDS[2]),
+        "run": {
+            "run_id": str(RUN_ID),
+            "status": "failed",
+            "country_package_version": "2.174.1",
+            "policyengine_version": "6.17.1",
+            "error_message": "simulation_failed: the reform failed",
+            "created_at": READ_AT,
+            "started_at": READ_AT,
+            "completed_at": READ_AT,
+            "baseline_simulation_run_id": str(SIDE_IDS[1]),
+            "reform_simulation_run_id": str(SIDE_IDS[3]),
+        },
+    }
+    assert missing.status_code == 404
+    assert missing.json() == {
+        "code": "unknown_report",
+        "detail": f"There is no report {RUN_ID}.",
+    }
+
+
+def test_a_simulation_is_read_with_its_newest_runs_status(client_for) -> None:
+    submissions = FakeEconomySubmissions(stored_simulation=STORED_SIMULATION)
+
+    with client_for(submissions) as client:
+        result = client.get(f"/simulations/{RECORD_ID}")
+        missing = client.get(f"/simulations/{RUN_ID}")
+
+    assert result.status_code == 200
+    assert result.json() == {"simulation_id": str(RECORD_ID), "run": None}
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "unknown_simulation"
+
+
+@pytest.mark.parametrize("path", ["/reports/not-a-uuid", "/simulations/not-a-uuid"])
+def test_a_read_of_an_id_that_is_not_a_uuid_is_refused(client_for, path) -> None:
+    with client_for(FakeEconomySubmissions()) as client:
+        result = client.get(path)
+
+    assert result.status_code == 422
+
+
+@pytest.mark.parametrize("record", ["reports", "simulations"])
+def test_a_read_the_database_cannot_answer_is_unavailable(client_for, record) -> None:
+    submissions = FakeEconomySubmissions(
+        failure=EconomySubmissionUnavailableError(
+            code="database_unavailable", detail="The database could not be read."
+        )
+    )
+
+    with client_for(submissions) as client:
+        result = client.get(f"/{record}/{RECORD_ID}")
+
+    assert result.status_code == 503
+    assert result.headers["Retry-After"] == "10"
+    assert result.json() == {
+        "code": "database_unavailable",
+        "detail": "The database could not be read.",
+    }
+
+
+@pytest.mark.parametrize("record", ["reports", "simulations"])
+def test_an_unconfigured_service_answers_reads_with_503(client_for, record) -> None:
+    with client_for(None) as client:
+        result = client.get(f"/{record}/{RECORD_ID}")
+
+    assert result.status_code == 503
+    assert result.json()["code"] == "not_configured"
+
+
+@pytest.mark.parametrize("record", ["reports", "simulations"])
+def test_an_unexpected_read_failure_answers_a_json_500(client_for, record) -> None:
+    submissions = FakeEconomySubmissions(failure=RuntimeError("must not be logged"))
+
+    with client_for(submissions) as client:
+        result = client.get(f"/{record}/{RECORD_ID}")
+
+    assert result.status_code == 500
+    assert result.json() == UNEXPECTED_FAILURE_ANSWER

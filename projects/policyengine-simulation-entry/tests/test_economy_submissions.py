@@ -45,12 +45,16 @@ from policyengine_simulation_entry.household_workers import (
 from policyengine_simulation_persistence import (
     CatalogDataset,
     EconomyRecordReferenceError,
+    EconomyReportState,
+    EconomySimulationState,
     MissingPolicyParametersError,
     OverlappingReformError,
+    ReportRunState,
     ReportRunStatus,
     RunReuse,
     RunVersions,
     SimulationChoice,
+    SimulationRunState,
     SimulationStatus,
     UnknownCatalogVersionError,
     UnknownDatasetError,
@@ -467,3 +471,60 @@ def test_the_calls_context_records_when_and_where_it_was_made() -> None:
         "observed",
         "staging",
     )
+
+
+REPORT_RUN = ReportRunState(
+    id=UUID(int=11),
+    status=ReportRunStatus.SUCCEEDED,
+    country_package_version="2.2.1",
+    policyengine_version=POLICYENGINE_VERSION,
+    error_message=None,
+    created_at=CREATED_AT,
+    started_at=CREATED_AT,
+    completed_at=CREATED_AT,
+    baseline_simulation_run_id=UUID(int=12),
+    reform_simulation_run_id=UUID(int=13),
+)
+STORED_REPORT = EconomyReportState(
+    id=UUID(int=10),
+    country="us",
+    baseline_simulation_id=UUID(int=14),
+    reform_simulation_id=UUID(int=15),
+    run=REPORT_RUN,
+)
+STORED_SIMULATION = EconomySimulationState(
+    id=UUID(int=20),
+    run=SimulationRunState(
+        id=UUID(int=21),
+        status=SimulationStatus.FAILED,
+        country_package_version="2.2.1",
+        policyengine_version=POLICYENGINE_VERSION,
+        error_message="simulation_failed: no",
+        created_at=CREATED_AT,
+        started_at=None,
+        completed_at=CREATED_AT,
+    ),
+)
+
+
+def test_a_report_and_a_simulation_are_read_as_they_stand() -> None:
+    submissions = service(
+        FakeStore(stored_report=STORED_REPORT, stored_simulation=STORED_SIMULATION)
+    )
+
+    assert asyncio.run(submissions.read_report(STORED_REPORT.id)) == STORED_REPORT
+    assert (
+        asyncio.run(submissions.read_simulation(STORED_SIMULATION.id))
+        == STORED_SIMULATION
+    )
+    assert asyncio.run(submissions.read_report(UUID(int=99))) is None
+    assert asyncio.run(submissions.read_simulation(UUID(int=99))) is None
+
+
+def test_a_read_the_database_cannot_answer_is_unavailable() -> None:
+    submissions = service(FakeStore(read_failure=DATABASE_ERROR))
+
+    for read in (submissions.read_report, submissions.read_simulation):
+        with pytest.raises(EconomySubmissionUnavailableError) as unavailable:
+            asyncio.run(read(UUID(int=1)))
+        assert unavailable.value.code == "database_unavailable"
