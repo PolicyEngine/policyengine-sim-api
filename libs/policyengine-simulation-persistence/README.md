@@ -125,6 +125,32 @@ commit fails after its rows were inserted raises
 `EconomyRecordOutcomeUnknownError`: PostgreSQL may have applied the commit,
 so the rows may exist.
 
+## Restarting runs whose call never started
+
+`run_restart_records.py` holds the restart check's reads and writes. The
+check runs as the Modal worker role, whose grants cover them: `SELECT` on
+the run tables and their inputs, and `UPDATE` of `updated_at`,
+`modal_call_id`, `status`, `error_message` and `completed_at`.
+
+- `list_unstarted_runs` returns the oldest rows, up to a limit, created in a
+  window that are still `pending` with no Modal call and whose `updated_at`
+  still equals `created_at`: household jobs, report runs outside a budget
+  window whose baseline is an economy simulation, and runs of economy
+  simulations that no report run names (standalone runs).
+- `mark_restart` sets a listed row's `updated_at` to the statement's clock
+  while it is still unstarted, so it is listed and marked only once.
+- `read_unstarted_report_run` and `read_unstarted_simulation_run` read back
+  what the Simulation Entrypoint built a call from: each side's simulation
+  run, policy and dynamic, with the values read against the run's own
+  catalog version, the region, dataset and year the run records, the
+  report's options and the run's versions. `StoredRunUnreadableError` says
+  the rows no longer describe one calculation: a side's region or dataset
+  is gone, or the two sides differ.
+
+`RunRestartStore` runs each in a transaction of its own. The check records
+a call, or fails a row, with `EconomyRunStore`'s and `HouseholdJobStore`'s
+own conditional writes.
+
 ## Reading a policy
 
 `read_policy_reform` (`policy_reform.py`) reads a stored policy as the reform

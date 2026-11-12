@@ -356,7 +356,7 @@ run's maximum age of 24 hours.
 anything: their `coordinate_report` requires an evaluation record, and their
 context model refuses `simulation_run_id`. Modal accepts the call, which fails
 at once, and the run stays pending with its call recorded until the sweep fails
-it (`modal_call_ended`), at least ten minutes after its creation. A call
+it (`modal_call_ended`), at least 15 minutes after its creation. A call
 reaches such an application only while the manifest's default, or
 `STAGE12_V2_WORKER_VERSION`, names one: during the deployment of this change,
 if it adds a newer .py version, until it moves the default to it, or while a
@@ -709,9 +709,35 @@ call that names no job, as deployment validation makes, touches no database.
 The stuck-run sweep (`src/modal/run_sweep_app.py`) fails household jobs
 nothing will finish by the rule it applies to report runs and simulation
 runs, counting a job's age from its creation: a pending job with no call
-recorded ten minutes after its creation, a pending or running job once
+recorded 15 minutes after its creation, a pending or running job once
 Modal reports its recorded call ended, and any job still unfinished 24 hours
 after its creation, whatever Modal reports.
+
+**Restarting a run whose call never started.** The same Modal application
+runs a restart check every two minutes, as the Modal worker role. It lists
+the household jobs, report runs and standalone simulation runs created 3 to
+12 minutes ago that are still pending with no call recorded and that
+nothing has changed since their insert, as when the Simulation Entrypoint
+stopped between creating a run and starting its call. For each, it reads
+back what the entrypoint built the call from, builds the same call with the
+entrypoint's own builders on the worker of the .py version the row records,
+sets the row's `updated_at` so it is never restarted twice, starts the call
+and records its ID while the row is still pending with none. A row it can't
+start again (its worker left the manifest, its stored rows changed, or Modal
+refuses the call) is failed with `run_not_started`; one whose rows or
+manifest it can't read now is left for the next check. The sweep's 15
+minutes come after that window, so a second miss is still failed with
+`run_not_started`. The restart code is the simulation service's
+(`policyengine_simulation_entry.run_restarts`, `run_restart_calls` and
+`run_restart_check`, on `policyengine_simulation_persistence`), which the
+image adds as source.
+
+It leaves alone the report runs of a budget window and the runs of
+household simulations, whose own calls start them. Each check is a
+`v2_run_restart_check` operation and each listed row a `v2_run_restart`
+operation, with the row's kind, ID, age and outcome, and each outcome is
+also logged as a `v2_run_restart_outcome` event, so the operation count
+metric and the events say how often runs need a restart and how each ended.
 
 - Image: the CA store, the frozen `modal-simulation-image` dependency group
   and the source packages, without the bundle's datasets or the Stage 12

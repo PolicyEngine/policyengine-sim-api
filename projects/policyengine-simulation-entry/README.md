@@ -100,11 +100,43 @@ can't be read. When Modal refuses the call, or doesn't confirm it within ten
 seconds, the job is failed at once and the 503 (`modal_call_refused`) names
 it; a job the household function claimed meanwhile is answered with 202 as
 it stands, and a job whose state couldn't then be recorded or read with 202
-`pending`, to be read rather than submitted again (the stuck-run sweep fails
-it if no call ever starts). Every 500 of either route, from an unexpected
+`pending`, to be read rather than submitted again (the restart check starts
+its call once more 3 to 12 minutes after its creation, and the stuck-run
+sweep fails it if no call ever starts). Every 500 of either route, from an unexpected
 failure or a request the service built and the household contract refuses,
 is the JSON error with code `internal_error`. `DEPLOYMENT.md` describes the deployment settings and the
 staging check.
+
+## Restarting a run whose call never started
+
+When the service stops between creating a household job, a report run or a
+standalone simulation run and starting its Modal call, nothing records a
+call for it. The restart check (`run_restarts`, with `run_restart_calls` and
+`run_restart_check`) starts such a row's call once more. It doesn't run in
+this service: the stuck-run sweep's Modal application
+(`projects/policyengine-simulation-executor/src/modal/run_sweep_app.py`)
+runs it every two minutes as the Modal worker role.
+
+- It takes the rows created 3 to 12 minutes ago that are still `pending`
+  with no call and that nothing has changed since their insert, at most 50
+  a check, oldest first. A budget window's report runs and household
+  simulations' runs are left out.
+- It rebuilds each call with this service's own builders
+  (`report_run_calculation`, `simulation_run_calculation`,
+  `prepare_household_job`) from the stored rows, on the manifest's worker
+  for the .py version the row records, even when that worker is no longer
+  the default. The context's request ID is the check's own
+  (`run-restart-<uuid>`), and its creation time is the row's.
+- It sets the row's `updated_at` before starting the call, so a row is
+  restarted at most once, then records the call's ID with the submission's
+  own conditional write.
+- A row whose call can't be rebuilt, or whose restart Modal refuses or
+  doesn't confirm within ten seconds, is failed with
+  `run_not_started: The run stayed pending with no Modal call recorded for
+  it, and …`. A row whose rows or manifest can't be read now is left
+  unmarked for the next check.
+- Each check, each row and each outcome are telemetry; see
+  `run_restart_check`'s docstring for the operations and event.
 
 ## Economy reports and simulations
 
