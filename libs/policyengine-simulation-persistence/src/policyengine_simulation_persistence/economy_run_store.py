@@ -9,11 +9,17 @@ reads and writes of ``economy_run_records`` and ``policy_reform`` that way.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from policyengine_simulation_persistence.economy_rerun_records import (
+    insert_report_rerun,
+    insert_simulation_rerun,
+    read_report_definition,
+    read_simulation_definition,
+)
 from policyengine_simulation_persistence.economy_run_reads import (
     read_economy_report,
     read_economy_simulation,
@@ -28,6 +34,7 @@ from policyengine_simulation_persistence.economy_run_records import (
     fail_unstarted_report_run,
     fail_unstarted_simulation_run,
     find_reusable_run,
+    find_reusable_run_of,
     insert_economy_report,
     insert_economy_simulation,
     read_dataset,
@@ -61,6 +68,13 @@ if TYPE_CHECKING:
 
     from sqlalchemy import Connection, Engine
 
+    from policyengine_simulation_persistence.economy_rerun_records import (
+        NewReportRerun,
+        NewSimulationRerun,
+        ReportDefinition,
+        SideDefinition,
+        SimulationDefinition,
+    )
     from policyengine_simulation_persistence.economy_run_reads import (
         EconomyReportState,
         EconomySimulationState,
@@ -78,6 +92,11 @@ if TYPE_CHECKING:
 type TransactionFactory = Callable[[], AbstractContextManager[Connection]]
 # Which of a report's simulations a value belongs to.
 type ReportSide = Literal["baseline", "reform"]
+# Finds a report side's reusable run, given the side, its policy and dynamic,
+# and the run the other side reuses, which it must not.
+type ReusableRunSearch = Callable[
+    [ReportSide, SimulationChoice, UUID | None], ReusableRun | None
+]
 # The errors a simulation's own policy or dynamic can raise.
 type SideRefusal = (
     UnknownPolicyError
@@ -253,39 +272,88 @@ class EconomyRunStore:
         """
         with self._transaction() as connection:
             catalog = _catalog_rows(connection, request)
-            population = catalog.population(request.year)
-            sides = []
-            excluded_run_id = None
-            sides_requested: tuple[tuple[ReportSide, SimulationChoice], ...] = (
-                ("baseline", baseline),
-                ("reform", reform),
+            search = (
+                None
+                if reuse is None
+                else _search_by_definition(
+                    connection, catalog.population(request.year), reuse
+                )
             )
-            for side, choice in sides_requested:
-                try:
-                    inputs = _simulation_inputs(
-                        connection, request.country, catalog.catalog_version_id, choice
-                    )
-                except _SIDE_ERRORS as error:
-                    raise ReportSideError(side, error) from error
-                if reuse is not None:
-                    reusable_run = find_reusable_run(
-                        connection,
-                        choice=choice,
-                        population=population,
-                        versions=reuse.versions,
-                        inputs=reuse.inputs,
-                        output_uri_prefix=reuse.output_uri_prefix,
-                        excluded_run_id=excluded_run_id,
-                    )
-                    if reusable_run is not None:
-                        excluded_run_id = reusable_run.simulation_run_id
-                        inputs = SimulationInputs(
-                            choice=inputs.choice,
-                            reform=inputs.reform,
-                            reusable_run=reusable_run,
-                        )
-                sides.append(inputs)
-        return EconomyReportInputs(catalog=catalog, baseline=sides[0], reform=sides[1])
+            return _report_inputs(
+                connection,
+                request,
+                catalog,
+                baseline=baseline,
+                reform=reform,
+                search=search,
+            )
+
+    def read_report_definition(self, report_id: UUID) -> ReportDefinition | None:
+        """Return what the stored report calculates, or None when there is none."""
+        with self._transaction() as connection:
+            return read_report_definition(connection, report_id)
+
+    def read_simulation_definition(
+        self, simulation_id: UUID
+    ) -> SimulationDefinition | None:
+        """Return what the stored simulation calculates, or None when there is none."""
+        with self._transaction() as connection:
+            return read_simulation_definition(connection, simulation_id)
+
+    def read_report_rerun_inputs(
+        self,
+        request: EconomyRequest,
+        *,
+        baseline: SideDefinition,
+        reform: SideDefinition,
+        reuse: RunReuse | None,
+    ) -> EconomyReportInputs:
+        """Read a report re-run's catalog rows, both sides' values and reusable runs.
+
+        ``request`` names the stored report's region code and dataset name,
+        found in the catalog version of the current .py version. With
+        ``reuse``, each side gets the run ``find_reusable_run_of`` finds among
+        its own simulation's runs, and the reform never gets the baseline's.
+        Raise the errors ``read_report_inputs`` raises.
+        """
+        with self._transaction() as connection:
+            catalog = _catalog_rows(connection, request)
+            search = (
+                None
+                if reuse is None
+                else _search_own_runs(
+                    connection,
+                    catalog.population(request.year),
+                    reuse,
+                    {
+                        "baseline": baseline.simulation_id,
+                        "reform": reform.simulation_id,
+                    },
+                )
+            )
+            return _report_inputs(
+                connection,
+                request,
+                catalog,
+                baseline=baseline.choice,
+                reform=reform.choice,
+                search=search,
+            )
+
+    def create_report_rerun(self, rerun: NewReportRerun) -> None:
+        """Create the report's new run and its sides' new simulation runs.
+
+        Raise ``insert_report_rerun``'s errors, and
+        EconomyRecordOutcomeUnknownError as ``create_report`` does.
+        """
+        self._create(lambda connection: insert_report_rerun(connection, rerun))
+
+    def create_simulation_rerun(self, rerun: NewSimulationRerun) -> None:
+        """Create the simulation's new run; see ``insert_simulation_rerun``.
+
+        Raise EconomyRecordOutcomeUnknownError as ``create_report`` does.
+        """
+        self._create(lambda connection: insert_simulation_rerun(connection, rerun))
 
     def create_report(self, report: NewEconomyReport) -> None:
         """Create the report, its new simulations and its runs.
@@ -465,3 +533,93 @@ def _simulation_inputs(
     return SimulationInputs(
         choice=choice, reform=combine_reforms(policy_reform, dynamic_reform)
     )
+
+
+def _side_inputs(
+    connection: Connection,
+    request: EconomyRequest,
+    catalog: EconomyCatalogRows,
+    side: ReportSide,
+    choice: SimulationChoice,
+) -> SimulationInputs:
+    """Read one report side's values; raise ReportSideError naming a refused side."""
+    try:
+        return _simulation_inputs(
+            connection, request.country, catalog.catalog_version_id, choice
+        )
+    except _SIDE_ERRORS as error:
+        raise ReportSideError(side, error) from error
+
+
+def _report_inputs(  # noqa: PLR0913  # the request's rows, both sides and the search
+    connection: Connection,
+    request: EconomyRequest,
+    catalog: EconomyCatalogRows,
+    *,
+    baseline: SimulationChoice,
+    reform: SimulationChoice,
+    search: ReusableRunSearch | None,
+) -> EconomyReportInputs:
+    """Read both sides' values and, with ``search``, each side's reusable run.
+
+    The reform never gets the run the baseline reuses.
+    """
+    sides: list[SimulationInputs] = []
+    excluded_run_id: UUID | None = None
+    requested: tuple[tuple[ReportSide, SimulationChoice], ...] = (
+        ("baseline", baseline),
+        ("reform", reform),
+    )
+    for side, choice in requested:
+        inputs = _side_inputs(connection, request, catalog, side, choice)
+        reusable_run = None if search is None else search(side, choice, excluded_run_id)
+        if reusable_run is not None:
+            excluded_run_id = reusable_run.simulation_run_id
+            inputs = replace(inputs, reusable_run=reusable_run)
+        sides.append(inputs)
+    return EconomyReportInputs(catalog=catalog, baseline=sides[0], reform=sides[1])
+
+
+def _search_by_definition(
+    connection: Connection, population: EconomyPopulation, reuse: RunReuse
+) -> ReusableRunSearch:
+    """Search any simulation with the side's definition (a new report's sides)."""
+
+    def search(
+        _side: ReportSide, choice: SimulationChoice, excluded_run_id: UUID | None
+    ) -> ReusableRun | None:
+        return find_reusable_run(
+            connection,
+            choice=choice,
+            population=population,
+            versions=reuse.versions,
+            inputs=reuse.inputs,
+            output_uri_prefix=reuse.output_uri_prefix,
+            excluded_run_id=excluded_run_id,
+        )
+
+    return search
+
+
+def _search_own_runs(
+    connection: Connection,
+    population: EconomyPopulation,
+    reuse: RunReuse,
+    simulation_ids: dict[ReportSide, UUID],
+) -> ReusableRunSearch:
+    """Search only each side's own simulation's runs (a stored report's re-run)."""
+
+    def search(
+        side: ReportSide, _choice: SimulationChoice, excluded_run_id: UUID | None
+    ) -> ReusableRun | None:
+        return find_reusable_run_of(
+            connection,
+            simulation_id=simulation_ids[side],
+            population=population,
+            versions=reuse.versions,
+            inputs=reuse.inputs,
+            output_uri_prefix=reuse.output_uri_prefix,
+            excluded_run_id=excluded_run_id,
+        )
+
+    return search

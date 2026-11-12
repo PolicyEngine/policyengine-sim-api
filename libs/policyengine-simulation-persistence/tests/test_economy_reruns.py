@@ -654,10 +654,14 @@ def test_a_rerun_is_refused_when_the_current_catalog_lacks_its_region_or_dataset
             if missing == "region"
             else replace(LATER_REQUEST, dataset_name="populace_us_2023")
         )
-        side = SideDefinition(stored.baseline.simulation_id, CURRENT_LAW)
 
         with pytest.raises(expected):
-            _store_on(connection).read_simulation_rerun_inputs(request, side)
+            _store_on(connection).read_report_rerun_inputs(
+                request,
+                baseline=SideDefinition(stored.baseline.simulation_id, CURRENT_LAW),
+                reform=SideDefinition(stored.reform.simulation_id, CURRENT_LAW),
+                reuse=None,
+            )
 
 
 def test_a_simulation_reruns_inputs_are_read_on_the_current_catalog_version(
@@ -670,14 +674,10 @@ def test_a_simulation_reruns_inputs_are_read_on_the_current_catalog_version(
             connection, economy.catalog, [StoredValue(CTC_AMOUNT, 3_000, START)]
         )
         choice = SimulationChoice(policy_id=policy_id, dynamic_id=None)
-        stored = insert_simulation_run(
-            connection, economy.population(), RunShape(choice=choice)
-        )
         act_as_the_service(connection)
 
-        inputs = _store_on(connection).read_simulation_rerun_inputs(
-            LATER_REQUEST, SideDefinition(stored.simulation_id, choice)
-        )
+        # A simulation's re-run reads the current catalog version as a new one's.
+        inputs = _store_on(connection).read_simulation_inputs(LATER_REQUEST, choice)
 
     assert inputs.catalog.catalog_version_id == later.catalog.version_id
     assert inputs.simulation.choice == choice
