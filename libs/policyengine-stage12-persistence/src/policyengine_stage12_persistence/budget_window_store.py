@@ -165,6 +165,17 @@ class BudgetWindowStore:
         with connection, connection.begin():
             yield connection
 
+    def window_of_year(self, report_run_id: UUID) -> UUID | None:
+        """Return the budget-window run a report run is a year of.
+
+        None when the report run is no window's year, or does not exist.
+        """
+        statement = select(report_runs.c.budget_window_run_id).where(
+            report_runs.c.id == report_run_id
+        )
+        with self._transaction("window_of_year") as connection:
+            return connection.execute(statement).scalar_one_or_none()
+
     def start_window(self, report_run_id: UUID, *, started_at: datetime) -> bool:
         """Mark the window a claimed year belongs to running; return whether it changed.
 
