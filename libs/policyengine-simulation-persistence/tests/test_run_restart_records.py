@@ -1,0 +1,540 @@
+"""The restart check's reads and writes for runs whose Modal call never started.
+
+These run against a database the Public API's own v2 migration chain built
+(``PUBLIC_API_SCHEMA_DATABASE_URL``), as the Modal worker role the restart
+check connects as, each in a transaction rolled back afterwards. The rows are
+inserted first, as the superuser, with the simulation service's own writes.
+Every row a test inserts shares the transaction's start time as its
+``created_at``, so each listing names its window around that time.
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
+
+import pytest
+from conftest import act_as_the_modal_worker, rolled_back_transaction
+from economy_rows import (
+    CURRENT_LAW,
+    VERSIONS,
+    EconomyCatalog,
+    insert_economy_catalog,
+    insert_reusable_run,
+)
+from policyengine_simulation_persistence import (
+    NewEconomyReport,
+    NewEconomySimulation,
+    NewHouseholdJob,
+    ReportRunTrigger,
+    ReportSimulation,
+    RestartKind,
+    RunRestartStore,
+    SimulationChoice,
+    SimulationType,
+    StoredRunUnreadableError,
+    UnstartedRun,
+    budget_window_runs,
+    insert_economy_report,
+    insert_economy_simulation,
+    insert_household_job,
+    list_unstarted_runs,
+    mark_restart,
+    read_unstarted_report_run,
+    read_unstarted_simulation_run,
+    record_household_call,
+    record_report_run_call,
+    report_runs,
+    simulation_runs,
+    simulations,
+)
+from public_api_rows import (
+    StoredValue,
+    insert_dynamic,
+    insert_household,
+    insert_policy,
+)
+from sqlalchemy import func, insert, select, text, update
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from sqlalchemy import Connection
+
+pytestmark = pytest.mark.public_api_schema
+
+START = datetime(2026, 1, 1, tzinfo=UTC)
+CTC_AMOUNT = "gov.irs.credits.ctc.amount.base[0].amount"
+ELASTICITY = "gov.simulation.labor_supply_responses.elasticities.income"
+REPORT_OPTIONS = {"include_cliffs": True, "spm": {"geography_kind": "national"}}
+HOUSEHOLD_DOCUMENT = {
+    "people": [
+        {
+            "id": "you",
+            "values": {"age": 40},
+            "memberships": {"household": "your household"},
+        }
+    ],
+    "household": [{"id": "your household", "values": {}}],
+}
+LISTING_LIMIT = 100
+
+
+def _transaction_start(connection: Connection) -> datetime:
+    """Return the time every row the test inserts records as its creation."""
+    return connection.execute(select(func.now())).scalar_one()
+
+
+def _listed(
+    connection: Connection, *, around: datetime, limit: int = LISTING_LIMIT
+) -> tuple[UnstartedRun, ...]:
+    """List the unstarted runs created within a second of ``around``."""
+    return list_unstarted_runs(
+        connection,
+        created_after=around - timedelta(seconds=1),
+        created_before=around + timedelta(seconds=1),
+        limit=limit,
+    )
+
+
+def _new_side(choice: SimulationChoice = CURRENT_LAW) -> ReportSimulation:
+    return ReportSimulation(
+        simulation_id=uuid4(), simulation_run_id=uuid4(), choice=choice, reused=False
+    )
+
+
+def _new_report(
+    economy: EconomyCatalog,
+    *,
+    baseline: ReportSimulation | None = None,
+    reform: ReportSimulation | None = None,
+) -> NewEconomyReport:
+    return NewEconomyReport(
+        id=uuid4(),
+        run_id=uuid4(),
+        country=economy.catalog.country,
+        label="Child tax credit",
+        description=None,
+        tax_benefit_model_id=economy.catalog.model_id,
+        population=economy.population(),
+        versions=VERSIONS,
+        inputs=REPORT_OPTIONS,
+        baseline=baseline or _new_side(),
+        reform=reform or _new_side(),
+    )
+
+
+def _new_simulation(
+    economy: EconomyCatalog, choice: SimulationChoice = CURRENT_LAW
+) -> NewEconomySimulation:
+    return NewEconomySimulation(
+        id=uuid4(),
+        run_id=uuid4(),
+        choice=choice,
+        population=economy.population(),
+        versions=VERSIONS,
+    )
+
+
+def _insert_household_job(connection: Connection, economy: EconomyCatalog) -> UUID:
+    household_id = insert_household(
+        connection, country="us", default_year=2026, document=HOUSEHOLD_DOCUMENT
+    )
+    job_id = uuid4()
+    insert_household_job(
+        connection,
+        NewHouseholdJob(
+            id=job_id,
+            country="us",
+            household_id=household_id,
+            policy_id=None,
+            year=2026,
+            request_data={"country": "us", "household_id": str(household_id)},
+            tax_benefit_model_version_id=economy.catalog.version_id,
+            country_package_version=VERSIONS.country_package_version,
+            policyengine_version=VERSIONS.policyengine_version,
+        ),
+    )
+    return job_id
+
+
+@pytest.fixture
+def connection(public_api_database_url) -> Iterator[Connection]:
+    """Yield the superuser's connection in a transaction rolled back afterwards."""
+    with rolled_back_transaction(public_api_database_url) as superuser_connection:
+        yield superuser_connection
+
+
+def test_an_unstarted_run_of_each_kind_is_listed_and_a_reports_sides_are_not(
+    connection,
+) -> None:
+    economy = insert_economy_catalog(connection)
+    report = _new_report(economy)
+    insert_economy_report(connection, report)
+    simulation = _new_simulation(economy)
+    insert_economy_simulation(connection, simulation)
+    job_id = _insert_household_job(connection, economy)
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+
+    listed = _listed(connection, around=created_at)
+
+    assert {(run.kind, run.run_id) for run in listed} == {
+        (RestartKind.REPORT_RUN, report.run_id),
+        (RestartKind.SIMULATION_RUN, simulation.run_id),
+        (RestartKind.HOUSEHOLD_JOB, job_id),
+    }
+    assert {run.created_at for run in listed} == {created_at}
+
+
+def test_a_run_created_outside_the_window_is_not_listed(connection) -> None:
+    economy = insert_economy_catalog(connection)
+    insert_economy_simulation(connection, _new_simulation(economy))
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+
+    too_new = list_unstarted_runs(
+        connection,
+        created_after=created_at - timedelta(minutes=12),
+        created_before=created_at - timedelta(minutes=3),
+        limit=LISTING_LIMIT,
+    )
+    too_old = list_unstarted_runs(
+        connection,
+        created_after=created_at + timedelta(minutes=3),
+        created_before=created_at + timedelta(minutes=12),
+        limit=LISTING_LIMIT,
+    )
+
+    assert too_new == ()
+    assert too_old == ()
+
+
+def test_the_listing_takes_the_oldest_runs_up_to_its_limit(connection) -> None:
+    economy = insert_economy_catalog(connection)
+    for _ in range(3):
+        insert_economy_simulation(connection, _new_simulation(economy))
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+
+    assert len(_listed(connection, around=created_at, limit=2)) == 2
+
+
+def test_a_run_with_a_call_or_no_longer_pending_is_not_listed(connection) -> None:
+    economy = insert_economy_catalog(connection)
+    called = _new_report(economy)
+    insert_economy_report(connection, called)
+    record_report_run_call(
+        connection, report_run_id=called.run_id, modal_call_id="fc-original"
+    )
+    claimed = _new_simulation(economy)
+    insert_economy_simulation(connection, claimed)
+    connection.execute(
+        update(simulation_runs)
+        .where(simulation_runs.c.id == claimed.run_id)
+        .values(status="running", started_at=func.now())
+    )
+    job_id = _insert_household_job(connection, economy)
+    record_household_call(connection, job_id=job_id, modal_call_id="fc-household")
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+
+    listed = _listed(connection, around=created_at)
+
+    # The called report run's sides stay named by a pending report run.
+    assert listed == ()
+
+
+def test_a_marked_run_is_marked_once_and_never_listed_again(connection) -> None:
+    economy = insert_economy_catalog(connection)
+    simulation = _new_simulation(economy)
+    insert_economy_simulation(connection, simulation)
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+    (unstarted,) = _listed(connection, around=created_at)
+
+    first = mark_restart(connection, unstarted)
+    second = mark_restart(connection, unstarted)
+
+    assert (first, second) == (True, False)
+    assert _listed(connection, around=created_at) == ()
+    row = connection.execute(
+        select(simulation_runs.c.status, simulation_runs.c.modal_call_id).where(
+            simulation_runs.c.id == simulation.run_id
+        )
+    ).one()
+    assert (row.status, row.modal_call_id) == ("pending", None)
+
+
+def test_a_run_given_a_call_after_it_was_listed_is_not_marked(connection) -> None:
+    economy = insert_economy_catalog(connection)
+    report = _new_report(economy)
+    insert_economy_report(connection, report)
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+    (unstarted,) = _listed(connection, around=created_at)
+    record_report_run_call(
+        connection, report_run_id=report.run_id, modal_call_id="fc-late"
+    )
+
+    assert mark_restart(connection, unstarted) is False
+
+
+def test_each_kind_is_marked_in_its_own_table(connection) -> None:
+    economy = insert_economy_catalog(connection)
+    report = _new_report(economy)
+    insert_economy_report(connection, report)
+    _insert_household_job(connection, economy)
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+
+    marked = {
+        run.kind: mark_restart(connection, run)
+        for run in _listed(connection, around=created_at)
+    }
+
+    assert marked == {RestartKind.REPORT_RUN: True, RestartKind.HOUSEHOLD_JOB: True}
+    assert _listed(connection, around=created_at) == ()
+
+
+def test_a_budget_window_year_is_not_listed(connection) -> None:
+    economy = insert_economy_catalog(connection)
+    report = _new_report(economy)
+    insert_economy_report(connection, report)
+    window_run_id = uuid4()
+    connection.execute(
+        insert(budget_window_runs).values(
+            id=window_run_id,
+            report_id=report.id,
+            tax_benefit_model_version_id=economy.catalog.version_id,
+            trigger=ReportRunTrigger.INITIAL,
+            recalculate=False,
+            status="pending",
+        )
+    )
+    connection.execute(
+        update(report_runs)
+        .where(report_runs.c.id == report.run_id)
+        .values(budget_window_run_id=window_run_id, year=2026)
+    )
+    # The update above changes the year's updated_at; put it back to its
+    # creation, as a year the service creates with its window stays.
+    connection.execute(
+        update(report_runs)
+        .where(report_runs.c.id == report.run_id)
+        .values(updated_at=report_runs.c.created_at)
+    )
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+
+    assert _listed(connection, around=created_at) == ()
+
+
+def test_a_household_simulations_run_and_report_run_are_not_listed(
+    connection,
+) -> None:
+    economy = insert_economy_catalog(connection)
+    report = _new_report(economy)
+    insert_economy_report(connection, report)
+    simulation = _new_simulation(economy)
+    insert_economy_simulation(connection, simulation)
+    household_id = insert_household(
+        connection, country="us", default_year=2026, document=HOUSEHOLD_DOCUMENT
+    )
+    # Make every simulation a household simulation, as C1 · 15's household
+    # reports and household simulations will be.
+    for simulation_id in (
+        report.baseline.simulation_id,
+        report.reform.simulation_id,
+        simulation.id,
+    ):
+        connection.execute(
+            update(simulations)
+            .where(simulations.c.id == simulation_id)
+            .values(
+                simulation_type=SimulationType.HOUSEHOLD,
+                dataset_id=None,
+                household_id=household_id,
+            )
+        )
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+
+    assert _listed(connection, around=created_at) == ()
+
+
+def test_a_report_runs_stored_inputs_are_read_back(connection) -> None:
+    economy = insert_economy_catalog(
+        connection, parameter_names=(CTC_AMOUNT, ELASTICITY)
+    )
+    policy_id = insert_policy(
+        connection, economy.catalog, [StoredValue(CTC_AMOUNT, 3_000, START)]
+    )
+    dynamic_id = insert_dynamic(
+        connection, economy.catalog, [StoredValue(ELASTICITY, -0.05, START)]
+    )
+    reform_choice = SimulationChoice(policy_id=policy_id, dynamic_id=dynamic_id)
+    reused = insert_reusable_run(connection, economy)
+    report = _new_report(
+        economy,
+        baseline=ReportSimulation(
+            simulation_id=reused.simulation_id,
+            simulation_run_id=reused.simulation_run_id,
+            choice=CURRENT_LAW,
+            reused=True,
+        ),
+        reform=_new_side(reform_choice),
+    )
+    insert_economy_report(connection, report)
+    act_as_the_modal_worker(connection)
+
+    stored = read_unstarted_report_run(connection, report.run_id)
+
+    assert stored is not None
+    assert stored.report_run_id == report.run_id
+    assert stored.country == "us"
+    assert stored.versions == VERSIONS
+    assert stored.options == REPORT_OPTIONS
+    assert stored.scope.catalog_version_id == economy.catalog.version_id
+    assert stored.scope.region_code == "us"
+    assert stored.scope.dataset_name == "populace_us_2024"
+    assert stored.scope.year == 2026
+    assert stored.baseline.simulation_run_id == reused.simulation_run_id
+    assert stored.baseline.choice == CURRENT_LAW
+    assert stored.baseline.reform == {}
+    assert stored.reform.simulation_run_id == report.reform.simulation_run_id
+    assert stored.reform.choice == reform_choice
+    assert stored.reform.reform == {
+        CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000},
+        ELASTICITY: {"2026-01-01.2200-12-31": -0.05},
+    }
+    assert stored.created_at == _transaction_start(connection)
+
+
+def test_a_standalone_runs_stored_inputs_are_read_back(connection) -> None:
+    economy = insert_economy_catalog(connection, parameter_names=(CTC_AMOUNT,))
+    policy_id = insert_policy(
+        connection, economy.catalog, [StoredValue(CTC_AMOUNT, 2_500, START)]
+    )
+    choice = SimulationChoice(policy_id=policy_id, dynamic_id=None)
+    simulation = _new_simulation(economy, choice)
+    insert_economy_simulation(connection, simulation)
+    act_as_the_modal_worker(connection)
+
+    stored = read_unstarted_simulation_run(connection, simulation.run_id)
+
+    assert stored is not None
+    assert stored.country == "us"
+    assert stored.versions == VERSIONS
+    assert stored.scope.catalog_version_id == economy.catalog.version_id
+    assert (stored.scope.region_code, stored.scope.dataset_name) == (
+        "us",
+        "populace_us_2024",
+    )
+    assert stored.scope.year == 2026
+    assert stored.run.simulation_run_id == simulation.run_id
+    assert stored.run.choice == choice
+    assert stored.run.reform == {CTC_AMOUNT: {"2026-01-01.2200-12-31": 2_500}}
+    assert stored.created_at == _transaction_start(connection)
+
+
+def test_a_missing_run_reads_as_none(connection) -> None:
+    act_as_the_modal_worker(connection)
+
+    assert read_unstarted_report_run(connection, uuid4()) is None
+    assert read_unstarted_simulation_run(connection, uuid4()) is None
+
+
+def test_a_run_whose_region_is_gone_cannot_be_read(connection) -> None:
+    economy = insert_economy_catalog(connection)
+    simulation = _new_simulation(economy)
+    insert_economy_simulation(connection, simulation)
+    connection.execute(
+        update(simulation_runs)
+        .where(simulation_runs.c.id == simulation.run_id)
+        .values(region_id=None)
+    )
+    act_as_the_modal_worker(connection)
+
+    with pytest.raises(StoredRunUnreadableError, match="region"):
+        read_unstarted_simulation_run(connection, simulation.run_id)
+
+
+def test_a_report_run_whose_sides_differ_cannot_be_read(connection) -> None:
+    economy = insert_economy_catalog(connection)
+    report = _new_report(economy)
+    insert_economy_report(connection, report)
+    connection.execute(
+        update(simulation_runs)
+        .where(simulation_runs.c.id == report.reform.simulation_run_id)
+        .values(year=2027)
+    )
+    act_as_the_modal_worker(connection)
+
+    with pytest.raises(StoredRunUnreadableError, match="sides"):
+        read_unstarted_report_run(connection, report.run_id)
+
+
+@pytest.fixture
+def savepoint_store(connection) -> RunRestartStore:
+    """Return a store whose every transaction is a savepoint of ``connection``."""
+
+    @contextmanager
+    def transaction() -> Iterator[Connection]:
+        with connection.begin_nested():
+            yield connection
+
+    return RunRestartStore(transaction)
+
+
+def test_the_store_lists_marks_and_reads_in_transactions_of_its_own(
+    connection, savepoint_store
+) -> None:
+    economy = insert_economy_catalog(connection)
+    report = _new_report(economy)
+    insert_economy_report(connection, report)
+    simulation = _new_simulation(economy)
+    insert_economy_simulation(connection, simulation)
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+
+    listed = savepoint_store.list_unstarted(
+        created_after=created_at - timedelta(seconds=1),
+        created_before=created_at + timedelta(seconds=1),
+        limit=LISTING_LIMIT,
+    )
+    by_kind = {run.kind: run for run in listed}
+    report_run = savepoint_store.read_report_run(report.run_id)
+    simulation_run = savepoint_store.read_simulation_run(simulation.run_id)
+    marked = savepoint_store.mark_restart(by_kind[RestartKind.REPORT_RUN])
+
+    assert set(by_kind) == {RestartKind.REPORT_RUN, RestartKind.SIMULATION_RUN}
+    assert report_run is not None
+    assert report_run.report_run_id == report.run_id
+    assert simulation_run is not None
+    assert simulation_run.run.simulation_run_id == simulation.run_id
+    assert marked is True
+
+
+def test_the_restart_writes_need_only_the_modal_worker_roles_privileges(
+    connection,
+) -> None:
+    economy = insert_economy_catalog(connection)
+    report = _new_report(economy)
+    insert_economy_report(connection, report)
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+    (unstarted,) = _listed(connection, around=created_at)
+
+    assert mark_restart(connection, unstarted) is True
+    assert (
+        record_report_run_call(
+            connection, report_run_id=report.run_id, modal_call_id="fc-restarted"
+        )
+        == "pending"
+    )
+    assert connection.execute(text("SELECT current_user")).scalar_one() == (
+        "policyengine_v2_modal_worker"
+    )
