@@ -30,6 +30,12 @@ revisions and live schema. This package never changes a schema.
   back to pending with no call (`release_simulation_run`). A report run's
   completion sets its own result columns and inserts its result rows in the
   same transaction.
+- **Household report runs** (`HouseholdReportRunStore`, a `ReportRunStore`):
+  one household function call claims a household report run and each of
+  its simulation runs, the baseline's and any reform's, records each run's
+  household result or failure document in `simulation_runs.household_result`,
+  and then marks the report run succeeded or failed. It checks first that the
+  report run names exactly the call's simulation runs.
 
 ## Tests
 
