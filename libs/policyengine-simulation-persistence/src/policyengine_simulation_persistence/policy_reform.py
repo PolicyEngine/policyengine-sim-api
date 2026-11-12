@@ -1,11 +1,13 @@
-"""Read a stored policy as the reform values a calculation applies.
+"""Read a stored policy, or dynamic, as the reform values a calculation applies.
 
 The Public API stores a policy's parameter values against the parameters of
 the catalog version it was saved on, each from a start date until an end
 date, or with no end date indefinitely. A calculation on any catalog version
 applies them by parameter name, as ``{parameter name: {period: value}}``, the
 shape of the Public API's policy JSON that the household functions' contract
-and the economy requests take.
+and the economy requests take. A dynamic's values are stored and read the same
+way. A simulation applies its policy's and its dynamic's values together, and
+is refused when both set the same parameter (``combine_reforms``).
 
 Each period is a range, ``YYYY-MM-DD.YYYY-MM-DD``, with the dates read in
 UTC. A value with no end date follows .py's own rule
@@ -29,11 +31,12 @@ on", but policyengine-uk's reform dictionary as that one day.
 from __future__ import annotations
 
 from datetime import UTC, date, timedelta
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 from sqlalchemy import select
 
 from policyengine_simulation_persistence.input_tables import (
+    dynamics,
     parameter_values,
     parameters,
     policies,
@@ -45,28 +48,55 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
-    from sqlalchemy import Connection
+    from sqlalchemy import ColumnElement, Connection
 
 # The last day a value without an end date is applied.
 OPEN_ENDED_STOP: Final = date(LATEST_YEAR, 12, 31)
 
 # A policy's reform values: each parameter's values by period.
 type PolicyReform = dict[str, dict[str, object]]
+# What stores the values a calculation applies.
+type ReformSource = Literal["policy", "dynamic"]
 
 
 class UnknownPolicyError(LookupError):
     """The Public API has no such policy in the country."""
 
 
-class MissingPolicyParametersError(ValueError):
-    """The policy sets parameters the calculation's catalog version lacks."""
+class UnknownDynamicError(LookupError):
+    """The Public API has no such dynamic."""
 
-    def __init__(self, parameter_names: Sequence[str]) -> None:
+
+class MissingPolicyParametersError(ValueError):
+    """The policy, or dynamic, sets parameters the calculation's catalog version lacks.
+
+    ``source`` says which of the two sets them.
+    """
+
+    def __init__(
+        self, parameter_names: Sequence[str], *, source: ReformSource = "policy"
+    ) -> None:
         """Name every parameter the catalog version lacks, in name order."""
         self.parameter_names = tuple(parameter_names)
+        self.source: ReformSource = source
         super().__init__(
-            "the policy sets parameters the catalog version does not have: "
+            f"the {source} sets parameters the catalog version does not have: "
             + ", ".join(self.parameter_names)
+        )
+
+
+class OverlappingReformError(ValueError):
+    """A simulation's policy and dynamic both set the same parameters.
+
+    Neither is applied over the other, so the simulation cannot be
+    calculated.
+    """
+
+    def __init__(self, parameter_names: Sequence[str]) -> None:
+        """Name every parameter both set, in name order."""
+        self.parameter_names = tuple(parameter_names)
+        super().__init__(
+            "the policy and the dynamic both set: " + ", ".join(self.parameter_names)
         )
 
 
@@ -118,6 +148,61 @@ def read_policy_reform(
     if found is None:
         msg = f"{country} has no policy {policy_id}"
         raise UnknownPolicyError(msg)
+    return _read_reform(
+        connection,
+        owner=parameter_values.c.policy_id == policy_id,
+        catalog_version_id=catalog_version_id,
+        source="policy",
+    )
+
+
+def read_dynamic_reform(
+    connection: Connection, *, dynamic_id: UUID, catalog_version_id: UUID
+) -> PolicyReform:
+    """Return the values the dynamic sets, by parameter name and period.
+
+    The periods follow the same rule as a policy's. Raise
+    UnknownDynamicError when there is no such dynamic, and
+    MissingPolicyParametersError, naming the dynamic as its source, when
+    ``catalog_version_id`` lacks a parameter it sets.
+    """
+    found = connection.execute(
+        select(dynamics.c.id).where(dynamics.c.id == dynamic_id)
+    ).scalar_one_or_none()
+    if found is None:
+        msg = f"there is no dynamic {dynamic_id}"
+        raise UnknownDynamicError(msg)
+    return _read_reform(
+        connection,
+        owner=parameter_values.c.dynamic_id == dynamic_id,
+        catalog_version_id=catalog_version_id,
+        source="dynamic",
+    )
+
+
+def combine_reforms(policy: PolicyReform, dynamic: PolicyReform) -> PolicyReform:
+    """Return a simulation's policy values and its dynamic's, as one reform.
+
+    Raise OverlappingReformError when both set a parameter, for any period.
+    """
+    overlapping = sorted(set(policy) & set(dynamic))
+    if overlapping:
+        raise OverlappingReformError(overlapping)
+    return {**policy, **dynamic}
+
+
+def _read_reform(
+    connection: Connection,
+    *,
+    owner: ColumnElement[bool],
+    catalog_version_id: UUID,
+    source: ReformSource,
+) -> PolicyReform:
+    """Return the values ``owner`` selects, by parameter name and .py's periods.
+
+    Raise MissingPolicyParametersError, naming ``source``, when
+    ``catalog_version_id`` lacks a parameter they set.
+    """
     values = connection.execute(
         select(
             parameters.c.name,
@@ -126,7 +211,7 @@ def read_policy_reform(
             parameter_values.c.end_date,
         )
         .join(parameters, parameters.c.id == parameter_values.c.parameter_id)
-        .where(parameter_values.c.policy_id == policy_id)
+        .where(owner)
         .order_by(parameters.c.name, parameter_values.c.start_date)
     ).all()
     names = sorted({row.name for row in values})
@@ -140,7 +225,7 @@ def read_policy_reform(
     )
     missing = [name for name in names if name not in available]
     if missing:
-        raise MissingPolicyParametersError(missing)
+        raise MissingPolicyParametersError(missing, source=source)
     reform: PolicyReform = {}
     # The rows are ordered by parameter name, then start date, the order
     # .py takes them in; each value's periods are .py's.

@@ -1,14 +1,14 @@
 """Read-only models of the Public API's tables a calculation is read from.
 
-The Public API writes households, policies and their parameter values, and
-its model catalog; the simulation service only reads them, with ``SELECT``.
-Each table here names only the columns the service reads, so these are not
-models of the whole tables: the Public API's other columns, defaults,
-constraints and indexes are its own. The tables live in ``input_metadata``,
-apart from the models of the tables the service writes (``service_metadata``)
-and from the tables those name by ``id`` alone (``referenced_metadata``).
-``tests/test_public_api_schema.py`` compares each column with the Public
-API's table.
+The Public API writes households, policies, dynamics and their parameter
+values, and its model catalog; the simulation service only reads them, with
+``SELECT``. Each table here names only the columns the service reads, so these
+are not models of the whole tables: the Public API's other columns,
+defaults, constraints and indexes are its own. The tables live in
+``input_metadata``, apart from the models of the tables the service writes
+(``service_metadata``) and from the tables those name by ``id`` alone
+(``referenced_metadata``). ``tests/test_public_api_schema.py`` compares each
+column with the Public API's table.
 """
 
 from __future__ import annotations
@@ -42,6 +42,26 @@ tax_benefit_model_versions = Table(
     Column("version", String(128), nullable=False),
 )
 
+# A region of one catalog version, unique by code within it, and the dataset
+# it uses unless a calculation names another.
+regions = Table(
+    "regions",
+    input_metadata,
+    Column("id", Uuid, nullable=False),
+    Column("code", String(255), nullable=False),
+    Column("tax_benefit_model_version_id", Uuid, nullable=False),
+    Column("default_dataset_id", Uuid, nullable=False),
+)
+
+# A dataset of one catalog version, unique by name within it.
+datasets = Table(
+    "datasets",
+    input_metadata,
+    Column("id", Uuid, nullable=False),
+    Column("name", String(255), nullable=False),
+    Column("tax_benefit_model_version_id", Uuid, nullable=False),
+)
+
 # ``household_data`` lists the people and each group entity as records, and
 # may hold a saved SPM selection; ``default_year`` is the year it describes.
 households = Table(
@@ -70,7 +90,8 @@ parameters = Table(
 )
 
 # A parameter's value from ``start_date`` until ``end_date``, or with no end
-# date indefinitely; a policy's own values name it in ``policy_id``.
+# date indefinitely; a policy's own values name it in ``policy_id``, and a
+# dynamic's in ``dynamic_id``.
 parameter_values = Table(
     "parameter_values",
     input_metadata,
@@ -79,4 +100,13 @@ parameter_values = Table(
     Column("start_date", DateTime(timezone=True), nullable=False),
     Column("end_date", DateTime(timezone=True), nullable=True),
     Column("policy_id", Uuid, nullable=True),
+    Column("dynamic_id", Uuid, nullable=True),
+)
+
+# Named parameter values a simulation applies beside its policy, such as
+# behavioural responses. A dynamic belongs to no country.
+dynamics = Table(
+    "dynamics",
+    input_metadata,
+    Column("id", Uuid, nullable=False),
 )

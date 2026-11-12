@@ -42,6 +42,10 @@ Auth0 permission:
 | `GET /internal/stage12/reports/{evaluation_id}` | `stage12:operate` |
 | `POST /household-calculations` | `simulation:submit` |
 | `GET /household-calculations/{household_job_id}` | `simulation:read` |
+| `POST /reports` | `simulation:submit` |
+| `GET /reports/{report_id}` | `simulation:read` |
+| `POST /simulations` | `simulation:submit` |
+| `GET /simulations/{simulation_id}` | `simulation:read` |
 
 `GET /health`, `GET /ready`, `GET /versions`, `GET /versions/{kind}` and
 `POST /ping` stay public. The entrypoint answers `GET /health` and `POST /ping`
@@ -101,4 +105,54 @@ it if no call ever starts). Every 500 of either route, from an unexpected
 failure or a request the service built and the household contract refuses,
 is the JSON error with code `internal_error`. `DEPLOYMENT.md` describes the deployment settings and the
 staging check.
+
+## Economy reports and simulations
+
+`POST /reports` creates an economy report: a baseline and a reform
+simulation of one region's data for one year. It names the `country`,
+`report_type` (`economy`), `label`, `description`, `year`, `region_code`
+and `dataset_name` (a region and dataset of the country's catalog version
+for the default worker's .py version; null for the region's default
+dataset), each side's stored `policy_id` and `dynamic_id` (null for current
+law), `include_cliffs`, and `spm` (SPM settings; omit it, since null is
+refused). `POST /simulations` creates a standalone economy simulation from
+the same fields for one policy and dynamic. Neither names a .py version or a
+record ID: the service runs the v2 version manifest's default worker and
+chooses every ID.
+
+The service reads the rows itself and, in one transaction, creates the
+records and their first runs, `pending` with no Modal call ID. A report
+side reuses a simulation run that already succeeded instead of creating
+one, when it is the newest run of the same policy, dynamic, catalog
+version, dataset, region and year on the same country package and .py
+versions, its output file is in the output bucket
+(`V2_SIMULATION_OUTPUT_BUCKET`), a succeeded report run with the same
+options used it, and no report run has refused to reuse it; the two sides
+never name the same run. The service then starts the run's Modal call by
+name: the report run's coordinator, given the report and its run IDs and no
+Stage 12 evaluation record, or a standalone run's simulation function,
+given its run's ID. It records the call's ID, and answers 201 with the
+record's ID, its run's ID and status, and, for a report, each side's
+simulation and run and whether it was reused.
+
+A request is refused before anything is written: with 400 and a `code` when
+a row it names is missing (`unknown_region`, `unknown_dataset` and
+`unknown_dynamic` name the caller's own choice; `unknown_catalog_version`,
+`unknown_policy`, `no_economy_worker`, `dataset_not_in_bundle` and
+`missing_reference` are the service's state, such as a catalog version
+missing while a release deploys), and with 422 and a `code` when a policy or
+dynamic sets parameters the catalog version lacks (`missing_parameters`) or
+both set one (`overlapping_parameters`). The routes answer 503 with
+`Retry-After` when the manifest or the database can't be read. When Modal
+refuses the call, or doesn't confirm it within ten seconds, the run (and a
+report run's new simulation runs) is failed at once and the 503
+(`modal_call_refused`) names the record, as `report_id` or `simulation_id`;
+a run claimed meanwhile is answered with 201. Every 500 is the JSON error
+with code `internal_error`, and may follow a write. No `detail` holds an
+exception's text.
+
+`GET /reports/{report_id}` and `GET /simulations/{simulation_id}` return the
+record and its newest run (created last, ties to the larger ID): its status,
+versions, error message and times, and a report run's simulation runs. The
+Public API reads results from the tables itself.
 
