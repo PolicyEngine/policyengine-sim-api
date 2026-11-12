@@ -49,6 +49,7 @@ REFERENCE_REFUSALS: dict[str, tuple[EconomyRefusalCode, str]] = {
     "dataset_id": ("unknown_dataset", "dataset"),
     "dynamic_id": ("unknown_dynamic", "dynamic"),
     "policy_id": ("unknown_policy", "policy"),
+    "household_id": ("unknown_household", "household"),
     "tax_benefit_model_version_id": ("unknown_catalog_version", "catalog version"),
     "tax_benefit_model_id": ("unknown_catalog_version", "tax-benefit model"),
 }

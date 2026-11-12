@@ -3,7 +3,12 @@
 - ``POST /reports`` (permission ``simulation:submit``) creates an economy
   report, its simulations and its first run, and starts the report run's
   coordinator, answering 201 with the report's ID, its run's ID and status,
-  and each side's simulation and simulation run.
+  and each side's simulation and simulation run. With ``report_type``
+  ``household`` it creates a household report, a household simulation and
+  run for its baseline and any reform, and its first run, and starts one
+  household function call for the report run, answering 201 with the
+  report, its run, its status, its year and each side's simulation and
+  simulation run.
 - ``POST /simulations`` (``simulation:submit``) creates a standalone
   economy simulation and its first run, and starts the run's simulation
   function, answering 201 with the simulation's ID, its run's ID and status.
@@ -56,6 +61,12 @@ from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionUnavailableError,
     EconomySubmissionUnprocessableError,
 )
+from policyengine_simulation_entry.household_report_api_models import (
+    HouseholdReportCreated,
+    HouseholdReportRequest,
+    ReportRequest,
+)
+from policyengine_simulation_entry.report_request_errors import ReportRequestRoute
 from policyengine_simulation_entry.route_support import (
     log_unexpected_failure,
     observability_context,
@@ -103,7 +114,9 @@ _REFUSED = {
     "description": (
         "A row the request names, or a function it needs, is missing; nothing "
         "was written. unknown_region, unknown_dataset and unknown_dynamic name "
-        "the caller's own region, dataset or dynamic; any other code is the "
+        "the caller's own region, dataset or dynamic; a household report's "
+        "unknown_household and no_household_function name its household and "
+        "the default worker's household function; any other code is the "
         "service's state, such as a catalog version missing while a release "
         "deploys"
     ),
@@ -113,8 +126,9 @@ _UNPROCESSABLE = {
     "description": (
         "The request's fields, or the stored policies and dynamics it names, "
         "cannot be calculated; nothing was written. Stored values that cannot "
-        "be calculated carry a code: missing_parameters or "
-        "overlapping_parameters"
+        "be calculated carry a code: missing_parameters, "
+        "overlapping_parameters, or household_not_calculable for a household "
+        "report's household"
     ),
     "model": EconomyRequestUnprocessable,
 }
@@ -191,6 +205,19 @@ class EconomySubmissions(Protocol):
         ...
 
 
+class HouseholdReportSubmissions(Protocol):
+    """Create household reports (``HouseholdReportSubmissionService``)."""
+
+    async def submit_report(
+        self,
+        request: HouseholdReportRequest,
+        *,
+        observability_context: dict[str, Any] | None,
+    ) -> HouseholdReportCreated:
+        """Create the report and its runs and start its household function call."""
+        ...
+
+
 def _error_response(status_code: int, error: EconomyError) -> JSONResponse:
     headers = (
         {"Retry-After": str(RETRY_AFTER_SECONDS)}
@@ -204,10 +231,12 @@ def _error_response(status_code: int, error: EconomyError) -> JSONResponse:
     )
 
 
-def _not_configured() -> JSONResponse:
+def _not_configured(
+    detail: str = "Economy runs are not configured.",
+) -> JSONResponse:
     return _error_response(
         status.HTTP_503_SERVICE_UNAVAILABLE,
-        EconomyError(code="not_configured", detail="Economy runs are not configured."),
+        EconomyError(code="not_configured", detail=detail),
     )
 
 
@@ -363,19 +392,28 @@ def _unknown(record: RecordName, record_id: UUID) -> JSONResponse:
     )
 
 
-def add_economy_routes(
+def add_economy_routes(  # noqa: PLR0913  # the app, its services and permissions
     app: FastAPI,
     entry: EntryRuntime,
     submissions: EconomySubmissions | None,
     *,
     submitter: AuthorizationDependency,
     reader: AuthorizationDependency,
+    household_reports: HouseholdReportSubmissions | None = None,
 ) -> None:
-    """Add the economy routes; without a service they answer 503."""
+    """Add the economy routes; without a service they answer 503.
+
+    ``POST /reports`` also takes household reports, which answer 503
+    without ``household_reports``.
+    """
     log_string_limit = entry.runtime.config.limits.max_string_length
     app.include_router(
         _submission_routes(
-            entry, submissions, submitter=submitter, log_string_limit=log_string_limit
+            entry,
+            submissions,
+            household_reports,
+            submitter=submitter,
+            log_string_limit=log_string_limit,
         )
     )
     app.include_router(
@@ -383,28 +421,64 @@ def add_economy_routes(
     )
 
 
+async def _household_report_answer(
+    entry: EntryRuntime,
+    household_reports: HouseholdReportSubmissions | None,
+    body: HouseholdReportRequest,
+    request: Request,
+    *,
+    log_string_limit: int,
+) -> JSONResponse:
+    """Create a household report and answer as ``POST /reports`` does."""
+    if household_reports is None:
+        return _not_configured("Household reports are not configured.")
+    observability_id = entry.start_workflow_observability(request)
+    try:
+        created = await household_reports.submit_report(
+            body, observability_context=observability_context(entry, observability_id)
+        )
+    except _SUBMISSION_FAILURES as error:
+        return _submission_failure_response(error, "report")
+    # Every other failure, a request the service built wrong included, is
+    # still answered as the JSON 500 declared.
+    except Exception as error:  # noqa: BLE001  # answered as internal_error
+        return _unexpected_failure_response(
+            REPORTS_PATH, error, max_characters=log_string_limit
+        )
+    return JSONResponse(
+        created.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+    )
+
+
 def _submission_routes(
     entry: EntryRuntime,
     submissions: EconomySubmissions | None,
+    household_reports: HouseholdReportSubmissions | None,
     *,
     submitter: AuthorizationDependency,
     log_string_limit: int,
 ) -> APIRouter:
     """Return the router of ``POST /reports`` and ``POST /simulations``."""
     router = APIRouter()
+    # A refused report body is located as an economy report's was.
+    report_router = APIRouter(route_class=ReportRequestRoute)
 
-    @router.post(
+    @report_router.post(
         REPORTS_PATH,
-        summary="Create an economy report",
+        summary="Create an economy or household report",
         description=(
             "Create an economy report comparing a baseline and a reform "
             "simulation of one region's data for one year, on the v2 version "
             "manifest's default worker, and start its first run. A side whose "
-            "simulation already succeeded on the same versions reuses that run."
+            "simulation already succeeded on the same versions reuses that run. "
+            "A household report (report_type household) calculates one stored "
+            "household for its default year under a baseline and, optionally, "
+            "a reform, each a new household simulation run, all in one "
+            "household function call."
         ),
         operation_id="create_report",
         status_code=status.HTTP_201_CREATED,
-        response_model=EconomyReportCreated,
+        response_model=EconomyReportCreated | HouseholdReportCreated,
         responses={
             201: {"description": "The report and its first run were created"},
             400: _REFUSED,
@@ -415,9 +489,15 @@ def _submission_routes(
         },
         dependencies=[Depends(submitter)],
     )
-    async def create_report(
-        body: EconomyReportRequest, request: Request
-    ) -> JSONResponse:
+    async def create_report(body: ReportRequest, request: Request) -> JSONResponse:
+        if isinstance(body, HouseholdReportRequest):
+            return await _household_report_answer(
+                entry,
+                household_reports,
+                body,
+                request,
+                log_string_limit=log_string_limit,
+            )
         if submissions is None:
             return _not_configured()
         observability_id = entry.start_workflow_observability(request)
@@ -437,6 +517,8 @@ def _submission_routes(
         return JSONResponse(
             created.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
         )
+
+    router.include_router(report_router)
 
     @router.post(
         SIMULATIONS_PATH,
