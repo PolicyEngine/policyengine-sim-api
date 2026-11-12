@@ -9,9 +9,12 @@ from pathlib import Path
 import yaml
 from fixtures.fake_modal import install_fake_modal
 from policyengine_simulation_entry import run_restart_check
+from policyengine_simulation_entry.run_restart_check import (
+    RESTART_STATEMENT_TIMEOUT_MILLISECONDS,
+)
 from policyengine_simulation_entry.run_restarts import (
     CALL_START_TIMEOUT_SECONDS,
-    RESTARTS_PER_CHECK,
+    CHECK_TIME_LIMIT,
 )
 from policyengine_simulation_executor.stage12_runtime import (
     report_run_access as report_run_access_module,
@@ -207,13 +210,22 @@ def test_the_restart_check_runs_every_two_minutes_with_the_worker_database_secre
 def test_a_check_that_waits_on_every_call_still_ends_within_its_timeout(
     monkeypatch,
 ) -> None:
-    """A row marked just before the timeout stops the check is never restarted."""
+    """A row marked just before the timeout stops the check is never restarted.
+
+    The check marks no row once its time limit has passed; after a row is
+    marked, it waits at most for the call's start and for the mark, record or
+    failure statements, each bounded by the statement timeout.
+    """
     module = _load(monkeypatch)
     options = _functions(module)["restart_unstarted_runs"]
-    longest_call_waits = RESTARTS_PER_CHECK * CALL_START_TIMEOUT_SECONDS
+    statement_seconds = RESTART_STATEMENT_TIMEOUT_MILLISECONDS / 1000
+    longest_after_the_limit = CALL_START_TIMEOUT_SECONDS + 3 * statement_seconds
 
-    # A minute for the database and the manifest.
-    assert longest_call_waits + 60 <= options["timeout"]
+    # Half a minute more for connecting and Modal's own start.
+    assert (
+        CHECK_TIME_LIMIT.total_seconds() + longest_after_the_limit + 30
+        <= options["timeout"]
+    )
 
 
 def test_the_image_bakes_the_modal_environment_and_telemetry_settings_in(

@@ -31,6 +31,7 @@ from policyengine_simulation_persistence import (
     ReportRunTrigger,
     ReportSimulation,
     RestartKind,
+    RunCall,
     RunRestartStore,
     SimulationChoice,
     SimulationType,
@@ -42,6 +43,8 @@ from policyengine_simulation_persistence import (
     insert_household_job,
     list_unstarted_runs,
     mark_restart,
+    read_report_run_simulation_run_ids,
+    read_run_call,
     read_unstarted_report_run,
     read_unstarted_simulation_run,
     record_household_call,
@@ -477,6 +480,56 @@ def test_a_report_run_whose_sides_differ_cannot_be_read(connection) -> None:
         read_unstarted_report_run(connection, report.run_id)
 
 
+def test_a_report_runs_simulation_runs_are_read_even_when_its_rows_are_not(
+    connection,
+) -> None:
+    """A report run that can't be rebuilt is failed with its new simulation runs."""
+    economy = insert_economy_catalog(connection)
+    report = _new_report(economy)
+    insert_economy_report(connection, report)
+    connection.execute(
+        update(simulation_runs)
+        .where(simulation_runs.c.id == report.reform.simulation_run_id)
+        .values(region_id=None)
+    )
+    act_as_the_modal_worker(connection)
+
+    with pytest.raises(StoredRunUnreadableError):
+        read_unstarted_report_run(connection, report.run_id)
+    assert read_report_run_simulation_run_ids(connection, report.run_id) == (
+        report.baseline.simulation_run_id,
+        report.reform.simulation_run_id,
+    )
+    assert read_report_run_simulation_run_ids(connection, uuid4()) == ()
+
+
+def test_a_rows_status_and_recorded_call_are_read_back(connection) -> None:
+    economy = insert_economy_catalog(connection)
+    report = _new_report(economy)
+    insert_economy_report(connection, report)
+    record_report_run_call(
+        connection, report_run_id=report.run_id, modal_call_id="fc-restarted"
+    )
+    job_id = _insert_household_job(connection, economy)
+    act_as_the_modal_worker(connection)
+
+    report_run = UnstartedRun(
+        kind=RestartKind.REPORT_RUN, run_id=report.run_id, created_at=START
+    )
+    job = UnstartedRun(kind=RestartKind.HOUSEHOLD_JOB, run_id=job_id, created_at=START)
+    missing = UnstartedRun(
+        kind=RestartKind.SIMULATION_RUN, run_id=uuid4(), created_at=START
+    )
+
+    assert read_run_call(connection, report_run) == RunCall(
+        status="pending", modal_call_id="fc-restarted"
+    )
+    assert read_run_call(connection, job) == RunCall(
+        status="pending", modal_call_id=None
+    )
+    assert read_run_call(connection, missing) is None
+
+
 @pytest.fixture
 def savepoint_store(connection) -> RunRestartStore:
     """Return a store whose every transaction is a savepoint of ``connection``."""
@@ -509,8 +562,15 @@ def test_the_store_lists_marks_and_reads_in_transactions_of_its_own(
     report_run = savepoint_store.read_report_run(report.run_id)
     simulation_run = savepoint_store.read_simulation_run(simulation.run_id)
     marked = savepoint_store.mark_restart(by_kind[RestartKind.REPORT_RUN])
+    call = savepoint_store.read_call(by_kind[RestartKind.SIMULATION_RUN])
+    sides = savepoint_store.read_report_run_simulation_run_ids(report.run_id)
 
     assert set(by_kind) == {RestartKind.REPORT_RUN, RestartKind.SIMULATION_RUN}
+    assert call == RunCall(status="pending", modal_call_id=None)
+    assert sides == (
+        report.baseline.simulation_run_id,
+        report.reform.simulation_run_id,
+    )
     assert report_run is not None
     assert report_run.report_run_id == report.run_id
     assert simulation_run is not None

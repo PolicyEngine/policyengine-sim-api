@@ -43,6 +43,7 @@ from policyengine_simulation_entry.household_workers import (
     ManifestHouseholdWorkers,
 )
 from policyengine_simulation_entry.run_restarts import (
+    CHECK_TIME_LIMIT,
     RESTART_AFTER,
     RESTART_UNTIL,
     RESTARTS_PER_CHECK,
@@ -60,6 +61,7 @@ from policyengine_simulation_persistence import (
     HouseholdJobRecord,
     HouseholdJobStatus,
     RestartKind,
+    RunCall,
     SimulationChoice,
     StoredEconomySide,
     StoredHousehold,
@@ -71,7 +73,7 @@ from policyengine_simulation_persistence import (
 from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from datetime import datetime
 
     from policyengine_simulation_entry.household_workers import HouseholdWorker
@@ -118,10 +120,27 @@ class FakeRestartStore:
     unstarted: tuple[UnstartedRun, ...] = ()
     report_runs: dict[UUID, StoredReportRun] = field(default_factory=dict)
     simulation_runs: dict[UUID, StoredSimulationRun] = field(default_factory=dict)
+    report_simulation_run_ids: dict[UUID, tuple[UUID, ...]] = field(
+        default_factory=dict
+    )
     read_failure: Exception | None = None
     marked_elsewhere: bool = False
+    # Each row's status and call as stored, by run ID; a row not named here is
+    # as the rig's other fakes left it (``holder``).
+    held: dict[UUID, RunCall | None] = field(default_factory=dict)
+    holder: Callable[[UnstartedRun], RunCall | None] | None = None
     windows: list[tuple[datetime, datetime, int]] = field(default_factory=list)
     marked: list[UnstartedRun] = field(default_factory=list)
+
+    def read_call(self, run: UnstartedRun) -> RunCall | None:
+        if run.run_id in self.held:
+            return self.held[run.run_id]
+        return None if self.holder is None else self.holder(run)
+
+    def read_report_run_simulation_run_ids(
+        self, report_run_id: UUID
+    ) -> tuple[UUID, ...]:
+        return self.report_simulation_run_ids.get(report_run_id, ())
 
     def list_unstarted(
         self, *, created_after: datetime, created_before: datetime, limit: int
@@ -288,7 +307,8 @@ def _rig(  # noqa: PLR0913  # each fake a test may replace
     households: FakeHouseholdJobs | None = None,
     economy_caller: FakeCaller | None = None,
     household_caller: FakeHouseholdCaller | None = None,
-    manifest: dict[str, object] | None = None,
+    manifest: object | None = None,
+    timer: Callable[[], float] | None = None,
 ) -> RestartRig:
     restarts = restarts or FakeRestartStore()
     economy = economy or FakeStore()
@@ -297,6 +317,16 @@ def _rig(  # noqa: PLR0913  # each fake a test may replace
     household_caller = household_caller or FakeHouseholdCaller()
     telemetry = RecordingTelemetry()
     store = MANIFEST_STORE if manifest is None else manifest
+
+    def holder(run: UnstartedRun) -> RunCall:
+        """Return the row as the fakes left it: claimed, given a call, or not."""
+        if economy.claimed or households.claimed:
+            return RunCall(status="running", modal_call_id="fc-original")
+        recorded = dict([*economy.recorded_calls, *households.recorded])
+        return RunCall(status="pending", modal_call_id=recorded.get(run.run_id))
+
+    if restarts.holder is None:
+        restarts.holder = holder
     restart_service = RunRestartService(
         stores=RestartStores(restarts=restarts, economy=economy, households=households),
         workers=RestartWorkers(
@@ -307,6 +337,7 @@ def _rig(  # noqa: PLR0913  # each fake a test may replace
         settings=SETTINGS,
         telemetry=telemetry,
         clock=lambda: NOW,
+        timer=timer or (lambda: 0.0),
         call_start_timeout_seconds=0.05,
         new_request_id=lambda: "restart-request",
     )
@@ -781,3 +812,143 @@ def test_the_deployment_label_follows_the_modal_environment(
 def test_a_modal_environment_no_deployment_uses_is_refused() -> None:
     with pytest.raises(ValueError, match="dev"):
         RestartSettings.for_modal_environment("dev")
+
+
+def test_an_unreadable_report_run_is_failed_with_its_simulation_runs() -> None:
+    """As a submission fails a report run, with the simulation runs made for it."""
+    run_id = UUID(int=8)
+    sides = (UUID(int=81), UUID(int=82))
+    rig = _rig(
+        restarts=FakeRestartStore(
+            unstarted=(_unstarted(RestartKind.REPORT_RUN, run_id),),
+            read_failure=StoredRunUnreadableError("report run 8 names no region"),
+            report_simulation_run_ids={run_id: sides},
+        )
+    )
+
+    summary = rig.restart()
+
+    ((failed_run_id, simulation_run_ids, message),) = rig.economy.failed_runs
+    assert (failed_run_id, simulation_run_ids) == (run_id, sides)
+    assert message.startswith("run_not_started: ")
+    assert summary == RestartSummary(listed=1, failed=1)
+
+
+def test_a_restarted_call_claiming_its_run_before_the_record_is_restarted() -> None:
+    stored, _call = _submitted_report()
+    rig = _rig(
+        restarts=FakeRestartStore(
+            unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
+            report_runs={stored.report_run_id: stored},
+            held={
+                stored.report_run_id: RunCall(
+                    status="running", modal_call_id="fc-coordinator"
+                )
+            },
+        ),
+        economy=FakeStore(claimed=True),
+    )
+
+    assert rig.restart() == RestartSummary(listed=1, restarted=1)
+
+
+def test_a_run_failed_before_its_restart_was_recorded_is_left() -> None:
+    stored, _call = _submitted_report()
+    rig = _rig(
+        restarts=FakeRestartStore(
+            unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
+            report_runs={stored.report_run_id: stored},
+            held={stored.report_run_id: RunCall(status="failed", modal_call_id=None)},
+        ),
+        economy=FakeStore(claimed=True),
+    )
+
+    assert rig.restart() == RestartSummary(listed=1, left=1)
+
+
+def test_a_refused_restart_of_a_run_the_sweep_failed_meanwhile_is_left() -> None:
+    stored, _call = _submitted_report()
+    rig = _rig(
+        restarts=FakeRestartStore(
+            unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
+            report_runs={stored.report_run_id: stored},
+            held={stored.report_run_id: RunCall(status="failed", modal_call_id=None)},
+        ),
+        economy=FakeStore(claimed=True),
+        economy_caller=FakeCaller(failure=ConnectionError("Modal is down")),
+    )
+
+    assert rig.restart() == RestartSummary(listed=1, left=1)
+
+
+@dataclass
+class AdvancingCaller(FakeCaller):
+    """Starts calls as ``FakeCaller`` does, moving a timer on by each start."""
+
+    elapsed: list[float] = field(default_factory=lambda: [0.0])
+    step_seconds: float = 0.0
+
+    async def start_report_run(self, *arguments: Any, **keywords: Any) -> str:
+        self.elapsed[0] += self.step_seconds
+        return await super().start_report_run(*arguments, **keywords)
+
+
+def test_a_check_past_its_time_limit_leaves_the_other_runs_for_the_next() -> None:
+    """No row is marked once the check's time is up, so none waits for the sweep."""
+    first, _first_call = _submitted_report()
+    second, _second_call = _submitted_report()
+    caller = AdvancingCaller(step_seconds=CHECK_TIME_LIMIT.total_seconds())
+    rig = _rig(
+        restarts=FakeRestartStore(
+            unstarted=(
+                _unstarted(RestartKind.REPORT_RUN, first.report_run_id),
+                _unstarted(RestartKind.REPORT_RUN, second.report_run_id),
+            ),
+            report_runs={first.report_run_id: first, second.report_run_id: second},
+        ),
+        economy_caller=caller,
+        timer=lambda: caller.elapsed[0],
+    )
+
+    summary = rig.restart()
+
+    assert [run.run_id for run in rig.restarts.marked] == [first.report_run_id]
+    assert [scope[1] for scope in rig.telemetry.scopes] == [first.report_run_id]
+    assert summary == RestartSummary(listed=2, restarted=1, deferred=1)
+
+
+class LoopWatchingManifestStore:
+    """A manifest store that notes whether each read ran on an event loop."""
+
+    def __init__(self, store: dict[str, object]) -> None:
+        self.store = store
+        self.read_on_event_loop: list[bool] = []
+
+    def get(self, key: str, default: object = None) -> object:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self.read_on_event_loop.append(False)
+        else:
+            self.read_on_event_loop.append(True)
+        return self.store.get(key, default)
+
+    def __setitem__(self, key: str, value: object) -> None:
+        raise AssertionError(key)
+
+
+def test_a_runs_call_is_rebuilt_off_the_event_loop() -> None:
+    """Modal's blocking reads, such as the manifest's, never hold up the loop."""
+    stored, _call = _submitted_report()
+    manifest = LoopWatchingManifestStore(MANIFEST_STORE)
+    rig = _rig(
+        restarts=FakeRestartStore(
+            unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
+            report_runs={stored.report_run_id: stored},
+        ),
+        manifest=manifest,
+    )
+
+    assert rig.restart() == RestartSummary(listed=1, restarted=1)
+    assert manifest.read_on_event_loop
+    assert not any(manifest.read_on_event_loop)
