@@ -573,9 +573,6 @@ def _run_household_calculation(
         HouseholdExecutionRequest,
         HouseholdWorkerIdentity,
     )
-    from policyengine_simulation_contract.household_report_execution import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        HouseholdReportRunCalculation,
-    )
     from policyengine_simulation_executor import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         household_calculation,
     )
@@ -617,9 +614,11 @@ def _run_household_calculation(
             remote_context=propagated,
         ):
             if household_report_run_id is not None:
+                # The recording code validates the payload once it holds
+                # the report run, so a refused payload fails the run.
                 result = stage12_runtime.run_household_report(
                     UUID(household_report_run_id),
-                    HouseholdReportRunCalculation.model_validate(payload),
+                    payload,
                     calculate_request,
                     modal_call_id=modal.current_function_call_id(),
                     runtime=runtime,

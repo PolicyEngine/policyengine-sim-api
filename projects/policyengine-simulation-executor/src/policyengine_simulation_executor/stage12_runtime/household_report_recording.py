@@ -29,6 +29,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 from policyengine_simulation_contract.household_execution import (
     HouseholdExecutionFailure,
 )
+from policyengine_simulation_contract.household_report_execution import (
+    HouseholdReportRunCalculation,
+)
 from policyengine_stage12_persistence import HouseholdReportRunStore, RunStatus
 
 from .database_retry import open_connection_with_retry
@@ -49,7 +52,6 @@ if TYPE_CHECKING:
         HouseholdExecutionResult,
     )
     from policyengine_simulation_contract.household_report_execution import (
-        HouseholdReportRunCalculation,
         HouseholdReportSide,
     )
     from policyengine_stage12_persistence import RunWrite, SimulationRunState
@@ -231,17 +233,22 @@ class _ReportRunCall:
                 completed_at=datetime.now(UTC),
             )
         unfinished.remove(run_id)
-        if not recorded.changed:
+        if recorded.changed:
+            reason = None if summary is None else _side_failure(side, summary)
+        else:
+            # Another writer finished the run this call held, so the call's
+            # outcome isn't the run's.
             logger.warning(
                 "Simulation run %s was %s before its calculation was recorded",
                 run_id,
                 recorded.status.value,
             )
+            reason = (
+                f"{SIDE_UNAVAILABLE_CODE}: The {side} simulation run was "
+                f"{recorded.status.value} before its calculation was recorded."
+            )
         return SideOutcome(
-            side=side,
-            simulation_run_id=run_id,
-            status=recorded.status,
-            reason=_side_failure(side, summary),
+            side=side, simulation_run_id=run_id, status=recorded.status, reason=reason
         )
 
     def _side_already_held(
@@ -257,7 +264,9 @@ class _ReportRunCall:
         if state.status is RunStatus.SUCCEEDED:
             return SideOutcome(side=side, simulation_run_id=run_id, status=state.status)
         if state.status is RunStatus.FAILED:
-            reason = _side_failure(side, state.error_message)
+            reason = _side_failure(
+                side, state.error_message or "no failure was recorded"
+            )
         else:
             reason = (
                 f"{SIDE_UNAVAILABLE_CODE}: The {side} simulation run is "
@@ -268,16 +277,20 @@ class _ReportRunCall:
         )
 
     def finish(self, outcomes: list[SideOutcome]) -> RunStatus:
-        """Mark the report run succeeded, or failed with its first failed side."""
-        reason = next(
+        """Mark the report run succeeded, or failed with its first side that wasn't.
+
+        A side succeeds only when its run did: one with any other status fails
+        the report run, with the side's reason.
+        """
+        unsucceeded = next(
             (
-                outcome.reason
+                outcome
                 for outcome in outcomes
                 if outcome.status is not RunStatus.SUCCEEDED
             ),
             None,
         )
-        if reason is None:
+        if unsucceeded is None:
             recorded = self.writer.complete_household_report_run(
                 self.report_run_id,
                 modal_call_id=self.modal_call_id,
@@ -288,7 +301,8 @@ class _ReportRunCall:
             recorded = self.writer.fail_report_run(
                 self.report_run_id,
                 modal_call_id=self.modal_call_id,
-                error_message=reason,
+                error_message=unsucceeded.reason
+                or _side_failure(unsucceeded.side, "no failure was recorded"),
                 failed_at=datetime.now(UTC),
             )
             status = RunStatus.FAILED
@@ -341,16 +355,14 @@ class _ReportRunCall:
         )
 
 
-def _side_failure(side: HouseholdReportSide, summary: str | None) -> str | None:
+def _side_failure(side: HouseholdReportSide, summary: str) -> str:
     """Return the report run's failure for a side that failed with ``summary``."""
-    if summary is None:
-        return None
     return f"{SIDE_FAILED_CODE}: The {side} simulation run failed: {summary}"
 
 
-def run_household_report(  # noqa: PLR0913  # the run, its calculation and the call's seams
+def run_household_report(  # noqa: PLR0913  # the run, its payload and the call's seams
     report_run_id: UUID,
-    calculation: HouseholdReportRunCalculation,
+    payload: Mapping[str, Any],
     calculate: HouseholdCalculation,
     *,
     modal_call_id: str | None,
@@ -359,14 +371,17 @@ def run_household_report(  # noqa: PLR0913  # the run, its calculation and the c
 ) -> dict[str, Any]:
     """Claim the report run, calculate and record each side, then finish the run.
 
-    Returns the report run's and each side's status, or, for a report run
-    another call holds or one already finished, a summary of the report run
-    without calculating. ``writer`` defaults to the store the Modal worker
-    role's database URL names. Once the call holds the report run, an error
-    or Modal's cancellation fails every run it left unfinished with a
-    generic summary, then propagates; a pre-emption doesn't, because Modal
-    runs the call again under the same call ID. Raises RuntimeError, before
-    any write, when ``modal_call_id`` is None.
+    ``payload`` is the call's ``HouseholdReportRunCalculation`` as sent; it
+    is validated once the call holds the report run, so a payload the
+    contract refuses fails the run at once. Returns the report run's and
+    each side's status, or, for a report run another call holds or one
+    already finished, a summary of the report run without calculating.
+    ``writer`` defaults to the store the Modal worker role's database URL
+    names. An error or Modal's cancellation, the claim's own included (it
+    may have committed before the error), fails every run the call holds or
+    left unfinished with a generic summary, then propagates; a pre-emption
+    doesn't, because Modal runs the call again under the same call ID.
+    Raises RuntimeError, before any write, when ``modal_call_id`` is None.
     """
     if modal_call_id is None:
         msg = "Modal household function call identifier is unavailable"
@@ -377,21 +392,22 @@ def run_household_report(  # noqa: PLR0913  # the run, its calculation and the c
         modal_call_id=modal_call_id,
         runtime=runtime,
     )
-    claimed = call.writer.claim_report_run(
-        report_run_id, modal_call_id=modal_call_id, claimed_at=datetime.now(UTC)
-    )
-    if not claimed.changed:
-        return {
-            "deduplicated": True,
-            "report_run_id": str(report_run_id),
-            "status": claimed.status.value,
-        }
-    sides = calculation.sides()
     # The runs this call may still have to fail if it stops: none until the
     # report run is known to name the call's runs.
     unfinished: list[UUID] = []
     calculating: UUID | None = None
     try:
+        claimed = call.writer.claim_report_run(
+            report_run_id, modal_call_id=modal_call_id, claimed_at=datetime.now(UTC)
+        )
+        if not claimed.changed:
+            return {
+                "deduplicated": True,
+                "report_run_id": str(report_run_id),
+                "status": claimed.status.value,
+            }
+        calculation = HouseholdReportRunCalculation.model_validate(payload)
+        sides = calculation.sides()
         call.writer.require_household_report_runs(
             report_run_id,
             baseline_simulation_run_id=calculation.baseline.calculation_id,
