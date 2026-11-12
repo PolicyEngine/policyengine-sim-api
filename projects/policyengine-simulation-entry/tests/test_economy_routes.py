@@ -547,7 +547,9 @@ def test_a_create_whose_commit_is_unconfirmed_answers_a_500(
 ) -> None:
     """A 500 tells the Public API the record may exist; no 503 may say it doesn't."""
     submissions = FakeEconomySubmissions(
-        failure=EconomySubmissionOutcomeUnknownError(record)
+        failure=EconomySubmissionOutcomeUnknownError(
+            record, error_type="OperationalError"
+        )
     )
 
     with client_for(submissions) as client:
@@ -561,7 +563,28 @@ def test_a_create_whose_commit_is_unconfirmed_answers_a_500(
             "it was written."
         ),
     }
-    (logged,) = _emitted_records(
-        capsys.readouterr().out, "economy_record_outcome_unknown"
-    )
+    printed = capsys.readouterr().out
+    (logged,) = _emitted_records(printed, "economy_record_outcome_unknown")
     assert logged["attributes"]["record"] == record
+    assert logged["attributes"]["error_type"] == "OperationalError"
+    # One event for one outcome.
+    assert _emitted_records(printed, "economy_records_outcome_unknown") == []
+
+
+@pytest.mark.parametrize(
+    "request_id",
+    ["r" * 256, "has spaces in it", ""],
+    ids=["too-long", "spaces", "empty"],
+)
+def test_a_request_id_the_call_cannot_carry_is_replaced(client_for, request_id) -> None:
+    """The call's context takes 1 to 128 of the observability runtime's characters."""
+    submissions = FakeEconomySubmissions()
+
+    with client_for(submissions) as client:
+        result = client.post(
+            "/reports", json=REPORT_BODY, headers={REQUEST_ID_HEADER: request_id}
+        )
+
+    assert result.status_code == 201
+    ((_, call_request_id, _),) = submissions.reports
+    assert str(UUID(call_request_id)) == call_request_id

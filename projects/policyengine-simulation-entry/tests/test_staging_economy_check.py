@@ -256,12 +256,18 @@ def test_a_read_that_gets_no_answer_is_asked_again(fakes, tmp_path):
 
 
 def test_every_request_has_a_time_limit(fakes, tmp_path):
+    """The submission, which isn't asked again, may take Cloud Run's full minute."""
     result, _ = _run(fakes, tmp_path, [f"200 {_report('succeeded')}"])
 
     assert result.returncode == 0, result.stderr
-    calls = fakes.calls("curl")
-    assert calls
-    assert all("--max-time" in call for call in calls)
+    limits = {
+        call[-1]: call[call.index("--max-time") + 1] for call in fakes.calls("curl")
+    }
+    assert limits == {
+        "https://issuer.example/oauth/token": "30",
+        f"{BASE_URL}/reports": "60",
+        f"{BASE_URL}/reports/{REPORT_ID}": "30",
+    }
 
 
 def test_any_other_read_answer_fails_the_check(fakes, tmp_path):

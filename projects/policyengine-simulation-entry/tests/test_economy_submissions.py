@@ -667,12 +667,17 @@ def test_a_dataset_the_bundle_lacks_is_named_in_the_services_words() -> None:
 def test_a_create_whose_commit_is_unconfirmed_may_have_written_the_record(
     record,
 ) -> None:
-    store = FakeStore(create_failure=EconomyRecordOutcomeUnknownError("lost"))
+    lost_commit = EconomyRecordOutcomeUnknownError("lost")
+    lost_commit.__cause__ = DATABASE_ERROR
+    store = FakeStore(create_failure=lost_commit)
     caller = FakeCaller()
     submit = _submit_report if record == "report" else _submit_simulation
 
     with pytest.raises(EconomySubmissionOutcomeUnknownError) as unknown:
         submit(service(store, caller=caller))
 
-    assert unknown.value.record == record
+    assert (unknown.value.record, unknown.value.error_type) == (
+        record,
+        "OperationalError",
+    )
     assert (caller.report_runs, caller.simulation_runs) == ([], [])
