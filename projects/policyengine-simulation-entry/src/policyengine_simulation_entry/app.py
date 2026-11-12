@@ -52,14 +52,13 @@ from policyengine_simulation_entry.auth import (
 )
 from policyengine_simulation_entry.backend import OldGatewayBackend, SimulationBackend
 from policyengine_simulation_entry.config import Settings
-from policyengine_simulation_entry.economy_routes import (
-    EconomySubmissions,
-    add_economy_routes,
+from policyengine_simulation_entry.economy_rerun_routes import (
+    EconomyService,
+    add_economy_rerun_routes,
 )
-from policyengine_simulation_entry.economy_submissions import (
-    EconomySubmissionService,
-    ServiceSettings,
-)
+from policyengine_simulation_entry.economy_reruns import EconomyRerunService
+from policyengine_simulation_entry.economy_routes import add_economy_routes
+from policyengine_simulation_entry.economy_submissions import ServiceSettings
 from policyengine_simulation_entry.economy_workers import (
     ManifestEconomyWorkers,
     ModalEconomyRunCaller,
@@ -540,18 +539,19 @@ def household_calculations_for(
 def _register_economy_routes(
     app: FastAPI,
     entry: EntryRuntime,
-    submissions: EconomySubmissions | None,
+    submissions: EconomyService | None,
     *,
     submitter: AuthorizationDependency,
     reader: AuthorizationDependency,
 ) -> None:
-    """Add the routes that create economy reports and simulations and read them."""
+    """Add the routes that create, read and re-run economy reports and simulations."""
     add_economy_routes(app, entry, submissions, submitter=submitter, reader=reader)
+    add_economy_rerun_routes(app, entry, submissions, submitter=submitter)
 
 
 def economy_submissions_for(
     settings: Settings, database: SimulationDatabaseConnection | None
-) -> EconomySubmissions | None:
+) -> EconomyService | None:
     """Build the economy submission service when the service is configured.
 
     It needs the simulation database and the v2 Modal environment; without
@@ -562,7 +562,7 @@ def economy_submissions_for(
         database, SimulationDatabase
     ):
         return None
-    return EconomySubmissionService(
+    return EconomyRerunService(
         store=EconomyRunStore.from_engine(
             database.engine,
             statement_timeout_milliseconds=ECONOMY_STATEMENT_TIMEOUT_MILLISECONDS,

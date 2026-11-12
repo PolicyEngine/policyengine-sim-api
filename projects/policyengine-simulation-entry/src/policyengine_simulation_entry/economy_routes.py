@@ -89,14 +89,14 @@ SIMULATIONS_PATH = "/simulations"
 SIMULATION_PATH = "/simulations/{simulation_id}"
 RETRY_AFTER_SECONDS = 10
 
-_ERROR = {"model": EconomyError}
-_RETRY_AFTER = {
+ERROR_ANSWER = {"model": EconomyError}
+RETRY_AFTER_HEADER = {
     "Retry-After": {
         "description": "Seconds to wait before asking again",
         "schema": {"type": "integer"},
     }
 }
-_FORBIDDEN = {
+FORBIDDEN_ANSWER = {
     "description": "The caller's token is missing, invalid or lacks the permission"
 }
 _REFUSED = {
@@ -107,7 +107,7 @@ _REFUSED = {
         "service's state, such as a catalog version missing while a release "
         "deploys"
     ),
-    **_ERROR,
+    **ERROR_ANSWER,
 }
 _UNPROCESSABLE = {
     "description": (
@@ -123,7 +123,7 @@ _INTERNAL_ERROR = {
         "The service failed unexpectedly, or could not confirm its rows were "
         "written (internal_error), possibly after creating the record"
     ),
-    **_ERROR,
+    **ERROR_ANSWER,
 }
 
 
@@ -136,12 +136,12 @@ _READ_UNAVAILABLE = {
         "Economy runs are not configured, or the database cannot be read; "
         "retry after Retry-After seconds"
     ),
-    "headers": _RETRY_AFTER,
-    **_ERROR,
+    "headers": RETRY_AFTER_HEADER,
+    **ERROR_ANSWER,
 }
 _READ_INTERNAL_ERROR = {
     "description": "The service failed unexpectedly (internal_error)",
-    **_ERROR,
+    **ERROR_ANSWER,
 }
 
 
@@ -154,8 +154,8 @@ def _unavailable_description(record: RecordName) -> dict[str, Any]:
             f"(modal_call_refused): then the {record} named by {record}_id was "
             "created and its run failed. Retry after Retry-After seconds"
         ),
-        "headers": _RETRY_AFTER,
-        **_ERROR,
+        "headers": RETRY_AFTER_HEADER,
+        **ERROR_ANSWER,
     }
 
 
@@ -191,7 +191,8 @@ class EconomySubmissions(Protocol):
         ...
 
 
-def _error_response(status_code: int, error: EconomyError) -> JSONResponse:
+def error_response(status_code: int, error: EconomyError) -> JSONResponse:
+    """Answer ``error`` with its status, and ``Retry-After`` on a 503."""
     headers = (
         {"Retry-After": str(RETRY_AFTER_SECONDS)}
         if status_code == status.HTTP_503_SERVICE_UNAVAILABLE
@@ -204,14 +205,16 @@ def _error_response(status_code: int, error: EconomyError) -> JSONResponse:
     )
 
 
-def _not_configured() -> JSONResponse:
-    return _error_response(
+def not_configured_response() -> JSONResponse:
+    """Answer 503 ``not_configured``: the service has no economy runs set up."""
+    return error_response(
         status.HTTP_503_SERVICE_UNAVAILABLE,
         EconomyError(code="not_configured", detail="Economy runs are not configured."),
     )
 
 
-_SUBMISSION_FAILURES = (
+# The submission service's own failures, each answered with its status.
+SUBMISSION_FAILURES = (
     EconomySubmissionRefusedError,
     EconomySubmissionUnprocessableError,
     EconomySubmissionUnavailableError,
@@ -219,10 +222,10 @@ _SUBMISSION_FAILURES = (
 )
 
 
-def _submission_failure_response(error: Exception, record: RecordName) -> JSONResponse:
+def submission_failure_response(error: Exception, record: RecordName) -> JSONResponse:
     """Answer a submission the service refused or could not serve."""
     if isinstance(error, EconomySubmissionRefusedError):
-        return _error_response(
+        return error_response(
             status.HTTP_400_BAD_REQUEST,
             EconomyError(code=error.code, detail=error.detail),
         )
@@ -239,11 +242,13 @@ def _submission_failure_response(error: Exception, record: RecordName) -> JSONRe
         )
     if isinstance(error, EconomySubmissionOutcomeUnknownError):
         return _outcome_unknown_response(error)
-    assert isinstance(error, EconomySubmissionUnavailableError)  # noqa: S101  # the last of _SUBMISSION_FAILURES
+    assert isinstance(error, EconomySubmissionUnavailableError)  # noqa: S101  # the last of SUBMISSION_FAILURES
     record_ids = {} if error.record_id is None else {f"{record}_id": error.record_id}
-    return _error_response(
+    return error_response(
         status.HTTP_503_SERVICE_UNAVAILABLE,
-        EconomyError(code=error.code, detail=error.detail, **record_ids),
+        EconomyError(
+            code=error.code, detail=error.detail, run_id=error.run_id, **record_ids
+        ),
     )
 
 
@@ -270,24 +275,29 @@ def _outcome_unknown_response(
     it nothing was created. The log is the fixed event
     ``economy_record_outcome_unknown``.
     """
-    fields = {"record": error.record, "error_type": error.error_type}
+    fields = {
+        "record": error.record,
+        "error_type": error.error_type,
+        "rerun": error.rerun,
+    }
+    written = f"the {error.record}'s new run" if error.rerun else f"the {error.record}"
     logger.error(
         "economy_record_outcome_unknown",
         extra={**fields, "policyengine_attributes": fields},
     )
-    return _error_response(
+    return error_response(
         status.HTTP_500_INTERNAL_SERVER_ERROR,
         EconomyError(
             code="internal_error",
             detail=(
-                f"The service may have created the {error.record}, but could not "
-                "confirm it was written."
+                f"The service may have created {written}, but could not confirm "
+                "it was written."
             ),
         ),
     )
 
 
-def _unexpected_failure_response(
+def unexpected_failure_response(
     route: str, error: Exception, *, max_characters: int
 ) -> JSONResponse:
     """Answer an unexpected failure with the JSON 500 the routes declare.
@@ -302,7 +312,7 @@ def _unexpected_failure_response(
         error=error,
         max_characters=max_characters,
     )
-    return _error_response(
+    return error_response(
         status.HTTP_500_INTERNAL_SERVER_ERROR,
         EconomyError(
             code="internal_error", detail="The service could not answer the request."
@@ -353,8 +363,9 @@ def _simulation_state(stored: StoredSimulation) -> EconomySimulationState:
     )
 
 
-def _unknown(record: RecordName, record_id: UUID) -> JSONResponse:
-    return _error_response(
+def unknown_record_response(record: RecordName, record_id: UUID) -> JSONResponse:
+    """Answer 404: there is no such report or simulation."""
+    return error_response(
         status.HTTP_404_NOT_FOUND,
         EconomyError(
             code="unknown_report" if record == "report" else "unknown_simulation",
@@ -408,7 +419,7 @@ def _submission_routes(
         responses={
             201: {"description": "The report and its first run were created"},
             400: _REFUSED,
-            403: _FORBIDDEN,
+            403: FORBIDDEN_ANSWER,
             422: _UNPROCESSABLE,
             500: _INTERNAL_ERROR,
             503: _unavailable_description("report"),
@@ -419,7 +430,7 @@ def _submission_routes(
         body: EconomyReportRequest, request: Request
     ) -> JSONResponse:
         if submissions is None:
-            return _not_configured()
+            return not_configured_response()
         observability_id = entry.start_workflow_observability(request)
         try:
             created = await submissions.submit_report(
@@ -427,11 +438,11 @@ def _submission_routes(
                 request_id=call_request_id_for(request),
                 observability_context=observability_context(entry, observability_id),
             )
-        except _SUBMISSION_FAILURES as error:
-            return _submission_failure_response(error, "report")
+        except SUBMISSION_FAILURES as error:
+            return submission_failure_response(error, "report")
         # Every other failure is still answered as the JSON 500 declared.
         except Exception as error:  # noqa: BLE001  # answered as internal_error
-            return _unexpected_failure_response(
+            return unexpected_failure_response(
                 REPORTS_PATH, error, max_characters=log_string_limit
             )
         return JSONResponse(
@@ -452,7 +463,7 @@ def _submission_routes(
         responses={
             201: {"description": "The simulation and its first run were created"},
             400: _REFUSED,
-            403: _FORBIDDEN,
+            403: FORBIDDEN_ANSWER,
             422: _UNPROCESSABLE,
             500: _INTERNAL_ERROR,
             503: _unavailable_description("simulation"),
@@ -463,7 +474,7 @@ def _submission_routes(
         body: EconomySimulationRequest, request: Request
     ) -> JSONResponse:
         if submissions is None:
-            return _not_configured()
+            return not_configured_response()
         observability_id = entry.start_workflow_observability(request)
         try:
             created = await submissions.submit_simulation(
@@ -471,11 +482,11 @@ def _submission_routes(
                 request_id=call_request_id_for(request),
                 observability_context=observability_context(entry, observability_id),
             )
-        except _SUBMISSION_FAILURES as error:
-            return _submission_failure_response(error, "simulation")
+        except SUBMISSION_FAILURES as error:
+            return submission_failure_response(error, "simulation")
         # Every other failure is still answered as the JSON 500 declared.
         except Exception as error:  # noqa: BLE001  # answered as internal_error
-            return _unexpected_failure_response(
+            return unexpected_failure_response(
                 SIMULATIONS_PATH, error, max_characters=log_string_limit
             )
         return JSONResponse(
@@ -496,20 +507,20 @@ async def _read_answer[Stored](  # noqa: PLR0913  # the read, its record and how
 ) -> JSONResponse:
     """Answer a read: the record as it stands, 404, 503 or the JSON 500."""
     if submissions is None:
-        return _not_configured()
+        return not_configured_response()
     route = REPORT_PATH if record == "report" else SIMULATION_PATH
     try:
         stored = await read(submissions)
         state = None if stored is None else answer(stored)
     except EconomySubmissionUnavailableError as error:
-        return _submission_failure_response(error, record)
+        return submission_failure_response(error, record)
     # Every other failure is still answered as the JSON 500 declared.
     except Exception as error:  # noqa: BLE001  # answered as internal_error
-        return _unexpected_failure_response(
+        return unexpected_failure_response(
             route, error, max_characters=log_string_limit
         )
     if state is None:
-        return _unknown(record, record_id)
+        return unknown_record_response(record, record_id)
     return JSONResponse(state.model_dump(mode="json"))
 
 
@@ -533,8 +544,11 @@ def _read_routes(
         response_model=EconomyReportState,
         responses={
             200: {"description": "The report as it stands"},
-            403: _FORBIDDEN,
-            404: {"description": "There is no such report (unknown_report)", **_ERROR},
+            403: FORBIDDEN_ANSWER,
+            404: {
+                "description": "There is no such report (unknown_report)",
+                **ERROR_ANSWER,
+            },
             422: _READ_UNPROCESSABLE,
             500: _READ_INTERNAL_ERROR,
             503: _READ_UNAVAILABLE,
@@ -562,10 +576,10 @@ def _read_routes(
         response_model=EconomySimulationState,
         responses={
             200: {"description": "The simulation as it stands"},
-            403: _FORBIDDEN,
+            403: FORBIDDEN_ANSWER,
             404: {
                 "description": "There is no such simulation (unknown_simulation)",
-                **_ERROR,
+                **ERROR_ANSWER,
             },
             422: _READ_UNPROCESSABLE,
             500: _READ_INTERNAL_ERROR,

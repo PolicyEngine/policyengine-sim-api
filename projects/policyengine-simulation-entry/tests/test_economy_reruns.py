@@ -210,6 +210,7 @@ def test_a_report_kind_the_service_does_not_rerun_yet_is_refused(kind, named) ->
 @pytest.mark.parametrize(
     ("missing", "named"),
     [
+        ({"country": "fr"}, "country"),
         ({"baseline": None}, "baseline simulation"),
         ({"reform": None}, "reform simulation"),
         ({"region_code": None}, "region"),
@@ -390,6 +391,7 @@ def test_a_simulation_is_rerun_as_a_new_run_of_it() -> None:
         ({"kind": "household"}, "household"),
         ({"kind": "unsupported"}, "this type of"),
         ({"country": None}, "country"),
+        ({"country": "fr"}, "country"),
         ({"region_code": None}, "region"),
         ({"dataset_name": None}, "dataset"),
         ({"year": None}, "year"),
