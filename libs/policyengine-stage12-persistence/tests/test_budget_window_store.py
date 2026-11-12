@@ -289,6 +289,9 @@ def test_a_refused_start_fails_that_year_and_the_window(store, windows, window) 
     ]
     assert rows[2028]["status"] == "failed"
     assert rows[2028]["error_message"].startswith("modal_call_refused: ")
+    # The cause's type, never its text, names why the start failed.
+    assert "RuntimeError" in rows[2028]["error_message"]
+    assert "Modal refused the call" not in rows[2028]["error_message"]
     assert {rows[year]["status"] for year in range(2029, 2033)} == {"failed"}
     window_row = windows.window_row(window)
     assert window_row["status"] == "failed"
@@ -470,7 +473,17 @@ def test_an_idle_window_with_waiting_years_fails_as_stalled(
     window_row = windows.window_row(window)
     assert window_row["error_message"].startswith("budget_window_stalled: ")
     rows = windows.year_rows(window)
-    assert {rows[year]["status"] for year in (2031, 2032)} == {"failed"}
+    for year in (2031, 2032):
+        assert rows[year]["status"] == "failed"
+        # The years record the stall, not another year's failure.
+        assert rows[year]["error_message"].startswith("budget_window_stalled: ")
+        for simulation_run_id in (
+            window.year(year).baseline_simulation_run_id,
+            window.year(year).reform_simulation_run_id,
+        ):
+            assert windows.seeder.row("simulation_runs", simulation_run_id)[
+                "error_message"
+            ].startswith("budget_window_stalled: ")
     assert window.window_run_id not in store.list_idle_windows(idle_since_before=cutoff)
 
 

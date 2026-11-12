@@ -213,16 +213,18 @@ def test_a_malformed_input_fails_only_the_start() -> None:
 class RecordingWindows(FakeWindowStore):
     """Records the order of the window steps and the coordinator call."""
 
-    def __init__(self, events):
+    def __init__(self, events, *, window_run_id=None):
         super().__init__()
         self.events = events
+        self.window_run_id = window_run_id or WINDOW_RUN_ID
 
     def start_window(self, report_run_id, *, started_at):
         self.events.append(("start", report_run_id))
         return True
 
     def window_of_year(self, report_run_id):
-        return WINDOW_RUN_ID
+        self.events.append(("window_of_year", report_run_id))
+        return self.window_run_id
 
     def advance_window(self, window_run_id, *, now, start_year=None):
         self.events.append(("advance", window_run_id, start_year))
@@ -253,9 +255,16 @@ def test_a_year_marks_its_window_running_then_advances_it_when_it_ends() -> None
     assert _year_call(events, coordinate) == {"status": "succeeded"}
 
     report_run_id = report_run_context().report_run.report_run_id
-    assert [event[0] for event in events] == ["start", "coordinate", "advance"]
-    assert events[0] == ("start", report_run_id)
-    starter = events[2][2]
+    # The window is looked up once, before the coordinator runs.
+    assert [event[0] for event in events] == [
+        "window_of_year",
+        "start",
+        "coordinate",
+        "advance",
+    ]
+    assert events[1] == ("start", report_run_id)
+    assert events[3][1] == WINDOW_RUN_ID
+    starter = events[3][2]
     assert isinstance(starter, ModalYearStarter)
     assert starter.payload == report_execution_input().model_dump(mode="json")
     assert starter.context == report_run_context().model_dump(mode="json")
@@ -276,7 +285,7 @@ def test_a_failed_or_cancelled_year_still_advances_its_window(ending) -> None:
     with pytest.raises(type(ending)):
         _year_call(events, coordinate)
 
-    assert [event[0] for event in events] == ["start", "advance"]
+    assert [event[0] for event in events] == ["window_of_year", "start", "advance"]
 
 
 def test_a_preempted_year_leaves_its_window_to_the_restarted_call() -> None:
@@ -288,7 +297,7 @@ def test_a_preempted_year_leaves_its_window_to_the_restarted_call() -> None:
     with pytest.raises(KeyboardInterrupt):
         _year_call(events, coordinate)
 
-    assert [event[0] for event in events] == ["start"]
+    assert [event[0] for event in events] == ["window_of_year", "start"]
 
 
 def test_a_call_naming_no_report_run_touches_no_window() -> None:
@@ -361,3 +370,69 @@ def test_the_v2_coordinator_runs_each_call_as_a_window_year(monkeypatch) -> None
 
     assert result == {"status": "succeeded"}
     assert received == [({"report": 1}, {"context": 1})]
+
+
+class NoWindow(RecordingWindows):
+    """A report run that is no budget window's year."""
+
+    def window_of_year(self, report_run_id):
+        self.events.append(("window_of_year", report_run_id))
+
+
+def test_a_report_run_outside_any_window_makes_no_window_writes() -> None:
+    events = []
+
+    result = _year_call(
+        events, lambda: {"status": "succeeded"}, windows=NoWindow(events)
+    )
+
+    assert result == {"status": "succeeded"}
+    assert [event[0] for event in events] == ["window_of_year"]
+
+
+class UnreadableWindow(RecordingWindows):
+    """A window lookup that fails before the coordinator runs."""
+
+    def __init__(self, events):
+        super().__init__(events)
+        self.lookups = 0
+
+    def window_of_year(self, report_run_id):
+        self.lookups += 1
+        if self.lookups == 1:
+            message = "database unavailable"
+            raise RuntimeError(message)
+        return super().window_of_year(report_run_id)
+
+
+def test_a_failed_lookup_still_advances_the_window_when_the_year_ends() -> None:
+    events = []
+
+    _year_call(
+        events, lambda: {"status": "succeeded"}, windows=UnreadableWindow(events)
+    )
+
+    # Nothing is marked before the coordinator runs; the window is looked up
+    # again, and advanced, once the year has ended.
+    assert [event[0] for event in events] == ["window_of_year", "advance"]
+
+
+def test_an_unreadable_observability_context_still_advances_the_window() -> None:
+    events = []
+
+    def observability_context():
+        message = "no trace"
+        raise RuntimeError(message)
+
+    result = coordinate_window_year(
+        lambda: {"status": "succeeded"},
+        payload=report_execution_input().model_dump(mode="json"),
+        context=report_run_context().model_dump(mode="json"),
+        windows=lambda: RecordingWindows(events),
+        observability_context=observability_context,
+    )
+
+    assert result == {"status": "succeeded"}
+    starter = events[-1][2]
+    assert events[-1][0] == "advance"
+    assert starter.observability_context is None
