@@ -341,9 +341,10 @@ holds, or one that failed, it returns `{"deduplicated": true,
 **Pre-emption and cancellation.** Modal runs a pre-empted call again under the
 same call ID, and each claim lets that call resume. A pre-empted coordinator
 cancels its unfinished workers and records nothing; the restarted coordinator
-asks each worker its earlier attempt started to stop, releases that worker's
-simulation run (pending, no call, keeping its first start) and starts a new
-worker on it. A failed or cancelled coordinator fails its report run and the
+asks each earlier worker that holds a simulation run to stop, releases that run
+(pending, no call, keeping its first start) and starts a new worker on it. A
+run that worker finished meanwhile is used as it finished, or fails the report
+with its own cause. A failed or cancelled coordinator fails its report run and the
 simulation runs it left unfinished, never one that succeeded. The stuck-run
 sweep judges the run tables only, leaves a report run's simulation runs to its
 coordinator while the report run is unfinished, and never fails a run whose

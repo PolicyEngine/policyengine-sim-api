@@ -69,9 +69,11 @@ class WaitingCoordination(Protocol):
     def child_descriptor(
         self, role: str, result: object
     ) -> SimulationArtifactDescriptor | None:
-        """Return a finished child's descriptor, or None to wait on its new call.
+        """Return a finished child's descriptor, or None to keep waiting.
 
-        Raises for a result that is no descriptor.
+        None means the coordinator replaced the role's call in the call
+        mapping the wait was given, which the wait then probes. Raises for a
+        result that is no descriptor.
         """
         ...
 

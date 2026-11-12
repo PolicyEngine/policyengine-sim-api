@@ -491,6 +491,8 @@ def test_a_preempted_comparison_run_behaves_as_before() -> None:
     report_runs = FakeReportRuns()
     context = invocation_context()
 
+    invoker = StartedWorkerCalls(report_runs.events)
+
     with pytest.raises(KeyboardInterrupt):
         coordinate_report(
             report_execution_input().model_dump(mode="json"),
@@ -500,7 +502,7 @@ def test_a_preempted_comparison_run_behaves_as_before() -> None:
             coordinator_invocation_id=COORDINATOR_CALL_ID,
             store=store,
             artifacts=FakeArtifacts(),
-            invoker=TimeoutInvoker(),
+            invoker=invoker,
             aggregator=economy_aggregate,
             report_runs=report_runs,
             sleep=_preempt,
@@ -508,3 +510,6 @@ def test_a_preempted_comparison_run_behaves_as_before() -> None:
 
     assert report_runs.events == []
     assert store.parent is not None
+    # A comparison run's children keep running: its restarted call
+    # reattaches to them.
+    assert [call.cancelled for call in invoker.calls] == [0, 0]

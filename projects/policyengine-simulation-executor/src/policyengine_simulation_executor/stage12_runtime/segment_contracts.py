@@ -39,15 +39,13 @@ class Stage12SegmentInput(_StrictSegmentModel):
 
     @model_validator(mode="after")
     def require_us_simulation(self) -> Stage12SegmentInput:
-        """Accept only US baseline and reform simulations."""
+        """Accept only US simulations, of any role.
+
+        A report's baseline or reform, or a simulation run started on its
+        own, is segmented in the same way.
+        """
         if self.simulation.geography.country != "us":
             msg = "Stage 12 segments currently support only the US"
-            raise ValueError(msg)
-        if self.simulation.role not in {
-            SimulationRole.BASELINE,
-            SimulationRole.REFORM,
-        }:
-            msg = "Stage 12 segment role must be baseline or reform"
             raise ValueError(msg)
         return self
 
@@ -68,15 +66,6 @@ class Stage12SegmentResult(_StrictSegmentModel):
         """Reject repeated region codes."""
         if len(value) != len(set(value)):
             msg = "segment region codes must be unique"
-            raise ValueError(msg)
-        return value
-
-    @field_validator("role")
-    @classmethod
-    def require_report_role(cls, value: SimulationRole) -> SimulationRole:
-        """Accept only the baseline and reform roles."""
-        if value not in {SimulationRole.BASELINE, SimulationRole.REFORM}:
-            msg = "Stage 12 segment role must be baseline or reform"
             raise ValueError(msg)
         return value
 

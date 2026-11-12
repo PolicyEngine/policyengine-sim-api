@@ -11,9 +11,11 @@ rows. No call creates or claims an evaluation record.
 
 Modal runs a pre-empted coordinator again under the same call ID: the
 restarted call resumes its claim, stops each worker its earlier attempt
-started, releases that worker's simulation run and starts a new worker on
-it. A cancelled coordinator, which Modal never runs again, fails the report
-run and the simulation runs it left unfinished; so does a failed one.
+started that holds a simulation run, releases that run and starts a new
+worker on it. One that finished meanwhile is used as it finished, and one
+an uncancelled earlier worker claims later is waited for. A cancelled
+coordinator, which Modal never runs again, fails the report run and the
+simulation runs it left unfinished; so does a failed one.
 """
 
 from __future__ import annotations
@@ -56,7 +58,12 @@ from .report_run_recording import (
     run_error_message,
     run_failure_detail,
 )
-from .reused_outputs import reused_outputs, simulations_to_calculate
+from .reused_outputs import (
+    CloudStorageOutputFiles,
+    checked_output,
+    reused_outputs,
+    simulations_to_calculate,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -72,6 +79,7 @@ if TYPE_CHECKING:
 
     from .coordination_core import CoordinatorDependencies, CoordinatorInvocation
     from .report_run_access import ReportRunWriter
+    from .reused_outputs import OutputFileReader
 
 logger = logging.getLogger(__name__)
 
@@ -387,13 +395,17 @@ class ReportRunCoordination(CoordinationCore):
         earlier_call_id = self.run_states[role].modal_call_id
         if earlier_call_id is not None:
             try:
-                self._release_from_earlier_worker(role, earlier_call_id)
+                needs_worker = self._release_from_earlier_worker(
+                    simulation, earlier_call_id
+                )
             except Stage12ExecutionError:
                 # The workers started before this run are stopped too.
                 self.cancel_children(
                     set(self.calls), cancellation(f"the {role} simulation failed")
                 )
                 raise
+            if not needs_worker:
+                return
         child_context = self.context.model_copy(
             update={"report_run": None, "simulation_run_id": run_id}
         )
@@ -417,8 +429,17 @@ class ReportRunCoordination(CoordinationCore):
             raise Stage12ExecutionError(detail) from None
         self.calls[role] = call
 
-    def _release_from_earlier_worker(self, role: str, earlier_call_id: str) -> None:
-        """Stop the earlier attempt's worker, then release its simulation run."""
+    def _release_from_earlier_worker(
+        self, simulation: PlannedSimulationExecutionInput, earlier_call_id: str
+    ) -> bool:
+        """Stop the earlier attempt's worker, release its run; return if one is needed.
+
+        The earlier worker may have finished the run, or another call may hold
+        it, before the release: a succeeded run's stored output is used, a
+        run another call holds is waited for, and a failed run fails the
+        report with its own cause (``Stage12ExecutionError``).
+        """
+        role = simulation.role.value
         try:
             self.child_invoker.restore(earlier_call_id).cancel()
         except Exception as error:  # noqa: BLE001  # stopping an earlier attempt's worker is best effort; releasing its run refuses its writes
@@ -428,21 +449,40 @@ class ReportRunCoordination(CoordinationCore):
                 self.run_ids.report_run_id,
                 type(error).__name__,
             )
+        run_id = self.simulation_run_id(role)
         released = self.writer.release_simulation_run(
-            self.simulation_run_id(role),
-            modal_call_id=earlier_call_id,
-            released_at=datetime.now(UTC),
+            run_id, modal_call_id=earlier_call_id, released_at=datetime.now(UTC)
         )
-        if not released.changed:
-            raise Stage12ExecutionError(
-                Stage12FailureDetail(
-                    error_code=SIMULATION_RUN_CHANGED,
-                    error_summary=(
-                        f"The {role} simulation run {self.simulation_run_id(role)} "
-                        f"became {released.status.value} while it was restarted."
-                    ),
-                )
+        if released.changed:
+            return True
+        state = self.writer.get_simulation_run(run_id)
+        if state.status is RunStatus.SUCCEEDED:
+            reused = checked_output(
+                simulation, run_id, state, files=self._output_files()
             )
+            self.reused[role] = reused
+            self.descriptors[role] = reused.descriptor
+            return False
+        if state.status is RunStatus.FAILED and state.error_message:
+            raise Stage12ExecutionError(run_failure_detail(state.error_message))
+        if state.status is RunStatus.RUNNING and state.modal_call_id is not None:
+            self.calls[role] = self.child_invoker.restore(state.modal_call_id)
+            return False
+        if state.status is RunStatus.PENDING and state.modal_call_id is None:
+            return True
+        raise Stage12ExecutionError(
+            Stage12FailureDetail(
+                error_code=SIMULATION_RUN_CHANGED,
+                error_summary=(
+                    f"The {role} simulation run {run_id} became "
+                    f"{state.status.value} while it was restarted."
+                ),
+            )
+        )
+
+    def _output_files(self) -> OutputFileReader:
+        """Return the reader of stored output files, by default Cloud Storage's."""
+        return self.dependencies.output_files or CloudStorageOutputFiles()
 
     def _require_recorded(
         self, simulations: Sequence[PlannedSimulationExecutionInput]
