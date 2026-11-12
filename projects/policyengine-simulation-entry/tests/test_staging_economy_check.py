@@ -44,7 +44,7 @@ while (($#)); do
     --output) output="$2"; shift 2 ;;
     --request) method="$2"; shift 2 ;;
     --data) data="$2"; shift 2 ;;
-    --header | --write-out) shift 2 ;;
+    --header | --write-out | --max-time) shift 2 ;;
     *) url="$1"; shift ;;
   esac
 done
@@ -67,6 +67,10 @@ case "${method} ${url}" in
     polls="$(($(cat "${FAKE_STATE}/polls" 2>/dev/null || echo 0) + 1))"
     echo "${polls}" > "${FAKE_STATE}/polls"
     answer="$(sed -n "${polls}p" "${FAKE_STATE}/answers")"
+    if [[ "${answer}" == "TRANSPORT" ]]; then
+      # curl's exit status when the request times out.
+      exit 28
+    fi
     printf '%s' "${answer#* }" > "${output}"
     printf '%s' "${answer%% *}"
     ;;
@@ -242,6 +246,24 @@ def test_an_unavailable_read_is_asked_again(fakes, tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+def test_a_read_that_gets_no_answer_is_asked_again(fakes, tmp_path):
+    result, _ = _run(
+        fakes, tmp_path, ["TRANSPORT", "TRANSPORT", f"200 {_report('succeeded')}"]
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "no answer" in result.stderr
+
+
+def test_every_request_has_a_time_limit(fakes, tmp_path):
+    result, _ = _run(fakes, tmp_path, [f"200 {_report('succeeded')}"])
+
+    assert result.returncode == 0, result.stderr
+    calls = fakes.calls("curl")
+    assert calls
+    assert all("--max-time" in call for call in calls)
+
+
 def test_any_other_read_answer_fails_the_check(fakes, tmp_path):
     result, _ = _run(fakes, tmp_path, ['404 {"code": "unknown_report"}'])
 
@@ -301,6 +323,8 @@ def test_the_check_job_creates_the_report_through_the_candidate():
         "publish_stage12_v2_default",
     }
     assert job["environment"] == "${{ inputs.release_environment }}"
+    # Longer than the script's own 30-minute deadline, so the script fails first.
+    assert job["timeout-minutes"] == 40
     assert step["run"] == (
         f".github/scripts/{CHECK_SCRIPT} "
         '"${{ needs.deploy_entrypoint.outputs.candidate_url }}"'

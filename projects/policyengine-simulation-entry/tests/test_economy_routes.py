@@ -12,6 +12,7 @@ import pytest
 from conftest import FakeBackend, make_settings
 from economy_service_fakes import REPORT_BODY, SIMULATION_BODY
 from fastapi.testclient import TestClient
+from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.economy_api_models import (
@@ -21,6 +22,7 @@ from policyengine_simulation_entry.economy_api_models import (
     EconomySimulationRequest,
 )
 from policyengine_simulation_entry.economy_submission_errors import (
+    EconomySubmissionOutcomeUnknownError,
     EconomySubmissionRefusedError,
     EconomySubmissionUnavailableError,
     EconomySubmissionUnprocessableError,
@@ -508,3 +510,57 @@ def test_an_unexpected_read_failure_answers_a_json_500(client_for, record) -> No
 
     assert result.status_code == 500
     assert result.json() == UNEXPECTED_FAILURE_ANSWER
+
+
+def test_the_calls_request_id_is_the_requests_own(client_for) -> None:
+    """The observability ID travels in the observability context instead."""
+    submissions = FakeEconomySubmissions()
+
+    with client_for(submissions) as client:
+        client.post(
+            "/reports",
+            json=REPORT_BODY,
+            headers={
+                REQUEST_ID_HEADER: "request-1",
+                OBSERVABILITY_ID_HEADER: OBSERVABILITY_ID,
+            },
+        )
+        client.post("/simulations", json=SIMULATION_BODY)
+
+    ((_, report_request_id, context),) = submissions.reports
+    ((_, simulation_request_id, _),) = submissions.simulations
+    assert report_request_id == "request-1"
+    assert context["observability_id"] == OBSERVABILITY_ID
+    assert simulation_request_id not in {"", OBSERVABILITY_ID}
+
+
+@pytest.mark.parametrize(
+    ("path", "body", "record"),
+    [
+        ("/reports", REPORT_BODY, "report"),
+        ("/simulations", SIMULATION_BODY, "simulation"),
+    ],
+)
+def test_a_create_whose_commit_is_unconfirmed_answers_a_500(
+    client_for, capsys, path, body, record
+) -> None:
+    """A 500 tells the Public API the record may exist; no 503 may say it doesn't."""
+    submissions = FakeEconomySubmissions(
+        failure=EconomySubmissionOutcomeUnknownError(record)
+    )
+
+    with client_for(submissions) as client:
+        result = client.post(path, json=body)
+
+    assert result.status_code == 500
+    assert result.json() == {
+        "code": "internal_error",
+        "detail": (
+            f"The service may have created the {record}, but could not confirm "
+            "it was written."
+        ),
+    }
+    (logged,) = _emitted_records(
+        capsys.readouterr().out, "economy_record_outcome_unknown"
+    )
+    assert logged["attributes"]["record"] == record

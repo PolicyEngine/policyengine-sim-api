@@ -9,6 +9,7 @@ acting as the simulation service's role, which the test rolls back.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -25,6 +26,8 @@ from economy_rows import (
     insert_reusable_run,
 )
 from policyengine_simulation_persistence import (
+    EconomyPopulation,
+    EconomyRecordOutcomeUnknownError,
     EconomyRequest,
     EconomyRunStore,
     MissingPolicyParametersError,
@@ -32,6 +35,7 @@ from policyengine_simulation_persistence import (
     NewEconomySimulation,
     OverlappingReformError,
     ReportRunStatus,
+    ReportSideError,
     ReportSimulation,
     ReusableRun,
     RunReuse,
@@ -45,6 +49,7 @@ from policyengine_simulation_persistence import (
 )
 from public_api_rows import StoredValue, insert_dataset, insert_dynamic, insert_policy
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -214,7 +219,7 @@ def test_values_the_running_version_lacks_or_both_set_are_refused(
         # A policy of the US saved on parameters the running version lacks.
         lacking_policy_id = insert_policy(
             connection,
-            saved_on.catalog.__class__(**{**vars(saved_on.catalog), "country": "us"}),
+            replace(saved_on.catalog, country="us"),
             [StoredValue(CTC_AMOUNT, 3_000, START)],
         )
         overlapping_policy_id = insert_policy(
@@ -361,3 +366,137 @@ def test_a_report_and_a_simulation_are_read_as_they_stand(
     assert stored_simulation is not None
     assert stored_simulation.run is not None
     assert stored_simulation.run.id == report.baseline.simulation_run_id
+
+
+@pytest.mark.parametrize(
+    ("side", "error_type"),
+    [
+        ("baseline", UnknownDynamicError),
+        ("reform", UnknownPolicyError),
+        ("reform", MissingPolicyParametersError),
+        ("baseline", OverlappingReformError),
+    ],
+)
+def test_a_reports_refused_values_name_the_side_they_belong_to(
+    public_api_database_url, side: str, error_type: type[Exception]
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection, parameter_names=(ELASTICITY,))
+        saved_on = insert_economy_catalog(
+            connection, country="uk", parameter_names=(CTC_AMOUNT,)
+        )
+        lacking_policy_id = insert_policy(
+            connection,
+            replace(saved_on.catalog, country="us"),
+            [StoredValue(CTC_AMOUNT, 3_000, START)],
+        )
+        overlapping_policy_id = insert_policy(
+            connection, economy.catalog, [StoredValue(ELASTICITY, -0.1, START)]
+        )
+        dynamic_id = insert_dynamic(
+            connection, economy.catalog, [StoredValue(ELASTICITY, -0.05, START)]
+        )
+        act_as_the_service(connection)
+        refused = {
+            UnknownDynamicError: SimulationChoice(None, uuid4()),
+            UnknownPolicyError: SimulationChoice(uuid4(), None),
+            MissingPolicyParametersError: SimulationChoice(lacking_policy_id, None),
+            OverlappingReformError: SimulationChoice(overlapping_policy_id, dynamic_id),
+        }[error_type]
+        choices = {"baseline": CURRENT_LAW, "reform": CURRENT_LAW, side: refused}
+
+        with pytest.raises(ReportSideError) as raised:
+            _store_on(connection).read_report_inputs(
+                REQUEST,
+                baseline=choices["baseline"],
+                reform=choices["reform"],
+                reuse=None,
+            )
+
+    assert raised.value.side == side
+    assert isinstance(raised.value.error, error_type)
+
+
+class _CommitFails:
+    """A transaction whose block runs, and whose commit then fails."""
+
+    def __init__(self, connection) -> None:
+        self.connection = connection
+
+    def __enter__(self):
+        return self.connection
+
+    def __exit__(self, error_type, error, traceback) -> None:
+        if error is None:
+            statement = "COMMIT"
+            raise OperationalError(statement, {}, Exception("connection lost"))
+
+
+class _RecordingConnection:
+    def __init__(self) -> None:
+        self.statements: list[object] = []
+
+    def execute(self, statement, *arguments):
+        self.statements.append(statement)
+
+
+def _new_report() -> NewEconomyReport:
+    return NewEconomyReport(
+        id=uuid4(),
+        run_id=uuid4(),
+        country="us",
+        label="Lost commit",
+        description=None,
+        tax_benefit_model_id=uuid4(),
+        population=EconomyPopulation(
+            tax_benefit_model_version_id=uuid4(),
+            region_id=uuid4(),
+            dataset_id=uuid4(),
+            year=2026,
+        ),
+        versions=VERSIONS,
+        inputs=OPTIONS,
+        baseline=ReportSimulation(uuid4(), uuid4(), CURRENT_LAW, reused=False),
+        reform=ReportSimulation(uuid4(), uuid4(), CURRENT_LAW, reused=False),
+    )
+
+
+def test_a_create_whose_commit_fails_may_have_been_written() -> None:
+    connection = _RecordingConnection()
+    store = EconomyRunStore(lambda: _CommitFails(connection))
+    report = _new_report()
+
+    with pytest.raises(EconomyRecordOutcomeUnknownError) as raised:
+        store.create_report(report)
+    with pytest.raises(EconomyRecordOutcomeUnknownError):
+        store.create_simulation(
+            NewEconomySimulation(
+                id=uuid4(),
+                run_id=uuid4(),
+                choice=CURRENT_LAW,
+                population=report.population,
+                versions=VERSIONS,
+            )
+        )
+
+    assert isinstance(raised.value.__cause__, OperationalError)
+    assert connection.statements
+
+
+class _StatementFails:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, error_type, error, traceback) -> None:
+        return None
+
+    def execute(self, statement, *arguments):
+        failed_statement = "INSERT"
+        raise OperationalError(failed_statement, {}, Exception("connection lost"))
+
+
+def test_a_create_whose_statement_fails_is_not_written() -> None:
+    store = EconomyRunStore(_StatementFails)
+
+    with pytest.raises(OperationalError):
+        store.create_report(_new_report())

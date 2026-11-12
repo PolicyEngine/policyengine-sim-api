@@ -32,6 +32,7 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from policyengine_simulation_entry.economy_api_models import EconomyReportRequest
 from policyengine_simulation_entry.economy_submission_errors import (
+    EconomySubmissionOutcomeUnknownError,
     EconomySubmissionRefusedError,
     EconomySubmissionUnavailableError,
     EconomySubmissionUnprocessableError,
@@ -44,6 +45,7 @@ from policyengine_simulation_entry.household_workers import (
 )
 from policyengine_simulation_persistence import (
     CatalogDataset,
+    EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
     EconomyReportState,
     EconomySimulationState,
@@ -51,6 +53,7 @@ from policyengine_simulation_persistence import (
     OverlappingReformError,
     ReportRunState,
     ReportRunStatus,
+    ReportSideError,
     RunReuse,
     RunVersions,
     SimulationChoice,
@@ -227,7 +230,7 @@ def test_a_missing_row_is_refused_before_anything_is_written(error, code) -> Non
         _submit_simulation(service(store, caller=caller))
 
     assert report_refusal.value.code == simulation_refusal.value.code == code
-    assert str(error) in report_refusal.value.detail
+    assert str(error) not in report_refusal.value.detail
     assert (store.reports, store.simulations, caller.report_runs) == ([], [], [])
 
 
@@ -236,7 +239,7 @@ def test_values_the_catalog_version_lacks_cannot_be_calculated() -> None:
     store = FakeStore(read_failure=error)
 
     with pytest.raises(EconomySubmissionUnprocessableError) as refusal:
-        _submit_report(service(store))
+        _submit_simulation(service(store))
 
     assert refusal.value.code == "missing_parameters"
     assert [reason.loc for reason in refusal.value.reasons] == [
@@ -244,7 +247,7 @@ def test_values_the_catalog_version_lacks_cannot_be_calculated() -> None:
         ("body", "dynamic_id", "gov.b"),
     ]
     assert POLICYENGINE_VERSION in refusal.value.reasons[0].msg
-    assert store.reports == []
+    assert store.simulations == []
 
 
 def test_a_parameter_the_policy_and_dynamic_both_set_cannot_be_calculated() -> None:
@@ -528,3 +531,148 @@ def test_a_read_the_database_cannot_answer_is_unavailable() -> None:
         with pytest.raises(EconomySubmissionUnavailableError) as unavailable:
             asyncio.run(read(UUID(int=1)))
         assert unavailable.value.code == "database_unavailable"
+
+
+@pytest.mark.parametrize(
+    ("side", "source", "field"),
+    [("reform", "policy", "policy_id"), ("baseline", "dynamic", "dynamic_id")],
+)
+def test_a_reports_missing_parameters_are_located_on_their_side(
+    side, source, field
+) -> None:
+    error = ReportSideError(
+        side, MissingPolicyParametersError(["gov.a"], source=source)
+    )
+
+    with pytest.raises(EconomySubmissionUnprocessableError) as refusal:
+        _submit_report(service(FakeStore(read_failure=error)))
+
+    assert refusal.value.code == "missing_parameters"
+    assert [reason.loc for reason in refusal.value.reasons] == [
+        ("body", side, field, "gov.a")
+    ]
+
+
+def test_a_reports_overlapping_parameters_are_located_on_their_side() -> None:
+    error = ReportSideError("baseline", OverlappingReformError(["gov.a"]))
+
+    with pytest.raises(EconomySubmissionUnprocessableError) as refusal:
+        _submit_report(service(FakeStore(read_failure=error)))
+
+    assert [reason.loc for reason in refusal.value.reasons] == [
+        ("body", "baseline", "dynamic_id", "gov.a")
+    ]
+
+
+# Text a store error carries, which no answer may pass on.
+ERROR_TEXT = "internal text that must not be passed on"
+
+
+@pytest.mark.parametrize(
+    ("error", "request_fields", "code", "detail"),
+    [
+        (
+            UnknownCatalogVersionError(ERROR_TEXT),
+            {},
+            "unknown_catalog_version",
+            f"us has no catalog version for .py {POLICYENGINE_VERSION}, the "
+            "default v2 worker's version.",
+        ),
+        (
+            UnknownRegionError(ERROR_TEXT),
+            {"region_code": "state/zz"},
+            "unknown_region",
+            f"us's catalog version for .py {POLICYENGINE_VERSION} has no region "
+            "state/zz.",
+        ),
+        (
+            UnknownDatasetError(ERROR_TEXT),
+            {"dataset_name": "acs_2099"},
+            "unknown_dataset",
+            f"us's catalog version for .py {POLICYENGINE_VERSION} has no dataset "
+            "acs_2099.",
+        ),
+        (
+            UnknownDatasetError(ERROR_TEXT),
+            {},
+            "unknown_dataset",
+            f"us's catalog version for .py {POLICYENGINE_VERSION} has no default "
+            "dataset for region us.",
+        ),
+        (
+            ReportSideError("reform", UnknownPolicyError(ERROR_TEXT)),
+            {},
+            "unknown_policy",
+            "us has no stored policy the request's reform names.",
+        ),
+        (
+            ReportSideError("baseline", UnknownDynamicError(ERROR_TEXT)),
+            {},
+            "unknown_dynamic",
+            "No stored dynamic matches the one the request's baseline names.",
+        ),
+    ],
+)
+def test_a_refusals_detail_is_built_from_the_request_not_the_error(
+    error, request_fields, code, detail
+) -> None:
+    with pytest.raises(EconomySubmissionRefusedError) as refusal:
+        _submit_report(
+            service(FakeStore(read_failure=error)), report_request(**request_fields)
+        )
+
+    assert (refusal.value.code, refusal.value.detail) == (code, detail)
+    assert ERROR_TEXT not in refusal.value.detail
+
+
+def test_a_standalone_simulations_unknown_rows_name_its_own_fields() -> None:
+    for error, detail in (
+        (UnknownPolicyError(ERROR_TEXT), "us has no stored policy the request names."),
+        (
+            UnknownDynamicError(ERROR_TEXT),
+            "No stored dynamic matches the one the request names.",
+        ),
+    ):
+        with pytest.raises(EconomySubmissionRefusedError) as refusal:
+            _submit_simulation(service(FakeStore(read_failure=error)))
+        assert refusal.value.detail == detail
+
+
+def test_a_country_without_an_economy_worker_is_refused_in_the_services_words() -> None:
+    workers = FakeWorkers(EconomyWorkerUnavailableError(ERROR_TEXT))
+
+    with pytest.raises(EconomySubmissionRefusedError) as refusal:
+        _submit_report(service(FakeStore(), workers=workers))
+
+    assert refusal.value.detail == (
+        "The default v2 worker cannot calculate economy runs for us."
+    )
+
+
+def test_a_dataset_the_bundle_lacks_is_named_in_the_services_words() -> None:
+    catalog = replace(
+        CATALOG, dataset=CatalogDataset(id=CATALOG.dataset.id, name="enhanced_cps_2024")
+    )
+
+    with pytest.raises(EconomySubmissionRefusedError) as refusal:
+        _submit_report(service(FakeStore(catalog=catalog)))
+
+    assert refusal.value.detail == (
+        f"The default v2 worker, .py {POLICYENGINE_VERSION}, has no dataset "
+        "enhanced_cps_2024."
+    )
+
+
+@pytest.mark.parametrize("record", ["report", "simulation"])
+def test_a_create_whose_commit_is_unconfirmed_may_have_written_the_record(
+    record,
+) -> None:
+    store = FakeStore(create_failure=EconomyRecordOutcomeUnknownError("lost"))
+    caller = FakeCaller()
+    submit = _submit_report if record == "report" else _submit_simulation
+
+    with pytest.raises(EconomySubmissionOutcomeUnknownError) as unknown:
+        submit(service(store, caller=caller))
+
+    assert unknown.value.record == record
+    assert (caller.report_runs, caller.simulation_runs) == ([], [])
