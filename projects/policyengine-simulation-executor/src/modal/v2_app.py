@@ -316,7 +316,9 @@ def validate_worker_uk() -> dict:
     memory=32768,
     timeout=3600,
     retries=0,
-    max_containers=300,
+    # Every segment of every US simulation call that may run at once: a
+    # segment queued behind this limit counts against its caller's wait.
+    max_containers=1000,
     secrets=worker_secrets,
 )
 def run_single_simulation_segment_us(
@@ -356,7 +358,8 @@ def run_single_simulation_segment_us(
     memory=32768,
     timeout=US_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
-    max_containers=10,
+    # Both simulations of every coordinator call that may run at once.
+    max_containers=50,
     secrets=report_run_writer_secrets,
 )
 def run_single_simulation_us(
@@ -414,7 +417,8 @@ def run_single_simulation_us(
     memory=32768,
     timeout=UK_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
-    max_containers=10,
+    # Both simulations of every coordinator call that may run at once.
+    max_containers=50,
     secrets=report_run_writer_secrets,
 )
 def run_single_simulation_uk(
@@ -461,7 +465,8 @@ def run_single_simulation_uk(
     # the production-result wait, and time to finish and record the report.
     timeout=COORDINATOR_TIMEOUT_SECONDS,
     retries=0,
-    max_containers=10,
+    # Three budget windows at five years each, and ten other reports.
+    max_containers=25,
     secrets=report_run_writer_secrets,
 )
 def coordinate_report(

@@ -26,10 +26,13 @@ simulation submission or polling contracts.
   and reform are separate and start before either is awaited, an eligible
   report starts 40 region-group calculation calls. These are invocations;
   Modal may reuse a warm container for more than one invocation.
-- Country-specific single-simulation functions and the report coordinator have
-  a Modal `max_containers` value of 10. The separate US region-group function
-  has a value of 300 so calculation work cannot wait behind the parent calls
-  that are collecting it. These are per-function limits, not one shared quota.
+- The report coordinator has a Modal `max_containers` value of 25: three
+  budget windows at five years each, and ten other reports. Each
+  country-specific single-simulation function has 50, both simulations of
+  every coordinator call, and the separate US region-group function has
+  1,000, every segment of every US simulation call, so calculation work
+  cannot wait behind the parent calls that are collecting it. These are
+  per-function limits, not one shared quota.
 - Stage 12 owns its partition, request and result models, orchestration, merge,
   and cache implementation. It does not import the corresponding v1 modules.
 - The v2 functions write canonical private artifacts and use a shared
