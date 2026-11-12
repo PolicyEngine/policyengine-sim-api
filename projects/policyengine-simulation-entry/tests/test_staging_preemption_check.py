@@ -1116,9 +1116,9 @@ def test_the_check_job_stops_a_household_and_a_report_through_the_candidate():
         "staging_economy_check",
     }
     assert job["environment"] == "${{ inputs.release_environment }}"
-    # Longer than both steps' own deadlines together, with the waits before
-    # each new attempt, so the script fails first.
-    assert job["timeout-minutes"] == 120
+    # Longer than both steps' worst case together, with every request and
+    # Modal command taking its full time limit, so the script fails first.
+    assert job["timeout-minutes"] == 150
     assert {step.get("uses") for step in job["steps"] if "uses" in step} == {
         "actions/checkout@v6",
         "actions/setup-python@v6",
