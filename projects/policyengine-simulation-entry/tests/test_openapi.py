@@ -463,8 +463,11 @@ def test_household_job_and_report_run_reads_name_their_modal_call():
 
     The staging preemption check finds the container to stop from it.
     """
-    schemas = create_app().openapi()["components"]["schemas"]
+    spec = create_app().openapi()
+    schemas = spec["components"]["schemas"]
 
+    for path in ("/household-calculations/{household_job_id}", "/reports/{report_id}"):
+        assert "Modal call" in spec["paths"][path]["get"]["description"]
     for schema_name in ("HouseholdCalculationState", "ReportRunRead"):
         schema = schemas[schema_name]
         assert "modal_call_id" in schema["required"]

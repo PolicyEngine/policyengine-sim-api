@@ -19,6 +19,8 @@ and another after.
 from __future__ import annotations
 
 import json
+import shlex
+import shutil
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -148,9 +150,14 @@ case "$*" in
     printf '%s\n' "${answer}"
     ;;
   "run --frozen modal container list --env "*" --json")
-    jq '[.listed[] | {"Container ID": ., "App ID": "ap-01V2",
-      "App Name": "policyengine-v2", "Start Time": "2026-11-13T12:00:00+00:00"}]' \
-      "${spec}"
+    counter="${FAKE_STATE}/listings"
+    listing="$(($(cat "${counter}" 2>/dev/null || echo 0) + 1))"
+    echo "${listing}" > "${counter}"
+    # A container with a departure count is listed only that many times.
+    jq --argjson listing "${listing}" \
+      '[.listed[] as $id | select((.departures[$id] // $listing) >= $listing)
+        | {"Container ID": $id, "App ID": "ap-01V2", "App Name": "policyengine-v2",
+           "Start Time": "2026-11-13T12:00:00+00:00"}]' "${spec}"
     ;;
   "run --frozen modal container stop --yes "*)
     if jq -e --arg id "${last}" '.refused_stops | index($id)' "${spec}" >/dev/null; then
@@ -316,11 +323,16 @@ class ModalContainers:
 
     listed: tuple[str, ...] = (*CONTAINERS, RERUN_CONTAINER)
     refused_stops: tuple[str, ...] = ()
+    # How many listings name each container before Modal scales it down.
+    departures: dict[str, int] = field(default_factory=dict)
 
 
 @pytest.fixture
 def fakes(tmp_path) -> FakeCommands:
     commands = FakeCommands.create(tmp_path)
+    real_jq = shutil.which("jq")
+    assert real_jq is not None
+    commands.add("jq", f'exec {shlex.quote(real_jq)} "$@"')
     commands.add("curl", FAKE_CURL)
     commands.add("uv", FAKE_UV)
     commands.add("sleep")
@@ -367,6 +379,7 @@ def _run(
         },
         "listed": list(containers.listed),
         "refused_stops": list(containers.refused_stops),
+        "departures": containers.departures,
     }
     (state / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
     environment = {
@@ -381,6 +394,8 @@ def _run(
         # The fake sleep returns at once, so a record that never finishes
         # fails the test within this many seconds.
         "PREEMPTION_CHECK_DEADLINE_SECONDS": "20",
+        # Most tests don't wait for an earlier attempt's container to leave.
+        "PREEMPTION_CHECK_SCALEDOWN_SECONDS": "0",
         "FAKE_STATE": str(state),
         "FAKE_BASE_URL": BASE_URL,
         "FAKE_ACCESS_TOKEN": ACCESS_TOKEN,
@@ -523,6 +538,52 @@ def test_a_calculation_that_finishes_before_the_stop_is_submitted_again(
     assert "finished before its container was stopped" in result.stderr
 
 
+def test_the_next_attempt_waits_for_the_last_attempts_container_to_leave(
+    fakes, tmp_path
+):
+    """A warm container calculates too fast to stop; Modal scales it down idle."""
+    result, state = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [_household_attempt(0, proves=False), _household_attempt(1)],
+        containers=ModalContainers(departures={CONTAINERS[0]: 3}),
+        PREEMPTION_CHECK_SCALEDOWN_SECONDS="120",
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = fakes.calls()
+    listings = [
+        index for index, call in enumerate(calls) if call[0] == "uv" and "list" in call
+    ]
+    submissions = [
+        index
+        for index, call in enumerate(calls)
+        if call[0] == "curl" and call[-1].endswith("/household-calculations")
+    ]
+    # The first attempt's lookup, then two listings naming its container and
+    # one without it, then the second attempt's lookup.
+    assert len(listings) == 5
+    assert listings[3] < submissions[1] < listings[4]
+    assert len(_submissions(state)) == 2
+    assert f"waiting for container {CONTAINERS[0]}" in result.stdout
+
+
+def test_a_container_still_listed_after_the_wait_does_not_hold_the_check(
+    fakes, tmp_path
+):
+    result, state = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [_household_attempt(0, proves=False), _household_attempt(1)],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert len(_submissions(state)) == 2
+    assert f"container {CONTAINERS[0]} is still listed" in result.stderr
+
+
 def test_three_calculations_that_finish_before_the_stop_fail_the_check(fakes, tmp_path):
     result, state = _run(
         fakes,
@@ -537,19 +598,54 @@ def test_three_calculations_that_finish_before_the_stop_fail_the_check(fakes, tm
     assert "no attempt in 3" in result.stderr
 
 
-def test_a_stop_modal_refuses_moves_on_to_another_attempt(fakes, tmp_path):
+def test_a_refused_stop_is_not_tried_again_and_the_job_is_followed(fakes, tmp_path):
+    """Modal refuses to stop a container that has ended.
+
+    A job that then succeeds finished just before the stop, so a new one is
+    submitted.
+    """
+    first = _household_attempt(0)
+    first.reads_before_stop = [
+        *first.reads_before_stop,
+        _household(JOB_IDS[0], "running", CALL_IDS[0]),
+        _household(JOB_IDS[0], "succeeded", CALL_IDS[0]),
+    ]
+
     result, state = _run(
         fakes,
         tmp_path,
         "household",
-        [_household_attempt(0), _household_attempt(1)],
+        [first, _household_attempt(1)],
         containers=ModalContainers(refused_stops=(CONTAINERS[0],)),
     )
 
     assert result.returncode == 0, result.stderr
     assert len(_submissions(state)) == 2
     assert _stops(fakes) == [CONTAINERS[0], CONTAINERS[1]]
-    assert f"could not stop container {CONTAINERS[0]}" in result.stderr
+    assert (state / f"reads-{JOB_IDS[0]}-before").read_text().strip() == "5"
+    assert f"refused to stop container {CONTAINERS[0]}" in result.stderr
+
+
+def test_a_job_left_running_after_a_refused_stop_fails_at_its_deadline(fakes, tmp_path):
+    """A container that ended for another reason, such as running out of memory.
+
+    Its job stays running, and the check doesn't submit another: it would
+    usually fail the same way.
+    """
+    result, state = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [_household_attempt(0), _household_attempt(1)],
+        containers=ModalContainers(refused_stops=(CONTAINERS[0],)),
+        PREEMPTION_CHECK_DEADLINE_SECONDS="2",
+    )
+
+    assert result.returncode == 1
+    assert len(_submissions(state)) == 1
+    assert _stops(fakes) == [CONTAINERS[0]]
+    assert "did not finish within 2 seconds" in result.stderr
+    assert f"refused to stop container {CONTAINERS[0]}" in result.stderr
 
 
 def test_a_call_that_finished_in_the_stopped_container_proves_nothing(fakes, tmp_path):
@@ -569,6 +665,18 @@ def test_a_call_that_finished_in_the_stopped_container_proves_nothing(fakes, tmp
     assert result.returncode == 1
     assert "never showed" in result.stderr
     assert CONTAINERS[0] in result.stderr
+
+
+def test_a_rerun_recorded_on_the_same_input_counts(fakes, tmp_path):
+    """Modal may record the rerun on the stopped input itself, in place."""
+    attempt = _household_attempt(0)
+    attempt.inputs_after_stop = [_inputs((RERUN_CONTAINER, "SUCCESS"))]
+
+    result, _ = _run(fakes, tmp_path, "household", [attempt])
+
+    assert result.returncode == 0, result.stderr
+    assert attempt.inputs_before_stop[0][0]["input_id"] == "in-0"
+    assert RERUN_CONTAINER in result.stdout
 
 
 def test_the_call_graph_is_asked_again_until_it_shows_the_other_container(
@@ -732,7 +840,10 @@ def test_a_container_that_is_not_a_modal_container_id_is_never_stopped(fakes, tm
 
 
 def test_no_secret_reaches_a_command_line(fakes, tmp_path):
-    """The token is sent from a file, and the client secret on standard input."""
+    """The token is sent from a file, and the client secret on standard input.
+
+    No command, jq included, gets either as an argument.
+    """
     result, _ = _run(fakes, tmp_path, "household", [_household_attempt(0)])
 
     assert result.returncode == 0, result.stderr
@@ -804,6 +915,7 @@ def test_the_report_check_needs_no_household(fakes, tmp_path):
         ("PREEMPTION_CHECK_DEADLINE_SECONDS", "ten"),
         ("PREEMPTION_CHECK_POLL_SECONDS", "-1"),
         ("PREEMPTION_CHECK_RERUN_SECONDS", "2m"),
+        ("PREEMPTION_CHECK_SCALEDOWN_SECONDS", "1.5"),
     ],
 )
 def test_a_malformed_setting_fails_the_check_before_any_request(
