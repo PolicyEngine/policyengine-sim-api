@@ -60,6 +60,7 @@ from policyengine_simulation_persistence.tables import (
     ReportRunTrigger,
     SimulationStatus,
     SimulationType,
+    budget_window_runs,
     report_runs,
     reports,
     simulation_runs,
@@ -86,7 +87,13 @@ _FAILED: Final = SimulationStatus.FAILED.value
 # the first column it constrains.
 _KEY_COLUMNS: Final = {
     str(constraint.name): (table.name, constraint.column_keys[0])
-    for table in (simulations, simulation_runs, reports, report_runs)
+    for table in (
+        simulations,
+        simulation_runs,
+        reports,
+        report_runs,
+        budget_window_runs,
+    )
     for constraint in table.foreign_key_constraints
 }
 

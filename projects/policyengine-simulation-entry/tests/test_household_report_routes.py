@@ -233,7 +233,7 @@ def test_an_unknown_report_type_is_refused_with_the_types_there_are(
     ((reason),) = result.json()["detail"]
     assert reason["loc"] == ["body", "report_type"]
     assert reason["type"] == "literal_error"
-    assert reason["msg"] == "Input should be 'economy' or 'household'"
+    assert reason["msg"] == "Input should be 'economy', 'budget_window' or 'household'"
     assert reason["input"] == "not_a_report_type"
 
 

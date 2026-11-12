@@ -4,6 +4,9 @@
   report, its simulations and its first run, and starts the report run's
   coordinator, answering 201 with the report's ID, its run's ID and status,
   and each side's simulation and simulation run. With ``report_type``
+  ``budget_window`` it creates a budget-window report with a report run per
+  year and starts up to its first five years, answering 201 with the report, the
+  first year's run, the window run, its status and every year's runs. With
   ``household`` it creates a household report, a household simulation and
   run for its baseline and any reform, and its first run, and starts one
   household function call for the report run, answering 201 with the
@@ -43,6 +46,10 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 
+from policyengine_simulation_entry.budget_window_api_models import (
+    BudgetWindowReportCreated,
+    BudgetWindowReportRequest,
+)
 from policyengine_simulation_entry.economy_api_models import (
     EconomyError,
     EconomyReportCreated,
@@ -64,8 +71,8 @@ from policyengine_simulation_entry.economy_submission_errors import (
 from policyengine_simulation_entry.household_report_api_models import (
     HouseholdReportCreated,
     HouseholdReportRequest,
-    ReportRequest,
 )
+from policyengine_simulation_entry.report_api_models import ReportRequest
 from policyengine_simulation_entry.report_request_errors import ReportRequestRoute
 from policyengine_simulation_entry.route_support import (
     log_unexpected_failure,
@@ -174,7 +181,7 @@ def _unavailable_description(record: RecordName) -> dict[str, Any]:
 
 
 class EconomySubmissions(Protocol):
-    """Create economy reports and simulations (``EconomySubmissionService``)."""
+    """Create reports and simulations (``ReportSubmissionService``)."""
 
     async def submit_report(
         self,
@@ -184,6 +191,16 @@ class EconomySubmissions(Protocol):
         observability_context: dict[str, Any] | None,
     ) -> EconomyReportCreated:
         """Create the report and its runs and start its coordinator."""
+        ...
+
+    async def submit_budget_window(
+        self,
+        request: BudgetWindowReportRequest,
+        *,
+        request_id: str,
+        observability_context: dict[str, Any] | None,
+    ) -> BudgetWindowReportCreated:
+        """Create the window's report and its years' runs, and start its first years."""
         ...
 
     async def submit_simulation(
@@ -421,6 +438,42 @@ def add_economy_routes(  # noqa: PLR0913  # the app, its services and permission
     )
 
 
+async def _economy_report_answer(
+    entry: EntryRuntime,
+    submissions: EconomySubmissions | None,
+    body: EconomyReportRequest | BudgetWindowReportRequest,
+    request: Request,
+    *,
+    log_string_limit: int,
+) -> JSONResponse:
+    """Create an economy or budget-window report; answer as ``POST /reports`` does."""
+    if submissions is None:
+        return _not_configured()
+    observability_id = entry.start_workflow_observability(request)
+    try:
+        call_request_id = call_request_id_for(request)
+        context = observability_context(entry, observability_id)
+        created: EconomyReportCreated | BudgetWindowReportCreated
+        if isinstance(body, BudgetWindowReportRequest):
+            created = await submissions.submit_budget_window(
+                body, request_id=call_request_id, observability_context=context
+            )
+        else:
+            created = await submissions.submit_report(
+                body, request_id=call_request_id, observability_context=context
+            )
+    except _SUBMISSION_FAILURES as error:
+        return _submission_failure_response(error, "report")
+    # Every other failure is still answered as the JSON 500 declared.
+    except Exception as error:  # noqa: BLE001  # answered as internal_error
+        return _unexpected_failure_response(
+            REPORTS_PATH, error, max_characters=log_string_limit
+        )
+    return JSONResponse(
+        created.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+    )
+
+
 async def _household_report_answer(
     entry: EntryRuntime,
     household_reports: HouseholdReportSubmissions | None,
@@ -465,12 +518,16 @@ def _submission_routes(
 
     @report_router.post(
         REPORTS_PATH,
-        summary="Create an economy or household report",
+        summary="Create an economy, budget-window or household report",
         description=(
             "Create an economy report comparing a baseline and a reform "
             "simulation of one region's data for one year, on the v2 version "
             "manifest's default worker, and start its first run. A side whose "
             "simulation already succeeded on the same versions reuses that run. "
+            "A budget-window report (report_type budget_window) compares them "
+            "in each year of a window of 1 to 75 years, with a report run per "
+            "year, at most five running at once; each year reuses its own "
+            "year's runs. "
             "A household report (report_type household) calculates one stored "
             "household for its default year under a baseline and, optionally, "
             "a reform, each a new household simulation run, all in one "
@@ -478,9 +535,11 @@ def _submission_routes(
         ),
         operation_id="create_report",
         status_code=status.HTTP_201_CREATED,
-        response_model=EconomyReportCreated | HouseholdReportCreated,
+        response_model=(
+            EconomyReportCreated | BudgetWindowReportCreated | HouseholdReportCreated
+        ),
         responses={
-            201: {"description": "The report and its first run were created"},
+            201: {"description": "The report and its first runs were created"},
             400: _REFUSED,
             403: _FORBIDDEN,
             422: _UNPROCESSABLE,
@@ -498,24 +557,8 @@ def _submission_routes(
                 request,
                 log_string_limit=log_string_limit,
             )
-        if submissions is None:
-            return _not_configured()
-        observability_id = entry.start_workflow_observability(request)
-        try:
-            created = await submissions.submit_report(
-                body,
-                request_id=call_request_id_for(request),
-                observability_context=observability_context(entry, observability_id),
-            )
-        except _SUBMISSION_FAILURES as error:
-            return _submission_failure_response(error, "report")
-        # Every other failure is still answered as the JSON 500 declared.
-        except Exception as error:  # noqa: BLE001  # answered as internal_error
-            return _unexpected_failure_response(
-                REPORTS_PATH, error, max_characters=log_string_limit
-            )
-        return JSONResponse(
-            created.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+        return await _economy_report_answer(
+            entry, submissions, body, request, log_string_limit=log_string_limit
         )
 
     router.include_router(report_router)

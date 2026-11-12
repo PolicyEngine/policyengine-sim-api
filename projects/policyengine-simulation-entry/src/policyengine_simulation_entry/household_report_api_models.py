@@ -13,15 +13,14 @@ are an economy report's (``economy_api_models``), with the household codes
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_persistence import ReportRunStatus
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, StrictBool
 
 from policyengine_simulation_entry.economy_api_models import (
-    EconomyReportRequest,
     ReportDescription,
     ReportLabel,
 )
@@ -61,14 +60,6 @@ class HouseholdReportRequest(_Request):
     def options(self) -> dict[str, Any]:
         """Return the report's options as it stores them (``reports.inputs``)."""
         return {"add_missing_variables": self.add_missing_variables}
-
-
-# The body of ``POST /reports``: an economy or a household report, told apart
-# by ``report_type``.
-ReportRequest = Annotated[
-    EconomyReportRequest | HouseholdReportRequest,
-    Field(discriminator="report_type"),
-]
 
 
 class HouseholdReportCreated(BaseModel):

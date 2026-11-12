@@ -5,6 +5,7 @@ from .aggregation import (
     build_aggregate_report,
     build_spm_result,
 )
+from .budget_window_scheduling import coordinate_window_year
 from .coordination import (
     CoordinatorDependencies,
     CoordinatorInvocation,
@@ -69,6 +70,7 @@ __all__ = [
     "calculate_segment",
     "calculate_simulation_frames",
     "coordinate_report",
+    "coordinate_window_year",
     "merge_segment_results",
     "redacted_failure_detail",
     "run_household_job",

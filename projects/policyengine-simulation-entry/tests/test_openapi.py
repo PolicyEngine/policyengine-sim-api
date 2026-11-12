@@ -90,6 +90,9 @@ ECONOMY_PATHS = (
     "/simulations/{simulation_id}",
 )
 ECONOMY_SCHEMAS = (
+    "BudgetWindowReportCreated",
+    "BudgetWindowReportRequest",
+    "BudgetWindowYearCreated",
     "EconomyError",
     "EconomyReportCreated",
     "EconomyReportRequest",
@@ -364,7 +367,14 @@ def test_economy_routes_declare_every_answer():
     unprocessable = {"$ref": "#/components/schemas/EconomyRequestUnprocessable"}
 
     for path, created in (
-        ("/reports", ("EconomyReportCreated", "HouseholdReportCreated")),
+        (
+            "/reports",
+            (
+                "EconomyReportCreated",
+                "BudgetWindowReportCreated",
+                "HouseholdReportCreated",
+            ),
+        ),
         ("/simulations", ("EconomySimulationCreated",)),
     ):
         responses = _responses(spec, "post", path)
@@ -447,7 +457,7 @@ def test_economy_requests_name_no_version_and_no_record_id():
     assert "spm" not in schemas["EconomyReportRequest"].get("required", [])
 
 
-def test_a_report_request_is_an_economy_or_a_household_report():
+def test_a_report_request_is_an_economy_report_a_budget_window_or_a_household():
     spec = create_app().openapi()
     body = spec["paths"]["/reports"]["post"]["requestBody"]["content"][
         "application/json"
@@ -458,11 +468,33 @@ def test_a_report_request_is_an_economy_or_a_household_report():
         "propertyName": "report_type",
         "mapping": {
             "economy": "#/components/schemas/EconomyReportRequest",
+            "budget_window": "#/components/schemas/BudgetWindowReportRequest",
             "household": "#/components/schemas/HouseholdReportRequest",
         },
     }
-    # A household report names its household and each side's policy, and no
-    # year, region, dataset, dynamic, version or record ID.
+    # A window sends its length and no cliff option, and names no version
+    # or record ID either.
+    assert set(schemas["BudgetWindowReportRequest"]["properties"]) == {
+        "country",
+        "report_type",
+        "label",
+        "description",
+        "year",
+        "budget_window_size",
+        "region_code",
+        "dataset_name",
+        "baseline",
+        "reform",
+        "spm",
+    }
+    size = schemas["BudgetWindowReportRequest"]["properties"]["budget_window_size"]
+    assert (size["minimum"], size["maximum"]) == (1, 75)
+
+
+def test_a_household_report_names_its_household_and_each_sides_policy():
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    # No year, region, dataset, dynamic, version or record ID.
     household_report = schemas["HouseholdReportRequest"]
     assert set(household_report["properties"]) == {
         "country",

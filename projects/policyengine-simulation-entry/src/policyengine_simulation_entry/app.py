@@ -42,6 +42,7 @@ from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
 from policyengine_simulation_persistence import EconomyRunStore, HouseholdJobStore
+from policyengine_stage12_persistence import BudgetWindowStore
 from starlette.datastructures import MutableHeaders
 
 from policyengine_simulation_entry.auth import (
@@ -51,6 +52,9 @@ from policyengine_simulation_entry.auth import (
     CallerAuthorizer,
 )
 from policyengine_simulation_entry.backend import OldGatewayBackend, SimulationBackend
+from policyengine_simulation_entry.budget_window_submissions import (
+    ReportSubmissionService,
+)
 from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.economy_routes import (
     EconomySubmissions,
@@ -58,7 +62,6 @@ from policyengine_simulation_entry.economy_routes import (
     add_economy_routes,
 )
 from policyengine_simulation_entry.economy_submissions import (
-    EconomySubmissionService,
     ServiceSettings,
 )
 from policyengine_simulation_entry.economy_workers import (
@@ -574,7 +577,9 @@ def economy_submissions_for(
         database, SimulationDatabase
     ):
         return None
-    return EconomySubmissionService(
+    return ReportSubmissionService(
+        # The service starts a budget window's first years as its own role.
+        windows=BudgetWindowStore(engine=database.engine),
         store=EconomyRunStore.from_engine(
             database.engine,
             statement_timeout_milliseconds=ECONOMY_STATEMENT_TIMEOUT_MILLISECONDS,

@@ -1,5 +1,13 @@
-"""Direct DML for temporary Stage 12 comparison state, runs and household jobs."""
+"""Direct DML for Stage 12 comparison state, runs, budget windows and household jobs."""
 
+from policyengine_stage12_persistence.budget_window_store import (
+    BUDGET_WINDOW_MAX_RUNNING_YEARS,
+    BudgetWindowStore,
+    WindowAdvance,
+    YearStartDeferred,
+    YearStarter,
+    YearToStart,
+)
 from policyengine_stage12_persistence.household_report_run_store import (
     HouseholdReportRunStore,
 )
@@ -28,7 +36,9 @@ from policyengine_stage12_persistence.validation import (
 )
 
 __all__ = [
+    "BUDGET_WINDOW_MAX_RUNNING_YEARS",
     "ActiveRun",
+    "BudgetWindowStore",
     "ConnectionOpener",
     "DistrictCodes",
     "HouseholdReportRunStore",
@@ -40,6 +50,10 @@ __all__ = [
     "SimulationRunState",
     "Stage12PersistenceStore",
     "Stage12RuntimeAccessError",
+    "WindowAdvance",
+    "YearStartDeferred",
+    "YearStarter",
+    "YearToStart",
     "create_stage12_engine",
     "normalized_database_url",
     "report_run_result",
