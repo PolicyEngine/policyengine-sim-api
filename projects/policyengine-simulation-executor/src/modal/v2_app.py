@@ -36,6 +36,7 @@ from policyengine_simulation_executor.stage12_bundle import (
 )
 from policyengine_simulation_executor.stage12_cache.models import CacheManifest
 from policyengine_simulation_executor.stage12_cache.store import Stage12CacheStore
+from policyengine_simulation_executor.stage12_runtime import report_run_access
 from policyengine_simulation_executor.stage12_runtime.report_run_access import (
     MODAL_WORKER_DATABASE_SECRET_NAME,
     MODAL_WORKER_DATABASE_URL_ENV,
@@ -515,15 +516,25 @@ def coordinate_report(
             },
             remote_context=propagated,
         ):
-            return stage12_runtime.coordinate_report(
-                payload,
-                context,
-                parent,
-                invocation=stage12_runtime.CoordinatorInvocation(
-                    application_name=APP_NAME,
-                    invocation_id=coordinator_invocation_id,
+            # A call naming a budget window's year marks the window running
+            # first and, when the year ends, starts the window's next years.
+            return stage12_runtime.coordinate_window_year(
+                lambda: stage12_runtime.coordinate_report(
+                    payload,
+                    context,
+                    parent,
+                    invocation=stage12_runtime.CoordinatorInvocation(
+                        application_name=APP_NAME,
+                        invocation_id=coordinator_invocation_id,
+                    ),
+                    dependencies=stage12_runtime.CoordinatorDependencies(
+                        runtime=runtime
+                    ),
                 ),
-                dependencies=stage12_runtime.CoordinatorDependencies(runtime=runtime),
+                payload=payload,
+                context=context,
+                windows=lambda: report_run_access.budget_window_store(runtime),
+                observability_context=runtime.capture_context,
             )
     finally:
         runtime.shutdown()

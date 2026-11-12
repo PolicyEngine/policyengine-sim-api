@@ -29,12 +29,13 @@ A budget window's years are report runs naming its budget-window run. A
 year still pending with no call, in a window that hasn't finished, waits
 for an earlier year's coordinator to start it, so the sweep leaves it to the
 window. A year started later counts, until its claim, from when its call
-was recorded rather than from its creation at submit. When the sweep fails a year, it fails the window too, with the
-window's waiting years. After judging the runs, it settles each unfinished
-window that nothing has changed for the minimum age with no year under way:
-its last year ended, or the simulation service created it, without
-anything recording what follows. Such a window is finished from its years,
-or failed as stalled with the years still waiting.
+was recorded rather than from its creation at submit. When the sweep fails
+a year, it fails the window too, with the window's waiting years. After
+judging the runs, it settles each unfinished window that nothing has
+changed for the minimum age with no year under way: its last year ended,
+or the simulation service created it, without anything recording what
+follows. Such a window is finished from its years, or failed as stalled
+with the years still waiting.
 """
 
 from __future__ import annotations

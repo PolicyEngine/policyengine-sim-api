@@ -16,21 +16,22 @@ everywhere in the coordinator.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, Protocol
+from uuid import UUID
 
-from policyengine_simulation_contract.stage12_execution import year_calculation
+from policyengine_simulation_contract.stage12_execution import (
+    ReportExecutionInput,
+    Stage12InvocationContext,
+    year_calculation,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from uuid import UUID
 
-    from policyengine_simulation_contract.stage12_execution import (
-        ReportExecutionInput,
-        Stage12InvocationContext,
-    )
     from policyengine_stage12_persistence import (
         WindowAdvance,
         YearStarter,
@@ -71,29 +72,35 @@ class ModalYearStarter:
 
     Every year of a window runs on the same .py version, so the next year's
     coordinator is this application's ``coordinate_report``. Its input is
-    derived from this coordinator's own ``report`` and ``context``: only the
+    derived from this coordinator's own ``payload`` and ``context``: only the
     year, its runs, its artifact prefix and its call's creation time differ.
+    They are checked only when a year is started, so a malformed input fails
+    that start, as Modal refusing the call would.
     """
 
-    report: ReportExecutionInput
-    context: Stage12InvocationContext
+    payload: Mapping[str, Any]
+    context: Mapping[str, Any]
     observability_context: dict[str, Any] | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
     def __call__(self, year_to_start: YearToStart, /) -> str:
-        """Spawn the year's coordinator call and return its Modal call ID."""
+        """Spawn the year's coordinator call and return its Modal call ID.
+
+        Raises ValueError when the coordinator's own input is malformed.
+        """
+        context = Stage12InvocationContext.model_validate(self.context)
         year_report, year_context = year_calculation(
-            self.report,
-            self.context,
+            ReportExecutionInput.model_validate(self.payload),
+            context,
             year=year_to_start.year,
             run_ids=year_to_start.run_ids,
             created_at=self.clock(),
         )
         modal: Any = import_module("modal")
         function = modal.Function.from_name(
-            self.context.modal_application,
+            context.modal_application,
             COORDINATOR_FUNCTION_NAME,
-            environment_name=self.context.modal_environment,
+            environment_name=context.modal_environment,
         )
         call = function.spawn(
             year_report.model_dump(mode="json"),
@@ -101,6 +108,88 @@ class ModalYearStarter:
             observability_context=self.observability_context,
         )
         return call.object_id
+
+
+def coordinate_window_year[CoordinatorResult](
+    coordinate: Callable[[], CoordinatorResult],
+    *,
+    payload: Mapping[str, Any],
+    context: Mapping[str, Any],
+    windows: Callable[[], YearWindowWriter],
+    observability_context: Callable[[], dict[str, Any] | None],
+) -> CoordinatorResult:
+    """Run one coordinator call, starting and advancing its year's window.
+
+    A call naming a report run marks the run's window running before
+    ``coordinate`` runs, and advances it once ``coordinate`` returns, raises
+    or is cancelled, starting waiting years in this application. A
+    pre-emption advances nothing: Modal runs the call again, and the
+    restarted call advances when it ends, even when it finds its year
+    already finished. Advancing more than once is safe, because an advance
+    starts only waiting years and never more than five under way. A call
+    naming no report run, or a store that cannot be built, touches no
+    window.
+    """
+    report_run_id = _report_run_named_by(context)
+    window_store = None if report_run_id is None else _built(windows)
+    if report_run_id is None or window_store is None:
+        return coordinate()
+    start_window_of_year(window_store, report_run_id)
+    try:
+        result = coordinate()
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        _advance_after_year(
+            window_store, report_run_id, payload, context, observability_context
+        )
+        raise
+    _advance_after_year(
+        window_store, report_run_id, payload, context, observability_context
+    )
+    return result
+
+
+def _advance_after_year(
+    windows: YearWindowWriter,
+    report_run_id: UUID,
+    payload: Mapping[str, Any],
+    context: Mapping[str, Any],
+    observability_context: Callable[[], dict[str, Any] | None],
+) -> None:
+    """Advance the window of a year whose coordinator call has ended."""
+    advance_window_of_year(
+        windows,
+        report_run_id,
+        start_year=ModalYearStarter(
+            payload=payload,
+            context=context,
+            observability_context=observability_context(),
+        ),
+    )
+
+
+def _report_run_named_by(context: Mapping[str, Any]) -> UUID | None:
+    """Return the report run a coordinator call's context names, if any."""
+    report_run = context.get("report_run")
+    if not isinstance(report_run, Mapping):
+        return None
+    try:
+        return UUID(str(report_run["report_run_id"]))
+    except (KeyError, ValueError):
+        # The coordinator refuses the malformed context itself.
+        return None
+
+
+def _built(windows: Callable[[], YearWindowWriter]) -> YearWindowWriter | None:
+    """Build the window store, or log why it can't be built and return None."""
+    try:
+        return windows()
+    except Exception as error:  # noqa: BLE001  # the year runs whether or not its window can be recorded
+        logger.warning(
+            "Could not open the budget-window store (%s)", type(error).__name__
+        )
+        return None
 
 
 def start_window_of_year(
