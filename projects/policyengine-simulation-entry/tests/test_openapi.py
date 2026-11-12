@@ -99,6 +99,9 @@ ECONOMY_SCHEMAS = (
     "EconomySimulationCreated",
     "EconomySimulationRequest",
     "EconomySimulationState",
+    "HouseholdPolicyChoice",
+    "HouseholdReportCreated",
+    "HouseholdReportRequest",
     "PolicyChoice",
     "ReportRunRead",
     "ReportRunStatus",
@@ -361,14 +364,15 @@ def test_economy_routes_declare_every_answer():
     unprocessable = {"$ref": "#/components/schemas/EconomyRequestUnprocessable"}
 
     for path, created in (
-        ("/reports", "EconomyReportCreated"),
-        ("/simulations", "EconomySimulationCreated"),
+        ("/reports", ("EconomyReportCreated", "HouseholdReportCreated")),
+        ("/simulations", ("EconomySimulationCreated",)),
     ):
         responses = _responses(spec, "post", path)
         assert set(responses) == {"201", "400", "403", "422", "500", "503"}
-        assert _response_schema(responses["201"]) == {
-            "$ref": f"#/components/schemas/{created}"
-        }
+        created_schema = _response_schema(responses["201"])
+        assert created_schema.get("anyOf", [created_schema]) == [
+            {"$ref": f"#/components/schemas/{name}"} for name in created
+        ]
         for status_code in ("400", "500", "503"):
             assert _response_schema(responses[status_code]) == error
         assert _response_schema(responses["422"]) == unprocessable
@@ -383,9 +387,15 @@ def test_economy_routes_declare_every_answer():
         "unknown_dataset",
         "unknown_dynamic",
         "unknown_catalog_version",
+        "unknown_household",
+        "no_household_function",
         "modal_call_refused",
         "internal_error",
     } <= codes
+    unprocessable_codes = spec["components"]["schemas"]["EconomyRequestUnprocessable"][
+        "properties"
+    ]["code"]["enum"]
+    assert "household_not_calculable" in unprocessable_codes
 
 
 def test_every_economy_503_declares_its_retry_after_header():
@@ -435,6 +445,53 @@ def test_economy_requests_name_no_version_and_no_record_id():
     assert spm["$ref"] == "#/components/schemas/SPMSelection"
     assert "default" not in spm
     assert "spm" not in schemas["EconomyReportRequest"].get("required", [])
+
+
+def test_a_report_request_is_an_economy_or_a_household_report():
+    spec = create_app().openapi()
+    body = spec["paths"]["/reports"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["schema"]
+    schemas = spec["components"]["schemas"]
+
+    assert body["discriminator"] == {
+        "propertyName": "report_type",
+        "mapping": {
+            "economy": "#/components/schemas/EconomyReportRequest",
+            "household": "#/components/schemas/HouseholdReportRequest",
+        },
+    }
+    # A household report names its household and each side's policy, and no
+    # year, region, dataset, dynamic, version or record ID.
+    household_report = schemas["HouseholdReportRequest"]
+    assert set(household_report["properties"]) == {
+        "country",
+        "report_type",
+        "label",
+        "description",
+        "household_id",
+        "baseline",
+        "reform",
+        "add_missing_variables",
+    }
+    assert set(household_report["required"]) == {
+        "country",
+        "report_type",
+        "label",
+        "household_id",
+        "baseline",
+    }
+    assert set(schemas["HouseholdPolicyChoice"]["properties"]) == {"policy_id"}
+    assert set(schemas["HouseholdReportCreated"]["required"]) == {
+        "report_id",
+        "report_run_id",
+        "status",
+        "year",
+        "baseline_simulation_id",
+        "baseline_simulation_run_id",
+        "reform_simulation_id",
+        "reform_simulation_run_id",
+    }
 
 
 def test_economy_reads_declare_every_answer():
