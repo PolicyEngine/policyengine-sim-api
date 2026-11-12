@@ -41,7 +41,7 @@ from policyengine_simulation_observability.identifiers import (
 from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
-from policyengine_simulation_persistence import HouseholdJobStore
+from policyengine_simulation_persistence import EconomyRunStore, HouseholdJobStore
 from starlette.datastructures import MutableHeaders
 
 from policyengine_simulation_entry.auth import (
@@ -52,6 +52,18 @@ from policyengine_simulation_entry.auth import (
 )
 from policyengine_simulation_entry.backend import OldGatewayBackend, SimulationBackend
 from policyengine_simulation_entry.config import Settings
+from policyengine_simulation_entry.economy_routes import (
+    EconomySubmissions,
+    add_economy_routes,
+)
+from policyengine_simulation_entry.economy_submissions import (
+    EconomySubmissionService,
+    ServiceSettings,
+)
+from policyengine_simulation_entry.economy_workers import (
+    ManifestEconomyWorkers,
+    ModalEconomyRunCaller,
+)
 from policyengine_simulation_entry.entry_runtime import (
     BACKEND_RESPONSE_HEADER,
     STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
@@ -110,6 +122,8 @@ logger = logging.getLogger(__name__)
 SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS = 3.0
 # The database ends each statement of a household route that runs longer.
 HOUSEHOLD_STATEMENT_TIMEOUT_MILLISECONDS = 5000
+# The database ends each statement of an economy route that runs longer.
+ECONOMY_STATEMENT_TIMEOUT_MILLISECONDS = 5000
 
 
 def _temporary_submission_payload(
@@ -523,6 +537,49 @@ def household_calculations_for(
     )
 
 
+def _register_economy_routes(
+    app: FastAPI,
+    entry: EntryRuntime,
+    submissions: EconomySubmissions | None,
+    *,
+    submitter: AuthorizationDependency,
+    reader: AuthorizationDependency,
+) -> None:
+    """Add the routes that create economy reports and simulations and read them."""
+    add_economy_routes(app, entry, submissions, submitter=submitter, reader=reader)
+
+
+def economy_submissions_for(
+    settings: Settings, database: SimulationDatabaseConnection | None
+) -> EconomySubmissions | None:
+    """Build the economy submission service when the service is configured.
+
+    It needs the simulation database and the v2 Modal environment; without
+    them the economy routes answer 503. Nothing is read from Modal until the
+    first submission. Without the output bucket, no report reuses a run.
+    """
+    if not settings.economy_runs_configured or not isinstance(
+        database, SimulationDatabase
+    ):
+        return None
+    return EconomySubmissionService(
+        store=EconomyRunStore.from_engine(
+            database.engine,
+            statement_timeout_milliseconds=ECONOMY_STATEMENT_TIMEOUT_MILLISECONDS,
+        ),
+        workers=ManifestEconomyWorkers.from_modal(
+            manifest_name=settings.v2_manifest_name,
+            environment=settings.v2_modal_environment,
+        ),
+        caller=ModalEconomyRunCaller(settings.v2_modal_environment),
+        settings=ServiceSettings(
+            environment=settings.environment,
+            modal_environment=settings.v2_modal_environment,
+            output_bucket=settings.v2_simulation_output_bucket or None,
+        ),
+    )
+
+
 def _register_service_routes(app: FastAPI, entry: EntryRuntime) -> None:
     """Add the public version, health, readiness and ping routes."""
     database_readiness = (
@@ -675,6 +732,13 @@ def create_app(
         app,
         entry,
         household_calculations_for(runtime_settings, runtime_database),
+        submitter=simulation_submitter,
+        reader=simulation_reader,
+    )
+    _register_economy_routes(
+        app,
+        entry,
+        economy_submissions_for(runtime_settings, runtime_database),
         submitter=simulation_submitter,
         reader=simulation_reader,
     )
