@@ -11,6 +11,7 @@ PostgreSQL in the persistence libraries.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -33,6 +34,7 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12InvocationContext,
     year_calculation,
 )
+from policyengine_simulation_entry import budget_window_submissions
 from policyengine_simulation_entry.budget_window_api_models import (
     BudgetWindowReportRequest,
 )
@@ -106,8 +108,9 @@ class FakeAdvancer:
     store: FakeWindowStore
     failure: Exception | None = None
     # How long the advance takes, as the database's lock and reads may, before
-    # it starts its first year.
+    # it starts its first year, and between one start and the next.
     delay_seconds: float = 0.0
+    delay_between_starts_seconds: float = 0.0
     advances: list[UUID] = field(default_factory=list)
     started: list[tuple[YearToStart, str]] = field(default_factory=list)
     deferred: list[int] = field(default_factory=list)
@@ -128,6 +131,8 @@ class FakeAdvancer:
                     reform_simulation_run_id=window_year.reform.simulation_run_id,
                 ),
             )
+            if started_years:
+                time.sleep(self.delay_between_starts_seconds)
             try:
                 call_id = start_year(year_to_start)
             except YearStartDeferred:
@@ -382,3 +387,31 @@ def test_a_later_year_modal_refuses_fails_the_window() -> None:
         )
 
     assert refused.value.record_id == store.windows[0].id
+
+
+def test_a_later_year_is_deferred_without_a_call_once_the_wait_has_run_out(
+    caplog,
+) -> None:
+    store = FakeWindowStore()
+    caller = FakeCaller()
+    advancer = FakeAdvancer(store, delay_between_starts_seconds=0.1)
+
+    with caplog.at_level(logging.INFO, logger=budget_window_submissions.__name__):
+        created = _submit(
+            _service(store, caller=caller, advancer=advancer), budget_window_size=3
+        )
+
+    assert created.status is ReportRunStatus.PENDING
+    # The first year's call used the whole wait; the second is never called.
+    assert len(caller.report_runs) == 1
+    assert advancer.deferred == [2027]
+    (deferral,) = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "budget_window_year_deferred"
+    ]
+    second_year = store.windows[0].years[1]
+    assert (deferral.year, deferral.record_id) == (
+        2027,
+        str(second_year.report_run_id),
+    )
