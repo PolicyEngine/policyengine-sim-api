@@ -157,12 +157,15 @@ def test_the_sweep_image_installs_the_locked_group_and_the_runtime_sources(
 
 def test_the_scheduled_function_sweeps_with_the_report_run_store(monkeypatch) -> None:
     module = _load(monkeypatch)
-    store = object()
+    store, window_store = object(), object()
     swept = []
     monkeypatch.setattr(report_run_access_module, "report_run_store", lambda: store)
+    monkeypatch.setattr(
+        report_run_access_module, "budget_window_store", lambda: window_store
+    )
 
-    def recording_sweep(received_store):
-        swept.append(received_store)
+    def recording_sweep(received_store, *, windows):
+        swept.append((received_store, windows))
         return run_sweep.SweepSummary(
             checked=3,
             failed=1,
@@ -171,6 +174,8 @@ def test_the_scheduled_function_sweeps_with_the_report_run_store(monkeypatch) ->
             left=0,
             failed_for_age=2,
             failed_without_call=4,
+            windows_failed=5,
+            windows_succeeded=6,
         )
 
     monkeypatch.setattr(run_sweep, "sweep_stuck_runs", recording_sweep)
@@ -183,8 +188,10 @@ def test_the_scheduled_function_sweeps_with_the_report_run_store(monkeypatch) ->
         "left": 0,
         "failed_for_age": 2,
         "failed_without_call": 4,
+        "windows_failed": 5,
+        "windows_succeeded": 6,
     }
-    assert swept == [store]
+    assert swept == [(store, window_store)]
 
 
 def test_the_restart_check_runs_every_two_minutes_with_the_worker_database_secret(

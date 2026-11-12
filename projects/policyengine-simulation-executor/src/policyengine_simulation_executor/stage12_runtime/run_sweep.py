@@ -28,6 +28,18 @@ Household jobs follow the same rule: the simulation service records the
 call it starts on a pending job, and a household function claims the job
 under that call. A household job counts from its creation, while pending or
 running, for both ages.
+
+A budget window's years are report runs naming its budget-window run. A
+year still pending with no call, in a window that hasn't finished, waits
+for an earlier year's coordinator to start it, so the sweep leaves it to the
+window. A year started later counts, until its claim, from when its call
+was recorded rather than from its creation at submit. When the sweep fails
+a year, it fails the window too, with the window's waiting years. After
+judging the runs, it settles each unfinished window that nothing has
+changed for the minimum age with no year under way: its last year ended,
+or the simulation service created it, without anything recording what
+follows. Such a window is finished from its years, or failed as stalled
+with the years still waiting.
 """
 
 from __future__ import annotations
@@ -43,8 +55,9 @@ from policyengine_stage12_persistence import RunKind, RunStatus
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from uuid import UUID
 
-    from policyengine_stage12_persistence import ActiveRun, RunWrite
+    from policyengine_stage12_persistence import ActiveRun, RunWrite, WindowAdvance
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +126,24 @@ class StuckRunStore(Protocol):
         ...
 
 
+class BudgetWindowSettler(Protocol):
+    """The sweep's budget-window writes; ``BudgetWindowStore`` implements them."""
+
+    def advance_window(self, window_run_id: UUID, *, now: datetime) -> WindowAdvance:
+        """Finish the window from its years' outcomes; start no year."""
+        ...
+
+    def list_idle_windows(self, *, idle_since_before: datetime) -> tuple[UUID, ...]:
+        """Return the unfinished windows with no year under way, unchanged since."""
+        ...
+
+    def settle_idle_window(
+        self, window_run_id: UUID, *, idle_since_before: datetime, now: datetime
+    ) -> WindowAdvance:
+        """Finish a window still idle: from its years, or as stalled."""
+        ...
+
+
 # The order the sweep judges each kind in: report runs before simulation
 # runs, which are listed only once no unfinished report run names them, then
 # household jobs, which no run names.
@@ -131,6 +162,8 @@ class SweepSummary:
     counts listed runs whose conditional failure changed nothing, because
     they were claimed, finished, moved to another call, had a call recorded,
     or a pending or running report run named them after they were listed.
+    ``windows_failed`` and ``windows_succeeded`` count the budget windows the
+    sweep finished, after failing one of their years or finding them idle.
     """
 
     checked: int
@@ -140,6 +173,8 @@ class SweepSummary:
     left: int = 0
     failed_for_age: int = 0
     failed_without_call: int = 0
+    windows_failed: int = 0
+    windows_succeeded: int = 0
 
 
 def modal_call_state(modal_call_id: str, *, modal_module: Any = None) -> CallState:  # noqa: ANN401  # the modal module, or a stand-in for it
@@ -191,11 +226,83 @@ class _Tally:
     left: int = 0
     failed_for_age: int = 0
     failed_without_call: int = 0
+    windows_failed: int = 0
+    windows_succeeded: int = 0
+
+    def count_window(self, advance: WindowAdvance | None) -> None:
+        """Count a window the sweep finished; ``None`` means it was missing."""
+        if advance is None or not advance.changed:
+            return
+        if advance.status is RunStatus.FAILED:
+            self.windows_failed += 1
+        elif advance.status is RunStatus.SUCCEEDED:
+            self.windows_succeeded += 1
 
 
-def sweep_stuck_runs(  # the store, then keyword-only seams and limits
+@dataclass(frozen=True)
+class _SweepPass:
+    """One sweep's shared state: its stores, its clock and its counts."""
+
+    store: StuckRunStore
+    windows: BudgetWindowSettler | None
+    now: datetime
+    tally: _Tally
+
+    def fail(self, run: ActiveRun, error_message: str) -> bool:
+        """Fail ``run`` as listed, then its window if it is a window's year.
+
+        Returns whether the run changed.
+        """
+        changed = self.store.fail_stuck_run(
+            run, error_message=error_message, failed_at=self.now
+        ).changed
+        if changed and run.budget_window_run_id is not None and self.windows:
+            windows = self.windows
+            self.tally.count_window(
+                _unless_missing(
+                    run.budget_window_run_id,
+                    lambda window_run_id: windows.advance_window(
+                        window_run_id, now=self.now
+                    ),
+                )
+            )
+        return changed
+
+    def settle_idle_windows(self, idle_since_before: datetime) -> None:
+        """Finish each window no year has advanced since ``idle_since_before``."""
+        if self.windows is None:
+            return
+        windows = self.windows
+        for window_run_id in windows.list_idle_windows(
+            idle_since_before=idle_since_before
+        ):
+            self.tally.count_window(
+                _unless_missing(
+                    window_run_id,
+                    lambda idle_window_run_id: windows.settle_idle_window(
+                        idle_window_run_id,
+                        idle_since_before=idle_since_before,
+                        now=self.now,
+                    ),
+                )
+            )
+
+
+def _unless_missing(
+    window_run_id: UUID, finish: Callable[[UUID], WindowAdvance]
+) -> WindowAdvance | None:
+    """Finish the window, or log and return None when it no longer exists."""
+    try:
+        return finish(window_run_id)
+    except LookupError:
+        logger.info("Budget-window run %s no longer exists", window_run_id)
+        return None
+
+
+def sweep_stuck_runs(  # noqa: PLR0913  # the stores, then keyword-only seams and limits
     store: StuckRunStore,
     *,
+    windows: BudgetWindowSettler | None = None,
     call_state: Callable[[str], CallState] = modal_call_state,
     now: datetime | None = None,
     minimum_age: timedelta = DEFAULT_MINIMUM_AGE,
@@ -213,48 +320,46 @@ def sweep_stuck_runs(  # the store, then keyword-only seams and limits
     or whose state is unknown, is left as it is, as is a running run with no
     call recorded, until the maximum age; so is one whose conditional failure
     changes nothing, which makes two sweeps at once safe.
+
+    With ``windows``, a failed year of a budget window fails its window, and
+    the windows no year has advanced for ``minimum_age`` are then settled.
     """
     now = now or datetime.now(UTC)
     states: dict[str, CallState] = {}
-    tally = _Tally()
+    sweep = _SweepPass(store=store, windows=windows, now=now, tally=_Tally())
+    tally = sweep.tally
     for kind in SWEPT_KINDS:
         for run in store.list_active_runs(kind, active_since_before=now - maximum_age):
-            if store.fail_stuck_run(
-                run, error_message=EXCEEDED_AGE_MESSAGE, failed_at=now
-            ).changed:
+            if sweep.fail(run, EXCEEDED_AGE_MESSAGE):
                 tally.failed_for_age += 1
             else:
                 tally.left += 1
     for kind in SWEPT_KINDS:
         for run in store.list_active_runs(kind, active_since_before=now - minimum_age):
-            _sweep_run(
-                store, run, states=states, call_state=call_state, now=now, tally=tally
-            )
+            _sweep_run(sweep, run, states=states, call_state=call_state)
+    sweep.settle_idle_windows(now - minimum_age)
     return SweepSummary(**vars(tally))
 
 
-def _sweep_run(  # noqa: PLR0913  # one run, the store, and the sweep's shared state
-    store: StuckRunStore,
+def _sweep_run(
+    sweep: _SweepPass,
     run: ActiveRun,
     *,
     states: dict[str, CallState],
     call_state: Callable[[str], CallState],
-    now: datetime,
-    tally: _Tally,
 ) -> None:
     """Fail ``run`` if its call has ended or was never started.
 
     Each call is asked about once.
     """
+    tally = sweep.tally
     tally.checked += 1
     modal_call_id = run.modal_call_id
     if modal_call_id is None:
         if run.status is not RunStatus.PENDING:
             # Nothing to ask Modal about; the maximum age decides it.
             tally.unknown += 1
-        elif store.fail_stuck_run(
-            run, error_message=NOT_STARTED_MESSAGE, failed_at=now
-        ).changed:
+        elif sweep.fail(run, NOT_STARTED_MESSAGE):
             tally.failed_without_call += 1
         else:
             tally.left += 1
@@ -270,9 +375,7 @@ def _sweep_run(  # noqa: PLR0913  # one run, the store, and the sweep's shared s
         tally.running += 1
     elif state is CallState.UNKNOWN:
         tally.unknown += 1
-    elif store.fail_stuck_run(
-        run, error_message=ENDED_CALL_MESSAGE, failed_at=now
-    ).changed:
+    elif sweep.fail(run, ENDED_CALL_MESSAGE):
         tally.failed += 1
     else:
         tally.left += 1

@@ -10,6 +10,35 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.13.0] - 2026-11-12
+
+### Added
+
+- Calculated budget windows on the detailed-save path. `POST /reports` takes
+  `report_type` `budget_window` with `budget_window_size` (1 to 75 years,
+  ending by 2200) and creates a report run per year, answering 201 with the
+  report, the first year's run, the window run and every year's runs. At
+  most five years run at once: the service starts the first ones, and when a
+  year ends its coordinator starts the window's next waiting years. The
+  window is marked succeeded when every year has succeeded, or failed as
+  soon as a year fails. The stuck-run sweep leaves a window's waiting years
+  to the window, fails a window when it fails one of its years, and settles
+  a window that no year advances any more.
+
+### Changed
+
+- Raised the v2 functions' Modal container limits so budget windows at their
+  cap don't wait behind them: the coordinator to 25, each simulation worker
+  to 50, and the US segment function to 1,000.
+
+
+## [0.12.0] - 2026-11-12
+
+### Added
+
+- The Simulation Entrypoint creates economy reports and simulations through `POST /reports` and `POST /simulations`, in the Public API's run tables, and starts their calculation on the v2 coordinator and workers by run ID; a report reuses a matching simulation run that already succeeded. `GET /reports/{report_id}` and `GET /simulations/{simulation_id}` return each record's newest run, and every staging deploy checks a small economy report.
+
+
 ## [0.11.1] - 2026-11-12
 
 ### Changed

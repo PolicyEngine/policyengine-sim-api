@@ -14,6 +14,9 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from policyengine_simulation_persistence.budget_window_records import (
+    insert_budget_window_report,
+)
 from policyengine_simulation_persistence.economy_run_reads import (
     read_economy_report,
     read_economy_simulation,
@@ -61,6 +64,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy import Connection, Engine
 
+    from policyengine_simulation_persistence.budget_window_records import (
+        NewBudgetWindowReport,
+    )
     from policyengine_simulation_persistence.economy_run_reads import (
         EconomyReportState,
         EconomySimulationState,
@@ -199,6 +205,21 @@ class EconomyReportInputs:
     reform: SimulationInputs
 
 
+@dataclass(frozen=True)
+class BudgetWindowInputs:
+    """What a budget-window report is read from, and each year's reusable runs.
+
+    ``baseline`` and ``reform`` hold each side's values, the same in every
+    year. ``reusable_runs`` gives, by year, the baseline's and the reform's
+    reusable run, each None when there is none.
+    """
+
+    catalog: EconomyCatalogRows
+    baseline: SimulationInputs
+    reform: SimulationInputs
+    reusable_runs: dict[int, tuple[ReusableRun | None, ReusableRun | None]]
+
+
 class EconomyRunStore:
     """Read and write economy simulations and reports, each in its own transaction."""
 
@@ -286,6 +307,71 @@ class EconomyRunStore:
                         )
                 sides.append(inputs)
         return EconomyReportInputs(catalog=catalog, baseline=sides[0], reform=sides[1])
+
+    def read_budget_window_inputs(
+        self,
+        request: EconomyRequest,
+        *,
+        baseline: SimulationChoice,
+        reform: SimulationChoice,
+        reuse: RunReuse | None,
+        years: Sequence[int],
+    ) -> BudgetWindowInputs:
+        """Read a window's catalog rows and both sides' values, then each year's runs.
+
+        ``request.year`` is the window's first year. With ``reuse``, each
+        year's sides get the runs ``find_reusable_run`` finds for that year,
+        and the reform never gets the baseline's. Raise the errors
+        ``read_report_inputs`` raises.
+        """
+        with self._transaction() as connection:
+            catalog = _catalog_rows(connection, request)
+            baseline_inputs = _side_inputs(
+                connection, request, catalog, "baseline", baseline
+            )
+            reform_inputs = _side_inputs(connection, request, catalog, "reform", reform)
+            reusable_runs: dict[int, tuple[ReusableRun | None, ReusableRun | None]] = {}
+            for year in years:
+                baseline_run = reform_run = None
+                if reuse is not None:
+                    population = catalog.population(year)
+                    baseline_run = find_reusable_run(
+                        connection,
+                        choice=baseline,
+                        population=population,
+                        versions=reuse.versions,
+                        inputs=reuse.inputs,
+                        output_uri_prefix=reuse.output_uri_prefix,
+                    )
+                    reform_run = find_reusable_run(
+                        connection,
+                        choice=reform,
+                        population=population,
+                        versions=reuse.versions,
+                        inputs=reuse.inputs,
+                        output_uri_prefix=reuse.output_uri_prefix,
+                        excluded_run_id=(
+                            None
+                            if baseline_run is None
+                            else baseline_run.simulation_run_id
+                        ),
+                    )
+                reusable_runs[year] = (baseline_run, reform_run)
+        return BudgetWindowInputs(
+            catalog=catalog,
+            baseline=baseline_inputs,
+            reform=reform_inputs,
+            reusable_runs=reusable_runs,
+        )
+
+    def create_budget_window_report(self, report: NewBudgetWindowReport) -> None:
+        """Create the window's report, its budget-window run and each year's runs.
+
+        Raise ``insert_budget_window_report``'s errors, and
+        EconomyRecordOutcomeUnknownError when the commit fails after the
+        rows were inserted.
+        """
+        self._create(lambda connection: insert_budget_window_report(connection, report))
 
     def create_report(self, report: NewEconomyReport) -> None:
         """Create the report, its new simulations and its runs.
@@ -486,3 +572,19 @@ def read_simulation_reform(
         )
     )
     return combine_reforms(policy_reform, dynamic_reform)
+
+
+def _side_inputs(
+    connection: Connection,
+    request: EconomyRequest,
+    catalog: EconomyCatalogRows,
+    side: ReportSide,
+    choice: SimulationChoice,
+) -> SimulationInputs:
+    """Read one report side's values; raise ReportSideError naming a refused side."""
+    try:
+        return _simulation_inputs(
+            connection, request.country, catalog.catalog_version_id, choice
+        )
+    except _SIDE_ERRORS as error:
+        raise ReportSideError(side, error) from error
