@@ -39,6 +39,7 @@ from policyengine_simulation_entry.household_report_api_models import (
     HouseholdReportCreated,
 )
 from policyengine_simulation_entry.household_report_submissions import (
+    HouseholdReportBuildError,
     HouseholdReportSideInputs,
     household_report_calculation,
 )
@@ -445,22 +446,17 @@ def _stored_household(document: dict | None = None) -> StoredHousehold:
 def test_a_report_runs_calculation_is_built_from_its_stored_inputs_alone():
     # A restart rebuilds the call from the stored report: its own year, not
     # the household's default year now, and its stored option.
-    worker = manifest_household_worker("us")
-
     calculation = household_report_calculation(
-        country="us",
         household=_stored_household(),
         year=2027,
         add_missing_variables=False,
-        sides={
-            "baseline": HouseholdReportSideInputs(
-                simulation_run_id=BASELINE_RUN_ID, reform={}
-            ),
-            "reform": HouseholdReportSideInputs(
-                simulation_run_id=REFORM_RUN_ID, reform=REFORM
-            ),
-        },
-        worker=worker,
+        baseline=HouseholdReportSideInputs(
+            simulation_run_id=BASELINE_RUN_ID, policy_values={}
+        ),
+        reform=HouseholdReportSideInputs(
+            simulation_run_id=REFORM_RUN_ID, policy_values=REFORM
+        ),
+        worker=manifest_household_worker("us"),
     )
 
     payload = calculation.model_dump(mode="json")
@@ -478,36 +474,47 @@ def test_a_report_runs_calculation_is_built_from_its_stored_inputs_alone():
 
 def test_a_calculation_of_the_baseline_alone_has_no_reform():
     calculation = household_report_calculation(
-        country="us",
         household=_stored_household(),
         year=2026,
         add_missing_variables=True,
-        sides={
-            "baseline": HouseholdReportSideInputs(
-                simulation_run_id=BASELINE_RUN_ID, reform=REFORM
-            )
-        },
+        baseline=HouseholdReportSideInputs(
+            simulation_run_id=BASELINE_RUN_ID, policy_values=REFORM
+        ),
         worker=manifest_household_worker("us"),
     )
 
     assert calculation.reform is None
     assert calculation.baseline.calculation_id == BASELINE_RUN_ID
+    assert calculation.baseline.policy.parameters == REFORM
 
 
 def test_a_stored_household_the_builder_cannot_read_is_not_calculable():
     with pytest.raises(EconomySubmissionUnprocessableError) as raised:
         household_report_calculation(
-            country="us",
             household=_stored_household({"people": "not a list of people"}),
             year=2026,
             add_missing_variables=False,
-            sides={
-                "baseline": HouseholdReportSideInputs(
-                    simulation_run_id=BASELINE_RUN_ID, reform={}
-                )
-            },
+            baseline=HouseholdReportSideInputs(
+                simulation_run_id=BASELINE_RUN_ID, policy_values={}
+            ),
             worker=manifest_household_worker("us"),
         )
 
     assert raised.value.code == "household_not_calculable"
     assert [reason.type for reason in raised.value.reasons] == ["household_unreadable"]
+
+
+def test_two_sides_recording_one_simulation_run_are_built_wrong():
+    side = HouseholdReportSideInputs(
+        simulation_run_id=BASELINE_RUN_ID, policy_values={}
+    )
+
+    with pytest.raises(HouseholdReportBuildError, match="different simulation runs"):
+        household_report_calculation(
+            household=_stored_household(),
+            year=2026,
+            add_missing_variables=False,
+            baseline=side,
+            reform=side,
+            worker=manifest_household_worker("us"),
+        )
