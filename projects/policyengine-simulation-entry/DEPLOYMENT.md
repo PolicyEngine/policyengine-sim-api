@@ -167,24 +167,25 @@ show the call's input finished in another container. A record completed
 sooner proves nothing, and that attempt counts as missed: the stopped
 container may have written the success before the signal reached it, and
 Modal's rerun then finds the record finished and only returns its summary.
-A rerun in a new container can't finish within 5 seconds of the stop. Run again, the household function or coordinator resumes its
-claim. The report's simulation runs are reused, so its coordinator
-starts no worker, and the check doesn't cover a coordinator starting its
-workers again.
+A rerun in a new container can't finish within 5 seconds of the stop (both
+times are counted in whole seconds). Run again, the household function or
+coordinator resumes its claim. The report's simulation runs are reused, so
+its coordinator starts no worker, and the check doesn't cover a coordinator
+starting its workers again.
 
 A calculation that finishes before its container is stopped, for example on
 a warm container, proves nothing, so the check submits a new one, up to
 three attempts. Before each new attempt it waits, up to three minutes, for
-Modal to stop listing the last attempt's container (Modal stops an idle
-container after 60 seconds), so the next calculation starts in a new
-container, including a container it first saw only after it had finished
-the calculation. A record that fails, or doesn't finish within its deadline
-(10 minutes for the household, 15 for the report, per attempt), fails the
-check at once. Modal refuses to stop a container that has ended; when a
-stop fails, the check doesn't stop it again or submit another calculation,
-but follows the record to its end, so a record left running by a container
-that ended for another reason, such as running out of memory, fails the
-check at its deadline. Every Modal command may take 60 seconds.
+Modal to stop listing every container the last attempt's call ran in, as
+the call graph names them, including the one Modal's rerun ran in (Modal
+stops an idle container after 60 seconds), so the next calculation starts
+in a new container. A record that fails, or doesn't finish within its
+deadline (10 minutes for the household, 15 for the report, per attempt),
+fails the check at once. Modal refuses to stop a container that has
+ended; when a stop fails, the check doesn't stop it again or submit another
+calculation, but follows the record to its end, so a record left running by
+a container that ended for another reason, such as running out of memory,
+fails the check at its deadline. Every Modal command may take 60 seconds.
 
 It uses the repository's Modal token (the repository secrets
 `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`), which must be allowed to read
@@ -192,8 +193,9 @@ call graphs and to list and stop containers. Production's deploy jobs use
 the same token, and `modal container stop` takes a container ID in any
 environment, so the script refuses any `MODAL_ENVIRONMENT` but `staging` and
 stops only a container that `modal container list --env staging` lists. It
-also uses the authenticated tests' client credentials. `deployment_ready` requires
-the check to pass in staging, so a failure stops the production deployment.
+also uses the authenticated tests' client credentials. `deployment_ready`
+requires the check to pass in staging, so a failure stops the production
+deployment.
 Each attempt adds a household job, or a report and its run, to the staging
 database.
 
