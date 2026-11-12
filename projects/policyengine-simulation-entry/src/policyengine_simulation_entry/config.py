@@ -102,6 +102,10 @@ class Settings:
     # manifest, and the manifest's name. Empty outside deployed environments.
     v2_modal_environment: str = ""
     v2_manifest_name: str = V2_VERSION_MANIFEST_NAME
+    # The bucket that keeps v2 simulation output files for good. An economy
+    # report reuses only a succeeded run whose file is in it; without it, no
+    # run is reused. Empty outside deployed environments.
+    v2_simulation_output_bucket: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -157,6 +161,7 @@ class Settings:
             v2_manifest_name=os.getenv(
                 "SIMULATION_V2_MANIFEST_NAME", V2_VERSION_MANIFEST_NAME
             ),
+            v2_simulation_output_bucket=os.getenv("V2_SIMULATION_OUTPUT_BUCKET", ""),
         )
 
     @property
@@ -179,6 +184,11 @@ class Settings:
     def household_calculations_configured(self) -> bool:
         """Whether the database and the v2 Modal environment are both set."""
         return bool(self.simulation_database_url and self.v2_modal_environment)
+
+    @property
+    def economy_runs_configured(self) -> bool:
+        """Whether economy reports and simulations can run: as household ones."""
+        return self.household_calculations_configured
 
     def validate(self) -> None:
         """Raise ConfigurationError unless the service can start safely.
