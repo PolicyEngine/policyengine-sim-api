@@ -9,6 +9,10 @@ from pathlib import Path
 import yaml
 from fixtures.fake_modal import install_fake_modal
 from policyengine_simulation_entry import run_restart_check
+from policyengine_simulation_entry.run_restarts import (
+    CALL_START_TIMEOUT_SECONDS,
+    RESTARTS_PER_CHECK,
+)
 from policyengine_simulation_executor.stage12_runtime import (
     report_run_access as report_run_access_module,
 )
@@ -197,8 +201,19 @@ def test_the_restart_check_runs_every_two_minutes_with_the_worker_database_secre
     # One check at a time; two at once would still restart each run once.
     assert options["max_containers"] == 1
     assert options["retries"] == 0
-    assert options["timeout"] <= 600
     assert options["image"] is module.sweep_image
+
+
+def test_a_check_that_waits_on_every_call_still_ends_within_its_timeout(
+    monkeypatch,
+) -> None:
+    """A row marked just before the timeout stops the check is never restarted."""
+    module = _load(monkeypatch)
+    options = _functions(module)["restart_unstarted_runs"]
+    longest_call_waits = RESTARTS_PER_CHECK * CALL_START_TIMEOUT_SECONDS
+
+    # A minute for the database and the manifest.
+    assert longest_call_waits + 60 <= options["timeout"]
 
 
 def test_the_image_bakes_the_modal_environment_and_telemetry_settings_in(
