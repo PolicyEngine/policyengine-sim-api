@@ -81,6 +81,11 @@ SERVICE_TABLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType
 _CALL_START: Final = frozenset(
     {"status", "modal_call_id", "error_message", "completed_at", "updated_at"}
 )
+# The state the service records for a budget-window run, which has no Modal
+# call of its own: the failure when Modal refuses one of its first years.
+_WINDOW_FAILURE: Final = frozenset(
+    {"status", "error_message", "completed_at", "updated_at"}
+)
 # The columns the service's role may UPDATE, by table. It holds UPDATE on
 # these columns alone, never on a whole table, so the database refuses any
 # other change to a run.
@@ -89,6 +94,7 @@ SERVICE_UPDATABLE_COLUMNS: Final[Mapping[str, frozenset[str]]] = MappingProxyTyp
         "simulation_runs": _CALL_START,
         "report_runs": _CALL_START,
         "household_jobs": _CALL_START,
+        "budget_window_runs": _WINDOW_FAILURE,
     }
 )
 

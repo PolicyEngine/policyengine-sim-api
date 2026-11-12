@@ -97,6 +97,9 @@ if TYPE_CHECKING:
         SimulationInputs,
     )
 
+    from policyengine_simulation_entry.budget_window_api_models import (
+        BudgetWindowReportRequest,
+    )
     from policyengine_simulation_entry.economy_api_models import (
         EconomyRefusalCode,
         EconomyReportRequest,
@@ -208,7 +211,8 @@ def _database_unavailable() -> EconomySubmissionUnavailableError:
     )
 
 
-def _choice(policy: PolicyChoice) -> SimulationChoice:
+def simulation_choice(policy: PolicyChoice) -> SimulationChoice:
+    """Return a request side's stored policy and dynamic."""
     return SimulationChoice(policy_id=policy.policy_id, dynamic_id=policy.dynamic_id)
 
 
@@ -269,17 +273,19 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
                 output_uri_prefix=reuse_prefix,
             )
         )
-        economy_request = _economy_request(request, worker)
+        economy_request = economy_request_for(request, worker)
         inputs = await self._read_inputs(
             lambda: self._store.read_report_inputs(
                 economy_request,
-                baseline=_choice(request.baseline),
-                reform=_choice(request.reform),
+                baseline=simulation_choice(request.baseline),
+                reform=simulation_choice(request.reform),
                 reuse=reuse,
             ),
             request=economy_request,
         )
-        scope = _scope(request, worker, inputs.catalog, spm=options.get("spm"))
+        scope = calculation_scope(
+            request, worker, inputs.catalog, spm=options.get("spm")
+        )
         report = NewEconomyReport(
             id=self._new_id(),
             run_id=self._new_id(),
@@ -339,7 +345,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         its run was failed.
         """
         worker = await self._default_worker(request.country)
-        economy_request = _economy_request(request, worker)
+        economy_request = economy_request_for(request, worker)
         choice = SimulationChoice(
             policy_id=request.policy_id, dynamic_id=request.dynamic_id
         )
@@ -347,7 +353,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
             lambda: self._store.read_simulation_inputs(economy_request, choice),
             request=economy_request,
         )
-        scope = _scope(request, worker, inputs.catalog, spm=None)
+        scope = calculation_scope(request, worker, inputs.catalog, spm=None)
         simulation = NewEconomySimulation(
             id=self._new_id(),
             run_id=self._new_id(),
@@ -543,7 +549,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
                 ),
             )
             if failed:
-                refused = _call_refused(
+                refused = call_refused(
                     "report", report_id, rerun_id=run_id if rerun else None
                 )
                 raise refused from None
@@ -588,7 +594,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
                 lambda message: self._store.fail_unstarted_simulation(run_id, message),
             )
             if failed:
-                refused = _call_refused(
+                refused = call_refused(
                     "simulation", simulation_id, rerun_id=run_id if rerun else None
                 )
                 raise refused from None
@@ -667,7 +673,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         return None if status is None else str(status)
 
 
-def _call_refused(
+def call_refused(
     record: RecordName, record_id: UUID, *, rerun_id: UUID | None = None
 ) -> EconomySubmissionUnavailableError:
     """Return the 503 naming a record whose new run's call Modal did not accept.
@@ -694,9 +700,13 @@ def _call_refused(
     )
 
 
-def _economy_request(
-    request: EconomyReportRequest | EconomySimulationRequest, worker: EconomyWorker
+def economy_request_for(
+    request: EconomyReportRequest
+    | EconomySimulationRequest
+    | BudgetWindowReportRequest,
+    worker: EconomyWorker,
 ) -> EconomyRequest:
+    """Return what the request names apart from policies, for the default worker."""
     return EconomyRequest(
         country=request.country,
         policyengine_version=worker.policyengine_version,
@@ -706,8 +716,10 @@ def _economy_request(
     )
 
 
-def _scope(
-    request: EconomyReportRequest | EconomySimulationRequest,
+def calculation_scope(
+    request: EconomyReportRequest
+    | EconomySimulationRequest
+    | BudgetWindowReportRequest,
     worker: EconomyWorker,
     catalog: EconomyCatalogRows,
     *,

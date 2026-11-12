@@ -30,6 +30,10 @@ UPDATE report_runs error_message
 UPDATE report_runs modal_call_id
 UPDATE report_runs status
 UPDATE report_runs updated_at
+UPDATE budget_window_runs completed_at
+UPDATE budget_window_runs error_message
+UPDATE budget_window_runs status
+UPDATE budget_window_runs updated_at
 UPDATE household_jobs completed_at
 UPDATE household_jobs error_message
 UPDATE household_jobs modal_call_id

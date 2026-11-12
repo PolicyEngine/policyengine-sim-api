@@ -31,6 +31,7 @@ SEEDED_TABLES = (
     "datasets",
     "simulations",
     "reports",
+    "budget_window_runs",
     "report_runs",
     "simulation_runs",
     "labor_supply_responses",
@@ -101,7 +102,7 @@ class ReportRunSeeder:
             reform_simulation_run_id=uuid4(),
         )
         with self.engine.begin() as connection:
-            self._insert_catalog(connection, model_id, version_id, dataset_id)
+            self.insert_catalog(connection, model_id, version_id, dataset_id)
             for simulation_id in simulation_ids:
                 connection.execute(
                     insert(self.table("simulations")).values(
@@ -159,7 +160,7 @@ class ReportRunSeeder:
         model_id, version_id, dataset_id = uuid4(), uuid4(), uuid4()
         household_id, job_id = uuid4(), uuid4()
         with self.engine.begin() as connection:
-            self._insert_catalog(connection, model_id, version_id, dataset_id)
+            self.insert_catalog(connection, model_id, version_id, dataset_id)
             connection.execute(
                 insert(self.table("households")).values(
                     id=household_id,
@@ -210,9 +211,10 @@ class ReportRunSeeder:
             # Deleting the model removes its versions.
             connection.execute(delete(models).where(models.c.id == seeded.model_id))
 
-    def _insert_catalog(
+    def insert_catalog(
         self, connection: Connection, model_id: UUID, version_id: UUID, dataset_id: UUID
     ) -> None:
+        """Insert a tax-benefit model, one version of it and one of its datasets."""
         connection.execute(
             insert(self.table("tax_benefit_models")).values(
                 id=model_id, name=f"test-{model_id.hex[:24]}"

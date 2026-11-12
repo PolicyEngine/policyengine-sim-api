@@ -94,6 +94,9 @@ ECONOMY_PATHS = (
     "/simulations/{simulation_id}/runs",
 )
 ECONOMY_SCHEMAS = (
+    "BudgetWindowReportCreated",
+    "BudgetWindowReportRequest",
+    "BudgetWindowYearCreated",
     "EconomyError",
     "EconomyReportCreated",
     "EconomyReportRequest",
@@ -366,14 +369,15 @@ def test_economy_routes_declare_every_answer():
     unprocessable = {"$ref": "#/components/schemas/EconomyRequestUnprocessable"}
 
     for path, created in (
-        ("/reports", "EconomyReportCreated"),
-        ("/simulations", "EconomySimulationCreated"),
+        ("/reports", ("EconomyReportCreated", "BudgetWindowReportCreated")),
+        ("/simulations", ("EconomySimulationCreated",)),
     ):
         responses = _responses(spec, "post", path)
         assert set(responses) == {"201", "400", "403", "422", "500", "503"}
-        assert _response_schema(responses["201"]) == {
-            "$ref": f"#/components/schemas/{created}"
-        }
+        created_schema = _response_schema(responses["201"])
+        assert created_schema.get("anyOf", [created_schema]) == [
+            {"$ref": f"#/components/schemas/{name}"} for name in created
+        ]
         for status_code in ("400", "500", "503"):
             assert _response_schema(responses[status_code]) == error
         assert _response_schema(responses["422"]) == unprocessable
@@ -484,6 +488,39 @@ def test_economy_requests_name_no_version_and_no_record_id():
     assert spm["$ref"] == "#/components/schemas/SPMSelection"
     assert "default" not in spm
     assert "spm" not in schemas["EconomyReportRequest"].get("required", [])
+
+
+def test_a_report_request_is_an_economy_report_or_a_budget_window():
+    spec = create_app().openapi()
+    body = spec["paths"]["/reports"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["schema"]
+    schemas = spec["components"]["schemas"]
+
+    assert body["discriminator"] == {
+        "propertyName": "report_type",
+        "mapping": {
+            "economy": "#/components/schemas/EconomyReportRequest",
+            "budget_window": "#/components/schemas/BudgetWindowReportRequest",
+        },
+    }
+    # A window sends its length and no cliff option, and names no version
+    # or record ID either.
+    assert set(schemas["BudgetWindowReportRequest"]["properties"]) == {
+        "country",
+        "report_type",
+        "label",
+        "description",
+        "year",
+        "budget_window_size",
+        "region_code",
+        "dataset_name",
+        "baseline",
+        "reform",
+        "spm",
+    }
+    size = schemas["BudgetWindowReportRequest"]["properties"]["budget_window_size"]
+    assert (size["minimum"], size["maximum"]) == (1, 75)
 
 
 def test_economy_reads_declare_every_answer():

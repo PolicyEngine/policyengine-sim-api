@@ -36,6 +36,7 @@ from policyengine_simulation_executor.stage12_bundle import (
 )
 from policyengine_simulation_executor.stage12_cache.models import CacheManifest
 from policyengine_simulation_executor.stage12_cache.store import Stage12CacheStore
+from policyengine_simulation_executor.stage12_runtime import report_run_access
 from policyengine_simulation_executor.stage12_runtime.report_run_access import (
     MODAL_WORKER_DATABASE_SECRET_NAME,
     MODAL_WORKER_DATABASE_URL_ENV,
@@ -316,7 +317,9 @@ def validate_worker_uk() -> dict:
     memory=32768,
     timeout=3600,
     retries=0,
-    max_containers=300,
+    # Every segment of every US simulation call that may run at once: a
+    # segment queued behind this limit counts against its caller's wait.
+    max_containers=1000,
     secrets=worker_secrets,
 )
 def run_single_simulation_segment_us(
@@ -356,7 +359,8 @@ def run_single_simulation_segment_us(
     memory=32768,
     timeout=US_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
-    max_containers=10,
+    # Both simulations of every coordinator call that may run at once.
+    max_containers=50,
     secrets=report_run_writer_secrets,
 )
 def run_single_simulation_us(
@@ -419,7 +423,8 @@ def run_single_simulation_us(
     memory=32768,
     timeout=UK_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
-    max_containers=10,
+    # Both simulations of every coordinator call that may run at once.
+    max_containers=50,
     secrets=report_run_writer_secrets,
 )
 def run_single_simulation_uk(
@@ -471,7 +476,8 @@ def run_single_simulation_uk(
     # the production-result wait, and time to finish and record the report.
     timeout=COORDINATOR_TIMEOUT_SECONDS,
     retries=0,
-    max_containers=10,
+    # Three budget windows at five years each, and ten other reports.
+    max_containers=25,
     secrets=report_run_writer_secrets,
 )
 def coordinate_report(
@@ -522,15 +528,25 @@ def coordinate_report(
             },
             remote_context=propagated,
         ):
-            return stage12_runtime.coordinate_report(
-                payload,
-                context,
-                parent,
-                invocation=stage12_runtime.CoordinatorInvocation(
-                    application_name=APP_NAME,
-                    invocation_id=coordinator_invocation_id,
+            # A call naming a budget window's year marks the window running
+            # first and, when the year ends, starts the window's next years.
+            return stage12_runtime.coordinate_window_year(
+                lambda: stage12_runtime.coordinate_report(
+                    payload,
+                    context,
+                    parent,
+                    invocation=stage12_runtime.CoordinatorInvocation(
+                        application_name=APP_NAME,
+                        invocation_id=coordinator_invocation_id,
+                    ),
+                    dependencies=stage12_runtime.CoordinatorDependencies(
+                        runtime=runtime
+                    ),
                 ),
-                dependencies=stage12_runtime.CoordinatorDependencies(runtime=runtime),
+                payload=payload,
+                context=context,
+                windows=lambda: report_run_access.budget_window_store(runtime),
+                observability_context=runtime.capture_context,
             )
     finally:
         runtime.shutdown()

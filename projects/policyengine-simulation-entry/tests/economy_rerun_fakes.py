@@ -7,7 +7,7 @@ persistence library; here a fake records what the re-run service asks of it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 from uuid import UUID
 
 from economy_service_fakes import (
@@ -149,6 +149,14 @@ class FakeRerunStore(FakeStore):
         self.simulation_reruns.append(rerun)
 
 
+class UnusedAdvancer:
+    """A window advancer a single-year re-run never asks to start a year."""
+
+    def advance_window(self, window_run_id: UUID, **_: Any) -> NoReturn:
+        msg = f"a single-year re-run advanced window {window_run_id}"
+        raise AssertionError(msg)
+
+
 def rerun_service(
     store: FakeRerunStore,
     *,
@@ -157,6 +165,7 @@ def rerun_service(
     output_bucket: str | None = OUTPUT_BUCKET,
 ) -> EconomyRerunService:
     return EconomyRerunService(
+        windows=UnusedAdvancer(),
         store=store,
         workers=workers or FakeWorkers(),
         caller=caller or FakeCaller(),

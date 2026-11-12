@@ -46,6 +46,10 @@ from policyengine_simulation_persistence import (
     RunReuse,
 )
 
+from policyengine_simulation_entry.budget_window_submissions import (
+    BudgetWindowRuns,
+    ReportSubmissionService,
+)
 from policyengine_simulation_entry.economy_api_models import (
     EconomyReportCreated,
     EconomySimulationCreated,
@@ -64,10 +68,6 @@ from policyengine_simulation_entry.economy_submission_errors import (
     EconomyRecordNotFoundError,
     EconomyRerunConflictError,
     EconomySubmissionRefusedError,
-)
-from policyengine_simulation_entry.economy_submissions import (
-    EconomyRuns,
-    EconomySubmissionService,
 )
 
 if TYPE_CHECKING:
@@ -107,8 +107,11 @@ _REPORT: Final[RecordName] = "report"
 _SIMULATION: Final[RecordName] = "simulation"
 
 
-class EconomyRerunRuns(EconomyRuns, Protocol):
-    """The economy store's reads and writes, with re-runs' (``EconomyRunStore``)."""
+class EconomyRerunRuns(BudgetWindowRuns, Protocol):
+    """The economy store's reads and writes, with budget windows' and re-runs'.
+
+    ``EconomyRunStore`` is one.
+    """
 
     def read_report_definition(self, report_id: UUID) -> ReportDefinition | None:
         """Return what the stored report calculates, or None."""
@@ -140,8 +143,8 @@ class EconomyRerunRuns(EconomyRuns, Protocol):
         ...
 
 
-class EconomyRerunService(EconomySubmissionService[EconomyRerunRuns]):
-    """Create and re-run economy reports and simulations, and start their calls."""
+class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
+    """Create and re-run economy and budget-window reports and simulations."""
 
     async def rerun_report(
         self,
