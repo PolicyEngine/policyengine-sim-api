@@ -253,7 +253,7 @@ class ReportSubmissionService(EconomySubmissionService):
         started claims itself, while the stuck-run sweep fails a window no
         year advances.
         """
-        start_year = _YearStarts(
+        start_year = YearStarts(
             worker=worker,
             caller=self._caller,
             first_year=report.first_year.year,
@@ -295,7 +295,7 @@ class ReportSubmissionService(EconomySubmissionService):
         return ReportRunStatus(advance.status.value)
 
 
-class _YearStarts:
+class YearStarts:
     """Start a window year's coordinator from the advance's thread; return its call.
 
     The first year's call takes the input built for it; each later year's is

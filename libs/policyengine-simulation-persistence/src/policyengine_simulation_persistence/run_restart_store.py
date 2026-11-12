@@ -12,8 +12,10 @@ from typing import TYPE_CHECKING
 
 from policyengine_simulation_persistence.engine import bounded_transaction
 from policyengine_simulation_persistence.run_restart_records import (
+    list_idle_budget_windows,
     list_unstarted_runs,
     mark_restart,
+    read_earliest_waiting_year,
     read_report_run_simulation_run_ids,
     read_run_call,
     read_unstarted_report_run,
@@ -33,6 +35,7 @@ if TYPE_CHECKING:
         StoredReportRun,
         StoredSimulationRun,
         UnstartedRun,
+        WaitingYear,
     )
 
 type TransactionFactory = Callable[[], AbstractContextManager[Connection]]
@@ -98,3 +101,20 @@ class RunRestartStore:
         """Return the simulation runs the report run names, baseline first."""
         with self._transaction() as connection:
             return read_report_run_simulation_run_ids(connection, report_run_id)
+
+    def list_idle_windows(
+        self, *, idle_after: datetime, idle_before: datetime, limit: int
+    ) -> tuple[UnstartedRun, ...]:
+        """Return the stopped budget windows last changed in the window."""
+        with self._transaction() as connection:
+            return list_idle_budget_windows(
+                connection,
+                idle_after=idle_after,
+                idle_before=idle_before,
+                limit=limit,
+            )
+
+    def read_earliest_waiting_year(self, window_run_id: UUID) -> WaitingYear | None:
+        """Return the window's earliest year still waiting, never changed, or None."""
+        with self._transaction() as connection:
+            return read_earliest_waiting_year(connection, window_run_id)

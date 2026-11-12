@@ -119,9 +119,12 @@ runs it every two minutes as the Modal worker role.
 
 - It takes the rows created 3 to 10 minutes ago that are still `pending`
   with no call and that nothing has changed since their insert, at most 20
-  a check, oldest first. A budget window's report runs and household
-  simulations' runs are left out. After three minutes a check marks no more
-  rows and leaves the rest for the next.
+  a check, oldest first, with the budget windows that stopped 3 to 10
+  minutes ago (`run_restart_windows`). A window is restarted as
+  `budget_window_submissions` starts a new one: from its earliest waiting
+  year's rebuilt call, with `YearStarts`. Household simulations' runs are
+  left out. After three minutes a check marks no more rows and leaves the
+  rest for the next.
 - It rebuilds each call with this service's own builders
   (`report_run_calculation`, `simulation_run_calculation`,
   `prepare_household_job`) from the stored rows, on the manifest's worker

@@ -9,7 +9,8 @@ minutes after its creation. The restart check, a scheduled Modal function
 beside the sweep, starts such a row's call once more:
 
 1. it lists the rows created 3 to 10 minutes ago that are still pending with
-   no call and that nothing has changed since their insert;
+   no call and that nothing has changed since their insert, and the budget
+   windows that stopped 3 to 10 minutes ago (``run_restart_windows``);
 2. for each, it reads back what the service built the call from and builds
    the same call, on the worker of the .py version the row records;
 3. it marks the row, so it is never restarted twice, starts the call, and
@@ -43,7 +44,8 @@ from collections import Counter
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from enum import StrEnum
+from heapq import merge
+from itertools import islice
 from typing import TYPE_CHECKING, Final, Protocol
 
 from policyengine_simulation_persistence import RestartKind
@@ -59,6 +61,8 @@ from policyengine_simulation_entry.run_restart_calls import (
     RestartWorkers,
     UnstartedRunSource,
 )
+from policyengine_simulation_entry.run_restart_outcomes import RestartOutcome
+from policyengine_simulation_entry.run_restart_windows import WindowRestarter
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -71,6 +75,9 @@ if TYPE_CHECKING:
         UnstartedRun,
     )
 
+    from policyengine_simulation_entry.budget_window_submissions import (
+        BudgetWindowAdvancer,
+    )
     from policyengine_simulation_entry.run_restart_calls import CallStart
 
 __all__ = [
@@ -113,35 +120,6 @@ CHECK_TIME_LIMIT: Final = timedelta(minutes=3)
 _NOT_STARTED: Final = (
     "run_not_started: The run stayed pending with no Modal call recorded for it"
 )
-
-
-class RestartOutcome(StrEnum):
-    """How the check ended for one listed row.
-
-    ``restarted``: its new call started, and the row records that call.
-    ``call_not_recorded``: its new call started, but the check couldn't
-    record or read the call's ID; the call claims the row itself.
-    ``started_meanwhile``: the row records another call, which claimed it
-    after the check marked it (or the check's own call, accepted after the
-    check stopped waiting for it); the other call then can't claim it.
-    ``left``: the row was gone, changed before the check started a call, or
-    failed meanwhile; also a marked row whose failure couldn't be written,
-    which the sweep fails later, and a row whose call couldn't be read
-    after Modal didn't confirm the check's call. ``deferred``: the row is
-    left unmarked for the next check, because its rows or the manifest
-    couldn't be read, rebuilding its call raised an unexpected error (logged
-    with its traceback), the failure of a row that can't be rebuilt couldn't
-    be written, the mark couldn't be written, or the check's time ran out.
-    ``failed``: it couldn't be started again and was failed with
-    ``run_not_started``.
-    """
-
-    RESTARTED = "restarted"
-    CALL_NOT_RECORDED = "call_not_recorded"
-    STARTED_MEANWHILE = "started_meanwhile"
-    LEFT = "left"
-    DEFERRED = "deferred"
-    FAILED = "failed"
 
 
 @dataclass(frozen=True)
@@ -245,6 +223,7 @@ class RestartStores:
     restarts: UnstartedRunSource
     economy: EconomyRunWrites
     households: HouseholdJobRestarts
+    windows: BudgetWindowAdvancer
 
 
 class RunRestartService:
@@ -283,20 +262,44 @@ class RunRestartService:
         self._timer = timer
         self._call_start_timeout_seconds = call_start_timeout_seconds
         self._deadline = 0.0
+        self._windows = WindowRestarter(
+            restarts=stores.restarts,
+            windows=stores.windows,
+            calls=self._calls,
+            caller=callers.economy,
+            telemetry=self._telemetry,
+            clock=clock,
+            out_of_time=self._out_of_time,
+            call_start_timeout_seconds=call_start_timeout_seconds,
+        )
 
     async def restart_unstarted_runs(self) -> RestartSummary:
         """Start once more each row created 3 to 10 minutes ago with no call.
 
-        Rows the check has no time left for are counted ``deferred``, with no
-        telemetry scope, since the next check lists them again. Raise the
-        store's error when the rows can't be listed.
+        So too each budget window that stopped 3 to 10 minutes ago with years
+        still waiting. Rows the check has no time left for are counted
+        ``deferred``, with no telemetry scope, since the next check lists
+        them again. Raise the store's error when the rows can't be listed.
         """
         self._deadline = self._timer() + CHECK_TIME_LIMIT.total_seconds()
         now = self._clock()
-        runs = self._stores.restarts.list_unstarted(
+        restarts = self._stores.restarts
+        rows = restarts.list_unstarted(
             created_after=now - RESTART_UNTIL,
             created_before=now - RESTART_AFTER,
             limit=RESTARTS_PER_CHECK,
+        )
+        windows = restarts.list_idle_windows(
+            idle_after=now - RESTART_UNTIL,
+            idle_before=now - RESTART_AFTER,
+            limit=RESTARTS_PER_CHECK,
+        )
+        # Each listing is oldest first; together, oldest first too.
+        runs = list(
+            islice(
+                merge(rows, windows, key=lambda run: run.created_at),
+                RESTARTS_PER_CHECK,
+            )
         )
         outcomes: Counter[RestartOutcome] = Counter()
         for position, run in enumerate(runs):
@@ -318,6 +321,8 @@ class RunRestartService:
 
     async def _restart(self, run: UnstartedRun) -> tuple[RestartOutcome, str | None]:
         """Start the row's call once more; return how it ended and any error type."""
+        if run.kind is RestartKind.BUDGET_WINDOW:
+            return await self._windows.restart(run)
         try:
             rebuilt = await asyncio.to_thread(self._calls.build, run)
         except DeferredRestartError as deferred:

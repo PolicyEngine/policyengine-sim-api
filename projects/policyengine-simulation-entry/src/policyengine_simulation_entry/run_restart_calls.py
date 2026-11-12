@@ -73,8 +73,12 @@ if TYPE_CHECKING:
         StoredReportRun,
         StoredSimulationRun,
         UnstartedRun,
+        WaitingYear,
     )
 
+    from policyengine_simulation_entry.economy_calculation_inputs import (
+        RunCalculation,
+    )
     from policyengine_simulation_entry.economy_workers import (
         EconomyRunCaller,
         EconomyWorker,
@@ -150,6 +154,16 @@ class UnstartedRunSource(Protocol):
 
     def read_call(self, run: UnstartedRun) -> RunCall | None:
         """Return the row's status and recorded call, or None when it is gone."""
+        ...
+
+    def list_idle_windows(
+        self, *, idle_after: datetime, idle_before: datetime, limit: int
+    ) -> tuple[UnstartedRun, ...]:
+        """Return the stopped budget windows last changed in the window."""
+        ...
+
+    def read_earliest_waiting_year(self, window_run_id: UUID) -> WaitingYear | None:
+        """Return the window's earliest year still waiting, never changed."""
         ...
 
 
@@ -443,7 +457,30 @@ class RestartCallBuilder:
             created_at=created_at,
         )
 
-    def _report_call(self, stored: StoredReportRun) -> CallStart:
+    def report_calculation(
+        self, report_run_id: UUID
+    ) -> tuple[EconomyWorker, RunCalculation] | None:
+        """Return a report run's worker and coordinator call, or None when gone.
+
+        A budget window is restarted from its earliest waiting year's call,
+        and the service's year starter derives each later year's from it.
+        Raise DeferredRestartError or CallNotRebuiltError as ``build`` does,
+        the latter naming no simulation runs: a window's years are failed by
+        the window, never by the restart.
+        """
+        try:
+            stored = self._restarts.read_report_run(report_run_id)
+            return None if stored is None else self._report_calculation(stored)
+        except (SQLAlchemyError, VersionManifestUnavailableError) as error:
+            raise DeferredRestartError(type(error).__name__) from error
+        except _REBUILD_ERRORS as error:
+            raise CallNotRebuiltError(
+                _rebuild_reason(error), error_type=type(error).__name__
+            ) from error
+
+    def _report_calculation(
+        self, stored: StoredReportRun
+    ) -> tuple[EconomyWorker, RunCalculation]:
         worker = self._economy_worker(stored.country, stored.versions)
         calculation = report_run_calculation(
             worker,
@@ -457,6 +494,10 @@ class RestartCallBuilder:
             baseline_policy=stored.baseline.reform,
             reform_policy=stored.reform.reform,
         )
+        return worker, calculation
+
+    def _report_call(self, stored: StoredReportRun) -> CallStart:
+        worker, calculation = self._report_calculation(stored)
         caller = self._callers.economy
 
         def start(observability_context: dict[str, Any] | None) -> Awaitable[str]:

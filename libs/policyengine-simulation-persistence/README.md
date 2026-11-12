@@ -137,6 +137,10 @@ the run tables and their inputs, and `UPDATE` of `updated_at`,
   still equals `created_at`: household jobs, report runs outside a budget
   window whose baseline is an economy simulation, and runs of economy
   simulations that no report run names (standalone runs).
+- `list_idle_budget_windows` returns the budget windows that stopped: pending
+  or running, with no year under way and years still waiting untouched,
+  last changed in a window. `read_earliest_waiting_year` names the year a
+  restart starts the window from, and marks.
 - `mark_restart` sets a listed row's `updated_at` to the statement's clock
   while it is still unstarted, so it is listed and marked only once.
 - `read_unstarted_report_run` and `read_unstarted_simulation_run` read back

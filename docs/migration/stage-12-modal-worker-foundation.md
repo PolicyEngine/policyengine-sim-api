@@ -816,8 +816,17 @@ service's (`policyengine_simulation_entry.run_restarts`, `run_restart_calls`
 and `run_restart_check`, on `policyengine_simulation_persistence`), which the
 image adds as source.
 
-It leaves alone a budget window's report runs and household simulations'
-runs: it can't rebuild their calls yet. Each check is a
+A budget window's years are never restarted one by one. A window stops when
+no year is under way and years still wait: the entrypoint stopped before
+starting its first years, or a year's coordinator before starting the next.
+The check restarts a window that stopped 3 to 10 minutes ago, with its
+waiting years untouched, as the entrypoint starts a new window: it rebuilds
+the earliest waiting year's call from its stored rows, marks that year, and
+advances the window (`BudgetWindowStore.advance_window`) with the
+entrypoint's year starter (`YearStarts`), which derives each later year's
+call from the first's. A window whose first call can't be rebuilt is marked
+and left, and the sweep fails it as stalled. Household simulations' runs
+are left alone: the check can't rebuild their calls yet. Each check is a
 `v2_run_restart_check` operation and each row it takes up a
 `v2_run_restart` operation, with the row's kind, ID, age and outcome, and
 each outcome is also logged as a `v2_run_restart_outcome` event. A deferred

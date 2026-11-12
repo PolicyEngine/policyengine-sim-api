@@ -46,6 +46,7 @@ from policyengine_simulation_persistence import (
     RunRestartStore,
     create_simulation_engine,
 )
+from policyengine_stage12_persistence import BudgetWindowStore
 
 from policyengine_simulation_entry.economy_workers import (
     ManifestEconomyWorkers,
@@ -215,6 +216,7 @@ def scheduled_restart_service(
             households=HouseholdJobStore.from_engine(
                 engine, statement_timeout_milliseconds=timeout
             ),
+            windows=BudgetWindowStore(engine=engine),
         ),
         workers=RestartWorkers(
             economy=ManifestEconomyWorkers.from_modal(

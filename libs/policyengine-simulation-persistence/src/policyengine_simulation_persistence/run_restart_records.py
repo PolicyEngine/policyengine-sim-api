@@ -11,8 +11,12 @@ function, starts such a run's call once more:
    (``updated_at`` still equals ``created_at``): household jobs, report runs,
    and standalone simulation runs, which no report run names. A report run's
    own simulation runs are its coordinator's to start. Budget-window years
-   and household simulations are left out: the check can't rebuild their
-   calls yet.
+   are left out, and household simulations too: the check can't rebuild
+   their calls yet.
+   ``list_idle_budget_windows`` lists, apart, the budget windows that
+   stopped: no year is under way and years are still waiting, untouched,
+   since a time in the window. ``read_earliest_waiting_year`` names the year
+   a restart starts the window from, and marks.
 2. ``mark_restart`` sets the row's ``updated_at`` before the check starts its
    call, so the row is never listed again and is restarted at most once. It
    uses the statement's clock rather than the transaction's, so the mark
@@ -35,7 +39,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final
 
-from sqlalchemy import exists, func, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 
 from policyengine_simulation_persistence.economy_run_records import (
     RunVersions,
@@ -52,8 +56,10 @@ from policyengine_simulation_persistence.input_tables import (
     tax_benefit_models,
 )
 from policyengine_simulation_persistence.tables import (
+    ReportRunStatus,
     SimulationStatus,
     SimulationType,
+    budget_window_runs,
     household_jobs,
     report_runs,
     reports,
@@ -79,8 +85,12 @@ class RestartKind(StrEnum):
     HOUSEHOLD_JOB = "household_job"
     REPORT_RUN = "report_run"
     SIMULATION_RUN = "simulation_run"
+    # A budget window none of whose years is under way: a restart starts its
+    # earliest waiting years, as the service starts a new window's.
+    BUDGET_WINDOW = "budget_window"
 
 
+# The table of each kind restarted one row at a time.
 RESTART_TABLES: Final[dict[RestartKind, Table]] = {
     RestartKind.HOUSEHOLD_JOB: household_jobs,
     RestartKind.REPORT_RUN: report_runs,
@@ -90,7 +100,11 @@ RESTART_TABLES: Final[dict[RestartKind, Table]] = {
 
 @dataclass(frozen=True)
 class UnstartedRun:
-    """A row still pending with no Modal call, and when it was created."""
+    """A row still pending with no Modal call, and since when it has waited.
+
+    ``created_at`` is a row's creation, and a budget window's last change:
+    the latest change of the window or any of its years.
+    """
 
     kind: RestartKind
     run_id: UUID
@@ -99,6 +113,14 @@ class UnstartedRun:
 
 class StoredRunUnreadableError(LookupError):
     """A run's stored rows no longer describe one calculation to start."""
+
+
+@dataclass(frozen=True)
+class WaitingYear:
+    """A budget window's year still pending with no call, never changed since."""
+
+    report_run_id: UUID
+    year: int
 
 
 @dataclass(frozen=True)
@@ -245,6 +267,97 @@ def list_unstarted_runs(
         )
     listed.sort(key=lambda run: (run.created_at, run.run_id))
     return tuple(listed[:limit])
+
+
+_ACTIVE_WINDOW_STATUSES: Final = (
+    ReportRunStatus.PENDING.value,
+    ReportRunStatus.RUNNING.value,
+)
+
+
+def _year_of_window() -> ColumnElement[bool]:
+    return report_runs.c.budget_window_run_id == budget_window_runs.c.id
+
+
+def _year_waiting() -> ColumnElement[bool]:
+    return and_(report_runs.c.status == _PENDING, report_runs.c.modal_call_id.is_(None))
+
+
+def _year_under_way() -> ColumnElement[bool]:
+    return or_(
+        report_runs.c.status == ReportRunStatus.RUNNING.value,
+        and_(
+            report_runs.c.status == _PENDING,
+            report_runs.c.modal_call_id.is_not(None),
+        ),
+    )
+
+
+def list_idle_budget_windows(
+    connection: Connection,
+    *,
+    idle_after: datetime,
+    idle_before: datetime,
+    limit: int,
+) -> tuple[UnstartedRun, ...]:
+    """Return the stopped budget windows last changed in the window, oldest first.
+
+    A window has stopped when it is pending or running, none of its years is
+    under way (running, or pending with a call), and years are still waiting
+    (pending with no call) that nothing has changed since their insert: the
+    service stopped before starting its first years, or a year's coordinator
+    before starting the next. Its last change is the latest ``updated_at`` of
+    the window and its years. A window whose waiting year was marked by a
+    restart is not listed again until that year has started.
+    """
+    last_year_change = (
+        select(func.max(report_runs.c.updated_at))
+        .where(_year_of_window())
+        .scalar_subquery()
+    )
+    last_change = func.greatest(
+        budget_window_runs.c.updated_at,
+        func.coalesce(last_year_change, budget_window_runs.c.updated_at),
+    )
+    statement = (
+        select(budget_window_runs.c.id, last_change.label("last_change"))
+        .where(
+            budget_window_runs.c.status.in_(_ACTIVE_WINDOW_STATUSES),
+            ~exists().where(_year_of_window(), _year_under_way()),
+            exists().where(_year_of_window(), _year_waiting()),
+            ~exists().where(
+                _year_of_window(),
+                _year_waiting(),
+                report_runs.c.updated_at != report_runs.c.created_at,
+            ),
+            last_change > idle_after,
+            last_change <= idle_before,
+        )
+        .order_by(last_change, budget_window_runs.c.id)
+        .limit(limit)
+    )
+    return tuple(
+        UnstartedRun(
+            kind=RestartKind.BUDGET_WINDOW, run_id=row.id, created_at=row.last_change
+        )
+        for row in connection.execute(statement)
+    )
+
+
+def read_earliest_waiting_year(
+    connection: Connection, window_run_id: UUID
+) -> WaitingYear | None:
+    """Return the window's earliest year still waiting, never changed, or None."""
+    row = connection.execute(
+        select(report_runs.c.id, report_runs.c.year)
+        .where(
+            report_runs.c.budget_window_run_id == window_run_id,
+            *_unstarted(report_runs),
+        )
+        .order_by(report_runs.c.year)
+        .limit(1)
+    ).one_or_none()
+    return None if row is None else WaitingYear(report_run_id=row.id, year=row.year)
 
 
 def mark_restart(connection: Connection, run: UnstartedRun) -> bool:

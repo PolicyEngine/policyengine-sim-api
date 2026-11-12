@@ -20,7 +20,9 @@ with no call recorded, as when the simulation service stopped between
 creating it and starting its call; the simulation service's own restart code
 (``policyengine_simulation_entry.run_restart_check``) rebuilds the call from
 the stored rows and records it. A run it can't start again is failed with
-``run_not_started``, as the sweep would fail it at 15 minutes. Its telemetry
+``run_not_started``, as the sweep would fail it at 15 minutes. A budget
+window that stopped 3 to 10 minutes ago, with no year under way and years
+still waiting, has its earliest waiting years started again. Its telemetry
 counts each restart and how it ended.
 
 Both connect as the Modal worker role, from the same Modal secret the v2
