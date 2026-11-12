@@ -23,7 +23,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
 from policyengine_simulation_executor.stage12_runtime.dependencies import (
     artifact_store,
 )
-from stage12_fake_report_runs import REFORM_RUN_ID, report_run_context
+from stage12_fake_report_runs import REFORM_RUN_ID, simulation_run_context
 from stage12_fake_stores import simulation_frames
 from stage12_runtime_support import invocation_context, planned_simulation
 
@@ -177,8 +177,9 @@ def test_the_store_keeps_a_report_runs_output_with_its_simulation_run() -> None:
     output_objects = InMemoryObjectStore()
     store = _report_run_store(artifact_objects, output_objects)
 
+    # The worker's context names the simulation run its call claims.
     descriptor = store.write_simulation_output(
-        report_run_context(),
+        simulation_run_context(REFORM_RUN_ID),
         simulation=planned_simulation(SimulationRole.REFORM),
         frames=simulation_frames(),
     )

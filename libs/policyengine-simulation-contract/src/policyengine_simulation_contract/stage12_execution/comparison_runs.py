@@ -28,7 +28,7 @@ class ReportRunIds(StrictContractModel):
 
     The simulation service creates the three rows before it starts the
     coordinator. The coordinator records the report run's status and results,
-    and each worker records its own simulation run's.
+    and each worker it starts claims and records its own simulation run.
     """
 
     report_run_id: UUID
@@ -64,9 +64,13 @@ class Stage12InvocationContext(StrictContractModel):
     Records the originating request, the environments, the worker version and
     callable, the manifest digests and the artifact prefix. Automatic runs also
     name the production function call they are compared with. Artifacts are kept
-    for at most 30 days after ``created_at``. A call that also records its
-    outcome on the Public API's run tables names those runs in ``report_run``;
-    its simulation output files go to their own bucket, which keeps them.
+    for at most 30 days after ``created_at``.
+
+    A detailed-save call works on the Public API's run tables instead of the
+    comparison path's records: a report coordinator's call names its report
+    run and both simulation runs in ``report_run``, and a simulation worker's
+    call names the one simulation run it claims in ``simulation_run_id``.
+    Its simulation output files go to their own bucket, which keeps them.
     """
 
     contract_version: Literal[1] = 1
@@ -88,8 +92,9 @@ class Stage12InvocationContext(StrictContractModel):
     production_function_call_id: ContractText | None = None
     created_at: datetime
     retention_expires_at: datetime
-    # Comparison runs leave it unset and record only the Stage 12 tables.
+    # Comparison runs leave both unset and record only the Stage 12 tables.
     report_run: ReportRunIds | None = None
+    simulation_run_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_retention(self) -> Stage12InvocationContext:
@@ -99,11 +104,23 @@ class Stage12InvocationContext(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_report_run_is_direct(self) -> Stage12InvocationContext:
-        """Reject report runs on a shadow run compared with a production call."""
-        if self.report_run is not None and self.production_function_call_id:
+        """Reject runs on a shadow run compared with a production call.
+
+        A call names a report run, for its coordinator, or a simulation run,
+        for a worker, not both.
+        """
+        if self.records_runs and self.production_function_call_id:
             msg = "a run compared with a production function call has no report run"
             raise ValueError(msg)
+        if self.report_run is not None and self.simulation_run_id is not None:
+            msg = "a call names a report run or a simulation run, not both"
+            raise ValueError(msg)
         return self
+
+    @property
+    def records_runs(self) -> bool:
+        """Whether this is a detailed-save call, which works on the run tables."""
+        return self.report_run is not None or self.simulation_run_id is not None
 
 
 ErrorCode = Annotated[str, Field(min_length=1, max_length=64)]

@@ -411,6 +411,38 @@ def test_simulation_workers_pass_their_own_modal_call_id(
 
 
 @pytest.mark.parametrize(
+    ("arguments", "expected_parent"),
+    [
+        # A detailed-save call names its report run and passes no record.
+        (({"report": 1}, {"context": 1}), None),
+        # A comparison-path call passes its evaluation record.
+        (({"report": 1}, {"context": 1}, {"parent": 1}), {"parent": 1}),
+    ],
+    ids=["report-run", "comparison"],
+)
+def test_the_coordinator_takes_an_evaluation_record_only_on_the_comparison_path(
+    monkeypatch, arguments, expected_parent
+) -> None:
+    from policyengine_simulation_executor import stage12_runtime
+
+    module = _load(monkeypatch)
+    monkeypatch.setattr(
+        module.modal, "current_function_call_id", lambda: "call-1", raising=False
+    )
+    received = []
+
+    def implementation(payload, context, parent, **_kwargs):
+        received.append((payload, context, parent))
+        return {"report_run_id": "run", "status": "succeeded"}
+
+    monkeypatch.setattr(stage12_runtime, "coordinate_report", implementation)
+
+    module.coordinate_report(*arguments, observability_context=None)
+
+    assert received == [({"report": 1}, {"context": 1}, expected_parent)]
+
+
+@pytest.mark.parametrize(
     "function_name",
     [
         "run_single_simulation_us",

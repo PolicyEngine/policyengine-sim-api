@@ -260,48 +260,182 @@ def test_a_report_run_fails_once_and_then_never_completes(
     assert row["completed_at"] == LATER
 
 
-def test_a_simulation_run_moves_to_the_latest_call_until_it_finishes(
+def test_a_simulation_run_is_claimed_only_by_the_call_recorded_on_it(
     store, seeder, seeded_run: SeededReportRun
 ) -> None:
+    # A worker claims its own run under its call ID, as a household function
+    # claims its job; Modal restarts a pre-empted worker under the same ID.
     run_id = seeded_run.run_ids.baseline_simulation_run_id
 
     first = store.claim_simulation_run(
         run_id, modal_call_id="fc-worker-1", claimed_at=NOW
     )
-    # The coordinator started this simulation again after a restart.
-    second = store.claim_simulation_run(
+    other_call = store.claim_simulation_run(
         run_id, modal_call_id="fc-worker-2", claimed_at=LATER
+    )
+    restarted = store.claim_simulation_run(
+        run_id, modal_call_id="fc-worker-1", claimed_at=LATER
+    )
+
+    assert first == RunWrite(changed=True, status=RunStatus.RUNNING)
+    assert other_call == RunWrite(changed=False, status=RunStatus.RUNNING)
+    assert restarted == RunWrite(changed=True, status=RunStatus.RUNNING)
+    row = seeder.row("simulation_runs", run_id)
+    assert row["modal_call_id"] == "fc-worker-1"
+    assert row["started_at"] == NOW
+    assert row["updated_at"] == LATER
+
+
+def test_a_pending_simulation_run_is_claimed_only_by_the_call_recorded_on_it(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    # The simulation service records the call it starts for a simulation run
+    # of its own while the run is still pending.
+    run_id = seeded_run.run_ids.reform_simulation_run_id
+    simulation_runs = seeder.table("simulation_runs")
+    with seeder.engine.begin() as connection:
+        connection.execute(
+            simulation_runs.update()
+            .where(simulation_runs.c.id == run_id)
+            .values(modal_call_id="fc-worker")
+        )
+
+    other_call = store.claim_simulation_run(
+        run_id, modal_call_id="fc-other", claimed_at=NOW
+    )
+    recorded_call = store.claim_simulation_run(
+        run_id, modal_call_id="fc-worker", claimed_at=LATER
+    )
+
+    assert other_call == RunWrite(changed=False, status=RunStatus.PENDING)
+    assert recorded_call == RunWrite(changed=True, status=RunStatus.RUNNING)
+    assert seeder.row("simulation_runs", run_id)["started_at"] == LATER
+
+
+def test_a_simulation_run_completes_only_while_its_call_holds_it(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    run_id = seeded_run.run_ids.baseline_simulation_run_id
+    store.claim_simulation_run(run_id, modal_call_id="fc-worker", claimed_at=NOW)
+
+    by_other_call = store.complete_simulation_run(
+        run_id,
+        modal_call_id="fc-other",
+        output_uri="gs://private/simulations/other.parquet",
+        output_sha256="b" * 64,
+        completed_at=LATER,
     )
     completed = store.complete_simulation_run(
         run_id,
+        modal_call_id="fc-worker",
         output_uri="gs://private/simulations/baseline.parquet",
         output_sha256="a" * 64,
         completed_at=LATER,
     )
     repeated = store.complete_simulation_run(
         run_id,
+        modal_call_id="fc-worker",
         output_uri="gs://private/simulations/baseline-other.parquet",
-        output_sha256="b" * 64,
+        output_sha256="c" * 64,
         completed_at=LATER,
     )
     failed_after = store.fail_simulation_run(
         run_id, error_message="cancelled", failed_at=LATER
     )
     claimed_after = store.claim_simulation_run(
-        run_id, modal_call_id="fc-worker-3", claimed_at=LATER
+        run_id, modal_call_id="fc-worker", claimed_at=LATER
     )
 
-    assert first == RunWrite(changed=True, status=RunStatus.RUNNING)
-    assert second == RunWrite(changed=True, status=RunStatus.RUNNING)
+    assert by_other_call == RunWrite(changed=False, status=RunStatus.RUNNING)
     assert completed == RunWrite(changed=True, status=RunStatus.SUCCEEDED)
     assert repeated == RunWrite(changed=False, status=RunStatus.SUCCEEDED)
     assert failed_after == RunWrite(changed=False, status=RunStatus.SUCCEEDED)
     assert claimed_after == RunWrite(changed=False, status=RunStatus.SUCCEEDED)
     row = seeder.row("simulation_runs", run_id)
-    assert row["modal_call_id"] == "fc-worker-2"
-    assert row["started_at"] == NOW
     assert row["output_uri"] == "gs://private/simulations/baseline.parquet"
     assert row["output_sha256"] == "a" * 64
+    assert row["completed_at"] == LATER
+
+
+def test_a_worker_fails_its_simulation_run_only_while_its_call_holds_it(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    run_id = seeded_run.run_ids.reform_simulation_run_id
+    store.claim_simulation_run(run_id, modal_call_id="fc-worker", claimed_at=NOW)
+
+    by_other_call = store.fail_simulation_run(
+        run_id,
+        modal_call_id="fc-other",
+        error_message="simulation_execution_failed: other",
+        failed_at=LATER,
+    )
+    failed = store.fail_simulation_run(
+        run_id,
+        modal_call_id="fc-worker",
+        error_message="simulation_execution_failed: the reform failed",
+        failed_at=LATER,
+    )
+
+    assert by_other_call == RunWrite(changed=False, status=RunStatus.RUNNING)
+    assert failed == RunWrite(changed=True, status=RunStatus.FAILED)
+    row = seeder.row("simulation_runs", run_id)
+    assert row["error_message"] == "simulation_execution_failed: the reform failed"
+    # The coordinator reads the failure its worker recorded.
+    state = store.get_simulation_run(run_id)
+    assert state.error_message == "simulation_execution_failed: the reform failed"
+    assert state.modal_call_id == "fc-worker"
+
+
+def test_a_simulation_run_an_earlier_call_holds_is_released_for_the_next_one(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    # A restarted coordinator stops the worker its pre-empted attempt
+    # started, releases that worker's run, and starts a new worker on it.
+    run_id = seeded_run.run_ids.baseline_simulation_run_id
+    store.claim_simulation_run(run_id, modal_call_id="fc-earlier", claimed_at=NOW)
+
+    by_other_call = store.release_simulation_run(
+        run_id, modal_call_id="fc-other", released_at=LATER
+    )
+    released = store.release_simulation_run(
+        run_id, modal_call_id="fc-earlier", released_at=LATER
+    )
+    stale_completion = store.complete_simulation_run(
+        run_id,
+        modal_call_id="fc-earlier",
+        output_uri="gs://private/simulations/stale.parquet",
+        output_sha256="d" * 64,
+        completed_at=LATER,
+    )
+    next_claim = store.claim_simulation_run(
+        run_id, modal_call_id="fc-next", claimed_at=LATER
+    )
+
+    assert by_other_call == RunWrite(changed=False, status=RunStatus.RUNNING)
+    assert released == RunWrite(changed=True, status=RunStatus.PENDING)
+    assert stale_completion == RunWrite(changed=False, status=RunStatus.PENDING)
+    assert next_claim == RunWrite(changed=True, status=RunStatus.RUNNING)
+    row = seeder.row("simulation_runs", run_id)
+    assert row["modal_call_id"] == "fc-next"
+    # The run counts from its first claim, for the stuck-run sweep.
+    assert row["started_at"] == NOW
+    assert row["output_uri"] is None
+
+
+def test_a_finished_simulation_run_is_never_released(
+    store, seeded_run: SeededReportRun
+) -> None:
+    run_id = seeded_run.run_ids.baseline_simulation_run_id
+    store.claim_simulation_run(run_id, modal_call_id="fc-worker", claimed_at=NOW)
+    store.fail_simulation_run(
+        run_id, modal_call_id="fc-worker", error_message="failed", failed_at=NOW
+    )
+
+    released = store.release_simulation_run(
+        run_id, modal_call_id="fc-worker", released_at=LATER
+    )
+
+    assert released == RunWrite(changed=False, status=RunStatus.FAILED)
 
 
 def test_a_pending_or_running_simulation_run_can_fail_but_not_resume(
@@ -317,6 +451,7 @@ def test_a_pending_or_running_simulation_run_can_fail_but_not_resume(
     )
     completed = store.complete_simulation_run(
         run_id,
+        modal_call_id="fc-worker",
         output_uri="gs://private/x.parquet",
         output_sha256="c" * 64,
         completed_at=LATER,
@@ -363,3 +498,7 @@ def test_a_missing_run_raises_lookup_error(store, seeded_run) -> None:
         store.claim_report_run(uuid4(), modal_call_id="fc-coordinator", claimed_at=NOW)
     with pytest.raises(LookupError, match="simulation run"):
         store.fail_simulation_run(uuid4(), error_message="failed", failed_at=NOW)
+    with pytest.raises(LookupError, match="simulation run"):
+        store.release_simulation_run(
+            uuid4(), modal_call_id="fc-worker", released_at=NOW
+        )

@@ -2,29 +2,89 @@
 
 The coordinator probes every started child together, without blocking,
 backing off between passes while none finishes, within the shared child-wait
-window that opens when the coordinator starts.
+window that opens when the coordinator starts. A failed child, or the window
+closing, is recorded through the coordinator's own ``child_failure`` and
+``cancel_children``, on whichever records it keeps.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
-from policyengine_simulation_contract.stage12_execution import (
-    SimulationArtifactDescriptor,
-)
 from policyengine_simulation_observability.stages import Stage
 
-from .coordinated_simulations import (
-    cancel_pending_simulations,
-    cancellation,
-    child_failure_detail,
-)
+from .coordinated_simulations import cancellation
 from .failure_recording import report_original_failure
 from .failures import Stage12ExecutionError, Stage12FailureDetail
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from contextlib import AbstractContextManager
+
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.stage12_execution import (
+        SimulationArtifactDescriptor,
+    )
+    from policyengine_simulation_observability.stages import StagePlan
+
+    from .coordination_core import CoordinatorDependencies
     from .dependencies import ChildCall
-    from .report_coordination import ReportCoordination
+    from .failure_causes import StageProgress
+
+
+class WaitingCoordination(Protocol):
+    """What waiting for children needs of a coordinator."""
+
+    @property
+    def dependencies(self) -> CoordinatorDependencies:
+        """The coordinator's seams: its clock, sleep and wait window."""
+        ...
+
+    @property
+    def stage_plan(self) -> StagePlan:
+        """How the report's stages are named."""
+        ...
+
+    @property
+    def progress(self) -> StageProgress:
+        """The last stage entered, for failure causes."""
+        ...
+
+    @property
+    def child_wait_deadline(self) -> float:
+        """The monotonic time the shared wait window closes."""
+        ...
+
+    @property
+    def runtime(self) -> ObservabilityRuntime | None:
+        """The telemetry runtime, or None."""
+        ...
+
+    def span(
+        self, stage: Stage, attributes: Mapping[str, object] | None = None
+    ) -> AbstractContextManager[object]:
+        """Track ``stage`` and time it as a span."""
+        ...
+
+    def child_descriptor(
+        self, role: str, result: object
+    ) -> SimulationArtifactDescriptor | None:
+        """Return a finished child's descriptor, or None to keep waiting.
+
+        None means the coordinator replaced the role's call in the call
+        mapping the wait was given, which the wait then probes. Raises for a
+        result that is no descriptor.
+        """
+        ...
+
+    def child_failure(self, role: str, error: Exception) -> Stage12FailureDetail:
+        """Report a failed child call; return the failure its report records."""
+        ...
+
+    def cancel_children(self, roles: set[str], detail: Stage12FailureDetail) -> None:
+        """Record each started, unfinished child of ``roles`` failed, then stop it."""
+        ...
+
 
 SIMULATION_POLL_INITIAL_SECONDS = 0.25
 SIMULATION_POLL_MAX_SECONDS = 1.0
@@ -39,7 +99,7 @@ def _next_poll_interval(current: float) -> float:
 
 
 def wait_for_children(
-    coordination: ReportCoordination,
+    coordination: WaitingCoordination,
     calls: dict[str, ChildCall],
     descriptors: dict[str, SimulationArtifactDescriptor],
 ) -> None:
@@ -53,7 +113,7 @@ def wait_for_children(
 
 
 def _observe_children(
-    coordination: ReportCoordination,
+    coordination: WaitingCoordination,
     calls: dict[str, ChildCall],
     descriptors: dict[str, SimulationArtifactDescriptor],
 ) -> None:
@@ -75,25 +135,18 @@ def _observe_children(
                 # The probe records the child's role, so a failure names it.
                 with coordination.progress.stage(wait_stage_name, role=role):
                     result = call.get(timeout=0)
-                    descriptor = SimulationArtifactDescriptor.model_validate(result)
+                    descriptor = coordination.child_descriptor(role, result)
             except TimeoutError:
                 continue
             except Exception as error:  # noqa: BLE001  # a child call's failure can be any exception type; it is recorded and stops the other child
-                detail = child_failure_detail(
-                    error=error,
-                    simulation=coordination.simulations[role],
-                    store=coordination.persistence,
-                    runtime=coordination.runtime,
-                    progress=coordination.progress,
-                )
-                cancel_pending_simulations(
-                    calls=calls,
-                    simulations=coordination.simulations,
-                    roles=pending - {role},
-                    store=coordination.persistence,
-                    detail=cancellation(f"the {role} simulation failed"),
+                detail = coordination.child_failure(role, error)
+                coordination.cancel_children(
+                    pending - {role}, cancellation(f"the {role} simulation failed")
                 )
                 raise Stage12ExecutionError(detail) from None
+            if descriptor is None:
+                # The coordinator now waits on another call for this child.
+                continue
             descriptors[role] = descriptor
             pending.remove(role)
             progress_made = True
@@ -118,14 +171,9 @@ def _observe_children(
                 runtime=coordination.runtime,
                 failure_scope="child_wait_timeout",
             )
-            cancel_pending_simulations(
-                calls=calls,
-                simulations=coordination.simulations,
-                roles=pending,
-                store=coordination.persistence,
-                detail=cancellation(
-                    f"the {timeout_seconds:g}-second wait window closed"
-                ),
+            coordination.cancel_children(
+                set(pending),
+                cancellation(f"the {timeout_seconds:g}-second wait window closed"),
             )
             raise wait_timeout
         # Never sleep past the deadline, so the window closes on time.

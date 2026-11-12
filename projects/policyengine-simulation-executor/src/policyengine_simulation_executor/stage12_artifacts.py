@@ -514,12 +514,12 @@ class Stage12ArtifactStore:
     ) -> SimulationArtifactDescriptor:
         """Store a simulation's output file where its call keeps it.
 
-        A call that names a report run keeps it in the simulation output
-        bucket, under its simulation run (``write_simulation_run_output``); a
-        comparison run keeps it under its artifact prefix
-        (``write_simulation``).
+        A worker's call that names its simulation run keeps it in the
+        simulation output bucket, under that run
+        (``write_simulation_run_output``); a comparison run keeps it under its
+        artifact prefix (``write_simulation``).
         """
-        if context.report_run is None:
+        if context.simulation_run_id is None:
             return self.write_simulation(
                 prefix=context.artifact_prefix,
                 simulation=simulation,
@@ -530,7 +530,7 @@ class Stage12ArtifactStore:
         return self.write_simulation_run_output(
             SimulationRunOutputLocation(
                 environment=context.environment,
-                simulation_run_id=context.report_run.simulation_run_id(simulation.role),
+                simulation_run_id=context.simulation_run_id,
             ),
             simulation=simulation,
             frames=frames,

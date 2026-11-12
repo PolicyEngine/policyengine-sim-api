@@ -32,7 +32,7 @@ from policyengine_simulation_executor.stage12_runtime.output_planning import (
     resolve_report_output_plan,
 )
 from policyengine_simulation_executor.stage12_runtime.partition import US_REGION_GROUPS
-from policyengine_simulation_executor.stage12_runtime.simulation import (
+from policyengine_simulation_executor.stage12_runtime.worker_inputs import (
     simulation_runtime_params,
 )
 

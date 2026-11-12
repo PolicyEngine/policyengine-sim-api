@@ -56,10 +56,17 @@ from .failures import (
     Stage12FailureDetail,
     validate_policy_periods,
 )
-from .output_planning import apply_output_plan, validate_output_frames
+from .output_planning import (
+    apply_output_plan,
+    resolve_simulation_output_plan,
+    validate_output_frames,
+)
 from .partition import should_segment_simulation
 from .report_run_access import report_run_store
-from .report_run_recording import SimulationRunRecordingStore
+from .report_run_recording import SimulationRunRecorder
+from .reused_outputs import CloudStorageOutputFiles
+from .simulation_runs import run_simulation_run
+from .worker_inputs import require_worker_context, simulation_runtime_params
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
@@ -70,6 +77,7 @@ if TYPE_CHECKING:
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.spm import SPMProvenance
     from policyengine_simulation_contract.stage12_bundle import CountryId
+    from policyengine_simulation_contract.stage12_execution import Stage12OutputPlan
     from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
     from policyengine_simulation_executor.simulation_runtime import (
@@ -78,6 +86,7 @@ if TYPE_CHECKING:
     )
 
     from .report_run_access import ReportRunWriter
+    from .reused_outputs import OutputFileReader
 
 logger = logging.getLogger(__name__)
 
@@ -141,19 +150,6 @@ def build_stage12_simulation(
     return model
 
 
-def simulation_runtime_params(
-    simulation: PlannedSimulationExecutionInput,
-) -> dict[str, Any]:
-    """Return the parameters a Stage 12 simulation is resolved and built from."""
-    return {
-        "country": simulation.geography.country,
-        "scope": "macro",
-        "time_period": str(simulation.year),
-        "region": simulation.geography.region,
-        **simulation.options,
-    }
-
-
 def simulation_input_sha256(simulation: SimulationExecutionInput) -> str:
     """Hash a simulation input ignoring its run ids, so equal inputs hash equally."""
     normalized = simulation.model_dump(
@@ -161,29 +157,6 @@ def simulation_input_sha256(simulation: SimulationExecutionInput) -> str:
         exclude={"evaluation_id", "simulation_execution_id"},
     )
     return sha256(canonical_json_bytes(normalized)).hexdigest()
-
-
-def _require_context(
-    simulation: PlannedSimulationExecutionInput,
-    context: Stage12InvocationContext,
-    *,
-    required_country: CountryId,
-) -> None:
-    if simulation.geography.country != required_country:
-        msg = "single-simulation input was sent to another country worker"
-        raise ValueError(msg)
-    if simulation.bundle.policyengine_version != context.worker_version:
-        msg = "single-simulation worker version does not match its context"
-        raise ValueError(msg)
-    if simulation.bundle.bundle_manifest_sha256 != context.bundle_manifest_sha256:
-        msg = "single-simulation bundle digest does not match its context"
-        raise ValueError(msg)
-    if str(simulation.evaluation_id) not in context.artifact_prefix:
-        msg = "single-simulation artifact prefix names another comparison run"
-        raise ValueError(msg)
-    if simulation.output_plan.country != required_country:
-        msg = "single-simulation output plan names another country"
-        raise ValueError(msg)
 
 
 def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
@@ -482,8 +455,9 @@ class SimulationWorkerDependencies:
 
     The defaults are the Stage 12 database store, the private artifact bucket,
     the standard country-package calculation, the deployed region-group
-    segment runner, no telemetry runtime, and the report run store, which only
-    a call that names a report run uses.
+    segment runner, no telemetry runtime, and, for a call that names a
+    simulation run, the run store, the output planning of a simulation on
+    its own, and the Cloud Storage reader of a succeeded run's output file.
     """
 
     store: ComparisonStore | None = None
@@ -501,6 +475,10 @@ class SimulationWorkerDependencies:
     ) = None
     runtime: ObservabilityRuntime | None = None
     report_runs: ReportRunWriter | None = None
+    output_plan_resolver: Callable[[SimulationExecutionInput], Stage12OutputPlan] = (
+        resolve_simulation_output_plan
+    )
+    output_files: OutputFileReader | None = None
 
 
 def run_single_simulation(
@@ -511,53 +489,34 @@ def run_single_simulation(
     dependencies: SimulationWorkerDependencies | None = None,
     modal_call_id: str | None = None,
 ) -> dict[str, Any]:
-    """Calculate one planned simulation, store its artifact, and return its descriptor.
+    """Calculate one simulation, store its output, and return its descriptor.
 
-    A child already marked succeeded returns its stored descriptor without
-    recalculating. A failure after the run is marked running marks it FAILED
-    and raises a ``RuntimeError`` that carries no calculation detail. A call
-    whose context names a report run also records its simulation run's
-    claim, output file and failure under ``modal_call_id``, and names its
-    artifacts by their digest, so a call Modal restarts can store them again.
-    It writes the output file to the simulation output bucket, which keeps
-    it; a comparison run's stays under its artifact prefix.
+    A detailed-save call's context names the simulation run it claims, and
+    ``run_simulation_run`` records that run alone, under ``modal_call_id``,
+    keeping the output file in the simulation output bucket. A
+    comparison-path call records its evaluation child record: a child
+    already marked succeeded returns its stored descriptor without
+    recalculating, and a failure after it is marked running marks it FAILED
+    and raises a ``RuntimeError`` that carries no calculation detail; its
+    output stays under its artifact prefix.
     """
     dependencies = dependencies or SimulationWorkerDependencies()
     runtime = dependencies.runtime
-    simulation = PlannedSimulationExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
-    _require_context(simulation, context, required_country=required_country)
-    persistence = dependencies.store or runtime_store(runtime)
-    recording = None
-    if context.report_run is not None:
-        if modal_call_id is None:
-            msg = "a report run's worker needs its Modal call ID"
-            raise ValueError(msg)
-        recording = SimulationRunRecordingStore(
-            persistence,
-            dependencies.report_runs or report_run_store(runtime),
-            context.report_run,
+    if context.records_runs:
+        return _run_named_simulation_run(
+            payload,
+            context,
+            required_country=required_country,
+            dependencies=dependencies,
             modal_call_id=modal_call_id,
         )
-        persistence = recording
-    artifact_storage = dependencies.artifacts or artifact_store(
-        report_run=context.report_run is not None
-    )
+    simulation = PlannedSimulationExecutionInput.model_validate(payload)
+    require_worker_context(simulation, context, required_country=required_country)
+    persistence = dependencies.store or runtime_store(runtime)
+    artifact_storage = dependencies.artifacts or artifact_store()
     child = persistence.get_simulation(simulation.simulation_execution_id)
     if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
-        if recording is not None:
-            # An earlier attempt stopped between the child's and the run's
-            # success; the run's completion is conditional, so this repeats
-            # nothing that was recorded, and if it fails the coordinator
-            # completes the run from the child's record.
-            try:
-                recording.complete_from_succeeded_child(child)
-            except Exception as error:  # noqa: BLE001  # the coordinator completes the run again
-                logger.warning(
-                    "Could not complete the simulation run of %s (%s)",
-                    simulation.simulation_execution_id,
-                    type(error).__name__,
-                )
         return descriptor_from_record(child, simulation).model_dump(mode="json")
     running = _claim_simulation(persistence, child)
     cancellation_requested = _cancellation_check(persistence, simulation)
@@ -606,6 +565,47 @@ def run_single_simulation(
         )
         msg = "Stage 12 simulation execution failed"
         raise RuntimeError(msg) from None
+
+
+def _run_named_simulation_run(
+    payload: object,
+    context: Stage12InvocationContext,
+    *,
+    required_country: CountryId,
+    dependencies: SimulationWorkerDependencies,
+    modal_call_id: str | None,
+) -> dict[str, Any]:
+    """Run a detailed-save call on the simulation run its context names.
+
+    Raises ValueError, before any write, for a context naming a report run
+    instead, or a call without its Modal call ID. The run store and the
+    buckets are opened before the claim, so a missing setting claims
+    nothing.
+    """
+    simulation_run_id = context.simulation_run_id
+    if simulation_run_id is None:
+        msg = "a worker's call names its simulation run, not a report run"
+        raise ValueError(msg)
+    if modal_call_id is None:
+        msg = "a detailed-save worker needs its Modal call ID"
+        raise ValueError(msg)
+    runtime = dependencies.runtime
+    recorder = SimulationRunRecorder(
+        writer=dependencies.report_runs or report_run_store(runtime),
+        simulation_run_id=simulation_run_id,
+        modal_call_id=modal_call_id,
+    )
+    return run_simulation_run(
+        payload,
+        context,
+        required_country=required_country,
+        recorder=recorder,
+        artifact_storage=dependencies.artifacts or artifact_store(report_run=True),
+        planner=dependencies.output_plan_resolver,
+        calculate=partial(_calculate, dependencies=dependencies),
+        output_files=dependencies.output_files or CloudStorageOutputFiles(),
+        runtime=runtime,
+    )
 
 
 def _claim_simulation(

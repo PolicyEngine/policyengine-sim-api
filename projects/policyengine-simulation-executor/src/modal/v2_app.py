@@ -369,7 +369,12 @@ def run_single_simulation_us(
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    """Calculate one planned US simulation and return its artifact descriptor."""
+    """Calculate one US simulation and return its artifact descriptor.
+
+    A ``context`` naming a simulation run claims that run under this call's
+    Modal call ID; a simulation started on its own, without an output plan,
+    is planned here.
+    """
     runtime = init_process_observability(
         service_name="policyengine-stage12-us-worker",
         service_role="stage12_simulation_worker",
@@ -428,7 +433,12 @@ def run_single_simulation_uk(
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    """Calculate one planned UK simulation and return its artifact descriptor."""
+    """Calculate one UK simulation and return its artifact descriptor.
+
+    A ``context`` naming a simulation run claims that run under this call's
+    Modal call ID; a simulation started on its own, without an output plan,
+    is planned here.
+    """
     runtime = init_process_observability(
         service_name="policyengine-stage12-uk-worker",
         service_role="stage12_simulation_worker",
@@ -473,19 +483,21 @@ def run_single_simulation_uk(
 def coordinate_report(
     payload: dict,
     context: dict,
-    parent: dict,
+    parent: dict | None = None,
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    """Run one Stage 12 report: reuse or fan out its simulations, aggregate, persist.
+    """Run one Stage 12 report: reuse or fan out its simulations, aggregate, record.
 
-    A call whose ``context`` names a report run uses the stored output of each
-    of its simulation runs that already succeeded, and starts a worker only
-    for each other simulation.
-
-    A ``production_function_call_id`` in ``context`` marks a shadow run whose
-    result is compared with that production job's. A report another
-    invocation already claimed returns a ``deduplicated`` marker instead.
+    A detailed-save call's ``context`` names its report run, and it passes no
+    ``parent``: the coordinator claims the report run under its Modal call
+    ID, uses the stored output of each simulation run that already
+    succeeded, and starts a worker for each other one, which claims its own
+    simulation run. A comparison-path call passes its ``parent`` evaluation
+    record; a ``production_function_call_id`` in its ``context`` marks a
+    shadow run whose result is compared with that production job's. A report
+    run or evaluation record another call holds, or one already finished,
+    returns a ``deduplicated`` marker instead.
     """
     coordinator_invocation_id = modal.current_function_call_id()
     if coordinator_invocation_id is None:
