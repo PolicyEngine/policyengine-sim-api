@@ -18,10 +18,12 @@
 # environment. `modal container stop` sends it SIGINT, and Modal gives the
 # call's input to another container under the same call ID, as it does
 # after a pre-emption. The check passes once the record succeeds under that
-# call, completed after the stop, and the call graph shows the call's input
-# finished in another container. A record completed before the stop proves
-# nothing: Modal's rerun then finds it finished and only returns its
-# summary. A calculation that finishes before its container is stopped
+# call, completed at least 5 seconds after the stop, and the call graph
+# shows the call's input finished in another container. A record completed
+# before then proves nothing: the stopped container may have written the
+# success before the signal reached it, and Modal's rerun then finds the
+# record finished and only returns its summary. A rerun in a new container
+# can't finish within 5 seconds of the stop. A calculation that finishes before its container is stopped
 # proves nothing, so a new one is submitted, up to PREEMPTION_CHECK_ATTEMPTS
 # times, once Modal no longer lists the last attempt's container: on that
 # warm container the calculation would finish too fast to stop. A record
@@ -74,6 +76,9 @@ scaledown_seconds="${PREEMPTION_CHECK_SCALEDOWN_SECONDS:-180}"
 request_timeout_seconds=30
 submission_timeout_seconds=60
 modal_command_timeout_seconds=60
+# A record completed sooner after the stop was completed by the stopped
+# container, not by Modal's rerun in a new one.
+rerun_minimum_seconds=5
 uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 call_id_pattern='^fc-[0-9A-Za-z]+$'
 container_id_pattern='^ta-[0-9A-Za-z]+$'
@@ -145,14 +150,27 @@ call_inputs() {
   modal_command python -m src.modal.utils.describe_call_inputs "$1"
 }
 
-# Succeed when Modal lists container <container-id> as running in
-# MODAL_ENVIRONMENT.
+# Return 0 when Modal lists container <container-id> as running in
+# MODAL_ENVIRONMENT, 1 when it doesn't, and 2 when Modal couldn't list the
+# environment's containers, which says nothing about the container.
 container_listed() {
   local listing
-  listing="$(modal_command modal container list --env "${MODAL_ENVIRONMENT}" --json)" \
-    || return 1
+  local search_status=0
+  if ! listing="$(modal_command modal container list --env "${MODAL_ENVIRONMENT}" --json)"; then
+    printf 'Modal could not list the containers in environment %s; asking again\n' \
+      "${MODAL_ENVIRONMENT}" >&2
+    return 2
+  fi
   jq -e --arg container_id "$1" 'any(.[]; .["Container ID"] == $container_id)' \
-    <<<"${listing}" >/dev/null
+    <<<"${listing}" >/dev/null || search_status=$?
+  case "${search_status}" in
+    0 | 1) return "${search_status}" ;;
+    *)
+      printf 'Modal could not list the containers in environment %s readably; asking again\n' \
+        "${MODAL_ENVIRONMENT}" >&2
+      return 2
+      ;;
+  esac
 }
 
 # Create the attempt's record. Sets record_url, record_noun, record_label
@@ -273,13 +291,20 @@ find_container() {
   [[ -n "${candidate}" ]] || return 0
   [[ "${candidate}" =~ ${container_id_pattern} ]] \
     || fail "Modal names '${candidate}' as call ${record_call_id}'s container, which is not a Modal container ID"
-  if container_listed "${candidate}"; then
-    container_id="${candidate}"
-    printf 'Call %s of %s runs in container %s\n' "${record_call_id}" "${record_label}" "${container_id}"
-  else
-    unlisted_note="container ${candidate} is not listed in Modal environment ${MODAL_ENVIRONMENT}"
-    printf '%s; asking again\n' "${unlisted_note}" >&2
-  fi
+  local listed_status=0
+  container_listed "${candidate}" || listed_status=$?
+  case "${listed_status}" in
+    0)
+      container_id="${candidate}"
+      printf 'Call %s of %s runs in container %s\n' "${record_call_id}" "${record_label}" "${container_id}"
+      ;;
+    1)
+      unlisted_note="container ${candidate} is not listed in Modal environment ${MODAL_ENVIRONMENT}"
+      printf '%s; asking again\n' "${unlisted_note}" >&2
+      ;;
+    # Modal couldn't list: the next read asks again.
+    *) ;;
+  esac
 }
 
 # When container_id is empty, set it to a container the call graph says ran
@@ -310,12 +335,17 @@ completed_after_the_stop() {
     jq -rn --arg completed_at "${record_completed_at}" \
       '$completed_at | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601'
   )" || fail "${record_label}'s completion time ${record_completed_at} is not a UTC time"
-  if ((completed_epoch > stopped_at_epoch)); then
-    return 0
+  if ((completed_epoch <= stopped_at_epoch)); then
+    attempt_outcome="missed"
+    miss_reason="${record_label} completed at ${record_completed_at}, before its container ${stopped_container_id} was stopped, so Modal's rerun of call ${stopped_call_id} found it finished"
+    return 1
   fi
-  attempt_outcome="missed"
-  miss_reason="${record_label} completed at ${record_completed_at}, before its container ${stopped_container_id} was stopped, so Modal's rerun of call ${stopped_call_id} found it finished"
-  return 1
+  if ((completed_epoch - stopped_at_epoch < rerun_minimum_seconds)); then
+    attempt_outcome="missed"
+    miss_reason="${record_label} completed at ${record_completed_at}, $((completed_epoch - stopped_at_epoch)) seconds after its container ${stopped_container_id} was stopped: too soon for Modal to have run call ${stopped_call_id} again in a new container, so the stopped container may have finished it before the signal reached it"
+    return 1
+  fi
+  return 0
 }
 
 # Wait until Modal no longer lists container <container-id>, at most
@@ -327,10 +357,19 @@ wait_for_container_to_leave() {
   [[ -n "${leaving}" ]] || return 0
   printf 'Before the next attempt, waiting for container %s to leave Modal environment %s\n' \
     "${leaving}" "${MODAL_ENVIRONMENT}"
-  while container_listed "${leaving}"; do
+  local listed_status
+  while true; do
+    listed_status=0
+    container_listed "${leaving}" || listed_status=$?
+    ((listed_status != 1)) || return 0
     if ((SECONDS - waiting_since >= scaledown_seconds)); then
-      printf 'container %s is still listed after %d seconds; submitting again anyway\n' \
-        "${leaving}" "${scaledown_seconds}" >&2
+      if ((listed_status == 0)); then
+        printf 'container %s is still listed after %d seconds; submitting again anyway\n' \
+          "${leaving}" "${scaledown_seconds}" >&2
+      else
+        printf 'Modal could not say within %d seconds whether container %s has left; submitting again anyway\n' \
+          "${scaledown_seconds}" "${leaving}" >&2
+      fi
       return 0
     fi
     sleep "${poll_seconds}"
@@ -381,9 +420,11 @@ attempt_once() {
   local started_at="${SECONDS}"
   while true; do
     read_record
-    if [[ -n "${stopped_call_id}" && -n "${record_call_id}" \
+    # A read the service answered (record_status set) must name the stopped
+    # call: Modal runs it again under the same ID.
+    if [[ -n "${record_status}" && -n "${stopped_call_id}" \
       && "${record_call_id}" != "${stopped_call_id}" ]]; then
-      fail "${record_label} names call ${record_call_id} after its container ${stopped_container_id} was stopped, not call ${stopped_call_id}, which Modal runs again under the same ID"
+      fail "${record_label} names ${record_call_id:+call }${record_call_id:-no call} after its container ${stopped_container_id} was stopped, not call ${stopped_call_id}, which Modal runs again under the same ID"
     fi
     case "${record_status}" in
       "") ;;

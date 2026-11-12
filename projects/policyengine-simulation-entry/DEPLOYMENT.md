@@ -162,10 +162,12 @@ runs that call (`src/modal/utils/describe_call_inputs.py`), and stops that
 container with `modal container stop`. Modal sends the container SIGINT and
 gives the input to another container under the same call ID, as it does
 after a pre-emption. The check requires the record to succeed under that
-call, with a completion time after the stop, and the call graph to show the
-call's input finished in another container. A record that completed before
-the stop proves nothing: Modal's rerun finds it finished and only returns
-its summary, so that attempt counts as missed. Run again, the household function or coordinator resumes its
+call, completed at least 5 seconds after the stop, and the call graph to
+show the call's input finished in another container. A record completed
+sooner proves nothing, and that attempt counts as missed: the stopped
+container may have written the success before the signal reached it, and
+Modal's rerun then finds the record finished and only returns its summary.
+A rerun in a new container can't finish within 5 seconds of the stop. Run again, the household function or coordinator resumes its
 claim. The report's simulation runs are reused, so its coordinator
 starts no worker, and the check doesn't cover a coordinator starting its
 workers again.
