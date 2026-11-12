@@ -94,18 +94,22 @@ printf 'Created report %s, run %s (baseline reused: %s, reform reused: %s)\n' \
   "$(jq -r '.baseline_reused' "${submission}")" "$(jq -r '.reform_reused' "${submission}")"
 
 started_at="${SECONDS}"
+# What the last read found, for the deadline's failure message.
+last_read="nothing yet"
 while true; do
   report_body="${work_directory}/report.json"
   if ! read_status="$(
     send report "${request_timeout_seconds}" --header "@${authorization_header}" \
       "${base_url}/reports/${report_id}"
   )"; then
+    last_read="it got no answer"
     printf 'GET /reports/%s got no answer; asking again\n' "${report_id}" >&2
   elif [[ "${read_status}" == "200" ]]; then
     newest_run_id="$(jq -r '.run.run_id // empty' "${report_body}")"
     [[ "${newest_run_id}" == "${report_run_id}" ]] \
       || fail "report ${report_id}'s newest run is ${newest_run_id:-missing}, not the created run ${report_run_id}"
     run_status="$(jq -r '.run.status' "${report_body}")"
+    last_read="the run was ${run_status}"
     case "${run_status}" in
       succeeded)
         printf 'Report run %s succeeded on .py %s with %s\n' "${report_run_id}" \
@@ -121,11 +125,12 @@ while true; do
     esac
   elif [[ "${read_status}" == "429" || "${read_status}" == 5?? ]]; then
     # The service, or Cloud Run's front end in its place, can't answer now.
+    last_read="it answered ${read_status}"
     printf 'GET /reports/%s answered %s; asking again\n' "${report_id}" "${read_status}" >&2
   else
     fail "GET /reports/${report_id} answered ${read_status}: $(cat "${report_body}")"
   fi
   ((SECONDS - started_at < deadline_seconds)) \
-    || fail "report run ${report_run_id} did not finish within ${deadline_seconds} seconds"
+    || fail "report run ${report_run_id} did not finish within ${deadline_seconds} seconds (last read: ${last_read})"
   sleep "${poll_seconds}"
 done

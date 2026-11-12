@@ -51,8 +51,6 @@ REPORT_AGGREGATES: Final = tuple(ReportAggregate)
 # How long the coordinator keeps a call's Stage 12 artifacts; the longest the
 # contract allows. Simulation output files go to the output bucket instead.
 ARTIFACT_RETENTION: Final = timedelta(days=30)
-# The context field naming a standalone simulation run's own run.
-SIMULATION_RUN_ID_FIELD: Final = "simulation_run_id"
 
 
 class DatasetNotInBundleError(LookupError):
@@ -170,6 +168,7 @@ def _context(
     *,
     run_id: UUID,
     report_run: ReportRunIds | None,
+    simulation_run_id: UUID | None = None,
 ) -> Stage12InvocationContext:
     created_at = origin.created_at
     return Stage12InvocationContext(
@@ -188,6 +187,7 @@ def _context(
         created_at=created_at,
         retention_expires_at=created_at + ARTIFACT_RETENTION,
         report_run=report_run,
+        simulation_run_id=simulation_run_id,
     )
 
 
@@ -249,11 +249,14 @@ def simulation_run_calculation(
         role=SimulationRole.STANDALONE,
         policy=policy,
     )
-    context = _context(worker, origin, run_id=simulation_run_id, report_run=None)
+    context = _context(
+        worker,
+        origin,
+        run_id=simulation_run_id,
+        report_run=None,
+        simulation_run_id=simulation_run_id,
+    )
     return RunCalculation(
         payload=simulation.model_dump(mode="json"),
-        context={
-            **context.model_dump(mode="json"),
-            SIMULATION_RUN_ID_FIELD: str(simulation_run_id),
-        },
+        context=context.model_dump(mode="json"),
     )

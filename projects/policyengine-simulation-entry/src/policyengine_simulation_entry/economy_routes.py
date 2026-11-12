@@ -19,7 +19,7 @@ with ``Retry-After`` when it is not configured or a dependency cannot be
 read, before writing anything, or when Modal refused the run's call: then
 the record was created and its run failed, and the answer names it. Every
 500 the routes answer is the JSON error with code ``internal_error``, and may
-follow a write; a failure before a route's handler runs gets the request
+follow a write; a failure outside a handler's ``try`` gets the request
 middleware's own plain-text 500, which the Public API reads alike.
 
 A request gets its observability ID from the caller's header, or a new one,
