@@ -371,6 +371,34 @@ def test_a_year_started_late_counts_from_its_start(run_store, windows, window) -
     assert window.year(2031).report_run_id not in listed
 
 
+def test_a_start_that_fails_after_its_call_claimed_the_year_keeps_the_year(
+    store, windows, window
+) -> None:
+    # The service waits a limited time for Modal to accept a call; Modal may
+    # accept it later, and its coordinator claim the year, before the wait's
+    # end is recorded.
+    first_year_run_id = window.year(2026).report_run_id
+
+    def claim_then_time_out(year_to_start: YearToStart) -> str:
+        if year_to_start.run_ids.report_run_id == first_year_run_id:
+            windows.set_years(window, [2026], status="running", modal_call_id="fc-late")
+            raise TimeoutError
+        return f"fc-{year_to_start.year}"
+
+    advance = store.advance_window(
+        window.window_run_id, now=LATER, start_year=claim_then_time_out
+    )
+
+    assert advance == WindowAdvance(
+        status=RunStatus.PENDING,
+        changed=False,
+        started_years=(2026, 2027, 2028, 2029, 2030),
+    )
+    rows = windows.year_rows(window)
+    assert (rows[2026]["status"], rows[2026]["modal_call_id"]) == ("running", "fc-late")
+    assert windows.window_row(window)["status"] == "pending"
+
+
 def test_a_finished_window_is_left_as_it_is(store, windows, window) -> None:
     windows.set_window(
         window, status="failed", error_message="earlier", completed_at=NOW
