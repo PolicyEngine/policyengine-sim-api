@@ -23,10 +23,23 @@ revisions and live schema. This package never changes a schema.
   conditional on the row's status and, for a claim, completion or failure by
   a call, on its recorded Modal call; a report run's completion sets its own
   result columns and inserts its result rows in the same transaction.
+- **Budget windows** (`BudgetWindowStore`): `budget_window_runs`, one row per
+  calculation of a budget-window report, whose years are report runs naming
+  it and their year. The simulation service creates every year pending and
+  starts the first ones; each year's coordinator, when its year ends,
+  advances the window. An advance locks the window run's row, then fails the
+  window and its waiting years when a year failed, marks it succeeded when
+  every year succeeded, or starts the earliest waiting years until
+  `BUDGET_WINDOW_MAX_RUNNING_YEARS` (five) are under way, recording each
+  call while the year is still pending with no call. A claimed year marks
+  its window running. The stuck-run sweep leaves a waiting year to its
+  window, fails the window of a year it fails, and settles a window no year
+  advances any more. The Modal worker role and the simulation service's role
+  may both advance a window.
 
 ## Tests
 
-The report run tests need a disposable Postgres migrated by the Public API's
+The report run and budget-window tests need a disposable Postgres migrated by the Public API's
 v2 chain, with its declared privileges applied. They skip unless both URLs
 are set:
 
