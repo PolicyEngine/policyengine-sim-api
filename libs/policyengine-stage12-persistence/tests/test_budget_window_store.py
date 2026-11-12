@@ -10,6 +10,8 @@ migrations created (see ``report_run_database``).
 
 from __future__ import annotations
 
+import logging
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -30,8 +32,13 @@ from policyengine_stage12_persistence import (
     RunStatus,
     WindowAdvance,
     YearToStart,
+    budget_window_store,
 )
-from report_run_database import NOW, worker_database_url
+from report_run_database import NOW, SEED_URL_ENV, worker_database_url
+from sqlalchemy import Engine, create_engine, event
+
+# The simulation service's role, which the Public API's manifest grants.
+SERVICE_ROLE = "policyengine_v2_simulation_service"
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -286,6 +293,79 @@ def test_a_refused_start_fails_that_year_and_the_window(store, windows, window) 
     window_row = windows.window_row(window)
     assert window_row["status"] == "failed"
     assert "2028" in window_row["error_message"]
+
+
+def test_a_refused_start_names_its_cause_on_its_own_simulations(
+    store, windows, window, caplog
+) -> None:
+    starter = RecordingStarter(refused=_run_ids(window, [2026]))
+
+    with caplog.at_level(logging.WARNING, logger=budget_window_store.__name__):
+        store.advance_window(window.window_run_id, now=LATER, start_year=starter)
+
+    for seeded_year, message_start in (
+        (window.year(2026), "modal_call_refused: "),
+        (window.year(2027), "budget_window_failed: "),
+    ):
+        for simulation_run_id in (
+            seeded_year.baseline_simulation_run_id,
+            seeded_year.reform_simulation_run_id,
+        ):
+            row = windows.seeder.row("simulation_runs", simulation_run_id)
+            assert row["status"] == "failed"
+            assert row["error_message"].startswith(message_start)
+    # The cause's type is logged; its text may hold connection details.
+    assert "RuntimeError" in caplog.text
+    assert str(window.year(2026).report_run_id) in caplog.text
+    assert "Modal refused the call" not in caplog.text
+
+
+def test_the_service_role_starts_and_fails_a_window(windows, window) -> None:
+    # The simulation service starts a window's first years with the same
+    # store, as its own role, and fails the window when Modal refuses one.
+    service_store = BudgetWindowStore(engine=_engine_as_the_service(windows))
+    try:
+        starter = RecordingStarter(refused=_run_ids(window, [2028]))
+
+        advance = service_store.advance_window(
+            window.window_run_id, now=LATER, start_year=starter
+        )
+    finally:
+        service_store.engine.dispose()
+
+    assert advance.started_years == (2026, 2027)
+    assert windows.window_row(window)["status"] == "failed"
+
+
+def _engine_as_the_service(windows: BudgetWindowSeeder) -> Engine:
+    """Return an engine whose every connection acts as the service's role."""
+    engine = create_engine(os.environ[SEED_URL_ENV])
+
+    @event.listens_for(engine, "connect")
+    def act_as_the_service(dbapi_connection, _connection_record) -> None:
+        with dbapi_connection.cursor() as cursor:
+            cursor.execute(f"SET ROLE {SERVICE_ROLE}")
+
+    return engine
+
+
+def test_a_year_started_late_counts_from_its_start(run_store, windows, window) -> None:
+    # The service created every year at submit; an earlier year's coordinator
+    # recorded this year's call a day later, and Modal hasn't run it yet.
+    started_late_at = NOW + timedelta(hours=30)
+    windows.set_window(window, status="running", started_at=NOW)
+    windows.set_years(
+        window, [2031], modal_call_id="fc-queued", updated_at=started_late_at
+    )
+
+    listed = {
+        run.run_id
+        for run in run_store.list_active_runs(
+            RunKind.REPORT_RUN, active_since_before=NOW + timedelta(hours=25)
+        )
+    }
+
+    assert window.year(2031).report_run_id not in listed
 
 
 def test_a_finished_window_is_left_as_it_is(store, windows, window) -> None:

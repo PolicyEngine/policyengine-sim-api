@@ -114,6 +114,23 @@ def test_the_artifact_prefix_names_the_environment_month_and_run() -> None:
     ) == (f"stage-12-runs/production/2026/12/{LATER_YEAR_RUNS.report_run_id}")
 
 
+@pytest.mark.parametrize("environment", ["", "staging/other", "../production"])
+def test_an_environment_that_could_leave_the_prefix_is_refused(environment) -> None:
+    with pytest.raises(ValueError, match="invalid Stage 12 artifact environment"):
+        report_run_artifact_prefix(
+            environment, LATER_CREATED_AT, LATER_YEAR_RUNS.report_run_id
+        )
+
+
+def test_a_creation_time_without_a_time_zone_is_refused() -> None:
+    with pytest.raises(ValueError, match="timezone"):
+        report_run_artifact_prefix(
+            "staging",
+            LATER_CREATED_AT.replace(tzinfo=None),
+            LATER_YEAR_RUNS.report_run_id,
+        )
+
+
 def test_a_later_year_is_calculated_on_its_own_year_and_runs() -> None:
     report, context = _first_year()
 
