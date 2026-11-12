@@ -26,9 +26,11 @@
 # rerun in a new container can't finish within 5 seconds of the stop.
 # A calculation that finishes before its container is stopped proves
 # nothing, so a new one is submitted, up to PREEMPTION_CHECK_ATTEMPTS
-# times, once Modal no longer lists any container the last attempt's call
-# ran in: on such a warm container the calculation would finish too fast
-# to stop. A record
+# times, each after a wait for Modal to stop the containers the last
+# attempt left idle, the one the check found and the one Modal's rerun ran
+# in: on such a warm container the calculation would finish too fast to
+# stop. Modal stops a container left idle for 60 seconds by default, and
+# the household functions and the coordinator don't change that. A record
 # that fails, or doesn't finish within the deadline, fails the check at
 # once. A stop that fails, as Modal's does for a container that has ended,
 # is not tried again: the check follows the record to its end, so a record
@@ -46,9 +48,8 @@
 # each attempt's deadline (600 for household, 900 for report);
 # PREEMPTION_CHECK_POLL_SECONDS (2); PREEMPTION_CHECK_RERUN_SECONDS (120),
 # how long after the record succeeds the call graph may take to show the
-# call's other container; and PREEMPTION_CHECK_SCALEDOWN_SECONDS (180), how
-# long to wait for the last attempt's container to leave before a new
-# attempt (Modal stops an idle container after 60 seconds by default).
+# call's other container; and PREEMPTION_CHECK_SCALEDOWN_SECONDS (90), how
+# long to wait before a new attempt.
 # The access token is sent from a file, and the client secret on standard
 # input through jq's environment, so neither appears on any command line. A submission, which isn't
 # asked again, may take 60 seconds, Cloud Run's own limit; every other
@@ -74,7 +75,7 @@ attempts="${PREEMPTION_CHECK_ATTEMPTS:-3}"
 deadline_seconds="${PREEMPTION_CHECK_DEADLINE_SECONDS:-${default_deadline_seconds}}"
 poll_seconds="${PREEMPTION_CHECK_POLL_SECONDS:-2}"
 rerun_seconds="${PREEMPTION_CHECK_RERUN_SECONDS:-120}"
-scaledown_seconds="${PREEMPTION_CHECK_SCALEDOWN_SECONDS:-180}"
+scaledown_seconds="${PREEMPTION_CHECK_SCALEDOWN_SECONDS:-90}"
 request_timeout_seconds=30
 submission_timeout_seconds=60
 modal_command_timeout_seconds=60
@@ -152,28 +153,31 @@ call_inputs() {
   modal_command python -m src.modal.utils.describe_call_inputs "$1"
 }
 
-# Of the containers <container-id>..., print those Modal lists as running
-# in MODAL_ENVIRONMENT, one per line. Return 0 when it lists any, 1 when it
-# lists none, and 2 when Modal couldn't list the environment's containers
-# readably, which says nothing about them.
-containers_listed() {
+# Return 0 when Modal lists container <container-id> as running in
+# MODAL_ENVIRONMENT, 1 when it doesn't, and 2 when Modal couldn't list the
+# environment's containers as a JSON list, which says nothing about the
+# container.
+container_listed() {
   local listing listed
   if ! listing="$(modal_command modal container list --env "${MODAL_ENVIRONMENT}" --json)"; then
     printf 'Modal could not list the containers in environment %s; asking again\n' \
       "${MODAL_ENVIRONMENT}" >&2
     return 2
   fi
-  if ! listed="$(
-    jq -r '[.[] | .["Container ID"]] as $running
-      | $ARGS.positional[] | select(. as $id | $running | index($id))' \
-      --args "$@" <<<"${listing}" 2>/dev/null
-  )"; then
-    printf 'Modal could not list the containers in environment %s readably; asking again\n' \
-      "${MODAL_ENVIRONMENT}" >&2
-    return 2
-  fi
-  [[ -n "${listed}" ]] || return 1
-  printf '%s\n' "${listed}"
+  listed="$(
+    jq -r --arg container_id "$1" \
+      'if type == "array" then any(.[]; .["Container ID"] == $container_id)
+       else error("not a list") end' <<<"${listing}" 2>/dev/null
+  )" || listed=""
+  case "${listed}" in
+    true) return 0 ;;
+    false) return 1 ;;
+    *)
+      printf 'Modal could not list the containers in environment %s readably; asking again\n' \
+        "${MODAL_ENVIRONMENT}" >&2
+      return 2
+      ;;
+  esac
 }
 
 # Create the attempt's record. Sets record_url, record_noun, record_label
@@ -295,10 +299,12 @@ find_container() {
   [[ "${candidate}" =~ ${container_id_pattern} ]] \
     || fail "Modal names '${candidate}' as call ${record_call_id}'s container, which is not a Modal container ID"
   local listed_status=0
-  containers_listed "${candidate}" >/dev/null || listed_status=$?
+  container_listed "${candidate}" || listed_status=$?
   case "${listed_status}" in
     0)
       container_id="${candidate}"
+      unlisted_note=""
+      listing_note=""
       printf 'Call %s of %s runs in container %s\n' "${record_call_id}" "${record_label}" "${container_id}"
       ;;
     1)
@@ -308,28 +314,6 @@ find_container() {
     # Modal couldn't list: the next read asks again.
     *) listing_note="Modal could not list the containers in environment ${MODAL_ENVIRONMENT}" ;;
   esac
-}
-
-# Set leaving_containers to the container the check found or stopped and
-# every container the call graph says ran an input of this attempt's call,
-# such as the one Modal's rerun ran in, so the next attempt can wait for
-# them to leave: a warm container may finish a calculation before the check
-# sees it running.
-remember_call_containers() {
-  local call="${stopped_call_id:-${record_call_id}}"
-  local inputs candidate
-  leaving_containers=()
-  if [[ -n "${container_id}" ]]; then
-    leaving_containers+=("${container_id}")
-  fi
-  [[ -n "${call}" ]] || return 0
-  inputs="$(call_inputs "${call}")" || return 0
-  while IFS= read -r candidate; do
-    if [[ "${candidate}" =~ ${container_id_pattern} \
-      && " ${leaving_containers[*]+${leaving_containers[*]}} " != *" ${candidate} "* ]]; then
-      leaving_containers+=("${candidate}")
-    fi
-  done < <(jq -r '.[] | select(.container_id != "") | .container_id' <<<"${inputs}" 2>/dev/null || true)
 }
 
 # Return 0 when the record completed after its container was stopped, so
@@ -353,37 +337,6 @@ completed_after_the_stop() {
     return 1
   fi
   return 0
-}
-
-# Wait until Modal lists none of leaving_containers, at most
-# scaledown_seconds, so the next attempt's calculation starts in a new
-# container rather than a warm one the last attempt left.
-wait_for_containers_to_leave() {
-  local waiting_since="${SECONDS}"
-  local leaving listed_status still_listed
-  ((${#leaving_containers[@]} > 0)) || return 0
-  for leaving in "${leaving_containers[@]}"; do
-    printf 'Before the next attempt, waiting for container %s to leave Modal environment %s\n' \
-      "${leaving}" "${MODAL_ENVIRONMENT}"
-  done
-  while true; do
-    listed_status=0
-    still_listed="$(containers_listed "${leaving_containers[@]}")" || listed_status=$?
-    ((listed_status != 1)) || return 0
-    if ((SECONDS - waiting_since >= scaledown_seconds)); then
-      if ((listed_status == 0)); then
-        while IFS= read -r leaving; do
-          printf 'container %s is still listed after %d seconds\n' "${leaving}" "${scaledown_seconds}" >&2
-        done <<<"${still_listed}"
-      else
-        printf 'Modal could not say within %d seconds whether the last attempt'"'"'s containers have left\n' \
-          "${scaledown_seconds}" >&2
-      fi
-      printf 'Submitting again anyway\n' >&2
-      return 0
-    fi
-    sleep "${poll_seconds}"
-  done
 }
 
 # After the record succeeded: require the call graph to show the stopped
@@ -492,8 +445,9 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
   [[ "${attempt_outcome}" != "proven" ]] || exit 0
   printf 'Attempt %d of %d proved nothing: %s\n' "${attempt}" "${attempts}" "${miss_reason}" >&2
   if ((attempt < attempts)); then
-    remember_call_containers
-    wait_for_containers_to_leave
+    printf 'Before the next attempt, waiting %d seconds for Modal to stop the containers the last one left idle\n' \
+      "${scaledown_seconds}"
+    sleep "${scaledown_seconds}"
   fi
 done
 fail "no attempt in ${attempts} showed a ${kind} calculation finishing in another container after its container was stopped; the last: ${miss_reason}"

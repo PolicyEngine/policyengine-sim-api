@@ -1316,10 +1316,10 @@ jobs:
     needs: [deploy_entrypoint, authenticated_test, publish_stage12_v2_default, staging_economy_check]
     runs-on: ubuntu-latest
     # Longer than both steps' worst case together, so the script fails
-    # first: about 136 minutes, with every request and Modal command taking
+    # first: about 126 minutes, with every request and Modal command taking
     # its full time limit (three attempts of up to 17.5 minutes for the
-    # household and 22.5 for the report, and up to 4 minutes' wait before
-    # each new attempt), and the install.
+    # household and 22.5 for the report, and a 90-second wait before each
+    # new attempt), and the install.
     timeout-minutes: 150
     environment: ${{ inputs.release_environment }}
     steps:

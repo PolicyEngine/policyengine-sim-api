@@ -175,13 +175,13 @@ starting its workers again.
 
 A calculation that finishes before its container is stopped, for example on
 a warm container, proves nothing, so the check submits a new one, up to
-three attempts. Before each new attempt it waits, up to three minutes, for
-Modal to stop listing every container the last attempt's call ran in, as
-the call graph names them, including the one Modal's rerun ran in (Modal
-stops an idle container after 60 seconds), so the next calculation starts
-in a new container. A record that fails, or doesn't finish within its
-deadline (10 minutes for the household, 15 for the report, per attempt),
-fails the check at once. Modal refuses to stop a container that has
+three attempts. Before each new attempt it waits 90 seconds, so Modal
+stops the containers the last attempt left idle, the one the check found
+and the one Modal's rerun ran in (Modal stops a container left idle for 60
+seconds by default, and these functions don't change that), and the next
+calculation starts in a new container. A record that fails, or doesn't
+finish within its deadline (10 minutes for the household, 15 for the
+report, per attempt), fails the check at once. Modal refuses to stop a container that has
 ended; when a stop fails, the check doesn't stop it again or submit another
 calculation, but follows the record to its end, so a record left running by
 a container that ended for another reason, such as running out of memory,
