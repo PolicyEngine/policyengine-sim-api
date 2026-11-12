@@ -11,9 +11,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from policyengine_simulation_contract.stage12_execution import (
-    SimulationArtifactDescriptor,
-)
 from policyengine_simulation_observability.stages import Stage
 
 from .coordinated_simulations import cancellation
@@ -25,6 +22,9 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.stage12_execution import (
+        SimulationArtifactDescriptor,
+    )
     from policyengine_simulation_observability.stages import StagePlan
 
     from .coordination_core import CoordinatorDependencies
@@ -64,6 +64,15 @@ class WaitingCoordination(Protocol):
         self, stage: Stage, attributes: Mapping[str, object] | None = None
     ) -> AbstractContextManager[object]:
         """Track ``stage`` and time it as a span."""
+        ...
+
+    def child_descriptor(
+        self, role: str, result: object
+    ) -> SimulationArtifactDescriptor | None:
+        """Return a finished child's descriptor, or None to wait on its new call.
+
+        Raises for a result that is no descriptor.
+        """
         ...
 
     def child_failure(self, role: str, error: Exception) -> Stage12FailureDetail:
@@ -124,7 +133,7 @@ def _observe_children(
                 # The probe records the child's role, so a failure names it.
                 with coordination.progress.stage(wait_stage_name, role=role):
                     result = call.get(timeout=0)
-                    descriptor = SimulationArtifactDescriptor.model_validate(result)
+                    descriptor = coordination.child_descriptor(role, result)
             except TimeoutError:
                 continue
             except Exception as error:  # noqa: BLE001  # a child call's failure can be any exception type; it is recorded and stops the other child
@@ -133,6 +142,9 @@ def _observe_children(
                     pending - {role}, cancellation(f"the {role} simulation failed")
                 )
                 raise Stage12ExecutionError(detail) from None
+            if descriptor is None:
+                # The coordinator now waits on another call for this child.
+                continue
             descriptors[role] = descriptor
             pending.remove(role)
             progress_made = True

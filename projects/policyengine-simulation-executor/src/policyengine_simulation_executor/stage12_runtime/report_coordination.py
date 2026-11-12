@@ -86,6 +86,13 @@ class ReportCoordination(CoordinationCore):
         wait_for_children(self, calls, descriptors)
         return self._aggregate_and_complete(parent, output_plan, descriptors)
 
+    def child_descriptor(
+        self, role: str, result: object
+    ) -> SimulationArtifactDescriptor:
+        """Return the descriptor a finished child's call returned."""
+        del role
+        return SimulationArtifactDescriptor.model_validate(result)
+
     def child_failure(self, role: str, error: Exception) -> Stage12FailureDetail:
         """Report a failed child call; return its failure, as its record has it."""
         return child_failure_detail(

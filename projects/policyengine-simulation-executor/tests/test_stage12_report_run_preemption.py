@@ -12,6 +12,9 @@ fails its report run and the simulation runs it left unfinished.
 from __future__ import annotations
 
 import pytest
+from policyengine_simulation_executor.stage12_runtime import (
+    report_run_coordination as report_run_coordination_module,
+)
 from policyengine_stage12_persistence import RunStatus
 from stage12_child_call_support import TimeoutInvoker
 from stage12_fake_report_runs import (
@@ -217,7 +220,14 @@ class ChangedBeforeRelease(FakeReportRuns):
         return super().release_simulation_run(simulation_run_id, **values)
 
 
-def test_a_run_changed_before_its_release_stops_the_workers_already_started() -> None:
+def test_a_run_changed_before_its_release_stops_the_workers_already_started(
+    monkeypatch,
+) -> None:
+    # An unsegmented worker is stopped through Modal; a segmented one learns
+    # of it from its failed run.
+    monkeypatch.setattr(
+        report_run_coordination_module, "should_segment_simulation", lambda _: False
+    )
     report_runs = ChangedBeforeRelease()
     _claimed_by_earlier_workers(report_runs)
     # The baseline's earlier worker never claimed its run, so it starts first.

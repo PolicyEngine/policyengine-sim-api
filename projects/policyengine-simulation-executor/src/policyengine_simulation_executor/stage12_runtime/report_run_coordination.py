@@ -386,7 +386,14 @@ class ReportRunCoordination(CoordinationCore):
         run_id = self.simulation_run_id(role)
         earlier_call_id = self.run_states[role].modal_call_id
         if earlier_call_id is not None:
-            self._release_from_earlier_worker(role, earlier_call_id)
+            try:
+                self._release_from_earlier_worker(role, earlier_call_id)
+            except Stage12ExecutionError:
+                # The workers started before this run are stopped too.
+                self.cancel_children(
+                    set(self.calls), cancellation(f"the {role} simulation failed")
+                )
+                raise
         child_context = self.context.model_copy(
             update={"report_run": None, "simulation_run_id": run_id}
         )
@@ -459,6 +466,37 @@ class ReportRunCoordination(CoordinationCore):
                         ),
                     )
                 )
+
+    def child_descriptor(
+        self, role: str, result: object
+    ) -> SimulationArtifactDescriptor | None:
+        """Return a finished worker's descriptor, or None to wait on another call.
+
+        A worker that found its run held by another call returns a
+        ``deduplicated`` summary: a worker an earlier attempt started, whose
+        cancellation didn't reach it, claimed the run first. The coordinator
+        then waits for that call, which records the run, instead. Raises
+        ``RuntimeError`` for a run that failed or holds no other call.
+        """
+        if not (isinstance(result, dict) and result.get("deduplicated")):
+            return SimulationArtifactDescriptor.model_validate(result)
+        state = self.writer.get_simulation_run(self.simulation_run_id(role))
+        holder = state.modal_call_id
+        if (
+            state.status in {RunStatus.RUNNING, RunStatus.SUCCEEDED}
+            and holder is not None
+            and holder != self.calls[role].object_id
+        ):
+            logger.warning(
+                "The %s simulation run of report run %s is held by an earlier "
+                "worker; waiting for it",
+                role,
+                self.run_ids.report_run_id,
+            )
+            self.calls[role] = self.child_invoker.restore(holder)
+            return None
+        msg = f"the {role} worker's run is {state.status.value} without its result"
+        raise RuntimeError(msg)
 
     def child_failure(self, role: str, error: Exception) -> Stage12FailureDetail:
         """Report a failed worker call; return the failure its run records.
@@ -551,9 +589,10 @@ class ReportRunCoordination(CoordinationCore):
     def fail(self, error: Exception) -> None:
         """Record a failed report run once, after stopping its unfinished workers.
 
-        A worker's, start's or wait window's failure arrives as
-        ``Stage12ExecutionError`` after the unfinished workers were stopped;
-        any other failure is reported here, before any write, and then the
+        A ``Stage12ExecutionError`` arrives already reported: a worker's,
+        start's, release's or wait window's failure, after the unfinished
+        workers were stopped, or a run found failed before any started. Any
+        other failure is reported here, before any write, and then the
         started, unfinished workers are stopped. The report run's unfinished
         simulation runs then fail, and the report run last.
         """
