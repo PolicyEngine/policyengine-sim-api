@@ -4,8 +4,8 @@ A budget-window report is created as an economy report with one report run
 per year of its window (``NewBudgetWindowReport``), all pending with no
 Modal call, in one transaction. The service then advances the window as its
 own role (``BudgetWindowStore.advance_window``): under the window run's row
-lock, the earliest five years' coordinators are started and their calls
-recorded. Each year's coordinator starts the next years when its year ends.
+lock, up to the earliest five years' coordinators are started and their
+calls recorded. Each year's coordinator starts the next years when its year ends.
 
 The first year's coordinator input is built as a single-year report's is;
 every later year's is derived from it (``year_calculation``), so all years
@@ -341,9 +341,7 @@ class _YearStarts:
         later_year = year_to_start.year != self._first_year
         remaining_seconds = self._wait_ends_at - time.monotonic()
         if later_year and remaining_seconds <= 0:
-            logger.info(
-                "budget_window_year_deferred", extra={"year": year_to_start.year}
-            )
+            logger.info("budget_window_year_deferred", extra=_deferral(year_to_start))
             raise YearStartDeferred
         payload, context = self._calculation(year_to_start)
         started = asyncio.run_coroutine_threadsafe(
@@ -361,7 +359,7 @@ class _YearStarts:
             started.cancel()
             if later_year:
                 logger.info(
-                    "budget_window_year_deferred", extra={"year": year_to_start.year}
+                    "budget_window_year_deferred", extra=_deferral(year_to_start)
                 )
                 raise YearStartDeferred from None
             raise
@@ -390,6 +388,14 @@ def _with_reusable(
 ) -> SimulationInputs:
     """Return a side's values naming the year's reusable run, if any."""
     return replace(inputs, reusable_run=reusable_run)
+
+
+def _deferral(year_to_start: YearToStart) -> dict[str, Any]:
+    """Return a deferred year's log fields: its year and its report run."""
+    return {
+        "year": year_to_start.year,
+        "record_id": str(year_to_start.run_ids.report_run_id),
+    }
 
 
 def _run_ids(window_year: BudgetWindowYear) -> ReportRunIds:

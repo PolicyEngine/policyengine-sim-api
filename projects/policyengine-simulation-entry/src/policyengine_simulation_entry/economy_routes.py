@@ -35,16 +35,16 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING, Annotated, Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
-from pydantic import Field
 
 from policyengine_simulation_entry.budget_window_api_models import (
     BudgetWindowReportCreated,
     BudgetWindowReportRequest,
+    ReportRequest,
 )
 from policyengine_simulation_entry.economy_api_models import (
     EconomyError,
@@ -441,10 +441,7 @@ def _submission_routes(
         dependencies=[Depends(submitter)],
     )
     async def create_report(
-        body: Annotated[
-            EconomyReportRequest | BudgetWindowReportRequest,
-            Field(discriminator="report_type"),
-        ],
+        body: ReportRequest,
         request: Request,
     ) -> JSONResponse:
         if submissions is None:

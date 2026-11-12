@@ -17,10 +17,7 @@ from typing import TYPE_CHECKING, Any, Final, get_args
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 
-from policyengine_simulation_entry.budget_window_api_models import (
-    BudgetWindowReportRequest,
-)
-from policyengine_simulation_entry.economy_api_models import EconomyReportRequest
+from policyengine_simulation_entry.budget_window_api_models import ReportRequest
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Sequence
@@ -28,10 +25,10 @@ if TYPE_CHECKING:
     from fastapi import Request, Response
 
 # The values of ``report_type``, which Pydantic puts into the locations: one
-# per request model the route takes.
+# per request model the route's body takes.
 REPORT_TYPES: Final = tuple(
     report_type
-    for model in (EconomyReportRequest, BudgetWindowReportRequest)
+    for model in get_args(get_args(ReportRequest)[0])
     for report_type in get_args(model.model_fields["report_type"].annotation)
 )
 

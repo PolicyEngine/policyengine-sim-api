@@ -162,8 +162,8 @@ years and single-year reports reuse each other's runs. In one transaction
 the service creates the report (an economy report whose
 `budget_window_size` is set), one `budget_window_runs` row, and for each
 year a report run naming it and the year, with that year's own simulations
-unless a side reuses a run of the same year. It then starts the earliest
-five years, as its own role, under the window run's row lock
+unless a side reuses a run of the same year. It then starts up to the
+earliest five years, as its own role, under the window run's row lock
 (`BudgetWindowStore.advance_window`): the first year's coordinator input is
 built as an economy report's, and each later year's is derived from it.
 Each year's coordinator starts the next years when its year ends. The 201
