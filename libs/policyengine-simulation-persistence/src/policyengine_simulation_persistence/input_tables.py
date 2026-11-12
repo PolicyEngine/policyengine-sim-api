@@ -42,6 +42,26 @@ tax_benefit_model_versions = Table(
     Column("version", String(128), nullable=False),
 )
 
+# A region of one catalog version, unique by code within it, and the dataset
+# it uses unless a calculation names another.
+regions = Table(
+    "regions",
+    input_metadata,
+    Column("id", Uuid, nullable=False),
+    Column("code", String(255), nullable=False),
+    Column("tax_benefit_model_version_id", Uuid, nullable=False),
+    Column("default_dataset_id", Uuid, nullable=False),
+)
+
+# A dataset of one catalog version, unique by name within it.
+datasets = Table(
+    "datasets",
+    input_metadata,
+    Column("id", Uuid, nullable=False),
+    Column("name", String(255), nullable=False),
+    Column("tax_benefit_model_version_id", Uuid, nullable=False),
+)
+
 # ``household_data`` lists the people and each group entity as records, and
 # may hold a saved SPM selection; ``default_year`` is the year it describes.
 households = Table(
