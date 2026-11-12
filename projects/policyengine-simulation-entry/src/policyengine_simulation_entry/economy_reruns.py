@@ -40,12 +40,18 @@ from policyengine_simulation_persistence import (
     EconomyRequest,
     NewReportRerun,
     NewSimulationRerun,
+    NewWindowRerun,
     RerunRecordDeletedError,
     RerunSide,
     RunInProgressError,
     RunReuse,
+    WindowRerunYear,
 )
 
+from policyengine_simulation_entry.budget_window_api_models import (
+    BudgetWindowReportCreated,
+    BudgetWindowYearCreated,
+)
 from policyengine_simulation_entry.budget_window_submissions import (
     BudgetWindowRuns,
     ReportSubmissionService,
@@ -71,17 +77,20 @@ from policyengine_simulation_entry.economy_submission_errors import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from uuid import UUID
 
     from policyengine_simulation_persistence import (
+        BudgetWindowInputs,
         EconomyCatalogRows,
         EconomyReportInputs,
         RecordKind,
         ReportDefinition,
+        ReusableRun,
         SideDefinition,
+        SimulationChoice,
         SimulationDefinition,
-        SimulationInputs,
+        WindowYearDefinition,
     )
 
     from policyengine_simulation_entry.economy_api_models import (
@@ -97,10 +106,11 @@ if TYPE_CHECKING:
 
 # How a refusal names each kind of stored record this service does not re-run
 # yet.
-_NOT_RERUN: Final[dict[RecordKind, str]] = {
-    "budget_window": "budget-window",
-    "household": "household",
-}
+_NOT_RERUN: Final[dict[RecordKind, str]] = {"household": "household"}
+# The kinds of stored report this service re-runs.
+_RERUN_REPORT_KINDS: Final[frozenset[RecordKind]] = frozenset(
+    {"economy", "budget_window"}
+)
 # The countries this service calculates, as the contract names them.
 _COUNTRIES: Final[tuple[CountryId, ...]] = get_args(CountryId)
 _REPORT: Final[RecordName] = "report"
@@ -134,6 +144,22 @@ class EconomyRerunRuns(BudgetWindowRuns, Protocol):
         """Read a re-run's catalog rows, both sides' values and reusable runs."""
         ...
 
+    def read_window_rerun_inputs(
+        self,
+        request: EconomyRequest,
+        *,
+        baseline: SimulationChoice,
+        reform: SimulationChoice,
+        years: Sequence[WindowYearDefinition],
+        reuse: RunReuse | None,
+    ) -> BudgetWindowInputs:
+        """Read a window re-run's catalog rows, both sides' values and years' runs."""
+        ...
+
+    def create_window_rerun(self, rerun: NewWindowRerun) -> None:
+        """Create the window's new run, each year's report run and new runs."""
+        ...
+
     def create_report_rerun(self, rerun: NewReportRerun) -> None:
         """Create the report's new run and its sides' new simulation runs."""
         ...
@@ -153,13 +179,15 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         *,
         request_id: str,
         observability_context: dict[str, Any] | None,
-    ) -> EconomyReportCreated:
+    ) -> EconomyReportCreated | BudgetWindowReportCreated:
         """Create the stored report's new run on the current versions, and start it.
 
-        Raise EconomyRecordNotFoundError (404) or EconomyRerunConflictError
-        (409) as the module describes, and otherwise the errors
-        ``submit_report`` raises, a 503 for Modal's refusal naming the new
-        run as well as the report.
+        A budget window's new run is a budget-window run with a report run
+        per year, whose first years are started (``_rerun_window``). Raise
+        EconomyRecordNotFoundError (404) or EconomyRerunConflictError (409)
+        as the module describes, and otherwise the errors ``submit_report``
+        raises, a 503 for Modal's refusal naming the new run as well as the
+        report.
         """
         definition = await self._read_state(
             lambda: self._store.read_report_definition(report_id)
@@ -167,6 +195,11 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         if definition is None:
             raise EconomyRecordNotFoundError(_REPORT)
         stored = _rerunnable_report(definition)
+        window_years = (
+            _complete_window_years(definition)
+            if definition.kind == "budget_window"
+            else ()
+        )
         worker = await self._default_worker(stored.country)
         economy_request = EconomyRequest(
             country=stored.country,
@@ -184,6 +217,20 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                 output_uri_prefix=self._settings.reuse_prefix,
             )
         )
+        if window_years:
+            return await self._rerun_window(
+                _WindowRerunRequest(
+                    stored=stored,
+                    options=definition.inputs,
+                    years=window_years,
+                    economy_request=economy_request,
+                    reuse=reuse,
+                    recalculate=request.force,
+                ),
+                worker,
+                request_id=request_id,
+                observability_context=observability_context,
+            )
         inputs = await self._read_inputs(
             lambda: self._store.read_report_rerun_inputs(
                 economy_request,
@@ -199,8 +246,12 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             run_id=self._new_id(),
             population=inputs.catalog.population(stored.year),
             versions=worker.versions,
-            baseline=self._rerun_side(stored.baseline, inputs.baseline),
-            reform=self._rerun_side(stored.reform, inputs.reform),
+            baseline=self._rerun_side(
+                stored.baseline.simulation_id, inputs.baseline.reusable_run
+            ),
+            reform=self._rerun_side(
+                stored.reform.simulation_id, inputs.reform.reusable_run
+            ),
         )
         calculation = report_run_calculation(
             worker,
@@ -314,18 +365,107 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             status=status,
         )
 
+    async def _rerun_window(
+        self,
+        window: _WindowRerunRequest,
+        worker: EconomyWorker,
+        *,
+        request_id: str,
+        observability_context: dict[str, Any] | None,
+    ) -> BudgetWindowReportCreated:
+        """Create the window's new run and each year's runs; start its first years.
+
+        Each year's sides are that year's own simulations, as its report run
+        in the report's newest window run names them, and each year reuses a
+        run of its own simulations unless the re-run is forced. The years
+        start as a new window's do (``_start_first_years``).
+        """
+        stored = window.stored
+        inputs = await self._read_inputs(
+            lambda: self._store.read_window_rerun_inputs(
+                window.economy_request,
+                baseline=stored.baseline.choice,
+                reform=stored.reform.choice,
+                years=[year.definition for year in window.years],
+                reuse=window.reuse,
+            ),
+            request=window.economy_request,
+            source=STORED_REPORT,
+        )
+        window_run_id = self._new_id()
+        rerun = NewWindowRerun(
+            report_id=stored.report_id,
+            window_run_id=window_run_id,
+            population=inputs.catalog.population(stored.year),
+            versions=worker.versions,
+            recalculate=window.recalculate,
+            years=tuple(self._window_rerun_year(year, inputs) for year in window.years),
+        )
+        first_year = rerun.years[0]
+        first_calculation = report_run_calculation(
+            worker,
+            _rerun_scope(
+                stored.country,
+                window.economy_request,
+                worker,
+                inputs.catalog,
+                options=window.options,
+            ),
+            self._origin(request_id),
+            run_ids=ReportRunIds(
+                report_run_id=first_year.report_run_id,
+                baseline_simulation_run_id=first_year.baseline.simulation_run_id,
+                reform_simulation_run_id=first_year.reform.simulation_run_id,
+            ),
+            baseline_policy=inputs.baseline.reform,
+            reform_policy=inputs.reform.reform,
+        )
+        await self._create_rerun(
+            _REPORT,
+            lambda: self._store.create_window_rerun(rerun),
+            source=STORED_REPORT,
+        )
+        status = await self._start_first_years(
+            worker,
+            first_calculation,
+            report_id=stored.report_id,
+            window_run_id=window_run_id,
+            first_year=first_year.year,
+            observability_context=observability_context,
+            rerun=True,
+        )
+        return BudgetWindowReportCreated(
+            report_id=stored.report_id,
+            report_run_id=first_year.report_run_id,
+            budget_window_run_id=window_run_id,
+            status=status,
+            years=[_rerun_year_created(window_year) for window_year in rerun.years],
+        )
+
+    def _window_rerun_year(
+        self, year: _CompleteWindowYear, inputs: BudgetWindowInputs
+    ) -> WindowRerunYear:
+        """Return a year naming its own simulations' reusable runs, or new runs."""
+        baseline_run, reform_run = inputs.reusable_runs[year.year]
+        return WindowRerunYear(
+            year=year.year,
+            report_run_id=self._new_id(),
+            baseline=self._rerun_side(year.baseline_simulation_id, baseline_run),
+            reform=self._rerun_side(year.reform_simulation_id, reform_run),
+        )
+
     def _rerun_side(
-        self, stored: SideDefinition, inputs: SimulationInputs
+        self, simulation_id: UUID, reusable_run: ReusableRun | None
     ) -> RerunSide:
         """Return a side naming its own simulation's reusable run, or a new run."""
-        if inputs.reusable_run is not None:
+        if reusable_run is not None:
             return RerunSide(
-                simulation_id=stored.simulation_id,
-                simulation_run_id=inputs.reusable_run.simulation_run_id,
+                simulation_id=simulation_id,
+                simulation_run_id=reusable_run.simulation_run_id,
                 reused=True,
             )
         return RerunSide(
-            simulation_id=stored.simulation_id,
+            simulation_id=simulation_id,
             simulation_run_id=self._new_id(),
             reused=False,
         )
@@ -362,6 +502,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
 class _StoredReportRows:
     """The country and rows a stored report calculates on, each present."""
 
+    report_id: UUID
     country: CountryId
     year: int
     region_code: str
@@ -394,7 +535,7 @@ def _refusal(
     """
     if kind == "unsupported":
         detail = f"The service does not re-run this type of {record}."
-    elif kind != "economy":
+    elif kind in _NOT_RERUN:
         detail = f"The service does not re-run {_NOT_RERUN[kind]} {record}s yet."
     else:
         lacking = next(name for name, value in missing if value is None)
@@ -408,7 +549,7 @@ def _rerunnable_report(definition: ReportDefinition) -> _StoredReportRows:
     region_code, dataset_name = definition.region_code, definition.dataset_name
     country, year = _calculated_country(definition.country), definition.year
     if (
-        definition.kind != "economy"
+        definition.kind not in _RERUN_REPORT_KINDS
         or country is None
         or baseline is None
         or reform is None
@@ -429,12 +570,88 @@ def _rerunnable_report(definition: ReportDefinition) -> _StoredReportRows:
             ),
         )
     return _StoredReportRows(
+        report_id=definition.id,
         country=country,
         year=year,
         region_code=region_code,
         dataset_name=dataset_name,
         baseline=baseline,
         reform=reform,
+    )
+
+
+@dataclass(frozen=True)
+class _CompleteWindowYear:
+    """A year of a stored window's newest calculation, with both sides' simulations."""
+
+    definition: WindowYearDefinition
+    baseline_simulation_id: UUID
+    reform_simulation_id: UUID
+
+    @property
+    def year(self) -> int:
+        """The year."""
+        return self.definition.year
+
+
+@dataclass(frozen=True)
+class _WindowRerunRequest:
+    """What a budget window's re-run calculates, as the service has read it."""
+
+    stored: _StoredReportRows
+    options: dict[str, Any]
+    years: tuple[_CompleteWindowYear, ...]
+    economy_request: EconomyRequest
+    reuse: RunReuse | None
+    recalculate: bool
+
+
+def _complete_window_years(
+    definition: ReportDefinition,
+) -> tuple[_CompleteWindowYear, ...]:
+    """Return the stored window's years, or refuse a window that lacks one.
+
+    Its newest calculation must have a report run naming both sides in each
+    year of its window, from the report's first year.
+    """
+    expected = (
+        ()
+        if definition.year is None or definition.budget_window_size is None
+        else tuple(
+            range(definition.year, definition.year + definition.budget_window_size)
+        )
+    )
+    complete = tuple(
+        _CompleteWindowYear(
+            definition=year,
+            baseline_simulation_id=year.baseline_simulation_id,
+            reform_simulation_id=year.reform_simulation_id,
+        )
+        for year in definition.window_years
+        if year.reform_simulation_id is not None
+    )
+    if not expected or tuple(year.year for year in complete) != expected:
+        raise EconomyRerunConflictError(
+            code="rerun_not_supported",
+            detail=(
+                "The report names no complete budget-window calculation, a "
+                "report run naming both sides in each year of its window, so "
+                "it cannot be re-run."
+            ),
+        )
+    return complete
+
+
+def _rerun_year_created(window_year: WindowRerunYear) -> BudgetWindowYearCreated:
+    return BudgetWindowYearCreated(
+        year=window_year.year,
+        report_run_id=window_year.report_run_id,
+        baseline_simulation_id=window_year.baseline.simulation_id,
+        baseline_simulation_run_id=window_year.baseline.simulation_run_id,
+        baseline_reused=window_year.baseline.reused,
+        reform_simulation_id=window_year.reform.simulation_id,
+        reform_simulation_run_id=window_year.reform.simulation_run_id,
+        reform_reused=window_year.reform.reused,
     )
 
 

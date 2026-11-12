@@ -28,6 +28,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 
+from policyengine_simulation_entry.budget_window_api_models import (
+    BudgetWindowReportCreated,
+)
 from policyengine_simulation_entry.economy_api_models import (
     EconomyError,
     EconomyReportCreated,
@@ -78,8 +81,8 @@ class EconomyReruns(Protocol):
         *,
         request_id: str,
         observability_context: dict[str, Any] | None,
-    ) -> EconomyReportCreated:
-        """Create the report's new run and start its coordinator."""
+    ) -> EconomyReportCreated | BudgetWindowReportCreated:
+        """Create the report's new run and start it, or a window's first years."""
         ...
 
     async def rerun_simulation(
@@ -231,17 +234,19 @@ def add_economy_rerun_routes(
 
     @router.post(
         REPORT_RUNS_PATH,
-        summary="Re-run an economy report",
+        summary="Re-run an economy or budget-window report",
         description=(
             "Create the stored report's new run on the v2 version manifest's "
             "default worker, and start it; every earlier run is kept. Without "
             "force, a side reuses a run of its own simulation that succeeded "
             "on the same versions; with force, both simulations are "
-            "calculated again."
+            "calculated again. A budget-window report's new run is a "
+            "budget-window run with a report run per year, up to five of them "
+            "started at once, each year on its own year's simulations."
         ),
         operation_id="rerun_report",
         status_code=status.HTTP_201_CREATED,
-        response_model=EconomyReportCreated,
+        response_model=EconomyReportCreated | BudgetWindowReportCreated,
         responses=_responses("report"),
         dependencies=[Depends(submitter)],
     )

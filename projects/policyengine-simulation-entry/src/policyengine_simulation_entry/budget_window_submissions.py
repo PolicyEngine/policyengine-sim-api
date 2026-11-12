@@ -218,8 +218,10 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
         )
         status = await self._start_first_years(
             worker,
-            report,
             first_calculation,
+            report_id=report.id,
+            window_run_id=report.window_run_id,
+            first_year=first_year.year,
             observability_context=observability_context,
         )
         return BudgetWindowReportCreated(
@@ -240,15 +242,18 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
             reform=self._side(_with_reusable(inputs.reform, reform_run)),
         )
 
-    async def _start_first_years(
+    async def _start_first_years(  # noqa: PLR0913  # the call, then the window it starts
         self,
         worker: EconomyWorker,
-        report: NewBudgetWindowReport,
         first_calculation: RunCalculation,
         *,
+        report_id: UUID,
+        window_run_id: UUID,
+        first_year: int,
         observability_context: dict[str, Any] | None,
+        rerun: bool = False,
     ) -> ReportRunStatus:
-        """Advance the new window, starting its first years; return its status.
+        """Advance the new window run, starting its first years; return its status.
 
         Raise EconomySubmissionUnavailableError naming the report when the
         window failed because Modal refused a year, or didn't confirm the
@@ -256,12 +261,13 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
         left waiting. An advance that can't be written leaves the window pending:
         the report exists, so it is answered as created, and a year Modal
         started claims itself, while the stuck-run sweep fails a window no
-        year advances.
+        year advances. ``rerun`` says the report existed before the window
+        run, which the 503 then names.
         """
         start_year = _YearStarts(
             worker=worker,
             caller=self._caller,
-            first_year=report.first_year.year,
+            first_year=first_year,
             first_calculation=first_calculation,
             observability_context=observability_context,
             loop=asyncio.get_running_loop(),
@@ -271,7 +277,7 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
         try:
             advance = await asyncio.to_thread(
                 self._windows.advance_window,
-                report.window_run_id,
+                window_run_id,
                 now=self._clock(),
                 start_year=start_year,
             )
@@ -280,7 +286,7 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
                 "budget_window_not_started",
                 extra={
                     "record": "report",
-                    "record_id": str(report.id),
+                    "record_id": str(report_id),
                     "error_type": type(error).__name__,
                 },
             )
@@ -291,11 +297,13 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
                 "budget_window_call_unconfirmed",
                 extra={
                     "record": "report",
-                    "record_id": str(report.id),
+                    "record_id": str(report_id),
                     "started_years": list(advance.started_years),
                 },
             )
-            refused = call_refused("report", report.id)
+            refused = call_refused(
+                "report", report_id, rerun_id=window_run_id if rerun else None
+            )
             raise refused from None
         return ReportRunStatus(advance.status.value)
 

@@ -27,7 +27,7 @@ record's (``economy_run_records``).
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 from sqlalchemy import func, insert, literal, select
@@ -51,6 +51,7 @@ from policyengine_simulation_persistence.tables import (
     ReportRunTrigger,
     SimulationStatus,
     SimulationType,
+    budget_window_runs,
     report_runs,
     reports,
     simulation_runs,
@@ -88,13 +89,29 @@ class SideDefinition:
 
 
 @dataclass(frozen=True)
+class WindowYearDefinition:
+    """One year of a budget window's newest calculation, and its sides' simulations.
+
+    They are the simulations of the runs that year's report run names: a
+    year that reused a run names that run's simulation, which may be another
+    report's. ``reform_simulation_id`` is None for a year naming no reform.
+    """
+
+    year: int
+    baseline_simulation_id: UUID
+    reform_simulation_id: UUID | None
+
+
+@dataclass(frozen=True)
 class ReportDefinition:
     """What a stored report calculates, as a re-run reads it.
 
     ``region_code`` and ``dataset_name`` are the code and name of the
     report's region and dataset, or None when the report names none (or a
     row it named was deleted). ``baseline`` and ``reform`` are None when the
-    report names no such simulation.
+    report names no such simulation; a budget window's are its first
+    year's. A budget window's ``window_years`` are the years of its newest
+    budget-window run, earliest first, empty when it has none.
     """
 
     id: UUID
@@ -106,6 +123,8 @@ class ReportDefinition:
     inputs: dict[str, Any]
     baseline: SideDefinition | None
     reform: SideDefinition | None
+    budget_window_size: int | None = None
+    window_years: tuple[WindowYearDefinition, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -158,6 +177,37 @@ class NewReportRerun:
             for side in (self.baseline, self.reform)
             if not side.reused
         )
+
+
+@dataclass(frozen=True)
+class WindowRerunYear:
+    """One year of a budget window's re-run: its report run and each side's run."""
+
+    year: int
+    report_run_id: UUID
+    baseline: RerunSide
+    reform: RerunSide
+
+
+@dataclass(frozen=True)
+class NewWindowRerun:
+    """A stored budget window's new calculation, a report run per year.
+
+    ``population`` is the first year's, on the current catalog version;
+    each year calculates on the same catalog version, region and dataset in
+    its own year. ``recalculate`` records whether the re-run was forced.
+    """
+
+    report_id: UUID
+    window_run_id: UUID
+    population: EconomyPopulation
+    versions: RunVersions
+    recalculate: bool
+    years: tuple[WindowRerunYear, ...]
+
+    def population_in(self, year: int) -> EconomyPopulation:
+        """Return what the window's simulations of ``year`` calculate on."""
+        return replace(self.population, year=year)
 
 
 @dataclass(frozen=True)
@@ -229,16 +279,61 @@ def read_report_definition(
     )
     if row is None:
         return None
+    kind = _report_kind(row["type"], row["household_id"], row["budget_window_size"])
     return ReportDefinition(
         id=row["id"],
         country=row["country"],
-        kind=_report_kind(row["type"], row["household_id"], row["budget_window_size"]),
+        kind=kind,
         year=row["year"],
         region_code=row["region_code"],
         dataset_name=row["dataset_name"],
         inputs=row["inputs"],
         baseline=_side(row, "baseline"),
         reform=_side(row, "reform"),
+        budget_window_size=row["budget_window_size"],
+        window_years=(
+            _window_years(connection, report_id) if kind == "budget_window" else ()
+        ),
+    )
+
+
+def _window_years(
+    connection: Connection, report_id: UUID
+) -> tuple[WindowYearDefinition, ...]:
+    """Return the years of the report's newest budget-window run, earliest first."""
+    newest_window_run = (
+        select(budget_window_runs.c.id)
+        .where(budget_window_runs.c.report_id == report_id)
+        .order_by(
+            budget_window_runs.c.created_at.desc(), budget_window_runs.c.id.desc()
+        )
+        .limit(1)
+        .scalar_subquery()
+    )
+    baseline_run = simulation_runs.alias("baseline_run")
+    reform_run = simulation_runs.alias("reform_run")
+    rows = connection.execute(
+        select(
+            report_runs.c.year,
+            baseline_run.c.simulation_id.label("baseline_simulation_id"),
+            reform_run.c.simulation_id.label("reform_simulation_id"),
+        )
+        .join(
+            baseline_run, baseline_run.c.id == report_runs.c.baseline_simulation_run_id
+        )
+        .outerjoin(
+            reform_run, reform_run.c.id == report_runs.c.reform_simulation_run_id
+        )
+        .where(report_runs.c.budget_window_run_id == newest_window_run)
+        .order_by(report_runs.c.year)
+    )
+    return tuple(
+        WindowYearDefinition(
+            year=row.year,
+            baseline_simulation_id=row.baseline_simulation_id,
+            reform_simulation_id=row.reform_simulation_id,
+        )
+        for row in rows
     )
 
 
@@ -365,11 +460,7 @@ def insert_report_rerun(connection: Connection, rerun: NewReportRerun) -> None:
     either refusal ends the caller's transaction, or its savepoint.
     """
     lock_reruns_of(connection, rerun.report_id)
-    under_way = _run_under_way(
-        connection, report_runs, report_runs.c.report_id == rerun.report_id
-    )
-    if under_way is not None:
-        raise RunInProgressError(under_way)
+    _refuse_while_report_runs(connection, rerun.report_id)
     with _record_checked(report_runs.c.report_id), references_checked():
         for side in (rerun.baseline, rerun.reform):
             if not side.reused:
@@ -395,6 +486,81 @@ def insert_report_rerun(connection: Connection, rerun: NewReportRerun) -> None:
                 modal_call_id=None,
             )
         )
+
+
+def insert_window_rerun(connection: Connection, rerun: NewWindowRerun) -> None:
+    """Create the budget window's new run, each year's report run and new runs.
+
+    The budget-window run has trigger ``manual`` and records ``recalculate``;
+    each year's report run names it and its year, and each side reusing no
+    run gets a new run of its year's simulation. All are pending with no
+    Modal call; the service then starts the first years. Raise as
+    ``insert_report_rerun`` does.
+    """
+    lock_reruns_of(connection, rerun.report_id)
+    _refuse_while_report_runs(connection, rerun.report_id)
+    population = rerun.population
+    with (
+        _record_checked(budget_window_runs.c.report_id, report_runs.c.report_id),
+        references_checked(),
+    ):
+        # First, so a report deleted after its reads is told apart from a
+        # year's simulation deleted with it.
+        connection.execute(
+            insert(budget_window_runs).values(
+                id=rerun.window_run_id,
+                report_id=rerun.report_id,
+                tax_benefit_model_version_id=population.tax_benefit_model_version_id,
+                trigger=ReportRunTrigger.MANUAL,
+                recalculate=rerun.recalculate,
+                status=ReportRunStatus.PENDING,
+            )
+        )
+        for window_year in rerun.years:
+            for side in (window_year.baseline, window_year.reform):
+                if not side.reused:
+                    insert_simulation_run(
+                        connection,
+                        run_id=side.simulation_run_id,
+                        simulation_id=side.simulation_id,
+                        population=rerun.population_in(window_year.year),
+                        versions=rerun.versions,
+                    )
+        connection.execute(
+            insert(report_runs),
+            [_year_run_row(rerun, window_year) for window_year in rerun.years],
+        )
+
+
+def _year_run_row(
+    rerun: NewWindowRerun, window_year: WindowRerunYear
+) -> dict[str, Any]:
+    """Return a year's new report run, pending with no call, as inserted."""
+    return {
+        "id": window_year.report_run_id,
+        "report_id": rerun.report_id,
+        "baseline_simulation_run_id": window_year.baseline.simulation_run_id,
+        "reform_simulation_run_id": window_year.reform.simulation_run_id,
+        "budget_window_run_id": rerun.window_run_id,
+        "year": window_year.year,
+        "country_package_version": rerun.versions.country_package_version,
+        "policyengine_version": rerun.versions.policyengine_version,
+        "status": ReportRunStatus.PENDING,
+        "trigger": ReportRunTrigger.MANUAL,
+        "modal_call_id": None,
+    }
+
+
+def _refuse_while_report_runs(connection: Connection, report_id: UUID) -> None:
+    """Raise RunInProgressError while the report has a run pending or running.
+
+    A budget-window run under way is named first, then a report run.
+    """
+    under_way = _run_under_way(
+        connection, budget_window_runs, budget_window_runs.c.report_id == report_id
+    ) or _run_under_way(connection, report_runs, report_runs.c.report_id == report_id)
+    if under_way is not None:
+        raise RunInProgressError(under_way)
 
 
 def insert_simulation_rerun(connection: Connection, rerun: NewSimulationRerun) -> None:
@@ -424,15 +590,16 @@ def insert_simulation_rerun(connection: Connection, rerun: NewSimulationRerun) -
 
 
 @contextmanager
-def _record_checked(own_key: Column[Any]) -> Iterator[None]:
-    """Turn a refusal of the new run's key to the record into RerunRecordDeletedError.
+def _record_checked(*own_keys: Column[Any]) -> Iterator[None]:
+    """Turn a refusal of a new run's key to the record into RerunRecordDeletedError.
 
-    ``own_key`` is that key's column; a refusal of any other row propagates
-    unchanged.
+    ``own_keys`` are those keys' columns; a refusal of any other row
+    propagates unchanged.
     """
     try:
         yield
     except EconomyRecordReferenceError as error:
-        if (error.table_name, error.column_name) == (own_key.table.name, own_key.key):
+        refused = (error.table_name, error.column_name)
+        if refused in {(key.table.name, key.key) for key in own_keys}:
             raise RerunRecordDeletedError from None
         raise

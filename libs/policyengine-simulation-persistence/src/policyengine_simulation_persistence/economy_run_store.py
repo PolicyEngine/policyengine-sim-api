@@ -20,6 +20,7 @@ from policyengine_simulation_persistence.budget_window_records import (
 from policyengine_simulation_persistence.economy_rerun_records import (
     insert_report_rerun,
     insert_simulation_rerun,
+    insert_window_rerun,
     read_report_definition,
     read_simulation_definition,
 )
@@ -77,9 +78,11 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence.economy_rerun_records import (
         NewReportRerun,
         NewSimulationRerun,
+        NewWindowRerun,
         ReportDefinition,
         SideDefinition,
         SimulationDefinition,
+        WindowYearDefinition,
     )
     from policyengine_simulation_persistence.economy_run_reads import (
         EconomyReportState,
@@ -360,6 +363,64 @@ class EconomyRunStore:
                 reform=reform.choice,
                 search=search,
             )
+
+    def read_window_rerun_inputs(
+        self,
+        request: EconomyRequest,
+        *,
+        baseline: SimulationChoice,
+        reform: SimulationChoice,
+        years: Sequence[WindowYearDefinition],
+        reuse: RunReuse | None,
+    ) -> BudgetWindowInputs:
+        """Read a window re-run's catalog rows, both sides' values and each year's runs.
+
+        ``request.year`` is the window's first year. With ``reuse``, each
+        year's sides get the runs ``find_reusable_run_of`` finds among that
+        year's own simulations' runs, and the reform never gets the
+        baseline's. Raise the errors ``read_report_inputs`` raises.
+        """
+        with self._transaction() as connection:
+            catalog = _catalog_rows(connection, request)
+            baseline_inputs = _side_inputs(
+                connection, request, catalog, "baseline", baseline
+            )
+            reform_inputs = _side_inputs(connection, request, catalog, "reform", reform)
+            reusable_runs: dict[int, tuple[ReusableRun | None, ReusableRun | None]] = {}
+            for window_year in years:
+                baseline_run = reform_run = None
+                if reuse is not None and window_year.reform_simulation_id is not None:
+                    search = _search_own_runs(
+                        connection,
+                        catalog.population(window_year.year),
+                        reuse,
+                        {
+                            "baseline": window_year.baseline_simulation_id,
+                            "reform": window_year.reform_simulation_id,
+                        },
+                    )
+                    baseline_run = search("baseline", baseline, None)
+                    reform_run = search(
+                        "reform",
+                        reform,
+                        None
+                        if baseline_run is None
+                        else baseline_run.simulation_run_id,
+                    )
+                reusable_runs[window_year.year] = (baseline_run, reform_run)
+        return BudgetWindowInputs(
+            catalog=catalog,
+            baseline=baseline_inputs,
+            reform=reform_inputs,
+            reusable_runs=reusable_runs,
+        )
+
+    def create_window_rerun(self, rerun: NewWindowRerun) -> None:
+        """Create the window's new run and its years' runs; see ``insert_window_rerun``.
+
+        Raise EconomyRecordOutcomeUnknownError as ``create_report`` does.
+        """
+        self._create(lambda connection: insert_window_rerun(connection, rerun))
 
     def create_report_rerun(self, rerun: NewReportRerun) -> None:
         """Create the report's new run and its sides' new simulation runs.
