@@ -2,8 +2,11 @@
 
 The submission service raises these, and the routes answer each with its
 status: EconomySubmissionRefusedError 400, EconomySubmissionUnprocessableError
-422 and EconomySubmissionUnavailableError 503. ``read_refusal`` and
-``reference_refusal`` turn the store's errors into them.
+422, EconomySubmissionUnavailableError 503 and
+EconomySubmissionOutcomeUnknownError 500. ``read_refusal`` and
+``reference_refusal`` turn the store's errors into them, writing each detail
+from the request rather than from an error's text, since the Public API
+passes a refusal's detail on to its callers.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from typing import TYPE_CHECKING, Literal
 from policyengine_simulation_persistence import (
     MissingPolicyParametersError,
     OverlappingReformError,
+    ReportSideError,
     UnknownCatalogVersionError,
     UnknownDatasetError,
     UnknownDynamicError,
@@ -24,7 +28,10 @@ from policyengine_simulation_persistence import (
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from policyengine_simulation_persistence import EconomyRecordReferenceError
+    from policyengine_simulation_persistence import (
+        EconomyRecordReferenceError,
+        EconomyRequest,
+    )
 
     from policyengine_simulation_entry.economy_api_models import (
         EconomyRefusalCode,
@@ -85,6 +92,20 @@ class EconomySubmissionUnprocessableError(Exception):
         self.reasons = reasons
 
 
+class EconomySubmissionOutcomeUnknownError(Exception):
+    """The submission's rows may have been written, but that can't be confirmed.
+
+    The commit failed after the rows were inserted. The route answers 500,
+    which the Public API reads as a record that may exist, never a 503,
+    which it reads as nothing created.
+    """
+
+    def __init__(self, record: RecordName) -> None:
+        """Keep what the submission creates."""
+        super().__init__(f"the {record} may have been created")
+        self.record: RecordName = record
+
+
 class EconomySubmissionUnavailableError(Exception):
     """A dependency could not be read or refused the call; ask again later.
 
@@ -106,44 +127,84 @@ class EconomySubmissionUnavailableError(Exception):
         self.record_id = record_id
 
 
-# Each store error naming a row the request names that doesn't exist, and
-# the code it is refused with.
-_MISSING_ROW_CODES: dict[type[LookupError], EconomyRefusalCode] = {
-    UnknownRegionError: "unknown_region",
-    UnknownDatasetError: "unknown_dataset",
-    UnknownDynamicError: "unknown_dynamic",
-    UnknownPolicyError: "unknown_policy",
-}
-
-
 def read_refusal(
-    error: Exception, *, policyengine_version: str
+    error: Exception, request: EconomyRequest
 ) -> EconomySubmissionRefusedError | EconomySubmissionUnprocessableError | None:
     """Return the refusal a store read's error means, or None for any other error.
 
     A missing catalog version, region, dataset, policy or dynamic is refused
-    (400); a policy or dynamic setting parameters the catalog version for
-    ``policyengine_version`` lacks, or both setting one, cannot be
-    calculated (422).
+    (400); a policy or dynamic setting parameters the catalog version lacks,
+    or both setting one, cannot be calculated (422). A report side's refusal
+    (ReportSideError) is located on that side's fields. Every detail is
+    written from ``request``, never from the error's text.
     """
+    side = None
+    if isinstance(error, ReportSideError):
+        side, error = error.side, error.error
+    return _missing_row_refusal(error, request, side) or _unprocessable(
+        error, request, side
+    )
+
+
+def _missing_row_refusal(
+    error: Exception, request: EconomyRequest, side: str | None
+) -> EconomySubmissionRefusedError | None:
+    """Return the 400 a missing row means, or None for another error."""
+    catalog = (
+        f"{request.country}'s catalog version for .py {request.policyengine_version}"
+    )
+    named_by = "the request" if side is None else f"the request's {side}"
+    refusal: tuple[EconomyRefusalCode, str] | None = None
     if isinstance(error, UnknownCatalogVersionError):
-        return EconomySubmissionRefusedError(
-            code="unknown_catalog_version",
-            detail=f"{error}, the default v2 worker's version",
+        refusal = (
+            "unknown_catalog_version",
+            f"{request.country} has no catalog version for .py "
+            f"{request.policyengine_version}, the default v2 worker's version.",
         )
-    for error_type, code in _MISSING_ROW_CODES.items():
-        if isinstance(error, error_type):
-            return EconomySubmissionRefusedError(code=code, detail=str(error))
+    elif isinstance(error, UnknownRegionError):
+        refusal = ("unknown_region", f"{catalog} has no region {request.region_code}.")
+    elif isinstance(error, UnknownDatasetError):
+        dataset = (
+            f"default dataset for region {request.region_code}"
+            if request.dataset_name is None
+            else f"dataset {request.dataset_name}"
+        )
+        refusal = ("unknown_dataset", f"{catalog} has no {dataset}.")
+    elif isinstance(error, UnknownPolicyError):
+        refusal = (
+            "unknown_policy",
+            f"{request.country} has no stored policy {named_by} names.",
+        )
+    elif isinstance(error, UnknownDynamicError):
+        refusal = (
+            "unknown_dynamic",
+            f"No stored dynamic matches the one {named_by} names.",
+        )
+    if refusal is None:
+        return None
+    code, detail = refusal
+    return EconomySubmissionRefusedError(code=code, detail=detail)
+
+
+def _unprocessable(
+    error: Exception, request: EconomyRequest, side: str | None
+) -> EconomySubmissionUnprocessableError | None:
+    """Return the 422 refused values mean, or None for another error.
+
+    Each reason is located at the field that names the values: the request's
+    own, or the report side's.
+    """
+    location: tuple[str, ...] = ("body",) if side is None else ("body", side)
     if isinstance(error, MissingPolicyParametersError):
         field_name = "policy_id" if error.source == "policy" else "dynamic_id"
         return EconomySubmissionUnprocessableError(
             code="missing_parameters",
             reasons=tuple(
                 UnprocessableReason(
-                    loc=("body", field_name, name),
+                    loc=(*location, field_name, name),
                     msg=(
-                        f"the catalog version for .py {policyengine_version} has "
-                        "no such parameter"
+                        f"the catalog version for .py {request.policyengine_version} "
+                        "has no such parameter"
                     ),
                     type="missing_parameter",
                 )
@@ -155,7 +216,7 @@ def read_refusal(
             code="overlapping_parameters",
             reasons=tuple(
                 UnprocessableReason(
-                    loc=("body", "dynamic_id", name),
+                    loc=(*location, "dynamic_id", name),
                     msg="the policy and the dynamic both set this parameter",
                     type="overlapping_parameter",
                 )

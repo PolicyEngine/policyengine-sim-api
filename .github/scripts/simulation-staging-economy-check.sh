@@ -9,7 +9,9 @@
 # Optional: ECONOMY_CHECK_DEADLINE_SECONDS (1800) and
 # ECONOMY_CHECK_POLL_SECONDS (15).
 # The access token is sent from a file and the client secret on standard
-# input, so neither appears on a command line.
+# input, so neither appears on a command line. Each request is given
+# REQUEST_TIMEOUT_SECONDS; a read that gets no answer is asked again, as a
+# 503 is, until the deadline.
 
 set -euo pipefail
 
@@ -22,6 +24,7 @@ base_url="${1:?Simulation Entrypoint base URL is required}"
 base_url="${base_url%/}"
 deadline_seconds="${ECONOMY_CHECK_DEADLINE_SECONDS:-1800}"
 poll_seconds="${ECONOMY_CHECK_POLL_SECONDS:-15}"
+request_timeout_seconds=30
 uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 
 for variable_name in SIMULATION_TEST_AUTH_ISSUER SIMULATION_TEST_AUTH_AUDIENCE \
@@ -38,11 +41,12 @@ trap 'rm -rf "${work_directory}"' EXIT
 chmod 700 "${work_directory}"
 
 # Send one request; write its body to <name>.json and print its HTTP status.
+# It fails, printing nothing, when no answer arrives.
 send() {
   local name="$1"
   shift
-  curl --silent --show-error --output "${work_directory}/${name}.json" \
-    --write-out '%{http_code}' "$@"
+  curl --silent --show-error --max-time "${request_timeout_seconds}" \
+    --output "${work_directory}/${name}.json" --write-out '%{http_code}' "$@"
 }
 
 token_status="$(
@@ -53,7 +57,7 @@ token_status="$(
     '{client_id: $client_id, client_secret: $client_secret, audience: $audience, grant_type: "client_credentials"}' \
     | send token --request POST --header 'Content-Type: application/json' \
       --data @- "${SIMULATION_TEST_AUTH_ISSUER%/}/oauth/token"
-)"
+)" || fail "the token request got no answer"
 [[ "${token_status}" == "200" ]] || fail "the token request answered ${token_status}"
 access_token="$(jq -r '.access_token // empty' "${work_directory}/token.json")"
 [[ -n "${access_token}" ]] || fail "the token response has no access_token"
@@ -74,7 +78,7 @@ submission_status="$(
     | send submission --request POST --header "@${authorization_header}" \
       --header 'Content-Type: application/json' --data @- \
       "${base_url}/reports"
-)"
+)" || fail "POST /reports got no answer; it may have created a report"
 [[ "${submission_status}" == "201" ]] \
   || fail "POST /reports answered ${submission_status}: $(cat "${work_directory}/submission.json")"
 submission="${work_directory}/submission.json"
@@ -88,11 +92,12 @@ printf 'Created report %s, run %s (baseline reused: %s, reform reused: %s)\n' \
 
 started_at="${SECONDS}"
 while true; do
-  read_status="$(
-    send report --header "@${authorization_header}" "${base_url}/reports/${report_id}"
-  )"
   report_body="${work_directory}/report.json"
-  if [[ "${read_status}" == "200" ]]; then
+  if ! read_status="$(
+    send report --header "@${authorization_header}" "${base_url}/reports/${report_id}"
+  )"; then
+    printf 'GET /reports/%s got no answer; asking again\n' "${report_id}" >&2
+  elif [[ "${read_status}" == "200" ]]; then
     newest_run_id="$(jq -r '.run.run_id // empty' "${report_body}")"
     [[ "${newest_run_id}" == "${report_run_id}" ]] \
       || fail "report ${report_id}'s newest run is ${newest_run_id:-missing}, not the created run ${report_run_id}"

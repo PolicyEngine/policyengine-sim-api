@@ -1276,6 +1276,8 @@ jobs:
       }}
     needs: [deploy_entrypoint, authenticated_test, publish_stage12_v2_default]
     runs-on: ubuntu-latest
+    # Longer than the script's own 30-minute deadline, so the script fails first.
+    timeout-minutes: 40
     environment: ${{ inputs.release_environment }}
     steps:
       - uses: actions/checkout@v6

@@ -10,7 +10,9 @@ reads and writes of ``economy_run_records`` and ``policy_reform`` that way.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from policyengine_simulation_persistence.economy_run_reads import (
     read_economy_report,
@@ -43,6 +45,10 @@ from policyengine_simulation_persistence.household_job_store import (
     UnknownCatalogVersionError,
 )
 from policyengine_simulation_persistence.policy_reform import (
+    MissingPolicyParametersError,
+    OverlappingReformError,
+    UnknownDynamicError,
+    UnknownPolicyError,
     combine_reforms,
     read_dynamic_reform,
     read_policy_reform,
@@ -70,6 +76,15 @@ if TYPE_CHECKING:
     )
 
 type TransactionFactory = Callable[[], AbstractContextManager[Connection]]
+# Which of a report's simulations a value belongs to.
+type ReportSide = Literal["baseline", "reform"]
+# The errors a simulation's own policy or dynamic can raise.
+_SIDE_ERRORS = (
+    UnknownPolicyError,
+    UnknownDynamicError,
+    MissingPolicyParametersError,
+    OverlappingReformError,
+)
 
 
 class UnknownRegionError(LookupError):
@@ -78,6 +93,29 @@ class UnknownRegionError(LookupError):
 
 class UnknownDatasetError(LookupError):
     """The catalog version has no dataset with the requested name."""
+
+
+class ReportSideError(Exception):
+    """A report side's policy or dynamic is refused.
+
+    ``side`` names the side, and ``error`` is the policy reader's refusal:
+    UnknownPolicyError, UnknownDynamicError, MissingPolicyParametersError or
+    OverlappingReformError.
+    """
+
+    def __init__(self, side: ReportSide, error: Exception) -> None:
+        """Keep the side and the refusal."""
+        super().__init__(f"the report's {side}: {error}")
+        self.side: ReportSide = side
+        self.error = error
+
+
+class EconomyRecordOutcomeUnknownError(RuntimeError):
+    """A create's statements ran, but its commit failed: the rows may exist.
+
+    PostgreSQL may have applied the commit before the connection failed, so
+    the caller must not answer that nothing was created.
+    """
 
 
 @dataclass(frozen=True)
@@ -184,7 +222,10 @@ class EconomyRunStore:
     ) -> EconomySimulationInputs:
         """Read a standalone simulation's catalog rows and values together.
 
-        Raise the errors ``read_report_inputs`` names.
+        Raise UnknownCatalogVersionError, UnknownRegionError or
+        UnknownDatasetError, or the policy reader's UnknownPolicyError,
+        UnknownDynamicError or MissingPolicyParametersError, or
+        OverlappingReformError.
         """
         with self._transaction() as connection:
             catalog = _catalog_rows(connection, request)
@@ -205,19 +246,25 @@ class EconomyRunStore:
 
         With ``reuse``, each side gets the run ``find_reusable_run`` finds,
         and the reform never gets the baseline's. Raise
-        UnknownCatalogVersionError, UnknownRegionError, UnknownDatasetError,
-        the policy reader's UnknownPolicyError, UnknownDynamicError or
-        MissingPolicyParametersError, or OverlappingReformError.
+        UnknownCatalogVersionError, UnknownRegionError or UnknownDatasetError,
+        or ReportSideError naming the side whose policy or dynamic is refused.
         """
         with self._transaction() as connection:
             catalog = _catalog_rows(connection, request)
             population = catalog.population(request.year)
             sides = []
             excluded_run_id = None
-            for choice in (baseline, reform):
-                inputs = _simulation_inputs(
-                    connection, request.country, catalog.catalog_version_id, choice
-                )
+            sides_requested: tuple[tuple[ReportSide, SimulationChoice], ...] = (
+                ("baseline", baseline),
+                ("reform", reform),
+            )
+            for side, choice in sides_requested:
+                try:
+                    inputs = _simulation_inputs(
+                        connection, request.country, catalog.catalog_version_id, choice
+                    )
+                except _SIDE_ERRORS as error:
+                    raise ReportSideError(side, error) from error
                 if reuse is not None:
                     reusable_run = find_reusable_run(
                         connection,
@@ -239,14 +286,40 @@ class EconomyRunStore:
         return EconomyReportInputs(catalog=catalog, baseline=sides[0], reform=sides[1])
 
     def create_report(self, report: NewEconomyReport) -> None:
-        """Create the report, its new simulations and its runs."""
-        with self._transaction() as connection:
-            insert_economy_report(connection, report)
+        """Create the report, its new simulations and its runs.
+
+        Raise ``insert_economy_report``'s errors, and
+        EconomyRecordOutcomeUnknownError when the commit fails after the
+        rows were inserted.
+        """
+        self._create(lambda connection: insert_economy_report(connection, report))
 
     def create_simulation(self, simulation: NewEconomySimulation) -> None:
-        """Create the simulation and its run; see ``insert_economy_simulation``."""
-        with self._transaction() as connection:
-            insert_economy_simulation(connection, simulation)
+        """Create the simulation and its run; see ``insert_economy_simulation``.
+
+        Raise EconomyRecordOutcomeUnknownError as ``create_report`` does.
+        """
+        self._create(
+            lambda connection: insert_economy_simulation(connection, simulation)
+        )
+
+    def _create(self, insert: Callable[[Connection], None]) -> None:
+        """Run ``insert`` in a transaction, telling a failed commit apart.
+
+        An error from ``insert`` leaves nothing written and propagates. An
+        error once it has run is the commit's, after which the rows may
+        exist: EconomyRecordOutcomeUnknownError.
+        """
+        inserted = False
+        try:
+            with self._transaction() as connection:
+                insert(connection)
+                inserted = True
+        except SQLAlchemyError as error:
+            if not inserted:
+                raise
+            msg = "the create's commit failed after its rows were inserted"
+            raise EconomyRecordOutcomeUnknownError(msg) from error
 
     def record_report_call(
         self, report_run_id: UUID, modal_call_id: str

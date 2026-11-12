@@ -21,7 +21,8 @@ the record was created and its run failed, and the answer names it. Every
 500 is the JSON error with code ``internal_error``, and may follow a write.
 
 A request gets its observability ID from the caller's header, or a new one,
-and passes it to the Modal call it starts.
+and passes it to the Modal call it starts in the observability context; the
+call's ``request_id`` is the request's own ``X-Request-ID``.
 """
 
 from __future__ import annotations
@@ -46,6 +47,7 @@ from policyengine_simulation_entry.economy_api_models import (
     SimulationRunRead,
 )
 from policyengine_simulation_entry.economy_submission_errors import (
+    EconomySubmissionOutcomeUnknownError,
     EconomySubmissionRefusedError,
     EconomySubmissionUnavailableError,
     EconomySubmissionUnprocessableError,
@@ -110,8 +112,8 @@ _UNPROCESSABLE = {
 }
 _INTERNAL_ERROR = {
     "description": (
-        "The service failed unexpectedly (internal_error), possibly after "
-        "creating the record"
+        "The service failed unexpectedly, or could not confirm its rows were "
+        "written (internal_error), possibly after creating the record"
     ),
     **_ERROR,
 }
@@ -205,6 +207,7 @@ _SUBMISSION_FAILURES = (
     EconomySubmissionRefusedError,
     EconomySubmissionUnprocessableError,
     EconomySubmissionUnavailableError,
+    EconomySubmissionOutcomeUnknownError,
 )
 
 
@@ -226,11 +229,39 @@ def _submission_failure_response(error: Exception, record: RecordName) -> JSONRe
             },
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
+    if isinstance(error, EconomySubmissionOutcomeUnknownError):
+        return _outcome_unknown_response(error)
     assert isinstance(error, EconomySubmissionUnavailableError)  # noqa: S101  # the last of _SUBMISSION_FAILURES
     record_ids = {} if error.record_id is None else {f"{record}_id": error.record_id}
     return _error_response(
         status.HTTP_503_SERVICE_UNAVAILABLE,
         EconomyError(code=error.code, detail=error.detail, **record_ids),
+    )
+
+
+def _outcome_unknown_response(
+    error: EconomySubmissionOutcomeUnknownError,
+) -> JSONResponse:
+    """Answer a create whose commit can't be confirmed with the JSON 500.
+
+    The Public API reads a 500 as a record that may exist; a 503 would tell
+    it nothing was created. The log is the fixed event
+    ``economy_record_outcome_unknown``.
+    """
+    fields = {"record": error.record}
+    logger.error(
+        "economy_record_outcome_unknown",
+        extra={**fields, "policyengine_attributes": fields},
+    )
+    return _error_response(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        EconomyError(
+            code="internal_error",
+            detail=(
+                f"The service may have created the {error.record}, but could not "
+                "confirm it was written."
+            ),
+        ),
     )
 
 
@@ -371,7 +402,7 @@ def _submission_routes(
         try:
             created = await submissions.submit_report(
                 body,
-                request_id=observability_id,
+                request_id=request.state.request_id,
                 observability_context=observability_context(entry, observability_id),
             )
         except _SUBMISSION_FAILURES as error:
@@ -415,7 +446,7 @@ def _submission_routes(
         try:
             created = await submissions.submit_simulation(
                 body,
-                request_id=observability_id,
+                request_id=request.state.request_id,
                 observability_context=observability_context(entry, observability_id),
             )
         except _SUBMISSION_FAILURES as error:
@@ -471,7 +502,7 @@ def _read_routes(
 
     @router.get(
         REPORT_PATH,
-        summary="Get an economy report's newest run",
+        summary="Get a report's newest run",
         description=(
             "Return the report, its two simulations and its newest run's "
             "status, versions, error message and times."
@@ -500,7 +531,7 @@ def _read_routes(
 
     @router.get(
         SIMULATION_PATH,
-        summary="Get an economy simulation's newest run",
+        summary="Get a simulation's newest run",
         description=(
             "Return the simulation and its newest run's status, versions, error "
             "message and times."

@@ -200,12 +200,18 @@ def test_each_missing_row_a_request_names_is_refused(
         store = _store_on(connection)
         request = EconomyRequest(**{**vars(REQUEST), **request_fields})
 
-        with pytest.raises(error_type):
+        # A report names the side whose policy or dynamic is missing.
+        side_refused = missing in {"policy", "dynamic"}
+        with pytest.raises(ReportSideError if side_refused else error_type) as raised:
             store.read_report_inputs(
                 request, baseline=CURRENT_LAW, reform=choice, reuse=REUSE
             )
         with pytest.raises(error_type):
             store.read_simulation_inputs(request, choice)
+
+    if side_refused:
+        assert raised.value.side == "reform"
+        assert isinstance(raised.value.error, error_type)
 
 
 def test_values_the_running_version_lacks_or_both_set_are_refused(

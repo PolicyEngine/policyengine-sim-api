@@ -19,7 +19,8 @@ Answers the Public API reads:
 - 503 with ``code`` and ``detail`` when the service cannot answer now. Only
   ``modal_call_refused`` follows a write, and it names the record created
   (``report_id`` or ``simulation_id``), whose run was failed;
-- 500 with ``code`` ``internal_error``, possibly after a write.
+- 500 with ``code`` ``internal_error``, possibly after a write: an
+  unexpected failure, or a commit that failed after the rows were inserted.
 
 ``detail`` never holds an exception's text, and ``code`` is a fixed
 identifier.
@@ -28,7 +29,7 @@ identifier.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any, Final, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from policyengine_simulation_contract.spm import SPMSelection
@@ -46,9 +47,6 @@ ReportDescription = Annotated[str, Field(max_length=10_000)]
 # Why a request is refused (400), naming a row the caller chose that doesn't
 # exist: the Public API answers these as its caller's error.
 CallerRowRefusalCode = Literal["unknown_region", "unknown_dataset", "unknown_dynamic"]
-CALLER_ROW_REFUSAL_CODES: Final = frozenset(
-    {"unknown_region", "unknown_dataset", "unknown_dynamic"}
-)
 # Why a request is refused (400) for the service's own state, or a row the
 # Public API checks before asking.
 ServiceStateRefusalCode = Literal[
@@ -170,8 +168,10 @@ class _Answer(BaseModel):
 class EconomySimulationCreated(_Answer):
     """The simulation a request created, its first run and that run's status.
 
-    The status is the run's as the service last wrote or read it: ``pending``
-    unless the simulation function had claimed the run by then.
+    The status is the run's when its call's ID was recorded: ``pending``, or
+    ``running`` when the simulation function had claimed it first. A run
+    whose call Modal didn't confirm, or whose call's ID couldn't be
+    recorded, is answered ``pending``.
     """
 
     simulation_id: UUID
@@ -182,8 +182,10 @@ class EconomySimulationCreated(_Answer):
 class EconomyReportCreated(_Answer):
     """The report a request created, its first run and that run's status.
 
-    The status is the run's as the service last wrote or read it: ``pending``
-    unless the coordinator had claimed the run by then. Each side names its
+    The status is the run's when its call's ID was recorded: ``pending``, or
+    ``running`` when the coordinator had claimed it first. A run whose call
+    Modal didn't confirm, or whose call's ID couldn't be recorded, is
+    answered ``pending``. Each side names its
     simulation and simulation run; ``…_reused`` is true for a side that
     names a run that already succeeded, rather than a new one.
     """

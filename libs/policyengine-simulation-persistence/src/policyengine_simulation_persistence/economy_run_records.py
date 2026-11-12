@@ -290,14 +290,17 @@ def find_reusable_run(  # noqa: PLR0913  # each keyword is one part of the match
     - whose output file is under ``output_uri_prefix``, the output bucket,
       which never deletes a file;
     - that a succeeded report run used, in a report with the same ``inputs``
-      (options), so its file holds what such a report needs;
+      (options), so its file holds the outputs a report with those options
+      planned;
     - that no report run has refused to reuse (an error message starting
       ``reused_simulation_``), so a submission after a refused reuse
       calculates the simulation again; and
     - that is not ``excluded_run_id``, the other side's run.
 
-    The coordinator may still refuse it, for example when labour supply
-    responses differ between the two reports.
+    The coordinator may still refuse it, when the new report plans outputs
+    that report did not, as for a reform that turns on labour supply
+    responses: the refusal fails that report run, and the run is not offered
+    again.
     """
     used_by = report_runs.alias("used_by_report_run")
     refused_by = report_runs.alias("refused_by_report_run")

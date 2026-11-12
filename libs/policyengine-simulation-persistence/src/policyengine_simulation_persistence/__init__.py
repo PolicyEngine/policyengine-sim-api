@@ -39,10 +39,12 @@ from policyengine_simulation_persistence.economy_run_records import (
 )
 from policyengine_simulation_persistence.economy_run_store import (
     EconomyCatalogRows,
+    EconomyRecordOutcomeUnknownError,
     EconomyReportInputs,
     EconomyRequest,
     EconomyRunStore,
     EconomySimulationInputs,
+    ReportSideError,
     RunReuse,
     SimulationInputs,
     UnknownDatasetError,
@@ -105,6 +107,7 @@ __all__ = [
     "CatalogRegion",
     "EconomyCatalogRows",
     "EconomyPopulation",
+    "EconomyRecordOutcomeUnknownError",
     "EconomyRecordReferenceError",
     "EconomyReportInputs",
     "EconomyReportState",
@@ -126,6 +129,7 @@ __all__ = [
     "ReportRunState",
     "ReportRunStatus",
     "ReportRunTrigger",
+    "ReportSideError",
     "ReportSimulation",
     "ReusableRun",
     "RunReuse",

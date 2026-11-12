@@ -167,7 +167,8 @@ def test_a_report_answers_201_with_its_records_and_runs(client_for) -> None:
         "include_cliffs": True,
         "spm": {"geography_kind": "national"},
     }
-    assert request_id == OBSERVABILITY_ID
+    # The call's request ID is the request's own (see the request ID test).
+    assert request_id != OBSERVABILITY_ID
     assert context["observability_id"] == OBSERVABILITY_ID
 
 
@@ -185,7 +186,7 @@ def test_a_simulation_answers_201_with_its_record_and_run(client_for) -> None:
     }
     ((request, request_id, _),) = submissions.simulations
     assert str(request.policy_id) == SIMULATION_BODY["policy_id"]
-    assert request_id == result.headers[OBSERVABILITY_ID_HEADER]
+    assert request_id != result.headers[OBSERVABILITY_ID_HEADER]
 
 
 @pytest.mark.parametrize(

@@ -211,13 +211,13 @@ def test_a_report_without_spm_settings_stores_none() -> None:
     ("error", "code"),
     [
         (
-            UnknownCatalogVersionError("us has no catalog version"),
+            UnknownCatalogVersionError("store text: no catalog version"),
             "unknown_catalog_version",
         ),
-        (UnknownRegionError("no region state/zz"), "unknown_region"),
-        (UnknownDatasetError("no dataset acs"), "unknown_dataset"),
-        (UnknownPolicyError("us has no policy"), "unknown_policy"),
-        (UnknownDynamicError("there is no dynamic"), "unknown_dynamic"),
+        (UnknownRegionError("store text: no region"), "unknown_region"),
+        (UnknownDatasetError("store text: no dataset"), "unknown_dataset"),
+        (UnknownPolicyError("store text: no policy"), "unknown_policy"),
+        (UnknownDynamicError("store text: no dynamic"), "unknown_dynamic"),
     ],
 )
 def test_a_missing_row_is_refused_before_anything_is_written(error, code) -> None:

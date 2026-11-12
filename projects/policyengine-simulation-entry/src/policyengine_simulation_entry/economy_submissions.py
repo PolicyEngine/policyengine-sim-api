@@ -20,7 +20,7 @@ stored policy and dynamic. The service:
    Modal refuses the call, or does not confirm it in time, it fails the
    report run and its new simulation runs at once instead, under the same
    condition; a run the coordinator claimed meanwhile, because Modal
-   accepted the call after all, is answered as it stands.
+   accepted the call after all, is left as it is and answered ``pending``.
 
 A standalone simulation is created and started the same way, with one
 simulation run calculated by the country's simulation function.
@@ -42,6 +42,7 @@ from uuid import UUID, uuid4
 
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_simulation_persistence import (
+    EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
     EconomyRequest,
     NewEconomyReport,
@@ -68,6 +69,7 @@ from policyengine_simulation_entry.economy_calculation_inputs import (
     simulation_run_calculation,
 )
 from policyengine_simulation_entry.economy_submission_errors import (
+    EconomySubmissionOutcomeUnknownError,
     EconomySubmissionRefusedError,
     EconomySubmissionUnavailableError,
     RecordName,
@@ -270,7 +272,7 @@ class EconomySubmissionService:
                 reform=_choice(request.reform),
                 reuse=reuse,
             ),
-            policyengine_version=worker.policyengine_version,
+            request=economy_request,
         )
         scope = _scope(request, worker, inputs.catalog, spm=options.get("spm"))
         report = NewEconomyReport(
@@ -298,7 +300,7 @@ class EconomySubmissionService:
             baseline_policy=inputs.baseline.reform,
             reform_policy=inputs.reform.reform,
         )
-        await self._create(lambda: self._store.create_report(report))
+        await self._create("report", lambda: self._store.create_report(report))
         status = await self._start_report_run(
             worker, report, calculation, observability_context=observability_context
         )
@@ -333,7 +335,7 @@ class EconomySubmissionService:
         )
         inputs = await self._read_inputs(
             lambda: self._store.read_simulation_inputs(economy_request, choice),
-            policyengine_version=worker.policyengine_version,
+            request=economy_request,
         )
         scope = _scope(request, worker, inputs.catalog, spm=None)
         simulation = NewEconomySimulation(
@@ -350,7 +352,9 @@ class EconomySubmissionService:
             simulation_run_id=simulation.run_id,
             policy=inputs.simulation.reform,
         )
-        await self._create(lambda: self._store.create_simulation(simulation))
+        await self._create(
+            "simulation", lambda: self._store.create_simulation(simulation)
+        )
         status = await self._start_simulation_run(
             worker,
             simulation,
@@ -418,9 +422,13 @@ class EconomySubmissionService:
     async def _default_worker(self, country: str) -> EconomyWorker:
         try:
             return await asyncio.to_thread(self._workers.default_worker, country)
-        except EconomyWorkerUnavailableError as error:
+        except EconomyWorkerUnavailableError:
             raise EconomySubmissionRefusedError(
-                code="no_economy_worker", detail=str(error)
+                code="no_economy_worker",
+                detail=(
+                    "The default v2 worker cannot calculate economy runs for "
+                    f"{country}."
+                ),
             ) from None
         except VersionManifestUnavailableError as error:
             logger.warning(
@@ -433,7 +441,7 @@ class EconomySubmissionService:
             ) from None
 
     async def _read_inputs[Inputs](
-        self, read: Callable[[], Inputs], *, policyengine_version: str
+        self, read: Callable[[], Inputs], *, request: EconomyRequest
     ) -> Inputs:
         """Run ``read`` on a thread; answer each refusal as the request's error."""
         try:
@@ -445,16 +453,31 @@ class EconomySubmissionService:
             )
             raise _database_unavailable() from None
         except Exception as error:
-            refusal = read_refusal(error, policyengine_version=policyengine_version)
+            refusal = read_refusal(error, request)
             if refusal is None:
                 raise
             raise refusal from None
 
-    async def _create(self, create: Callable[[], None]) -> None:
+    async def _create(self, record: RecordName, create: Callable[[], None]) -> None:
+        """Create the rows; answer a refusal, an unknown outcome or an outage.
+
+        A commit that failed after the rows were inserted may have written
+        them, so it is never answered as unavailable, which would tell the
+        caller nothing was created.
+        """
         try:
             await asyncio.to_thread(create)
         except EconomyRecordReferenceError as error:
             raise reference_refusal(error) from None
+        except EconomyRecordOutcomeUnknownError as error:
+            logger.warning(
+                "economy_records_outcome_unknown",
+                extra={
+                    "record": record,
+                    "error_type": type(error.__cause__).__name__,
+                },
+            )
+            raise EconomySubmissionOutcomeUnknownError(record) from None
         except SQLAlchemyError as error:
             logger.warning(
                 "economy_records_not_created",
@@ -648,13 +671,17 @@ def _scope(
     """
     try:
         dataset = bundle_dataset(worker, catalog.dataset.name)
-    except DatasetNotInBundleError as error:
+    except DatasetNotInBundleError:
         code: EconomyRefusalCode = (
             "dataset_not_in_bundle"
             if request.dataset_name is None
             else "unknown_dataset"
         )
-        raise EconomySubmissionRefusedError(code=code, detail=str(error)) from None
+        detail = (
+            f"The default v2 worker, .py {worker.version}, has no dataset "
+            f"{catalog.dataset.name}."
+        )
+        raise EconomySubmissionRefusedError(code=code, detail=detail) from None
     return CalculationScope(
         country=request.country,
         region_code=catalog.region.code,
