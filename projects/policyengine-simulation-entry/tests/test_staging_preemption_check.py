@@ -36,6 +36,7 @@ from workflow_script_support import FakeCommands, run_script
 if TYPE_CHECKING:
     from pathlib import Path
 
+
 CHECK_SCRIPT = "simulation-staging-preemption-check.sh"
 READY_SCRIPT = "simulation-staging-preemption-ready.sh"
 CHECK_JOB = "staging_preemption_check"
@@ -317,6 +318,10 @@ def _report_attempt(attempt: int) -> Attempt:
     )
 
 
+def _jq_arguments_log(commands: FakeCommands) -> Path:
+    return commands.log.with_name("jq-arguments.log")
+
+
 @dataclass(frozen=True)
 class ModalContainers:
     """The containers Modal lists in staging, and those it refuses to stop."""
@@ -330,9 +335,18 @@ class ModalContainers:
 @pytest.fixture
 def fakes(tmp_path) -> FakeCommands:
     commands = FakeCommands.create(tmp_path)
+    # jq records its arguments apart from the other calls, separated by NUL,
+    # since its programs span lines, then runs the real jq.
     real_jq = shutil.which("jq")
     assert real_jq is not None
-    commands.add("jq", f'exec {shlex.quote(real_jq)} "$@"')
+    fake_jq = commands.directory / "jq"
+    fake_jq.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\0' \"$@\" >> {shlex.quote(str(_jq_arguments_log(commands)))}\n"
+        f'exec {shlex.quote(real_jq)} "$@"\n',
+        encoding="utf-8",
+    )
+    fake_jq.chmod(0o755)
     commands.add("curl", FAKE_CURL)
     commands.add("uv", FAKE_UV)
     commands.add("sleep")
@@ -847,7 +861,12 @@ def test_no_secret_reaches_a_command_line(fakes, tmp_path):
     result, _ = _run(fakes, tmp_path, "household", [_household_attempt(0)])
 
     assert result.returncode == 0, result.stderr
-    arguments = [argument for call in fakes.calls() for argument in call]
+    jq_arguments = _jq_arguments_log(fakes).read_text(encoding="utf-8").split("\0")
+    arguments = [
+        *(argument for call in fakes.calls() for argument in call),
+        *jq_arguments,
+    ]
+    assert len(jq_arguments) > 1
     assert not any(ACCESS_TOKEN in argument for argument in arguments)
     assert not any(CLIENT_SECRET in argument for argument in arguments)
 

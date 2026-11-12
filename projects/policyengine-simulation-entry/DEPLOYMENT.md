@@ -170,15 +170,23 @@ workers again.
 
 A calculation that finishes before its container is stopped, for example on
 a warm container, proves nothing, so the check submits a new one, up to
-three attempts. A record that fails, or doesn't finish within its deadline
-(10 minutes for the household, 15 for the report, per attempt), fails the
-check at once.
+three attempts. Before each new attempt it waits, up to three minutes, for
+Modal to stop listing the last attempt's container (Modal stops an idle
+container after 60 seconds), so the next calculation starts in a new
+container. A record that fails, or doesn't finish within its deadline (10
+minutes for the household, 15 for the report, per attempt), fails the check
+at once. Modal refuses to stop a container that has ended; the check then
+doesn't stop it again or submit another calculation, but follows the record
+to its end, so a record left running by a container that ended for another
+reason, such as running out of memory, fails the check at its deadline.
 
-The check refuses any `MODAL_ENVIRONMENT` but `staging`, and stops only a
-container that `modal container list --env staging` lists. It uses the
-`beta` environment's Modal token (`MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`),
-which must be allowed to read call graphs and to list and stop containers,
-and the authenticated tests' client credentials. `deployment_ready` requires
+It uses the repository's Modal token (the repository secrets
+`MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`), which must be allowed to read
+call graphs and to list and stop containers. Production's deploy jobs use
+the same token, and `modal container stop` takes a container ID in any
+environment, so the script refuses any `MODAL_ENVIRONMENT` but `staging` and
+stops only a container that `modal container list --env staging` lists. It
+also uses the authenticated tests' client credentials. `deployment_ready` requires
 the check to pass in staging, so a failure stops the production deployment.
 Each attempt adds a household job, or a report and its run, to the staging
 database.

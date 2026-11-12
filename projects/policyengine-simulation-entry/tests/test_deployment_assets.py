@@ -218,8 +218,8 @@ def _assert_deployment_environment_settings(reusable_workflow: str) -> None:
         # environment's custom-hostname variable, the staging household
         # check reads the beta variable SIMULATION_STAGING_HOUSEHOLD_ID and
         # the environment's auth secrets, the staging economy check reads
-        # those auth secrets too, and the staging preemption check reads them,
-        # that variable and the environment's Modal token.
+        # those auth secrets too, and the staging preemption check reads them
+        # and that variable.
         reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 20
     )
     assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow

@@ -21,8 +21,14 @@
 # call and the call graph shows the call's input finished in another
 # container. A calculation that finishes before its container is stopped
 # proves nothing, so a new one is submitted, up to PREEMPTION_CHECK_ATTEMPTS
-# times; a record that fails, or doesn't finish within the deadline, fails
-# the check at once.
+# times, once Modal no longer lists the last attempt's container: on that
+# warm container the calculation would finish too fast to stop. A record
+# that fails, or doesn't finish within the deadline, fails the check at
+# once. A stop Modal refuses, as it does for a container that has ended, is
+# not tried again: the check follows the record to its end, so a record
+# left running by a container that ended for another reason, such as
+# running out of memory, fails at its deadline rather than being submitted
+# again.
 #
 # Required env vars: the test client's SIMULATION_TEST_AUTH_ISSUER,
 # SIMULATION_TEST_AUTH_AUDIENCE, SIMULATION_TEST_AUTH_CLIENT_ID and
@@ -32,11 +38,13 @@
 # in the staging Public API).
 # Optional: PREEMPTION_CHECK_ATTEMPTS (3); PREEMPTION_CHECK_DEADLINE_SECONDS,
 # each attempt's deadline (600 for household, 900 for report);
-# PREEMPTION_CHECK_POLL_SECONDS (2); and PREEMPTION_CHECK_RERUN_SECONDS
-# (120), how long after the record succeeds the call graph may take to show
-# the call's other container.
-# The access token is sent from a file and the client secret on standard
-# input, so neither appears on a command line. A submission, which isn't
+# PREEMPTION_CHECK_POLL_SECONDS (2); PREEMPTION_CHECK_RERUN_SECONDS (120),
+# how long after the record succeeds the call graph may take to show the
+# call's other container; and PREEMPTION_CHECK_SCALEDOWN_SECONDS (180), how
+# long to wait for the last attempt's container to leave before a new
+# attempt (Modal stops an idle container after 60 seconds by default).
+# The access token is sent from a file, and the client secret on standard
+# input through jq's environment, so neither appears on any command line. A submission, which isn't
 # asked again, may take 60 seconds, Cloud Run's own limit; every other
 # request 30. A read that gets no answer, a 429 or any 5xx is asked again
 # until the deadline.
@@ -60,6 +68,7 @@ attempts="${PREEMPTION_CHECK_ATTEMPTS:-3}"
 deadline_seconds="${PREEMPTION_CHECK_DEADLINE_SECONDS:-${default_deadline_seconds}}"
 poll_seconds="${PREEMPTION_CHECK_POLL_SECONDS:-2}"
 rerun_seconds="${PREEMPTION_CHECK_RERUN_SECONDS:-120}"
+scaledown_seconds="${PREEMPTION_CHECK_SCALEDOWN_SECONDS:-180}"
 request_timeout_seconds=30
 submission_timeout_seconds=60
 uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
@@ -85,7 +94,8 @@ fi
   || fail "PREEMPTION_CHECK_ATTEMPTS must be a whole number of at least 1"
 for setting in "PREEMPTION_CHECK_DEADLINE_SECONDS=${deadline_seconds}" \
   "PREEMPTION_CHECK_POLL_SECONDS=${poll_seconds}" \
-  "PREEMPTION_CHECK_RERUN_SECONDS=${rerun_seconds}"; do
+  "PREEMPTION_CHECK_RERUN_SECONDS=${rerun_seconds}" \
+  "PREEMPTION_CHECK_SCALEDOWN_SECONDS=${scaledown_seconds}"; do
   [[ "${setting#*=}" =~ ^[0-9]+$ ]] \
     || fail "${setting%%=*} must be a whole number of seconds"
 done
@@ -105,11 +115,12 @@ send() {
 }
 
 token_status="$(
-  jq -n \
-    --arg client_id "${SIMULATION_TEST_AUTH_CLIENT_ID}" \
-    --arg client_secret "${SIMULATION_TEST_AUTH_CLIENT_SECRET}" \
-    --arg audience "${SIMULATION_TEST_AUTH_AUDIENCE}" \
-    '{client_id: $client_id, client_secret: $client_secret, audience: $audience, grant_type: "client_credentials"}' \
+  jq -n '{
+      client_id: env.SIMULATION_TEST_AUTH_CLIENT_ID,
+      client_secret: env.SIMULATION_TEST_AUTH_CLIENT_SECRET,
+      audience: env.SIMULATION_TEST_AUTH_AUDIENCE,
+      grant_type: "client_credentials"
+    }' \
     | send token "${request_timeout_seconds}" --request POST --header 'Content-Type: application/json' \
       --data @- "${SIMULATION_TEST_AUTH_ISSUER%/}/oauth/token"
 )" || fail "the token request got no answer"
@@ -260,6 +271,25 @@ find_container() {
   fi
 }
 
+# Wait until Modal no longer lists container <container-id>, at most
+# scaledown_seconds, so the next attempt's calculation starts in a new
+# container rather than the warm one the last attempt left.
+wait_for_container_to_leave() {
+  local leaving="$1"
+  local waiting_since="${SECONDS}"
+  [[ -n "${leaving}" ]] || return 0
+  printf 'Before the next attempt, waiting for container %s to leave Modal environment %s\n' \
+    "${leaving}" "${MODAL_ENVIRONMENT}"
+  while container_listed "${leaving}"; do
+    if ((SECONDS - waiting_since >= scaledown_seconds)); then
+      printf 'container %s is still listed after %d seconds; submitting again anyway\n' \
+        "${leaving}" "${scaledown_seconds}" >&2
+      return 0
+    fi
+    sleep "${poll_seconds}"
+  done
+}
+
 # After the record succeeded: require the call graph to show the stopped
 # call's input finished in another container. Sets attempt_outcome.
 confirm_rerun() {
@@ -298,6 +328,7 @@ attempt_once() {
   stopped_container_id=""
   stopped_call_id=""
   unlisted_note=""
+  stop_refusal=""
   last_read="nothing yet"
   local started_at="${SECONDS}"
   while true; do
@@ -311,17 +342,17 @@ attempt_once() {
       succeeded)
         if [[ -z "${stopped_container_id}" ]]; then
           attempt_outcome="missed"
-          miss_reason="${record_label} finished before its container was stopped${unlisted_note:+ (${unlisted_note})}"
+          miss_reason="${record_label} finished before its container was stopped${unlisted_note:+ (${unlisted_note})}${stop_refusal:+ (${stop_refusal})}"
         else
           confirm_rerun
         fi
         return 0
         ;;
       failed)
-        fail "${record_label} failed${stopped_container_id:+ after its container ${stopped_container_id} was stopped}: ${record_error}"
+        fail "${record_label} failed${stopped_container_id:+ after its container ${stopped_container_id} was stopped}${stop_refusal:+ after ${stop_refusal}}: ${record_error}"
         ;;
       pending | running)
-        if [[ -z "${stopped_container_id}" && -n "${record_call_id}" ]]; then
+        if [[ -z "${stopped_container_id}" && -z "${stop_refusal}" && -n "${record_call_id}" ]]; then
           [[ -n "${container_id}" ]] || find_container
           if [[ "${record_status}" == "running" && -n "${container_id}" ]]; then
             if uv run --frozen modal container stop --yes "${container_id}"; then
@@ -330,9 +361,11 @@ attempt_once() {
               printf 'Stopped container %s while %s was running; waiting for Modal to run call %s again\n' \
                 "${stopped_container_id}" "${record_label}" "${stopped_call_id}"
             else
-              attempt_outcome="missed"
-              miss_reason="modal container stop could not stop container ${container_id} running ${record_label}"
-              return 0
+              # Modal refuses to stop a container that has ended. The
+              # check doesn't stop it again or submit another calculation
+              # while this one may still be running.
+              stop_refusal="modal container stop refused to stop container ${container_id} while ${record_label} was running"
+              printf '%s; following it to its end\n' "${stop_refusal}" >&2
             fi
           fi
         fi
@@ -340,7 +373,7 @@ attempt_once() {
       *) fail "${record_label} has an unknown status: ${record_status}" ;;
     esac
     ((SECONDS - started_at < deadline_seconds)) \
-      || fail "${record_label} did not finish within ${deadline_seconds} seconds (last read: ${last_read})"
+      || fail "${record_label} did not finish within ${deadline_seconds} seconds (last read: ${last_read})${stop_refusal:+; ${stop_refusal}}"
     sleep "${poll_seconds}"
   done
 }
@@ -352,5 +385,8 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
   attempt_once
   [[ "${attempt_outcome}" != "proven" ]] || exit 0
   printf 'Attempt %d of %d proved nothing: %s\n' "${attempt}" "${attempts}" "${miss_reason}" >&2
+  if ((attempt < attempts)); then
+    wait_for_container_to_leave "${container_id}"
+  fi
 done
 fail "no attempt in ${attempts} stopped the container of a running ${kind} calculation; the last: ${miss_reason}"
