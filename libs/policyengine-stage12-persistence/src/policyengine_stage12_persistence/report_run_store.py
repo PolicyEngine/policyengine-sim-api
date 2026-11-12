@@ -98,12 +98,13 @@ class RunWrite:
 
 @dataclass(frozen=True)
 class SimulationRunState:
-    """A simulation run's status, what it calculated, and its output file.
+    """A simulation run's status, what it calculated, its output file and its call.
 
     ``dataset_id`` and ``region_id`` are the Public API's catalog rows, None
     when the run names none. ``output_uri`` and ``output_sha256`` are None
     until the run records an output file, and stay None for a run that
-    records none.
+    records none. ``modal_call_id`` is the call recorded on the run, None
+    while none is; ``error_message`` is a failed run's recorded failure.
     """
 
     status: RunStatus
@@ -114,6 +115,8 @@ class SimulationRunState:
     region_id: UUID | None
     output_uri: str | None
     output_sha256: str | None
+    modal_call_id: str | None = None
+    error_message: str | None = None
 
 
 class ReportRunStore:
@@ -180,7 +183,7 @@ class ReportRunStore:
             raise ValueError(msg)
 
     def get_simulation_run(self, simulation_run_id: UUID) -> SimulationRunState:
-        """Return a simulation run's status, year, versions, dataset, region and output.
+        """Return a simulation run's state; see ``SimulationRunState``.
 
         It only reads the run. Raises LookupError when the run does not exist.
         """
@@ -193,6 +196,8 @@ class ReportRunStore:
             simulation_runs.c.region_id,
             simulation_runs.c.output_uri,
             simulation_runs.c.output_sha256,
+            simulation_runs.c.modal_call_id,
+            simulation_runs.c.error_message,
         ).where(simulation_runs.c.id == simulation_run_id)
         with self._transaction("get_simulation_run") as connection:
             stored = connection.execute(statement).one_or_none()
@@ -208,6 +213,8 @@ class ReportRunStore:
             region_id=stored.region_id,
             output_uri=stored.output_uri,
             output_sha256=stored.output_sha256,
+            modal_call_id=stored.modal_call_id,
+            error_message=stored.error_message,
         )
 
     def claim_report_run(
@@ -313,16 +320,24 @@ class ReportRunStore:
         modal_call_id: str,
         claimed_at: datetime,
     ) -> RunWrite:
-        """Mark a pending or running simulation run running under ``modal_call_id``.
+        """Mark the simulation run running under the worker's ``modal_call_id``.
 
-        A running one moves to the newest call, because the coordinator starts
-        a simulation again only after stopping its earlier call.
+        A pending or running run is claimed while it records no call or this
+        call: the simulation service records the call it starts on a run of
+        its own while the run is still pending, and Modal restarts a
+        pre-empted call under the same call ID. A run recording another call
+        is that call's; a report run's coordinator releases a run its earlier
+        worker holds (``release_simulation_run``) before starting another.
         """
         statement = (
             update(simulation_runs)
             .where(
                 simulation_runs.c.id == simulation_run_id,
                 simulation_runs.c.status.in_(ACTIVE_STATUSES),
+                or_(
+                    simulation_runs.c.modal_call_id.is_(None),
+                    simulation_runs.c.modal_call_id == modal_call_id,
+                ),
             )
             .values(
                 status=RunStatus.RUNNING.value,
@@ -339,16 +354,21 @@ class ReportRunStore:
         self,
         simulation_run_id: UUID,
         *,
+        modal_call_id: str,
         output_uri: str,
         output_sha256: str,
         completed_at: datetime,
     ) -> RunWrite:
-        """Record a running simulation run's output file and mark it succeeded."""
+        """Record the run's output file and mark it succeeded while this call holds it.
+
+        The run must be running under ``modal_call_id``, so a worker whose
+        run was failed or released meanwhile records nothing.
+        """
         statement = (
             update(simulation_runs)
             .where(
                 simulation_runs.c.id == simulation_run_id,
-                simulation_runs.c.status == RunStatus.RUNNING.value,
+                _running_under_call(simulation_runs, modal_call_id),
             )
             .values(
                 status=RunStatus.SUCCEEDED.value,
@@ -369,14 +389,23 @@ class ReportRunStore:
         *,
         error_message: str,
         failed_at: datetime,
+        modal_call_id: str | None = None,
     ) -> RunWrite:
-        """Mark a pending or running simulation run failed with ``error_message``."""
+        """Mark a simulation run failed with ``error_message``.
+
+        A worker passes its ``modal_call_id``, and fails the run only while
+        that call holds it running. Without one, as a report run's
+        coordinator fails the runs it left unfinished, any pending or
+        running run fails.
+        """
+        held = (
+            simulation_runs.c.status.in_(ACTIVE_STATUSES)
+            if modal_call_id is None
+            else _running_under_call(simulation_runs, modal_call_id)
+        )
         statement = (
             update(simulation_runs)
-            .where(
-                simulation_runs.c.id == simulation_run_id,
-                simulation_runs.c.status.in_(ACTIVE_STATUSES),
-            )
+            .where(simulation_runs.c.id == simulation_run_id, held)
             .values(
                 status=RunStatus.FAILED.value,
                 error_message=error_message,
@@ -386,6 +415,38 @@ class ReportRunStore:
         )
         return self._write(
             simulation_runs, simulation_run_id, statement, "fail_simulation_run"
+        )
+
+    def release_simulation_run(
+        self,
+        simulation_run_id: UUID,
+        *,
+        modal_call_id: str,
+        released_at: datetime,
+    ) -> RunWrite:
+        """Return a run ``modal_call_id`` holds to pending, recording no call.
+
+        A report run's coordinator that Modal restarted stops the worker its
+        earlier attempt started, then releases that worker's run so the
+        worker it starts next can claim it. Only a pending or running run
+        that still records ``modal_call_id`` is released; it keeps its first
+        start, from which the stuck-run sweep counts it.
+        """
+        statement = (
+            update(simulation_runs)
+            .where(
+                simulation_runs.c.id == simulation_run_id,
+                simulation_runs.c.status.in_(ACTIVE_STATUSES),
+                simulation_runs.c.modal_call_id == modal_call_id,
+            )
+            .values(
+                status=RunStatus.PENDING.value,
+                modal_call_id=None,
+                updated_at=released_at,
+            )
+        )
+        return self._write(
+            simulation_runs, simulation_run_id, statement, "release_simulation_run"
         )
 
     def claim_household_job(
@@ -635,8 +696,8 @@ def _uniform_rows(rows: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
 def _running_under_call(table: Table, modal_call_id: str) -> ColumnElement[bool]:
     """Return the condition that a row is running under ``modal_call_id``.
 
-    A report run or household job is completed or failed by a call only while
-    that call holds it running.
+    A run or household job is completed or failed by a call only while that
+    call holds it running.
     """
     return and_(
         table.c.status == RunStatus.RUNNING.value,

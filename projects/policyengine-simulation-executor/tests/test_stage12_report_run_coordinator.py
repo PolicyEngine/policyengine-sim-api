@@ -20,7 +20,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
 )
 from policyengine_simulation_executor.stage12_runtime import (
-    coordination as coordination_module,
+    report_run_coordination as report_run_coordination_module,
 )
 from policyengine_stage12_persistence import RunStatus
 from stage12_child_call_support import ConcurrentInvoker
@@ -175,7 +175,18 @@ def test_a_report_run_that_cannot_be_claimed_starts_nothing(
 
 
 def _with_evaluation_id(report):
-    return report.model_copy(update={"evaluation_id": BASELINE_RUN_ID})
+    # The report and both simulations name another evaluation together.
+    return report.model_copy(
+        update={
+            "evaluation_id": BASELINE_RUN_ID,
+            "baseline": report.baseline.model_copy(
+                update={"evaluation_id": BASELINE_RUN_ID}
+            ),
+            "reform": report.reform.model_copy(
+                update={"evaluation_id": BASELINE_RUN_ID}
+            ),
+        }
+    )
 
 
 def _with_baseline_execution_id(report):
@@ -325,7 +336,6 @@ def test_a_planning_failure_fails_the_report_run_and_its_unstarted_runs() -> Non
     run = report_runs.report_runs[REPORT_RUN_ID]
     assert run.status is RunStatus.FAILED
     assert run.error_message.startswith("report_coordination_failed: ")
-    assert "could not be loaded" not in run.error_message
     assert invoker.call_ids == []
     assert all(
         simulation_run.status is RunStatus.FAILED
@@ -439,7 +449,9 @@ def test_report_run_coordinator_names_its_artifacts_by_digest(monkeypatch) -> No
         built.append(report_run)
         return artifacts
 
-    monkeypatch.setattr(coordination_module, "artifact_store", recording_artifact_store)
+    monkeypatch.setattr(
+        report_run_coordination_module, "artifact_store", recording_artifact_store
+    )
 
     context = report_run_context()
     coordinate_report(

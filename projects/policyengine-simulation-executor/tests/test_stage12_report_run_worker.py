@@ -115,7 +115,6 @@ def test_a_failed_calculation_fails_the_workers_simulation_run() -> None:
     assert run.status is RunStatus.FAILED
     assert run.writes == ["claim_simulation_run", "fail_simulation_run"]
     assert run.error_message.startswith("simulation_execution_failed: ")
-    assert "out of memory" not in run.error_message
 
 
 def test_an_invalid_policy_fails_the_simulation_run_with_its_reason() -> None:

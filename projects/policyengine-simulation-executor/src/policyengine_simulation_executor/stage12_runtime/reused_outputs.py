@@ -12,12 +12,11 @@ the SPM calculation receipt a worker would write now. It describes the file
 as a worker describes the one it writes, and the aggregation uses the
 decoded frames in place of a worker's artifact.
 
-A reused run gets no Stage 12 child record: those records coordinate the
-workers the coordinator starts, and no worker runs for it. The coordinator
-writes nothing to the run, so report runs that reuse it at the same time
-leave each other unaffected, and the stuck-run sweep never lists a succeeded
-run. Of the result rows that belong to the run itself, its poverty and
-inequality, a report run inserts only those the run has none of yet.
+No worker runs for a reused run. The coordinator writes nothing to it, so
+report runs that reuse it at the same time leave each other unaffected, and
+the stuck-run sweep never lists a succeeded run. Of the result rows that
+belong to the run itself, its poverty and inequality, a report run inserts
+only those the run has none of yet.
 
 A succeeded run whose output can't be used fails the report run with one of
 the error codes below. It is never calculated again, since a succeeded
@@ -54,7 +53,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
 
 from .failures import Stage12InputError
 from .output_planning import validate_output_frames
-from .simulation import simulation_runtime_params
+from .worker_inputs import simulation_runtime_params
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -73,7 +72,6 @@ if TYPE_CHECKING:
     )
 
     from .output_planning import StageScope
-    from .report_run_recording import ReportRunRecorder
 
 # The run records no output file, or no object is stored where it says.
 REUSED_OUTPUT_MISSING = "reused_simulation_output_missing"
@@ -149,26 +147,20 @@ class ReusedSimulationOutput:
 def reused_outputs(
     simulations: Sequence[PlannedSimulationExecutionInput],
     *,
-    report_run: ReportRunRecorder | None,
+    run_ids: ReportRunIds,
+    stored_runs: Mapping[SimulationRole, SimulationRunState],
     files: OutputFileReader | None,
     span: StageScope,
 ) -> dict[str, ReusedSimulationOutput]:
     """Return, by role, the checked output of each simulation whose run succeeded.
 
-    ``report_run`` reads the call's simulation runs; a call that names no
-    report run reuses nothing. ``files`` reads their output files, by default
-    from Cloud Storage, and each read is timed with ``span``. A simulation run
-    that is pending, running or failed is left to a worker, as before. Raises
+    ``stored_runs`` holds the report run's two simulation runs as the
+    coordinator read them. ``files`` reads their output files, by default
+    from Cloud Storage, and each read is timed with ``span``. A simulation
+    run that is pending, running or failed is left to a worker. Raises
     ``ReusedSimulationOutputError`` for a succeeded run whose output can't
     be used.
     """
-    if report_run is None:
-        return {}
-    run_ids = report_run.run_ids
-    stored_runs = {
-        role: report_run.writer.get_simulation_run(run_ids.simulation_run_id(role))
-        for role in (SimulationRole.BASELINE, SimulationRole.REFORM)
-    }
     reader = files or CloudStorageOutputFiles()
     reused: dict[str, ReusedSimulationOutput] = {}
     for simulation in simulations:
