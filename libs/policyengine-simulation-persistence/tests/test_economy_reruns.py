@@ -39,6 +39,7 @@ from economy_rows import (
     insert_simulation_run,
 )
 from policyengine_simulation_persistence import (
+    EconomyRecordReferenceError,
     EconomyRequest,
     EconomyRunStore,
     MissingPolicyParametersError,
@@ -48,6 +49,7 @@ from policyengine_simulation_persistence import (
     ReportRunStatus,
     ReportRunTrigger,
     ReportSideError,
+    RerunRecordDeletedError,
     RerunSide,
     ReusableRun,
     RunInProgressError,
@@ -855,3 +857,46 @@ def test_a_report_of_another_type_is_read_as_unsupported(
 
     assert definition is not None
     assert definition.kind == "unsupported"
+
+
+def test_a_rerun_of_a_deleted_report_or_simulation_says_the_record_is_gone(
+    public_api_database_url,
+) -> None:
+    """The record's own key refuses the new run: the record was deleted."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        later = insert_later_catalog(connection, economy)
+        stored = _stored_report(connection, economy, run_status=ReportRunStatus.FAILED)
+        act_as_the_service(connection)
+
+        with connection.begin_nested(), pytest.raises(RerunRecordDeletedError):
+            insert_report_rerun(
+                connection, replace(_rerun_of(stored, later), report_id=uuid4())
+            )
+        with connection.begin_nested(), pytest.raises(RerunRecordDeletedError):
+            insert_simulation_rerun(
+                connection,
+                NewSimulationRerun(
+                    simulation_id=uuid4(),
+                    run_id=uuid4(),
+                    population=later.population(),
+                    versions=LATER_VERSIONS,
+                ),
+            )
+        # A report whose side simulation is gone names that simulation instead.
+        gone_side = replace(
+            _rerun_of(stored, later),
+            reform=RerunSide(
+                simulation_id=uuid4(), simulation_run_id=uuid4(), reused=False
+            ),
+        )
+        with (
+            connection.begin_nested(),
+            pytest.raises(EconomyRecordReferenceError) as refused,
+        ):
+            insert_report_rerun(connection, gone_side)
+
+    assert (refused.value.table_name, refused.value.column_name) == (
+        "simulation_runs",
+        "simulation_id",
+    )

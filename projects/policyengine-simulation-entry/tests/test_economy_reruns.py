@@ -49,6 +49,7 @@ from policyengine_simulation_persistence import (
     NewSimulationRerun,
     ReportRunStatus,
     ReportSideError,
+    RerunRecordDeletedError,
     RerunSide,
     ReusableRun,
     RunInProgressError,
@@ -440,15 +441,9 @@ def test_a_simulations_stored_policy_is_located_on_the_simulation() -> None:
     assert reason.loc == ("simulation", "dynamic_id", "gov.old.elasticity")
 
 
-@pytest.mark.parametrize(
-    ("record", "deleted"),
-    [
-        ("report", EconomyRecordReferenceError("report_runs", "report_id")),
-        ("simulation", EconomyRecordReferenceError("simulation_runs", "simulation_id")),
-    ],
-)
-def test_a_record_deleted_after_its_reads_is_not_found(record, deleted) -> None:
-    service = rerun_service(FakeRerunStore(rerun_failure=deleted))
+@pytest.mark.parametrize("record", ["report", "simulation"])
+def test_a_record_deleted_after_its_reads_is_not_found(record) -> None:
+    service = rerun_service(FakeRerunStore(rerun_failure=RerunRecordDeletedError()))
     rerun = _rerun_report if record == "report" else _rerun_simulation
 
     with pytest.raises(EconomyRecordNotFoundError) as missing:
