@@ -76,6 +76,9 @@ simulation_runs = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("output_uri", String(2048)),
     Column("output_sha256", String(64)),
+    # A household simulation run's ``HouseholdExecutionResult`` or
+    # ``HouseholdExecutionFailure`` document, set by the household function.
+    Column("household_result", JSON(none_as_null=True)),
 )
 
 # A household job is one household calculation, which a household function

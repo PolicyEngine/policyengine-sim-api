@@ -1,5 +1,8 @@
 """Direct DML for temporary Stage 12 comparison state, runs and household jobs."""
 
+from policyengine_stage12_persistence.household_report_run_store import (
+    HouseholdReportRunStore,
+)
 from policyengine_stage12_persistence.report_run_results import (
     DistrictCodes,
     ReportRunResult,
@@ -28,6 +31,7 @@ __all__ = [
     "ActiveRun",
     "ConnectionOpener",
     "DistrictCodes",
+    "HouseholdReportRunStore",
     "ReportRunResult",
     "ReportRunStore",
     "RunKind",

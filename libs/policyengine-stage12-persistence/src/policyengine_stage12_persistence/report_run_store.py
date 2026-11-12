@@ -271,7 +271,7 @@ class ReportRunStore:
             update(report_runs)
             .where(
                 report_runs.c.id == run_ids.report_run_id,
-                _running_under_call(report_runs, modal_call_id),
+                running_under_call(report_runs, modal_call_id),
             )
             .values(
                 status=RunStatus.SUCCEEDED.value,
@@ -302,7 +302,7 @@ class ReportRunStore:
             update(report_runs)
             .where(
                 report_runs.c.id == report_run_id,
-                _running_under_call(report_runs, modal_call_id),
+                running_under_call(report_runs, modal_call_id),
             )
             .values(
                 status=RunStatus.FAILED.value,
@@ -368,7 +368,7 @@ class ReportRunStore:
             update(simulation_runs)
             .where(
                 simulation_runs.c.id == simulation_run_id,
-                _running_under_call(simulation_runs, modal_call_id),
+                running_under_call(simulation_runs, modal_call_id),
             )
             .values(
                 status=RunStatus.SUCCEEDED.value,
@@ -401,7 +401,7 @@ class ReportRunStore:
         held = (
             simulation_runs.c.status.in_(ACTIVE_STATUSES)
             if modal_call_id is None
-            else _running_under_call(simulation_runs, modal_call_id)
+            else running_under_call(simulation_runs, modal_call_id)
         )
         statement = (
             update(simulation_runs)
@@ -501,7 +501,7 @@ class ReportRunStore:
             update(household_jobs)
             .where(
                 household_jobs.c.id == household_job_id,
-                _running_under_call(household_jobs, modal_call_id),
+                running_under_call(household_jobs, modal_call_id),
             )
             .values(
                 status=RunStatus.SUCCEEDED.value,
@@ -534,7 +534,7 @@ class ReportRunStore:
             update(household_jobs)
             .where(
                 household_jobs.c.id == household_job_id,
-                _running_under_call(household_jobs, modal_call_id),
+                running_under_call(household_jobs, modal_call_id),
             )
             .values(
                 status=RunStatus.FAILED.value,
@@ -693,7 +693,7 @@ def _uniform_rows(rows: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
     return [dict.fromkeys(columns) | row for row in rows]
 
 
-def _running_under_call(table: Table, modal_call_id: str) -> ColumnElement[bool]:
+def running_under_call(table: Table, modal_call_id: str) -> ColumnElement[bool]:
     """Return the condition that a row is running under ``modal_call_id``.
 
     A run or household job is completed or failed by a call only while that
