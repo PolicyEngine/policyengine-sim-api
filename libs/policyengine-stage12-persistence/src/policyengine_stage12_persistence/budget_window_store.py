@@ -429,7 +429,9 @@ def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the sta
     """Start the earliest waiting years in the free places and record their calls.
 
     A start that raises fails that year and the window, and starts nothing
-    more.
+    more, unless the year's own call claimed it meanwhile (Modal accepted
+    the call after the starter stopped waiting): that year is under way, and
+    the next ones start.
     """
     started: list[int] = []
     for year in [year for year in years if year.waiting][: max(free_places, 0)]:
@@ -445,13 +447,16 @@ def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the sta
                 year.report_run_id,
                 type(error).__name__,
             )
-            _fail_waiting_years(
+            refused_years = _fail_waiting_years(
                 connection,
                 window_run_id,
                 CALL_REFUSED_MESSAGE.format(error_type=type(error).__name__),
                 now=now,
                 only=year.report_run_id,
             )
+            if not refused_years:
+                started.append(year.year)
+                continue
             _fail_window(
                 connection,
                 window_run_id,
@@ -506,8 +511,10 @@ def _fail_waiting_years(
     *,
     now: datetime,
     only: UUID | None = None,
-) -> None:
+) -> int:
     """Fail the window's waiting years (or only one) and their unstarted simulations.
+
+    Return how many years were failed.
 
     Each failed year's simulation runs get the same message. A simulation run
     is failed only while it is pending with no call and no pending or running
@@ -538,7 +545,7 @@ def _fail_waiting_years(
         if run_id is not None
     }
     if not simulation_run_ids:
-        return
+        return len(failed_years)
     connection.execute(
         update(simulation_runs)
         .where(
@@ -554,6 +561,7 @@ def _fail_waiting_years(
             updated_at=now,
         )
     )
+    return len(failed_years)
 
 
 def _waiting() -> ColumnElement[bool]:
