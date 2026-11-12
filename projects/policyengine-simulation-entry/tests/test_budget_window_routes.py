@@ -178,3 +178,42 @@ def test_a_refused_report_names_its_fields_as_an_economy_report_did(
     assert result.status_code == 422
     (error,) = result.json()["detail"]
     assert {"loc": error["loc"], "type": error["type"]} == expected
+
+
+@pytest.mark.parametrize("report_type", [None, 5, ["economy"], "household"])
+def test_an_unknown_report_type_is_refused_with_the_value_sent(
+    client_for, report_type
+) -> None:
+    with client_for(FakeSubmissions()) as client:
+        result = client.post(
+            "/reports", json={**REPORT_BODY, "report_type": report_type}
+        )
+
+    assert result.status_code == 422
+    assert result.json()["detail"] == [
+        {
+            "type": "literal_error",
+            "loc": ["body", "report_type"],
+            "msg": "Input should be 'economy' or 'budget_window'",
+            "input": report_type,
+            "ctx": {"expected": "'economy' or 'budget_window'"},
+        }
+    ]
+
+
+def test_a_report_with_no_type_is_refused_as_an_economy_report_was(
+    client_for,
+) -> None:
+    body = {name: value for name, value in REPORT_BODY.items() if name != "report_type"}
+
+    with client_for(FakeSubmissions()) as client:
+        result = client.post("/reports", json=body)
+
+    assert result.json()["detail"] == [
+        {
+            "type": "missing",
+            "loc": ["body", "report_type"],
+            "msg": "Field required",
+            "input": body,
+        }
+    ]

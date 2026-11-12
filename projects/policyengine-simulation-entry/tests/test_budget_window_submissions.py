@@ -105,12 +105,16 @@ class FakeAdvancer:
 
     store: FakeWindowStore
     failure: Exception | None = None
+    # How long the advance takes, as the database's lock and reads may, before
+    # it starts its first year.
+    delay_seconds: float = 0.0
     advances: list[UUID] = field(default_factory=list)
     started: list[tuple[YearToStart, str]] = field(default_factory=list)
     deferred: list[int] = field(default_factory=list)
 
     def advance_window(self, window_run_id, *, now, start_year):
         self.advances.append(window_run_id)
+        time.sleep(self.delay_seconds)
         if self.failure is not None:
             raise self.failure
         (report,) = self.store.windows
@@ -330,3 +334,51 @@ def test_the_first_years_share_one_wait_for_modal() -> None:
     assert created.status is ReportRunStatus.PENDING
     assert [year_to_start.year for year_to_start, _ in advancer.started] == [2026]
     assert advancer.deferred == [2027]
+    # Once the wait has run out, no later year's call is even started.
+    assert caller.calls == 2
+
+
+def test_the_wait_for_modal_starts_when_the_first_year_starts() -> None:
+    # The advance's lock and reads take longer than the wait itself; the
+    # first year's call is still given the whole wait.
+    store = FakeWindowStore()
+    caller = FakeCaller()
+    advancer = FakeAdvancer(store, delay_seconds=0.1)
+
+    created = _submit(
+        _service(store, caller=caller, advancer=advancer), budget_window_size=2
+    )
+
+    assert created.status is ReportRunStatus.PENDING
+    assert [year_to_start.year for year_to_start, _ in advancer.started] == [
+        2026,
+        2027,
+    ]
+
+
+@dataclass
+class RefusingAfterFirstCaller(FakeCaller):
+    """Starts the first call, then is refused by Modal for the next."""
+
+    def __post_init__(self) -> None:
+        self.calls = 0
+
+    async def start_report_run(self, worker, report_payload, context_payload, **kwargs):
+        self.calls += 1
+        if self.calls > 1:
+            message = "Modal refused the call"
+            raise RuntimeError(message)
+        return await super().start_report_run(
+            worker, report_payload, context_payload, **kwargs
+        )
+
+
+def test_a_later_year_modal_refuses_fails_the_window() -> None:
+    store = FakeWindowStore()
+
+    with pytest.raises(EconomySubmissionUnavailableError) as refused:
+        _submit(
+            _service(store, caller=RefusingAfterFirstCaller()), budget_window_size=3
+        )
+
+    assert refused.value.record_id == store.windows[0].id
