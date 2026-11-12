@@ -7,8 +7,11 @@ and from a household job's creation. It asks Modal for the status of each
 recorded call and marks a run or job failed once its call has ended, and
 fails a pending one that has no call recorded, because nothing will run it.
 It also fails any still unfinished 24 hours after it was created or started,
-longer than any Modal call of it can run, whatever Modal reports. Its result
-counts runs and household jobs together. It connects as the Modal worker
+longer than any Modal call of it can run, whatever Modal reports. A failed
+year of a budget window fails its window, and a window no year has
+advanced for ten minutes is finished from its years, or failed as stalled.
+Its result counts runs and household jobs together, and the windows it
+finished. It connects as the Modal worker
 role, from the same Modal secret the v2 coordinator, workers and household
 functions use. This application is not versioned with the .py bundle: one
 copy runs per Modal environment.
@@ -78,11 +81,14 @@ sweep_image = (
     secrets=[modal_worker_database_secret],
 )
 def sweep_stuck_runs() -> dict:
-    """Fail the runs and household jobs nothing will finish; count them and why."""
+    """Fail the runs, household jobs and windows nothing will finish; count them."""
     from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the container, not at deploy time
         report_run_access,
         run_sweep,
     )
 
-    summary = run_sweep.sweep_stuck_runs(report_run_access.report_run_store())
+    summary = run_sweep.sweep_stuck_runs(
+        report_run_access.report_run_store(),
+        windows=report_run_access.budget_window_store(),
+    )
     return asdict(summary)

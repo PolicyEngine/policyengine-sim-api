@@ -4,9 +4,10 @@ An operator creates the Modal secret in each Modal environment. The v2 Modal
 application attaches it to the coordinator and the simulation workers, which
 record the status and results of the report run and simulation runs their
 call names, and to the household functions, which record the household job
-their call names. The secret must exist in a Modal environment before the v2
-application deploys there: ``modal deploy`` checks its required key and fails
-without it.
+their call names. The coordinator also starts a budget window's waiting
+years, and it and the stuck-run sweep record the window's outcome. The
+secret must exist in a Modal environment before the v2 application deploys
+there: ``modal deploy`` checks its required key and fails without it.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import os
 from functools import partial
 from typing import TYPE_CHECKING, Protocol
 
-from policyengine_stage12_persistence import ReportRunStore
+from policyengine_stage12_persistence import BudgetWindowStore, ReportRunStore
 
 from .database_retry import open_connection_with_retry
 
@@ -158,6 +159,20 @@ def report_run_store(runtime: ObservabilityRuntime | None = None) -> ReportRunSt
     ``postgresql://`` URL.
     """
     return ReportRunStore(
+        os.environ.get(MODAL_WORKER_DATABASE_URL_ENV, ""),
+        open_connection=partial(open_connection_with_retry, runtime=runtime),
+    )
+
+
+def budget_window_store(
+    runtime: ObservabilityRuntime | None = None,
+) -> BudgetWindowStore:
+    """Build the budget-window store from ``MODAL_WORKER_DATABASE_URL``.
+
+    Raises ``ValueError`` when the variable is unset or not a complete
+    ``postgresql://`` URL.
+    """
+    return BudgetWindowStore(
         os.environ.get(MODAL_WORKER_DATABASE_URL_ENV, ""),
         open_connection=partial(open_connection_with_retry, runtime=runtime),
     )
