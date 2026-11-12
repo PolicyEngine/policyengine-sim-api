@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID, uuid4
 
@@ -276,51 +277,45 @@ def _contract_reasons(
     return tuple(reasons)
 
 
-def _side_request(  # noqa: PLR0913  # the side, its run, and what it calculates
-    request: HouseholdReportRequest,
-    worker: HouseholdWorker,
-    household: StoredHousehold,
+@dataclass(frozen=True)
+class HouseholdReportSideInputs:
+    """One side of a household report run: the simulation run it records.
+
+    ``reform`` holds the side's policy values by parameter name and period,
+    empty for current law, as ``HouseholdReportStore.read_inputs`` reads them.
+    """
+
+    simulation_run_id: UUID
+    reform: PolicyReform
+
+
+def household_report_calculation(  # noqa: PLR0913  # the report's stored inputs and its worker
     *,
-    situation: dict[str, Any],
+    country: str,
+    household: StoredHousehold,
     year: int,
-    side: ReportSide,
-    simulation_run_id: UUID,
-    reform: PolicyReform,
-) -> HouseholdExecutionRequest:
-    """Build one side's household contract request; raise its refusal."""
-    try:
-        return HouseholdExecutionRequest.model_validate(
-            {
-                "calculation_id": simulation_run_id,
-                "country": request.country,
-                # The household's default year, as a situation's period key.
-                "year": str(year),
-                "household": situation,
-                **job_policy_fields(reform=reform),
-                "add_missing_variables": request.add_missing_variables,
-                "bundle": worker.bundle,
-                **_spm_fields(household.document),
-            }
-        )
-    except ValidationError as error:
-        raise _not_calculable(*_contract_reasons(error, side)) from None
+    add_missing_variables: bool,
+    sides: Mapping[ReportSide, HouseholdReportSideInputs],
+    worker: HouseholdWorker,
+) -> HouseholdReportRunCalculation:
+    """Build a household report run's household function payload from its inputs.
 
+    ``sides`` names the baseline and, for a report with one, the reform.
+    Each side's request calculates ``household`` for ``year`` with the
+    household's saved SPM selection, on ``worker``'s bundle, and its
+    calculation ID is the side's simulation run. Creating a report passes
+    the household's default year; a restart or re-run passes the stored
+    report's year and ``add_missing_variables``, so the call calculates what
+    was created.
 
-def _household_situation(
-    request: HouseholdReportRequest, household: StoredHousehold
-) -> tuple[dict[str, Any], int]:
-    """Return the household as a situation, and its year; refuse what can't be."""
-    year = household.default_year
-    if year is None:
-        raise _not_calculable(
-            UnprocessableReason(
-                loc=("body", "household_id"),
-                msg="the household has no default year to calculate",
-                type="household_without_default_year",
-            )
-        )
+    Raise EconomySubmissionUnprocessableError (``household_not_calculable``)
+    when the stored household cannot be read, or the household contract
+    refuses what would be calculated, located at the request field it traces
+    to; and HouseholdReportBuildError when it refuses a field the service
+    builds.
+    """
     try:
-        return household_situation(request.country, household.document), year
+        situation = household_situation(country, household.document)
     except UnreadableHouseholdError:
         raise _not_calculable(
             UnprocessableReason(
@@ -329,6 +324,65 @@ def _household_situation(
                 type="household_unreadable",
             )
         ) from None
+    requests = {
+        side: _side_request(
+            side,
+            inputs,
+            country=country,
+            year=year,
+            situation=situation,
+            add_missing_variables=add_missing_variables,
+            household=household,
+            worker=worker,
+        )
+        for side, inputs in sides.items()
+    }
+    return HouseholdReportRunCalculation(
+        baseline=requests["baseline"], reform=requests.get("reform")
+    )
+
+
+def _side_request(  # noqa: PLR0913  # the side and what it calculates
+    side: ReportSide,
+    inputs: HouseholdReportSideInputs,
+    *,
+    country: str,
+    year: int,
+    situation: dict[str, Any],
+    add_missing_variables: bool,
+    household: StoredHousehold,
+    worker: HouseholdWorker,
+) -> HouseholdExecutionRequest:
+    """Build one side's household contract request; raise its refusal."""
+    try:
+        return HouseholdExecutionRequest.model_validate(
+            {
+                "calculation_id": inputs.simulation_run_id,
+                "country": country,
+                # The report's year, as a situation's period key.
+                "year": str(year),
+                "household": situation,
+                **job_policy_fields(reform=inputs.reform),
+                "add_missing_variables": add_missing_variables,
+                "bundle": worker.bundle,
+                **_spm_fields(household.document),
+            }
+        )
+    except ValidationError as error:
+        raise _not_calculable(*_contract_reasons(error, side)) from None
+
+
+def _report_year(household: StoredHousehold) -> int:
+    """Return the year a new report calculates: the household's default year."""
+    if household.default_year is None:
+        raise _not_calculable(
+            UnprocessableReason(
+                loc=("body", "household_id"),
+                msg="the household has no default year to calculate",
+                type="household_without_default_year",
+            )
+        )
+    return household.default_year
 
 
 class HouseholdReportSubmissionService:
@@ -446,7 +500,7 @@ class HouseholdReportSubmissionService:
     ) -> tuple[NewHouseholdReport, HouseholdReportRunCalculation]:
         """Return the report to create and the calculation its call is given."""
         household = inputs.household
-        situation, year = _household_situation(request, household)
+        year = _report_year(household)
         report_id, run_id = self._new_id(), self._new_id()
         sides: dict[ReportSide, HouseholdReportSimulation] = {
             side: HouseholdReportSimulation(
@@ -456,19 +510,20 @@ class HouseholdReportSubmissionService:
             )
             for side, policy_id in _policy_ids(request).items()
         }
-        side_requests = {
-            side: _side_request(
-                request,
-                worker,
-                household,
-                situation=situation,
-                year=year,
-                side=side,
-                simulation_run_id=created.simulation_run_id,
-                reform=inputs.reforms[side],
-            )
-            for side, created in sides.items()
-        }
+        calculation = household_report_calculation(
+            country=request.country,
+            household=household,
+            year=year,
+            add_missing_variables=request.add_missing_variables,
+            sides={
+                side: HouseholdReportSideInputs(
+                    simulation_run_id=created.simulation_run_id,
+                    reform=inputs.reforms[side],
+                )
+                for side, created in sides.items()
+            },
+            worker=worker,
+        )
         report = NewHouseholdReport(
             id=report_id,
             run_id=run_id,
@@ -486,9 +541,6 @@ class HouseholdReportSubmissionService:
             inputs=request.options(),
             baseline=sides["baseline"],
             reform=sides.get("reform"),
-        )
-        calculation = HouseholdReportRunCalculation(
-            baseline=side_requests["baseline"], reform=side_requests.get("reform")
         )
         return report, calculation
 
