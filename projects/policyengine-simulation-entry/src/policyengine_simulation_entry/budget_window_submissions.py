@@ -209,7 +209,7 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
             worker,
             calculation_scope(request, worker, inputs.catalog, spm=options.get("spm")),
             self._origin(request_id),
-            run_ids=_run_ids(first_year),
+            run_ids=year_run_ids(first_year),
             baseline_policy=inputs.baseline.reform,
             reform_policy=inputs.reform.reform,
         )
@@ -411,7 +411,8 @@ def _deferral(year_to_start: YearToStart) -> dict[str, Any]:
     }
 
 
-def _run_ids(window_year: BudgetWindowYear) -> ReportRunIds:
+def year_run_ids(window_year: WindowYearRuns) -> ReportRunIds:
+    """Return a window year's report run and its sides' runs, as its call names them."""
     return ReportRunIds(
         report_run_id=window_year.report_run_id,
         baseline_simulation_run_id=window_year.baseline.simulation_run_id,

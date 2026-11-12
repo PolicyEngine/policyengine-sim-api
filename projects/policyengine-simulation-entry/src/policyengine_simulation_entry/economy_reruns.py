@@ -57,6 +57,7 @@ from policyengine_simulation_entry.budget_window_submissions import (
     BudgetWindowRuns,
     ReportSubmissionService,
     year_created,
+    year_run_ids,
 )
 from policyengine_simulation_entry.economy_api_models import (
     EconomyReportCreated,
@@ -414,11 +415,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                 options=window.options,
             ),
             self._origin(request_id),
-            run_ids=ReportRunIds(
-                report_run_id=first_year.report_run_id,
-                baseline_simulation_run_id=first_year.baseline.simulation_run_id,
-                reform_simulation_run_id=first_year.reform.simulation_run_id,
-            ),
+            run_ids=year_run_ids(first_year),
             baseline_policy=inputs.baseline.reform,
             reform_policy=inputs.reform.reform,
         )
