@@ -50,6 +50,9 @@ REPORT_RUN_IDS = [f"00000000-0000-4000-8000-00000000c00{digit}" for digit in "12
 CALL_IDS = [f"fc-01CALL{digit}" for digit in "123"]
 CONTAINERS = [f"ta-01CONTAINER{digit}" for digit in "123"]
 RERUN_CONTAINER = "ta-01RERUN"
+# A succeeded record's completion time, before or after any test's stop.
+BEFORE_THE_STOP = "2026-01-01T00:00:00Z"
+AFTER_THE_STOP = "2099-01-01T00:00:00Z"
 REPORT_REQUEST = {
     "country": "uk",
     "report_type": "economy",
@@ -191,7 +194,7 @@ def _household(job_id: str, status: str, call_id: str | None = None, **fields) -
         "error_message": None,
         "created_at": "2026-11-13T12:00:00Z",
         "started_at": None,
-        "completed_at": None,
+        "completed_at": AFTER_THE_STOP if status == "succeeded" else None,
         **fields,
     }
     return f"200 {json.dumps(body)}"
@@ -212,7 +215,7 @@ def _report(attempt: int, status: str, call_id: str | None = None, **run_fields)
             "error_message": None,
             "created_at": "2026-11-13T12:00:00Z",
             "started_at": None,
-            "completed_at": None,
+            "completed_at": AFTER_THE_STOP if status == "succeeded" else None,
             "baseline_simulation_run_id": "00000000-0000-4000-8000-0000000000f2",
             "reform_simulation_run_id": "00000000-0000-4000-8000-0000000000f4",
             "modal_call_id": call_id,
@@ -350,6 +353,8 @@ def fakes(tmp_path) -> FakeCommands:
     commands.add("curl", FAKE_CURL)
     commands.add("uv", FAKE_UV)
     commands.add("sleep")
+    # The fake timeout runs its command at once, without a time limit.
+    commands.add("timeout", 'shift\nexec "$@"')
     return commands
 
 
@@ -583,6 +588,38 @@ def test_the_next_attempt_waits_for_the_last_attempts_container_to_leave(
     assert f"waiting for container {CONTAINERS[0]}" in result.stdout
 
 
+def test_the_next_attempt_waits_for_a_container_first_seen_finished(fakes, tmp_path):
+    """A warm container finished the job before the check saw it running."""
+    first = _household_attempt(0, proves=False)
+    first.reads_before_stop = [_household(JOB_IDS[0], "succeeded", CALL_IDS[0])]
+    first.inputs_before_stop = [_inputs((CONTAINERS[0], "SUCCESS"))]
+
+    result, _ = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [first, _household_attempt(1)],
+        containers=ModalContainers(departures={CONTAINERS[0]: 2}),
+        PREEMPTION_CHECK_SCALEDOWN_SECONDS="120",
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = fakes.calls()
+    listings = [
+        index for index, call in enumerate(calls) if call[0] == "uv" and "list" in call
+    ]
+    submissions = [
+        index
+        for index, call in enumerate(calls)
+        if call[0] == "curl" and call[-1].endswith("/household-calculations")
+    ]
+    # Two listings naming the first attempt's container and one without it,
+    # then the second attempt's lookup.
+    assert len(listings) == 4
+    assert listings[2] < submissions[1] < listings[3]
+    assert f"waiting for container {CONTAINERS[0]}" in result.stdout
+
+
 def test_a_container_still_listed_after_the_wait_does_not_hold_the_check(
     fakes, tmp_path
 ):
@@ -609,7 +646,7 @@ def test_three_calculations_that_finish_before_the_stop_fail_the_check(fakes, tm
     assert result.returncode == 1
     assert len(_submissions(state)) == 3
     assert _stops(fakes) == []
-    assert "no attempt in 3" in result.stderr
+    assert "no attempt in 3 showed" in result.stderr
 
 
 def test_a_refused_stop_is_not_tried_again_and_the_job_is_followed(fakes, tmp_path):
@@ -637,7 +674,9 @@ def test_a_refused_stop_is_not_tried_again_and_the_job_is_followed(fakes, tmp_pa
     assert len(_submissions(state)) == 2
     assert _stops(fakes) == [CONTAINERS[0], CONTAINERS[1]]
     assert (state / f"reads-{JOB_IDS[0]}-before").read_text().strip() == "5"
-    assert f"refused to stop container {CONTAINERS[0]}" in result.stderr
+    assert f"modal container stop failed for container {CONTAINERS[0]}" in (
+        result.stderr
+    )
 
 
 def test_a_job_left_running_after_a_refused_stop_fails_at_its_deadline(fakes, tmp_path):
@@ -659,7 +698,9 @@ def test_a_job_left_running_after_a_refused_stop_fails_at_its_deadline(fakes, tm
     assert len(_submissions(state)) == 1
     assert _stops(fakes) == [CONTAINERS[0]]
     assert "did not finish within 2 seconds" in result.stderr
-    assert f"refused to stop container {CONTAINERS[0]}" in result.stderr
+    assert f"modal container stop failed for container {CONTAINERS[0]}" in (
+        result.stderr
+    )
 
 
 def test_a_call_that_finished_in_the_stopped_container_proves_nothing(fakes, tmp_path):
@@ -691,6 +732,58 @@ def test_a_rerun_recorded_on_the_same_input_counts(fakes, tmp_path):
     assert result.returncode == 0, result.stderr
     assert attempt.inputs_before_stop[0][0]["input_id"] == "in-0"
     assert RERUN_CONTAINER in result.stdout
+
+
+def test_a_job_completed_before_its_container_was_stopped_proves_nothing(
+    fakes, tmp_path
+):
+    """It finished between the running read and the stop.
+
+    Modal runs the call again, but the rerun finds the job finished and
+    returns its summary, which Modal records as a success.
+    """
+    attempt = _household_attempt(0)
+    attempt.reads_after_stop = [
+        _household(JOB_IDS[0], "succeeded", CALL_IDS[0], completed_at=BEFORE_THE_STOP)
+    ]
+
+    result, _ = _run(
+        fakes, tmp_path, "household", [attempt], PREEMPTION_CHECK_ATTEMPTS="1"
+    )
+
+    assert result.returncode == 1
+    assert f"completed at {BEFORE_THE_STOP}" in result.stderr
+    assert f"before its container {CONTAINERS[0]} was stopped" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "completed_at",
+    [AFTER_THE_STOP, "2099-01-01T00:00:00.123456Z", "2099-01-01T00:00:00+00:00"],
+    ids=["whole-seconds", "fractional-seconds", "utc-offset"],
+)
+def test_a_completion_after_the_stop_is_read_in_each_form_the_service_writes(
+    fakes, tmp_path, completed_at
+):
+    attempt = _report_attempt(0)
+    attempt.reads_after_stop = [
+        _report(0, "succeeded", CALL_IDS[0], completed_at=completed_at)
+    ]
+
+    result, _ = _run(fakes, tmp_path, "report", [attempt])
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_record_that_succeeded_without_a_completion_time_fails(fakes, tmp_path):
+    attempt = _household_attempt(0)
+    attempt.reads_after_stop = [
+        _household(JOB_IDS[0], "succeeded", CALL_IDS[0], completed_at=None)
+    ]
+
+    result, _ = _run(fakes, tmp_path, "household", [attempt])
+
+    assert result.returncode == 1
+    assert "no completion time" in result.stderr
 
 
 def test_the_call_graph_is_asked_again_until_it_shows_the_other_container(
@@ -869,6 +962,21 @@ def test_no_secret_reaches_a_command_line(fakes, tmp_path):
     assert len(jq_arguments) > 1
     assert not any(ACCESS_TOKEN in argument for argument in arguments)
     assert not any(CLIENT_SECRET in argument for argument in arguments)
+
+
+def test_every_modal_command_has_a_time_limit(fakes, tmp_path):
+    """A Modal request that hangs fails its command instead of the job."""
+    result, _ = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [_household_attempt(0, proves=False), _household_attempt(1)],
+    )
+
+    assert result.returncode == 0, result.stderr
+    limited = [call[1:3] for call in fakes.calls("timeout")]
+    assert len(fakes.calls("uv")) > 3
+    assert limited == [["60", "uv"]] * len(fakes.calls("uv"))
 
 
 def test_every_request_has_a_time_limit(fakes, tmp_path):
