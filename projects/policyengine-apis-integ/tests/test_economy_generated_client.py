@@ -177,6 +177,7 @@ def test_a_report_and_a_simulation_are_read_with_their_newest_runs():
             "completed_at": "2026-11-12T15:04:00Z",
             "baseline_simulation_run_id": SIDE_IDS[1],
             "reform_simulation_run_id": SIDE_IDS[3],
+            "modal_call_id": "fc-coordinator",
         },
     }
     simulation = {"simulation_id": REPORT_ID, "run": None}
@@ -192,5 +193,6 @@ def test_a_report_and_a_simulation_are_read_with_their_newest_runs():
     run = report_response.parsed.run
     assert run is not None
     assert run.status is ReportRunStatus.SUCCEEDED
+    assert run.modal_call_id == "fc-coordinator"
     assert isinstance(simulation_response.parsed, EconomySimulationState)
     assert simulation_response.parsed.to_dict() == simulation

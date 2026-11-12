@@ -417,6 +417,7 @@ STORED_REPORT = EconomyReportState(
         completed_at=datetime.fromisoformat(READ_AT),
         baseline_simulation_run_id=SIDE_IDS[1],
         reform_simulation_run_id=SIDE_IDS[3],
+        modal_call_id="fc-coordinator",
     ),
 )
 STORED_SIMULATION = EconomySimulationState(id=RECORD_ID, run=None)
@@ -446,6 +447,7 @@ def test_a_report_is_read_with_its_newest_runs_status(client_for) -> None:
             "completed_at": READ_AT,
             "baseline_simulation_run_id": str(SIDE_IDS[1]),
             "reform_simulation_run_id": str(SIDE_IDS[3]),
+            "modal_call_id": "fc-coordinator",
         },
     }
     assert missing.status_code == 404

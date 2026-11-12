@@ -456,3 +456,19 @@ def test_economy_reads_declare_every_answer():
     names = operation_ids(cast("OpenAPIDocument", spec))
     assert names[("GET", "/reports/{report_id}")] == "get_report"
     assert names[("GET", "/simulations/{simulation_id}")] == "get_simulation"
+
+
+def test_household_job_and_report_run_reads_name_their_modal_call():
+    """Each read names the Modal call recorded on it, or null before one is.
+
+    The staging preemption check finds the container to stop from it.
+    """
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    for schema_name in ("HouseholdCalculationState", "ReportRunRead"):
+        schema = schemas[schema_name]
+        assert "modal_call_id" in schema["required"]
+        assert schema["properties"]["modal_call_id"]["anyOf"] == [
+            {"type": "string"},
+            {"type": "null"},
+        ]

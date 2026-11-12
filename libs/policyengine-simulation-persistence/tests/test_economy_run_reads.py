@@ -157,6 +157,52 @@ def test_a_failed_newest_run_is_read_with_its_error(public_api_database_url) -> 
     assert report.run.completed_at is not None
 
 
+def test_a_report_run_is_read_with_the_modal_call_it_records(
+    public_api_database_url,
+) -> None:
+    """A run names the Modal call recorded on it, and no call before one is.
+
+    The staging preemption check finds the coordinator's container from it.
+    """
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        report_id, run_ids = _report_with_runs(connection, economy)
+        for run_id in run_ids:
+            connection.execute(
+                update(report_runs)
+                .where(report_runs.c.id == run_id)
+                .values(modal_call_id=f"fc-{run_id.hex}")
+            )
+        population = economy.population()
+        uncalled_run_id = insert_report_run_naming(
+            connection,
+            economy,
+            (
+                insert_simulation_run(connection, population),
+                insert_simulation_run(connection, population),
+            ),
+            ReportRunOutcome(status=ReportRunStatus.PENDING),
+        )
+        uncalled_report_id = (
+            connection.execute(
+                report_runs.select().where(report_runs.c.id == uncalled_run_id)
+            )
+            .one()
+            .report_id
+        )
+        act_as_the_service(connection)
+
+        report = read_economy_report(connection, report_id)
+        uncalled_report = read_economy_report(connection, uncalled_report_id)
+
+    assert report is not None
+    assert report.run is not None
+    assert report.run.modal_call_id == f"fc-{report.run.id.hex}"
+    assert uncalled_report is not None
+    assert uncalled_report.run is not None
+    assert uncalled_report.run.modal_call_id is None
+
+
 def test_a_simulation_is_read_with_its_newest_run(public_api_database_url) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)

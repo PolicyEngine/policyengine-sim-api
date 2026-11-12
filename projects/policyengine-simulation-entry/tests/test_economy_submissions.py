@@ -487,6 +487,7 @@ REPORT_RUN = ReportRunState(
     completed_at=CREATED_AT,
     baseline_simulation_run_id=UUID(int=12),
     reform_simulation_run_id=UUID(int=13),
+    modal_call_id="fc-11",
 )
 STORED_REPORT = EconomyReportState(
     id=UUID(int=10),
