@@ -483,6 +483,41 @@ def test_a_side_whose_claim_raises_is_failed_though_this_call_may_not_hold_it() 
         BASELINE_RUN_ID,
         REFORM_RUN_ID,
     ]
+    assert {write["call"] for write in runs.of("fail_unfinished")} == {None}
+
+
+def _reform_raises(request: HouseholdExecutionRequest) -> HouseholdExecutionResult:
+    if request.calculation_id == REFORM_RUN_ID:
+        msg = "the model could not load"
+        raise RuntimeError(msg)
+    return _succeeded(request)
+
+
+@pytest.mark.parametrize(
+    "baseline",
+    ["recorded", "held-by-another-call"],
+)
+def test_an_error_leaves_a_side_this_call_finished_or_does_not_hold_alone(
+    baseline: str,
+) -> None:
+    # Only the reform is left to fail: the failure write checks no call, so
+    # a side out of the list must never reach it.
+    runs = (
+        FakeHouseholdReportRuns()
+        if baseline == "recorded"
+        else FakeHouseholdReportRuns(
+            simulation_claims={
+                BASELINE_RUN_ID: RunWrite(changed=False, status=RunStatus.RUNNING)
+            },
+            simulation_states={BASELINE_RUN_ID: _state(RunStatus.RUNNING)},
+        )
+    )
+
+    with pytest.raises(RuntimeError):
+        _run(runs, _reform_raises)
+
+    assert [write["run"] for write in runs.of("fail_unfinished")] == [REFORM_RUN_ID]
+    assert len(runs.of("fail_report")) == 1
 
 
 @pytest.mark.parametrize(

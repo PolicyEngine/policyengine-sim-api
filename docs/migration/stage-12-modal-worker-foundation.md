@@ -733,8 +733,8 @@ side it already recorded. An error, a refused payload included, or Modal's
 cancellation fails the report run and each of its simulation runs left
 unfinished, with a summary naming only the error's type, then propagates; a
 pre-emption records nothing. An error in the report run's claim, or in the
-read of its simulation runs, fails the report run alone, and leaves its
-simulation runs to the stuck-run sweep.
+read of its simulation runs, fails the report run if the claim applied
+before the error, and leaves its simulation runs to the stuck-run sweep.
 
 The stuck-run sweep (`src/modal/run_sweep_app.py`) fails household jobs
 nothing will finish by the rule it applies to report runs and simulation

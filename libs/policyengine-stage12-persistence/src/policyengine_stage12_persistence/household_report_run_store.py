@@ -8,8 +8,10 @@ simulation run with ``ReportRunStore``'s claims, under its own Modal call
 ID, reads which simulation runs the report run names, then records each
 run's ``HouseholdExecutionResult`` or ``HouseholdExecutionFailure``
 document in ``household_result``, and marks the report run succeeded or
-failed. Each write applies only while the call
-still holds its row running, as every other run write does.
+failed. Each write here applies only while the call
+still holds its row running. A call that stops fails the runs it left
+unfinished with ``ReportRunStore.fail_simulation_run``, which, given no
+call, applies while the run is pending or running.
 """
 
 from __future__ import annotations

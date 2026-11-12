@@ -74,8 +74,9 @@ type HouseholdCalculation = Callable[
 class HouseholdReportRunWriter(Protocol):
     """A household report run's writes; ``HouseholdReportRunStore`` implements it.
 
-    Each write is conditional on its row's status and recorded Modal call,
-    and returns whether it changed the row, and the row's status afterwards.
+    Each write is conditional on its row's status and, but for
+    ``fail_simulation_run`` given no call, on its recorded Modal call; each
+    returns whether it changed the row, and the row's status afterwards.
     """
 
     def claim_report_run(
@@ -317,11 +318,13 @@ class _ReportRunCall:
     def fail_unfinished(self, error: BaseException, *, unfinished: list[UUID]) -> None:
         """Fail every run this call left unfinished, logging rather than raising.
 
-        Each of the report run's simulation runs this call hasn't finished is
-        failed while still active, whether this call holds it or its claim
-        rolled back: household simulation runs are never shared, so no other
-        call works on them. Then the report run is failed while this call
-        holds it.
+        ``unfinished`` holds the report run's simulation runs this call has
+        neither finished nor found held by another call (``side`` takes each
+        out of it). Each is failed while still active, whether this call
+        holds it or its claim rolled back. The write checks no call: the
+        simulation service creates new simulation runs for each household
+        report, so only this call works on the runs left in the list. Then
+        the report run is failed while this call holds it.
         """
         summary = unexpected_failure_summary(error)
         for run_id in unfinished:
@@ -393,9 +396,9 @@ def run_household_report(  # noqa: PLR0913  # the run, its payload and the call'
     of its simulation runs the call left unfinished, with a generic summary,
     then propagates; a pre-emption doesn't, because Modal runs the call
     again under the same call ID. The simulation runs are known once the
-    call has read them, so an error in the report run's claim (which may
-    have committed before the error) or in that read fails the report run
-    alone, and leaves its simulation runs to the stuck-run sweep.
+    call has read them, so an error in the report run's claim, or in that
+    read, fails the report run if the claim applied before the error, and
+    leaves its simulation runs to the stuck-run sweep.
     Raises RuntimeError, before any write, when ``modal_call_id`` is None.
     """
     if modal_call_id is None:
