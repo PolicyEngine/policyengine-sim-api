@@ -25,6 +25,7 @@ from policyengine_simulation_contract.stage12_execution import (
 from policyengine_simulation_executor.stage12_runtime.output_planning import (
     apply_output_plan,
     resolve_report_output_plan,
+    resolve_simulation_output_plan,
     validate_output_frames,
 )
 from policyengine_simulation_observability.stages import Stage
@@ -354,3 +355,45 @@ def test_uk_output_validation_requires_geographic_dataset_columns(
 
     with pytest.raises(ValueError, match=missing):
         validate_output_frames(frames, plan)
+
+
+def _self_comparison(simulation: SimulationExecutionInput) -> ReportExecutionInput:
+    """Return the report that compares ``simulation`` with itself."""
+    return ReportExecutionInput(
+        evaluation_id=EVALUATION_ID,
+        baseline=simulation.model_copy(
+            update={
+                "role": SimulationRole.BASELINE,
+                "simulation_execution_id": UUID("00000000-0000-0000-0000-000000000002"),
+            }
+        ),
+        reform=simulation.model_copy(
+            update={
+                "role": SimulationRole.REFORM,
+                "simulation_execution_id": UUID("00000000-0000-0000-0000-000000000003"),
+            }
+        ),
+        requested_aggregates=tuple(ReportAggregate),
+    )
+
+
+@pytest.mark.parametrize(
+    ("policy", "options"),
+    [
+        ({}, {}),
+        ({"gov.irs.credits.ctc.amount.base[0].amount": 3_000}, {}),
+        ({}, {"include_cliffs": True}),
+    ],
+    ids=["current-law", "reform", "cliffs"],
+)
+def test_a_simulation_planned_alone_gets_its_self_comparisons_plan(
+    policy, options
+) -> None:
+    standalone = _simulation(
+        "us", SimulationRole.STANDALONE, policy=policy, options=options
+    )
+
+    plan = resolve_simulation_output_plan(standalone)
+
+    assert plan == resolve_report_output_plan(_self_comparison(standalone))
+    assert plan.requirements.include_cliff_impacts is bool(options)

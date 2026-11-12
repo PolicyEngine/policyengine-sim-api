@@ -1,12 +1,12 @@
 """The Modal worker role's database credentials, which runs and household jobs use.
 
 An operator creates the Modal secret in each Modal environment. The v2 Modal
-application attaches it to the coordinator and the simulation workers, which
-record the status and results of the report run and simulation runs their
-call names, and to the household functions, which record the household job
-their call names. The secret must exist in a Modal environment before the v2
-application deploys there: ``modal deploy`` checks its required key and fails
-without it.
+application attaches it to the coordinator, which records the report run
+its call names, to the simulation workers, each of which claims and records
+the simulation run its call names, and to the household functions, which
+record the household job their call names. The secret must exist in a Modal
+environment before the v2 application deploys there: ``modal deploy``
+checks its required key and fails without it.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ class ReportRunWriter(Protocol):
         ...
 
     def get_simulation_run(self, simulation_run_id: UUID) -> SimulationRunState:
-        """Return a simulation run's status, year, versions, dataset, region and output.
+        """Return a simulation run's state, with its recorded call and failure.
 
         LookupError when the run does not exist.
         """
@@ -93,24 +93,36 @@ class ReportRunWriter(Protocol):
     def claim_simulation_run(
         self, simulation_run_id: UUID, *, modal_call_id: str, claimed_at: datetime
     ) -> RunWrite:
-        """Mark a pending or running simulation run running under this call."""
+        """Mark a pending or running run that records no other call running."""
         ...
 
     def complete_simulation_run(
         self,
         simulation_run_id: UUID,
         *,
+        modal_call_id: str,
         output_uri: str,
         output_sha256: str,
         completed_at: datetime,
     ) -> RunWrite:
-        """Record a running simulation run's output file and mark it succeeded."""
+        """Mark the run succeeded with its output file, while this call holds it."""
         ...
 
     def fail_simulation_run(
-        self, simulation_run_id: UUID, *, error_message: str, failed_at: datetime
+        self,
+        simulation_run_id: UUID,
+        *,
+        error_message: str,
+        failed_at: datetime,
+        modal_call_id: str | None = None,
     ) -> RunWrite:
-        """Mark a pending or running simulation run failed."""
+        """Mark the run failed while ``modal_call_id`` holds it, or while active."""
+        ...
+
+    def release_simulation_run(
+        self, simulation_run_id: UUID, *, modal_call_id: str, released_at: datetime
+    ) -> RunWrite:
+        """Return a run ``modal_call_id`` holds to pending, recording no call."""
         ...
 
 

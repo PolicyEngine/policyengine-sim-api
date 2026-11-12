@@ -94,3 +94,50 @@ def test_a_shadow_comparison_run_cannot_record_report_runs() -> None:
                 report_run=_run_ids().model_dump(mode="json"),
             )
         )
+
+
+def test_a_workers_context_names_the_simulation_run_its_call_claims() -> None:
+    context = Stage12InvocationContext(
+        **_context_fields(simulation_run_id=str(BASELINE_RUN_ID))
+    )
+
+    assert context.simulation_run_id == BASELINE_RUN_ID
+    assert context.report_run is None
+    assert context.records_runs
+    restored = Stage12InvocationContext.model_validate(context.model_dump(mode="json"))
+    assert restored.simulation_run_id == BASELINE_RUN_ID
+
+
+def test_only_a_detailed_save_call_records_runs() -> None:
+    comparison = Stage12InvocationContext(**_context_fields())
+    coordinator = Stage12InvocationContext(
+        **_context_fields(report_run=_run_ids().model_dump(mode="json"))
+    )
+
+    assert comparison.simulation_run_id is None
+    assert not comparison.records_runs
+    assert coordinator.records_runs
+    # A comparison context's JSON is unchanged, for the workers deployed now.
+    assert "simulation_run_id" not in comparison.model_dump(
+        mode="json", exclude_none=True
+    )
+
+
+def test_a_context_names_a_report_run_or_a_simulation_run_not_both() -> None:
+    with pytest.raises(ValidationError, match="report run or a simulation run"):
+        Stage12InvocationContext(
+            **_context_fields(
+                report_run=_run_ids().model_dump(mode="json"),
+                simulation_run_id=str(BASELINE_RUN_ID),
+            )
+        )
+
+
+def test_a_shadow_comparison_run_cannot_record_a_simulation_run() -> None:
+    with pytest.raises(ValidationError, match="production function call"):
+        Stage12InvocationContext(
+            **_context_fields(
+                production_function_call_id="fc-production",
+                simulation_run_id=str(BASELINE_RUN_ID),
+            )
+        )

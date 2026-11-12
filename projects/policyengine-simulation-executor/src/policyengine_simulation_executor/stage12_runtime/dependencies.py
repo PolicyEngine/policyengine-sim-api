@@ -189,8 +189,9 @@ SIMULATION_OUTPUT_BUCKET_ENV = "V2_SIMULATION_OUTPUT_BUCKET"
 def artifact_store(*, report_run: bool = False) -> Stage12ArtifactStore:
     """Build the store for ``STAGE12_ARTIFACT_BUCKET``; ValueError if it is unset.
 
-    A call that names a report run gets a store that names each artifact's
-    digest in its key, and that keeps simulation output files in
+    A detailed-save call, which names a report run or a simulation run,
+    gets a store that names each artifact's digest in its key, and that
+    keeps simulation output files in
     ``V2_SIMULATION_OUTPUT_BUCKET``, where nothing is deleted. Without that
     variable it raises ValueError rather than keep them in the artifact
     bucket, which deletes them after 30 days.
@@ -200,7 +201,7 @@ def artifact_store(*, report_run: bool = False) -> Stage12ArtifactStore:
         output_bucket = os.environ.get(SIMULATION_OUTPUT_BUCKET_ENV, "")
         if not output_bucket:
             msg = (
-                f"a report run's Stage 12 call requires {SIMULATION_OUTPUT_BUCKET_ENV}"
+                f"a detailed-save Stage 12 call requires {SIMULATION_OUTPUT_BUCKET_ENV}"
             )
             raise ValueError(msg)
         simulation_outputs = SimulationOutputBucket(output_bucket)
