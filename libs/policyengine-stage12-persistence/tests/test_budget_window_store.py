@@ -339,6 +339,14 @@ def test_a_report_run_outside_any_window_marks_nothing(
     assert not store.start_window(seeded_run.run_ids.report_run_id, started_at=LATER)
 
 
+def test_a_year_names_its_window(store, window, seeded_run) -> None:
+    assert store.window_of_year(window.year(2029).report_run_id) == (
+        window.window_run_id
+    )
+    assert store.window_of_year(seeded_run.run_ids.report_run_id) is None
+    assert store.window_of_year(uuid4()) is None
+
+
 def test_an_idle_window_with_waiting_years_fails_as_stalled(
     store, windows, window
 ) -> None:
