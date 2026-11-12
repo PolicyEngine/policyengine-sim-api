@@ -169,13 +169,15 @@ case "$*" in
       printf 'Active Containers in environment: staging\n'
       exit 0
     fi
-    # A stopped container is never listed again, and one with a departure
-    # count only that many times.
+    if jq -e --argjson listing "${listing}" '.empty_listings | index($listing)' \
+      "${spec}" >/dev/null; then
+      exit 0
+    fi
+    # A stopped container is never listed again.
     stopped="$(find "${FAKE_STATE}" -name 'stopped-*' -exec basename {} \; \
       | sed 's/^stopped-//' | jq -R . | jq -s .)"
-    jq --argjson listing "${listing}" --argjson stopped "${stopped}" \
+    jq --argjson stopped "${stopped}" \
       '[.listed[] as $id | select(($stopped | index($id)) == null)
-        | select((.departures[$id] // $listing) >= $listing)
         | {"Container ID": $id, "App ID": "ap-01V2", "App Name": "policyengine-v2",
            "Start Time": "2026-11-13T12:00:00+00:00"}]' "${spec}"
     ;;
@@ -357,8 +359,7 @@ class ModalContainers:
     # print something other than JSON.
     failed_listings: tuple[int, ...] = ()
     unreadable_listings: tuple[int, ...] = ()
-    # How many listings name each container before Modal scales it down.
-    departures: dict[str, int] = field(default_factory=dict)
+    empty_listings: tuple[int, ...] = ()
 
 
 @pytest.fixture
@@ -437,7 +438,7 @@ def _run(
         "timed_out_stops": list(containers.timed_out_stops),
         "failed_listings": list(containers.failed_listings),
         "unreadable_listings": list(containers.unreadable_listings),
-        "departures": containers.departures,
+        "empty_listings": list(containers.empty_listings),
     }
     (state / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
     environment = {
@@ -452,8 +453,6 @@ def _run(
         # The fake sleep returns at once, so a record that never finishes
         # fails the test within this many seconds.
         "PREEMPTION_CHECK_DEADLINE_SECONDS": "20",
-        # Most tests don't wait for an earlier attempt's container to leave.
-        "PREEMPTION_CHECK_SCALEDOWN_SECONDS": "0",
         "FAKE_STATE": str(state),
         "FAKE_BASE_URL": BASE_URL,
         "FAKE_ACCESS_TOKEN": ACCESS_TOKEN,
@@ -606,69 +605,6 @@ def test_a_calculation_that_finishes_before_the_stop_is_submitted_again(
     assert "finished before its container was stopped" in result.stderr
 
 
-def test_the_next_attempt_waits_for_the_last_attempts_container_to_leave(
-    fakes, tmp_path
-):
-    """A warm container calculates too fast to stop; Modal scales it down idle."""
-    result, state = _run(
-        fakes,
-        tmp_path,
-        "household",
-        [_household_attempt(0, proves=False), _household_attempt(1)],
-        containers=ModalContainers(departures={CONTAINERS[0]: 3}),
-        PREEMPTION_CHECK_SCALEDOWN_SECONDS="120",
-    )
-
-    assert result.returncode == 0, result.stderr
-    calls = fakes.calls()
-    listings = [
-        index for index, call in enumerate(calls) if call[0] == "uv" and "list" in call
-    ]
-    submissions = [
-        index
-        for index, call in enumerate(calls)
-        if call[0] == "curl" and call[-1].endswith("/household-calculations")
-    ]
-    # The first attempt's lookup, then two listings naming its container and
-    # one without it, then the second attempt's lookup.
-    assert len(listings) == 5
-    assert listings[3] < submissions[1] < listings[4]
-    assert len(_submissions(state)) == 2
-    assert f"waiting for container {CONTAINERS[0]}" in result.stdout
-
-
-def test_the_next_attempt_waits_for_a_container_first_seen_finished(fakes, tmp_path):
-    """A warm container finished the job before the check saw it running."""
-    first = _household_attempt(0, proves=False)
-    first.reads_before_stop = [_household(JOB_IDS[0], "succeeded", CALL_IDS[0])]
-    first.inputs_before_stop = [_inputs((CONTAINERS[0], "SUCCESS"))]
-
-    result, _ = _run(
-        fakes,
-        tmp_path,
-        "household",
-        [first, _household_attempt(1)],
-        containers=ModalContainers(departures={CONTAINERS[0]: 2}),
-        PREEMPTION_CHECK_SCALEDOWN_SECONDS="120",
-    )
-
-    assert result.returncode == 0, result.stderr
-    calls = fakes.calls()
-    listings = [
-        index for index, call in enumerate(calls) if call[0] == "uv" and "list" in call
-    ]
-    submissions = [
-        index
-        for index, call in enumerate(calls)
-        if call[0] == "curl" and call[-1].endswith("/household-calculations")
-    ]
-    # Two listings naming the first attempt's container and one without it,
-    # then the second attempt's lookup.
-    assert len(listings) == 4
-    assert listings[2] < submissions[1] < listings[3]
-    assert f"waiting for container {CONTAINERS[0]}" in result.stdout
-
-
 def test_a_failed_listing_is_asked_again_rather_than_taken_for_an_absent_container(
     fakes, tmp_path
 ):
@@ -704,6 +640,46 @@ def test_an_unreadable_listing_is_asked_again(fakes, tmp_path):
     assert "is not listed" not in result.stderr
 
 
+def test_an_empty_listing_is_asked_again(fakes, tmp_path):
+    """Modal's listing prints a JSON array, even an empty one."""
+    result, _ = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [_household_attempt(0)],
+        containers=ModalContainers(empty_listings=(1,)),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _stops(fakes) == [CONTAINERS[0]]
+    assert _listings_before_the_first_stop(fakes) == 2
+    assert "readably" in result.stderr
+    assert "is not listed" not in result.stderr
+
+
+def test_a_container_found_after_a_failed_listing_clears_its_note(fakes, tmp_path):
+    attempt = _household_attempt(0, proves=False)
+    attempt.reads_before_stop = [
+        _household(JOB_IDS[0], "pending", CALL_IDS[0]),
+        _household(JOB_IDS[0], "pending", CALL_IDS[0]),
+        _household(JOB_IDS[0], "succeeded", CALL_IDS[0]),
+    ]
+
+    result, _ = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [attempt],
+        containers=ModalContainers(failed_listings=(1,)),
+        PREEMPTION_CHECK_ATTEMPTS="1",
+    )
+
+    assert result.returncode == 1
+    last_reason = result.stderr.split("the last: ")[-1]
+    assert "finished before its container was stopped" in last_reason
+    assert "Modal could not list" not in last_reason
+
+
 def test_a_job_finished_while_modal_could_not_list_says_so(fakes, tmp_path):
     result, _ = _run(
         fakes,
@@ -718,48 +694,6 @@ def test_a_job_finished_while_modal_could_not_list_says_so(fakes, tmp_path):
     assert "the last: " in result.stderr
     last_reason = result.stderr.split("the last: ")[-1]
     assert "Modal could not list" in last_reason
-
-
-def test_a_wait_modal_cannot_answer_ends_at_its_time_limit(fakes, tmp_path):
-    result, state = _run(
-        fakes,
-        tmp_path,
-        "household",
-        [_household_attempt(0, proves=False), _household_attempt(1)],
-        containers=ModalContainers(failed_listings=(2,)),
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert len(_submissions(state)) == 2
-    assert "could not say within 0 seconds" in result.stderr
-
-
-def test_the_wait_asks_again_after_a_failed_listing(fakes, tmp_path):
-    """A listing Modal doesn't answer doesn't mean the container has left."""
-    result, _ = _run(
-        fakes,
-        tmp_path,
-        "household",
-        [_household_attempt(0, proves=False), _household_attempt(1)],
-        containers=ModalContainers(departures={CONTAINERS[0]: 3}, failed_listings=(2,)),
-        PREEMPTION_CHECK_SCALEDOWN_SECONDS="120",
-    )
-
-    assert result.returncode == 0, result.stderr
-    calls = fakes.calls()
-    listings = [
-        index for index, call in enumerate(calls) if call[0] == "uv" and "list" in call
-    ]
-    submissions = [
-        index
-        for index, call in enumerate(calls)
-        if call[0] == "curl" and call[-1].endswith("/household-calculations")
-    ]
-    # The first attempt's lookup; then, waiting, a failed listing, one naming
-    # the container and one without it; then the second attempt's lookup.
-    assert len(listings) == 5
-    assert listings[3] < submissions[1] < listings[4]
-    assert "Modal could not list" in result.stderr
 
 
 def test_a_stop_that_runs_out_of_time_is_followed_like_a_failed_one(fakes, tmp_path):
@@ -785,10 +719,21 @@ def test_a_stop_that_runs_out_of_time_is_followed_like_a_failed_one(fakes, tmp_p
     assert "finished after modal container stop failed" in result.stderr
 
 
-def test_a_container_still_listed_after_the_wait_does_not_hold_the_check(
-    fakes, tmp_path
-):
-    result, state = _run(
+def _indices(fakes: FakeCommands, matches) -> list[int]:
+    return [index for index, call in enumerate(fakes.calls()) if matches(call)]
+
+
+def _is_submission(call: list[str]) -> bool:
+    return call[0] == "curl" and call[-1].endswith("/household-calculations")
+
+
+def test_the_next_attempt_waits_out_modals_idle_scale_down_first(fakes, tmp_path):
+    """Modal stops a container left idle for 60 seconds, by default.
+
+    A new attempt on a warm container the last one left, the one the check
+    found or the one Modal's rerun ran in, would finish too fast to stop.
+    """
+    result, _ = _run(
         fakes,
         tmp_path,
         "household",
@@ -796,8 +741,27 @@ def test_a_container_still_listed_after_the_wait_does_not_hold_the_check(
     )
 
     assert result.returncode == 0, result.stderr
-    assert len(_submissions(state)) == 2
-    assert f"container {CONTAINERS[0]} is still listed" in result.stderr
+    submissions = _indices(fakes, _is_submission)
+    waits = _indices(fakes, lambda call: call == ["sleep", "90"])
+    assert len(waits) == 1
+    assert submissions[0] < waits[0] < submissions[1]
+    assert "waiting 90 seconds" in result.stdout
+
+
+def test_no_wait_follows_the_last_attempt(fakes, tmp_path):
+    result, _ = _run(
+        fakes,
+        tmp_path,
+        "household",
+        [_household_attempt(attempt, proves=False) for attempt in range(3)],
+        PREEMPTION_CHECK_SCALEDOWN_SECONDS="75",
+    )
+
+    assert result.returncode == 1
+    submissions = _indices(fakes, _is_submission)
+    waits = _indices(fakes, lambda call: call == ["sleep", "75"])
+    assert len(waits) == 2
+    assert submissions[0] < waits[0] < submissions[1] < waits[1] < submissions[2]
 
 
 def test_three_calculations_that_finish_before_the_stop_fail_the_check(fakes, tmp_path):
@@ -947,42 +911,21 @@ def test_a_completion_moments_after_the_stop_is_taken_for_the_stopped_containers
     assert ("too soon" in result.stderr) is not proves
 
 
-def test_after_a_too_soon_completion_the_next_attempt_waits_for_the_rerun_container(
-    fakes, tmp_path
-):
-    """Modal's rerun ran in a container that is now idle and warm."""
-    first = _household_attempt(0)
-    first.reads_after_stop = [
+def test_a_completion_in_the_stops_own_second_is_too_soon(fakes, tmp_path):
+    """Both times are whole seconds, so the same second may be after the stop."""
+    attempt = _household_attempt(0)
+    attempt.reads_after_stop = [
         _household(
-            JOB_IDS[0], "succeeded", CALL_IDS[0], completed_at="2026-11-13T12:00:02Z"
+            JOB_IDS[0], "succeeded", CALL_IDS[0], completed_at="2026-11-13T12:00:00Z"
         )
     ]
 
     result, _ = _run(
-        fakes,
-        tmp_path,
-        "household",
-        [first, _household_attempt(1)],
-        containers=ModalContainers(departures={RERUN_CONTAINER: 2}),
-        PREEMPTION_CHECK_SCALEDOWN_SECONDS="120",
+        fakes, tmp_path, "household", [attempt], PREEMPTION_CHECK_ATTEMPTS="1"
     )
 
-    assert result.returncode == 0, result.stderr
-    calls = fakes.calls()
-    listings = [
-        index for index, call in enumerate(calls) if call[0] == "uv" and "list" in call
-    ]
-    submissions = [
-        index
-        for index, call in enumerate(calls)
-        if call[0] == "curl" and call[-1].endswith("/household-calculations")
-    ]
-    # The first attempt's lookup; then, waiting, one listing naming the
-    # rerun's container and one without it; then the second attempt's lookup.
-    assert len(listings) == 4
-    assert listings[2] < submissions[1] < listings[3]
-    assert f"waiting for container {RERUN_CONTAINER}" in result.stdout
-    assert "too soon" in result.stderr
+    assert result.returncode == 1
+    assert "0 seconds after" in result.stderr
 
 
 def test_a_record_that_names_no_call_after_the_stop_fails(fakes, tmp_path):
