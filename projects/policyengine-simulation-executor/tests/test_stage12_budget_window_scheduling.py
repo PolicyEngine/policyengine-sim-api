@@ -10,6 +10,7 @@ own outcome: a failure is logged.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
@@ -354,8 +355,21 @@ def test_the_v2_coordinator_runs_each_call_as_a_window_year(monkeypatch) -> None
     coordinator_trace = {"traceparent": "00-coordinator-trace-01"}
 
     class TracedRuntime(RecordingRuntime):
+        """Captures the trace of the coordinator's open operation, as the real one."""
+
+        operation_open = False
+
+        @contextmanager
+        def operation(self, name, **kwargs):
+            with super().operation(name, **kwargs):
+                self.operation_open = True
+                try:
+                    yield
+                finally:
+                    self.operation_open = False
+
         def capture_context(self) -> dict:
-            return coordinator_trace
+            return {**coordinator_trace, "operation_open": self.operation_open}
 
     monkeypatch.setattr(
         module, "init_process_observability", lambda **_: TracedRuntime()
@@ -363,10 +377,11 @@ def test_the_v2_coordinator_runs_each_call_as_a_window_year(monkeypatch) -> None
     received = []
 
     def window_year(coordinate, *, payload, context, windows, observability_context):
-        # The next years' calls carry the coordinator's trace, captured
-        # only when they are started.
+        result = coordinate()
+        # As the wrapper does, the next years' trace is captured once the
+        # year's coordinator returns, while its operation is still open.
         received.append((payload, context, observability_context()))
-        return coordinate()
+        return result
 
     monkeypatch.setattr(stage12_runtime, "coordinate_window_year", window_year)
     monkeypatch.setattr(
@@ -380,7 +395,9 @@ def test_the_v2_coordinator_runs_each_call_as_a_window_year(monkeypatch) -> None
     )
 
     assert result == {"status": "succeeded"}
-    assert received == [({"report": 1}, {"context": 1}, coordinator_trace)]
+    assert received == [
+        ({"report": 1}, {"context": 1}, {**coordinator_trace, "operation_open": True})
+    ]
 
 
 class NoWindow(RecordingWindows):
