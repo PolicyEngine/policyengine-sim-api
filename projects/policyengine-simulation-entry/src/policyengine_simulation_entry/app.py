@@ -543,9 +543,10 @@ def _register_economy_routes(
     submissions: EconomySubmissions | None,
     *,
     submitter: AuthorizationDependency,
+    reader: AuthorizationDependency,
 ) -> None:
-    """Add the routes that create economy reports and simulations."""
-    add_economy_routes(app, entry, submissions, submitter=submitter)
+    """Add the routes that create economy reports and simulations and read them."""
+    add_economy_routes(app, entry, submissions, submitter=submitter, reader=reader)
 
 
 def economy_submissions_for(
@@ -739,6 +740,7 @@ def create_app(
         entry,
         economy_submissions_for(runtime_settings, runtime_database),
         submitter=simulation_submitter,
+        reader=simulation_reader,
     )
     _register_service_routes(app, entry)
     return app

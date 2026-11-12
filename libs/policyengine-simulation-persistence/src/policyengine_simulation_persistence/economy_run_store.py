@@ -12,6 +12,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from policyengine_simulation_persistence.economy_run_reads import (
+    read_economy_report,
+    read_economy_simulation,
+)
 from policyengine_simulation_persistence.economy_run_records import (
     CatalogDataset,
     CatalogRegion,
@@ -51,6 +55,10 @@ if TYPE_CHECKING:
 
     from sqlalchemy import Connection, Engine
 
+    from policyengine_simulation_persistence.economy_run_reads import (
+        EconomyReportState,
+        EconomySimulationState,
+    )
     from policyengine_simulation_persistence.economy_run_records import (
         NewEconomyReport,
         NewEconomySimulation,
@@ -285,6 +293,16 @@ class EconomyRunStore:
                 simulation_run_id=simulation_run_id,
                 error_message=error_message,
             )
+
+    def read_report(self, report_id: UUID) -> EconomyReportState | None:
+        """Return the report with its newest run, or None when there is none."""
+        with self._transaction() as connection:
+            return read_economy_report(connection, report_id)
+
+    def read_simulation(self, simulation_id: UUID) -> EconomySimulationState | None:
+        """Return the simulation with its newest run, or None when there is none."""
+        with self._transaction() as connection:
+            return read_economy_simulation(connection, simulation_id)
 
 
 def _catalog_rows(

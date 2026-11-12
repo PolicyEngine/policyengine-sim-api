@@ -87,7 +87,9 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence import (
         EconomyCatalogRows,
         EconomyReportInputs,
+        EconomyReportState,
         EconomySimulationInputs,
+        EconomySimulationState,
         SimulationInputs,
     )
 
@@ -166,6 +168,14 @@ class EconomyRuns(Protocol):
         self, simulation_run_id: UUID, error_message: str
     ) -> bool:
         """Fail the simulation run while it is pending with no call ID."""
+        ...
+
+    def read_report(self, report_id: UUID) -> EconomyReportState | None:
+        """Return the report with its newest run."""
+        ...
+
+    def read_simulation(self, simulation_id: UUID) -> EconomySimulationState | None:
+        """Return the simulation with its newest run."""
         ...
 
 
@@ -352,6 +362,34 @@ class EconomySubmissionService:
             simulation_run_id=simulation.run_id,
             status=status,
         )
+
+    async def read_report(self, report_id: UUID) -> EconomyReportState | None:
+        """Return the report with its newest run, or None when there is none.
+
+        Raise EconomySubmissionUnavailableError when it cannot be read.
+        """
+        return await self._read_state(lambda: self._store.read_report(report_id))
+
+    async def read_simulation(
+        self, simulation_id: UUID
+    ) -> EconomySimulationState | None:
+        """Return the simulation with its newest run, or None when there is none.
+
+        Raise EconomySubmissionUnavailableError when it cannot be read.
+        """
+        return await self._read_state(
+            lambda: self._store.read_simulation(simulation_id)
+        )
+
+    async def _read_state[State](self, read: Callable[[], State]) -> State:
+        try:
+            return await asyncio.to_thread(read)
+        except SQLAlchemyError as error:
+            logger.warning(
+                "economy_state_unreadable",
+                extra={"error_type": type(error).__name__},
+            )
+            raise _database_unavailable() from None
 
     def _side(self, inputs: SimulationInputs) -> ReportSimulation:
         """Return a side naming its reusable run, or a new simulation and run."""

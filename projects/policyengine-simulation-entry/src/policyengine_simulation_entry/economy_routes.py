@@ -7,6 +7,10 @@
 - ``POST /simulations`` (``simulation:submit``) creates a standalone
   economy simulation and its first run, and starts the run's simulation
   function, answering 201 with the simulation's ID, its run's ID and status.
+- ``GET /reports/{report_id}`` and ``GET /simulations/{simulation_id}``
+  (``simulation:read``) return the record with its newest run's status,
+  versions, error message and times. The Public API reads results from the
+  tables itself; these reads let a deploy check follow a run.
 
 A refused request answers 400 (a row it names, or a function it needs, is
 missing; ``code`` says which) or 422 (its fields, or the stored values it
@@ -24,6 +28,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
@@ -32,9 +37,13 @@ from policyengine_simulation_entry.economy_api_models import (
     EconomyError,
     EconomyReportCreated,
     EconomyReportRequest,
+    EconomyReportState,
     EconomyRequestUnprocessable,
     EconomySimulationCreated,
     EconomySimulationRequest,
+    EconomySimulationState,
+    ReportRunRead,
+    SimulationRunRead,
 )
 from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionRefusedError,
@@ -47,7 +56,16 @@ from policyengine_simulation_entry.route_support import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from fastapi import FastAPI
+    from policyengine_simulation_persistence import (
+        EconomyReportState as StoredReport,
+    )
+    from policyengine_simulation_persistence import (
+        EconomySimulationState as StoredSimulation,
+    )
+    from pydantic import BaseModel
 
     from policyengine_simulation_entry.auth import AuthorizationDependency
     from policyengine_simulation_entry.economy_submission_errors import RecordName
@@ -56,7 +74,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 REPORTS_PATH = "/reports"
+REPORT_PATH = "/reports/{report_id}"
 SIMULATIONS_PATH = "/simulations"
+SIMULATION_PATH = "/simulations/{simulation_id}"
 RETRY_AFTER_SECONDS = 10
 
 _ERROR = {"model": EconomyError}
@@ -97,6 +117,24 @@ _INTERNAL_ERROR = {
 }
 
 
+_READ_UNPROCESSABLE = {
+    "description": "The ID is not a UUID",
+    "model": EconomyRequestUnprocessable,
+}
+_READ_UNAVAILABLE = {
+    "description": (
+        "Economy runs are not configured, or the database cannot be read; "
+        "retry after Retry-After seconds"
+    ),
+    "headers": _RETRY_AFTER,
+    **_ERROR,
+}
+_READ_INTERNAL_ERROR = {
+    "description": "The service failed unexpectedly (internal_error)",
+    **_ERROR,
+}
+
+
 def _unavailable_description(record: RecordName) -> dict[str, Any]:
     return {
         "description": (
@@ -132,6 +170,14 @@ class EconomySubmissions(Protocol):
         observability_context: dict[str, Any] | None,
     ) -> EconomySimulationCreated:
         """Create the simulation and its run and start the run's function."""
+        ...
+
+    async def read_report(self, report_id: UUID) -> StoredReport | None:
+        """Return the report with its newest run, or None."""
+        ...
+
+    async def read_simulation(self, simulation_id: UUID) -> StoredSimulation | None:
+        """Return the simulation with its newest run, or None."""
         ...
 
 
@@ -211,16 +257,88 @@ def _unexpected_failure_response(
     )
 
 
+def _report_state(stored: StoredReport) -> EconomyReportState:
+    run = stored.run
+    return EconomyReportState(
+        report_id=stored.id,
+        country=stored.country,
+        baseline_simulation_id=stored.baseline_simulation_id,
+        reform_simulation_id=stored.reform_simulation_id,
+        run=None
+        if run is None
+        else ReportRunRead(
+            run_id=run.id,
+            status=run.status,
+            country_package_version=run.country_package_version,
+            policyengine_version=run.policyengine_version,
+            error_message=run.error_message,
+            created_at=run.created_at,
+            started_at=run.started_at,
+            completed_at=run.completed_at,
+            baseline_simulation_run_id=run.baseline_simulation_run_id,
+            reform_simulation_run_id=run.reform_simulation_run_id,
+        ),
+    )
+
+
+def _simulation_state(stored: StoredSimulation) -> EconomySimulationState:
+    run = stored.run
+    return EconomySimulationState(
+        simulation_id=stored.id,
+        run=None
+        if run is None
+        else SimulationRunRead(
+            run_id=run.id,
+            status=run.status,
+            country_package_version=run.country_package_version,
+            policyengine_version=run.policyengine_version,
+            error_message=run.error_message,
+            created_at=run.created_at,
+            started_at=run.started_at,
+            completed_at=run.completed_at,
+        ),
+    )
+
+
+def _unknown(record: RecordName, record_id: UUID) -> JSONResponse:
+    return _error_response(
+        status.HTTP_404_NOT_FOUND,
+        EconomyError(
+            code="unknown_report" if record == "report" else "unknown_simulation",
+            detail=f"There is no {record} {record_id}.",
+        ),
+    )
+
+
 def add_economy_routes(
     app: FastAPI,
     entry: EntryRuntime,
     submissions: EconomySubmissions | None,
     *,
     submitter: AuthorizationDependency,
+    reader: AuthorizationDependency,
 ) -> None:
     """Add the economy routes; without a service they answer 503."""
-    router = APIRouter()
     log_string_limit = entry.runtime.config.limits.max_string_length
+    app.include_router(
+        _submission_routes(
+            entry, submissions, submitter=submitter, log_string_limit=log_string_limit
+        )
+    )
+    app.include_router(
+        _read_routes(submissions, reader=reader, log_string_limit=log_string_limit)
+    )
+
+
+def _submission_routes(
+    entry: EntryRuntime,
+    submissions: EconomySubmissions | None,
+    *,
+    submitter: AuthorizationDependency,
+    log_string_limit: int,
+) -> APIRouter:
+    """Return the router of ``POST /reports`` and ``POST /simulations``."""
+    router = APIRouter()
 
     @router.post(
         REPORTS_PATH,
@@ -311,4 +429,105 @@ def add_economy_routes(
             created.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
         )
 
-    app.include_router(router)
+    return router
+
+
+async def _read_answer[Stored](  # noqa: PLR0913  # the read, its record and how to answer it
+    submissions: EconomySubmissions | None,
+    read: Callable[[EconomySubmissions], Awaitable[Stored | None]],
+    answer: Callable[[Stored], BaseModel],
+    *,
+    record: RecordName,
+    record_id: UUID,
+    log_string_limit: int,
+) -> JSONResponse:
+    """Answer a read: the record as it stands, 404, 503 or the JSON 500."""
+    if submissions is None:
+        return _not_configured()
+    route = REPORT_PATH if record == "report" else SIMULATION_PATH
+    try:
+        stored = await read(submissions)
+        state = None if stored is None else answer(stored)
+    except EconomySubmissionUnavailableError as error:
+        return _submission_failure_response(error, record)
+    # Every other failure is still answered as the JSON 500 declared.
+    except Exception as error:  # noqa: BLE001  # answered as internal_error
+        return _unexpected_failure_response(
+            route, error, max_characters=log_string_limit
+        )
+    if state is None:
+        return _unknown(record, record_id)
+    return JSONResponse(state.model_dump(mode="json"))
+
+
+def _read_routes(
+    submissions: EconomySubmissions | None,
+    *,
+    reader: AuthorizationDependency,
+    log_string_limit: int,
+) -> APIRouter:
+    """Return the router of the report and simulation reads."""
+    router = APIRouter()
+
+    @router.get(
+        REPORT_PATH,
+        summary="Get an economy report's newest run",
+        description=(
+            "Return the report, its two simulations and its newest run's "
+            "status, versions, error message and times."
+        ),
+        operation_id="get_report",
+        response_model=EconomyReportState,
+        responses={
+            200: {"description": "The report as it stands"},
+            403: _FORBIDDEN,
+            404: {"description": "There is no such report (unknown_report)", **_ERROR},
+            422: _READ_UNPROCESSABLE,
+            500: _READ_INTERNAL_ERROR,
+            503: _READ_UNAVAILABLE,
+        },
+        dependencies=[Depends(reader)],
+    )
+    async def get_report(report_id: UUID) -> JSONResponse:
+        return await _read_answer(
+            submissions,
+            lambda service: service.read_report(report_id),
+            _report_state,
+            record="report",
+            record_id=report_id,
+            log_string_limit=log_string_limit,
+        )
+
+    @router.get(
+        SIMULATION_PATH,
+        summary="Get an economy simulation's newest run",
+        description=(
+            "Return the simulation and its newest run's status, versions, error "
+            "message and times."
+        ),
+        operation_id="get_simulation",
+        response_model=EconomySimulationState,
+        responses={
+            200: {"description": "The simulation as it stands"},
+            403: _FORBIDDEN,
+            404: {
+                "description": "There is no such simulation (unknown_simulation)",
+                **_ERROR,
+            },
+            422: _READ_UNPROCESSABLE,
+            500: _READ_INTERNAL_ERROR,
+            503: _READ_UNAVAILABLE,
+        },
+        dependencies=[Depends(reader)],
+    )
+    async def get_simulation(simulation_id: UUID) -> JSONResponse:
+        return await _read_answer(
+            submissions,
+            lambda service: service.read_simulation(simulation_id),
+            _simulation_state,
+            record="simulation",
+            record_id=simulation_id,
+            log_string_limit=log_string_limit,
+        )
+
+    return router

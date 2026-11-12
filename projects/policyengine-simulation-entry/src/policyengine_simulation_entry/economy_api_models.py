@@ -27,6 +27,7 @@ identifier.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any, Final, Literal
 from uuid import UUID
 
@@ -80,6 +81,8 @@ EconomyErrorCode = Literal[
     EconomyUnprocessableCode,
     EconomyUnavailableCode,
     "internal_error",
+    "unknown_report",
+    "unknown_simulation",
 ]
 
 
@@ -194,6 +197,56 @@ class EconomyReportCreated(_Answer):
     reform_simulation_id: UUID
     reform_simulation_run_id: UUID
     reform_reused: bool
+
+
+class SimulationRunRead(_Answer):
+    """A simulation run's state: its status, versions, error message and times."""
+
+    run_id: UUID
+    status: SimulationStatus
+    country_package_version: str
+    policyengine_version: str
+    error_message: str | None
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+
+
+class ReportRunRead(_Answer):
+    """A report run's state, and the simulation runs it compares."""
+
+    run_id: UUID
+    status: ReportRunStatus
+    country_package_version: str
+    policyengine_version: str
+    error_message: str | None
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    baseline_simulation_run_id: UUID
+    reform_simulation_run_id: UUID | None
+
+
+class EconomyReportState(_Answer):
+    """A report, its two simulations and its newest run, as they stand.
+
+    The newest run is the one created last, ties going to the larger ID;
+    ``run`` is null for a report with none. Its results are read from the
+    Public API.
+    """
+
+    report_id: UUID
+    country: str
+    baseline_simulation_id: UUID | None
+    reform_simulation_id: UUID | None
+    run: ReportRunRead | None
+
+
+class EconomySimulationState(_Answer):
+    """A simulation and its newest run, as they stand; ``run`` null with none."""
+
+    simulation_id: UUID
+    run: SimulationRunRead | None
 
 
 class EconomyError(_Answer):
