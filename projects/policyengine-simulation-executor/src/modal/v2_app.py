@@ -553,6 +553,7 @@ def _run_household_calculation(
     *,
     observability_context: dict | None,
     household_job_id: str | None,
+    household_report_run_id: str | None = None,
 ) -> dict:
     """Calculate one household request for ``country`` and return its outcome.
 
@@ -561,12 +562,19 @@ def _run_household_calculation(
     With ``household_job_id``, the call claims that household job under its
     Modal call ID and records the outcome on it, or returns the job's status
     without calculating when another call holds it or it has finished
-    (``stage12_runtime.run_household_job``); without it, the call touches no
-    database.
+    (``stage12_runtime.run_household_job``). With ``household_report_run_id``,
+    ``payload`` is a ``HouseholdReportRunCalculation``: the call claims the
+    report run and each side's simulation run, calculates and records each
+    side, and returns the runs' statuses
+    (``stage12_runtime.run_household_report``). A call names at most one of
+    the two; without either, the call touches no database.
     """
     from policyengine_simulation_contract.household_execution import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         HouseholdExecutionRequest,
         HouseholdWorkerIdentity,
+    )
+    from policyengine_simulation_contract.household_report_execution import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        HouseholdReportRunCalculation,
     )
     from policyengine_simulation_executor import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         household_calculation,
@@ -579,9 +587,11 @@ def _run_household_calculation(
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
 
-    def calculate() -> HouseholdExecutionResult | HouseholdExecutionFailure:
+    def calculate_request(
+        request: HouseholdExecutionRequest,
+    ) -> HouseholdExecutionResult | HouseholdExecutionFailure:
         return household_calculation.calculate_household(
-            HouseholdExecutionRequest.model_validate(payload),
+            request,
             worker=HouseholdWorkerIdentity(
                 application_name=APP_NAME,
                 function_name=household_callable_name(country),
@@ -592,7 +602,13 @@ def _run_household_calculation(
             ),
         )
 
+    def calculate() -> HouseholdExecutionResult | HouseholdExecutionFailure:
+        return calculate_request(HouseholdExecutionRequest.model_validate(payload))
+
     try:
+        if household_job_id is not None and household_report_run_id is not None:
+            msg = "a household call names either a household job or a report run"
+            raise ValueError(msg)
         propagated = normalize_observability_context(observability_context)
         result = None
         with runtime.operation(
@@ -600,7 +616,15 @@ def _run_household_calculation(
             attributes={"country": country},
             remote_context=propagated,
         ):
-            if household_job_id is None:
+            if household_report_run_id is not None:
+                result = stage12_runtime.run_household_report(
+                    UUID(household_report_run_id),
+                    HouseholdReportRunCalculation.model_validate(payload),
+                    calculate_request,
+                    modal_call_id=modal.current_function_call_id(),
+                    runtime=runtime,
+                )
+            elif household_job_id is None:
                 result = calculate().model_dump(mode="json")
             else:
                 result = stage12_runtime.run_household_job(
@@ -631,16 +655,20 @@ def calculate_household_us(
     *,
     observability_context: dict | None = None,
     household_job_id: str | None = None,
+    household_report_run_id: str | None = None,
 ) -> dict:
     """Calculate one US household under the request's policy.
 
     With ``household_job_id``, record the calculation on that household job.
+    With ``household_report_run_id``, ``payload`` is that household report
+    run's calculation: calculate and record each side, then the report run.
     """
     return _run_household_calculation(
         "us",
         payload,
         observability_context=observability_context,
         household_job_id=household_job_id,
+        household_report_run_id=household_report_run_id,
     )
 
 
@@ -658,14 +686,18 @@ def calculate_household_uk(
     *,
     observability_context: dict | None = None,
     household_job_id: str | None = None,
+    household_report_run_id: str | None = None,
 ) -> dict:
     """Calculate one UK household under the request's policy.
 
     With ``household_job_id``, record the calculation on that household job.
+    With ``household_report_run_id``, ``payload`` is that household report
+    run's calculation: calculate and record each side, then the report run.
     """
     return _run_household_calculation(
         "uk",
         payload,
         observability_context=observability_context,
         household_job_id=household_job_id,
+        household_report_run_id=household_report_run_id,
     )

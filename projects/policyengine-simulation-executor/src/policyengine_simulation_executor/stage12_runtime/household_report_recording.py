@@ -1,0 +1,420 @@
+"""Recording the household report run a v2 household function's call names.
+
+The simulation service creates a household report's simulation runs, one
+for its baseline and one for any reform, and its report run naming them,
+all pending with no Modal call; it starts one household function call with
+the report run's ID, then records the call's ID on the report run. The
+function claims the report run under its own Modal call ID, then each side:
+it claims the side's simulation run, calculates it, and records the
+``HouseholdExecutionResult``, or the ``HouseholdExecutionFailure`` with a
+one-line summary, in the run's ``household_result``. Both sides are always
+calculated, so each run has its own outcome. The report run then succeeds,
+or fails with the first failed side's summary. Everything is written as the
+Modal worker role.
+
+A report run another call holds, or one already finished, is not calculated
+again. A call Modal restarts after a pre-emption runs under the same call
+ID, so it resumes its own claims, and keeps a side it had already recorded.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from functools import partial
+from typing import TYPE_CHECKING, Any, Protocol
+
+from policyengine_simulation_contract.household_execution import (
+    HouseholdExecutionFailure,
+)
+from policyengine_stage12_persistence import HouseholdReportRunStore, RunStatus
+
+from .database_retry import open_connection_with_retry
+from .failure_recording import persist_failure_record
+from .household_job_recording import (
+    household_failure_summary,
+    unexpected_failure_summary,
+)
+from .report_run_access import MODAL_WORKER_DATABASE_URL_ENV
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+    from uuid import UUID
+
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.household_execution import (
+        HouseholdExecutionRequest,
+        HouseholdExecutionResult,
+    )
+    from policyengine_simulation_contract.household_report_execution import (
+        HouseholdReportRunCalculation,
+        HouseholdReportSide,
+    )
+    from policyengine_stage12_persistence import RunWrite, SimulationRunState
+
+logger = logging.getLogger(__name__)
+
+# A report run whose side failed records this code, then the side's summary.
+SIDE_FAILED_CODE = "household_calculation_failed"
+# A report run whose side another call holds records this code.
+SIDE_UNAVAILABLE_CODE = "household_simulation_run_unavailable"
+
+type HouseholdCalculation = Callable[
+    [HouseholdExecutionRequest],
+    HouseholdExecutionResult | HouseholdExecutionFailure,
+]
+
+
+class HouseholdReportRunWriter(Protocol):
+    """A household report run's writes; ``HouseholdReportRunStore`` implements it.
+
+    Each write is conditional on its row's status and recorded Modal call,
+    and returns whether it changed the row, and the row's status afterwards.
+    """
+
+    def claim_report_run(
+        self, report_run_id: UUID, *, modal_call_id: str, claimed_at: datetime
+    ) -> RunWrite:
+        """Mark a pending or running report run that records no other call running."""
+        ...
+
+    def require_household_report_runs(
+        self,
+        report_run_id: UUID,
+        *,
+        baseline_simulation_run_id: UUID,
+        reform_simulation_run_id: UUID | None,
+    ) -> None:
+        """Raise unless the report run names exactly these simulation runs."""
+        ...
+
+    def claim_simulation_run(
+        self, simulation_run_id: UUID, *, modal_call_id: str, claimed_at: datetime
+    ) -> RunWrite:
+        """Mark a pending or running run that records no other call running."""
+        ...
+
+    def get_simulation_run(self, simulation_run_id: UUID) -> SimulationRunState:
+        """Return a simulation run's state, with its recorded call and failure."""
+        ...
+
+    def complete_household_simulation_run(
+        self,
+        simulation_run_id: UUID,
+        *,
+        modal_call_id: str,
+        household_result: Mapping[str, Any],
+        completed_at: datetime,
+    ) -> RunWrite:
+        """Mark the run succeeded with its household while this call holds it."""
+        ...
+
+    def fail_household_simulation_run(
+        self,
+        simulation_run_id: UUID,
+        *,
+        modal_call_id: str,
+        error_message: str,
+        failed_at: datetime,
+        household_result: Mapping[str, Any] | None = None,
+    ) -> RunWrite:
+        """Mark the run failed while this call holds it."""
+        ...
+
+    def fail_simulation_run(
+        self,
+        simulation_run_id: UUID,
+        *,
+        error_message: str,
+        failed_at: datetime,
+        modal_call_id: str | None = None,
+    ) -> RunWrite:
+        """Mark the run failed: while ``modal_call_id`` holds it, or while active."""
+        ...
+
+    def complete_household_report_run(
+        self, report_run_id: UUID, *, modal_call_id: str, completed_at: datetime
+    ) -> RunWrite:
+        """Mark the report run succeeded while this call holds it."""
+        ...
+
+    def fail_report_run(
+        self,
+        report_run_id: UUID,
+        *,
+        modal_call_id: str,
+        error_message: str,
+        failed_at: datetime,
+    ) -> RunWrite:
+        """Mark the report run failed while this call holds it."""
+        ...
+
+
+def household_report_run_store(
+    runtime: ObservabilityRuntime | None = None,
+) -> HouseholdReportRunStore:
+    """Build the household report run store from ``MODAL_WORKER_DATABASE_URL``.
+
+    Raises ``ValueError`` when the variable is unset or not a complete
+    ``postgresql://`` URL.
+    """
+    return HouseholdReportRunStore(
+        os.environ.get(MODAL_WORKER_DATABASE_URL_ENV, ""),
+        open_connection=partial(open_connection_with_retry, runtime=runtime),
+    )
+
+
+@dataclass(frozen=True)
+class SideOutcome:
+    """What one side's simulation run ended as, and why it failed, if it did.
+
+    ``reason`` is the report run's failure for a side that did not succeed.
+    """
+
+    side: HouseholdReportSide
+    simulation_run_id: UUID
+    status: RunStatus
+    reason: str | None = None
+
+    def as_json(self) -> dict[str, str]:
+        """Return the side's outcome as the call answers it."""
+        return {
+            "side": self.side,
+            "simulation_run_id": str(self.simulation_run_id),
+            "status": self.status.value,
+        }
+
+
+@dataclass
+class _ReportRunCall:
+    """One call's writes to the report run and its simulation runs."""
+
+    writer: HouseholdReportRunWriter
+    report_run_id: UUID
+    modal_call_id: str
+    runtime: ObservabilityRuntime | None
+
+    def side(
+        self,
+        side: HouseholdReportSide,
+        request: HouseholdExecutionRequest,
+        calculate: HouseholdCalculation,
+        unfinished: list[UUID],
+    ) -> SideOutcome:
+        """Claim, calculate and record one side; return what its run ended as."""
+        run_id = request.calculation_id
+        claimed = self.writer.claim_simulation_run(
+            run_id, modal_call_id=self.modal_call_id, claimed_at=datetime.now(UTC)
+        )
+        if not claimed.changed:
+            unfinished.remove(run_id)
+            return self._side_already_held(side, run_id)
+        outcome = calculate(request)
+        document = outcome.model_dump(mode="json")
+        if isinstance(outcome, HouseholdExecutionFailure):
+            summary = household_failure_summary(outcome)
+            recorded = self.writer.fail_household_simulation_run(
+                run_id,
+                modal_call_id=self.modal_call_id,
+                error_message=summary,
+                failed_at=datetime.now(UTC),
+                household_result=document,
+            )
+        else:
+            summary = None
+            recorded = self.writer.complete_household_simulation_run(
+                run_id,
+                modal_call_id=self.modal_call_id,
+                household_result=document,
+                completed_at=datetime.now(UTC),
+            )
+        unfinished.remove(run_id)
+        if not recorded.changed:
+            logger.warning(
+                "Simulation run %s was %s before its calculation was recorded",
+                run_id,
+                recorded.status.value,
+            )
+        return SideOutcome(
+            side=side,
+            simulation_run_id=run_id,
+            status=recorded.status,
+            reason=_side_failure(side, summary),
+        )
+
+    def _side_already_held(
+        self, side: HouseholdReportSide, run_id: UUID
+    ) -> SideOutcome:
+        """Return a side's run this call could not claim, as it stands.
+
+        A restarted call finds a side it finished: a succeeded run is kept,
+        and a failed one keeps its recorded failure. A run still pending or
+        running holds another call, which this call leaves alone.
+        """
+        state = self.writer.get_simulation_run(run_id)
+        if state.status is RunStatus.SUCCEEDED:
+            return SideOutcome(side=side, simulation_run_id=run_id, status=state.status)
+        if state.status is RunStatus.FAILED:
+            reason = _side_failure(side, state.error_message)
+        else:
+            reason = (
+                f"{SIDE_UNAVAILABLE_CODE}: The {side} simulation run is "
+                f"{state.status.value} under another call."
+            )
+        return SideOutcome(
+            side=side, simulation_run_id=run_id, status=state.status, reason=reason
+        )
+
+    def finish(self, outcomes: list[SideOutcome]) -> RunStatus:
+        """Mark the report run succeeded, or failed with its first failed side."""
+        reason = next(
+            (
+                outcome.reason
+                for outcome in outcomes
+                if outcome.status is not RunStatus.SUCCEEDED
+            ),
+            None,
+        )
+        if reason is None:
+            recorded = self.writer.complete_household_report_run(
+                self.report_run_id,
+                modal_call_id=self.modal_call_id,
+                completed_at=datetime.now(UTC),
+            )
+            status = RunStatus.SUCCEEDED
+        else:
+            recorded = self.writer.fail_report_run(
+                self.report_run_id,
+                modal_call_id=self.modal_call_id,
+                error_message=reason,
+                failed_at=datetime.now(UTC),
+            )
+            status = RunStatus.FAILED
+        if not recorded.changed:
+            logger.warning(
+                "Report run %s was %s before its outcome was recorded",
+                self.report_run_id,
+                recorded.status.value,
+            )
+        return status
+
+    def fail_unfinished(
+        self, error: BaseException, *, claimed: UUID | None, unfinished: list[UUID]
+    ) -> None:
+        """Fail every run this call left unfinished, logging rather than raising.
+
+        The side it was calculating is failed under its call; a side it had
+        not claimed yet is failed while still active; then the report run.
+        """
+        summary = unexpected_failure_summary(error)
+        for run_id in unfinished:
+            if run_id == claimed:
+                write = partial(
+                    self.writer.fail_household_simulation_run,
+                    run_id,
+                    modal_call_id=self.modal_call_id,
+                    error_message=summary,
+                    failed_at=datetime.now(UTC),
+                )
+            else:
+                write = partial(
+                    self.writer.fail_simulation_run,
+                    run_id,
+                    error_message=summary,
+                    failed_at=datetime.now(UTC),
+                )
+            persist_failure_record(
+                write, runtime=self.runtime, failure_scope="household_simulation_run"
+            )
+        persist_failure_record(
+            partial(
+                self.writer.fail_report_run,
+                self.report_run_id,
+                modal_call_id=self.modal_call_id,
+                error_message=summary,
+                failed_at=datetime.now(UTC),
+            ),
+            runtime=self.runtime,
+            failure_scope="report_run",
+        )
+
+
+def _side_failure(side: HouseholdReportSide, summary: str | None) -> str | None:
+    """Return the report run's failure for a side that failed with ``summary``."""
+    if summary is None:
+        return None
+    return f"{SIDE_FAILED_CODE}: The {side} simulation run failed: {summary}"
+
+
+def run_household_report(  # noqa: PLR0913  # the run, its calculation and the call's seams
+    report_run_id: UUID,
+    calculation: HouseholdReportRunCalculation,
+    calculate: HouseholdCalculation,
+    *,
+    modal_call_id: str | None,
+    runtime: ObservabilityRuntime | None = None,
+    writer: HouseholdReportRunWriter | None = None,
+) -> dict[str, Any]:
+    """Claim the report run, calculate and record each side, then finish the run.
+
+    Returns the report run's and each side's status, or, for a report run
+    another call holds or one already finished, a summary of the report run
+    without calculating. ``writer`` defaults to the store the Modal worker
+    role's database URL names. Once the call holds the report run, an error
+    or Modal's cancellation fails every run it left unfinished with a
+    generic summary, then propagates; a pre-emption doesn't, because Modal
+    runs the call again under the same call ID. Raises RuntimeError, before
+    any write, when ``modal_call_id`` is None.
+    """
+    if modal_call_id is None:
+        msg = "Modal household function call identifier is unavailable"
+        raise RuntimeError(msg)
+    call = _ReportRunCall(
+        writer=writer or household_report_run_store(runtime),
+        report_run_id=report_run_id,
+        modal_call_id=modal_call_id,
+        runtime=runtime,
+    )
+    claimed = call.writer.claim_report_run(
+        report_run_id, modal_call_id=modal_call_id, claimed_at=datetime.now(UTC)
+    )
+    if not claimed.changed:
+        return {
+            "deduplicated": True,
+            "report_run_id": str(report_run_id),
+            "status": claimed.status.value,
+        }
+    sides = calculation.sides()
+    # The runs this call may still have to fail if it stops: none until the
+    # report run is known to name the call's runs.
+    unfinished: list[UUID] = []
+    calculating: UUID | None = None
+    try:
+        call.writer.require_household_report_runs(
+            report_run_id,
+            baseline_simulation_run_id=calculation.baseline.calculation_id,
+            reform_simulation_run_id=(
+                None
+                if calculation.reform is None
+                else calculation.reform.calculation_id
+            ),
+        )
+        unfinished.extend(request.calculation_id for _, request in sides)
+        outcomes = []
+        for side, request in sides:
+            calculating = request.calculation_id
+            outcomes.append(call.side(side, request, calculate, unfinished))
+        status = call.finish(outcomes)
+    except KeyboardInterrupt:
+        # Pre-emption: Modal runs the call again, and it resumes its claims.
+        raise
+    except BaseException as error:
+        call.fail_unfinished(error, claimed=calculating, unfinished=unfinished)
+        raise
+    return {
+        "report_run_id": str(report_run_id),
+        "status": status.value,
+        "simulation_runs": [outcome.as_json() for outcome in outcomes],
+    }
