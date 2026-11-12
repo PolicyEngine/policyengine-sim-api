@@ -39,9 +39,9 @@ revisions and live schema. This package never changes a schema.
 
 ## Tests
 
-The report run and budget-window tests need a disposable Postgres migrated by the Public API's
-v2 chain, with its declared privileges applied. They skip unless both URLs
-are set:
+The report run and budget-window tests need a disposable Postgres migrated
+by the Public API's v2 chain, with its declared privileges applied. They skip
+unless both URLs are set:
 
 - `REPORT_RUN_TEST_DATABASE_URL`: logs in as `policyengine_v2_modal_worker`;
 - `REPORT_RUN_TEST_SEED_DATABASE_URL`: logs in as a role that may insert the
