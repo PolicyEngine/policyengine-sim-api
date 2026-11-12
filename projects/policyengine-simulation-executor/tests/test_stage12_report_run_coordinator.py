@@ -285,7 +285,7 @@ def test_a_simulation_run_that_already_failed_fails_the_report_run_unstarted() -
     assert run.status is RunStatus.FAILED
     assert run.error_message == (
         f"simulation_run_failed: The reform simulation run {REFORM_RUN_ID} "
-        "already failed."
+        "already failed: run_exceeded_maximum_age: The run was still unfinished."
     )
     assert invoker.call_ids == []
     # The baseline was never started; it fails with its report run.

@@ -12,8 +12,10 @@ fails its report run and the simulation runs it left unfinished.
 from __future__ import annotations
 
 from hashlib import sha256
+from types import SimpleNamespace
 
 import pytest
+from policyengine_simulation_contract.stage12_execution import SimulationRole
 from policyengine_simulation_executor import spm as runtime_spm
 from policyengine_simulation_executor.stage12_artifacts import (
     serialize_simulation_frames,
@@ -32,6 +34,8 @@ from stage12_fake_report_runs import (
     economy_aggregate,
     report_run_context,
     report_run_input,
+    report_run_planned_simulation,
+    simulation_run_context,
 )
 from stage12_fake_stores import FakeArtifacts, FakeStore, simulation_frames
 from stage12_run_worker_support import EarlierCall, RunWorkerInvoker
@@ -226,7 +230,7 @@ class ChangedBeforeRelease(FakeReportRuns):
         return super().release_simulation_run(simulation_run_id, **values)
 
 
-def test_a_run_changed_before_its_release_stops_the_workers_already_started(
+def test_a_run_failed_before_its_release_stops_the_workers_already_started(
     monkeypatch,
 ) -> None:
     # An unsegmented worker is stopped through Modal; a segmented one learns
@@ -244,10 +248,14 @@ def test_a_run_changed_before_its_release_stops_the_workers_already_started(
     with pytest.raises(RuntimeError, match="coordination failed"):
         _coordinate(report_runs, invoker)
 
-    # The report run fails with the earlier worker's own cause.
+    # The report run fails as it would had the run failed before the restart,
+    # naming the earlier worker's own cause.
     run = report_runs.report_runs[REPORT_RUN_ID]
     assert run.status is RunStatus.FAILED
-    assert run.error_message == "simulation_execution_failed: the earlier worker"
+    assert run.error_message == (
+        f"simulation_run_failed: The reform simulation run {REFORM_RUN_ID} "
+        "already failed: simulation_execution_failed: the earlier worker"
+    )
     # The baseline worker already started is stopped, and its run fails.
     (baseline_call,) = invoker.calls
     assert baseline_call.cancelled == 1
@@ -314,6 +322,105 @@ def test_a_run_its_earlier_worker_completes_before_its_release_is_used_as_stored
         report_runs.reform_output_uri,
     )
     assert report_runs.report_runs[REPORT_RUN_ID].status is RunStatus.SUCCEEDED
+
+
+def test_a_run_reused_at_its_release_is_never_written_when_the_report_fails(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(runtime_spm, "normalize_runtime_spm", lambda _params: None)
+    files = OutputFiles()
+    report_runs = SucceededBeforeRelease(files)
+    _claimed_by_earlier_workers(report_runs)
+    artifacts = FakeArtifacts()
+
+    def failing_aggregator(**_values):
+        msg = "aggregation failed"
+        raise ValueError(msg)
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(
+            report_runs,
+            RunWorkerInvoker(report_runs, artifacts),
+            artifacts,
+            output_files=files,
+            aggregator=failing_aggregator,
+        )
+
+    reform = report_runs.simulation_runs[REFORM_RUN_ID]
+    assert reform.status is RunStatus.SUCCEEDED
+    # Other report runs may reuse it, so the failing one writes nothing to it.
+    assert reform.writes == ["complete_simulation_run", "release_simulation_run"]
+
+
+OTHER_REFORM_CALL_ID = "fc-reform-other"
+
+
+class HeldByAnotherCallBeforeRelease(FakeReportRuns):
+    """Move the reform run to another call just before its release."""
+
+    def release_simulation_run(self, simulation_run_id, **values):
+        if simulation_run_id == REFORM_RUN_ID:
+            self.simulation_runs[REFORM_RUN_ID].modal_call_id = OTHER_REFORM_CALL_ID
+        return super().release_simulation_run(simulation_run_id, **values)
+
+
+class ReleasedBeforeRelease(FakeReportRuns):
+    """Return the reform run to pending with no call just before its release."""
+
+    def release_simulation_run(self, simulation_run_id, **values):
+        if simulation_run_id == REFORM_RUN_ID:
+            run = self.simulation_runs[REFORM_RUN_ID]
+            run.status, run.modal_call_id = RunStatus.PENDING, None
+        return super().release_simulation_run(simulation_run_id, **values)
+
+
+class OtherReformWorker(RunWorkerInvoker):
+    """Restore the other call holding the reform run as a real reform worker."""
+
+    def restore(self, invocation_id):
+        if invocation_id == OTHER_REFORM_CALL_ID:
+            self.restored[invocation_id] = invocation_id
+            request = SimpleNamespace(
+                simulation=report_run_planned_simulation(
+                    SimulationRole.REFORM
+                ).model_dump(mode="json"),
+                context=simulation_run_context(REFORM_RUN_ID).model_dump(mode="json"),
+            )
+            return self.worker_call(request, OTHER_REFORM_CALL_ID)
+        return super().restore(invocation_id)
+
+
+def test_a_run_another_call_holds_at_its_release_is_waited_for() -> None:
+    report_runs = HeldByAnotherCallBeforeRelease()
+    _claimed_by_earlier_workers(report_runs)
+    artifacts = FakeArtifacts()
+    invoker = OtherReformWorker(report_runs, artifacts)
+
+    result = _coordinate(report_runs, invoker, artifacts)
+
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
+    assert invoker.events == ["spawn:baseline"]
+    assert OTHER_REFORM_CALL_ID in invoker.restored
+    reform = report_runs.simulation_runs[REFORM_RUN_ID]
+    assert (reform.status, reform.modal_call_id) == (
+        RunStatus.SUCCEEDED,
+        OTHER_REFORM_CALL_ID,
+    )
+
+
+def test_a_run_left_pending_at_its_release_gets_a_new_worker() -> None:
+    report_runs = ReleasedBeforeRelease()
+    _claimed_by_earlier_workers(report_runs)
+    artifacts = FakeArtifacts()
+    invoker = RunWorkerInvoker(report_runs, artifacts)
+
+    result = _coordinate(report_runs, invoker, artifacts)
+
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
+    assert sorted(invoker.events) == ["spawn:baseline", "spawn:reform"]
+    reform = report_runs.simulation_runs[REFORM_RUN_ID]
+    assert reform.status is RunStatus.SUCCEEDED
+    assert reform.modal_call_id in invoker.call_ids
 
 
 STALE_CALL_ID = "fc-baseline-stale"
