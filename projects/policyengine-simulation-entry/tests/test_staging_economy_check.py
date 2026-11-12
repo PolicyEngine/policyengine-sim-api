@@ -287,6 +287,23 @@ def test_any_other_read_answer_fails_the_check(fakes, tmp_path):
     assert "404" in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("answer", "last_read"),
+    [
+        (f"200 {_report('running')}", "the run was running"),
+        ('500 {"code": "internal_error", "detail": "x"}', "it answered 500"),
+        ("TRANSPORT", "it got no answer"),
+    ],
+)
+def test_the_deadline_failure_says_what_the_last_read_found(
+    fakes, tmp_path, answer, last_read
+):
+    result, _ = _run(fakes, tmp_path, [answer], ECONOMY_CHECK_DEADLINE_SECONDS="0")
+
+    assert result.returncode == 1
+    assert f"last read: {last_read}" in result.stderr
+
+
 def test_a_run_that_does_not_finish_in_time_fails_the_check(fakes, tmp_path):
     result, _ = _run(
         fakes,

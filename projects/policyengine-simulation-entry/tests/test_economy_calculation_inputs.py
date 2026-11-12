@@ -17,7 +17,6 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12InvocationContext,
 )
 from policyengine_simulation_entry.economy_calculation_inputs import (
-    SIMULATION_RUN_ID_FIELD,
     CalculationScope,
     CallOrigin,
     DatasetNotInBundleError,
@@ -115,6 +114,7 @@ def test_a_report_run_is_named_by_its_run_ids_with_no_evaluation_record() -> Non
 
     context = Stage12InvocationContext.model_validate(calculation.context)
     assert context.report_run == RUN_IDS
+    assert context.simulation_run_id is None
     assert context.production_function_call_id is None
     assert (context.environment, context.modal_environment, context.request_id) == (
         "staging",
@@ -145,8 +145,10 @@ def test_a_standalone_run_is_named_in_its_functions_context() -> None:
     assert simulation.simulation_execution_id == BASELINE_RUN_ID
     assert simulation.evaluation_id == BASELINE_RUN_ID
     assert simulation.policy == REFORM
-    assert calculation.context[SIMULATION_RUN_ID_FIELD] == str(BASELINE_RUN_ID)
-    assert calculation.context["report_run"] is None
+    context = Stage12InvocationContext.model_validate(calculation.context)
+    assert context.simulation_run_id == BASELINE_RUN_ID
+    assert context.report_run is None
+    assert context.records_runs
     assert calculation.context["artifact_prefix"] == (
         f"stage-12-runs/staging/2026/11/{BASELINE_RUN_ID}"
     )
