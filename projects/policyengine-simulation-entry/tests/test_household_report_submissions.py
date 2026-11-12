@@ -128,7 +128,7 @@ def test_a_household_report_is_created_and_its_household_function_started():
         CATALOG_VERSION_ID,
     )
     assert (report.household_id, report.year) == (HOUSEHOLD_ID, 2026)
-    assert report.inputs == {"add_missing_variables": True}
+    assert report.inputs == {}
     assert report.versions == RunVersions(
         country_package_version=worker.bundle.country_package_version,
         policyengine_version=worker.bundle.policyengine_version,
@@ -445,11 +445,10 @@ def _stored_household(document: dict | None = None) -> StoredHousehold:
 
 def test_a_report_runs_calculation_is_built_from_its_stored_inputs_alone():
     # A restart rebuilds the call from the stored report: its own year, not
-    # the household's default year now, and its stored option.
+    # the household's default year now.
     calculation = household_report_calculation(
         household=_stored_household(),
         year=2027,
-        add_missing_variables=False,
         baseline=HouseholdReportSideInputs(
             simulation_run_id=BASELINE_RUN_ID, policy_values={}
         ),
@@ -464,11 +463,8 @@ def test_a_report_runs_calculation_is_built_from_its_stored_inputs_alone():
         ("baseline", BASELINE_RUN_ID, {}),
         ("reform", REFORM_RUN_ID, REFORM),
     ):
-        expected = {
-            **_side_request(run_id, parameters),
-            "year": "2027",
-            "add_missing_variables": False,
-        }
+        # Every side adds the household's missing variables.
+        expected = {**_side_request(run_id, parameters), "year": "2027"}
         assert payload[side] == expected
 
 
@@ -476,7 +472,6 @@ def test_a_calculation_of_the_baseline_alone_has_no_reform():
     calculation = household_report_calculation(
         household=_stored_household(),
         year=2026,
-        add_missing_variables=True,
         baseline=HouseholdReportSideInputs(
             simulation_run_id=BASELINE_RUN_ID, policy_values=REFORM
         ),
@@ -493,7 +488,6 @@ def test_a_stored_household_the_builder_cannot_read_is_not_calculable():
         household_report_calculation(
             household=_stored_household({"people": "not a list of people"}),
             year=2026,
-            add_missing_variables=False,
             baseline=HouseholdReportSideInputs(
                 simulation_run_id=BASELINE_RUN_ID, policy_values={}
             ),
@@ -513,7 +507,6 @@ def test_two_sides_recording_one_simulation_run_are_built_wrong():
         household_report_calculation(
             household=_stored_household(),
             year=2026,
-            add_missing_variables=False,
             baseline=side,
             reform=side,
             worker=manifest_household_worker("us"),

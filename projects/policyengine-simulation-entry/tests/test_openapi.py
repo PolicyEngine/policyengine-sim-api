@@ -494,7 +494,8 @@ def test_a_report_request_is_an_economy_report_a_budget_window_or_a_household():
 def test_a_household_report_names_its_household_and_each_sides_policy():
     schemas = create_app().openapi()["components"]["schemas"]
 
-    # No year, region, dataset, dynamic, version or record ID.
+    # No year, region, dataset, dynamic, version or record ID, and no option:
+    # a household report always adds the household's missing variables.
     household_report = schemas["HouseholdReportRequest"]
     assert set(household_report["properties"]) == {
         "country",
@@ -504,7 +505,6 @@ def test_a_household_report_names_its_household_and_each_sides_policy():
         "household_id",
         "baseline",
         "reform",
-        "add_missing_variables",
     }
     assert set(household_report["required"]) == {
         "country",

@@ -80,7 +80,6 @@ HOUSEHOLD_REPORT_BODY: dict[str, Any] = {
     "household_id": str(HOUSEHOLD_ID),
     "baseline": {"policy_id": None},
     "reform": {"policy_id": str(POLICY_ID)},
-    "add_missing_variables": True,
 }
 
 

@@ -31,7 +31,6 @@ HOUSEHOLD_REPORT_BODY = {
     "household_id": HOUSEHOLD_ID,
     "baseline": {"policy_id": None},
     "reform": {"policy_id": POLICY_ID},
-    "add_missing_variables": True,
 }
 CREATED_HOUSEHOLD_REPORT = {
     "report_id": REPORT_ID,

@@ -65,7 +65,8 @@ DOCUMENT = {
     ],
     "household": [{"id": "your household", "values": {}}],
 }
-OPTIONS = {"add_missing_variables": True}
+# A household report has no options: it always adds missing variables.
+OPTIONS: dict[str, object] = {}
 
 
 def _store_on(connection: Connection) -> HouseholdReportStore:

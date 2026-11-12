@@ -114,7 +114,8 @@ def test_a_household_report_answers_201_with_its_records_and_runs(client_for) ->
     assert request.household_id == UUID(HOUSEHOLD_REPORT_BODY["household_id"])
     assert request.reform is not None
     assert request.reform.policy_id == POLICY_ID
-    assert request.options() == {"add_missing_variables": True}
+    # A household report has no options: it always adds missing variables.
+    assert request.options() == {}
     assert context["observability_id"] == OBSERVABILITY_ID
     assert economy.reports == []
 
@@ -144,7 +145,6 @@ def test_a_report_of_the_baseline_alone_may_leave_out_its_reform(client_for) -> 
     assert result.status_code == 201
     ((request, _),) = household_reports.reports
     assert request.reform is None
-    assert request.add_missing_variables is True
 
 
 def test_household_reports_answer_503_until_they_are_configured(client_for) -> None:
@@ -181,9 +181,9 @@ def test_household_reports_answer_503_until_they_are_configured(client_for) -> N
             "uuid_parsing",
         ),
         (
-            {**HOUSEHOLD_REPORT_BODY, "add_missing_variables": "yes"},
+            {**HOUSEHOLD_REPORT_BODY, "add_missing_variables": True},
             ["body", "add_missing_variables"],
-            "bool_type",
+            "extra_forbidden",
         ),
         (
             {**HOUSEHOLD_REPORT_BODY, "year": 2026},
@@ -200,7 +200,7 @@ def test_household_reports_answer_503_until_they_are_configured(client_for) -> N
         "no-household",
         "dynamic",
         "malformed-policy",
-        "option-not-a-bool",
+        "missing-variables-option",
         "year",
         "no-report-type",
     ],
