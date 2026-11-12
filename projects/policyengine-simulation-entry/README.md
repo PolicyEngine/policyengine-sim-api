@@ -44,8 +44,10 @@ Auth0 permission:
 | `GET /household-calculations/{household_job_id}` | `simulation:read` |
 | `POST /reports` | `simulation:submit` |
 | `GET /reports/{report_id}` | `simulation:read` |
+| `POST /reports/{report_id}/runs` | `simulation:submit` |
 | `POST /simulations` | `simulation:submit` |
 | `GET /simulations/{simulation_id}` | `simulation:read` |
+| `POST /simulations/{simulation_id}/runs` | `simulation:submit` |
 
 `GET /health`, `GET /ready`, `GET /versions`, `GET /versions/{kind}` and
 `POST /ping` stay public. The entrypoint answers `GET /health` and `POST /ping`
@@ -155,4 +157,34 @@ exception's text.
 record and its newest run (created last, ties to the larger ID): its status,
 versions, error message and times, and a report run's simulation runs. The
 Public API reads results from the tables itself.
+
+## Re-running a report or simulation
+
+`POST /reports/{report_id}/runs` calculates a stored economy report again,
+as a new run on the default worker's versions, and keeps every earlier run.
+Its body is `{"force": false}` by default. The report keeps its simulations:
+each side gets a new run of its own simulation, or, without `force`, reuses
+that simulation's newest run on the same versions, catalog version, dataset,
+region and year that a new report's side could reuse; `force` calculates
+both again. The new report run's trigger is `manual`. The service reads the
+report's region code and dataset name, finds the rows with that code and
+name in the catalog version of the default worker's .py version, and reads
+each simulation's stored policy and dynamic on it.
+`POST /simulations/{simulation_id}/runs`, with no body, creates and starts
+a stored economy simulation's new run, which is always calculated. Each
+answers 201 with the same fields as the create, naming the new run.
+
+A re-run is refused before anything is written: 404 (`unknown_report`,
+`unknown_simulation`) for a record that doesn't exist; 409
+`run_in_progress`, naming the run in `run_id`, while the record has a run
+pending or running; 409 `rerun_not_supported` for a budget-window or
+household record, which this service does not re-run yet, or one that
+names no region, dataset, year or simulation; and the create's 400 and 422
+codes when the stored rows can't be calculated on the current catalog
+version, worded for the stored record (a 422 reason's `loc` starts with
+`report` or `simulation`). The check for a run under way and the inserts
+run under a transaction-level advisory lock on the record's ID, so two
+re-runs of one record never both create a run. When Modal refuses the new
+run's call, the run is failed and the 503 `modal_call_refused` names the
+record and the run (`run_id`).
 

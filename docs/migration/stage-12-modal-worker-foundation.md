@@ -331,6 +331,16 @@ as for a report comparing it with itself, so a report whose plan needs more
 columns, for example a reform that turns on labour supply responses, can't
 reuse it and fails with `reused_simulation_output_incompatible`.
 
+**A re-run.** The service re-runs a stored report or simulation with the same
+two calls, by run ID. It creates the record's new run (a report run with
+trigger `manual`) and, for a report, a new `simulation_runs` row of each side's
+own simulation, or names that simulation's run that already succeeded on the
+same versions, unless the re-run is forced. The new runs record the catalog
+version, dataset and region of the current .py version's catalog; the
+`simulations` and `reports` rows are unchanged. The coordinator and workers
+claim and calculate them as they would a new record's: nothing on the Modal
+side tells a re-run apart.
+
 **Each worker** claims its simulation run under its own Modal call ID: a pending
 or running run that records no call or its own. It records its output file, or
 its failure, only while it holds the run running. It returns the output's

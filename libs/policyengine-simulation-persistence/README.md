@@ -125,6 +125,34 @@ commit fails after its rows were inserted raises
 `EconomyRecordOutcomeUnknownError`: PostgreSQL may have applied the commit,
 so the rows may exist.
 
+## Re-running a report or simulation
+
+`economy_rerun_records.py` holds a re-run's reads and writes. A re-run
+calculates a stored record again on the current versions, as a new run, and
+changes no `reports` or `simulations` row, which the service's role may not
+update: a report keeps its simulations, and each new run records the catalog
+version, dataset and region it calculates on.
+
+- `read_report_definition` and `read_simulation_definition` read what the
+  record calculates: its kind (`economy`, `budget_window`, `household` or
+  `unsupported`), country, year, its region's code and dataset's name, and
+  each simulation's policy and dynamic.
+- `find_reusable_run_of` is `find_reusable_run` limited to one simulation's
+  runs, with the catalog version, dataset and region compared on the run.
+- `insert_report_rerun` creates a report's new run, trigger `manual`, and a
+  new run of each side's simulation that reuses none;
+  `insert_simulation_rerun` creates a simulation's new run. Each refuses with
+  `RunInProgressError`, naming the run, while the record has a run `pending`
+  or `running`, and first takes `lock_reruns_of`, a transaction-level
+  advisory lock on the record's ID, so concurrent re-runs of one record
+  wait for each other.
+
+`EconomyRunStore.read_report_rerun_inputs` reads a re-run's catalog rows by
+the stored region code and dataset name, and each side's values and
+reusable run of its own simulation, never giving both sides the same run.
+`create_report_rerun` and `create_simulation_rerun` run the inserts in a
+transaction of their own.
+
 ## Reading a policy
 
 `read_policy_reform` (`policy_reform.py`) reads a stored policy as the reform
