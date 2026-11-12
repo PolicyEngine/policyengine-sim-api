@@ -46,6 +46,15 @@ from stage12_runtime_support import (
 )
 
 COORDINATOR_CALL_ID = "fc-coordinator"
+# A worker's longest recorded failure: a 64-character code, and a summary of
+# 512 characters that ends with its correlation ID.
+LONG_RECORDED_FAILURE = (
+    "simulation_execution_failed: "
+    + "x" * (512 - len(" (correlation_id=" + "c" * 32 + ")"))
+    + " (correlation_id="
+    + "c" * 32
+    + ")"
+)
 
 
 def _coordinate(report_runs, invoker, artifacts, *, report=None, **seams):
@@ -286,8 +295,10 @@ def test_a_malformed_report_input_fails_the_claimed_report_run() -> None:
             f"simulation_run_failed: The reform simulation run {REFORM_RUN_ID} "
             "already failed.",
         ),
+        # Repeated whole, so the correlation ID that ends it stays.
+        (LONG_RECORDED_FAILURE, LONG_RECORDED_FAILURE),
     ],
-    ids=["recorded-failure", "no-recorded-failure"],
+    ids=["recorded-failure", "no-recorded-failure", "longest-recorded-failure"],
 )
 def test_a_simulation_run_that_already_failed_fails_the_report_run_unstarted(
     recorded, report_failure

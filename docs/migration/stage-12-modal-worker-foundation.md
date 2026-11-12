@@ -311,8 +311,9 @@ run row naming other simulation runs, fails the report run with
 worker an earlier attempt started, which Modal never cancelled, the coordinator
 waits for that worker instead. It uses the stored output of each simulation run
 that already succeeded (see the reuse of succeeded runs above), fails the
-report run with `simulation_run_failed` if a run it must calculate already
-failed, and starts a worker for each other one with a context naming only that
+report run with the run's own recorded failure if a run it must calculate
+already failed (`simulation_run_failed` if it recorded none), and starts a
+worker for each other one with a context naming only that
 simulation run (`simulation_run_id`). It aggregates both outputs and completes
 the report run with its result rows. It returns
 `{"report_run_id", "status"}`, or the same marked `deduplicated` without running

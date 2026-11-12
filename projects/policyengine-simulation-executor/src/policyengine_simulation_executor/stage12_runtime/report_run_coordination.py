@@ -91,7 +91,8 @@ logger = logging.getLogger(__name__)
 # A detailed-save call's report input or context names other runs than the
 # report run it claimed.
 REPORT_RUN_INPUT_MISMATCH = "report_run_input_mismatch"
-# A simulation run the report run must calculate has already failed.
+# A simulation run the report run must calculate has already failed, and
+# recorded no failure of its own to repeat.
 SIMULATION_RUN_FAILED = "simulation_run_failed"
 # A simulation run changed while the coordinator restarted it.
 SIMULATION_RUN_CHANGED = "simulation_run_changed"

@@ -383,14 +383,15 @@ class OtherReformWorker(RunWorkerInvoker):
 
     def restore(self, invocation_id):
         if invocation_id == OTHER_REFORM_CALL_ID:
-            self.restored[invocation_id] = invocation_id
             request = SimpleNamespace(
                 simulation=report_run_planned_simulation(
                     SimulationRole.REFORM
                 ).model_dump(mode="json"),
                 context=simulation_run_context(REFORM_RUN_ID).model_dump(mode="json"),
             )
-            return self.worker_call(request, OTHER_REFORM_CALL_ID)
+            call = self.worker_call(request, OTHER_REFORM_CALL_ID)
+            self.restored[invocation_id] = call
+            return call
         return super().restore(invocation_id)
 
 
@@ -451,8 +452,9 @@ class UncancelledEarlierWorker(RunWorkerInvoker):
 
     def restore(self, invocation_id):
         if invocation_id == STALE_CALL_ID:
-            self.restored[invocation_id] = invocation_id
-            return self.worker_call(self.earlier_request, STALE_CALL_ID)
+            call = self.worker_call(self.earlier_request, STALE_CALL_ID)
+            self.restored[invocation_id] = call
+            return call
         return super().restore(invocation_id)
 
 
