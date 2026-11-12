@@ -11,7 +11,7 @@ stored policy and, optionally, the reform's. The service:
    the household's ``default_year``, with the side's new simulation run ID
    as its calculation ID;
 3. creates, in one transaction, each side's household simulation and its
-   pending simulation run, the report with its options, and its first
+   pending simulation run, the report, which has no options, and its first
    report run, pending with no Modal call ID;
 4. starts one household function call with ``spawn``, passing the report
    run's ID and both sides' requests, then records the call's ID while the
@@ -255,7 +255,8 @@ def _contract_reasons(
     for item in error.errors():
         location = tuple(item["loc"])
         request_field = request_field_of(location, spm_from_request=False)
-        if request_field is None:
+        # A household report sets add_missing_variables itself.
+        if request_field is None or request_field == "add_missing_variables":
             built_wrong.append(".".join(str(part) for part in location) or "request")
             continue
         field_location = (

@@ -87,7 +87,8 @@ def seed_household_report_run(
                 baseline_simulation_id=simulation_ids[0],
                 reform_simulation_id=reform_simulation_id,
                 year=HOUSEHOLD_YEAR,
-                inputs={"add_missing_variables": False},
+                # A household report has no options.
+                inputs={},
             )
         )
         connection.execute(
