@@ -80,7 +80,9 @@ class RunWorkerInvoker:
         self.contexts: list[Stage12InvocationContext] = []
         self.simulations: list[dict] = []
         self.call_ids: list[str] = []
-        self.restored: dict[str, EarlierCall] = {}
+        # Each restored call by its ID: an earlier, cancelled worker, or a
+        # test's own stand-in for a call that keeps running.
+        self.restored: dict[str, object] = {}
 
     def spawn(self, request):
         role = request.simulation["role"]

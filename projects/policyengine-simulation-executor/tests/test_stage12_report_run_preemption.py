@@ -219,7 +219,7 @@ class StartedWorkerCalls(TimeoutInvoker):
         return EarlierCall(invocation_id, self.run_events)
 
 
-class ChangedBeforeRelease(FakeReportRuns):
+class FailedBeforeRelease(FakeReportRuns):
     """Fail the reform run under its earlier worker just before its release."""
 
     def release_simulation_run(self, simulation_run_id, **values):
@@ -238,7 +238,7 @@ def test_a_run_failed_before_its_release_stops_the_workers_already_started(
     monkeypatch.setattr(
         report_run_coordination_module, "should_segment_simulation", lambda _: False
     )
-    report_runs = ChangedBeforeRelease()
+    report_runs = FailedBeforeRelease()
     _claimed_by_earlier_workers(report_runs)
     # The baseline's earlier worker never claimed its run, so it starts first.
     baseline = report_runs.simulation_runs[BASELINE_RUN_ID]
@@ -248,14 +248,14 @@ def test_a_run_failed_before_its_release_stops_the_workers_already_started(
     with pytest.raises(RuntimeError, match="coordination failed"):
         _coordinate(report_runs, invoker)
 
-    # The report run fails as it would had the run failed before the restart,
-    # naming the earlier worker's own cause.
+    # The report run fails with the earlier worker's own recorded failure,
+    # and the run that failed is not written again.
     run = report_runs.report_runs[REPORT_RUN_ID]
     assert run.status is RunStatus.FAILED
-    assert run.error_message == (
-        f"simulation_run_failed: The reform simulation run {REFORM_RUN_ID} "
-        "already failed: simulation_execution_failed: the earlier worker"
-    )
+    assert run.error_message == "simulation_execution_failed: the earlier worker"
+    assert report_runs.simulation_runs[REFORM_RUN_ID].writes == [
+        "release_simulation_run"
+    ]
     # The baseline worker already started is stopped, and its run fails.
     (baseline_call,) = invoker.calls
     assert baseline_call.cancelled == 1
@@ -346,6 +346,10 @@ def test_a_run_reused_at_its_release_is_never_written_when_the_report_fails(
             aggregator=failing_aggregator,
         )
 
+    # The report failed in its aggregation, after using the stored output.
+    assert "in stage12_aggregation" in (
+        report_runs.report_runs[REPORT_RUN_ID].error_message
+    )
     reform = report_runs.simulation_runs[REFORM_RUN_ID]
     assert reform.status is RunStatus.SUCCEEDED
     # Other report runs may reuse it, so the failing one writes nothing to it.
@@ -364,7 +368,7 @@ class HeldByAnotherCallBeforeRelease(FakeReportRuns):
         return super().release_simulation_run(simulation_run_id, **values)
 
 
-class ReleasedBeforeRelease(FakeReportRuns):
+class ReturnedToPendingBeforeRelease(FakeReportRuns):
     """Return the reform run to pending with no call just before its release."""
 
     def release_simulation_run(self, simulation_run_id, **values):
@@ -409,7 +413,7 @@ def test_a_run_another_call_holds_at_its_release_is_waited_for() -> None:
 
 
 def test_a_run_left_pending_at_its_release_gets_a_new_worker() -> None:
-    report_runs = ReleasedBeforeRelease()
+    report_runs = ReturnedToPendingBeforeRelease()
     _claimed_by_earlier_workers(report_runs)
     artifacts = FakeArtifacts()
     invoker = RunWorkerInvoker(report_runs, artifacts)

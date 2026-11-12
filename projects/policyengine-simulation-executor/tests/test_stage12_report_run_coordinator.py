@@ -272,21 +272,37 @@ def test_a_malformed_report_input_fails_the_claimed_report_run() -> None:
     assert invoker.call_ids == []
 
 
-def test_a_simulation_run_that_already_failed_fails_the_report_run_unstarted() -> None:
+@pytest.mark.parametrize(
+    ("recorded", "report_failure"),
+    [
+        # The report run records the run's own failure, as when its worker
+        # fails during the report.
+        (
+            "run_exceeded_maximum_age: The run was still unfinished.",
+            "run_exceeded_maximum_age: The run was still unfinished.",
+        ),
+        (
+            None,
+            f"simulation_run_failed: The reform simulation run {REFORM_RUN_ID} "
+            "already failed.",
+        ),
+    ],
+    ids=["recorded-failure", "no-recorded-failure"],
+)
+def test_a_simulation_run_that_already_failed_fails_the_report_run_unstarted(
+    recorded, report_failure
+) -> None:
     report_runs, artifacts, invoker = _run_through_workers()
     reform = report_runs.simulation_runs[REFORM_RUN_ID]
     reform.status = RunStatus.FAILED
-    reform.error_message = "run_exceeded_maximum_age: The run was still unfinished."
+    reform.error_message = recorded
 
     with pytest.raises(RuntimeError, match="coordination failed"):
         _coordinate(report_runs, invoker, artifacts)
 
     run = report_runs.report_runs[REPORT_RUN_ID]
     assert run.status is RunStatus.FAILED
-    assert run.error_message == (
-        f"simulation_run_failed: The reform simulation run {REFORM_RUN_ID} "
-        "already failed: run_exceeded_maximum_age: The run was still unfinished."
-    )
+    assert run.error_message == report_failure
     assert invoker.call_ids == []
     # The baseline was never started; it fails with its report run.
     baseline = report_runs.simulation_runs[BASELINE_RUN_ID]
@@ -294,7 +310,9 @@ def test_a_simulation_run_that_already_failed_fails_the_report_run_unstarted() -
     assert baseline.error_message == (
         "simulation_cancelled: Cancelled after the report failed."
     )
-    assert reform.error_message.startswith("run_exceeded_maximum_age: ")
+    assert reform.error_message == recorded
+    # A run that already failed is not written again.
+    assert reform.writes == []
 
 
 def test_a_failed_worker_fails_the_report_run_with_its_own_cause() -> None:
