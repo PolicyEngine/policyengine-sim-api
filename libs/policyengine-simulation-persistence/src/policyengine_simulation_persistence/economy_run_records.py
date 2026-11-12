@@ -60,6 +60,7 @@ from policyengine_simulation_persistence.tables import (
     ReportRunTrigger,
     SimulationStatus,
     SimulationType,
+    budget_window_runs,
     report_runs,
     reports,
     simulation_runs,
@@ -86,7 +87,13 @@ _FAILED: Final = SimulationStatus.FAILED.value
 # the first column it constrains.
 _KEY_COLUMNS: Final = {
     str(constraint.name): (table.name, constraint.column_keys[0])
-    for table in (simulations, simulation_runs, reports, report_runs)
+    for table in (
+        simulations,
+        simulation_runs,
+        reports,
+        report_runs,
+        budget_window_runs,
+    )
     for constraint in table.foreign_key_constraints
 }
 
@@ -374,10 +381,10 @@ def insert_economy_report(connection: Connection, report: NewEconomyReport) -> N
     Raise EconomyRecordReferenceError when the database refuses a row it
     names. The refusal ends the caller's transaction, or its savepoint.
     """
-    with _references_checked():
+    with references_checked():
         for side in (report.baseline, report.reform):
             if not side.reused:
-                _insert_simulation(
+                insert_simulation_with_run(
                     connection,
                     simulation_id=side.simulation_id,
                     run_id=side.simulation_run_id,
@@ -431,8 +438,8 @@ def insert_economy_simulation(
     Raise EconomyRecordReferenceError when the database refuses a row it
     names. The refusal ends the caller's transaction, or its savepoint.
     """
-    with _references_checked():
-        _insert_simulation(
+    with references_checked():
+        insert_simulation_with_run(
             connection,
             simulation_id=simulation.id,
             run_id=simulation.run_id,
@@ -442,7 +449,7 @@ def insert_economy_simulation(
         )
 
 
-def _insert_simulation(  # noqa: PLR0913  # the simulation's and its run's parts
+def insert_simulation_with_run(  # noqa: PLR0913  # the simulation's and its run's parts
     connection: Connection,
     *,
     simulation_id: UUID,
@@ -482,7 +489,7 @@ def _insert_simulation(  # noqa: PLR0913  # the simulation's and its run's parts
 
 
 @contextmanager
-def _references_checked() -> Iterator[None]:
+def references_checked() -> Iterator[None]:
     """Turn a foreign-key refusal into EconomyRecordReferenceError.
 
     Any other integrity error propagates unchanged.

@@ -227,9 +227,12 @@ dynamic, household and catalog tables a run reads. `SERVICE_UPDATABLE_COLUMNS`
 lists the columns it may `UPDATE` on `simulation_runs`, `report_runs` and
 `household_jobs`: `status`, `modal_call_id`, `error_message`, `completed_at`
 and `updated_at`, to record a Modal call's ID once Modal accepts the call, or
-to fail the run when Modal refuses it. The role holds `UPDATE` on those
-columns only, never on a whole table, so the database refuses any other change
-to a run. The Public API's privilege manifest grants them all.
+to fail the run when Modal refuses it. On `budget_window_runs` it lists
+`status`, `error_message`, `completed_at` and `updated_at`, to fail a window
+when Modal refuses one of the first years the service starts. The role holds
+`UPDATE` on those columns only, never on a whole table, so the database
+refuses any other change to a run. The Public API's privilege manifest grants
+them all.
 
 `missing_table_privileges` returns each one the connected role lacks, ordered
 by table, as `"INSERT on reports"` or `"UPDATE (modal_call_id) on

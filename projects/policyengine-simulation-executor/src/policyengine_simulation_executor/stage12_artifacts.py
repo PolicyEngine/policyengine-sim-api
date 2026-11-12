@@ -22,6 +22,8 @@ from policyengine_simulation_contract.stage12_execution import (
     RowIdentity,
     SimulationArtifactDescriptor,
     Stage12InvocationContext,
+    report_run_artifact_prefix,
+    require_artifact_environment,
     stage12_output_plan_sha256,
 )
 from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
@@ -52,13 +54,6 @@ def canonical_json_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def _require_environment_segment(environment: str) -> None:
-    """Raise ``ValueError`` for an environment that could escape its key prefix."""
-    if not environment or "/" in environment or ".." in environment:
-        msg = "invalid Stage 12 artifact environment"
-        raise ValueError(msg)
-
-
 def comparison_run_prefix(
     *,
     environment: str,
@@ -68,15 +63,10 @@ def comparison_run_prefix(
     """Return ``stage-12-runs/<environment>/<YYYY>/<MM>/<evaluation_id>`` for one run.
 
     Raises ``ValueError`` for an environment that could escape the prefix or a
-    naive ``created_at``.
+    naive ``created_at``. The contract builds the prefix, so the simulation
+    service and the coordinator name a run's artifacts alike.
     """
-    _require_environment_segment(environment)
-    if created_at.tzinfo is None:
-        msg = "Stage 12 artifact timestamp must include a timezone"
-        raise ValueError(msg)
-    return (
-        f"stage-12-runs/{environment}/{created_at:%Y}/{created_at:%m}/{evaluation_id}"
-    )
+    return report_run_artifact_prefix(environment, created_at, evaluation_id)
 
 
 def _content_named(name: str, content_sha256: str | None) -> str:
@@ -112,7 +102,7 @@ def simulation_run_output_path(
     attempt's. Raises ``ValueError`` for an environment that could escape the
     prefix.
     """
-    _require_environment_segment(environment)
+    require_artifact_environment(environment)
     return (
         f"simulation-runs/{environment}/{country}/{simulation_run_id}/"
         f"output-{content_sha256}.parquet"
