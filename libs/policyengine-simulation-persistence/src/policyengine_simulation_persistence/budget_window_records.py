@@ -17,7 +17,7 @@ starts the first years; each year's coordinator starts the next ones (see
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import insert
 
@@ -30,6 +30,8 @@ from policyengine_simulation_persistence.economy_run_records import (
     references_checked,
 )
 from policyengine_simulation_persistence.tables import (
+    LATEST_YEAR,
+    MAX_BUDGET_WINDOW_YEARS,
     ReportRunStatus,
     ReportRunTrigger,
     budget_window_runs,
@@ -41,12 +43,6 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy import Connection
-
-# The most years one budget window compares, as the Public API's check on
-# ``reports.budget_window_size`` allows.
-MAX_BUDGET_WINDOW_YEARS: Final = 75
-# The last year any run may calculate.
-LAST_RUN_YEAR: Final = 2200
 
 
 @dataclass(frozen=True)
@@ -88,12 +84,12 @@ class NewBudgetWindowReport:
             not self.years
             or len(self.years) > MAX_BUDGET_WINDOW_YEARS
             or tuple(year.year for year in self.years) != expected
-            or expected[-1] > LAST_RUN_YEAR
+            or expected[-1] > LATEST_YEAR
         ):
             msg = (
                 "a budget window's years must be 1 to "
                 f"{MAX_BUDGET_WINDOW_YEARS} consecutive years from its first, "
-                f"ending by {LAST_RUN_YEAR}"
+                f"ending by {LATEST_YEAR}"
             )
             raise ValueError(msg)
 

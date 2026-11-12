@@ -379,7 +379,10 @@ single-year report's runs, and the reverse.
 
 - **Creating and starting.** The simulation service creates every year's runs
   in one transaction, all pending with no call, then starts the earliest
-  years. The contract's `year_calculation` derives each year's coordinator
+  years within one ten-second wait for Modal, counted from the first start;
+  a later year not confirmed within it is deferred (`YearStartDeferred`)
+  and waits for a started year's coordinator. The contract's
+  `year_calculation` derives each year's coordinator
   input and context from the first year's: only the year, its three runs, the
   artifact prefix (`report_run_artifact_prefix`) and the call's creation time
   differ.
@@ -400,7 +403,9 @@ single-year report's runs, and the reverse.
   own outcome.
 - **The window's outcome.** A failed year, or a start Modal refuses, fails the
   window, its waiting years and their unstarted simulation runs, and no
-  further year starts; years already started run to their end. Once every
+  further year starts; years already started run to their end. A start whose
+  year its own call claimed meanwhile counts as started, and a deferred
+  start fails nothing. Once every
   year has succeeded the window succeeds.
 - **The stuck-run sweep.** It leaves a waiting year of an unfinished window to
   the window, counts a year started later from when its call was recorded,

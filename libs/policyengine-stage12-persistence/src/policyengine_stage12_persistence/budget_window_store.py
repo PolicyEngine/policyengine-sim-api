@@ -100,7 +100,10 @@ class YearStarter(Protocol):
     """Starts a year's coordinator call and returns the call's Modal ID.
 
     It raises when Modal refuses the call, or ``YearStartDeferred`` to leave
-    the year waiting.
+    the year waiting. A starter defers only once a year of the window is
+    under way, whose coordinator starts the waiting years when its year
+    ends; otherwise nothing starts them until the stuck-run sweep fails the
+    window as stalled.
     """
 
     def __call__(self, year_to_start: YearToStart, /) -> str:
@@ -252,7 +255,9 @@ class BudgetWindowStore:
         year's call is recorded while the year is still pending with no call;
         a call its coordinator already claimed under keeps that claim. A
         start that raises fails that year as refused by Modal, and so the
-        window. Raises LookupError when the window run does not exist.
+        window, unless the year's own call has claimed it meanwhile; a start
+        deferred with ``YearStartDeferred`` leaves that year and the later
+        ones waiting. Raises LookupError when the window run does not exist.
         """
         with self._transaction("advance_window") as connection:
             window = _lock_window(connection, window_run_id)

@@ -16,7 +16,7 @@ from uuid import UUID
 from policyengine_simulation_contract.spm import SPMSelection
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_persistence import (
-    LAST_RUN_YEAR,
+    LATEST_YEAR,
     MAX_BUDGET_WINDOW_YEARS,
     ReportRunStatus,
 )
@@ -80,8 +80,8 @@ class BudgetWindowReportRequest(BaseModel):
     @model_validator(mode="after")
     def refuse_years_past_the_last(self) -> BudgetWindowReportRequest:
         """Refuse a window whose last year is after 2200."""
-        if self.year + self.budget_window_size - 1 > LAST_RUN_YEAR:
-            msg = f"a budget window must end by {LAST_RUN_YEAR}"
+        if self.year + self.budget_window_size - 1 > LATEST_YEAR:
+            msg = f"a budget window must end by {LATEST_YEAR}"
             raise ValueError(msg)
         return self
 

@@ -5,24 +5,46 @@
 location (``["body", "economy", "year"]``) and reports a missing or unknown
 ``report_type`` at the body itself. The Public API passes the locations to
 its callers, so the report route answers them as it did when it took only
-economy reports: without the type, and with ``report_type`` named.
+economy reports: without the type, and with ``report_type`` named. A body
+with no ``report_type`` is refused for that alone, before its other fields
+are checked, since its type decides which fields it must have.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, get_args
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
+
+from policyengine_simulation_entry.budget_window_api_models import (
+    BudgetWindowReportRequest,
+)
+from policyengine_simulation_entry.economy_api_models import EconomyReportRequest
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Sequence
 
     from fastapi import Request, Response
 
-# The values of ``report_type``, which Pydantic puts into the locations.
-REPORT_TYPES: Final = ("economy", "budget_window")
-_EXPECTED_TYPES: Final = " or ".join(f"'{report_type}'" for report_type in REPORT_TYPES)
+# The values of ``report_type``, which Pydantic puts into the locations: one
+# per request model the route takes.
+REPORT_TYPES: Final = tuple(
+    report_type
+    for model in (EconomyReportRequest, BudgetWindowReportRequest)
+    for report_type in get_args(model.model_fields["report_type"].annotation)
+)
+
+
+def _expected(report_types: Sequence[str]) -> str:
+    """Return the types as Pydantic lists a literal's values: 'a', 'b' or 'c'."""
+    quoted = [f"'{report_type}'" for report_type in report_types]
+    return " or ".join(
+        [", ".join(quoted[:-1]), quoted[-1]] if len(quoted) > 1 else quoted
+    )
+
+
+_EXPECTED_TYPES: Final = _expected(REPORT_TYPES)
 
 
 def report_request_errors(errors: Sequence[Any]) -> list[dict[str, Any]]:
@@ -46,11 +68,13 @@ def _located(error: dict[str, Any]) -> dict[str, Any]:
             "input": error.get("input"),
         }
     if location == ("body",) and kind == "union_tag_invalid":
+        body = error.get("input")
         return {
             "type": "literal_error",
             "loc": ("body", "report_type"),
             "msg": f"Input should be {_EXPECTED_TYPES}",
-            "input": error.get("ctx", {}).get("tag"),
+            # The value sent, as JSON; the error's own tag is its text.
+            "input": body.get("report_type") if isinstance(body, dict) else None,
             "ctx": {"expected": _EXPECTED_TYPES},
         }
     if len(location) >= 2 and location[0] == "body" and location[1] in REPORT_TYPES:  # noqa: PLR2004  # the body, then the type

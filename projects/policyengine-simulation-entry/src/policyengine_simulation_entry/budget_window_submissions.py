@@ -9,9 +9,11 @@ recorded. Each year's coordinator starts the next years when its year ends.
 
 The first year's coordinator input is built as a single-year report's is;
 every later year's is derived from it (``year_calculation``), so all years
-are calculated alike. A year Modal refuses, or doesn't confirm in time,
-fails the window, and the request is answered 503 naming the report, as an
-economy report whose run Modal refused is.
+are calculated alike. A year Modal refuses fails the window, and so does
+the first year when Modal doesn't confirm it in time; the request is then
+answered 503 naming the report, as an economy report whose run Modal
+refused is. The first years share one wait for Modal, and a later year not
+confirmed within it is left waiting for a started year's coordinator.
 """
 
 from __future__ import annotations
@@ -244,8 +246,9 @@ class ReportSubmissionService(EconomySubmissionService):
         """Advance the new window, starting its first years; return its status.
 
         Raise EconomySubmissionUnavailableError naming the report when the
-        window failed because Modal refused a year or didn't confirm it in
-        time. An advance that can't be written leaves the window pending:
+        window failed because Modal refused a year, or didn't confirm the
+        first in time; a later year not confirmed within the shared wait is
+        left waiting. An advance that can't be written leaves the window pending:
         the report exists, so it is answered as created, and a year Modal
         started claims itself, while the stuck-run sweep fails a window no
         year advances.
@@ -326,13 +329,21 @@ class _YearStarts:
         self._observability_context = observability_context
         self._loop = loop
         self._clock = clock
-        self._wait_ends_at = time.monotonic() + timeout_seconds
+        self._timeout_seconds = timeout_seconds
+        # The shared wait starts with the first start, after the advance's
+        # lock and reads, so only Modal's time counts against it.
+        self._wait_ends_at: float | None = None
 
     def __call__(self, year_to_start: YearToStart, /) -> str:
         """Start the year's coordinator and return its Modal call ID."""
+        if self._wait_ends_at is None:
+            self._wait_ends_at = time.monotonic() + self._timeout_seconds
         later_year = year_to_start.year != self._first_year
         remaining_seconds = self._wait_ends_at - time.monotonic()
         if later_year and remaining_seconds <= 0:
+            logger.info(
+                "budget_window_year_deferred", extra={"year": year_to_start.year}
+            )
             raise YearStartDeferred
         payload, context = self._calculation(year_to_start)
         started = asyncio.run_coroutine_threadsafe(
@@ -349,6 +360,9 @@ class _YearStarts:
         except TimeoutError:
             started.cancel()
             if later_year:
+                logger.info(
+                    "budget_window_year_deferred", extra={"year": year_to_start.year}
+                )
                 raise YearStartDeferred from None
             raise
         except BaseException:

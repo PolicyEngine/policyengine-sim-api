@@ -168,13 +168,17 @@ five years, as its own role, under the window run's row lock
 built as an economy report's, and each later year's is derived from it.
 Each year's coordinator starts the next years when its year ends. The 201
 names the report, the first year's report run, the window run, its status
-and every year's runs. A year Modal refuses, or doesn't confirm within ten
-seconds, fails the window, its waiting years and their new simulation runs,
-and the 503 (`modal_call_refused`) names the report. The window run's
+and every year's runs. A year Modal refuses fails the window, its waiting
+years and their new simulation runs, and so does the first year when Modal
+doesn't confirm it within ten seconds; the 503 (`modal_call_refused`) names
+the report. The window run's
 status needs the update grant on `budget_window_runs` that the Public API
 gives the service (PolicyEngine/policyengine-api#4267); `/ready` checks it.
-The first years share one ten-second wait for Modal: a later year not
-confirmed within it waits for a started year's coordinator to start it.
+The first years share that one ten-second wait for Modal, counted from the
+first start: a later year not confirmed within it waits, with the years
+after it, for a started year's coordinator to start it. A body with no
+`report_type` is refused for that alone, before its other fields are
+checked.
 `GET /reports/{report_id}` answers a window with one of its years' runs;
 the window's own status is in `budget_window_runs`, which the Public API
 reads.

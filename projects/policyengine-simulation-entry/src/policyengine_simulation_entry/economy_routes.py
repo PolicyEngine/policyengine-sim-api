@@ -5,7 +5,7 @@
   coordinator, answering 201 with the report's ID, its run's ID and status,
   and each side's simulation and simulation run. With ``report_type``
   ``budget_window`` it creates a budget-window report with a report run per
-  year and starts its first five years, answering 201 with the report, the
+  year and starts up to its first five years, answering 201 with the report, the
   first year's run, the window run, its status and every year's runs.
 - ``POST /simulations`` (``simulation:submit``) creates a standalone
   economy simulation and its first run, and starts the run's simulation
