@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.11.1] - 2026-11-12
+
+### Changed
+
+- The v2 Modal coordinator and workers now coordinate a detailed-save report run on the Public API's run tables alone, and create or claim no Stage 12 evaluation record. `coordinate_report` takes the report run named in its context, with no evaluation record: it claims that run under its Modal call ID, checks that the report input names it and its two simulation runs, and starts a worker for each simulation run it doesn't reuse, whose context names that simulation run (the new `simulation_run_id` field). Each worker claims its own simulation run under its own Modal call ID, as the household functions claim their jobs, and records its output file or failure only while it holds the run. A simulation run can also be calculated on its own, by starting `run_single_simulation_us` or `run_single_simulation_uk` with a simulation that has no output plan. A pre-empted coordinator's restart releases each simulation run its earlier worker holds and starts it again, and a failed or cancelled coordinator fails its report run and the simulation runs it left unfinished. Comparison-path calls, which pass an evaluation record, work as before.
+
+
 ## [0.11.0] - 2026-11-11
 
 ### Added
