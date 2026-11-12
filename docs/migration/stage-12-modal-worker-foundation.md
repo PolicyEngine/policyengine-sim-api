@@ -752,11 +752,12 @@ worker of the .py version the row records. It then sets the row's
 records its ID while the row is still pending with none. A row it can't start
 again (its worker left the manifest, its stored rows changed, or Modal
 refuses the call) is failed with `run_not_started`, a report run with its
-pending simulation runs; one whose rows or manifest it can't read now, or
-whose rebuild raises an unexpected error (logged with its traceback), is left
-for the next check. After three minutes a check marks no more rows, so it
-ends within its five-minute timeout without leaving a marked row with no
-call. The sweep's 15 minutes come after the restart window, so a second miss
+pending simulation runs. A row is left unmarked for the next check when its
+rows or manifest can't be read now, its rebuild raises an unexpected error
+(logged with its traceback), its mark can't be written, its call can't be
+rebuilt and its failure can't be written, or the check's time is up. After
+three minutes a check marks no more rows, so it ends within its five-minute
+timeout without leaving a marked row with no call. The sweep's 15 minutes come after the restart window, so a second miss
 is still failed with `run_not_started`. The restart code is the simulation
 service's (`policyengine_simulation_entry.run_restarts`, `run_restart_calls`
 and `run_restart_check`, on `policyengine_simulation_persistence`), which the

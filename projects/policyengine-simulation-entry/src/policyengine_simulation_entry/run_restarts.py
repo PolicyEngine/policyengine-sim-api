@@ -20,7 +20,9 @@ or its stored rows changed), or whose new call Modal refuses, is failed at
 once with ``run_not_started``, as the sweep would fail it later. A row whose
 rows or manifest can't be read now, or whose rebuild raises an unexpected
 error, is left unmarked, for the next check, as is one the check has no
-time left for or whose mark or failure can't be written. A
+time left for, whose mark can't be written, or whose call can't be rebuilt
+and whose failure can't be written. A marked row whose failure can't be
+written is left to the sweep. A
 call the service started after all claims the row only while the row records
 no call or that call's own ID, so once the restart records its call, the
 earlier call's claim is refused; if the earlier call claimed it first, the
@@ -124,11 +126,12 @@ class RestartOutcome(StrEnum):
     check stopped waiting for it); the other call then can't claim it.
     ``left``: the row was gone, changed before the check started a call, or
     failed meanwhile; also a marked row whose failure couldn't be written,
-    which the sweep fails later. ``deferred``: the row is left unmarked for
-    the next check, because its rows or the manifest couldn't be read,
-    rebuilding its call raised an unexpected error (logged with its
-    traceback), the failure of a row that can't be rebuilt couldn't be
-    written, the mark couldn't be written, or the check's time ran out.
+    which the sweep fails later, and a row whose call couldn't be read
+    after Modal didn't confirm the check's call. ``deferred``: the row is
+    left unmarked for the next check, because its rows or the manifest
+    couldn't be read, rebuilding its call raised an unexpected error (logged
+    with its traceback), the failure of a row that can't be rebuilt couldn't
+    be written, the mark couldn't be written, or the check's time ran out.
     ``failed``: it couldn't be started again and was failed with
     ``run_not_started``.
     """
