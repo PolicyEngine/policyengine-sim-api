@@ -59,7 +59,8 @@ ReportDescription = Annotated[str, Field(max_length=10_000)]
 # catalog version lacks or which was deleted.
 CallerRowRefusalCode = Literal["unknown_region", "unknown_dataset", "unknown_dynamic"]
 # Why a request is refused (400) for the service's own state, or a row the
-# Public API checks before asking.
+# Public API checks before asking. On a report's re-run, ``unknown_policy`` and
+# ``missing_reference`` name the stored report's own policy or simulation.
 ServiceStateRefusalCode = Literal[
     # The country has no catalog version for the default worker's .py version.
     "unknown_catalog_version",

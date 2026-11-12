@@ -191,8 +191,9 @@ the report's own runs: a side whose simulation has a run under way for
 another report, or for the simulation's own re-run, still gets a new run,
 calculated separately. A simulation's re-run checks every run of the
 simulation, including those reports created. A report or simulation
-deleted after the re-run read it answers 404; a report deleted with its
-simulations answers 400 `missing_reference`, naming a simulation. When Modal
+deleted after the re-run read it answers 404. A report deleted with its
+simulations answers 400 `missing_reference`, naming a simulation, when a
+side gets a new run, and 404 when both sides reuse a run. When Modal
 refuses the new
 run's call, the run is failed and the 503 `modal_call_refused` names the
 record and the run (`run_id`).

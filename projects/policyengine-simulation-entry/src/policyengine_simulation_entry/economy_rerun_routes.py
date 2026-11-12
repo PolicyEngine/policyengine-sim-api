@@ -97,6 +97,17 @@ class EconomyService(EconomySubmissions, EconomyReruns, Protocol):
     """Create, read and re-run economy reports and simulations."""
 
 
+# The 400 codes that name a stored record's own rows on its re-run: a
+# report's re-run also names its stored simulations (missing_reference).
+_STORED_ROW_CODES: dict[RecordName, str] = {
+    "report": (
+        "unknown_region, unknown_dataset, unknown_dynamic, unknown_policy and "
+        "missing_reference"
+    ),
+    "simulation": "unknown_region, unknown_dataset, unknown_dynamic and unknown_policy",
+}
+
+
 def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
     """Return every answer a re-run of ``record`` declares."""
     return {
@@ -106,9 +117,8 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
                 f"The stored {record}'s region, dataset, policy or dynamic is "
                 "missing from the catalog version of the default worker's .py "
                 "version, or a function it needs is missing; nothing was "
-                "written. unknown_region, unknown_dataset, unknown_dynamic, "
-                f"unknown_policy and missing_reference name the stored {record}'s "
-                "own rows; any other code is the service's state"
+                f"written. {_STORED_ROW_CODES[record]} name the stored "
+                f"{record}'s own rows; any other code is the service's state"
             ),
             **ERROR_ANSWER,
         },

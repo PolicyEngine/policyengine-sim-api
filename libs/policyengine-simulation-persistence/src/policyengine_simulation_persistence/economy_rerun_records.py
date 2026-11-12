@@ -358,11 +358,11 @@ def insert_report_rerun(connection: Connection, rerun: NewReportRerun) -> None:
     """Create the report's new run and its sides' new simulation runs, pending.
 
     Take the report's re-run lock first. Raise RunInProgressError, creating
-    nothing, when the report has a run pending or running;
-    RerunRecordDeletedError when the report no longer exists; and
-    EconomyRecordReferenceError when the database refuses another row the
-    new runs name, such as a side's simulation. A refusal ends the caller's
-    transaction, or its savepoint.
+    nothing, when the report has a run pending or running. Raise
+    RerunRecordDeletedError when the database refuses the new run's key to
+    the report, which no longer exists, and EconomyRecordReferenceError when
+    it refuses another row the new runs name, such as a side's simulation;
+    either refusal ends the caller's transaction, or its savepoint.
     """
     lock_reruns_of(connection, rerun.report_id)
     under_way = _run_under_way(
