@@ -124,6 +124,8 @@ class FakeRestartStore:
         default_factory=dict
     )
     read_failure: Exception | None = None
+    # A read of one run that raises, by run ID.
+    read_failures: dict[UUID, Exception] = field(default_factory=dict)
     marked_elsewhere: bool = False
     # Each row's status and call as stored, by run ID; a row not named here is
     # as the rig's other fakes left it (``holder``).
@@ -157,6 +159,8 @@ class FakeRestartStore:
     def read_report_run(self, report_run_id: UUID) -> StoredReportRun | None:
         if self.read_failure is not None:
             raise self.read_failure
+        if report_run_id in self.read_failures:
+            raise self.read_failures[report_run_id]
         return self.report_runs.get(report_run_id)
 
     def read_simulation_run(
@@ -452,7 +456,7 @@ def _without_request_id(context: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in context.items() if key != "request_id"}
 
 
-def test_the_check_lists_runs_created_three_to_twelve_minutes_ago() -> None:
+def test_the_check_lists_runs_created_three_to_ten_minutes_ago() -> None:
     rig = _rig()
 
     summary = rig.restart()
@@ -462,7 +466,7 @@ def test_the_check_lists_runs_created_three_to_twelve_minutes_ago() -> None:
     ]
     assert (
         timedelta(minutes=3),
-        timedelta(minutes=12),
+        timedelta(minutes=10),
     ) == (RESTART_AFTER, RESTART_UNTIL)
     assert summary == RestartSummary(listed=0)
 
@@ -952,3 +956,30 @@ def test_a_runs_call_is_rebuilt_off_the_event_loop() -> None:
     assert rig.restart() == RestartSummary(listed=1, restarted=1)
     assert manifest.read_on_event_loop
     assert not any(manifest.read_on_event_loop)
+
+
+def test_an_unexpected_rebuild_error_defers_its_run_and_the_check_goes_on() -> None:
+    """One row the check can't rebuild for an unforeseen reason holds up no other."""
+    broken_run_id = UUID(int=9)
+    stored, _call = _submitted_report()
+    rig = _rig(
+        restarts=FakeRestartStore(
+            unstarted=(
+                _unstarted(RestartKind.REPORT_RUN, broken_run_id),
+                _unstarted(RestartKind.REPORT_RUN, stored.report_run_id),
+            ),
+            report_runs={stored.report_run_id: stored},
+            read_failures={broken_run_id: RuntimeError("unforeseen")},
+        )
+    )
+
+    summary = rig.restart()
+
+    assert rig.telemetry.outcomes[0] == (
+        RestartKind.REPORT_RUN,
+        broken_run_id,
+        RestartOutcome.DEFERRED,
+        "RuntimeError",
+    )
+    assert [run.run_id for run in rig.restarts.marked] == [stored.report_run_id]
+    assert summary == RestartSummary(listed=2, restarted=1, deferred=1)
