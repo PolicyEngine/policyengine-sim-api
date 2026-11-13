@@ -17,6 +17,9 @@ from policyengine_simulation_contract.stage12_manifest import V2VersionManifest
 from policyengine_simulation_entry.household_report_api_models import (
     HouseholdReportRequest,
 )
+from policyengine_simulation_entry.household_report_reruns import (
+    HouseholdReportRerunService,
+)
 from policyengine_simulation_entry.household_report_submissions import (
     HouseholdReportSubmissionService,
 )
@@ -33,7 +36,10 @@ from policyengine_simulation_persistence import (
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from policyengine_simulation_persistence import NewHouseholdReport
+    from policyengine_simulation_persistence import (
+        NewHouseholdReport,
+        NewHouseholdReportRerun,
+    )
 
 HOUSEHOLD_ID = UUID("00000000-0000-4000-8000-0000000000bb")
 POLICY_ID = UUID("00000000-0000-4000-8000-0000000000cc")
@@ -115,7 +121,8 @@ class FakeHouseholdReportStore:
     """Records what the service asks of the database, and answers as told.
 
     ``claimed`` marks the report run as claimed by its household function: a
-    failure write then changes nothing.
+    failure write then changes nothing. ``rerun_failure`` is raised by a
+    re-run's create instead of recording it.
     """
 
     default_year: int | None = 2026
@@ -124,9 +131,11 @@ class FakeHouseholdReportStore:
     create_failure: Exception | None = None
     record_failure: Exception | None = None
     fail_failure: Exception | None = None
+    rerun_failure: Exception | None = None
     claimed: bool = False
     reads: list[dict[str, Any]] = field(default_factory=list)
     reports: list[NewHouseholdReport] = field(default_factory=list)
+    report_reruns: list[NewHouseholdReportRerun] = field(default_factory=list)
     recorded_calls: list[tuple[UUID, str]] = field(default_factory=list)
     failed_runs: list[tuple[UUID, tuple[UUID, ...], str]] = field(default_factory=list)
 
@@ -167,6 +176,11 @@ class FakeHouseholdReportStore:
         if self.create_failure is not None:
             raise self.create_failure
         self.reports.append(report)
+
+    def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> None:
+        if self.rerun_failure is not None:
+            raise self.rerun_failure
+        self.report_reruns.append(rerun)
 
     def record_report_call(
         self, report_run_id: UUID, modal_call_id: str
@@ -232,6 +246,22 @@ def household_report_service(
     caller: FakeHouseholdReportCaller | None = None,
 ) -> HouseholdReportSubmissionService:
     return HouseholdReportSubmissionService(
+        store=store,
+        workers=workers or FakeHouseholdWorkers(),
+        caller=caller or FakeHouseholdReportCaller(),
+        call_start_timeout_seconds=0.05,
+        new_id=numbered_ids(),
+    )
+
+
+def household_rerun_service(
+    store: FakeHouseholdReportStore,
+    *,
+    workers: FakeHouseholdWorkers | None = None,
+    caller: FakeHouseholdReportCaller | None = None,
+) -> HouseholdReportRerunService:
+    """Return the service that creates and re-runs household reports, on fakes."""
+    return HouseholdReportRerunService(
         store=store,
         workers=workers or FakeHouseholdWorkers(),
         caller=caller or FakeHouseholdReportCaller(),

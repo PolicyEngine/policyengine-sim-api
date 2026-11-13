@@ -432,7 +432,11 @@ def test_rerun_routes_declare_every_answer():
     for path, rerun in (
         (
             "/reports/{report_id}/runs",
-            ("EconomyReportCreated", "BudgetWindowReportCreated"),
+            (
+                "EconomyReportCreated",
+                "BudgetWindowReportCreated",
+                "HouseholdReportCreated",
+            ),
         ),
         ("/simulations/{simulation_id}/runs", ("EconomySimulationCreated",)),
     ):
@@ -460,6 +464,10 @@ def test_rerun_routes_declare_every_answer():
         spec["components"]["schemas"]["EconomyError"]["properties"]["code"]["enum"]
     )
     assert {"run_in_progress", "rerun_not_supported"} <= codes
+    # A household report's re-run names its household's own codes.
+    report_answers = _responses(spec, "post", "/reports/{report_id}/runs")
+    assert "unknown_household" in report_answers["400"]["description"]
+    assert "household_not_calculable" in report_answers["422"]["description"]
     report_rerun = spec["components"]["schemas"]["ReportRerunRequest"]
     assert set(report_rerun["properties"]) == {"force"}
     assert (

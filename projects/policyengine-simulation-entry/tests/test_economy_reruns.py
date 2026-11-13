@@ -196,19 +196,15 @@ def test_an_unknown_report_or_simulation_is_not_found() -> None:
     assert (report.value.record, simulation.value.record) == ("report", "simulation")
 
 
-@pytest.mark.parametrize(
-    ("kind", "named"),
-    [("household", "household"), ("unsupported", "this type of")],
-)
-def test_a_report_kind_the_service_does_not_rerun_yet_is_refused(kind, named) -> None:
-    store = FakeRerunStore(report_definition=replace(STORED_REPORT, kind=kind))
+def test_a_report_kind_the_service_does_not_rerun_is_refused() -> None:
+    store = FakeRerunStore(report_definition=replace(STORED_REPORT, kind="unsupported"))
     caller = FakeCaller()
 
     with pytest.raises(EconomyRerunConflictError) as refused:
         _rerun_report(rerun_service(store, caller=caller))
 
     assert refused.value.code == "rerun_not_supported"
-    assert named in refused.value.detail
+    assert "this type of" in refused.value.detail
     assert (store.rerun_reads, caller.report_runs) == ([], [])
 
 
@@ -393,7 +389,7 @@ def test_a_simulation_is_rerun_as_a_new_run_of_it() -> None:
 @pytest.mark.parametrize(
     ("changes", "named"),
     [
-        ({"kind": "household"}, "household"),
+        ({"kind": "household"}, "only through its report"),
         ({"kind": "unsupported"}, "this type of"),
         ({"country": None}, "country"),
         ({"country": "fr"}, "country"),

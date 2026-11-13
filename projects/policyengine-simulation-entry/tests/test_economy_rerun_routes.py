@@ -29,6 +29,9 @@ from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionUnprocessableError,
     UnprocessableReason,
 )
+from policyengine_simulation_entry.household_report_api_models import (
+    HouseholdReportCreated,
+)
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 from policyengine_simulation_persistence import ReportRunStatus, SimulationStatus
 
@@ -63,7 +66,9 @@ class FakeEconomyReruns:
     """Records each re-run, and answers as told."""
 
     failure: Exception | None = None
-    report_answer: EconomyReportCreated | BudgetWindowReportCreated = RERUN_REPORT
+    report_answer: (
+        EconomyReportCreated | BudgetWindowReportCreated | HouseholdReportCreated
+    ) = RERUN_REPORT
     report_reruns: list[tuple[UUID, ReportRerunRequest, str, Any]] = field(
         default_factory=list
     )
@@ -76,7 +81,7 @@ class FakeEconomyReruns:
         *,
         request_id: str,
         observability_context: dict[str, Any] | None,
-    ) -> EconomyReportCreated | BudgetWindowReportCreated:
+    ) -> EconomyReportCreated | BudgetWindowReportCreated | HouseholdReportCreated:
         self.report_reruns.append(
             (report_id, request, request_id, observability_context)
         )
@@ -109,7 +114,9 @@ def client_for(monkeypatch):
     def build(reruns: FakeEconomyReruns | None) -> TestClient:
         if reruns is not None:
             monkeypatch.setattr(
-                app_module, "economy_submissions_for", lambda settings, database: reruns
+                app_module,
+                "economy_submissions_for",
+                lambda settings, database, **_: reruns,
             )
         return TestClient(
             create_app(
@@ -170,6 +177,26 @@ def test_a_budget_window_rerun_answers_201_with_its_new_window_run(client_for) -
 
     assert result.status_code == 201
     assert result.json() == window.model_dump(mode="json")
+
+
+def test_a_household_report_rerun_answers_201_with_its_new_run(client_for) -> None:
+    household = HouseholdReportCreated(
+        report_id=RECORD_ID,
+        report_run_id=RUN_ID,
+        status=ReportRunStatus.PENDING,
+        year=2025,
+        baseline_simulation_id=SIDE_IDS[0],
+        baseline_simulation_run_id=SIDE_IDS[1],
+        reform_simulation_id=None,
+        reform_simulation_run_id=None,
+    )
+    reruns = FakeEconomyReruns(report_answer=household)
+
+    with client_for(reruns) as client:
+        result = client.post(REPORT_RUNS, json={})
+
+    assert result.status_code == 201
+    assert result.json() == household.model_dump(mode="json")
 
 
 def test_a_report_rerun_without_force_reuses_runs(client_for) -> None:

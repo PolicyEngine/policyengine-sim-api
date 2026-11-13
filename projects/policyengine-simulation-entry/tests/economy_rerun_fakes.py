@@ -38,6 +38,7 @@ from test_budget_window_submissions import FakeAdvancer, FakeWindowStore
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from policyengine_simulation_entry.economy_reruns import HouseholdReportReruns
     from policyengine_simulation_persistence import (
         EconomyRequest,
         NewReportRerun,
@@ -226,15 +227,17 @@ class UnusedAdvancer:
         raise AssertionError(msg)
 
 
-def rerun_service(
+def rerun_service(  # noqa: PLR0913  # the store, then each seam a test may replace
     store: FakeRerunStore,
     *,
     workers: FakeWorkers | None = None,
     caller: FakeCaller | None = None,
     output_bucket: str | None = OUTPUT_BUCKET,
     advancer: FakeAdvancer | None = None,
+    household_reports: HouseholdReportReruns | None = None,
 ) -> EconomyRerunService:
     return EconomyRerunService(
+        household_reports=household_reports,
         windows=advancer or UnusedAdvancer(),
         store=store,
         workers=workers or FakeWorkers(),
