@@ -26,7 +26,10 @@ from policyengine_simulation_contract.stage12_execution import (
     EntityOutputPlan,
     GeographySelection,
     PlannedSimulationExecutionInput,
+    ReportAggregate,
+    ReportExecutionInput,
     ReportOutputRequirements,
+    SimulationExecutionInput,
     SimulationRole,
     Stage12OutputPlan,
 )
@@ -41,7 +44,12 @@ from policyengine_simulation_executor.stage12_runtime import (
     local_area_datasets,
 )
 from policyengine_simulation_executor.stage12_runtime import simulation as worker
-from stage12_runtime_support import BASELINE_ID, EVALUATION_ID
+from stage12_runtime_support import (
+    BASELINE_ID,
+    EVALUATION_ID,
+    REFORM_ID,
+    report_execution_input,
+)
 
 NATIONAL_DATASET = "microcosm_uk_2024_25"
 LOCAL_AREA_DATASET = "microcosm_uk_2024_25_dense"
@@ -365,3 +373,70 @@ def test_a_local_area_dataset_without_an_area_column_fails_before_simulating(
             _uk_simulation("uk", LOCAL_AREA_DATASET),
             household=_area_household().drop(columns=[missing]),
         )
+
+
+def _uk_report(region: str, identity: str) -> ReportExecutionInput:
+    """Return a UK report whose two simulations are on the dataset ``identity``."""
+    baseline = _uk_simulation(region, identity).model_dump(
+        mode="json", exclude={"output_plan"}
+    )
+    reform = {
+        **baseline,
+        "simulation_execution_id": str(REFORM_ID),
+        "role": SimulationRole.REFORM.value,
+        "policy": {"gov.hmrc.income_tax.rates.uk[0].rate": {"2026-01-01": 0.21}},
+    }
+    return ReportExecutionInput(
+        evaluation_id=EVALUATION_ID,
+        baseline=SimulationExecutionInput.model_validate(baseline),
+        reform=SimulationExecutionInput.model_validate(reform),
+        requested_aggregates=tuple(ReportAggregate),
+    )
+
+
+@pytest.mark.parametrize("region", ["uk", "country/wales"])
+def test_a_uk_wide_or_nation_report_on_the_local_area_dataset_calculates_areas(
+    monkeypatch, region: str
+) -> None:
+    _route_uk_area_regions(monkeypatch)
+
+    assert local_area_datasets.is_local_area_report(
+        _uk_report(region, LOCAL_AREA_DATASET)
+    )
+
+
+def test_a_report_on_the_national_dataset_is_no_local_area_report(
+    monkeypatch,
+) -> None:
+    _route_uk_area_regions(monkeypatch)
+
+    assert not local_area_datasets.is_local_area_report(
+        _uk_report("uk", NATIONAL_DATASET)
+    )
+
+
+def test_a_constituency_report_on_the_local_area_dataset_is_an_ordinary_report(
+    monkeypatch,
+) -> None:
+    # Its national aggregation already calculates its one area.
+    _route_uk_area_regions(monkeypatch)
+
+    assert not local_area_datasets.is_local_area_report(
+        _uk_report("constituency/W07000081", LOCAL_AREA_DATASET)
+    )
+
+
+def test_no_report_is_a_local_area_report_where_the_release_does_not_route(
+    monkeypatch,
+) -> None:
+    _route_uk_area_regions(monkeypatch, routed=False)
+
+    assert not local_area_datasets.is_local_area_report(
+        _uk_report("uk", LOCAL_AREA_DATASET)
+    )
+
+
+def test_a_us_report_is_no_local_area_report(monkeypatch) -> None:
+    _route_uk_area_regions(monkeypatch)
+
+    assert not local_area_datasets.is_local_area_report(report_execution_input())
