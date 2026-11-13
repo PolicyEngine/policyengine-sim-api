@@ -38,6 +38,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    false,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -53,6 +54,8 @@ LATEST_YEAR: Final = 2200
 MODAL_CALL_ID_LENGTH: Final = 255
 OUTPUT_URI_LENGTH: Final = 2048
 SHA256_LENGTH: Final = 64
+# A definition key is a SHA-256 in lowercase hexadecimal.
+DEFINITION_KEY_LENGTH: Final = 64
 
 
 class SimulationType(StrEnum):
@@ -135,6 +138,42 @@ def _terminal_completion(table_name: str) -> CheckConstraint:
     )
 
 
+def _key_columns(*names: str) -> tuple[Column[int] | Column[str], ...]:
+    """Return ``key_version`` and each named key column, nullable.
+
+    A row created before the keys existed has none of them, and is never
+    found by key.
+    """
+    return (
+        Column("key_version", Integer, nullable=True),
+        *(Column(name, String(DEFINITION_KEY_LENGTH), nullable=True) for name in names),
+    )
+
+
+def _key_checks(table_name: str, *names: str) -> tuple[CheckConstraint, ...]:
+    """Require a positive key version, and each key in lowercase hexadecimal.
+
+    The checks are the Public API's, under its names; ``names`` are the key
+    columns.
+    """
+    return (
+        CheckConstraint("key_version > 0", name=f"ck_{table_name}_key_version"),
+        *(
+            CheckConstraint(
+                f"length({name}) = {DEFINITION_KEY_LENGTH} AND "
+                f"ltrim({name}, '0123456789abcdef') = ''",
+                name=f"ck_{table_name}_{name}",
+            )
+            for name in names
+        ),
+    )
+
+
+def _forced_column() -> Column[bool]:
+    """Return the marker of a forced re-run's run, which nothing joins."""
+    return Column("forced", Boolean, nullable=False, server_default=false())
+
+
 def _year_between(table_name: str, *, nullable: bool) -> CheckConstraint:
     condition = f"year BETWEEN 1900 AND {LATEST_YEAR}"
     if nullable:
@@ -207,6 +246,7 @@ simulations = Table(
     Column("filter_value", String(255), nullable=True),
     Column("filter_strategy", String(64), nullable=True),
     Column("year", Integer, nullable=True),
+    *_key_columns("definition_key"),
     PrimaryKeyConstraint("id", name="pk_simulations"),
     _public_api_key(
         "dataset_id",
@@ -256,6 +296,17 @@ simulations = Table(
         name="ck_simulations_type_input",
     ),
     _year_between("simulations", nullable=True),
+    *_key_checks("simulations", "definition_key"),
+    CheckConstraint(
+        "(key_version IS NULL) = (definition_key IS NULL)",
+        name="ck_simulations_keys_complete",
+    ),
+    # Find-or-create's conflict target: one simulation per definition.
+    UniqueConstraint(
+        "key_version",
+        "definition_key",
+        name="uq_simulations_key_version_definition_key",
+    ),
     Index(
         "ix_simulations_tax_benefit_model_version_id",
         "tax_benefit_model_version_id",
@@ -284,6 +335,7 @@ reports = Table(
     Column("inputs", JSON, nullable=False),
     # The number of years from ``year`` an economy report's window covers.
     Column("budget_window_size", Integer, nullable=True),
+    *_key_columns("definition_key", "dataset_independent_key"),
     PrimaryKeyConstraint("id", name="pk_reports"),
     _public_api_key(
         "user_id", "users", ondelete="SET NULL", name="fk_reports_user_id_users"
@@ -337,6 +389,24 @@ reports = Table(
         name="ck_reports_budget_window_size",
     ),
     _year_between("reports", nullable=True),
+    *_key_checks("reports", "definition_key", "dataset_independent_key"),
+    CheckConstraint(
+        "(key_version IS NULL) = (definition_key IS NULL) AND "
+        "(key_version IS NULL) = (dataset_independent_key IS NULL)",
+        name="ck_reports_keys_complete",
+    ),
+    # Find-or-create's conflict target: one report per definition.
+    UniqueConstraint(
+        "key_version",
+        "definition_key",
+        name="uq_reports_key_version_definition_key",
+    ),
+    # Reports that differ only in their dataset share this key.
+    Index(
+        "ix_reports_key_version_dataset_independent_key",
+        "key_version",
+        "dataset_independent_key",
+    ),
     Index("ix_reports_country_type_created_at", "country", "type", "created_at"),
     Index("ix_reports_tax_benefit_model_id", "tax_benefit_model_id"),
     # Deleting a user sets its reports' user_id to null.
@@ -369,6 +439,7 @@ simulation_runs = Table(
     Column("household_result", JSON, nullable=True),
     Column("output_uri", String(OUTPUT_URI_LENGTH), nullable=True),
     Column("output_sha256", String(SHA256_LENGTH), nullable=True),
+    _forced_column(),
     PrimaryKeyConstraint("id", name="pk_simulation_runs"),
     _public_api_key(
         "tax_benefit_model_version_id",
@@ -415,6 +486,19 @@ simulation_runs = Table(
         "id",
     ),
     Index("ix_simulation_runs_status_started_at", "status", "started_at"),
+    # One run that hasn't failed per simulation, year, catalog version and
+    # versions, apart from forced re-runs' runs: find-or-create's conflict
+    # target, so identical requests join one run.
+    Index(
+        "uq_simulation_runs_unfailed_unforced_versions",
+        "simulation_id",
+        "year",
+        "tax_benefit_model_version_id",
+        "country_package_version",
+        "policyengine_version",
+        unique=True,
+        postgresql_where=text("status <> 'failed' AND NOT forced"),
+    ),
     Index(
         "ix_simulation_runs_tax_benefit_model_version_id",
         "tax_benefit_model_version_id",
@@ -511,6 +595,7 @@ report_runs = Table(
     Column("reform_cliff_share", Float, nullable=True),
     Column("spm_provenance", JSONB, nullable=True),
     Column("data_version", String(VERSION_LENGTH), nullable=True),
+    _forced_column(),
     PrimaryKeyConstraint("id", name="pk_report_runs"),
     ForeignKeyConstraint(
         ["report_id"],
@@ -573,6 +658,19 @@ report_runs = Table(
         "id",
     ),
     Index("ix_report_runs_status_started_at", "status", "started_at"),
+    # One run that hasn't failed per report and versions, apart from forced
+    # re-runs' runs and a budget window's years: find-or-create's conflict
+    # target.
+    Index(
+        "uq_report_runs_unfailed_unforced_versions",
+        "report_id",
+        "country_package_version",
+        "policyengine_version",
+        unique=True,
+        postgresql_where=text(
+            "budget_window_run_id IS NULL AND status <> 'failed' AND NOT forced"
+        ),
+    ),
     Index(
         "ix_report_runs_baseline_simulation_run_id",
         "baseline_simulation_run_id",
