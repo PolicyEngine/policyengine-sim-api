@@ -244,6 +244,19 @@ def test_verify_refuses_a_manifest_changed_since_the_move(monkeypatch, tmp_path,
         _run(monkeypatch, "--verify-plan", str(tmp_path / "plan.json"))
 
 
+def test_verify_refuses_a_manifest_whose_schema_2_key_was_deleted(
+    monkeypatch, tmp_path, store
+):
+    # Current readers then stop using the local-area report key and read an
+    # older copy, without household functions, so the move isn't live.
+    _with_both_workers(store)
+    _move(monkeypatch, tmp_path, _installed_version())
+    del store.values[SCHEMA_2_MANIFEST_KEY]
+
+    with pytest.raises(ValueError, match="is not what this default move wrote"):
+        _run(monkeypatch, "--verify-plan", str(tmp_path / "plan.json"))
+
+
 def test_restore_puts_the_default_back_only_while_the_move_is_live(
     monkeypatch, tmp_path, store, capsys
 ):
