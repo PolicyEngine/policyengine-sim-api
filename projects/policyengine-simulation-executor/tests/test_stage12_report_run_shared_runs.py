@@ -84,10 +84,12 @@ def _baseline_holder(report_runs, files, ending, **options) -> HolderCall:
     )
 
 
-def test_a_run_another_call_holds_is_waited_for_and_read_from_its_stored_file() -> (
-    None
-):
-    report_runs, files, artifacts = FakeReportRuns(), StoredOutputFiles(), FakeArtifacts()
+def test_a_run_another_call_holds_is_waited_for_and_read_from_its_stored_file() -> None:
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
     holder = _baseline_holder(report_runs, files, HolderEnding.SUCCEEDS)
     invoker = HolderInvoker(report_runs, artifacts, holders=[holder])
     aggregated = []
@@ -117,7 +119,11 @@ def test_a_run_another_call_holds_is_waited_for_and_read_from_its_stored_file() 
 def test_a_waited_for_run_that_fails_fails_the_report_run_with_its_own_failure() -> (
     None
 ):
-    report_runs, files, artifacts = FakeReportRuns(), StoredOutputFiles(), FakeArtifacts()
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
     holder = _baseline_holder(report_runs, files, HolderEnding.FAILS)
     invoker = HolderInvoker(
         report_runs, artifacts, holders=[holder], held_roles=("reform",)
@@ -150,7 +156,11 @@ def test_a_waited_for_run_whose_holder_stopped_without_an_outcome_is_failed(
 ) -> None:
     # A pending run under a call is one the simulation service started a
     # worker on, which never claimed it.
-    report_runs, files, artifacts = FakeReportRuns(), StoredOutputFiles(), FakeArtifacts()
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
     holder = _baseline_holder(report_runs, files, HolderEnding.STOPS)
     report_runs.simulation_runs[BASELINE_RUN_ID].status = status
     invoker = HolderInvoker(report_runs, artifacts, holders=[holder])
@@ -181,7 +191,11 @@ class ClaimedFirstByAnotherWorker(HolderInvoker):
 def test_a_worker_that_finds_its_run_held_leaves_the_coordinator_waiting_for_it() -> (
     None
 ):
-    report_runs, files, artifacts = FakeReportRuns(), StoredOutputFiles(), FakeArtifacts()
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
     holder = HolderCall(
         OTHER_WORKER_CALL_ID,
         report_runs=report_runs,
@@ -204,7 +218,11 @@ def test_a_worker_that_finds_its_run_held_leaves_the_coordinator_waiting_for_it(
 
 
 def test_a_closed_wait_window_leaves_the_waited_for_run_to_its_holder() -> None:
-    report_runs, files, artifacts = FakeReportRuns(), StoredOutputFiles(), FakeArtifacts()
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
     holder = _baseline_holder(
         report_runs, files, HolderEnding.SUCCEEDS, probes_before_ending=10**6
     )
@@ -226,3 +244,38 @@ def test_a_closed_wait_window_leaves_the_waited_for_run_to_its_holder() -> None:
     assert report_runs.simulation_runs[BASELINE_RUN_ID].writes == []
     # The reform's own worker is left to finish too.
     assert report_runs.simulation_runs[REFORM_RUN_ID].status is RunStatus.SUCCEEDED
+
+
+class RefusedBaselineStart(HolderInvoker):
+    """Modal refuses the call that would start the baseline's worker."""
+
+    def spawn(self, request):
+        if request.simulation["role"] == "baseline":
+            msg = "Modal refused the call"
+            raise ConnectionError(msg)
+        return super().spawn(request)
+
+
+def test_a_worker_start_refused_fails_the_report_run_and_leaves_its_run_pending() -> (
+    None
+):
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
+    invoker = RefusedBaselineStart(report_runs, artifacts)
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(report_runs, invoker, artifacts, files)
+
+    report_run = report_runs.report_runs[REPORT_RUN_ID]
+    assert report_run.status is RunStatus.FAILED
+    assert report_run.error_message.startswith("simulation_dispatch_failed: ")
+    # Another report run naming it may start it; otherwise the sweep fails it.
+    for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
+        simulation_run = report_runs.simulation_runs[run_id]
+        assert (simulation_run.status, simulation_run.writes) == (
+            RunStatus.PENDING,
+            [],
+        )

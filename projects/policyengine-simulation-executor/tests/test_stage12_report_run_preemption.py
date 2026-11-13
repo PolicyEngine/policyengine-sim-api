@@ -135,7 +135,11 @@ def test_a_preempted_coordinator_cancels_no_worker_and_records_nothing() -> None
 
 
 def test_a_restart_waits_for_each_earlier_worker_and_reads_its_output() -> None:
-    report_runs, files, artifacts = FakeReportRuns(), StoredOutputFiles(), FakeArtifacts()
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
     earlier_workers = _earlier_workers(report_runs, files)
     invoker = HolderInvoker(report_runs, artifacts, holders=earlier_workers)
 
@@ -160,7 +164,11 @@ def test_a_restart_waits_for_each_earlier_worker_and_reads_its_output() -> None:
 
 
 def test_a_restart_starts_a_worker_its_earlier_attempt_never_started() -> None:
-    report_runs, files, artifacts = FakeReportRuns(), StoredOutputFiles(), FakeArtifacts()
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
     # The earlier attempt's reform worker never claimed its run.
     earlier_workers = _earlier_workers(report_runs, files, roles=("baseline",))
     invoker = HolderInvoker(report_runs, artifacts, holders=earlier_workers)
@@ -174,10 +182,12 @@ def test_a_restart_starts_a_worker_its_earlier_attempt_never_started() -> None:
     assert reform.status is RunStatus.SUCCEEDED
 
 
-def test_a_run_its_earlier_worker_completed_is_never_written_when_the_report_fails() -> (
-    None
-):
-    report_runs, files, artifacts = FakeReportRuns(), StoredOutputFiles(), FakeArtifacts()
+def test_an_earlier_workers_finished_run_is_not_written_when_the_report_fails() -> None:
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
     earlier_workers = _earlier_workers(report_runs, files, roles=("reform",))
     invoker = HolderInvoker(report_runs, artifacts, holders=earlier_workers)
 
@@ -235,7 +245,9 @@ class UncancelledEarlierWorker(HolderInvoker):
 
 
 def test_a_restart_waits_for_an_earlier_worker_that_holds_its_run() -> None:
-    report_runs, files, artifacts = FakeReportRuns(), StoredOutputFiles(), FakeArtifacts()
+    report_runs, artifacts = FakeReportRuns(), FakeArtifacts()
+    # The stale worker writes its output where the coordinator's workers do.
+    files = StoredOutputFiles(fallback=artifacts)
     # The earlier attempt started the baseline worker, but it hadn't claimed
     # its run; the earlier reform worker is still calculating.
     earlier_workers = _earlier_workers(report_runs, files, roles=("reform",))
@@ -243,7 +255,7 @@ def test_a_restart_waits_for_an_earlier_worker_that_holds_its_run() -> None:
     report_run.status, report_run.modal_call_id = RunStatus.RUNNING, COORDINATOR_CALL_ID
     invoker = UncancelledEarlierWorker(report_runs, artifacts, holders=earlier_workers)
 
-    result = _coordinate(report_runs, invoker, artifacts, output_files=artifacts)
+    result = _coordinate(report_runs, invoker, artifacts, output_files=files)
 
     assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
     # The new worker found the run held, so the coordinator waited for the

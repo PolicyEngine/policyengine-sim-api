@@ -283,18 +283,6 @@ class FakeReportRuns:
             error_message=error_message,
         )
 
-    def release_simulation_run(self, simulation_run_id, *, modal_call_id, released_at):
-        run = self._run(self.simulation_runs, simulation_run_id, "simulation run")
-        return self._apply(
-            run,
-            "release_simulation_run",
-            condition=lambda: (
-                run.status in ACTIVE and run.modal_call_id == modal_call_id
-            ),
-            status=RunStatus.PENDING,
-            modal_call_id=None,
-        )
-
     @staticmethod
     def _claimable(run: FakeRun, modal_call_id: str) -> bool:
         return run.status in ACTIVE and run.modal_call_id in {None, modal_call_id}

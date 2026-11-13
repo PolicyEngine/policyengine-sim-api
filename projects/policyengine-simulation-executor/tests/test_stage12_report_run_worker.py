@@ -225,12 +225,9 @@ def test_a_worker_that_lost_its_run_records_nothing(taken_by) -> None:
                 failed_at=None,
             )
         else:
-            report_runs.release_simulation_run(
-                BASELINE_RUN_ID, modal_call_id=WORKER_CALL_ID, released_at=None
-            )
-            report_runs.claim_simulation_run(
-                BASELINE_RUN_ID, modal_call_id="fc-next-worker", claimed_at=None
-            )
+            # No write moves a held run to another call; the worker still
+            # refuses to record one that another call holds.
+            run.modal_call_id = "fc-next-worker"
         return simulation_frames()
 
     with pytest.raises(RuntimeError, match="cancelled"):

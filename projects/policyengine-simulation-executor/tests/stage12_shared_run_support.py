@@ -39,17 +39,24 @@ class HolderEnding(StrEnum):
 
 
 class StoredOutputFiles:
-    """Stored output files by URI, recording each read."""
+    """Stored output files by URI, recording each read.
 
-    def __init__(self) -> None:
+    A URI this holds no file for is read from ``fallback``, such as the
+    artifact store the coordinator's own workers write to, when one is given.
+    """
+
+    def __init__(self, fallback=None) -> None:
         self.payloads: dict[str, bytes] = {}
         self.reads: list[str] = []
+        self.fallback = fallback
 
     def read(self, uri: str) -> bytes:
         self.reads.append(uri)
-        if uri not in self.payloads:
-            raise FileNotFoundError(uri)
-        return self.payloads[uri]
+        if uri in self.payloads:
+            return self.payloads[uri]
+        if self.fallback is not None:
+            return self.fallback.read(uri)
+        raise FileNotFoundError(uri)
 
 
 def stored_output_uri(simulation_run_id: UUID) -> str:
@@ -126,7 +133,7 @@ class HolderCall:
 
 
 class HolderInvoker(RunWorkerInvoker):
-    """Restore each holder call by its ID; start every other child as the real worker."""
+    """Restore each holder call by its ID; start other children as real workers."""
 
     def __init__(self, report_runs, artifacts, *, holders=(), **options) -> None:
         super().__init__(report_runs, artifacts, **options)
