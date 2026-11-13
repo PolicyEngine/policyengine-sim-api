@@ -10,6 +10,7 @@ from uuid import UUID
 
 import pytest
 from policyengine_simulation_entry.run_restart_check import (
+    RESTART_STATEMENT_TIMEOUT_MILLISECONDS,
     ObservabilityRestartTelemetry,
     run_scheduled_check,
     scheduled_restart_service,
@@ -21,6 +22,7 @@ from policyengine_simulation_entry.run_restarts import (
     RunRestartService,
 )
 from policyengine_simulation_persistence import RestartKind, UnstartedRun
+from policyengine_stage12_persistence import BudgetWindowStore
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -175,6 +177,25 @@ def test_the_scheduled_service_restarts_in_its_modal_environments_deployment() -
         assert isinstance(scheduled.service, RunRestartService)
         assert scheduled.settings == RestartSettings(
             environment="production", modal_environment="main"
+        )
+    finally:
+        scheduled.engine.dispose()
+
+
+def test_the_scheduled_window_advance_bounds_each_statement_as_the_check_does() -> None:
+    """A window's lock or reads can't hold the check past its Modal timeout."""
+    scheduled = scheduled_restart_service(
+        database_url=DATABASE_URL,
+        modal_environment="main",
+        runtime=RecordingRuntime(),
+    )
+    try:
+        windows = scheduled.service._stores.windows
+        assert isinstance(windows, BudgetWindowStore)
+        assert windows.engine is scheduled.engine
+        assert (
+            windows.statement_timeout_milliseconds
+            == RESTART_STATEMENT_TIMEOUT_MILLISECONDS
         )
     finally:
         scheduled.engine.dispose()

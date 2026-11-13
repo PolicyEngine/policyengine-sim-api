@@ -32,11 +32,13 @@ from policyengine_stage12_persistence import (
     RunStatus,
     WindowAdvance,
     YearStartDeferred,
+    YearStartRefused,
     YearToStart,
     budget_window_store,
 )
 from report_run_database import NOW, SEED_URL_ENV, worker_database_url
 from sqlalchemy import Engine, create_engine, event
+from sqlalchemy.exc import OperationalError
 
 # The simulation service's role, which the Public API's manifest grants.
 SERVICE_ROLE = "policyengine_v2_simulation_service"
@@ -322,6 +324,74 @@ def test_a_refused_start_names_its_cause_on_its_own_simulations(
     assert "RuntimeError" in caplog.text
     assert str(window.year(2026).report_run_id) in caplog.text
     assert "Modal refused the call" not in caplog.text
+
+
+def test_a_start_refused_with_its_own_message_records_that_message(
+    store, windows, window
+) -> None:
+    """A starter that can't build a year's call says why, rather than Modal."""
+    message = (
+        "run_not_started: The run stayed pending with no Modal call recorded "
+        "for it, and its call could not be built again: the region is gone."
+    )
+
+    def refuse(year_to_start: YearToStart) -> str:
+        raise YearStartRefused(message)
+
+    advance = store.advance_window(window.window_run_id, now=LATER, start_year=refuse)
+
+    assert advance == WindowAdvance(status=RunStatus.FAILED, changed=True)
+    rows = windows.year_rows(window)
+    assert rows[2026]["status"] == "failed"
+    assert rows[2026]["error_message"] == message
+    for simulation_run_id in (
+        window.year(2026).baseline_simulation_run_id,
+        window.year(2026).reform_simulation_run_id,
+    ):
+        row = windows.seeder.row("simulation_runs", simulation_run_id)
+        assert row["error_message"] == message
+    assert rows[2027]["error_message"].startswith("budget_window_failed: ")
+    window_row = windows.window_row(window)
+    assert window_row["status"] == "failed"
+    assert window_row["error_message"] == (
+        "budget_window_year_failed: The budget window's 2026 report run failed."
+    )
+
+
+def test_a_statement_timeout_stops_an_advance_waiting_for_the_windows_lock(
+    store, window
+) -> None:
+    """The restart check's store gives up on a window another advance holds."""
+    holding = threading.Event()
+    release = threading.Event()
+
+    def hold_the_lock(year_to_start: YearToStart) -> str:
+        holding.set()
+        release.wait(timeout=10)
+        raise YearStartDeferred
+
+    bounded = BudgetWindowStore(
+        worker_database_url(), statement_timeout_milliseconds=200
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        holder = pool.submit(
+            store.advance_window,
+            window.window_run_id,
+            now=LATER,
+            start_year=hold_the_lock,
+        )
+        try:
+            assert holding.wait(timeout=10)
+            waited_from = time.monotonic()
+            with pytest.raises(OperationalError, match="statement timeout"):
+                bounded.advance_window(
+                    window.window_run_id, now=LATER, start_year=RecordingStarter()
+                )
+            assert time.monotonic() - waited_from < 5
+        finally:
+            release.set()
+            holder.result()
+            bounded.engine.dispose()
 
 
 def test_the_service_role_starts_and_fails_a_window(windows, window) -> None:

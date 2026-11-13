@@ -32,7 +32,6 @@ from economy_service_fakes import (
     simulation_request,
 )
 from household_fixtures import manifest_store
-from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_simulation_entry.economy_workers import ManifestEconomyWorkers
 from policyengine_simulation_entry.household_api_models import (
     HouseholdCalculationRequest,
@@ -61,6 +60,7 @@ from policyengine_simulation_persistence import (
     HouseholdCalculationInputs,
     HouseholdJobRecord,
     HouseholdJobStatus,
+    IdleBudgetWindow,
     RestartKind,
     RunCall,
     SimulationChoice,
@@ -70,12 +70,6 @@ from policyengine_simulation_persistence import (
     StoredRunUnreadableError,
     StoredSimulationRun,
     UnstartedRun,
-    WaitingYear,
-)
-from policyengine_stage12_persistence import (
-    RunStatus,
-    WindowAdvance,
-    YearToStart,
 )
 from sqlalchemy.exc import OperationalError
 
@@ -83,8 +77,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from datetime import datetime
 
+    from policyengine_simulation_entry.budget_window_submissions import (
+        BudgetWindowAdvancer,
+    )
     from policyengine_simulation_entry.household_workers import HouseholdWorker
-    from policyengine_simulation_persistence import NewHouseholdJob
+    from policyengine_simulation_entry.run_restarts import RestartTarget
+    from policyengine_simulation_persistence import NewHouseholdJob, WaitingYear
+    from policyengine_stage12_persistence import WindowAdvance
 
 NOW = CREATED_AT + timedelta(minutes=4)
 DATABASE_ERROR = OperationalError("SELECT 1", {}, Exception("server closed"))
@@ -134,10 +133,12 @@ class FakeRestartStore:
     # A read of one run that raises, by run ID.
     read_failures: dict[UUID, Exception] = field(default_factory=dict)
     marked_elsewhere: bool = False
+    # Raised by every mark, as when the mark can't be written.
+    mark_failure: Exception | None = None
     # Each row's status and call as stored, by run ID; a row not named here is
     # as the rig's other fakes left it (``holder``).
     held: dict[UUID, RunCall | None] = field(default_factory=dict)
-    idle_windows: tuple[UnstartedRun, ...] = ()
+    idle_windows: tuple[IdleBudgetWindow, ...] = ()
     waiting_years: dict[UUID, WaitingYear] = field(default_factory=dict)
     holder: Callable[[UnstartedRun], RunCall | None] | None = None
     listings: list[tuple[datetime, datetime, int]] = field(default_factory=list)
@@ -145,7 +146,7 @@ class FakeRestartStore:
 
     def list_idle_windows(
         self, *, idle_after: datetime, idle_before: datetime, limit: int
-    ) -> tuple[UnstartedRun, ...]:
+    ) -> tuple[IdleBudgetWindow, ...]:
         self.listings.append((idle_after, idle_before, limit))
         return self.idle_windows
 
@@ -169,6 +170,8 @@ class FakeRestartStore:
         return self.unstarted
 
     def mark_restart(self, run: UnstartedRun) -> bool:
+        if self.mark_failure is not None:
+            raise self.mark_failure
         if self.marked_elsewhere:
             return False
         self.marked.append(run)
@@ -279,35 +282,14 @@ class FakeHouseholdCaller:
         return "fc-household-restarted"
 
 
-@dataclass
-class FakeWindows:
-    """Advances a window as ``BudgetWindowStore`` does: its waiting years in order.
-
-    Each waiting year is offered to the starter; the advance ends with
-    ``status``, or failed when a start raises.
-    """
-
-    waiting: tuple[YearToStart, ...] = ()
-    status: RunStatus = RunStatus.PENDING
-    advanced: list[UUID] = field(default_factory=list)
-    started_calls: list[str] = field(default_factory=list)
+class UnusedWindows:
+    """A window advancer for checks that list no budget window."""
 
     def advance_window(
         self, window_run_id: UUID, *, now: datetime, start_year: Any = None
     ) -> WindowAdvance:
-        self.advanced.append(window_run_id)
-        started = []
-        for year in self.waiting:
-            try:
-                self.started_calls.append(start_year(year))
-            except Exception:  # noqa: BLE001  # as the store fails a refused year
-                return WindowAdvance(
-                    status=RunStatus.FAILED, changed=True, started_years=tuple(started)
-                )
-            started.append(year.year)
-        return WindowAdvance(
-            status=self.status, changed=False, started_years=tuple(started)
-        )
+        msg = "this check lists no budget window"
+        raise AssertionError(msg)
 
 
 @dataclass
@@ -320,13 +302,15 @@ class RecordingTelemetry:
     )
 
     @contextmanager
-    def restart_scope(self, run: UnstartedRun, *, age_seconds: float) -> Iterator[None]:
+    def restart_scope(
+        self, run: RestartTarget, *, age_seconds: float
+    ) -> Iterator[None]:
         self.scopes.append((run.kind, run.run_id, age_seconds))
         yield
 
     def record_outcome(
         self,
-        run: UnstartedRun,
+        run: RestartTarget,
         outcome: RestartOutcome,
         *,
         error_type: str | None = None,
@@ -342,7 +326,7 @@ class RestartRig:
     """The restart service and every fake it was built with."""
 
     restarts: FakeRestartStore
-    windows: FakeWindows
+    windows: BudgetWindowAdvancer
     economy: FakeStore
     households: FakeHouseholdJobs
     economy_caller: FakeCaller
@@ -354,7 +338,7 @@ class RestartRig:
         return asyncio.run(self.service.restart_unstarted_runs())
 
 
-def _rig(  # noqa: PLR0913  # each fake a test may replace
+def restart_rig(  # noqa: PLR0913  # each fake a test may replace
     *,
     restarts: FakeRestartStore | None = None,
     economy: FakeStore | None = None,
@@ -363,10 +347,10 @@ def _rig(  # noqa: PLR0913  # each fake a test may replace
     household_caller: FakeHouseholdCaller | None = None,
     manifest: object | None = None,
     timer: Callable[[], float] | None = None,
-    windows: FakeWindows | None = None,
+    windows: BudgetWindowAdvancer | None = None,
 ) -> RestartRig:
     restarts = restarts or FakeRestartStore()
-    windows = windows or FakeWindows()
+    windows = windows or UnusedWindows()
     economy = economy or FakeStore()
     households = households or FakeHouseholdJobs()
     economy_caller = economy_caller or FakeCaller()
@@ -414,7 +398,7 @@ def _rig(  # noqa: PLR0913  # each fake a test may replace
     )
 
 
-def _submitted_report() -> tuple[StoredReportRun, tuple[dict, dict]]:
+def submitted_report() -> tuple[StoredReportRun, tuple[dict, dict]]:
     """Submit a report as the service does; return its stored run and its call."""
     caller = FakeCaller()
     created = asyncio.run(
@@ -515,7 +499,7 @@ def _without_request_id(context: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_the_check_lists_runs_created_three_to_ten_minutes_ago() -> None:
-    rig = _rig()
+    rig = restart_rig()
 
     summary = rig.restart()
 
@@ -532,9 +516,9 @@ def test_the_check_lists_runs_created_three_to_ten_minutes_ago() -> None:
 
 
 def test_a_report_run_is_started_again_with_the_call_its_submission_started() -> None:
-    stored, (payload, context) = _submitted_report()
+    stored, (payload, context) = submitted_report()
     run = _unstarted(RestartKind.REPORT_RUN, stored.report_run_id)
-    rig = _rig(
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(run,), report_runs={stored.report_run_id: stored}
         )
@@ -559,7 +543,7 @@ def test_a_standalone_simulation_run_is_started_again_with_its_submissions_call(
 ):
     stored, (payload, context) = _submitted_simulation()
     run_id = stored.run.simulation_run_id
-    rig = _rig(
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.SIMULATION_RUN, run_id),),
             simulation_runs={run_id: stored},
@@ -582,7 +566,7 @@ def test_a_household_job_is_started_again_with_its_submissions_call() -> None:
     payload = _submitted_household_job(
         households, policy_id=str(POLICY_ID), add_missing_variables=True
     )
-    rig = _rig(
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.HOUSEHOLD_JOB, HOUSEHOLD_JOB_ID),)
         ),
@@ -600,8 +584,8 @@ def test_a_household_job_is_started_again_with_its_submissions_call() -> None:
 
 
 def test_a_run_another_check_marked_first_is_left_without_a_call() -> None:
-    stored, _call = _submitted_report()
-    rig = _rig(
+    stored, _call = submitted_report()
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
             report_runs={stored.report_run_id: stored},
@@ -617,7 +601,7 @@ def test_a_run_another_check_marked_first_is_left_without_a_call() -> None:
 
 
 def test_a_run_gone_before_it_is_read_is_left_alone() -> None:
-    rig = _rig(
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(
                 _unstarted(RestartKind.REPORT_RUN, UUID(int=1)),
@@ -634,8 +618,8 @@ def test_a_run_gone_before_it_is_read_is_left_alone() -> None:
 
 
 def test_a_run_whose_rows_cannot_be_read_is_left_for_the_next_check() -> None:
-    stored, _call = _submitted_report()
-    rig = _rig(
+    stored, _call = submitted_report()
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
             read_failure=DATABASE_ERROR,
@@ -650,8 +634,8 @@ def test_a_run_whose_rows_cannot_be_read_is_left_for_the_next_check() -> None:
 
 
 def test_an_unreadable_manifest_leaves_the_run_for_the_next_check() -> None:
-    stored, _call = _submitted_report()
-    rig = _rig(
+    stored, _call = submitted_report()
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
             report_runs={stored.report_run_id: stored},
@@ -666,8 +650,8 @@ def test_an_unreadable_manifest_leaves_the_run_for_the_next_check() -> None:
 
 
 def test_a_run_whose_worker_left_the_manifest_is_failed_as_not_started() -> None:
-    stored, _call = _submitted_report()
-    rig = _rig(
+    stored, _call = submitted_report()
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
             report_runs={stored.report_run_id: stored},
@@ -691,7 +675,7 @@ def test_a_run_whose_worker_left_the_manifest_is_failed_as_not_started() -> None
 
 def test_a_run_whose_stored_rows_no_longer_describe_it_is_failed() -> None:
     run_id = UUID(int=7)
-    rig = _rig(
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.SIMULATION_RUN, run_id),),
             read_failure=StoredRunUnreadableError("simulation run 7 names no region"),
@@ -711,7 +695,7 @@ def test_a_household_job_whose_household_changed_is_failed_as_not_started() -> N
     households = FakeHouseholdJobs()
     _submitted_household_job(households)
     households.default_year = 2027
-    rig = _rig(
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.HOUSEHOLD_JOB, HOUSEHOLD_JOB_ID),)
         ),
@@ -728,8 +712,8 @@ def test_a_household_job_whose_household_changed_is_failed_as_not_started() -> N
 
 
 def test_a_restart_modal_refuses_fails_the_run_as_not_started() -> None:
-    stored, _call = _submitted_report()
-    rig = _rig(
+    stored, _call = submitted_report()
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
             report_runs={stored.report_run_id: stored},
@@ -761,7 +745,7 @@ def test_a_restart_modal_refuses_fails_the_run_as_not_started() -> None:
 def test_a_restart_modal_does_not_confirm_in_time_fails_the_run() -> None:
     stored, _call = _submitted_simulation()
     run_id = stored.run.simulation_run_id
-    rig = _rig(
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.SIMULATION_RUN, run_id),),
             simulation_runs={run_id: stored},
@@ -778,8 +762,8 @@ def test_a_restart_modal_does_not_confirm_in_time_fails_the_run() -> None:
 
 
 def test_a_refused_restart_of_a_run_another_call_claimed_leaves_it() -> None:
-    stored, _call = _submitted_report()
-    rig = _rig(
+    stored, _call = submitted_report()
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
             report_runs={stored.report_run_id: stored},
@@ -800,7 +784,7 @@ def test_a_restarted_call_another_call_claimed_first_counts_as_started_meanwhile
     households = FakeHouseholdJobs()
     _submitted_household_job(households)
     households.claimed = True
-    rig = _rig(
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.HOUSEHOLD_JOB, HOUSEHOLD_JOB_ID),)
         ),
@@ -814,8 +798,8 @@ def test_a_restarted_call_another_call_claimed_first_counts_as_started_meanwhile
 
 
 def test_a_restart_whose_call_cannot_be_recorded_still_counts_its_call() -> None:
-    stored, _call = _submitted_report()
-    rig = _rig(
+    stored, _call = submitted_report()
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
             report_runs={stored.report_run_id: stored},
@@ -831,14 +815,14 @@ def test_a_restart_whose_call_cannot_be_recorded_still_counts_its_call() -> None
 
 
 def test_each_listed_run_is_one_telemetry_scope_with_its_age_and_outcome() -> None:
-    report, _report_call = _submitted_report()
+    report, _report_call = submitted_report()
     simulation, _simulation_call = _submitted_simulation()
     simulation_run_id = simulation.run.simulation_run_id
     report_run = replace(
         _unstarted(RestartKind.REPORT_RUN, report.report_run_id),
         created_at=CREATED_AT + timedelta(seconds=30),
     )
-    rig = _rig(
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(
                 report_run,
@@ -882,7 +866,7 @@ def test_an_unreadable_report_run_is_failed_with_its_simulation_runs() -> None:
     """As a submission fails a report run, with the simulation runs made for it."""
     run_id = UUID(int=8)
     sides = (UUID(int=81), UUID(int=82))
-    rig = _rig(
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.REPORT_RUN, run_id),),
             read_failure=StoredRunUnreadableError("report run 8 names no region"),
@@ -899,8 +883,8 @@ def test_an_unreadable_report_run_is_failed_with_its_simulation_runs() -> None:
 
 
 def test_a_restarted_call_claiming_its_run_before_the_record_is_restarted() -> None:
-    stored, _call = _submitted_report()
-    rig = _rig(
+    stored, _call = submitted_report()
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
             report_runs={stored.report_run_id: stored},
@@ -917,8 +901,8 @@ def test_a_restarted_call_claiming_its_run_before_the_record_is_restarted() -> N
 
 
 def test_a_run_failed_before_its_restart_was_recorded_is_left() -> None:
-    stored, _call = _submitted_report()
-    rig = _rig(
+    stored, _call = submitted_report()
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
             report_runs={stored.report_run_id: stored},
@@ -931,8 +915,8 @@ def test_a_run_failed_before_its_restart_was_recorded_is_left() -> None:
 
 
 def test_a_refused_restart_of_a_run_the_sweep_failed_meanwhile_is_left() -> None:
-    stored, _call = _submitted_report()
-    rig = _rig(
+    stored, _call = submitted_report()
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
             report_runs={stored.report_run_id: stored},
@@ -959,10 +943,10 @@ class AdvancingCaller(FakeCaller):
 
 def test_a_check_past_its_time_limit_leaves_the_other_runs_for_the_next() -> None:
     """No row is marked once the check's time is up, so none waits for the sweep."""
-    first, _first_call = _submitted_report()
-    second, _second_call = _submitted_report()
+    first, _first_call = submitted_report()
+    second, _second_call = submitted_report()
     caller = AdvancingCaller(step_seconds=CHECK_TIME_LIMIT.total_seconds())
-    rig = _rig(
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(
                 _unstarted(RestartKind.REPORT_RUN, first.report_run_id),
@@ -1003,9 +987,9 @@ class LoopWatchingManifestStore:
 
 def test_a_runs_call_is_rebuilt_off_the_event_loop() -> None:
     """Modal's blocking reads, such as the manifest's, never hold up the loop."""
-    stored, _call = _submitted_report()
+    stored, _call = submitted_report()
     manifest = LoopWatchingManifestStore(MANIFEST_STORE)
-    rig = _rig(
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(_unstarted(RestartKind.REPORT_RUN, stored.report_run_id),),
             report_runs={stored.report_run_id: stored},
@@ -1026,8 +1010,8 @@ def test_an_unexpected_rebuild_error_defers_its_run_and_the_check_goes_on(
     The error is logged with its traceback, so it can be diagnosed.
     """
     broken_run_id = UUID(int=9)
-    stored, _call = _submitted_report()
-    rig = _rig(
+    stored, _call = submitted_report()
+    rig = restart_rig(
         restarts=FakeRestartStore(
             unstarted=(
                 _unstarted(RestartKind.REPORT_RUN, broken_run_id),
@@ -1060,134 +1044,3 @@ def test_an_unexpected_rebuild_error_defers_its_run_and_the_check_goes_on(
         "run_kind": "report_run",
         "run_id": str(broken_run_id),
     }
-
-
-WINDOW_RUN_ID = UUID("00000000-0000-4000-8000-0000000000f1")
-
-
-def _idle_window_rig(**options: Any) -> tuple[RestartRig, StoredReportRun, dict]:
-    """Return a rig with one idle window whose earliest waiting year was submitted.
-
-    Its second waiting year is the following year, on runs of its own.
-    """
-    stored, (payload, _context) = _submitted_report()
-    first_year = YearToStart(
-        year=2026,
-        run_ids=ReportRunIds(
-            report_run_id=stored.report_run_id,
-            baseline_simulation_run_id=stored.baseline.simulation_run_id,
-            reform_simulation_run_id=stored.reform.simulation_run_id,
-        ),
-    )
-    second_year = YearToStart(
-        year=2027,
-        run_ids=ReportRunIds(
-            report_run_id=UUID(int=2027),
-            baseline_simulation_run_id=UUID(int=20271),
-            reform_simulation_run_id=UUID(int=20272),
-        ),
-    )
-    restarts = options.pop("restarts", None) or FakeRestartStore(
-        idle_windows=(
-            UnstartedRun(
-                kind=RestartKind.BUDGET_WINDOW,
-                run_id=WINDOW_RUN_ID,
-                created_at=CREATED_AT,
-            ),
-        ),
-        report_runs={stored.report_run_id: stored},
-        waiting_years={
-            WINDOW_RUN_ID: WaitingYear(report_run_id=stored.report_run_id, year=2026)
-        },
-    )
-    windows = options.pop("windows", None) or FakeWindows(
-        waiting=(first_year, second_year)
-    )
-    return _rig(restarts=restarts, windows=windows, **options), stored, payload
-
-
-def test_an_idle_window_is_restarted_from_its_earliest_waiting_year() -> None:
-    """Its first years start as the service starts them, from its first year's call."""
-    rig, stored, payload = _idle_window_rig()
-
-    summary = rig.restart()
-
-    assert rig.windows.advanced == [WINDOW_RUN_ID]
-    assert [run.run_id for run in rig.restarts.marked] == [stored.report_run_id]
-    first_call, second_call = rig.economy_caller.report_runs
-    assert first_call[1] == payload
-    assert second_call[1]["evaluation_id"] == str(UUID(int=2027))
-    assert second_call[1]["baseline"]["year"] == 2027
-    assert summary == RestartSummary(listed=1, restarted=1)
-    assert rig.telemetry.outcomes == [
-        (RestartKind.BUDGET_WINDOW, WINDOW_RUN_ID, RestartOutcome.RESTARTED, None)
-    ]
-
-
-def test_the_check_lists_idle_windows_in_the_same_window_of_time() -> None:
-    rig, _stored, _payload = _idle_window_rig()
-
-    rig.restart()
-
-    assert (
-        rig.restarts.listings
-        == [(NOW - RESTART_UNTIL, NOW - RESTART_AFTER, RESTARTS_PER_CHECK)] * 2
-    )
-
-
-def test_a_window_whose_restarted_year_modal_refuses_counts_as_failed() -> None:
-    rig, _stored, _payload = _idle_window_rig(
-        economy_caller=FakeCaller(failure=ConnectionError("Modal is down"))
-    )
-
-    summary = rig.restart()
-
-    assert summary == RestartSummary(listed=1, failed=1)
-
-
-def test_a_window_no_longer_waiting_is_left_unmarked() -> None:
-    rig, _stored, _payload = _idle_window_rig(
-        restarts=FakeRestartStore(
-            idle_windows=(
-                UnstartedRun(
-                    kind=RestartKind.BUDGET_WINDOW,
-                    run_id=WINDOW_RUN_ID,
-                    created_at=CREATED_AT,
-                ),
-            )
-        )
-    )
-
-    summary = rig.restart()
-
-    assert rig.restarts.marked == []
-    assert rig.windows.advanced == []
-    assert summary == RestartSummary(listed=1, left=1)
-
-
-def test_a_window_another_check_marked_first_is_left_without_an_advance() -> None:
-    rig, stored, _payload = _idle_window_rig()
-    rig.restarts.marked_elsewhere = True
-
-    summary = rig.restart()
-
-    assert rig.windows.advanced == []
-    assert summary == RestartSummary(listed=1, left=1)
-    assert stored.report_run_id not in [run.run_id for run in rig.restarts.marked]
-
-
-def test_a_window_whose_first_years_call_cannot_be_rebuilt_is_left_to_the_sweep() -> (
-    None
-):
-    """It is marked, so no later check tries again; the sweep fails it as stalled."""
-    rig, stored, _payload = _idle_window_rig()
-    rig.restarts.read_failures[stored.report_run_id] = StoredRunUnreadableError(
-        "report run names no region"
-    )
-
-    summary = rig.restart()
-
-    assert [run.run_id for run in rig.restarts.marked] == [stored.report_run_id]
-    assert rig.windows.advanced == []
-    assert summary == RestartSummary(listed=1, left=1)
-    assert rig.telemetry.outcomes[0][3] == "StoredRunUnreadableError"

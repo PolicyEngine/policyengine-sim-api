@@ -26,6 +26,7 @@ from economy_rows import (
 )
 from policyengine_simulation_persistence import (
     BudgetWindowYear,
+    IdleBudgetWindow,
     NewBudgetWindowReport,
     NewEconomyReport,
     NewEconomySimulation,
@@ -561,7 +562,7 @@ def _new_window(economy: EconomyCatalog, years: int = 3) -> NewBudgetWindowRepor
 
 def _idle_windows(
     connection: Connection, *, around: datetime
-) -> tuple[UnstartedRun, ...]:
+) -> tuple[IdleBudgetWindow, ...]:
     """List the idle windows whose last change is within a second of ``around``."""
     return list_idle_budget_windows(
         connection,
@@ -582,11 +583,7 @@ def test_an_idle_window_with_years_waiting_is_listed_for_a_restart(
     act_as_the_modal_worker(connection)
 
     assert _idle_windows(connection, around=created_at) == (
-        UnstartedRun(
-            kind=RestartKind.BUDGET_WINDOW,
-            run_id=window.window_run_id,
-            created_at=created_at,
-        ),
+        IdleBudgetWindow(run_id=window.window_run_id, last_changed_at=created_at),
     )
     # Its years are never listed as report runs of their own.
     assert _listed(connection, around=created_at) == ()
