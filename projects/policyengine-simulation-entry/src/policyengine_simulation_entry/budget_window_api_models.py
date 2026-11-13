@@ -25,7 +25,6 @@ from pydantic.json_schema import SkipJsonSchema
 
 from policyengine_simulation_entry.economy_api_models import (
     CatalogKey,
-    EconomyReportRequest,
     PolicyChoice,
     ReportDescription,
     ReportLabel,
@@ -102,14 +101,6 @@ class BudgetWindowReportRequest(BaseModel):
         if self.spm is not None:
             options["spm"] = self.spm.model_dump(mode="json")
         return options
-
-
-# The body of ``POST /reports``: an economy report or a budget window, told
-# apart by ``report_type``.
-ReportRequest = Annotated[
-    EconomyReportRequest | BudgetWindowReportRequest,
-    Field(discriminator="report_type"),
-]
 
 
 class _Answer(BaseModel):
