@@ -85,6 +85,9 @@ EconomyUnprocessableCode = Literal[
     # be read, or the household functions' contract refuses what the report
     # would calculate: located at the household or a side's policy.
     "household_not_calculable",
+    # A report asks for cliffs (include_cliffs: true), which wait for each
+    # simulation run's own cliff calculation (C1 · 39); located at the field.
+    "cliffs_not_available",
 ]
 # Why a stored record is not re-run now (409).
 EconomyConflictCode = Literal[

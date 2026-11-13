@@ -70,13 +70,16 @@ from policyengine_simulation_entry.economy_api_models import (
     EconomySimulationCreated,
 )
 from policyengine_simulation_entry.economy_calculation_inputs import (
-    CalculationScope,
     CallOrigin,
-    DatasetNotInBundleError,
-    bundle_dataset,
     report_run_calculation,
-    simulation_options,
     simulation_run_calculation,
+)
+from policyengine_simulation_entry.economy_requests import (
+    calculation_scope,
+    economy_request_for,
+    refuse_cliffs,
+    report_created,
+    stored_options,
 )
 from policyengine_simulation_entry.economy_submission_errors import (
     REQUEST_BODY,
@@ -100,7 +103,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from policyengine_simulation_persistence import (
-        EconomyCatalogRows,
         EconomyReportInputs,
         EconomyReportState,
         EconomySimulationInputs,
@@ -111,11 +113,7 @@ if TYPE_CHECKING:
         SimulationInputs,
     )
 
-    from policyengine_simulation_entry.budget_window_api_models import (
-        BudgetWindowReportRequest,
-    )
     from policyengine_simulation_entry.economy_api_models import (
-        EconomyRefusalCode,
         EconomyReportRequest,
         EconomySimulationRequest,
         PolicyChoice,
@@ -277,6 +275,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         EconomySubmissionOutcomeUnknownError (500) when the create's commit
         failed after its rows were inserted.
         """
+        refuse_cliffs(request)
         worker = await self._default_worker(request.country)
         options = request.options()
         spm = options.get("spm")
@@ -701,85 +700,16 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         return None if status is None else str(status)
 
 
-def stored_options(options: dict[str, Any]) -> dict[str, Any]:
-    """Return what a report stores of a request's options: the SPM selection.
-
-    A report has no options of its own (C1 · 24's answer 4): ``include_cliffs``
-    is a request option, never stored or keyed.
-    """
-    return {name: value for name, value in options.items() if name == "spm"}
-
-
-def report_created(
-    found: FoundEconomyReport, status: ReportRunStatus
-) -> EconomyReportCreated:
-    """Answer the report and run a request ended on, with ``status``.
-
-    A side is reused when this request didn't insert its run.
-    """
-    return EconomyReportCreated(
-        report_id=found.report_id,
-        report_run_id=found.run.id,
-        status=status,
-        baseline_simulation_id=found.baseline.simulation_id,
-        baseline_simulation_run_id=found.baseline.simulation_run_id,
-        baseline_reused=not found.baseline.run_inserted,
-        reform_simulation_id=found.reform.simulation_id,
-        reform_simulation_run_id=found.reform.simulation_run_id,
-        reform_reused=not found.reform.run_inserted,
-    )
-
-
-def economy_request_for(
-    request: EconomyReportRequest
-    | EconomySimulationRequest
-    | BudgetWindowReportRequest,
-    worker: EconomyWorker,
-) -> EconomyRequest:
-    """Return what the request names apart from policies, for the default worker."""
-    return EconomyRequest(
-        country=request.country,
-        policyengine_version=worker.policyengine_version,
-        region_code=request.region_code,
-        dataset_name=request.dataset_name,
-        year=request.year,
-    )
-
-
-def calculation_scope(
-    request: EconomyReportRequest
-    | EconomySimulationRequest
-    | BudgetWindowReportRequest,
-    worker: EconomyWorker,
-    catalog: EconomyCatalogRows,
-    *,
-    spm: dict[str, Any] | None,
-) -> CalculationScope:
-    """Return what the calculation runs on, with the bundle's dataset.
-
-    Raise EconomySubmissionRefusedError when the bundle lacks the catalog
-    dataset: ``unknown_dataset`` when the request named it, and
-    ``dataset_not_in_bundle`` for the region's default.
-    """
-    try:
-        dataset = bundle_dataset(worker, catalog.dataset.name)
-    except DatasetNotInBundleError:
-        code: EconomyRefusalCode = (
-            "dataset_not_in_bundle"
-            if request.dataset_name is None
-            else "unknown_dataset"
-        )
-        detail = (
-            f"The default v2 worker, .py {worker.version}, has no dataset "
-            f"{catalog.dataset.name}."
-        )
-        raise EconomySubmissionRefusedError(code=code, detail=detail) from None
-    return CalculationScope(
-        country=request.country,
-        region_code=catalog.region.code,
-        dataset=dataset,
-        year=request.year,
-        options=simulation_options(
-            include_cliffs=getattr(request, "include_cliffs", False), spm=spm
-        ),
-    )
+# The request helpers moved to economy_requests; their names stay importable here.
+__all__ = [
+    "CALL_START_TIMEOUT_SECONDS",
+    "EconomyRuns",
+    "EconomySubmissionService",
+    "ServiceSettings",
+    "calculation_scope",
+    "economy_request_for",
+    "refuse_cliffs",
+    "report_created",
+    "simulation_choice",
+    "stored_options",
+]

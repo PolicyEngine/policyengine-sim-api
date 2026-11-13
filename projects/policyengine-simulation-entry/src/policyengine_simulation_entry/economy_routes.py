@@ -138,7 +138,9 @@ _UNPROCESSABLE = {
         "cannot be calculated; nothing was written. Stored values that cannot "
         "be calculated carry a code: missing_parameters, "
         "overlapping_parameters, or household_not_calculable for a household "
-        "report's household"
+        "report's household; a report asking for cliffs (include_cliffs: "
+        "true) carries cliffs_not_available until each simulation run's own "
+        "cliff calculation exists"
     ),
     "model": EconomyRequestUnprocessable,
 }

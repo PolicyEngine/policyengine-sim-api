@@ -154,7 +154,10 @@ a row it names is missing (`unknown_region`, `unknown_dataset` and
 `missing_reference` are the service's state, such as a catalog version
 missing while a release deploys), and with 422 and a `code` when a policy or
 dynamic sets parameters the catalog version lacks (`missing_parameters`) or
-both set one (`overlapping_parameters`). The routes answer 503 with
+both set one (`overlapping_parameters`), and a report with
+`include_cliffs: true` with 422 `cliffs_not_available`, located at the
+field, until each simulation run's own cliff calculation exists (C1 · 39).
+The routes answer 503 with
 `Retry-After` when the manifest or the database can't be read. When Modal
 refuses the call, or doesn't confirm it within ten seconds, the run is
 failed at once (a report run alone: its simulation runs may already be
