@@ -801,6 +801,12 @@ pre-emption records nothing. An error in the report run's claim, or in the
 read of its simulation runs, fails the report run if the claim applied
 before the error, and leaves its simulation runs to the stuck-run sweep.
 
+A household report's re-run (`POST /reports/{report_id}/runs`) is a new
+report run, trigger `manual`, naming a new run of each side's own household
+simulation on the current catalog version, in the report's year. The
+service starts one call for it, as for a new household report, and the
+function claims and calculates it as it would a new report's run.
+
 The stuck-run sweep (`src/modal/run_sweep_app.py`) fails household jobs
 nothing will finish by the rule it applies to report runs and simulation
 runs (a household report run and its simulation runs are judged as any

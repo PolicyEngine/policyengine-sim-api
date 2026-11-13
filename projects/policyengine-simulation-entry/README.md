@@ -249,6 +249,14 @@ does. Up to five years start at once, as a new window's do (a later year
 Modal doesn't confirm in time waits for an earlier year's coordinator); it
 answers 201 with the budget-window create's fields, naming the window run
 and every year.
+A household report's re-run calculates its stored household again in the
+report's own year (not the household's current `default_year`), under each
+side's stored policy read on the current catalog version. Each side gets a
+new run of its own household simulation, recording that catalog version:
+household runs are never reused, so `force` changes nothing. The new report
+run (trigger `manual`) is started by one household function call, as a new
+household report's is, and the re-run answers 201 with the household report
+create's fields.
 `POST /simulations/{simulation_id}/runs`, with no body, creates and starts
 a stored economy simulation's new run, which is always calculated. Each
 answers 201 with the same fields as the create, naming the new run.
@@ -257,14 +265,18 @@ A re-run is refused before anything is written: 404 (`unknown_report`,
 `unknown_simulation`) for a record that doesn't exist; 409
 `run_in_progress`, naming the run in `run_id`, while the record has a run
 pending or running (for a report, its budget-window run, or else its report
-run);
-409 `rerun_not_supported` for a household record, which this service does
-not re-run yet, a budget window whose newest window run lacks a year, or a
-record that names no region, dataset, year, simulation or country the
-service calculates; and the create's 400 and 422
-codes when the stored rows can't be calculated on the current catalog
-version, worded for the stored record (a 422 reason's `loc` starts with
-`report` or `simulation`). The check for a run under way and the inserts
+run); 409 `rerun_not_supported` for a household simulation, which is re-run
+only through its report, a budget window whose newest window run lacks a
+year, or a record that names no region, dataset, year, simulation, household
+or country the service calculates (a household report names no region or
+dataset); and the create's 400 and 422 codes when the stored rows can't be
+calculated on the current catalog version, worded for the stored record (a
+422 reason's `loc` starts with `report` or `simulation`), with a household
+report's own codes: 400 `unknown_household` and `no_household_function`,
+and 422 `household_not_calculable`, located at the report's `household_id`
+or a side's `policy_id`. Without household reports configured, a household
+report's re-run answers 503 `not_configured`. The check for a run under way
+and the inserts
 run under a transaction-level advisory lock on the record's ID, so two
 re-runs of one record never both create a run. A report's re-run checks only
 the report's own runs: a side whose simulation has a run under way for
@@ -273,10 +285,9 @@ calculated separately. A simulation's re-run checks every run of the
 simulation, including those reports created. A report or simulation
 deleted after the re-run read it answers 404. A report deleted with its
 simulations answers 400 `missing_reference`, naming a simulation, when a
-side gets a new run, and 404 when both sides reuse a run; a deleted
-budget-window report always answers 404, as its window run is created
-first. When Modal
-refuses the new
-run's call, the run is failed and the 503 `modal_call_refused` names the
-record and the run (`run_id`).
+side gets a new run, as a household report's sides always do, and 404 when
+both sides reuse a run; a deleted budget-window report always answers 404,
+as its window run is created first. When Modal refuses the new run's call,
+the run is failed, with a household report's new simulation runs, and the
+503 `modal_call_refused` names the record and the run (`run_id`).
 

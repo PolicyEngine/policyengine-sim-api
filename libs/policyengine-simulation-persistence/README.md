@@ -184,6 +184,16 @@ report run per year and each year's new runs of its own simulations. Every
 report re-run is refused while a budget-window run or a report run of the
 report is `pending` or `running`.
 
+A household report's definition also names its household (`household_id`).
+`insert_household_report_rerun` creates its new report run (trigger
+`manual`) and a new run of each side's own household simulation (no dataset
+or region), recording the current catalog version and the report's year:
+household runs are never reused. It takes the same lock and makes the same
+check for a run under way, and shares `insert_household_simulation_run` with
+`insert_household_report`. `HouseholdReportStore.create_report_rerun` runs it
+in a transaction of its own; the store's `read_inputs` reads the re-run's
+household and policies as it does a new report's.
+
 `EconomyRunStore.read_report_rerun_inputs` reads a re-run's catalog rows by
 the stored region code and dataset name, and each side's values and
 reusable run of its own simulation, never giving both sides the same run.
