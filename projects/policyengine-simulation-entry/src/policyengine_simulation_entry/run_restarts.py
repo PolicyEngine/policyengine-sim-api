@@ -54,6 +54,7 @@ from policyengine_simulation_persistence import IdleBudgetWindow, RestartKind
 from sqlalchemy.exc import SQLAlchemyError
 
 from policyengine_simulation_entry.run_restart_calls import (
+    REPORT_RUN_KINDS,
     CallNotRebuiltError,
     DeferredRestartError,
     HouseholdJobRestarts,
@@ -124,12 +125,6 @@ CALL_START_TIMEOUT_SECONDS: Final = 10.0
 # bounded statements, so the check ends within the scheduled function's
 # timeout and no row it marks is left without its call.
 CHECK_TIME_LIMIT: Final = timedelta(minutes=3)
-# The kinds recorded on a report run. A household report run's call and
-# failure are written as an economy report run's are, with the same
-# conditional writes on ``report_runs``.
-_REPORT_RUN_KINDS: Final = frozenset(
-    {RestartKind.REPORT_RUN, RestartKind.HOUSEHOLD_REPORT_RUN}
-)
 
 
 @dataclass(frozen=True)
@@ -433,7 +428,7 @@ class RunRestartService:
         Return None when the failure couldn't be written.
         """
         try:
-            if run.kind in _REPORT_RUN_KINDS:
+            if run.kind in REPORT_RUN_KINDS:
                 failed = self._stores.economy.fail_unstarted_report(
                     run.run_id, simulation_run_ids, message
                 )
@@ -449,7 +444,7 @@ class RunRestartService:
 
     def _record(self, run: UnstartedRun, call_id: str) -> None:
         """Record the call's ID while the row is pending with no call."""
-        if run.kind in _REPORT_RUN_KINDS:
+        if run.kind in REPORT_RUN_KINDS:
             self._stores.economy.record_report_call(run.run_id, call_id)
         elif run.kind is RestartKind.SIMULATION_RUN:
             self._stores.economy.record_simulation_call(run.run_id, call_id)

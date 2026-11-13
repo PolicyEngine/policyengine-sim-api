@@ -313,9 +313,10 @@ def list_unstarted_runs(
     """Return the oldest restartable rows created in the window, at most ``limit``.
 
     A row is restartable while it is pending with no Modal call recorded and
-    nothing has changed it since its insert. Report runs and standalone
-    simulation runs are listed only for economy simulations, and report runs
-    only outside a budget window.
+    nothing has changed it since its insert. Report runs are listed only
+    outside a budget window: an economy report run as ``report_run``, a
+    household report run as ``household_report_run``. Standalone simulation
+    runs are listed only for economy simulations.
     """
     listed: list[UnstartedRun] = []
     for kind, table in RESTART_TABLES.items():

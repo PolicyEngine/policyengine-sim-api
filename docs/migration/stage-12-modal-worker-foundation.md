@@ -872,8 +872,9 @@ function call with `household_report_calculation`, started with
 `start_report_run`. A run whose .py version's catalog version is no longer
 the one its simulation runs were created on, or whose household or policy
 is gone or can no longer be calculated, is failed with `run_not_started`
-and why, with its simulation runs. Each check is a
-`v2_run_restart_check` operation and each row it takes up a
+and why, with its simulation runs.
+
+Each check is a `v2_run_restart_check` operation and each row it takes up a
 `v2_run_restart` operation, with the row's kind, ID, age and outcome, and
 each outcome is also logged as a `v2_run_restart_outcome` event. A deferred
 row is taken up again by the next check, so the distinct run IDs are the

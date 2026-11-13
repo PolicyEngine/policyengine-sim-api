@@ -345,9 +345,13 @@ _REBUILD_REASONS: Final[dict[type[Exception], str | None]] = {
 _REBUILD_ERRORS: Final = tuple(_REBUILD_REASONS)
 
 
+def _rebuild_cause(error: Exception) -> Exception:
+    """Return the error that says why: a report side's refusal, or the error."""
+    return error.error if isinstance(error, ReportSideError) else error
+
+
 def _rebuild_reason(error: Exception) -> str:
-    if isinstance(error, ReportSideError):
-        return _rebuild_reason(error.error)
+    error = _rebuild_cause(error)
     reason = next(
         (
             reason
@@ -443,11 +447,11 @@ class RestartCallBuilder:
         except (SQLAlchemyError, VersionManifestUnavailableError) as error:
             raise DeferredRestartError(type(error).__name__) from error
         except _REBUILD_ERRORS as error:
-            if run.kind in _REPORT_RUN_KINDS and not simulation_run_ids:
+            if run.kind in REPORT_RUN_KINDS and not simulation_run_ids:
                 simulation_run_ids = self._report_simulation_run_ids(run.run_id)
             raise CallNotRebuiltError(
                 _rebuild_reason(error),
-                error_type=type(error).__name__,
+                error_type=type(_rebuild_cause(error)).__name__,
                 simulation_run_ids=simulation_run_ids,
             ) from error
 
@@ -696,8 +700,10 @@ class RestartCallBuilder:
         return start
 
 
-# The kinds recorded on a report run, which is failed with its simulation runs.
-_REPORT_RUN_KINDS: Final = frozenset(
+# The kinds recorded on a report run, failed with its simulation runs. A
+# household report run's call and failure are written as an economy report
+# run's are, with the same conditional writes on ``report_runs``.
+REPORT_RUN_KINDS: Final = frozenset(
     {RestartKind.REPORT_RUN, RestartKind.HOUSEHOLD_REPORT_RUN}
 )
 
