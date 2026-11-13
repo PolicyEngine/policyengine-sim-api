@@ -26,8 +26,12 @@ from policyengine_simulation_persistence import (
     BudgetWindowInputs,
     EconomyReportInputs,
     EconomySimulationInputs,
+    FoundBudgetWindow,
     FoundReportRun,
+    FoundSide,
     FoundSimulationRun,
+    FoundWindowRun,
+    FoundWindowYear,
     ReportDefinition,
     ReportRunStatus,
     SideDefinition,
@@ -142,6 +146,9 @@ class FakeRerunStore(FakeWindowStore):
     simulation_reruns: list[NewSimulationRerun] = field(default_factory=list)
     joined_simulation_run: FoundSimulationRun | None = None
     joined_report_run: FoundReportRun | None = None
+    # A keyed window's run on the re-run's versions, which an unforced
+    # re-run joins.
+    joined_window: FoundBudgetWindow | None = None
     # The side runs a keyed report's re-run joins, by side, in place of the
     # runs it proposes.
     joined_side_runs: dict[str, UUID] = field(default_factory=dict)
@@ -224,10 +231,37 @@ class FakeRerunStore(FakeWindowStore):
             },
         )
 
-    def create_window_rerun(self, rerun: NewWindowRerun) -> None:
+    def create_window_rerun(self, rerun: NewWindowRerun) -> FoundBudgetWindow:
         if self.rerun_failure is not None:
             raise self.rerun_failure
         self.windows.append(rerun)
+        # As the store does, a recalculating re-run joins nothing.
+        if self.joined_window is not None and not rerun.recalculate:
+            return self.joined_window
+        return FoundBudgetWindow(
+            report_id=rerun.report_id,
+            report_inserted=False,
+            window_run=FoundWindowRun(
+                id=rerun.window_run_id, inserted=True, status=ReportRunStatus.PENDING
+            ),
+            years=tuple(
+                FoundWindowYear(
+                    year=window_year.year,
+                    report_run_id=window_year.report_run_id,
+                    baseline=FoundSide(
+                        simulation_id=window_year.baseline.simulation_id,
+                        simulation_run_id=window_year.baseline.simulation_run_id,
+                        run_inserted=True,
+                    ),
+                    reform=FoundSide(
+                        simulation_id=window_year.reform.simulation_id,
+                        simulation_run_id=window_year.reform.simulation_run_id,
+                        run_inserted=True,
+                    ),
+                )
+                for window_year in rerun.years
+            ),
+        )
 
     def create_report_rerun(self, rerun: NewReportRerun) -> FoundReportRun:
         if self.rerun_failure is not None:

@@ -44,8 +44,12 @@ from policyengine_simulation_persistence import (
     CatalogDataset,
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
+    FoundBudgetWindow,
     FoundReportRun,
+    FoundSide,
     FoundSimulationRun,
+    FoundWindowRun,
+    FoundWindowYear,
     MissingPolicyParametersError,
     NewReportRerun,
     NewSimulationRerun,
@@ -739,6 +743,88 @@ def test_a_forced_window_rerun_recalculates_every_year() -> None:
     assert window.recalculate is True
     assert not any(window_year.baseline.reused for window_year in window.years)
     assert not any(year.baseline_reused for year in rerun.years)
+
+
+KEYED_WINDOW = replace(STORED_WINDOW, keyed=True)
+
+
+def test_a_keyed_windows_rerun_joins_its_window_run_and_starts_no_year() -> None:
+    """Answers 3 and 8: the window run on these versions is answered as it is."""
+    joined = FoundBudgetWindow(
+        report_id=REPORT_ID,
+        report_inserted=False,
+        window_run=FoundWindowRun(
+            id=UUID(int=81), inserted=False, status=ReportRunStatus.SUCCEEDED
+        ),
+        years=tuple(
+            FoundWindowYear(
+                year=year,
+                report_run_id=UUID(int=82 + offset),
+                baseline=FoundSide(
+                    simulation_id=WINDOW_SIMULATION_IDS[year][0],
+                    simulation_run_id=UUID(int=90 + offset),
+                    run_inserted=False,
+                ),
+                reform=FoundSide(
+                    simulation_id=WINDOW_SIMULATION_IDS[year][1],
+                    simulation_run_id=UUID(int=95 + offset),
+                    run_inserted=False,
+                ),
+            )
+            for offset, year in enumerate((2026, 2027, 2028))
+        ),
+    )
+    store = FakeRerunStore(report_definition=KEYED_WINDOW, joined_window=joined)
+    caller = FakeCaller()
+    advancer = FakeAdvancer(store)
+
+    rerun = _rerun_report(rerun_service(store, caller=caller, advancer=advancer))
+
+    (window,) = store.windows
+    assert window.recalculate is False
+    assert (advancer.advances, caller.report_runs) == ([], [])
+    assert (rerun.budget_window_run_id, rerun.status, rerun.report_run_id) == (
+        UUID(int=81),
+        ReportRunStatus.SUCCEEDED,
+        UUID(int=82),
+    )
+    assert all(year.baseline_reused for year in rerun.years)
+
+
+def test_a_keyed_windows_rerun_with_no_run_on_its_versions_starts_a_new_one() -> None:
+    store = FakeRerunStore(report_definition=KEYED_WINDOW)
+    advancer = FakeAdvancer(store)
+
+    rerun = _rerun_report(rerun_service(store, advancer=advancer))
+
+    (window,) = store.windows
+    assert window.recalculate is False
+    assert advancer.advances == [window.window_run_id]
+    assert rerun.budget_window_run_id == window.window_run_id
+
+
+def test_a_keyed_windows_forced_rerun_recalculates_every_year() -> None:
+    store = FakeRerunStore(
+        report_definition=KEYED_WINDOW,
+        joined_window=FoundBudgetWindow(
+            report_id=REPORT_ID,
+            report_inserted=False,
+            window_run=FoundWindowRun(
+                id=UUID(int=81), inserted=False, status=ReportRunStatus.SUCCEEDED
+            ),
+            years=(),
+        ),
+    )
+    advancer = FakeAdvancer(store)
+
+    rerun = _rerun_report(
+        rerun_service(store, advancer=advancer), ReportRerunRequest(force=True)
+    )
+
+    (window,) = store.windows
+    assert window.recalculate is True
+    assert advancer.advances == [window.window_run_id]
+    assert rerun.budget_window_run_id == window.window_run_id
 
 
 def test_a_window_rerun_whose_first_year_modal_refuses_names_the_window_run() -> None:

@@ -446,9 +446,7 @@ def test_a_create_the_database_cannot_take_is_unavailable():
     ],
     ids=["refused", "not-confirmed-in-time"],
 )
-def test_a_call_modal_does_not_confirm_fails_only_the_report_run(
-    caller, error_type
-):
+def test_a_call_modal_does_not_confirm_fails_only_the_report_run(caller, error_type):
     """Its simulation runs may be another report run's (answer 8)."""
     store = FakeHouseholdReportStore()
 
