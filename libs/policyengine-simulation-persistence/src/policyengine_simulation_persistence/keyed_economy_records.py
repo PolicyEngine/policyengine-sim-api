@@ -45,6 +45,7 @@ from policyengine_simulation_persistence.shared_rows import (
     find_or_insert_report_run,
     find_or_insert_simulation,
     find_or_insert_simulation_run,
+    find_or_insert_simulation_runs,
 )
 from policyengine_simulation_persistence.tables import (
     ReportRunStatus,
@@ -263,21 +264,19 @@ def _find_or_insert_simulation_runs(
     Inserted in simulation ID order; one simulation on both sides gets one
     run, with the baseline's proposed ID.
     """
-    proposed: dict[UUID, UUID] = {}
-    for side in reversed(_SIDES):
-        proposed[simulation_ids[side]] = getattr(request, side).simulation_run_id
-    return {
-        simulation_id: find_or_insert_simulation_run(
-            connection,
-            simulation_run_row(
-                run_id=proposed[simulation_id],
-                simulation_id=simulation_id,
-                population=request.population,
-                versions=request.versions,
-            ),
+    proposed_sides = {"baseline": request.baseline, "reform": request.reform}
+    rows = {
+        simulation_ids[side]: simulation_run_row(
+            run_id=proposed_sides[side].simulation_run_id,
+            simulation_id=simulation_ids[side],
+            population=request.population,
+            versions=request.versions,
         )
-        for simulation_id in sorted(proposed)
+        # The reform first, so one simulation on both sides keeps the
+        # baseline's proposed ID.
+        for side in reversed(_SIDES)
     }
+    return find_or_insert_simulation_runs(connection, rows)
 
 
 def _simulation_row(

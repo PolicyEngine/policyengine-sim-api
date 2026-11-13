@@ -77,6 +77,7 @@ from policyengine_simulation_persistence.shared_rows import (
     find_joinable_report_run,
     find_or_insert_report_run,
     find_or_insert_simulation_run,
+    find_or_insert_simulation_runs,
 )
 from policyengine_simulation_persistence.tables import (
     ReportRunStatus,
@@ -387,25 +388,21 @@ def _side_runs(connection: Connection, rerun: NewReportRerun) -> tuple[UUID, UUI
                     forced=rerun.forced,
                 )
         return rerun.baseline.simulation_run_id, rerun.reform.simulation_run_id
-    proposed = {
-        side.simulation_id: side.simulation_run_id
+    # The reform first, so one simulation on both sides keeps the baseline's
+    # proposed ID.
+    rows = {
+        side.simulation_id: simulation_run_row(
+            run_id=side.simulation_run_id,
+            simulation_id=side.simulation_id,
+            population=rerun.population,
+            versions=rerun.versions,
+        )
         for side in reversed(sides)
         if not side.reused
     }
-    found = {
-        simulation_id: find_or_insert_simulation_run(
-            connection,
-            simulation_run_row(
-                run_id=proposed[simulation_id],
-                simulation_id=simulation_id,
-                population=rerun.population,
-                versions=rerun.versions,
-            ),
-        ).id
-        for simulation_id in sorted(proposed)
-    }
+    found = find_or_insert_simulation_runs(connection, rows)
     baseline_run_id, reform_run_id = (
-        side.simulation_run_id if side.reused else found[side.simulation_id]
+        side.simulation_run_id if side.reused else found[side.simulation_id].id
         for side in sides
     )
     return baseline_run_id, reform_run_id

@@ -155,6 +155,7 @@ from policyengine_simulation_persistence.shared_rows import (
     find_or_insert_report_run,
     find_or_insert_simulation,
     find_or_insert_simulation_run,
+    find_or_insert_simulation_runs,
 )
 from policyengine_simulation_persistence.tables import (
     LATEST_YEAR,
@@ -277,6 +278,7 @@ __all__ = [
     "find_or_insert_report_run",
     "find_or_insert_simulation",
     "find_or_insert_simulation_run",
+    "find_or_insert_simulation_runs",
     "find_reusable_run",
     "find_reusable_run_of",
     "household_jobs",

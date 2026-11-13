@@ -593,24 +593,29 @@ def _created_report_run(
     """Answer the report run a re-run created, with the side runs it names.
 
     A side is reused when its run isn't one this re-run inserted: a reused
-    run, or, for a keyed report, its simulation's run the store joined.
-    The status is the new run's, until its call is started.
+    run, or, for a keyed report, its simulation's run the store joined. The
+    runs this re-run may have inserted have the IDs its unreused sides
+    proposed; one simulation on both sides gets one run, with the
+    baseline's. The status is the new run's, until its call is started.
     """
     if created.reform_simulation_run_id is None:
         msg = f"report run {created.id} of an economy report names no reform run"
         raise ValueError(msg)
+    proposed = {
+        side.simulation_run_id
+        for side in (rerun.baseline, rerun.reform)
+        if not side.reused
+    }
     return EconomyReportCreated(
         report_id=stored.report_id,
         report_run_id=created.id,
         status=created.status,
         baseline_simulation_id=stored.baseline.simulation_id,
         baseline_simulation_run_id=created.baseline_simulation_run_id,
-        baseline_reused=rerun.baseline.reused
-        or created.baseline_simulation_run_id != rerun.baseline.simulation_run_id,
+        baseline_reused=created.baseline_simulation_run_id not in proposed,
         reform_simulation_id=stored.reform.simulation_id,
         reform_simulation_run_id=created.reform_simulation_run_id,
-        reform_reused=rerun.reform.reused
-        or created.reform_simulation_run_id != rerun.reform.simulation_run_id,
+        reform_reused=created.reform_simulation_run_id not in proposed,
     )
 
 

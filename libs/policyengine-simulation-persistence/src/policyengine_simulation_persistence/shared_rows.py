@@ -180,6 +180,21 @@ def find_or_insert_simulation_run(
     )
 
 
+def find_or_insert_simulation_runs(
+    connection: Connection, rows: Mapping[UUID, Mapping[str, Any]]
+) -> dict[UUID, FoundSimulationRun]:
+    """Return each simulation's joinable run, by simulation ID, or insert ``rows``.
+
+    ``rows`` maps each simulation's ID to its run as it would be inserted.
+    The lookups go in simulation ID order, so two transactions never wait
+    for each other in opposite orders.
+    """
+    return {
+        simulation_id: find_or_insert_simulation_run(connection, rows[simulation_id])
+        for simulation_id in sorted(rows)
+    }
+
+
 def find_or_insert_report_run(
     connection: Connection, values: Mapping[str, Any]
 ) -> FoundReportRun:
