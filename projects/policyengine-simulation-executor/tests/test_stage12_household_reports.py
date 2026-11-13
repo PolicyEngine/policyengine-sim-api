@@ -15,7 +15,7 @@ and runs it again under the same call ID, so a pre-emption records nothing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 from uuid import UUID
 
@@ -972,4 +972,140 @@ def test_a_held_side_failed_by_a_call_still_running_fails_with_its_failure() -> 
         f"{FAILURE_MESSAGE}"
     )
     assert runs.of("fail_held_by") == []
+    assert answer["status"] == "failed"
+
+
+class _MovingHolder:
+    """A holding call that, probed, ends as ``ends_as`` after changing the run.
+
+    ``releases`` leaves the run pending with no call, claimable again;
+    ``moves`` leaves it running under ``LATER_HOLDER_CALL_ID``.
+    """
+
+    object_id = "fc-earlier"
+
+    def __init__(self, runs, run_id, *, ends_as: str) -> None:
+        self.runs = runs
+        self.run_id = run_id
+        self.ends_as = ends_as
+
+    def get(self, *, timeout=None):
+        running = _state(RunStatus.RUNNING)
+        if self.ends_as == "releases":
+            self.runs.simulation_claims.pop(self.run_id)
+            self.runs.simulation_states[self.run_id] = replace(
+                running, status=RunStatus.PENDING, modal_call_id=None
+            )
+        else:
+            self.runs.simulation_states[self.run_id] = replace(
+                running, modal_call_id=LATER_HOLDER_CALL_ID
+            )
+        msg = "the holder call ended"
+        raise RuntimeError(msg)
+
+    def cancel(self) -> None:
+        """Never called: the wait leaves its holders alone."""
+
+
+LATER_HOLDER_CALL_ID = "fc-later"
+
+
+def _restoring(holders, restored: list[str], **wait_options) -> HeldRunWait:
+    wait = _wait(None, **wait_options)
+
+    def restore(modal_call_id: str):
+        restored.append(modal_call_id)
+        return holders[modal_call_id]
+
+    return replace(wait, restore=restore)
+
+
+def test_a_held_side_left_unstarted_is_claimed_and_calculated_here() -> None:
+    runs, _holder = _held_baseline("never")
+    calculated: list[UUID] = []
+    restored: list[str] = []
+    holders = {"fc-earlier": _MovingHolder(runs, BASELINE_RUN_ID, ends_as="releases")}
+
+    answer = _run(
+        runs, _recording_calculate(calculated), wait=_restoring(holders, restored)
+    )
+
+    assert calculated == [REFORM_RUN_ID, BASELINE_RUN_ID]
+    assert [write["run"] for write in runs.of("claim")] == [
+        BASELINE_RUN_ID,
+        REFORM_RUN_ID,
+        BASELINE_RUN_ID,
+    ]
+    assert runs.of("fail_held_by") == []
+    assert answer["status"] == "succeeded"
+
+
+def test_a_held_side_moved_to_another_call_is_waited_for_under_it() -> None:
+    runs, later_holder = _held_baseline("succeeds", probes_before_ending=0)
+    later_holder.object_id = LATER_HOLDER_CALL_ID
+    restored: list[str] = []
+    holders = {
+        "fc-earlier": _MovingHolder(runs, BASELINE_RUN_ID, ends_as="moves"),
+        LATER_HOLDER_CALL_ID: later_holder,
+    }
+
+    answer = _run(runs, _succeeded, wait=_restoring(holders, restored))
+
+    # The earlier call's end left the run under a later call, which is
+    # waited for rather than failed.
+    assert restored == ["fc-earlier", LATER_HOLDER_CALL_ID]
+    assert runs.of("fail_held_by") == []
+    assert answer["status"] == "succeeded"
+
+
+def test_one_run_on_both_sides_another_call_holds_is_waited_for_once() -> None:
+    runs, holder = _held_baseline("succeeds")
+    runs.named_runs = (BASELINE_RUN_ID, BASELINE_RUN_ID)
+    calculation = HouseholdReportRunCalculation.model_validate(
+        {"baseline": _request(BASELINE_RUN_ID), "reform": _request(BASELINE_RUN_ID)}
+    )
+    calculated: list[UUID] = []
+
+    answer = _run(
+        runs,
+        _recording_calculate(calculated),
+        wait=_wait(holder),
+        calculation=calculation,
+    )
+
+    assert calculated == []
+    assert runs.kinds == ["claim_report", "read_runs", "claim", "complete_report"]
+    assert answer["status"] == "succeeded"
+    assert [side["status"] for side in answer["simulation_runs"]] == [
+        "succeeded",
+        "succeeded",
+    ]
+
+
+def test_the_wait_window_counts_this_calls_own_calculation() -> None:
+    runs = FakeHouseholdReportRuns(
+        simulation_claims={
+            REFORM_RUN_ID: RunWrite(changed=False, status=RunStatus.RUNNING)
+        },
+        simulation_states={REFORM_RUN_ID: _state(RunStatus.RUNNING)},
+    )
+    holder = _Holder(runs, REFORM_RUN_ID, ends_as="never")
+    clock = _Clock()
+    wait = replace(
+        _wait(holder, timeout_seconds=60),
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+    )
+
+    def slow_calculation(
+        request: HouseholdExecutionRequest,
+    ) -> HouseholdExecutionResult:
+        clock.now += 50
+        return _succeeded(request)
+
+    answer = _run(runs, slow_calculation, wait=wait)
+
+    # The window is 60 seconds from the call's start: the baseline took 50 of
+    # them, so the held reform was waited for 10 seconds, not 60.
+    assert clock.now == pytest.approx(60)
     assert answer["status"] == "failed"

@@ -9,7 +9,7 @@ waiting unless Modal reports the call ended, including when Modal can't say.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from uuid import UUID, uuid4
 
 import pytest
@@ -143,3 +143,19 @@ def test_a_failed_probe_of_an_ended_call_fails_the_run_it_left_unfinished() -> N
     assert store.failed_for_calls == [HOLDING_CALL_ID]
     assert raised.value.detail.error_code == "modal_call_ended"
     assert store.state.error_message == ENDED_CALL_MESSAGE
+
+
+def test_a_failed_probe_of_a_run_moved_to_another_call_follows_it_unasked() -> None:
+    later_call_id = "fc-later-worker"
+    store = OneRunStore(
+        replace(_run_state(RunStatus.RUNNING), modal_call_id=later_call_id)
+    )
+    call_states = ModalCallStates(CallState.RUNNING)
+    waited = _wait(store, call_states)
+
+    with pytest.raises(TimeoutError):
+        waited.get(timeout=0)
+
+    assert call_states.asked == []
+    assert store.failed_for_calls == []
+    assert waited.object_id == later_call_id

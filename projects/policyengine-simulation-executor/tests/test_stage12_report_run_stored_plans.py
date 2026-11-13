@@ -36,7 +36,13 @@ from stage12_fake_report_runs import (
 from stage12_fake_stores import FakeArtifacts, simulation_frames
 from stage12_run_worker_support import RunWorkerInvoker
 from stage12_runtime_support import coordinate_report, shared_output_plan
-from stage12_shared_run_support import StoredOutputFiles, stored_output_uri
+from stage12_shared_run_support import (
+    HolderCall,
+    HolderEnding,
+    HolderInvoker,
+    StoredOutputFiles,
+    stored_output_uri,
+)
 
 COORDINATOR_CALL_ID = "fc-coordinator"
 # The US labour-supply responses .py's output reads from both sides.
@@ -215,3 +221,48 @@ def test_an_older_file_lacking_a_column_the_report_reads_is_refused() -> None:
     )
     assert invoker.events == []
     assert report_runs.simulation_runs[BASELINE_RUN_ID].writes == []
+
+
+def test_a_waited_for_file_lacking_a_column_the_report_reads_is_refused() -> None:
+    # The holder stores the baseline under an earlier report's plan, without
+    # the copied input this report reads from that side.
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
+    read_plan = _with_person_columns(shared_output_plan(), add=(COPIED_INPUT,))
+    reform_frames = simulation_frames(120.0)
+    reform_frames["person"] = reform_frames["person"].assign(**{COPIED_INPUT: 1.0})
+    _succeeded_with_frames(report_runs, files, REFORM_RUN_ID, reform_frames)
+    holder_call_id = "fc-other-report-baseline-worker"
+    baseline = report_runs.simulation_runs[BASELINE_RUN_ID]
+    baseline.status, baseline.modal_call_id = RunStatus.RUNNING, holder_call_id
+    holder = HolderCall(
+        holder_call_id,
+        report_runs=report_runs,
+        simulation_run_id=BASELINE_RUN_ID,
+        files=files,
+        ending=HolderEnding.SUCCEEDS,
+    )
+    invoker = HolderInvoker(report_runs, artifacts, holders=[holder])
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(
+            report_runs,
+            invoker,
+            artifacts,
+            files,
+            output_plan_resolver=lambda _report: read_plan,
+            stored_plan_resolver=lambda _simulation: read_plan,
+        )
+
+    report_run = report_runs.report_runs[REPORT_RUN_ID]
+    assert report_run.error_message.startswith(
+        "reused_simulation_output_incompatible: "
+    )
+    assert invoker.events == []
+    # The run is its holder's, which completed it; the refusal writes nothing.
+    assert report_runs.simulation_runs[BASELINE_RUN_ID].writes == [
+        "complete_simulation_run"
+    ]
