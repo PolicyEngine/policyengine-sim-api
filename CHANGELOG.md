@@ -10,6 +10,15 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.15.0] - 2026-11-13
+
+### Added
+
+- `POST /reports/{report_id}/runs` also re-runs a stored budget-window report, as a new budget-window run with a report run per year on each year's own simulations, its first years started as a new window's are.
+- `POST /reports/{report_id}/runs` also re-runs a stored household report, in the report's own year, as a new report run with a new run of each side's own household simulation, started by one household function call; household runs are never reused, so `force` changes nothing.
+- The Simulation Entrypoint re-runs a stored economy report or simulation on the current .py version through `POST /reports/{report_id}/runs` and `POST /simulations/{simulation_id}/runs`, as a new run started by run ID, keeping every earlier run. A report's re-run reuses a run of each side's own simulation that succeeded on the same versions unless `force` is set; a record with a run pending or running is refused with 409 `run_in_progress`.
+
+
 ## [0.14.0] - 2026-11-13
 
 ### Added
