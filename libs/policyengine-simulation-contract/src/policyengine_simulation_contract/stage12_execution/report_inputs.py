@@ -161,7 +161,9 @@ class ReportExecutionInput(StrictContractModel):
     """A baseline and reform simulation pair to run and aggregate into one report.
 
     Both simulations must belong to this report, carry the baseline and reform
-    roles and distinct execution IDs, and differ only in their policy.
+    roles, and differ only in their policy. Their execution IDs differ, except
+    in a report that names one simulation run on both sides, whose two inputs
+    are then the same simulation, policy included.
     """
 
     contract_version: Literal[1] = 1
@@ -174,8 +176,9 @@ class ReportExecutionInput(StrictContractModel):
     def require_aligned_simulations(self) -> ReportExecutionInput:
         """Check the two simulations form one comparable report.
 
-        Roles must be baseline and reform, both must belong to this report with
-        distinct execution ids, and everything but the policy must match.
+        Roles must be baseline and reform, both must belong to this report,
+        and everything but the policy must match. Inputs sharing one
+        execution ID name one simulation run, so their policies match too.
         """
         if self.baseline.role is not SimulationRole.BASELINE:
             msg = "baseline input must use the baseline role"
@@ -189,8 +192,15 @@ class ReportExecutionInput(StrictContractModel):
         if self.reform.evaluation_id != self.evaluation_id:
             msg = "reform evaluation_id must match the report"
             raise ValueError(msg)
-        if self.baseline.simulation_execution_id == self.reform.simulation_execution_id:
-            msg = "baseline and reform simulation identifiers must differ"
+        if (
+            self.baseline.simulation_execution_id
+            == self.reform.simulation_execution_id
+            and self.baseline.policy != self.reform.policy
+        ):
+            msg = (
+                "a report naming one simulation run on both sides must give "
+                "both the same policy"
+            )
             raise ValueError(msg)
         for field_name in (
             "population",
