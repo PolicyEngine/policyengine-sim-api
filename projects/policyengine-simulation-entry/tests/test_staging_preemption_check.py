@@ -670,8 +670,23 @@ def test_an_empty_listing_is_asked_again(fakes, tmp_path):
 
 @pytest.mark.parametrize(
     "output",
-    ["{}", "null", json.dumps([{"ID": CONTAINERS[0]}])],
-    ids=["object", "null", "renamed-column"],
+    [
+        "{}",
+        "null",
+        json.dumps([{"ID": CONTAINERS[0]}]),
+        "[1]",
+        "[null]",
+        # The container's own entry is readable; the other entry isn't.
+        json.dumps([{"Container ID": CONTAINERS[0]}, {"ID": CONTAINERS[1]}]),
+    ],
+    ids=[
+        "object",
+        "null",
+        "renamed-column",
+        "number-entry",
+        "null-entry",
+        "renamed-column-in-one-entry",
+    ],
 )
 def test_a_listing_that_is_not_a_list_of_containers_is_asked_again(
     fakes, tmp_path, output
@@ -700,10 +715,14 @@ def test_a_listing_that_is_not_a_list_of_containers_is_asked_again(
     ],
     ids=["unlisted-after-a-failure", "failure-after-unlisted"],
 )
-def test_a_missed_attempts_reason_names_only_the_last_lookups_outcome(
+def test_a_missed_attempts_reason_names_only_the_last_listings_outcome(
     fakes, tmp_path, failed_listings, last_note, earlier_note
 ):
-    """Modal lists no containers, after or before a listing that fails."""
+    """Modal lists no containers, after or before a listing that fails.
+
+    The reason keeps the last container listing's outcome, even when later
+    call-graph reads name no container to list.
+    """
     attempt = _household_attempt(0, proves=False)
     attempt.reads_before_stop = [
         _household(JOB_IDS[0], "pending", CALL_IDS[0]),
@@ -799,8 +818,10 @@ def _is_submission(call: list[str]) -> bool:
 def test_the_next_attempt_waits_out_modals_idle_scale_down_first(fakes, tmp_path):
     """Modal stops a container left idle for 60 seconds, by default.
 
-    A new attempt on a warm container the last one left, the one the check
-    found or the one Modal's rerun ran in, would finish too fast to stop.
+    A new attempt on a container the last one left warm would finish too
+    fast to stop, so it starts a fixed wait after the last attempt ended.
+    The wait covers a container Modal ran a stopped call in again only when
+    that rerun returned within about 30 seconds of the attempt's end.
     """
     result, _ = _run(
         fakes,
