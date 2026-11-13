@@ -167,6 +167,10 @@ class UnstartedRunSource(Protocol):
         """Return the window's earliest year still waiting, never changed."""
         ...
 
+    def mark_waiting_year(self, year: WaitingYear) -> bool:
+        """Mark the window's year while it is still unstarted; return whether."""
+        ...
+
 
 class HouseholdJobRestarts(Protocol):
     """The household job reads and writes a restart uses (``HouseholdJobStore``)."""

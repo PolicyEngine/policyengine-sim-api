@@ -17,7 +17,7 @@ function, starts such a run's call once more:
    stopped (``IdleBudgetWindow``): no year is under way and years are still
    waiting, untouched, since a time in the window.
    ``read_earliest_waiting_year`` names the year a restart starts the window
-   from, and marks just before its first start.
+   from, and ``mark_waiting_year`` marks it just before its first start.
 2. ``mark_restart`` sets the row's ``updated_at`` before the check starts its
    call, so the row is never listed again and is restarted at most once. It
    uses the statement's clock rather than the transaction's, so the mark
@@ -376,10 +376,23 @@ def mark_restart(connection: Connection, run: UnstartedRun) -> bool:
     A row given a call, claimed, finished or already marked since it was
     listed is left as it is, so two checks at once restart it only once.
     """
-    table = RESTART_TABLES[run.kind]
+    return _mark(connection, RESTART_TABLES[run.kind], run.run_id)
+
+
+def mark_waiting_year(connection: Connection, year: WaitingYear) -> bool:
+    """Mark a window's waiting year, as ``mark_restart`` marks a row.
+
+    A window with a marked waiting year is not listed again until that year
+    has started, so the window is restarted once each time it stops.
+    """
+    return _mark(connection, report_runs, year.report_run_id)
+
+
+def _mark(connection: Connection, table: Table, run_id: UUID) -> bool:
+    """Set the row's ``updated_at`` while it is still unstarted; return whether."""
     marked = connection.execute(
         update(table)
-        .where(table.c.id == run.run_id, *_unstarted(table))
+        .where(table.c.id == run_id, *_unstarted(table))
         .values(updated_at=func.clock_timestamp())
         .returning(table.c.id)
     ).scalar_one_or_none()

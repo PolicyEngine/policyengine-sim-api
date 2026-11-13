@@ -141,7 +141,8 @@ the run tables and their inputs, and `UPDATE` of `updated_at`,
   (`IdleBudgetWindow`, a type apart from the rows): pending or running, with
   no year under way and years still waiting untouched, last changed in a
   window. `read_earliest_waiting_year` names the year a restart starts the
-  window from, and marks just before its first start.
+  window from, and `mark_waiting_year` marks it just before its first
+  start.
 - `mark_restart` sets a listed row's `updated_at` to the statement's clock
   while it is still unstarted, so it is listed and marked only once.
 - `read_unstarted_report_run` and `read_unstarted_simulation_run` read back

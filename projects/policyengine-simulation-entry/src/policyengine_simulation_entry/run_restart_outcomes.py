@@ -38,7 +38,8 @@ class RestartOutcome(StrEnum):
     after Modal didn't confirm the check's call. A window is left when it is
     gone, has no year waiting untouched, finished or was failed for an
     earlier failed year before the check started anything, or its year
-    changed before the mark; and when its marked year's failure couldn't be
+    changed before the mark (or before the refusal of a year whose call
+    can't be rebuilt); and when its marked year's failure couldn't be
     written, for the sweep to fail as stalled.
     ``deferred``: the row or window is left unmarked for the next check,
     because its rows or the manifest couldn't be read, its restart raised

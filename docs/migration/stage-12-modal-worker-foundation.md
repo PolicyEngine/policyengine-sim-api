@@ -829,7 +829,8 @@ window is restarted once each time it stops; an advance whose lock or reads
 fail marks nothing, and the next check takes the window up again. Its
 statements are bounded by the check's statement timeout. A window whose
 first call can't be rebuilt is failed at once through the same advance: that
-year records `run_not_started` and why, and the window which year failed.
+year records `run_not_started` and why, and the window which year failed,
+unless the year changed before the advance took the window's lock.
 Household simulations' runs
 are left alone: the check can't rebuild their calls yet. Each check is a
 `v2_run_restart_check` operation and each row it takes up a

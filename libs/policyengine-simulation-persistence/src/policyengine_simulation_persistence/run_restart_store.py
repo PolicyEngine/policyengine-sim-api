@@ -15,6 +15,7 @@ from policyengine_simulation_persistence.run_restart_records import (
     list_idle_budget_windows,
     list_unstarted_runs,
     mark_restart,
+    mark_waiting_year,
     read_earliest_waiting_year,
     read_report_run_simulation_run_ids,
     read_run_call,
@@ -119,3 +120,8 @@ class RunRestartStore:
         """Return the window's earliest year still waiting, never changed, or None."""
         with self._transaction() as connection:
             return read_earliest_waiting_year(connection, window_run_id)
+
+    def mark_waiting_year(self, year: WaitingYear) -> bool:
+        """Mark the window's year while it is still unstarted; return whether it was."""
+        with self._transaction() as connection:
+            return mark_waiting_year(connection, year)

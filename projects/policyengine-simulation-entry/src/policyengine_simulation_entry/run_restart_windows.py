@@ -23,7 +23,8 @@ advance whose lock or reads fail starts and marks nothing, so the next
 check takes the window up again. A year Modal refuses fails the window, as
 it would at the service's start. A window whose first call can't be
 rebuilt is failed at once, through the same advance: that year records
-``run_not_started`` and why, as a row the check can't rebuild is failed.
+``run_not_started`` and why, as a row the check can't rebuild is failed,
+unless it changed before the advance took the window's lock.
 """
 
 from __future__ import annotations
@@ -32,7 +33,6 @@ import asyncio
 from functools import partial
 from typing import TYPE_CHECKING
 
-from policyengine_simulation_persistence import RestartKind, UnstartedRun
 from policyengine_stage12_persistence import (
     RunStatus,
     YearStartDeferred,
@@ -54,6 +54,7 @@ from policyengine_simulation_entry.run_restart_outcomes import (
 if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
+    from uuid import UUID
 
     from policyengine_simulation_persistence import IdleBudgetWindow
     from policyengine_stage12_persistence import WindowAdvance, YearToStart
@@ -75,13 +76,21 @@ class _MarkedYearStarts:
     """Start a window's years with ``YearStarts``, marking the restart first.
 
     Before the first start, it marks the earliest waiting year. A mark that
-    changes nothing (the year changed meanwhile) or can't be written defers
-    the year, so the advance starts nothing more. It records what happened,
-    so the restart can say how it ended.
+    changes nothing (the year changed meanwhile) or raises defers the year,
+    so the advance starts nothing more; an error other than the database's
+    is logged with its traceback. It records what happened, so the restart
+    can say how it ended.
     """
 
-    def __init__(self, *, mark: Callable[[], bool], start_year: YearStarts) -> None:
-        """Mark with ``mark``, then start each year with ``start_year``."""
+    def __init__(
+        self,
+        *,
+        window: IdleBudgetWindow,
+        mark: Callable[[], bool],
+        start_year: YearStarts,
+    ) -> None:
+        """Mark with ``mark``, then start each of the window's years."""
+        self._window = window
         self._mark = mark
         self._start_year = start_year
         self.marked = False
@@ -95,6 +104,11 @@ class _MarkedYearStarts:
             try:
                 self.marked = self._mark()
             except SQLAlchemyError as error:
+                self.mark_error_type = type(error).__name__
+                raise YearStartDeferred from None
+            # Any other error is no refusal by Modal: nothing was started.
+            except Exception as error:  # noqa: BLE001  # logged with its traceback by log_unexpected_error
+                log_unexpected_error(self._window)
                 self.mark_error_type = type(error).__name__
                 raise YearStartDeferred from None
             if not self.marked:
@@ -136,33 +150,36 @@ class _MarkedYearStarts:
 
 
 class _RefusedFirstYear:
-    """Fail the first year offered with why its call can't be rebuilt.
+    """Fail the year whose call can't be rebuilt, with why.
 
-    The advance fails that year, and so the window, unless the year's own
-    call claimed it meanwhile; any later year is deferred to its
-    coordinator. Nothing is marked, so a failure that isn't written leaves
-    the window for the next check.
+    The advance offers the earliest year still waiting. When that is the
+    year the restart read, it is refused, and the advance fails it, and so
+    the window, unless the year's own call claimed it meanwhile. Any other
+    year is deferred to its coordinator: the year read has changed since,
+    so nothing is failed. Nothing is marked, so a failure that isn't written
+    leaves the window for the next check.
     """
 
-    def __init__(self, cannot: CallNotRebuiltError) -> None:
-        """Refuse with the reason ``cannot`` gives."""
+    def __init__(self, cannot: CallNotRebuiltError, *, report_run_id: UUID) -> None:
+        """Refuse the year of ``report_run_id`` with the reason ``cannot`` gives."""
         self._error_message = (
             f"{NOT_STARTED_MESSAGE}, and its call could not be built again: "
             f"{cannot.reason}."
         )
         self._error_type = cannot.error_type
-        self.offered = False
+        self._report_run_id = report_run_id
+        self.refused = False
 
-    def __call__(self, year_to_start: YearToStart, /) -> str:  # noqa: ARG002  # the YearStarter protocol's argument
-        """Refuse the first year offered; defer any later one."""
-        if self.offered:
+    def __call__(self, year_to_start: YearToStart, /) -> str:
+        """Refuse the year read, when it is offered first; defer any other."""
+        if self.refused or year_to_start.run_ids.report_run_id != self._report_run_id:
             raise YearStartDeferred
-        self.offered = True
+        self.refused = True
         raise YearStartRefused(self._error_message)
 
     def ended(self, advance: WindowAdvance) -> _Ended:
         """Return how the restart ended, from the advance it made."""
-        if self.offered and advance.status is RunStatus.FAILED:
+        if self.refused and advance.status is RunStatus.FAILED:
             return RestartOutcome.FAILED, self._error_type
         return RestartOutcome.LEFT, None
 
@@ -235,18 +252,13 @@ class WindowRestarter:
         except DeferredRestartError as deferred:
             return RestartOutcome.DEFERRED, str(deferred)
         except CallNotRebuiltError as cannot:
-            return _RefusedFirstYear(cannot)
+            return _RefusedFirstYear(cannot, report_run_id=waiting.report_run_id)
         if built is None:
             return RestartOutcome.LEFT, None
         worker, calculation = built
-        first_year = UnstartedRun(
-            kind=RestartKind.REPORT_RUN,
-            run_id=waiting.report_run_id,
-            # The mark reads only the row's kind and ID.
-            created_at=window.last_changed_at,
-        )
         return _MarkedYearStarts(
-            mark=partial(self._restarts.mark_restart, first_year),
+            window=window,
+            mark=partial(self._restarts.mark_waiting_year, waiting),
             start_year=YearStarts(
                 worker=worker,
                 caller=self._caller,
