@@ -16,7 +16,6 @@ import pytest
 from conftest import FakeBackend, make_settings
 from economy_rerun_fakes import (
     REPORT_ID,
-    RUN_UNDER_WAY_ID,
     FakeRerunStore,
     rerun_service,
 )
@@ -61,6 +60,7 @@ from policyengine_simulation_entry.simulation_database import SimulationDatabase
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
+    FoundReportRun,
     HouseholdRerunSide,
     MissingPolicyParametersError,
     NewHouseholdReportRerun,
@@ -68,7 +68,6 @@ from policyengine_simulation_persistence import (
     ReportRunStatus,
     ReportSideError,
     RerunRecordDeletedError,
-    RunInProgressError,
     RunVersions,
     SideDefinition,
     SimulationChoice,
@@ -157,7 +156,8 @@ def _side_request(calculation_id: UUID, parameters: dict) -> dict:
     }
 
 
-# A household run is never reused, so a forced re-run creates the same runs.
+# A household report without keys is always re-run as forced runs (interim
+# answer B), so ``force`` changes nothing.
 @pytest.mark.parametrize("force", [False, True])
 def test_a_household_report_is_rerun_as_new_runs_of_its_own_simulations(
     force,
@@ -195,6 +195,7 @@ def test_a_household_report_is_rerun_as_new_runs_of_its_own_simulations(
             reform=HouseholdRerunSide(
                 simulation_id=REFORM_SIMULATION_ID, simulation_run_id=REFORM_RUN_ID
             ),
+            forced=True,
         )
     ]
     ((called_worker, payload, report_run_id, context),) = caller.calls
@@ -397,21 +398,89 @@ def test_a_household_rerun_whose_inputs_cannot_be_read_answers_503() -> None:
     assert unavailable.value.code == "database_unavailable"
 
 
-def test_a_household_report_with_a_run_under_way_is_not_rerun() -> None:
-    households = FakeHouseholdReportStore(
-        rerun_failure=RunInProgressError(RUN_UNDER_WAY_ID)
-    )
-    caller = FakeHouseholdReportCaller()
-    service, _, _ = _services(households=households, caller=caller)
+KEYED_HOUSEHOLD_REPORT = replace(STORED_HOUSEHOLD_REPORT, keyed=True)
+JOINED_RUN = FoundReportRun(
+    id=UUID(int=90),
+    inserted=False,
+    status=ReportRunStatus.RUNNING,
+    baseline_simulation_run_id=UUID(int=91),
+    reform_simulation_run_id=UUID(int=92),
+)
 
-    with pytest.raises(EconomyRerunConflictError) as refused:
+
+def test_a_keyed_household_reports_rerun_joins_its_run_and_starts_no_call() -> None:
+    """Answers 3 and 8: the run under way is answered as it is, so the 409 goes."""
+    households = FakeHouseholdReportStore(joined_run=JOINED_RUN)
+    caller = FakeHouseholdReportCaller()
+    service, _, _ = _services(
+        KEYED_HOUSEHOLD_REPORT, households=households, caller=caller
+    )
+
+    rerun = _rerun(service)
+
+    (asked,) = households.report_reruns
+    assert asked.forced is False
+    assert rerun == HouseholdReportCreated(
+        report_id=REPORT_ID,
+        report_run_id=UUID(int=90),
+        status=ReportRunStatus.RUNNING,
+        year=2025,
+        baseline_simulation_id=BASELINE_SIMULATION_ID,
+        baseline_simulation_run_id=UUID(int=91),
+        reform_simulation_id=REFORM_SIMULATION_ID,
+        reform_simulation_run_id=UUID(int=92),
+    )
+    assert (caller.calls, households.recorded_calls) == ([], [])
+
+
+def test_a_keyed_household_reports_forced_rerun_is_an_extra_run() -> None:
+    """Answer 3: a forced run joins nothing and calculates both sides again."""
+    households = FakeHouseholdReportStore(joined_run=JOINED_RUN)
+    caller = FakeHouseholdReportCaller()
+    service, _, _ = _services(
+        KEYED_HOUSEHOLD_REPORT, households=households, caller=caller
+    )
+
+    rerun = _rerun(service, force=True)
+
+    (asked,) = households.report_reruns
+    assert asked.forced is True
+    assert (rerun.report_run_id, rerun.baseline_simulation_run_id) == (
+        RUN_ID,
+        BASELINE_RUN_ID,
+    )
+    ((_, _, report_run_id, _),) = caller.calls
+    assert report_run_id == RUN_ID
+
+
+def test_a_keyed_household_rerun_is_calculated_on_the_side_runs_it_names() -> None:
+    """A side joins its simulation's run; Modal's refusal fails only the report run."""
+    shared_baseline_run = UUID(int=77)
+    households = FakeHouseholdReportStore(
+        joined_side_runs={"baseline": shared_baseline_run}
+    )
+    caller = FakeHouseholdReportCaller(failure=RuntimeError("Modal refused"))
+    service, _, _ = _services(
+        KEYED_HOUSEHOLD_REPORT, households=households, caller=caller
+    )
+
+    with pytest.raises(EconomySubmissionUnavailableError):
         _rerun(service)
 
-    assert (refused.value.code, refused.value.run_id) == (
-        "run_in_progress",
-        RUN_UNDER_WAY_ID,
+    ((failed_run, failed_simulation_runs, _),) = households.failed_runs
+    assert (failed_run, failed_simulation_runs) == (RUN_ID, ())
+    working = FakeHouseholdReportCaller()
+    service, _, _ = _services(
+        KEYED_HOUSEHOLD_REPORT,
+        households=FakeHouseholdReportStore(
+            joined_side_runs={"baseline": shared_baseline_run}
+        ),
+        caller=working,
     )
-    assert caller.calls == []
+    rerun = _rerun(service)
+    ((_, payload, _, _),) = working.calls
+    assert payload["baseline"]["calculation_id"] == str(shared_baseline_run)
+    assert rerun.baseline_simulation_run_id == shared_baseline_run
 
 
 def test_a_household_report_or_simulation_deleted_after_its_read_is_answered() -> None:

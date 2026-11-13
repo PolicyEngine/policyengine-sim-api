@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     )
     from policyengine_simulation_contract.stage12_bundle import CountryId
     from policyengine_simulation_persistence import (
+        FoundReportRun,
         PolicyReform,
         ReportSide,
         SideDefinition,
@@ -119,8 +120,8 @@ class HouseholdReportRerunRows(HouseholdReports, Protocol):
     ``HouseholdReportStore`` is one.
     """
 
-    def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> None:
-        """Create the report's new run and each side's new simulation run."""
+    def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> FoundReportRun:
+        """Join the report's run on the re-run's versions, or create it."""
         ...
 
 

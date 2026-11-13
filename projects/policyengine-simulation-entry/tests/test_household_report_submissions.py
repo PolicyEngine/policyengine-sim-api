@@ -54,10 +54,14 @@ from policyengine_simulation_entry.household_workers import (
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
+    FoundReportRun,
+    HouseholdReportDefinition,
     MissingPolicyParametersError,
+    ProposedSide,
     ReportRunStatus,
     ReportSideError,
     RunVersions,
+    SimulationChoice,
     StoredHousehold,
     UnknownCatalogVersionError,
     UnknownHouseholdError,
@@ -124,28 +128,31 @@ def test_a_household_report_is_created_and_its_household_function_started():
             "policyengine_version": worker.bundle.policyengine_version,
         }
     ]
-    (report,) = store.reports
-    assert (report.id, report.run_id, report.country) == (REPORT_ID, RUN_ID, "us")
+    # Answer 8: the report and its simulations are found or created by key.
+    (report,) = store.keyed_reports
+    assert report.definition == HouseholdReportDefinition(
+        country="us",
+        baseline=SimulationChoice(policy_id=None, dynamic_id=None),
+        reform=SimulationChoice(policy_id=POLICY_ID, dynamic_id=None),
+        household_id=HOUSEHOLD_ID,
+        year=2026,
+    )
+    assert (report.report_id, report.run_id) == (REPORT_ID, RUN_ID)
     assert report.label == "A larger child tax credit for one family"
     assert report.description == "Raises the credit to $3,000"
     assert (report.tax_benefit_model_id, report.tax_benefit_model_version_id) == (
         MODEL_ID,
         CATALOG_VERSION_ID,
     )
-    assert (report.household_id, report.year) == (HOUSEHOLD_ID, 2026)
-    assert report.inputs == {}
     assert report.versions == RunVersions(
         country_package_version=worker.bundle.country_package_version,
         policyengine_version=worker.bundle.policyengine_version,
     )
-    assert (report.baseline.simulation_id, report.baseline.policy_id) == (
-        BASELINE_ID,
-        None,
+    assert report.baseline == ProposedSide(
+        simulation_id=BASELINE_ID, simulation_run_id=BASELINE_RUN_ID
     )
-    assert report.reform is not None
-    assert (report.reform.simulation_run_id, report.reform.policy_id) == (
-        REFORM_RUN_ID,
-        POLICY_ID,
+    assert report.reform == ProposedSide(
+        simulation_id=REFORM_ID, simulation_run_id=REFORM_RUN_ID
     )
     ((called_worker, payload, report_run_id, context),) = caller.calls
     assert called_worker == worker
@@ -174,9 +181,9 @@ def test_a_report_of_the_baseline_alone_creates_and_calculates_one_side():
         None,
     )
     assert store.reads[0]["policy_ids"] == {"baseline": POLICY_ID}
-    (report,) = store.reports
-    assert report.reform is None
-    assert report.simulation_run_ids == (BASELINE_RUN_ID,)
+    (report,) = store.keyed_reports
+    assert (report.reform, report.definition.reform) == (None, None)
+    assert report.definition.baseline.policy_id == POLICY_ID
     ((_, payload, _, _),) = caller.calls
     assert payload["reform"] is None
     assert payload["baseline"]["policy"] == {"parameters": REFORM}
@@ -220,7 +227,64 @@ def test_the_default_workers_household_function_is_needed(failure, expected_type
         _submit(service)
 
     assert raised.value.code == code
-    assert (store.reads, store.reports) == ([], [])
+    assert (store.reads, store.keyed_reports) == ([], [])
+
+
+def test_an_identical_request_joins_its_run_and_starts_no_call():
+    """Answer 8: it ends on the report and run the first request created."""
+    joined = FoundReportRun(
+        id=UUID(int=90),
+        inserted=False,
+        status=ReportRunStatus.SUCCEEDED,
+        baseline_simulation_run_id=UUID(int=91),
+        reform_simulation_run_id=UUID(int=92),
+    )
+    store = FakeHouseholdReportStore(joined_run=joined)
+    caller = FakeHouseholdReportCaller()
+
+    created = _submit(household_report_service(store, caller=caller))
+
+    assert created == HouseholdReportCreated(
+        report_id=REPORT_ID,
+        report_run_id=UUID(int=90),
+        status=ReportRunStatus.SUCCEEDED,
+        year=2026,
+        baseline_simulation_id=BASELINE_ID,
+        baseline_simulation_run_id=UUID(int=91),
+        reform_simulation_id=REFORM_ID,
+        reform_simulation_run_id=UUID(int=92),
+    )
+    assert (caller.calls, store.recorded_calls, store.failed_runs) == ([], [], [])
+
+
+def test_a_created_run_is_calculated_on_the_side_runs_it_names():
+    """A side's run another report run created is the side's calculation ID."""
+    shared_baseline_run = UUID(int=77)
+    store = FakeHouseholdReportStore(joined_side_runs={"baseline": shared_baseline_run})
+    caller = FakeHouseholdReportCaller()
+
+    created = _submit(household_report_service(store, caller=caller))
+
+    ((_, payload, report_run_id, _),) = caller.calls
+    assert report_run_id == RUN_ID
+    assert payload["baseline"]["calculation_id"] == str(shared_baseline_run)
+    assert payload["reform"]["calculation_id"] == str(REFORM_RUN_ID)
+    assert created.baseline_simulation_run_id == shared_baseline_run
+
+
+def test_a_policy_compared_with_itself_is_calculated_on_one_run():
+    """Its two sides are one simulation, so the store names one run twice."""
+    store = FakeHouseholdReportStore(joined_side_runs={"reform": BASELINE_RUN_ID})
+    caller = FakeHouseholdReportCaller()
+
+    _submit(
+        household_report_service(store, caller=caller),
+        household_report_request(reform={"policy_id": None}),
+    )
+
+    ((_, payload, _, _),) = caller.calls
+    assert payload["baseline"] == payload["reform"]
+    HouseholdReportRunCalculation.model_validate(payload)
 
 
 @pytest.mark.parametrize(
@@ -264,7 +328,7 @@ def test_each_missing_input_is_refused_before_anything_is_written(
         _submit(household_report_service(store, caller=caller))
 
     assert (raised.value.code, raised.value.detail) == (code, detail)
-    assert (store.reports, caller.calls) == ([], [])
+    assert (store.keyed_reports, caller.calls) == ([], [])
 
 
 def test_a_policy_setting_missing_parameters_is_refused_on_its_side():
@@ -283,7 +347,7 @@ def test_a_policy_setting_missing_parameters_is_refused_on_its_side():
         ("body", "baseline", "policy_id", "gov.b"),
     ]
     assert {reason.type for reason in raised.value.reasons} == {"missing_parameter"}
-    assert store.reports == []
+    assert store.keyed_reports == []
 
 
 @pytest.mark.parametrize(
@@ -308,7 +372,7 @@ def test_a_household_that_cannot_be_calculated_is_refused(store, reason_type):
     assert (reason.loc, reason.type) == (("body", "household_id"), reason_type)
     # The detail is the service's own words, never the document's contents.
     assert "not a list of people" not in reason.msg
-    assert (store.reports, caller.calls) == ([], [])
+    assert (store.keyed_reports, caller.calls) == ([], [])
 
 
 def test_a_household_the_contract_refuses_is_located_on_the_household():
@@ -328,7 +392,7 @@ def test_a_household_the_contract_refuses_is_located_on_the_household():
         reason.loc[:3] == ("body", "household_id", "household")
         for reason in raised.value.reasons
     )
-    assert store.reports == []
+    assert store.keyed_reports == []
 
 
 @pytest.mark.parametrize(
@@ -384,9 +448,10 @@ def test_a_create_the_database_cannot_take_is_unavailable():
     ],
     ids=["refused", "not-confirmed-in-time"],
 )
-def test_a_call_modal_does_not_confirm_fails_the_report_run_and_its_runs(
+def test_a_call_modal_does_not_confirm_fails_only_the_report_run(
     caller, error_type
 ):
+    """Its simulation runs may be another report run's (answer 8)."""
     store = FakeHouseholdReportStore()
 
     with pytest.raises(EconomySubmissionUnavailableError) as raised:
@@ -397,7 +462,7 @@ def test_a_call_modal_does_not_confirm_fails_the_report_run_and_its_runs(
     assert store.failed_runs == [
         (
             RUN_ID,
-            (BASELINE_RUN_ID, REFORM_RUN_ID),
+            (),
             "modal_call_refused: Modal did not accept the report's call "
             f"({error_type}).",
         )
