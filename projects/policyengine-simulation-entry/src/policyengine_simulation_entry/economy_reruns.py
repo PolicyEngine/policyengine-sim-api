@@ -18,7 +18,9 @@ default worker, as a new run, and keeps every earlier run. The service:
 3. creates, in one transaction, the new run (a report's with trigger
    ``manual``) and each report side's new simulation run of its own
    simulation, all pending with no Modal call ID, unless the record has a
-   run pending or running (409 ``run_in_progress``);
+   run pending or running (409 ``run_in_progress``). A forced re-run is
+   never refused: its runs are marked forced, an extra run that nothing
+   joins (C1 · 24's answer 3);
 4. starts and records the new run's call as a new record's: the report run's
    coordinator, or the simulation function, by run ID (C1 · 8's
    coordination), failing the new runs when Modal refuses the call.
@@ -309,6 +311,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             reform=self._rerun_side(
                 stored.reform.simulation_id, inputs.reform.reusable_run
             ),
+            forced=request.force,
         )
         calculation = report_run_calculation(
             worker,

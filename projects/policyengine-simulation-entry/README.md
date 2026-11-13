@@ -236,12 +236,15 @@ Its body is required: `{}` or `{"force": false}` re-runs the report, and
 each side gets a new run of its own simulation, or, without `force`, reuses
 that simulation's newest run on the same versions, catalog version, dataset,
 region and year that a new report's side could reuse; `force` calculates
-both again. The new report run's trigger is `manual`. The service reads the
+both again, as an extra run: the new report run and both simulation runs
+are marked `forced`, so nothing joins them, and a forced re-run is never
+refused while a run is under way. The new report run's trigger is `manual`. The service reads the
 report's region code and dataset name, finds the rows with that code and
 name in the catalog version of the default worker's .py version, and reads
 each simulation's stored policy and dynamic on it.
 A budget-window report's re-run is a new budget-window run, trigger
-`manual`, with `recalculate` set by `force`, and a report run per year. Each
+`manual`, with `recalculate` set by `force`, and a report run per year;
+a forced one's year runs and new simulation runs are marked `forced`. Each
 year's sides are the simulations that year's report run of the report's
 newest window run names (a year that reused another report's run names that
 report's simulation), and each reuses a run of them as a single-year side
@@ -265,7 +268,7 @@ A re-run is refused before anything is written: 404 (`unknown_report`,
 `unknown_simulation`) for a record that doesn't exist; 409
 `run_in_progress`, naming the run in `run_id`, while the record has a run
 pending or running (for a report, its budget-window run, or else its report
-run); 409 `rerun_not_supported` for a household simulation (re-run only
+run), unless the re-run is forced; 409 `rerun_not_supported` for a household simulation (re-run only
 through its report), a household report whose simulation names a dynamic (a
 household calculation applies none), a budget window whose newest window run
 lacks a year, or a record that names no region, dataset, year, simulation,
