@@ -137,16 +137,16 @@ in 2026, through the candidate's tagged URL with the authenticated tests'
 client credentials (`POST /reports`), then forces a new run of the report
 (`POST /reports/{report_id}/runs` with `{"force": true}`), follows that run
 through `GET /reports/{report_id}`, and requires it to succeed within 30
-minutes. The request reuses the simulation runs an earlier check on the same
-versions calculated, and once reports are found by key it ends on that
-check's report run, so the forced run, which nothing joins or reuses, is
-what calculates on every deploy: both simulations on the release's workers
-and the comparison on its coordinator. Both requests need
-`simulation:submit`. `deployment_ready` requires the check to pass in
-staging, so a failure stops the production deployment. Each run adds a
-forced report run and its two simulation runs to the staging database, and,
-until reports are found by key, a new report and its ordinary run too, which
-on a .py version's first check calculates both simulations as well.
+minutes. The report is found by key, so on versions an earlier check ran on,
+the request ends on that check's report run and calculates nothing; the
+forced run, which nothing joins, is what calculates on every deploy: both
+simulations on the release's workers and the comparison on its
+coordinator. Both requests need `simulation:submit`. `deployment_ready`
+requires the check to pass in staging, so a failure stops the production
+deployment. Each run adds a forced report run and its two simulation runs
+to the staging database; a .py version's first check also adds the
+report's ordinary run, on one simulation run for both sides (current law
+compared with itself), which calculates as well.
 
 ## Candidate qualification
 
