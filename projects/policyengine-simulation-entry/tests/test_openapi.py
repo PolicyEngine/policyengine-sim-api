@@ -533,6 +533,21 @@ def test_economy_requests_name_no_version_and_no_record_id():
     assert "spm" not in schemas["EconomyReportRequest"].get("required", [])
 
 
+def test_a_reports_label_and_description_are_optional_and_never_stored():
+    """Answer 6: each user's saved report holds them, in the Public API."""
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    for name in (
+        "EconomyReportRequest",
+        "BudgetWindowReportRequest",
+        "HouseholdReportRequest",
+    ):
+        request = schemas[name]
+        assert {"label", "description"} <= set(request["properties"]), name
+        assert "label" not in request.get("required", []), name
+        assert "not stored" in request["properties"]["label"]["description"], name
+
+
 def test_a_report_request_is_an_economy_report_a_budget_window_or_a_household():
     spec = create_app().openapi()
     body = spec["paths"]["/reports"]["post"]["requestBody"]["content"][
@@ -585,7 +600,6 @@ def test_a_household_report_names_its_household_and_each_sides_policy():
     assert set(household_report["required"]) == {
         "country",
         "report_type",
-        "label",
         "household_id",
         "baseline",
     }
