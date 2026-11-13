@@ -98,7 +98,10 @@ class FakeWindows:
     as for a window that finished, or that a failed year fails now.
     ``failure`` is raised before any year is offered, as when the window's
     lock or reads fail, and ``failure_after_starts`` after every start, as
-    when the commit fails.
+    when the commit fails. A start that raises for a year in
+    ``claimed_meanwhile`` counts that year started and goes on, as when the
+    year's own call claimed it first; ``refusal_not_written`` is raised in
+    place of failing the window, as when that failure can't be written.
     """
 
     waiting: tuple[YearToStart, ...] = ()
@@ -106,6 +109,8 @@ class FakeWindows:
     ended: WindowAdvance | None = None
     failure: BaseException | None = None
     failure_after_starts: BaseException | None = None
+    claimed_meanwhile: frozenset[UUID] = frozenset()
+    refusal_not_written: BaseException | None = None
     advanced: list[UUID] = field(default_factory=list)
     started_calls: list[str] = field(default_factory=list)
     refusals: list[str] = field(default_factory=list)
@@ -124,7 +129,12 @@ class FakeWindows:
                 self.started_calls.append(start_year(year))
             except YearStartDeferred:
                 break
-            except Exception as error:  # noqa: BLE001  # as the store fails a refused year
+            except Exception as error:  # as the store fails a refused year
+                if year.run_ids.report_run_id in self.claimed_meanwhile:
+                    started.append(year.year)
+                    continue
+                if self.refusal_not_written is not None:
+                    raise self.refusal_not_written from error
                 self.refusals.append(
                     error.error_message
                     if isinstance(error, YearStartRefused)
@@ -186,7 +196,8 @@ def _idle_window_rig(**options: Any) -> tuple[RestartRig, StoredReportRun, dict]
 
 
 def _marked_run_ids(rig: RestartRig) -> list[UUID]:
-    return [run.run_id for run in rig.restarts.marked]
+    """Return the report runs of the window years the check marked."""
+    return [year.report_run_id for year in rig.restarts.marked_years]
 
 
 def test_an_idle_window_is_restarted_from_its_earliest_waiting_year() -> None:
@@ -269,7 +280,7 @@ def test_a_window_no_longer_waiting_is_left_unmarked() -> None:
 
     summary = rig.restart()
 
-    assert rig.restarts.marked == []
+    assert rig.restarts.marked_years == []
     assert rig.windows.advanced == []
     assert summary == RestartSummary(listed=1, left=1)
 
@@ -297,7 +308,7 @@ def test_a_window_whose_first_years_call_cannot_be_rebuilt_fails_with_the_reason
 
     assert rig.windows.refusals == [NOT_REBUILT]
     assert rig.economy_caller.report_runs == []
-    assert rig.restarts.marked == []
+    assert rig.restarts.marked_years == []
     assert summary == RestartSummary(listed=1, failed=1)
     assert rig.telemetry.outcomes == [
         (
@@ -307,6 +318,74 @@ def test_a_window_whose_first_years_call_cannot_be_rebuilt_fails_with_the_reason
             "StoredRunUnreadableError",
         )
     ]
+
+
+def test_a_refusal_never_fails_a_year_other_than_the_one_not_rebuilt() -> None:
+    """The year read was claimed before the advance, which offers the next first."""
+    rig, stored, _payload = _idle_window_rig()
+    rig.restarts.read_failures[stored.report_run_id] = StoredRunUnreadableError(
+        "report run names no region"
+    )
+    rig.windows.waiting = rig.windows.waiting[1:]
+
+    summary = rig.restart()
+
+    assert rig.windows.refusals == []
+    assert rig.economy_caller.report_runs == []
+    assert summary == RestartSummary(listed=1, left=1)
+
+
+def test_a_refused_year_its_own_call_claimed_first_is_left() -> None:
+    """The year is under way after all; the later years wait for its coordinator."""
+    rig, stored, _payload = _idle_window_rig()
+    rig.restarts.read_failures[stored.report_run_id] = StoredRunUnreadableError(
+        "report run names no region"
+    )
+    rig.windows.claimed_meanwhile = frozenset({stored.report_run_id})
+
+    summary = rig.restart()
+
+    assert rig.windows.refusals == []
+    assert rig.economy_caller.report_runs == []
+    assert summary == RestartSummary(listed=1, left=1)
+
+
+def test_a_marked_window_whose_refusal_cannot_be_written_is_left_to_the_sweep() -> None:
+    rig, stored, _payload = _idle_window_rig(
+        economy_caller=FakeCaller(failure=ConnectionError("Modal is down"))
+    )
+    rig.windows.refusal_not_written = DATABASE_ERROR
+
+    summary = rig.restart()
+
+    assert _marked_run_ids(rig) == [stored.report_run_id]
+    assert summary == RestartSummary(listed=1, left=1)
+    assert rig.telemetry.outcomes[0][3] == "OperationalError"
+
+
+def test_an_unexpected_error_from_the_mark_defers_the_window_and_is_logged(
+    caplog,
+) -> None:
+    """It is no refusal by Modal, so no year is failed for it."""
+    rig, _stored, _payload = _idle_window_rig()
+    rig.restarts.mark_failure = RuntimeError("unforeseen")
+
+    summary = rig.restart()
+
+    assert rig.windows.refusals == []
+    assert rig.economy_caller.report_runs == []
+    assert summary == RestartSummary(listed=1, deferred=1)
+    assert rig.telemetry.outcomes[0][3] == "RuntimeError"
+    (logged,) = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "v2_run_restart_unexpected_error"
+    ]
+    assert isinstance(logged.exc_info[1], RuntimeError)
+    assert logged.policyengine_attributes == {
+        "run_kind": "budget_window",
+        "run_id": str(WINDOW_RUN_ID),
+    }
 
 
 def test_a_database_error_before_any_start_leaves_the_window_for_the_next_check() -> (
@@ -319,7 +398,7 @@ def test_a_database_error_before_any_start_leaves_the_window_for_the_next_check(
 
     summary = rig.restart()
 
-    assert rig.restarts.marked == []
+    assert rig.restarts.marked_years == []
     assert rig.economy_caller.report_runs == []
     assert summary == RestartSummary(listed=1, deferred=1)
     assert rig.telemetry.outcomes[0][2:] == (
@@ -398,7 +477,8 @@ def test_an_unexpected_error_in_a_windows_restart_defers_it_and_the_check_goes_o
         RestartOutcome.DEFERRED,
         "RuntimeError",
     )
-    assert _marked_run_ids(rig) == [stored.report_run_id]
+    assert rig.restarts.marked_years == []
+    assert [run.run_id for run in rig.restarts.marked] == [stored.report_run_id]
     assert summary == RestartSummary(listed=2, restarted=1, deferred=1)
     (logged,) = [
         record
@@ -419,7 +499,7 @@ def test_a_window_gone_before_its_advance_is_left() -> None:
 
     summary = rig.restart()
 
-    assert rig.restarts.marked == []
+    assert rig.restarts.marked_years == []
     assert summary == RestartSummary(listed=1, left=1)
 
 
@@ -439,7 +519,7 @@ def test_a_window_that_ends_without_a_start_is_left_unmarked(ended) -> None:
 
     summary = rig.restart()
 
-    assert rig.restarts.marked == []
+    assert rig.restarts.marked_years == []
     assert summary == RestartSummary(listed=1, left=1)
 
 
@@ -454,7 +534,7 @@ def test_a_window_the_check_has_no_time_left_for_is_left_for_the_next_check() ->
     summary = rig.restart()
 
     assert rig.windows.advanced == []
-    assert rig.restarts.marked == []
+    assert rig.restarts.marked_years == []
     assert summary == RestartSummary(listed=1, deferred=1)
 
 

@@ -143,6 +143,7 @@ class FakeRestartStore:
     holder: Callable[[UnstartedRun], RunCall | None] | None = None
     listings: list[tuple[datetime, datetime, int]] = field(default_factory=list)
     marked: list[UnstartedRun] = field(default_factory=list)
+    marked_years: list[WaitingYear] = field(default_factory=list)
 
     def list_idle_windows(
         self, *, idle_after: datetime, idle_before: datetime, limit: int
@@ -175,6 +176,14 @@ class FakeRestartStore:
         if self.marked_elsewhere:
             return False
         self.marked.append(run)
+        return True
+
+    def mark_waiting_year(self, year: WaitingYear) -> bool:
+        if self.mark_failure is not None:
+            raise self.mark_failure
+        if self.marked_elsewhere:
+            return False
+        self.marked_years.append(year)
         return True
 
     def read_report_run(self, report_run_id: UUID) -> StoredReportRun | None:

@@ -49,6 +49,7 @@ from policyengine_simulation_persistence import (
     list_idle_budget_windows,
     list_unstarted_runs,
     mark_restart,
+    mark_waiting_year,
     read_earliest_waiting_year,
     read_report_run_simulation_run_ids,
     read_run_call,
@@ -622,15 +623,14 @@ def test_a_window_whose_earliest_waiting_year_was_marked_is_not_listed(
     insert_budget_window_report(connection, window)
     created_at = _transaction_start(connection)
     act_as_the_modal_worker(connection)
-    first_year = UnstartedRun(
-        kind=RestartKind.REPORT_RUN,
-        run_id=window.years[0].report_run_id,
-        created_at=created_at,
-    )
+    first_year = WaitingYear(report_run_id=window.years[0].report_run_id, year=2026)
 
-    assert mark_restart(connection, first_year) is True
+    assert mark_waiting_year(connection, first_year) is True
+    assert mark_waiting_year(connection, first_year) is False
     marked_at = connection.execute(
-        select(report_runs.c.updated_at).where(report_runs.c.id == first_year.run_id)
+        select(report_runs.c.updated_at).where(
+            report_runs.c.id == first_year.report_run_id
+        )
     ).scalar_one()
     assert _idle_windows(connection, around=created_at) == ()
     assert _idle_windows(connection, around=marked_at) == ()
@@ -714,6 +714,7 @@ def test_the_store_lists_marks_and_reads_in_transactions_of_its_own(
         limit=LISTING_LIMIT,
     )
     waiting = savepoint_store.read_earliest_waiting_year(window.window_run_id)
+    year_marked = waiting is not None and savepoint_store.mark_waiting_year(waiting)
     sides = savepoint_store.read_report_run_simulation_run_ids(report.run_id)
 
     assert set(by_kind) == {RestartKind.REPORT_RUN, RestartKind.SIMULATION_RUN}
@@ -722,6 +723,7 @@ def test_the_store_lists_marks_and_reads_in_transactions_of_its_own(
     assert waiting == WaitingYear(
         report_run_id=window.years[0].report_run_id, year=2026
     )
+    assert year_marked is True
     assert sides == (
         report.baseline.simulation_run_id,
         report.reform.simulation_run_id,
