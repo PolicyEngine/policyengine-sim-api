@@ -283,3 +283,46 @@ def test_a_local_area_aggregate_is_stored_with_its_withheld_codes(monkeypatch) -
         ("local_authority", "E06000064"),
         ("local_authority", "W06000015"),
     ]
+
+
+class _NoAreaBuilder(_CapturingBuilder):
+    """Stands in for an output builder whose disclosure pass estimated no areas."""
+
+    withheld: dict[str, list[str]]
+
+    def uk_withheld_area_codes(self) -> dict[str, list[str]]:
+        return type(self).withheld
+
+
+@pytest.mark.parametrize("level", ["constituency", "local_authority"])
+def test_a_local_area_report_that_estimated_no_area_of_a_level_fails(
+    monkeypatch, level: str
+) -> None:
+    # A succeeded run then proves each level's area or withheld-code rows
+    # exist, which a staging check reading only the run's status relies on.
+    _route_uk_area_regions(monkeypatch)
+    _NoAreaBuilder.withheld = {
+        "constituency": ["W07000081"],
+        "local_authority": ["W06000015"],
+        level: [],
+    }
+    monkeypatch.setattr(
+        simulation_output_builder, "SimulationOutputBuilder", _NoAreaBuilder
+    )
+    report = _uk_report(region="country/wales", dataset=LOCAL_AREA_DATASET)
+    frames = {
+        entity: pd.DataFrame({f"{entity}_id": [1]})
+        for entity in ("person", "benunit", "household")
+    }
+    artifacts = FakeArtifacts()
+
+    with pytest.raises(ValueError, match=f"estimated no {level} area"):
+        build_aggregate_report(
+            report=report,
+            baseline=RetainedSimulationOutput(
+                frames, artifacts.add_simulation(report.baseline)
+            ),
+            reform=RetainedSimulationOutput(
+                frames, artifacts.add_simulation(report.reform)
+            ),
+        )
