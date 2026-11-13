@@ -147,7 +147,7 @@ class RunShape:
     """What a stored economy simulation and its run hold.
 
     A succeeded run records an output file in the output bucket unless
-    ``output_uri`` names another.
+    ``output_uri`` names another. ``forced`` marks a forced re-run's run.
     """
 
     choice: SimulationChoice = CURRENT_LAW
@@ -155,6 +155,7 @@ class RunShape:
     versions: RunVersions = VERSIONS
     output_uri: str | None = None
     completed_at: datetime = COMPLETED_AT
+    forced: bool = False
 
 
 def insert_simulation_run(
@@ -212,6 +213,7 @@ def insert_run_of(
                 else None
             ),
             output_sha256="d" * 64 if succeeded else None,
+            forced=shape.forced,
         )
     )
     return StoredRun(simulation_id=simulation_id, simulation_run_id=run_id)
