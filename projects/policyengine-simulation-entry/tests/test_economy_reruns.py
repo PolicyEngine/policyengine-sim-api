@@ -59,6 +59,7 @@ from policyengine_simulation_persistence import (
     RunInProgressError,
     RunReuse,
     RunVersions,
+    SharedRowNotSettledError,
     SimulationStatus,
     UnknownRegionError,
 )
@@ -376,6 +377,23 @@ def test_a_database_that_cannot_be_read_is_unavailable_before_any_call() -> None
 
     assert unavailable.value.code == "database_unavailable"
     assert caller.report_runs == []
+
+
+@pytest.mark.parametrize("record", ["report", "simulation"])
+def test_a_run_that_keeps_failing_before_it_is_read_is_answered_unavailable(
+    record: str,
+) -> None:
+    """Nothing was written, so the caller is told to ask again (503)."""
+    store = FakeRerunStore(rerun_failure=SharedRowNotSettledError("kept failing"))
+    service = rerun_service(store)
+
+    with pytest.raises(EconomySubmissionUnavailableError) as unavailable:
+        if record == "report":
+            _rerun_report(service)
+        else:
+            _rerun_simulation(service)
+
+    assert unavailable.value.code == "database_unavailable"
 
 
 def test_a_rerun_whose_commit_is_unconfirmed_may_have_written_its_run() -> None:
