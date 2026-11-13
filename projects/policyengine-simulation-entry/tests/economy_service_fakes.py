@@ -101,7 +101,14 @@ SIMULATION_BODY: dict[str, Any] = {
 
 
 def report_request(**changes: Any) -> EconomyReportRequest:
-    return EconomyReportRequest.model_validate({**REPORT_BODY, **changes})
+    """Return the report body's request, asking for no cliffs unless told to.
+
+    The service refuses ``include_cliffs: true`` until per-run cliff
+    calculations exist (C1 · 24's interim answer A).
+    """
+    return EconomyReportRequest.model_validate(
+        {**REPORT_BODY, "include_cliffs": False, **changes}
+    )
 
 
 def simulation_request(**changes: Any) -> EconomySimulationRequest:

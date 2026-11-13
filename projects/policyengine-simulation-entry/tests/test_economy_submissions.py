@@ -271,7 +271,10 @@ def test_the_report_stores_only_the_spm_settings_given() -> None:
 def test_a_report_without_spm_settings_stores_none() -> None:
     store = FakeStore()
     caller = FakeCaller()
-    without_spm = {key: value for key, value in REPORT_BODY.items() if key != "spm"}
+    without_spm = {
+        **{key: value for key, value in REPORT_BODY.items() if key != "spm"},
+        "include_cliffs": False,
+    }
 
     _submit_report(
         service(store, caller=caller),
@@ -281,7 +284,27 @@ def test_a_report_without_spm_settings_stores_none() -> None:
     (report,) = store.reports
     assert (report.inputs, report.definition.spm) == ({}, None)
     payload = ReportExecutionInput.model_validate(caller.report_runs[0][1])
-    assert payload.reform.options == {"include_cliffs": True}
+    assert payload.reform.options == {}
+
+
+def test_a_report_asking_for_cliffs_is_refused_before_anything_is_read() -> None:
+    """Interim answer A: a 422 until per-run cliff calculations exist (C1 · 39)."""
+    store = FakeStore()
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionUnprocessableError) as refusal:
+        _submit_report(
+            service(store, caller=caller), report_request(include_cliffs=True)
+        )
+
+    assert refusal.value.code == "cliffs_not_available"
+    ((reason),) = refusal.value.reasons
+    assert (reason.loc, reason.type) == (
+        ("body", "include_cliffs"),
+        "cliffs_not_available",
+    )
+    assert "cliff" in reason.msg
+    assert (store.report_reads, store.reports, caller.report_runs) == ([], [], [])
 
 
 @pytest.mark.parametrize(
