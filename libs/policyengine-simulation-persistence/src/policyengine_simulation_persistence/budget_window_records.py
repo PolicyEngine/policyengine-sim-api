@@ -227,18 +227,19 @@ def insert_budget_window_report(
         )
 
 
-def year_run_row(
+def year_run_row(  # noqa: PLR0913  # the year, then each column it doesn't name
     window_year: WindowYearRuns,
     *,
     report_id: UUID,
     window_run_id: UUID,
     versions: RunVersions,
     trigger: ReportRunTrigger,
+    forced: bool = False,
 ) -> dict[str, Any]:
     """Return a year's report run in a window run, pending with no call, as inserted.
 
     ``window_year`` is a new window's year or a re-run's; ``trigger`` says
-    which.
+    which, and ``forced`` marks a forced re-run's.
     """
     return {
         "id": window_year.report_run_id,
@@ -252,4 +253,5 @@ def year_run_row(
         "status": ReportRunStatus.PENDING,
         "trigger": trigger,
         "modal_call_id": None,
+        "forced": forced,
     }

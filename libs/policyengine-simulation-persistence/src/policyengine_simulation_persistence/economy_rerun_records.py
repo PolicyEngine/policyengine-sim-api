@@ -25,6 +25,12 @@ run of it); a transaction-level advisory lock on the
 record's ID makes concurrent re-runs of one record wait for each other, as
 a row lock on ``reports`` would need ``UPDATE`` on it.
 
+A forced re-run (C1 · 24's answer 3) is an extra run instead: its report
+run, or each year's report run of a budget window, and the simulation runs
+it calculates are marked ``forced``, which the Public API's one-unfailed-run
+indexes leave out, so it is created beside any run on the same versions,
+even one under way, and nothing ever joins it.
+
 The service then starts and records the new run's call as it does a new
 record's (``economy_run_records``).
 """
@@ -175,7 +181,11 @@ class RerunSide:
 
 @dataclass(frozen=True)
 class NewReportRerun:
-    """A stored report's new run, on the current versions and catalog rows."""
+    """A stored report's new run, on the current versions and catalog rows.
+
+    ``forced`` makes it a forced re-run's extra run, which calculates both
+    sides.
+    """
 
     report_id: UUID
     run_id: UUID
@@ -183,6 +193,13 @@ class NewReportRerun:
     versions: RunVersions
     baseline: RerunSide
     reform: RerunSide
+    forced: bool = False
+
+    def __post_init__(self) -> None:
+        """Refuse a forced re-run naming a run it doesn't create."""
+        if self.forced and (self.baseline.reused or self.reform.reused):
+            msg = "a forced re-run calculates both sides, reusing no run"
+            raise ValueError(msg)
 
     @property
     def new_simulation_run_ids(self) -> tuple[UUID, ...]:
@@ -508,15 +525,17 @@ def _run_under_way(
 def insert_report_rerun(connection: Connection, rerun: NewReportRerun) -> None:
     """Create the report's new run and its sides' new simulation runs, pending.
 
-    Take the report's re-run lock first. Raise RunInProgressError, creating
-    nothing, when the report has a run pending or running. Raise
+    Unless the re-run is forced, take the report's re-run lock first, and
+    raise RunInProgressError, creating nothing, when the report has a run
+    pending or running; a forced re-run's runs are marked forced. Raise
     RerunRecordDeletedError when the database refuses the new run's key to
     the report, which no longer exists, and EconomyRecordReferenceError when
     it refuses another row the new runs name, such as a side's simulation;
     either refusal ends the caller's transaction, or its savepoint.
     """
-    lock_reruns_of(connection, rerun.report_id)
-    _refuse_while_report_runs(connection, rerun.report_id)
+    if not rerun.forced:
+        lock_reruns_of(connection, rerun.report_id)
+        _refuse_while_report_runs(connection, rerun.report_id)
     with _record_checked(report_runs.c.report_id), references_checked():
         for side in (rerun.baseline, rerun.reform):
             if not side.reused:
@@ -526,6 +545,7 @@ def insert_report_rerun(connection: Connection, rerun: NewReportRerun) -> None:
                     simulation_id=side.simulation_id,
                     population=rerun.population,
                     versions=rerun.versions,
+                    forced=rerun.forced,
                 )
         connection.execute(
             insert(report_runs).values(
@@ -540,6 +560,7 @@ def insert_report_rerun(connection: Connection, rerun: NewReportRerun) -> None:
                 status=ReportRunStatus.PENDING,
                 trigger=ReportRunTrigger.MANUAL,
                 modal_call_id=None,
+                forced=rerun.forced,
             )
         )
 
@@ -551,10 +572,13 @@ def insert_window_rerun(connection: Connection, rerun: NewWindowRerun) -> None:
     each year's report run names it and its year, and each side reusing no
     run gets a new run of its year's simulation. All are pending with no
     Modal call; the service then starts the first years. Raise as
-    ``insert_report_rerun`` does.
+    ``insert_report_rerun`` does. A re-run that recalculates is a forced
+    one: no lock or refusal, and its year runs and simulation runs are
+    marked forced.
     """
-    lock_reruns_of(connection, rerun.report_id)
-    _refuse_while_report_runs(connection, rerun.report_id)
+    if not rerun.recalculate:
+        lock_reruns_of(connection, rerun.report_id)
+        _refuse_while_report_runs(connection, rerun.report_id)
     population = rerun.population
     with (
         _record_checked(budget_window_runs.c.report_id, report_runs.c.report_id),
@@ -581,6 +605,7 @@ def insert_window_rerun(connection: Connection, rerun: NewWindowRerun) -> None:
                         simulation_id=side.simulation_id,
                         population=rerun.population_in(window_year.year),
                         versions=rerun.versions,
+                        forced=rerun.recalculate,
                     )
         connection.execute(
             insert(report_runs),
@@ -591,6 +616,7 @@ def insert_window_rerun(connection: Connection, rerun: NewWindowRerun) -> None:
                     window_run_id=rerun.window_run_id,
                     versions=rerun.versions,
                     trigger=ReportRunTrigger.MANUAL,
+                    forced=rerun.recalculate,
                 )
                 for window_year in rerun.years
             ],

@@ -550,18 +550,20 @@ def insert_simulation_with_run(  # noqa: PLR0913  # the simulation's and its run
     )
 
 
-def insert_simulation_run(
+def insert_simulation_run(  # noqa: PLR0913  # the run, what it calculates on, and its marker
     connection: Connection,
     *,
     run_id: UUID,
     simulation_id: UUID,
     population: EconomyPopulation,
     versions: RunVersions,
+    forced: bool = False,
 ) -> None:
     """Create a run of a stored simulation on ``population``, pending with no call.
 
     The run records the catalog version, dataset and region it calculates
-    on, which a re-run's may differ from its simulation's.
+    on, which a re-run's may differ from its simulation's. ``forced`` marks
+    a forced re-run's run, which nothing joins.
     """
     connection.execute(
         insert(simulation_runs).values(
@@ -575,6 +577,7 @@ def insert_simulation_run(
             region_id=population.region_id,
             status=SimulationStatus.PENDING,
             modal_call_id=None,
+            forced=forced,
         )
     )
 
