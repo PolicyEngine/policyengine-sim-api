@@ -16,7 +16,9 @@ key holds everything that changes its numbers, the SPM selection included;
 a report's holds its two sides and window size and no options (C1 · 24's
 answer 4). A report also stores a ``dataset_independent_key``: its key
 object without the dataset (revised answer 1a), which a national report
-and its local-area report share.
+and its local-area report share. A household simulation names its stored
+household in place of a dataset and region, and a household report its
+household (answer 8).
 """
 
 from __future__ import annotations
@@ -36,8 +38,9 @@ if TYPE_CHECKING:
 
 # The format of every key this module builds.
 KEY_VERSION: Final = 1
-# A report's type, as the key and the Public API name it.
+# A report's or simulation's type, as the key and the Public API name it.
 _ECONOMY: Final = "economy"
+_HOUSEHOLD: Final = "household"
 
 
 def canonical_json(definition: Mapping[str, object]) -> str:
@@ -182,4 +185,107 @@ class EconomyReportDefinition:
             region_code=self.region_code,
             year=self.year if year is None else year,
             spm=self.spm,
+        )
+
+
+@dataclass(frozen=True)
+class HouseholdSimulationDefinition:
+    """What identifies a household simulation (answers 1a and 8).
+
+    Its stored policy and dynamic, the stored household's ID in place of a
+    dataset and region, and the year. The household's saved SPM selection
+    is part of the stored household, which the Public API's runtime never
+    changes, so its ID names it. The service never filters a simulation, so
+    its filter is null. Never a version.
+    """
+
+    country: str
+    choice: SimulationChoice
+    household_id: UUID
+    year: int
+
+    def key_object(self) -> dict[str, object]:
+        """Return the object whose canonical JSON the simulation's key hashes."""
+        return {
+            "record": "simulation",
+            "key_version": KEY_VERSION,
+            "simulation_type": _HOUSEHOLD,
+            "country": self.country,
+            **_side(self.choice),
+            "household_id": self.household_id,
+            "year": self.year,
+            "filter": None,
+        }
+
+    @property
+    def definition_key(self) -> str:
+        """The simulation's ``definition_key``."""
+        return definition_key(self.key_object())
+
+
+@dataclass(frozen=True)
+class HouseholdReportDefinition:
+    """What identifies a household report: its sides, household and year.
+
+    Each side's stored policy and dynamic, the reform None for a report of
+    the baseline alone, the stored household both sides calculate, and the
+    year, with no options. Never a version.
+    """
+
+    country: str
+    baseline: SimulationChoice
+    reform: SimulationChoice | None
+    household_id: UUID
+    year: int
+
+    @property
+    def sides(self) -> tuple[Literal["baseline", "reform"], ...]:
+        """Return each side the report calculates, the baseline's first."""
+        return ("baseline",) if self.reform is None else ("baseline", "reform")
+
+    def key_object(self) -> dict[str, object]:
+        """Return the object whose canonical JSON the report's key hashes."""
+        return {
+            "record": "report",
+            "key_version": KEY_VERSION,
+            "report_type": _HOUSEHOLD,
+            "country": self.country,
+            "baseline": _side(self.baseline),
+            "reform": None if self.reform is None else _side(self.reform),
+            "household_id": self.household_id,
+            "year": self.year,
+            "budget_window_size": None,
+        }
+
+    @property
+    def definition_key(self) -> str:
+        """The report's ``definition_key``."""
+        return definition_key(self.key_object())
+
+    def dataset_independent_key_object(self) -> dict[str, object]:
+        """Return the key object under its own record name.
+
+        A household report has no dataset to leave out; the Public API
+        requires the key with the other two.
+        """
+        return {**self.key_object(), "record": "report_dataset_independent"}
+
+    @property
+    def dataset_independent_key(self) -> str:
+        """The report's ``dataset_independent_key``."""
+        return definition_key(self.dataset_independent_key_object())
+
+    def simulation(
+        self, side: Literal["baseline", "reform"]
+    ) -> HouseholdSimulationDefinition:
+        """Return the simulation ``side`` names; raise ValueError for no reform."""
+        choice = self.baseline if side == "baseline" else self.reform
+        if choice is None:
+            msg = "a household report of the baseline alone has no reform"
+            raise ValueError(msg)
+        return HouseholdSimulationDefinition(
+            country=self.country,
+            choice=choice,
+            household_id=self.household_id,
+            year=self.year,
         )
