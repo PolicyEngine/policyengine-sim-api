@@ -479,8 +479,11 @@ def test_a_household_only_country_leaves_schema_1_readers_on_their_manifest() ->
     manifest = publish_v2_manifest(store=store, worker=_worker(household_only=("uk",)))
 
     # Schema version 1 cannot describe a country without a single-simulation
-    # function, so only the schema version 2 document changes.
-    assert [key for key, _ in store.writes] == [SCHEMA_2_MANIFEST_KEY]
+    # function, so only the schema version 2 documents change.
+    assert [key for key, _ in store.writes] == [
+        LOCAL_AREA_REPORTS_MANIFEST_KEY,
+        SCHEMA_2_MANIFEST_KEY,
+    ]
     assert store.values[ACTIVE_MANIFEST_KEY] == earlier
     assert schema_1_manifest_payload(manifest, include_cache=True) is None
     worker = manifest.versions["5.2.0"]
