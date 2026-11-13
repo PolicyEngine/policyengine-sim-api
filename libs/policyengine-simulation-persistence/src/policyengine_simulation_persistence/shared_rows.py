@@ -212,6 +212,42 @@ def find_or_insert_report_run(
     )
 
 
+def find_joinable_report_run(
+    connection: Connection,
+    *,
+    report_id: UUID,
+    country_package_version: str,
+    policyengine_version: str,
+) -> FoundReportRun | None:
+    """Return the report's joinable run on these versions, or None.
+
+    The run hasn't failed, wasn't forced, and is no budget window's year
+    run: the one ``find_or_insert_report_run`` would join.
+    """
+    row = connection.execute(
+        select(
+            report_runs.c.id,
+            report_runs.c.status,
+            report_runs.c.baseline_simulation_run_id,
+            report_runs.c.reform_simulation_run_id,
+        ).where(
+            report_runs.c.report_id == report_id,
+            report_runs.c.country_package_version == country_package_version,
+            report_runs.c.policyengine_version == policyengine_version,
+            *_JOINABLE_REPORT_RUN.read_conditions,
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return FoundReportRun(
+        id=row.id,
+        inserted=False,
+        status=ReportRunStatus(row.status),
+        baseline_simulation_run_id=row.baseline_simulation_run_id,
+        reform_simulation_run_id=row.reform_simulation_run_id,
+    )
+
+
 def _refuse_forced(values: Mapping[str, Any]) -> None:
     if values.get("forced"):
         msg = "a forced run is inserted directly: it never joins or is joined"

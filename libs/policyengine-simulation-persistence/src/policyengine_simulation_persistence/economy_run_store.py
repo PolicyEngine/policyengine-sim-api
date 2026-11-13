@@ -93,7 +93,10 @@ if TYPE_CHECKING:
         NewEconomySimulation,
     )
     from policyengine_simulation_persistence.policy_reform import PolicyReform
-    from policyengine_simulation_persistence.shared_rows import FoundSimulationRun
+    from policyengine_simulation_persistence.shared_rows import (
+        FoundReportRun,
+        FoundSimulationRun,
+    )
     from policyengine_simulation_persistence.tables import (
         ReportRunStatus,
         SimulationStatus,
@@ -415,13 +418,13 @@ class EconomyRunStore:
         """
         self._create(lambda connection: insert_window_rerun(connection, rerun))
 
-    def create_report_rerun(self, rerun: NewReportRerun) -> None:
-        """Create the report's new run and its sides' new simulation runs.
+    def create_report_rerun(self, rerun: NewReportRerun) -> FoundReportRun:
+        """Join or create the report's run; see ``insert_report_rerun``.
 
         Raise ``insert_report_rerun``'s errors, and
         EconomyRecordOutcomeUnknownError as ``create_report`` does.
         """
-        self._create(lambda connection: insert_report_rerun(connection, rerun))
+        return self._create(lambda connection: insert_report_rerun(connection, rerun))
 
     def create_simulation_rerun(self, rerun: NewSimulationRerun) -> FoundSimulationRun:
         """Join or create the simulation's run; see ``insert_simulation_rerun``.

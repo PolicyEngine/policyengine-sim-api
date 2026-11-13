@@ -19,14 +19,15 @@ service runs now, as a new run, and keeps every earlier run. The service:
 The record itself is never changed: the service may not update ``reports``
 or ``simulations``, so a report keeps naming the simulations it was created
 with, and each new run records the catalog version, dataset and region it
-calculates on. A simulation's re-run joins the simulation's run that
-hasn't failed on the current versions, catalog version and year, when there
-is one, pending, running or succeeded, rather than create one (C1 · 24's
-answers 2 and 3; ``shared_rows``). For a report, nothing is created while
-the record has a run that is ``pending`` or ``running`` (a budget-window
-run or a report run of it); a transaction-level advisory lock on the
-record's ID makes concurrent re-runs of one record wait for each other, as
-a row lock on ``reports`` would need ``UPDATE`` on it.
+calculates on. A re-run joins the record's run that hasn't failed on the
+current versions, when there is one, pending, running or succeeded, rather
+than create one (C1 · 24's answers 2 and 3; ``shared_rows``): a
+simulation's run on those versions, catalog version and year, or a
+report's run on those versions. A report's re-run takes a
+transaction-level advisory lock on its ID first, which makes concurrent
+re-runs of one report wait for each other, as a row lock on ``reports``
+would need ``UPDATE`` on it; nothing is created while a budget window's
+run of the report is ``pending`` or ``running``.
 
 A forced re-run (C1 · 24's answer 3) is an extra run instead: its report
 run, or each year's report run of a budget window, and the simulation runs
@@ -70,6 +71,9 @@ from policyengine_simulation_persistence.input_tables import (
     tax_benefit_models,
 )
 from policyengine_simulation_persistence.shared_rows import (
+    FoundReportRun,
+    find_joinable_report_run,
+    find_or_insert_report_run,
     find_or_insert_simulation_run,
 )
 from policyengine_simulation_persistence.tables import (
@@ -530,47 +534,90 @@ def _run_under_way(
     ).scalar_one_or_none()
 
 
-def insert_report_rerun(connection: Connection, rerun: NewReportRerun) -> None:
-    """Create the report's new run and its sides' new simulation runs, pending.
+def insert_report_rerun(
+    connection: Connection, rerun: NewReportRerun
+) -> FoundReportRun:
+    """Join the report's run on the re-run's versions, or create it, pending.
 
-    Unless the re-run is forced, take the report's re-run lock first, and
-    raise RunInProgressError, creating nothing, when the report has a run
-    pending or running; a forced re-run's runs are marked forced. Raise
-    RerunRecordDeletedError when the database refuses the new run's key to
-    the report, which no longer exists, and EconomyRecordReferenceError when
-    it refuses another row the new runs name, such as a side's simulation;
-    either refusal ends the caller's transaction, or its savepoint.
+    Unless the re-run is forced, take the report's re-run lock, raise
+    RunInProgressError, creating nothing, while a budget window's run of
+    the report is pending or running, and join the report's run on the
+    re-run's versions that hasn't failed and wasn't forced, when there is
+    one. Otherwise create the new run and its sides' new simulation runs; a
+    forced re-run's are marked forced, and never joined. Return the run and
+    whether this call created it, which only then needs its Modal call.
+
+    Raise RerunRecordDeletedError when the database refuses the new run's
+    key to the report, which no longer exists, and
+    EconomyRecordReferenceError when it refuses another row the new runs
+    name, such as a side's simulation; either refusal ends the caller's
+    transaction, or its savepoint.
     """
+    versions = rerun.versions
     if not rerun.forced:
         lock_reruns_of(connection, rerun.report_id)
-        _refuse_while_report_runs(connection, rerun.report_id)
-    with _record_checked(report_runs.c.report_id), references_checked():
-        for side in (rerun.baseline, rerun.reform):
-            if not side.reused:
-                insert_simulation_run(
-                    connection,
-                    run_id=side.simulation_run_id,
-                    simulation_id=side.simulation_id,
-                    population=rerun.population,
-                    versions=rerun.versions,
-                    forced=rerun.forced,
-                )
-        connection.execute(
-            insert(report_runs).values(
-                id=rerun.run_id,
-                report_id=rerun.report_id,
-                baseline_simulation_run_id=rerun.baseline.simulation_run_id,
-                reform_simulation_run_id=rerun.reform.simulation_run_id,
-                budget_window_run_id=None,
-                year=None,
-                country_package_version=rerun.versions.country_package_version,
-                policyengine_version=rerun.versions.policyengine_version,
-                status=ReportRunStatus.PENDING,
-                trigger=ReportRunTrigger.MANUAL,
-                modal_call_id=None,
-                forced=rerun.forced,
-            )
+        _refuse_while_window_runs(connection, rerun.report_id)
+        joined = find_joinable_report_run(
+            connection,
+            report_id=rerun.report_id,
+            country_package_version=versions.country_package_version,
+            policyengine_version=versions.policyengine_version,
         )
+        if joined is not None:
+            return joined
+    row = {
+        "id": rerun.run_id,
+        "report_id": rerun.report_id,
+        "baseline_simulation_run_id": rerun.baseline.simulation_run_id,
+        "reform_simulation_run_id": rerun.reform.simulation_run_id,
+        "budget_window_run_id": None,
+        "year": None,
+        "country_package_version": versions.country_package_version,
+        "policyengine_version": versions.policyengine_version,
+        "status": ReportRunStatus.PENDING,
+        "trigger": ReportRunTrigger.MANUAL,
+        "modal_call_id": None,
+        "forced": rerun.forced,
+    }
+    with _record_checked(report_runs.c.report_id), references_checked():
+        # A run another request created after the lookup above is joined,
+        # and the savepoint takes back this call's simulation runs with it.
+        savepoint = connection.begin_nested()
+        try:
+            for side in (rerun.baseline, rerun.reform):
+                if not side.reused:
+                    insert_simulation_run(
+                        connection,
+                        run_id=side.simulation_run_id,
+                        simulation_id=side.simulation_id,
+                        population=rerun.population,
+                        versions=versions,
+                        forced=rerun.forced,
+                    )
+            if rerun.forced:
+                connection.execute(insert(report_runs).values(row))
+                found = _created(rerun)
+            else:
+                found = find_or_insert_report_run(connection, row)
+        except BaseException:
+            savepoint.rollback()
+            raise
+        if found.inserted:
+            savepoint.commit()
+        else:
+            savepoint.rollback()
+        return found
+
+
+def _created(rerun: NewReportRerun) -> FoundReportRun:
+    """Return the report run a re-run created, as a lookup would."""
+    return FoundReportRun(
+        id=rerun.run_id,
+        inserted=True,
+        status=ReportRunStatus.PENDING,
+        baseline_simulation_run_id=rerun.baseline.simulation_run_id,
+        reform_simulation_run_id=rerun.reform.simulation_run_id,
+    )
 
 
 def insert_window_rerun(connection: Connection, rerun: NewWindowRerun) -> None:
@@ -670,6 +717,15 @@ def insert_household_report_rerun(
                 modal_call_id=None,
             )
         )
+
+
+def _refuse_while_window_runs(connection: Connection, report_id: UUID) -> None:
+    """Raise RunInProgressError while the report has a budget-window run under way."""
+    under_way = _run_under_way(
+        connection, budget_window_runs, budget_window_runs.c.report_id == report_id
+    )
+    if under_way is not None:
+        raise RunInProgressError(under_way)
 
 
 def _refuse_while_report_runs(connection: Connection, report_id: UUID) -> None:
