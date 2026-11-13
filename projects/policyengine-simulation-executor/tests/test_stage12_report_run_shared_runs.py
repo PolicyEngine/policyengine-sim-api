@@ -457,12 +457,10 @@ def test_a_waited_for_run_left_unstarted_gets_this_coordinators_worker() -> None
     assert baseline.modal_call_id in invoker.call_ids
 
 
-def test_a_forced_report_run_starts_workers_on_its_fresh_runs_and_waits_for_none() -> (
-    None
-):
-    # C1 · 24, answer 3: a forced re-run calculates extra simulation runs that
-    # no other report run joins, so both are pending with no call when its
-    # coordinator starts; it needs no marker to tell it so.
+def test_runs_no_other_report_run_names_get_workers_and_no_wait() -> None:
+    # The state a forced re-run's coordinator starts in (C1 · 24, answer 3):
+    # its extra simulation runs are pending with no call and no other report
+    # run joins them, so it needs no marker telling it the run was forced.
     report_runs, files, artifacts = (
         FakeReportRuns(),
         StoredOutputFiles(),
