@@ -161,6 +161,9 @@ class ReportDefinition:
     budget_window_size: int | None = None
     window_years: tuple[WindowYearDefinition, ...] = ()
     household_id: UUID | None = None
+    # Whether the report was created by key (C1 · 27): its simulations' runs
+    # are then shared, whatever report first calculated them.
+    keyed: bool = False
 
 
 @dataclass(frozen=True)
@@ -199,7 +202,10 @@ class NewReportRerun:
     """A stored report's new run, on the current versions and catalog rows.
 
     ``forced`` makes it a forced re-run's extra run, which calculates both
-    sides.
+    sides. ``sides_join_runs`` (a keyed report's unforced re-run) makes each
+    side join its simulation's unfailed, unforced run on the re-run's
+    versions rather than insert one; a side's ``simulation_run_id`` is then
+    the ID it proposes, used only if it inserts the run.
     """
 
     report_id: UUID
@@ -209,11 +215,14 @@ class NewReportRerun:
     baseline: RerunSide
     reform: RerunSide
     forced: bool = False
+    sides_join_runs: bool = False
 
     def __post_init__(self) -> None:
-        """Refuse a forced re-run naming a run it doesn't create."""
-        if self.forced and (self.baseline.reused or self.reform.reused):
-            msg = "a forced re-run calculates both sides, reusing no run"
+        """Refuse a forced re-run naming a run it doesn't create, or joining one."""
+        if self.forced and (
+            self.baseline.reused or self.reform.reused or self.sides_join_runs
+        ):
+            msg = "a forced re-run calculates both sides, reusing and joining no run"
             raise ValueError(msg)
 
     @property
@@ -344,6 +353,7 @@ def read_report_definition(
                 reports.c.budget_window_size,
                 reports.c.year,
                 reports.c.inputs,
+                reports.c.key_version,
                 region.c.code.label("region_code"),
                 dataset.c.name.label("dataset_name"),
                 baseline.c.id.label("baseline_id"),
@@ -381,6 +391,7 @@ def read_report_definition(
             _window_years(connection, report_id) if kind == "budget_window" else ()
         ),
         household_id=row["household_id"],
+        keyed=row["key_version"] is not None,
     )
 
 
@@ -583,11 +594,9 @@ def insert_report_rerun(
         )
         if joined is not None:
             return joined
-    row = {
+    row: dict[str, Any] = {
         "id": rerun.run_id,
         "report_id": rerun.report_id,
-        "baseline_simulation_run_id": rerun.baseline.simulation_run_id,
-        "reform_simulation_run_id": rerun.reform.simulation_run_id,
         "budget_window_run_id": None,
         "year": None,
         "country_package_version": versions.country_package_version,
@@ -602,16 +611,9 @@ def insert_report_rerun(
         # and the savepoint takes back this call's simulation runs with it.
         savepoint = connection.begin_nested()
         try:
-            for side in (rerun.baseline, rerun.reform):
-                if not side.reused:
-                    insert_simulation_run(
-                        connection,
-                        run_id=side.simulation_run_id,
-                        simulation_id=side.simulation_id,
-                        population=rerun.population,
-                        versions=versions,
-                        forced=rerun.forced,
-                    )
+            baseline_run_id, reform_run_id = _side_runs(connection, rerun)
+            row["baseline_simulation_run_id"] = baseline_run_id
+            row["reform_simulation_run_id"] = reform_run_id
             if rerun.forced:
                 connection.execute(insert(report_runs).values(row))
                 found = _created(rerun)
@@ -625,6 +627,52 @@ def insert_report_rerun(
         else:
             savepoint.rollback()
         return found
+
+
+def _side_runs(connection: Connection, rerun: NewReportRerun) -> tuple[UUID, UUID]:
+    """Return the baseline's and the reform's run, joined or inserted for the re-run.
+
+    A reused side names its run. With ``sides_join_runs`` (a keyed report's
+    unforced re-run), every other side joins its simulation's run on the
+    re-run's versions that hasn't failed and wasn't forced, or inserts one,
+    in simulation ID order, one run for one simulation on both sides.
+    Otherwise each other side inserts a new run, forced on a forced re-run.
+    """
+    sides = (rerun.baseline, rerun.reform)
+    if not rerun.sides_join_runs:
+        for side in sides:
+            if not side.reused:
+                insert_simulation_run(
+                    connection,
+                    run_id=side.simulation_run_id,
+                    simulation_id=side.simulation_id,
+                    population=rerun.population,
+                    versions=rerun.versions,
+                    forced=rerun.forced,
+                )
+        return rerun.baseline.simulation_run_id, rerun.reform.simulation_run_id
+    proposed = {
+        side.simulation_id: side.simulation_run_id
+        for side in reversed(sides)
+        if not side.reused
+    }
+    found = {
+        simulation_id: find_or_insert_simulation_run(
+            connection,
+            simulation_run_row(
+                run_id=proposed[simulation_id],
+                simulation_id=simulation_id,
+                population=rerun.population,
+                versions=rerun.versions,
+            ),
+        ).id
+        for simulation_id in sorted(proposed)
+    }
+    baseline_run_id, reform_run_id = (
+        side.simulation_run_id if side.reused else found[side.simulation_id]
+        for side in sides
+    )
+    return baseline_run_id, reform_run_id
 
 
 def _created(rerun: NewReportRerun) -> FoundReportRun:
