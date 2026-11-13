@@ -50,6 +50,7 @@ from policyengine_simulation_persistence import (
     ReportRunStatus,
     ReportSimulation,
     RunReuse,
+    SharedRowNotSettledError,
     SimulationChoice,
     SimulationStatus,
 )
@@ -505,7 +506,9 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
             raise EconomySubmissionOutcomeUnknownError(
                 record, error_type=type(error.__cause__).__name__, rerun=rerun
             ) from None
-        except SQLAlchemyError as error:
+        # A run kept failing between a lookup's insert and its read; its
+        # transaction wrote nothing, so the caller may ask again.
+        except (SharedRowNotSettledError, SQLAlchemyError) as error:
             logger.warning(
                 "economy_records_not_created",
                 extra={"error_type": type(error).__name__},
