@@ -134,6 +134,15 @@ from policyengine_simulation_persistence.policy_reform import (
     read_dynamic_reform,
     read_policy_reform,
 )
+from policyengine_simulation_persistence.shared_rows import (
+    FoundReportRun,
+    FoundRow,
+    SharedRowNotSettledError,
+    find_or_insert_report,
+    find_or_insert_report_run,
+    find_or_insert_simulation,
+    find_or_insert_simulation_run,
+)
 from policyengine_simulation_persistence.tables import (
     LATEST_YEAR,
     MAX_BUDGET_WINDOW_YEARS,
@@ -174,6 +183,8 @@ __all__ = [
     "EconomyRunStore",
     "EconomySimulationInputs",
     "EconomySimulationState",
+    "FoundReportRun",
+    "FoundRow",
     "HouseholdCalculationInputs",
     "HouseholdJobRecord",
     "HouseholdJobReferenceError",
@@ -209,6 +220,7 @@ __all__ = [
     "RunInProgressError",
     "RunReuse",
     "RunVersions",
+    "SharedRowNotSettledError",
     "SideDefinition",
     "SideRefusal",
     "SimulationChoice",
@@ -237,6 +249,10 @@ __all__ = [
     "fail_unstarted_household_job",
     "fail_unstarted_report_run",
     "fail_unstarted_simulation_run",
+    "find_or_insert_report",
+    "find_or_insert_report_run",
+    "find_or_insert_simulation",
+    "find_or_insert_simulation_run",
     "find_reusable_run",
     "find_reusable_run_of",
     "household_jobs",
