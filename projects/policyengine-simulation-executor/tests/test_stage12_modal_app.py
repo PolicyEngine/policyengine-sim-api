@@ -731,6 +731,111 @@ def test_household_functions_record_the_job_their_call_names(
     assert runtime.shutdown_calls == 1
 
 
+def _household_report_payload(country: str) -> dict:
+    """Return a household report run's calculation: a baseline and a reform."""
+    reform = {
+        **_household_payload(country),
+        "calculation_id": "00000000-0000-4000-8000-0000000000c2",
+    }
+    return {"baseline": _household_payload(country), "reform": reform}
+
+
+@pytest.mark.parametrize("country", ["us", "uk"])
+def test_household_functions_record_the_report_run_their_call_names(
+    monkeypatch, country
+) -> None:
+    from policyengine_simulation_contract.household_report_execution import (
+        HouseholdReportRunCalculation,
+    )
+    from policyengine_simulation_executor import (
+        household_calculation,
+        stage12_runtime,
+    )
+
+    module = _load(monkeypatch)
+    runtime = RecordingRuntime()
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+    monkeypatch.setattr(
+        module.modal,
+        "current_function_call_id",
+        lambda: "fc-household-report",
+        raising=False,
+    )
+    _refuse_household_jobs(monkeypatch)
+    calculated: list[dict] = []
+    recorded: list[dict] = []
+
+    def calculate(request, **keywords):
+        calculated.append({"request": request, **keywords})
+        return request.calculation_id
+
+    def run_household_report(report_run_id, payload, calculate_side, **keywords):
+        recorded.append(
+            {"report_run_id": report_run_id, "payload": payload, **keywords}
+        )
+        calculation = HouseholdReportRunCalculation.model_validate(payload)
+        outcomes = [calculate_side(request) for _, request in calculation.sides()]
+        return {"status": "succeeded", "outcomes": [str(item) for item in outcomes]}
+
+    monkeypatch.setattr(household_calculation, "calculate_household", calculate)
+    monkeypatch.setattr(stage12_runtime, "run_household_report", run_household_report)
+
+    result = getattr(module, f"calculate_household_{country}")(
+        _household_report_payload(country),
+        observability_context=_observability_context(),
+        household_report_run_id="00000000-0000-4000-8000-00000000a002",
+    )
+
+    assert result == {
+        "status": "succeeded",
+        "outcomes": [
+            "00000000-0000-4000-8000-0000000000c1",
+            "00000000-0000-4000-8000-0000000000c2",
+        ],
+    }
+    (report,) = recorded
+    assert report["report_run_id"] == UUID("00000000-0000-4000-8000-00000000a002")
+    # The payload reaches the recording code as sent, which validates it once
+    # the call holds the report run.
+    assert report["payload"] == _household_report_payload(country)
+    assert report["modal_call_id"] == "fc-household-report"
+    assert report["runtime"] is runtime
+    assert [call["required_country"] for call in calculated] == [country, country]
+    assert all(
+        call["worker"].function_name == f"calculate_household_{country}"
+        for call in calculated
+    )
+    # The claims, both calculations and the records are one operation.
+    (operation,) = runtime.operations
+    assert operation["name"] == "v2_household_execution"
+    assert runtime.shutdown_calls == 1
+
+
+def test_a_household_function_refuses_a_job_and_a_report_run_together(
+    monkeypatch,
+) -> None:
+    from policyengine_simulation_executor import stage12_runtime
+
+    module = _load(monkeypatch)
+    runtime = RecordingRuntime()
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+    _refuse_household_jobs(monkeypatch)
+
+    def refuse(*_args, **_keywords):
+        msg = "a call naming a job and a report run recorded one"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(stage12_runtime, "run_household_report", refuse)
+
+    with pytest.raises(ValueError, match="either a household job or a report run"):
+        module.calculate_household_us(
+            _household_report_payload("us"),
+            household_job_id="00000000-0000-4000-8000-00000000a001",
+            household_report_run_id="00000000-0000-4000-8000-00000000a002",
+        )
+    assert runtime.shutdown_calls == 1
+
+
 def test_household_functions_given_no_job_record_none(monkeypatch) -> None:
     # Release validation calls them with validation households, and no job.
     from policyengine_simulation_executor import household_calculation

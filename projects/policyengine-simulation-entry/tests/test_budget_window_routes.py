@@ -153,7 +153,7 @@ def test_an_economy_report_body_still_reaches_the_report_service(client_for) -> 
             {"loc": ["body", "report_type"], "type": "missing"},
         ),
         (
-            {**REPORT_BODY, "report_type": "household"},
+            {**REPORT_BODY, "report_type": "not_a_report_type"},
             {"loc": ["body", "report_type"], "type": "literal_error"},
         ),
         (
@@ -180,7 +180,7 @@ def test_a_refused_report_names_its_fields_as_an_economy_report_did(
     assert {"loc": error["loc"], "type": error["type"]} == expected
 
 
-@pytest.mark.parametrize("report_type", [None, 5, ["economy"], "household"])
+@pytest.mark.parametrize("report_type", [None, 5, ["economy"], "not_a_report_type"])
 def test_an_unknown_report_type_is_refused_with_the_value_sent(
     client_for, report_type
 ) -> None:
@@ -194,9 +194,9 @@ def test_an_unknown_report_type_is_refused_with_the_value_sent(
         {
             "type": "literal_error",
             "loc": ["body", "report_type"],
-            "msg": "Input should be 'economy' or 'budget_window'",
+            "msg": "Input should be 'economy', 'budget_window' or 'household'",
             "input": report_type,
-            "ctx": {"expected": "'economy' or 'budget_window'"},
+            "ctx": {"expected": "'economy', 'budget_window' or 'household'"},
         }
     ]
 

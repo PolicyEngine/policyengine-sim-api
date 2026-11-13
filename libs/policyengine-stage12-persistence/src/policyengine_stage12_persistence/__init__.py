@@ -8,6 +8,9 @@ from policyengine_stage12_persistence.budget_window_store import (
     YearStarter,
     YearToStart,
 )
+from policyengine_stage12_persistence.household_report_run_store import (
+    HouseholdReportRunStore,
+)
 from policyengine_stage12_persistence.report_run_results import (
     DistrictCodes,
     ReportRunResult,
@@ -38,6 +41,7 @@ __all__ = [
     "BudgetWindowStore",
     "ConnectionOpener",
     "DistrictCodes",
+    "HouseholdReportRunStore",
     "ReportRunResult",
     "ReportRunStore",
     "RunKind",

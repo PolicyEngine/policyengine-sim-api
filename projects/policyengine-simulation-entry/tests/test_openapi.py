@@ -102,6 +102,9 @@ ECONOMY_SCHEMAS = (
     "EconomySimulationCreated",
     "EconomySimulationRequest",
     "EconomySimulationState",
+    "HouseholdPolicyChoice",
+    "HouseholdReportCreated",
+    "HouseholdReportRequest",
     "PolicyChoice",
     "ReportRunRead",
     "ReportRunStatus",
@@ -364,7 +367,14 @@ def test_economy_routes_declare_every_answer():
     unprocessable = {"$ref": "#/components/schemas/EconomyRequestUnprocessable"}
 
     for path, created in (
-        ("/reports", ("EconomyReportCreated", "BudgetWindowReportCreated")),
+        (
+            "/reports",
+            (
+                "EconomyReportCreated",
+                "BudgetWindowReportCreated",
+                "HouseholdReportCreated",
+            ),
+        ),
         ("/simulations", ("EconomySimulationCreated",)),
     ):
         responses = _responses(spec, "post", path)
@@ -387,9 +397,15 @@ def test_economy_routes_declare_every_answer():
         "unknown_dataset",
         "unknown_dynamic",
         "unknown_catalog_version",
+        "unknown_household",
+        "no_household_function",
         "modal_call_refused",
         "internal_error",
     } <= codes
+    unprocessable_codes = spec["components"]["schemas"]["EconomyRequestUnprocessable"][
+        "properties"
+    ]["code"]["enum"]
+    assert "household_not_calculable" in unprocessable_codes
 
 
 def test_every_economy_503_declares_its_retry_after_header():
@@ -441,7 +457,7 @@ def test_economy_requests_name_no_version_and_no_record_id():
     assert "spm" not in schemas["EconomyReportRequest"].get("required", [])
 
 
-def test_a_report_request_is_an_economy_report_or_a_budget_window():
+def test_a_report_request_is_an_economy_report_a_budget_window_or_a_household():
     spec = create_app().openapi()
     body = spec["paths"]["/reports"]["post"]["requestBody"]["content"][
         "application/json"
@@ -453,6 +469,7 @@ def test_a_report_request_is_an_economy_report_or_a_budget_window():
         "mapping": {
             "economy": "#/components/schemas/EconomyReportRequest",
             "budget_window": "#/components/schemas/BudgetWindowReportRequest",
+            "household": "#/components/schemas/HouseholdReportRequest",
         },
     }
     # A window sends its length and no cliff option, and names no version
@@ -472,6 +489,41 @@ def test_a_report_request_is_an_economy_report_or_a_budget_window():
     }
     size = schemas["BudgetWindowReportRequest"]["properties"]["budget_window_size"]
     assert (size["minimum"], size["maximum"]) == (1, 75)
+
+
+def test_a_household_report_names_its_household_and_each_sides_policy():
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    # No year, region, dataset, dynamic, version or record ID, and no option:
+    # a household report always adds the household's missing variables.
+    household_report = schemas["HouseholdReportRequest"]
+    assert set(household_report["properties"]) == {
+        "country",
+        "report_type",
+        "label",
+        "description",
+        "household_id",
+        "baseline",
+        "reform",
+    }
+    assert set(household_report["required"]) == {
+        "country",
+        "report_type",
+        "label",
+        "household_id",
+        "baseline",
+    }
+    assert set(schemas["HouseholdPolicyChoice"]["properties"]) == {"policy_id"}
+    assert set(schemas["HouseholdReportCreated"]["required"]) == {
+        "report_id",
+        "report_run_id",
+        "status",
+        "year",
+        "baseline_simulation_id",
+        "baseline_simulation_run_id",
+        "reform_simulation_id",
+        "reform_simulation_run_id",
+    }
 
 
 def test_economy_reads_declare_every_answer():

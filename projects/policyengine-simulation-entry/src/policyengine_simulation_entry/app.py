@@ -58,6 +58,7 @@ from policyengine_simulation_entry.budget_window_submissions import (
 from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.economy_routes import (
     EconomySubmissions,
+    HouseholdReportSubmissions,
     add_economy_routes,
 )
 from policyengine_simulation_entry.economy_submissions import (
@@ -82,6 +83,9 @@ from policyengine_simulation_entry.entry_runtime import (
 )
 from policyengine_simulation_entry.household_calculations import (
     HouseholdCalculationService,
+)
+from policyengine_simulation_entry.household_report_submissions import (
+    household_reports_for,
 )
 from policyengine_simulation_entry.household_routes import (
     HouseholdCalculations,
@@ -540,16 +544,24 @@ def household_calculations_for(
     )
 
 
-def _register_economy_routes(
+def _register_economy_routes(  # noqa: PLR0913  # the app, its services and permissions
     app: FastAPI,
     entry: EntryRuntime,
     submissions: EconomySubmissions | None,
+    household_reports: HouseholdReportSubmissions | None,
     *,
     submitter: AuthorizationDependency,
     reader: AuthorizationDependency,
 ) -> None:
-    """Add the routes that create economy reports and simulations and read them."""
-    add_economy_routes(app, entry, submissions, submitter=submitter, reader=reader)
+    """Add the routes that create reports and economy simulations and read them."""
+    add_economy_routes(
+        app,
+        entry,
+        submissions,
+        submitter=submitter,
+        reader=reader,
+        household_reports=household_reports,
+    )
 
 
 def economy_submissions_for(
@@ -744,6 +756,7 @@ def create_app(
         app,
         entry,
         economy_submissions_for(runtime_settings, runtime_database),
+        household_reports_for(runtime_settings, runtime_database),
         submitter=simulation_submitter,
         reader=simulation_reader,
     )

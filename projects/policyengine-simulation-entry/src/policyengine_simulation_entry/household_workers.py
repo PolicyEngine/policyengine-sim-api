@@ -72,6 +72,21 @@ class HouseholdFunctionCaller(Protocol):
         ...
 
 
+class HouseholdReportRunCaller(Protocol):
+    """Start one household report run's call (``ModalHouseholdFunctionCaller``)."""
+
+    async def start_report_run(
+        self,
+        worker: HouseholdWorker,
+        payload: dict[str, Any],
+        *,
+        report_run_id: UUID,
+        observability_context: dict[str, Any] | None,
+    ) -> str:
+        """Start the call without waiting for it and return its Modal call ID."""
+        ...
+
+
 def default_household_worker(
     manifest: V2VersionManifest, country: str
 ) -> HouseholdWorker:
@@ -156,16 +171,43 @@ class ModalHouseholdFunctionCaller:
 
         Raise RuntimeError when Modal returns no call ID.
         """
+        return await self._spawn(
+            worker,
+            payload,
+            household_job_id=str(household_job_id),
+            observability_context=observability_context,
+        )
+
+    async def start_report_run(
+        self,
+        worker: HouseholdWorker,
+        payload: dict[str, Any],
+        *,
+        report_run_id: UUID,
+        observability_context: dict[str, Any] | None,
+    ) -> str:
+        """Start the household function on a household report run's calculation.
+
+        ``payload`` is the report run's ``HouseholdReportRunCalculation``.
+        Return the call's Modal call ID; raise RuntimeError when Modal
+        returns none.
+        """
+        return await self._spawn(
+            worker,
+            payload,
+            household_report_run_id=str(report_run_id),
+            observability_context=observability_context,
+        )
+
+    async def _spawn(
+        self, worker: HouseholdWorker, payload: dict[str, Any], **keywords: object
+    ) -> str:
         function = modal.Function.from_name(
             worker.application_name,
             worker.function_name,
             environment_name=self._environment,
         )
-        call = await function.spawn.aio(
-            payload,
-            household_job_id=str(household_job_id),
-            observability_context=observability_context,
-        )
+        call = await function.spawn.aio(payload, **keywords)
         call_id = getattr(call, "object_id", None)
         if not isinstance(call_id, str) or not call_id:
             msg = "Modal returned no call ID for the household function's call"

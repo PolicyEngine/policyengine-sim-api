@@ -181,3 +181,60 @@ async def test_a_call_modal_gives_no_id_is_refused(monkeypatch):
         await ModalHouseholdFunctionCaller("staging").spawn(
             worker, {}, household_job_id=JOB_ID, observability_context=None
         )
+
+
+REPORT_RUN_ID = UUID("00000000-0000-4000-8000-0000000000ab")
+
+
+@pytest.mark.asyncio
+async def test_a_household_report_run_is_started_by_name_with_its_run(monkeypatch):
+    function = FakeModalFunction("fc-household-report-1")
+    looked_up: list[tuple] = []
+
+    def from_name(application_name, function_name, *, environment_name):
+        looked_up.append((application_name, function_name, environment_name))
+        return function
+
+    monkeypatch.setattr(household_workers.modal.Function, "from_name", from_name)
+    worker = ManifestHouseholdWorkers(
+        manifest_store(household_worker_version())
+    ).default_worker("uk")
+    payload = {"baseline": {"calculation_id": str(JOB_ID)}, "reform": None}
+
+    call_id = await ModalHouseholdFunctionCaller("staging").start_report_run(
+        worker,
+        payload,
+        report_run_id=REPORT_RUN_ID,
+        observability_context={"observability_id": "o-1"},
+    )
+
+    assert call_id == "fc-household-report-1"
+    assert looked_up == [
+        (v2_application_name(POLICYENGINE_VERSION), "calculate_household_uk", "staging")
+    ]
+    assert function.spawned == [
+        (
+            (payload,),
+            {
+                "household_report_run_id": str(REPORT_RUN_ID),
+                "observability_context": {"observability_id": "o-1"},
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_report_run_call_modal_gives_no_id_is_refused(monkeypatch):
+    monkeypatch.setattr(
+        household_workers.modal.Function,
+        "from_name",
+        lambda *names, environment_name: FakeModalFunction(None),
+    )
+    worker = ManifestHouseholdWorkers(
+        manifest_store(household_worker_version())
+    ).default_worker("us")
+
+    with pytest.raises(RuntimeError, match="no call ID"):
+        await ModalHouseholdFunctionCaller("staging").start_report_run(
+            worker, {}, report_run_id=REPORT_RUN_ID, observability_context=None
+        )

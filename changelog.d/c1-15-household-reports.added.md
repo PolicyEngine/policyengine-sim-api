@@ -1,0 +1,1 @@
+The Simulation Entrypoint creates household reports through `POST /reports` with `report_type` `household`: one stored household, for its default year, under a baseline and an optional reform, each a new household simulation run. One household function call calculates the report run, writes each simulation run's `household_result` and finishes the report run.
