@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import and_, case, exists, func, insert, or_, select, update
+from sqlalchemy import and_, case, exists, func, insert, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from policyengine_stage12_persistence.report_run_tables import (
@@ -574,9 +574,9 @@ class ReportRunStore:
         each such report run's coordinator starts the run or waits for the
         call holding it, and fails it once that call ended without an
         outcome, so it is theirs to judge until they have finished; with
-        ``regardless_of_report_runs``, for the sweep's age limit, it is listed
-        whatever report runs name it, since new ones may keep joining a run
-        whose call Modal never ends. A year of a
+        ``regardless_of_report_runs``, for the sweep's age limit, a run that
+        records a call is listed whatever report runs name it, since new ones
+        may keep joining a run whose call Modal never ends. A year of a
         pending or running budget-window run that is still pending with no
         call recorded is waiting for an earlier year to end, and is listed
         only once its window has finished: the window is judged as a whole.
@@ -590,10 +590,9 @@ class ReportRunStore:
         conditions = [
             table.c.status.in_(ACTIVE_STATUSES),
             active_since < active_since_before,
+            _sweep_judges(kind, regardless_of_report_runs=regardless_of_report_runs),
         ]
         columns = [table.c.id, table.c.status, table.c.modal_call_id]
-        if kind is RunKind.SIMULATION_RUN and not regardless_of_report_runs:
-            conditions.append(no_active_report_run_names(table))
         if kind is RunKind.REPORT_RUN:
             conditions.append(~_waiting_window_year())
             columns.append(table.c.budget_window_run_id)
@@ -634,7 +633,8 @@ class ReportRunStore:
         before this update starts: the database doesn't make an insert in
         progress wait for this update, or this update for it. With
         ``regardless_of_report_runs``, for the sweep's age limit, a
-        simulation run is failed whatever report runs name it.
+        simulation run that records a call is failed whatever report runs
+        name it.
         """
         table = RUN_TABLES[run.kind]
         same_call = (
@@ -648,11 +648,8 @@ class ReportRunStore:
                 table.c.id == run.run_id,
                 table.c.status == run.status.value,
                 same_call,
-                *(
-                    (no_active_report_run_names(table),)
-                    if run.kind is RunKind.SIMULATION_RUN
-                    and not regardless_of_report_runs
-                    else ()
+                _sweep_judges(
+                    run.kind, regardless_of_report_runs=regardless_of_report_runs
                 ),
             )
             .values(
@@ -765,6 +762,23 @@ def _waiting_window_year() -> ColumnElement[bool]:
             budget_window_runs.c.status.in_(ACTIVE_STATUSES),
         ),
     )
+
+
+def _sweep_judges(
+    kind: RunKind, *, regardless_of_report_runs: bool
+) -> ColumnElement[bool]:
+    """Return the condition that the sweep may judge a run of ``kind``.
+
+    A simulation run must have no pending or running report run naming it;
+    for the age limit, one that records a call needs none. One no call has
+    claimed has no call to outlast: it waits for the report runs naming it.
+    """
+    table = RUN_TABLES[kind]
+    if kind is not RunKind.SIMULATION_RUN:
+        return true()
+    if not regardless_of_report_runs:
+        return no_active_report_run_names(table)
+    return or_(table.c.modal_call_id.is_not(None), no_active_report_run_names(table))
 
 
 def no_active_report_run_names(table: Table) -> ColumnElement[bool]:
