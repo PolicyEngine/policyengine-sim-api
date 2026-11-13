@@ -260,11 +260,12 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
         first in time; a later year not confirmed within the shared wait is
         left waiting. An advance that can't be written leaves the window pending:
         the report exists, so it is answered as created, and a year Modal
-        started claims itself, while the stuck-run sweep fails a window no
-        year advances. ``rerun`` says the report existed before the window
-        run, which the 503 then names.
+        started claims itself. A window no year advances is started again by
+        the restart check (``run_restart_windows``), and failed as stalled by
+        the stuck-run sweep when that start is lost too. ``rerun`` says the
+        report existed before the window run, which the 503 then names.
         """
-        start_year = _YearStarts(
+        start_year = YearStarts(
             worker=worker,
             caller=self._caller,
             first_year=first_year,
@@ -308,7 +309,7 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
         return ReportRunStatus(advance.status.value)
 
 
-class _YearStarts:
+class YearStarts:
     """Start a window year's coordinator from the advance's thread; return its call.
 
     The first year's call takes the input built for it; each later year's is

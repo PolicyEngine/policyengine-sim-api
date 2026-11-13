@@ -32,11 +32,14 @@ from policyengine_stage12_persistence import (
     RunStatus,
     WindowAdvance,
     YearStartDeferred,
+    YearStartRefused,
     YearToStart,
     budget_window_store,
 )
+from policyengine_stage12_persistence.report_run_tables import report_runs
 from report_run_database import NOW, SEED_URL_ENV, worker_database_url
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, func, select, update
+from sqlalchemy.exc import OperationalError
 
 # The simulation service's role, which the Public API's manifest grants.
 SERVICE_ROLE = "policyengine_v2_simulation_service"
@@ -322,6 +325,115 @@ def test_a_refused_start_names_its_cause_on_its_own_simulations(
     assert "RuntimeError" in caplog.text
     assert str(window.year(2026).report_run_id) in caplog.text
     assert "Modal refused the call" not in caplog.text
+
+
+def test_a_start_refused_with_its_own_message_records_that_message(
+    store, windows, window
+) -> None:
+    """A starter that can't build a year's call says why, rather than Modal."""
+    message = (
+        "run_not_started: The run stayed pending with no Modal call recorded "
+        "for it, and its call could not be built again: the region is gone."
+    )
+
+    def refuse(year_to_start: YearToStart) -> str:
+        raise YearStartRefused(message)
+
+    advance = store.advance_window(window.window_run_id, now=LATER, start_year=refuse)
+
+    assert advance == WindowAdvance(status=RunStatus.FAILED, changed=True)
+    rows = windows.year_rows(window)
+    assert rows[2026]["status"] == "failed"
+    assert rows[2026]["error_message"] == message
+    for simulation_run_id in (
+        window.year(2026).baseline_simulation_run_id,
+        window.year(2026).reform_simulation_run_id,
+    ):
+        row = windows.seeder.row("simulation_runs", simulation_run_id)
+        assert row["error_message"] == message
+    assert rows[2027]["error_message"].startswith("budget_window_failed: ")
+    window_row = windows.window_row(window)
+    assert window_row["status"] == "failed"
+    assert window_row["error_message"] == (
+        "budget_window_year_failed: The budget window's 2026 report run failed."
+    )
+
+
+def test_a_statement_timeout_stops_an_advance_waiting_for_the_windows_lock(
+    store, window
+) -> None:
+    """The restart check's store gives up on a window another advance holds."""
+    holding = threading.Event()
+    release = threading.Event()
+
+    def hold_the_lock(year_to_start: YearToStart) -> str:
+        holding.set()
+        release.wait(timeout=10)
+        raise YearStartDeferred
+
+    bounded = BudgetWindowStore(
+        worker_database_url(), statement_timeout_milliseconds=200
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        holder = pool.submit(
+            store.advance_window,
+            window.window_run_id,
+            now=LATER,
+            start_year=hold_the_lock,
+        )
+        try:
+            assert holding.wait(timeout=10)
+            waited_from = time.monotonic()
+            with pytest.raises(OperationalError, match="statement timeout"):
+                bounded.advance_window(
+                    window.window_run_id, now=LATER, start_year=RecordingStarter()
+                )
+            assert time.monotonic() - waited_from < 5
+        finally:
+            release.set()
+            holder.result()
+            bounded.engine.dispose()
+
+
+def test_a_starter_writes_its_own_year_on_another_connection_without_waiting(
+    store, windows, window
+) -> None:
+    """The advance locks only the window's row, not the years it starts.
+
+    The restart check marks the year it restarts a window from on its own
+    connection, from the starter, before that year's start; a lock on the
+    year would hold the mark until its statement timeout.
+    """
+    starter = RecordingStarter()
+    first_year = window.year(2026).report_run_id
+    marks: list[UUID | None] = []
+
+    def mark_then_start(year_to_start: YearToStart) -> str:
+        if not marks:
+            with store.engine.begin() as connection:
+                connection.execute(
+                    select(func.set_config("statement_timeout", "2000", True))  # noqa: FBT003  # set_config's is_local argument
+                )
+                marks.append(
+                    connection.execute(
+                        update(report_runs)
+                        .where(
+                            report_runs.c.id == first_year,
+                            report_runs.c.modal_call_id.is_(None),
+                        )
+                        .values(updated_at=func.clock_timestamp())
+                        .returning(report_runs.c.id)
+                    ).scalar_one_or_none()
+                )
+        return starter(year_to_start)
+
+    advance = store.advance_window(
+        window.window_run_id, now=LATER, start_year=mark_then_start
+    )
+
+    assert marks == [first_year]
+    assert advance.started_years == (2026, 2027, 2028, 2029, 2030)
+    assert windows.year_rows(window)[2026]["modal_call_id"] == "fc-started-1"
 
 
 def test_the_service_role_starts_and_fails_a_window(windows, window) -> None:

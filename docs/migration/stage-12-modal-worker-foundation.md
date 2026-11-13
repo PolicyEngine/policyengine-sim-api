@@ -371,7 +371,7 @@ run's maximum age of 24 hours.
 anything: their `coordinate_report` requires an evaluation record, and their
 context model refuses `simulation_run_id`. Modal accepts the call, which fails
 at once, and the run stays pending with its call recorded until the sweep fails
-it (`modal_call_ended`), at least ten minutes after its creation. A call
+it (`modal_call_ended`), at least 15 minutes after its creation. A call
 reaches such an application only while the manifest's default, or
 `STAGE12_V2_WORKER_VERSION`, names one: during the deployment of this change,
 if it adds a newer .py version, until it moves the default to it, or while a
@@ -422,7 +422,7 @@ single-year report's runs, and the reverse.
 - **The stuck-run sweep.** It leaves a waiting year of an unfinished window to
   the window, counts a year started later from when its call was recorded,
   fails the window when it fails one of its years, and settles a window that
-  nothing has changed for ten minutes with no year under way: from its years
+  nothing has changed for 15 minutes with no year under way: from its years
   when they have all ended, or as stalled (`budget_window_stalled`) when years
   are still waiting.
 
@@ -811,8 +811,8 @@ The stuck-run sweep (`src/modal/run_sweep_app.py`) fails household jobs
 nothing will finish by the rule it applies to report runs and simulation
 runs (a household report run and its simulation runs are judged as any
 report run and its simulation runs are), counting a job's age from its
-creation: a pending job with no call
-recorded ten minutes after its creation, a pending or running job once
+creation: a pending job with no call recorded 15 minutes after its
+creation, a pending or running job once
 Modal reports its recorded call ended, and any job still unfinished 24 hours
 after its creation, whatever Modal reports.
 
@@ -841,6 +841,64 @@ its function was validated. A failed household validation fails v2 worker
 validation like any other validation failure: the manifest is not published,
 and, as described under "Release and deployment constraints", the deployment
 does not promote the new Simulation Entrypoint revision.
+
+**Restarting a run whose call never started.** The stuck-run sweep's Modal
+application also runs a restart check every two minutes, as the Modal worker
+role. It lists, at most 20 a check, the household jobs, report runs and
+standalone simulation runs created 3 to 10 minutes ago that are still pending
+with no call recorded and that nothing has changed since their insert, as
+when the Simulation Entrypoint stopped between creating a run and starting
+its call. For each, on a thread, it reads back what the entrypoint built the
+call from and builds the same call with the entrypoint's own builders, on the
+worker of the .py version the row records. It then sets the row's
+`updated_at`, so the row is never restarted twice, starts the call and
+records its ID while the row is still pending with none. A row it can't start
+again (its worker left the manifest, its stored rows changed, or Modal
+refuses the call) is failed with `run_not_started`, a report run with its
+pending simulation runs. A row is left unmarked for the next check when its
+rows or manifest can't be read now, its rebuild raises an unexpected error
+(logged with its traceback), its mark can't be written, its call can't be
+rebuilt and its failure can't be written, or the check's time is up. After
+three minutes a check marks no more rows, so it ends within its five-minute
+timeout without leaving a marked row with no call. The sweep's 15 minutes come after the restart window, so a second miss
+is still failed with `run_not_started`. The restart code is the simulation
+service's (`policyengine_simulation_entry.run_restarts`, `run_restart_calls`
+and `run_restart_check`, on `policyengine_simulation_persistence`), which the
+image adds as source.
+
+A budget window's years are never restarted one by one. A window stops when
+no year is under way and years still wait: the entrypoint stopped before
+starting its first years, or a year's coordinator before starting the next.
+The check restarts a window that stopped 3 to 10 minutes ago, with its
+waiting years untouched, as the entrypoint starts a new window: it rebuilds
+the earliest waiting year's call from its stored rows, then advances the
+window (`BudgetWindowStore.advance_window`) with the entrypoint's year
+starter (`YearStarts`), which derives each later year's call from the
+first's. Just before the advance's first start it marks that year, so the
+window is restarted once each time it stops; an advance whose lock or reads
+fail marks nothing, and the next check takes the window up again. Its
+statements are bounded by the check's statement timeout. A window whose
+first call can't be rebuilt is failed at once through the same advance: that
+year records `run_not_started` and why, and the window which year failed,
+unless the year changed before the advance took the window's lock.
+
+A household report run is restarted as its own kind: the check reads the
+report run's household, year, versions and each side's policy, reads the
+household and the policies' values again with the entrypoint's reader
+(`HouseholdReportStore.read_inputs`), and rebuilds its one household
+function call with `household_report_calculation`, started with
+`start_report_run`. A run whose .py version's catalog version is no longer
+the one its simulation runs were created on, or whose household or policy
+is gone or can no longer be calculated, is failed with `run_not_started`
+and why, with its simulation runs.
+
+Each check is a `v2_run_restart_check` operation and each row it takes up a
+`v2_run_restart` operation, with the row's kind, ID, age and outcome, and
+each outcome is also logged as a `v2_run_restart_outcome` event. A deferred
+row is taken up again by the next check, so the distinct run IDs are the
+runs that needed a restart that a check took up; a row no check took up, in
+a burst larger than the checks in its window had time for, is failed by the
+sweep with `run_not_started` instead. The events say how each ended.
 
 ## Temporary direct runner endpoint
 

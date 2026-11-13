@@ -11,6 +11,8 @@ marked succeeded.
 
 Each advance locks the budget-window run's row while it starts years and
 records their calls, so coordinators ending at once start each year once.
+The simulation service's restart check advances a window that stopped,
+with no year under way and years still waiting, the same way.
 The lock is held across those Modal calls; claims and the window's start
 are separate one-statement transactions that never wait on each other, so
 other years' coordinators wait only for the lock to be released.
@@ -96,14 +98,31 @@ class YearStartDeferred(Exception):  # noqa: N818  # it names an outcome, not a 
     """
 
 
+class YearStartRefused(Exception):  # noqa: N818  # it names an outcome, not a fault
+    """A starter could not start this year; the year records ``error_message``.
+
+    It fails the year, and so the window, as any other error a start raises
+    does, but the year and its own simulation runs record the starter's
+    message rather than ``modal_call_refused``. The message is stored, so it
+    must hold no connection details.
+    """
+
+    def __init__(self, error_message: str) -> None:
+        """Keep the message the refused year records."""
+        super().__init__(error_message)
+        self.error_message = error_message
+
+
 class YearStarter(Protocol):
     """Starts a year's coordinator call and returns the call's Modal ID.
 
-    It raises when Modal refuses the call, or ``YearStartDeferred`` to leave
-    the year waiting. A starter defers only once a year of the window is
-    under way, whose coordinator starts the waiting years when its year
-    ends; otherwise nothing starts them until the stuck-run sweep fails the
-    window as stalled.
+    It raises when Modal refuses the call, ``YearStartRefused`` to fail the
+    year with a message of its own, or ``YearStartDeferred`` to leave the
+    year waiting. A starter defers only once a year of the window is under
+    way, whose coordinator starts the waiting years when its year ends, or
+    when it started nothing in this advance; a window left with no year
+    under way is started again by the simulation service's restart check,
+    and failed as stalled by the stuck-run sweep when nothing starts it.
     """
 
     def __call__(self, year_to_start: YearToStart, /) -> str:
@@ -175,10 +194,14 @@ class BudgetWindowStore:
         *,
         engine: Engine | None = None,
         open_connection: ConnectionOpener = open_connection_once,
+        statement_timeout_milliseconds: int | None = None,
     ) -> None:
         """Use ``engine`` if given, else build one from ``database_url``.
 
-        Raises ValueError when neither is given or the URL is invalid.
+        With ``statement_timeout_milliseconds``, the database cancels any
+        statement that runs longer, a wait for the window's lock included,
+        raising OperationalError. Raises ValueError when neither an engine
+        nor a URL is given, or the URL is invalid.
         """
         if engine is None:
             if database_url is None:
@@ -186,6 +209,7 @@ class BudgetWindowStore:
                 raise ValueError(msg)
             engine = create_stage12_engine(database_url)
         self.engine = engine
+        self.statement_timeout_milliseconds = statement_timeout_milliseconds
         self._open_connection = open_connection
 
     @contextmanager
@@ -197,6 +221,18 @@ class BudgetWindowStore:
             operation_name=operation_name,
         )
         with connection, connection.begin():
+            if self.statement_timeout_milliseconds is not None:
+                # Local to the transaction, so it never stays on a pooled
+                # connection.
+                connection.execute(
+                    select(
+                        func.set_config(
+                            "statement_timeout",
+                            str(self.statement_timeout_milliseconds),
+                            True,  # noqa: FBT003  # set_config's is_local argument
+                        )
+                    )
+                )
             yield connection
 
     def window_of_year(self, report_run_id: UUID) -> UUID | None:
@@ -254,10 +290,11 @@ class BudgetWindowStore:
         started until ``max_running_years`` are under way, and each started
         year's call is recorded while the year is still pending with no call;
         a call its coordinator already claimed under keeps that claim. A
-        start that raises fails that year as refused by Modal, and so the
-        window, unless the year's own call has claimed it meanwhile; a start
-        deferred with ``YearStartDeferred`` leaves that year and the later
-        ones waiting. Raises LookupError when the window run does not exist.
+        start that raises fails that year as refused by Modal (or with the
+        message of a ``YearStartRefused``), and so the window, unless the
+        year's own call has claimed it meanwhile; a start deferred with
+        ``YearStartDeferred`` leaves that year and the later ones waiting.
+        Raises LookupError when the window run does not exist.
         """
         with self._transaction("advance_window") as connection:
             window = _lock_window(connection, window_run_id)
@@ -446,8 +483,9 @@ def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the sta
     A start that raises fails that year and the window, and starts nothing
     more, unless the year's own call claimed it meanwhile (Modal accepted
     the call after the starter stopped waiting): that year is under way, and
-    the next ones start. A start deferred with ``YearStartDeferred`` leaves
-    that year and the later ones waiting.
+    the next ones start. The failed year records a ``YearStartRefused``'s
+    message, or else that Modal refused the call. A start deferred with
+    ``YearStartDeferred`` leaves that year and the later ones waiting.
     """
     started: list[int] = []
     for year in [year for year in years if year.waiting][: max(free_places, 0)]:
@@ -468,7 +506,9 @@ def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the sta
             refused_years = _fail_waiting_years(
                 connection,
                 window_run_id,
-                CALL_REFUSED_MESSAGE.format(error_type=type(error).__name__),
+                error.error_message
+                if isinstance(error, YearStartRefused)
+                else CALL_REFUSED_MESSAGE.format(error_type=type(error).__name__),
                 now=now,
                 only=year.report_run_id,
             )

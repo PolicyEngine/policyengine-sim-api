@@ -8,9 +8,10 @@ in its own Modal application, so that at most five are under way, or marks
 the window failed or succeeded (see ``BudgetWindowStore``).
 
 Neither step changes the year's own outcome. A failed write is logged,
-without the error's text, and the stuck-run sweep finishes a window that
-no year advances any more. A pre-emption or cancellation propagates, as
-everywhere in the coordinator.
+without the error's text. The simulation service's restart check starts a
+window that stopped with years still waiting again, and the stuck-run sweep
+finishes a window that nothing advances any more. A pre-emption or
+cancellation propagates, as everywhere in the coordinator.
 """
 
 from __future__ import annotations

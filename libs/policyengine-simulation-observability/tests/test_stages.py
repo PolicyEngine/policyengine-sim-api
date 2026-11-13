@@ -1,6 +1,7 @@
 import pytest
 from policyengine_simulation_observability.stages import (
     RUN_STAGE_REGISTRY,
+    V2_RUN_RESTART_STAGES,
     RunConfiguration,
     Stage,
 )
@@ -66,3 +67,13 @@ def test_v2_household_plan_measures_model_load_inputs_and_each_policy() -> None:
         Stage.V2_HOUSEHOLD_CALCULATION,
     )
     assert household.name(Stage.V2_HOUSEHOLD_CALCULATION) == "v2_household_calculation"
+
+
+def test_v2_run_restart_plan_measures_each_check_and_each_restart() -> None:
+    """The scheduled check is one operation; each row it lists is one more."""
+    restart = RUN_STAGE_REGISTRY[RunConfiguration.V2_RUN_RESTART]
+
+    assert restart is V2_RUN_RESTART_STAGES
+    assert restart.stages == (Stage.V2_RUN_RESTART_CHECK, Stage.V2_RUN_RESTART)
+    assert restart.name(Stage.V2_RUN_RESTART_CHECK) == "v2_run_restart_check"
+    assert restart.name(Stage.V2_RUN_RESTART) == "v2_run_restart"

@@ -71,8 +71,15 @@ modal-simulation-image = [
 ]
 # The executor's budget-window scheduler tests exercise the gateway app
 # end-to-end; the gateway project rides in as a dev-only path dependency.
+# The restart check in the stuck-run sweep's Modal app runs the simulation
+# service's own restart code: ``modal deploy`` adds the Simulation Entrypoint
+# and its persistence library to that app's image as local sources, so the
+# deploy job's ``uv sync`` installs them here. Nothing the executor's own
+# Docker image runs imports them, and it is built without this group.
 dev = [
     "policyengine-simulation-gateway",
+    "policyengine-simulation-entry",
+    "policyengine-simulation-persistence",
 ]
 
 [tool.uv.sources]
@@ -80,6 +87,8 @@ policyengine-fastapi = { path = "../../libs/policyengine-fastapi", editable = tr
 policyengine-simulation-observability = { path = "../../libs/policyengine-simulation-observability", editable = true }
 policyengine-simulation-contract = { path = "../../libs/policyengine-simulation-contract", editable = true }
 policyengine-stage12-persistence = { path = "../../libs/policyengine-stage12-persistence", editable = true }
+policyengine-simulation-entry = { path = "../policyengine-simulation-entry", editable = true }
+policyengine-simulation-persistence = { path = "../../libs/policyengine-simulation-persistence", editable = true }
 policyengine-simulation-gateway = { path = "../policyengine-simulation-gateway", editable = true }
 
 [project.optional-dependencies]

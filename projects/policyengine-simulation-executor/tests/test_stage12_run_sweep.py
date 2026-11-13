@@ -8,8 +8,14 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from policyengine_simulation_entry.run_restarts import (
+    CALL_START_TIMEOUT_SECONDS,
+    CHECK_TIME_LIMIT,
+    RESTART_UNTIL,
+)
 from policyengine_simulation_executor.stage12_runtime.run_sweep import (
     DEFAULT_MAXIMUM_AGE,
+    DEFAULT_MINIMUM_AGE,
     CallState,
     SweepSummary,
     modal_call_state,
@@ -142,6 +148,26 @@ def test_the_sweep_lists_runs_older_than_its_minimum_age() -> None:
 
     # Report runs, simulation runs and household jobs.
     assert store.cutoffs == [NOW - timedelta(minutes=15)] * 3
+
+
+def test_by_default_unstarted_runs_wait_until_the_restart_check_has_passed() -> None:
+    """The restart check starts a pending run with no call 3 to 10 minutes old.
+
+    The sweep fails such a run only once it is 15 minutes old, so a run whose
+    restart started is judged by its call, and only a second miss is failed.
+    """
+    store = FakeSweepStore([])
+
+    sweep_stuck_runs(store, call_state=lambda _: CallState.ENDED, now=NOW)
+
+    assert store.cutoffs == [NOW - timedelta(minutes=15)] * 3
+    # A row listed at the end of the window may be marked at the end of the
+    # check's time limit; its call starts and is recorded with a minute to
+    # spare before the sweep judges it.
+    latest_restart = (
+        RESTART_UNTIL + CHECK_TIME_LIMIT + timedelta(seconds=CALL_START_TIMEOUT_SECONDS)
+    )
+    assert latest_restart + timedelta(minutes=1) <= DEFAULT_MINIMUM_AGE
 
 
 def test_report_runs_are_swept_before_simulation_runs_are_listed() -> None:
