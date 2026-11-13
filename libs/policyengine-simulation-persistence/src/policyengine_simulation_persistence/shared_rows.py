@@ -70,6 +70,15 @@ class FoundRow:
 
 
 @dataclass(frozen=True)
+class FoundSimulationRun:
+    """A simulation run a lookup found or inserted, with its status."""
+
+    id: UUID
+    inserted: bool
+    status: SimulationStatus
+
+
+@dataclass(frozen=True)
 class FoundReportRun:
     """A report run a lookup found or inserted, with its status and pair."""
 
@@ -156,15 +165,19 @@ def find_or_insert_report(
 
 def find_or_insert_simulation_run(
     connection: Connection, values: Mapping[str, Any]
-) -> FoundRow:
+) -> FoundSimulationRun:
     """Return the simulation's joinable run on ``values``' versions, or insert it.
 
     A joinable run hasn't failed and wasn't forced. ``values`` is the whole
     row; a forced run is never looked up (ValueError): insert it directly.
     """
     _refuse_forced(values)
-    row, inserted = _find_or_insert(connection, _JOINABLE_SIMULATION_RUN, values, ())
-    return FoundRow(id=row.id, inserted=inserted)
+    row, inserted = _find_or_insert(
+        connection, _JOINABLE_SIMULATION_RUN, values, (simulation_runs.c.status,)
+    )
+    return FoundSimulationRun(
+        id=row.id, inserted=inserted, status=SimulationStatus(row.status)
+    )
 
 
 def find_or_insert_report_run(

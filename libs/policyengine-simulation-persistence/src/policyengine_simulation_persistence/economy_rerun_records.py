@@ -19,9 +19,12 @@ service runs now, as a new run, and keeps every earlier run. The service:
 The record itself is never changed: the service may not update ``reports``
 or ``simulations``, so a report keeps naming the simulations it was created
 with, and each new run records the catalog version, dataset and region it
-calculates on. Nothing is created while the record has a run that is
-``pending`` or ``running`` (for a report, a budget-window run or a report
-run of it); a transaction-level advisory lock on the
+calculates on. A simulation's re-run joins the simulation's run that
+hasn't failed on the current versions, catalog version and year, when there
+is one, pending, running or succeeded, rather than create one (C1 · 24's
+answers 2 and 3; ``shared_rows``). For a report, nothing is created while
+the record has a run that is ``pending`` or ``running`` (a budget-window
+run or a report run of it); a transaction-level advisory lock on the
 record's ID makes concurrent re-runs of one record wait for each other, as
 a row lock on ``reports`` would need ``UPDATE`` on it.
 
@@ -53,6 +56,7 @@ from policyengine_simulation_persistence.economy_run_records import (
     SimulationChoice,
     insert_simulation_run,
     references_checked,
+    simulation_run_row,
 )
 from policyengine_simulation_persistence.household_report_records import (
     HOUSEHOLD_REPORT_TYPE,
@@ -64,6 +68,9 @@ from policyengine_simulation_persistence.input_tables import (
     regions,
     tax_benefit_model_versions,
     tax_benefit_models,
+)
+from policyengine_simulation_persistence.shared_rows import (
+    find_or_insert_simulation_run,
 )
 from policyengine_simulation_persistence.tables import (
     ReportRunStatus,
@@ -87,6 +94,7 @@ if TYPE_CHECKING:
         EconomyPopulation,
         RunVersions,
     )
+    from policyengine_simulation_persistence.shared_rows import FoundSimulationRun
 
 # What a stored report or simulation calculates, as a re-run tells them apart:
 # a single-year economy report or simulation, a budget window, a household
@@ -676,29 +684,27 @@ def _refuse_while_report_runs(connection: Connection, report_id: UUID) -> None:
         raise RunInProgressError(under_way)
 
 
-def insert_simulation_rerun(connection: Connection, rerun: NewSimulationRerun) -> None:
-    """Create the simulation's new run, pending with no call.
+def insert_simulation_rerun(
+    connection: Connection, rerun: NewSimulationRerun
+) -> FoundSimulationRun:
+    """Join the simulation's run on the re-run's versions, or create it, pending.
 
-    Take the simulation's re-run lock first. Raise RunInProgressError,
-    creating nothing, when the simulation has a run pending or running, and
-    RerunRecordDeletedError or EconomyRecordReferenceError as
+    The run joined is the simulation's that hasn't failed and wasn't forced,
+    on the same year, catalog version, country package and .py versions;
+    otherwise ``rerun.run_id`` is created with no call. Return the run and
+    whether this call created it, which only then needs its Modal call.
+    Raise RerunRecordDeletedError or EconomyRecordReferenceError as
     ``insert_report_rerun`` does.
     """
-    lock_reruns_of(connection, rerun.simulation_id)
-    under_way = _run_under_way(
-        connection,
-        simulation_runs,
-        simulation_runs.c.simulation_id == rerun.simulation_id,
-    )
-    if under_way is not None:
-        raise RunInProgressError(under_way)
     with _record_checked(simulation_runs.c.simulation_id), references_checked():
-        insert_simulation_run(
+        return find_or_insert_simulation_run(
             connection,
-            run_id=rerun.run_id,
-            simulation_id=rerun.simulation_id,
-            population=rerun.population,
-            versions=rerun.versions,
+            simulation_run_row(
+                run_id=rerun.run_id,
+                simulation_id=rerun.simulation_id,
+                population=rerun.population,
+                versions=rerun.versions,
+            ),
         )
 
 

@@ -93,6 +93,7 @@ if TYPE_CHECKING:
         NewEconomySimulation,
     )
     from policyengine_simulation_persistence.policy_reform import PolicyReform
+    from policyengine_simulation_persistence.shared_rows import FoundSimulationRun
     from policyengine_simulation_persistence.tables import (
         ReportRunStatus,
         SimulationStatus,
@@ -422,12 +423,14 @@ class EconomyRunStore:
         """
         self._create(lambda connection: insert_report_rerun(connection, rerun))
 
-    def create_simulation_rerun(self, rerun: NewSimulationRerun) -> None:
-        """Create the simulation's new run; see ``insert_simulation_rerun``.
+    def create_simulation_rerun(self, rerun: NewSimulationRerun) -> FoundSimulationRun:
+        """Join or create the simulation's run; see ``insert_simulation_rerun``.
 
         Raise EconomyRecordOutcomeUnknownError as ``create_report`` does.
         """
-        self._create(lambda connection: insert_simulation_rerun(connection, rerun))
+        return self._create(
+            lambda connection: insert_simulation_rerun(connection, rerun)
+        )
 
     def read_budget_window_inputs(
         self,
@@ -493,23 +496,25 @@ class EconomyRunStore:
             lambda connection: insert_economy_simulation(connection, simulation)
         )
 
-    def _create(self, insert: Callable[[Connection], None]) -> None:
+    def _create[Created](self, insert: Callable[[Connection], Created]) -> Created:
         """Run ``insert`` in a transaction, telling a failed commit apart.
 
-        An error from ``insert`` leaves nothing written and propagates. An
-        error once it has run is the commit's, after which the rows may
-        exist: EconomyRecordOutcomeUnknownError.
+        Return what ``insert`` returns. An error from ``insert`` leaves
+        nothing written and propagates. An error once it has run is the
+        commit's, after which the rows may exist:
+        EconomyRecordOutcomeUnknownError.
         """
         inserted = False
         try:
             with self._transaction() as connection:
-                insert(connection)
+                created = insert(connection)
                 inserted = True
         except SQLAlchemyError as error:
             if not inserted:
                 raise
             msg = "the create's commit failed after its rows were inserted"
             raise EconomyRecordOutcomeUnknownError(msg) from error
+        return created
 
     def record_report_call(
         self, report_run_id: UUID, modal_call_id: str

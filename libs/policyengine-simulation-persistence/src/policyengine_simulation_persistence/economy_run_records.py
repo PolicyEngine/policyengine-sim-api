@@ -567,19 +567,39 @@ def insert_simulation_run(  # noqa: PLR0913  # the run, what it calculates on, a
     """
     connection.execute(
         insert(simulation_runs).values(
-            id=run_id,
-            simulation_id=simulation_id,
-            year=population.year,
-            tax_benefit_model_version_id=population.tax_benefit_model_version_id,
-            country_package_version=versions.country_package_version,
-            policyengine_version=versions.policyengine_version,
-            dataset_id=population.dataset_id,
-            region_id=population.region_id,
-            status=SimulationStatus.PENDING,
-            modal_call_id=None,
-            forced=forced,
+            simulation_run_row(
+                run_id=run_id,
+                simulation_id=simulation_id,
+                population=population,
+                versions=versions,
+                forced=forced,
+            )
         )
     )
+
+
+def simulation_run_row(
+    *,
+    run_id: UUID,
+    simulation_id: UUID,
+    population: EconomyPopulation,
+    versions: RunVersions,
+    forced: bool = False,
+) -> dict[str, Any]:
+    """Return an economy simulation run, pending with no call, as inserted."""
+    return {
+        "id": run_id,
+        "simulation_id": simulation_id,
+        "year": population.year,
+        "tax_benefit_model_version_id": population.tax_benefit_model_version_id,
+        "country_package_version": versions.country_package_version,
+        "policyengine_version": versions.policyengine_version,
+        "dataset_id": population.dataset_id,
+        "region_id": population.region_id,
+        "status": SimulationStatus.PENDING,
+        "modal_call_id": None,
+        "forced": forced,
+    }
 
 
 @contextmanager

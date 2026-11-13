@@ -137,6 +137,7 @@ from policyengine_simulation_persistence.policy_reform import (
 from policyengine_simulation_persistence.shared_rows import (
     FoundReportRun,
     FoundRow,
+    FoundSimulationRun,
     SharedRowNotSettledError,
     find_or_insert_report,
     find_or_insert_report_run,
@@ -185,6 +186,7 @@ __all__ = [
     "EconomySimulationState",
     "FoundReportRun",
     "FoundRow",
+    "FoundSimulationRun",
     "HouseholdCalculationInputs",
     "HouseholdJobRecord",
     "HouseholdJobReferenceError",
