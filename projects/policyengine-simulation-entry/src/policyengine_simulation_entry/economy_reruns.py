@@ -473,41 +473,52 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             recalculate=window.recalculate,
             years=tuple(self._window_rerun_year(year) for year in window.years),
         )
-        first_year = rerun.years[0]
-        first_calculation = report_run_calculation(
+        scope = rerun_scope(
+            stored.country,
+            window.economy_request,
             worker,
-            rerun_scope(
-                stored.country,
-                window.economy_request,
-                worker,
-                inputs.catalog,
-                options=window.options,
-            ),
+            inputs.catalog,
+            options=window.options,
+        )
+        # Refused before anything is written, on the run IDs it proposes.
+        report_run_calculation(
+            worker,
+            scope,
             self._origin(request_id),
-            run_ids=year_run_ids(first_year),
+            run_ids=year_run_ids(rerun.years[0]),
             baseline_policy=inputs.baseline.reform,
             reform_policy=inputs.reform.reform,
         )
-        await self._create_rerun(
+        found = await self._create_rerun(
             _REPORT,
             lambda: self._store.create_window_rerun(rerun),
             source=STORED_REPORT,
         )
-        status = await self._start_first_years(
-            worker,
-            first_calculation,
-            report_id=stored.report_id,
-            window_run_id=window_run_id,
-            first_year=first_year.year,
-            observability_context=observability_context,
-            rerun=True,
-        )
+        found_first_year = found.years[0]
+        status = found.window_run.status
+        if found.window_run.inserted:
+            status = await self._start_first_years(
+                worker,
+                report_run_calculation(
+                    worker,
+                    scope,
+                    self._origin(request_id),
+                    run_ids=year_run_ids(found_first_year),
+                    baseline_policy=inputs.baseline.reform,
+                    reform_policy=inputs.reform.reform,
+                ),
+                report_id=stored.report_id,
+                window_run_id=found.window_run.id,
+                first_year=found_first_year.year,
+                observability_context=observability_context,
+                rerun=True,
+            )
         return BudgetWindowReportCreated(
             report_id=stored.report_id,
-            report_run_id=first_year.report_run_id,
-            budget_window_run_id=window_run_id,
+            report_run_id=found_first_year.report_run_id,
+            budget_window_run_id=found.window_run.id,
             status=status,
-            years=[year_created(window_year) for window_year in rerun.years],
+            years=[year_created(window_year) for window_year in found.years],
         )
 
     def _window_rerun_year(self, year: WindowYearDefinition) -> WindowRerunYear:

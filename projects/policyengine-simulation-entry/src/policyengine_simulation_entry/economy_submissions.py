@@ -58,7 +58,6 @@ from policyengine_simulation_persistence import (
     KeyedEconomySimulation,
     ProposedSide,
     ReportRunStatus,
-    ReportSimulation,
     SharedRowNotSettledError,
     SimulationChoice,
     SimulationStatus,
@@ -110,7 +109,6 @@ if TYPE_CHECKING:
         FoundEconomyReport,
         FoundEconomySimulation,
         RunReuse,
-        SimulationInputs,
     )
 
     from policyengine_simulation_entry.economy_api_models import (
@@ -432,22 +430,6 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         """Return the IDs a side's rows get if this request inserts them."""
         return ProposedSide(
             simulation_id=self._new_id(), simulation_run_id=self._new_id()
-        )
-
-    def _side(self, inputs: SimulationInputs) -> ReportSimulation:
-        """Return a side naming its reusable run, or a new simulation and run."""
-        if inputs.reusable_run is not None:
-            return ReportSimulation(
-                simulation_id=inputs.reusable_run.simulation_id,
-                simulation_run_id=inputs.reusable_run.simulation_run_id,
-                choice=inputs.choice,
-                reused=True,
-            )
-        return ReportSimulation(
-            simulation_id=self._new_id(),
-            simulation_run_id=self._new_id(),
-            choice=inputs.choice,
-            reused=False,
         )
 
     def _origin(self, request_id: str) -> CallOrigin:
