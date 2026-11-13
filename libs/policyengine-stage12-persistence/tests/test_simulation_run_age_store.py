@@ -4,7 +4,10 @@ Identical requests share simulation runs, so new report runs may keep naming,
 and waiting for, a run whose call Modal never ends. The sweep's age limit,
 longer than any Modal call of a run can take, lists and fails such a run
 whatever report runs name it; the sweep's other passes still leave a run an
-unfinished report run names to that report run's coordinator.
+unfinished report run names to that report run's coordinator. A run no call
+has claimed has no call to outlast: while a report run names it, as a budget
+window's later year names its runs until the earlier years end, the age limit
+leaves it too.
 
 These run against a disposable Postgres that the Public API's v2 migrations
 created, connected as the Modal worker role (see ``report_run_database``).
@@ -16,6 +19,7 @@ from datetime import timedelta
 
 import pytest
 from policyengine_stage12_persistence import (
+    ActiveRun,
     ReportRunStore,
     RunKind,
     RunStatus,
@@ -47,6 +51,14 @@ def _listed(store, run_id, **options):
     ]
 
 
+def _created_long_ago(seeder, run_id) -> None:
+    table = seeder.table("simulation_runs")
+    with seeder.engine.begin() as connection:
+        connection.execute(
+            table.update().where(table.c.id == run_id).values(created_at=LONG_AGO)
+        )
+
+
 def test_an_old_run_a_running_report_run_names_is_listed_and_failed_for_its_age(
     store, seeder, seeded_run: SeededReportRun
 ) -> None:
@@ -76,3 +88,28 @@ def test_an_old_run_a_running_report_run_names_is_listed_and_failed_for_its_age(
     assert seeder.row("simulation_runs", run_id)["error_message"] == (
         EXCEEDED_AGE_MESSAGE
     )
+
+
+def test_an_old_run_no_call_claimed_is_left_while_a_report_run_names_it(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    run_id = seeded_run.run_ids.reform_simulation_run_id
+    _created_long_ago(seeder, run_id)
+    unclaimed = ActiveRun(
+        kind=RunKind.SIMULATION_RUN,
+        run_id=run_id,
+        status=RunStatus.PENDING,
+        modal_call_id=None,
+    )
+
+    listed = _listed(store, run_id, regardless_of_report_runs=True)
+    left = store.fail_stuck_run(
+        unclaimed,
+        error_message=EXCEEDED_AGE_MESSAGE,
+        failed_at=NOW,
+        regardless_of_report_runs=True,
+    )
+
+    assert listed == []
+    assert left == RunWrite(changed=False, status=RunStatus.PENDING)
+    assert seeder.row("simulation_runs", run_id)["error_message"] is None
