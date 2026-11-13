@@ -39,6 +39,7 @@ from economy_rows import (
     insert_simulation_run,
 )
 from policyengine_simulation_persistence import (
+    EconomyPopulation,
     EconomyRecordReferenceError,
     EconomyRequest,
     EconomyRunStore,
@@ -900,3 +901,80 @@ def test_a_rerun_of_a_deleted_report_or_simulation_says_the_record_is_gone(
         "simulation_runs",
         "simulation_id",
     )
+
+
+def _forced_rerun_of(stored: StoredReport, economy: EconomyCatalog) -> NewReportRerun:
+    """Return a forced re-run of ``stored`` on the versions it already ran on."""
+    return NewReportRerun(
+        report_id=stored.report_id,
+        run_id=uuid4(),
+        population=economy.population(),
+        versions=VERSIONS,
+        baseline=RerunSide(
+            simulation_id=stored.baseline.simulation_id,
+            simulation_run_id=uuid4(),
+            reused=False,
+        ),
+        reform=RerunSide(
+            simulation_id=stored.reform.simulation_id,
+            simulation_run_id=uuid4(),
+            reused=False,
+        ),
+        forced=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [ReportRunStatus.PENDING, ReportRunStatus.RUNNING, ReportRunStatus.SUCCEEDED],
+)
+def test_a_forced_report_rerun_is_an_extra_run_beside_any_run_on_its_versions(
+    public_api_database_url, status: ReportRunStatus
+) -> None:
+    """Answer 3: forced runs are marked, never refused and never conflict."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        stored = _stored_report(connection, economy, run_status=status)
+        rerun = _forced_rerun_of(stored, economy)
+        act_as_the_service(connection)
+
+        insert_report_rerun(connection, rerun)
+        report_run = _row(connection, "report_runs", rerun.run_id)
+        simulation_runs = [
+            _row(connection, "simulation_runs", run_id)
+            for run_id in rerun.new_simulation_run_ids
+        ]
+        earlier_run = _row(connection, "report_runs", stored.report_run_id)
+
+    assert (report_run["forced"], report_run["trigger"], report_run["status"]) == (
+        True,
+        ReportRunTrigger.MANUAL,
+        ReportRunStatus.PENDING,
+    )
+    assert len(simulation_runs) == 2
+    assert all(run["forced"] for run in simulation_runs)
+    assert all(run["status"] == SimulationStatus.PENDING for run in simulation_runs)
+    assert earlier_run["status"] == status
+    assert earlier_run["forced"] is False
+
+
+def test_a_forced_rerun_calculates_both_sides() -> None:
+    """A forced re-run never names a run it didn't create (answer 3)."""
+    reused = RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4(), reused=True)
+    created = RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4(), reused=False)
+
+    with pytest.raises(ValueError, match="forced"):
+        NewReportRerun(
+            report_id=uuid4(),
+            run_id=uuid4(),
+            population=EconomyPopulation(
+                tax_benefit_model_version_id=uuid4(),
+                region_id=uuid4(),
+                dataset_id=uuid4(),
+                year=2026,
+            ),
+            versions=VERSIONS,
+            baseline=reused,
+            reform=created,
+            forced=True,
+        )

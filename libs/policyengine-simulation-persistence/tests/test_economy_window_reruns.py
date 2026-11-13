@@ -606,3 +606,39 @@ def test_a_window_rerun_is_refused_while_a_year_still_runs_after_its_window_ende
             insert_window_rerun(connection, _window_rerun_of(stored, later))
 
     assert refused.value.run_id == still_running
+
+
+@pytest.mark.parametrize(
+    "status",
+    [ReportRunStatus.PENDING, ReportRunStatus.RUNNING, ReportRunStatus.SUCCEEDED],
+)
+def test_a_forced_window_rerun_is_an_extra_run_beside_any_run_on_its_versions(
+    public_api_database_url, status: ReportRunStatus
+) -> None:
+    """Answer 3: every year's report run and simulation runs are marked forced."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        stored = _stored_window(connection, economy, window_status=status)
+        rerun = replace(
+            _window_rerun_of(stored, economy, recalculate=True), versions=VERSIONS
+        )
+        act_as_the_service(connection)
+
+        insert_window_rerun(connection, rerun)
+        window_run = _row(connection, "budget_window_runs", rerun.window_run_id)
+        year_runs = [
+            _row(connection, "report_runs", year.report_run_id) for year in rerun.years
+        ]
+        simulation_runs = [
+            _row(connection, "simulation_runs", side.simulation_run_id)
+            for year in rerun.years
+            for side in (year.baseline, year.reform)
+        ]
+
+    assert (window_run["recalculate"], window_run["status"]) == (
+        True,
+        ReportRunStatus.PENDING,
+    )
+    assert all(run["forced"] for run in year_runs)
+    assert len(simulation_runs) == 2 * len(WINDOW_YEARS)
+    assert all(run["forced"] for run in simulation_runs)
