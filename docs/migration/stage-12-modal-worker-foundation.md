@@ -691,22 +691,24 @@ while each older key holds its schema version 1 form; current readers use the
 local-area report key's document in its place while `active-schema-2` holds its
 copy, and otherwise follow the same rules. Schema version 1 cannot describe a
 country that is not economy-capable, so a manifest holding one is written only
-under `active-schema-2` and the older keys keep the last manifest written
-there; such a document is used unless the document under the older keys was
-validated later. Otherwise readers use the `active-with-region-datasets` copy
-only while it, with its region datasets removed, equals the manifest under
-`active-with-cache`; otherwise they read `active-with-cache`, falling back to
-`active` before the first publish that writes it. Code released before schema
-version 2 or before region datasets republishes only the older keys it knows,
-so after a rollback the out-of-date copies stop matching and are no longer
-read, and the next publish starts from what the older code wrote. That document
-has no household functions, so the manifest names none for versions published
-before the rollback until each is published again, and it lacks whatever only
-`active-schema-2` held, such as a version with a household-only country. Code
-released before cache releases writes only `active`, which current readers do
-not read while `active-with-cache` exists; a rollback that far needs the newer
-keys deleted from the Modal Dict first. Removing the older copies needs a later
-change, once no deployed or rollback revision reads them.
+under the two schema version 2 keys (`active-schema-2` and
+`active-schema-2-with-local-area-reports`) and the older keys keep the last
+manifest written there; such a document is used unless the document under the
+older keys was validated later. Otherwise readers use the
+`active-with-region-datasets` copy only while it, with its region datasets
+removed, equals the manifest under `active-with-cache`; otherwise they read
+`active-with-cache`, falling back to `active` before the first publish that
+writes it. Code released before schema version 2 or before region datasets
+republishes only the older keys it knows, so after a rollback the out-of-date
+copies stop matching and are no longer read, and the next publish starts from
+what the older code wrote. That document has no household functions, so the
+manifest names none for versions published before the rollback until each is
+published again, and it lacks whatever only the schema version 2 keys held,
+such as a version with a household-only country. Code released before cache
+releases writes only `active`, which current readers do not read while
+`active-with-cache` exists; a rollback that far needs the newer keys deleted
+from the Modal Dict first. Removing the older copies needs a later change, once
+no deployed or rollback revision reads them.
 
 The UK entry's `local_area_reports` says that the worker's coordinator runs UK
 local-area report runs, the runs of UK-wide and nation reports on the
@@ -719,8 +721,8 @@ their own and a UK-wide or nation run on the national dataset calculates both
 area levels itself. The publisher decides it by `uk_area_regions_routed` and
 `routed_uk_area_dataset_name`, the rule the national aggregation's
 `uk_area_breakdowns_omitted` and the UK worker use, so the simulation service,
-which can't read the release kind from the catalog, offers a local-area report
-exactly where the national run leaves the areas out.
+which can't read the release kind from the catalog, can tell from it whether a
+report on the local-area dataset is possible and which dataset it is.
 
 The field is written only under the `active-schema-2-with-local-area-reports`
 key, which current readers read first; `active-schema-2` holds the same

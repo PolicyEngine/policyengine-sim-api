@@ -512,4 +512,5 @@ def test_the_installed_release_accepts_and_selects_its_own_local_area_dataset() 
         ),
     )
     # The worker refuses a selection that differs from the provenance.
-    assert (selection.name, selection.uri) == (dataset.identity, dataset.uri)
+    worker._require_loaded_dataset_matches_provenance(simulation, selection)
+    assert selection.name == dataset.identity
