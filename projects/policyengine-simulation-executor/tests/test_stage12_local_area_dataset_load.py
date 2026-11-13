@@ -440,3 +440,26 @@ def test_a_us_report_is_no_local_area_report(monkeypatch) -> None:
     _route_uk_area_regions(monkeypatch)
 
     assert not local_area_datasets.is_local_area_report(report_execution_input())
+
+
+@pytest.mark.parametrize(
+    ("region", "identity", "on_local_area_dataset"),
+    [
+        ("uk", LOCAL_AREA_DATASET, True),
+        ("country/wales", LOCAL_AREA_DATASET, True),
+        ("uk", NATIONAL_DATASET, False),
+        ("constituency/W07000081", LOCAL_AREA_DATASET, False),
+    ],
+)
+def test_a_simulation_is_on_the_local_area_dataset_by_its_region_and_dataset(
+    monkeypatch, region: str, identity: str, *, on_local_area_dataset: bool
+) -> None:
+    # The rule a simulation's stored output plan uses for its area columns.
+    _route_uk_area_regions(monkeypatch)
+
+    assert (
+        local_area_datasets.calculates_on_local_area_dataset(
+            _uk_simulation(region, identity)
+        )
+        is on_local_area_dataset
+    )
