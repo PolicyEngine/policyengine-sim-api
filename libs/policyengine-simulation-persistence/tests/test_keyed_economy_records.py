@@ -656,3 +656,42 @@ def test_a_keyed_reports_rerun_joins_each_sides_run_on_its_versions(
         created.baseline.simulation_run_id,
         created.reform.simulation_run_id,
     )
+
+
+def test_a_keyed_rerun_with_one_simulation_on_both_sides_inserts_one_run(
+    public_api_database_url,
+) -> None:
+    """Current law against current law: one new run, named on both sides."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        act_as_the_service(connection)
+        created = find_or_create_economy_report(connection, _keyed_report(economy))
+        _set_status(
+            connection, "simulation_runs", created.baseline.simulation_run_id, "failed"
+        )
+        _set_status(connection, "report_runs", created.run.id, "failed")
+        simulation_id = created.baseline.simulation_id
+        rerun = NewReportRerun(
+            report_id=created.report_id,
+            run_id=uuid4(),
+            population=economy.population(),
+            versions=VERSIONS,
+            baseline=RerunSide(simulation_id, uuid4(), reused=False),
+            reform=RerunSide(simulation_id, uuid4(), reused=False),
+            sides_join_runs=True,
+        )
+
+        found = insert_report_rerun(connection, rerun)
+        runs = connection.execute(
+            select(func.count())
+            .select_from(simulation_runs)
+            .where(simulation_runs.c.simulation_id == simulation_id)
+        ).scalar_one()
+
+    assert found.inserted is True
+    assert (
+        found.baseline_simulation_run_id
+        == found.reform_simulation_run_id
+        == rerun.baseline.simulation_run_id
+    )
+    assert runs == 2

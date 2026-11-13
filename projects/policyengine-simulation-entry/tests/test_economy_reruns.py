@@ -245,6 +245,26 @@ def test_a_keyed_reports_rerun_has_each_side_join_its_run_on_the_versions() -> N
     )
 
 
+def test_a_keyed_rerun_with_one_simulation_on_both_sides_reuses_neither() -> None:
+    """Review round 4: the one run this re-run inserted is named on both sides."""
+    store = FakeRerunStore(
+        report_definition=replace(
+            STORED_REPORT,
+            keyed=True,
+            reform=STORED_REPORT.baseline,
+        ),
+        one_run_on_both_sides=True,
+    )
+    caller = FakeCaller()
+
+    rerun = _rerun_report(rerun_service(store, caller=caller))
+
+    (created,) = store.report_reruns
+    assert rerun.baseline_simulation_run_id == rerun.reform_simulation_run_id
+    assert rerun.baseline_simulation_run_id == created.baseline.simulation_run_id
+    assert (rerun.baseline_reused, rerun.reform_reused) == (False, False)
+
+
 def test_a_keyed_reports_refused_rerun_fails_only_the_report_run() -> None:
     """Its simulation runs may already be another report run's."""
     store = FakeRerunStore(report_definition=replace(STORED_REPORT, keyed=True))

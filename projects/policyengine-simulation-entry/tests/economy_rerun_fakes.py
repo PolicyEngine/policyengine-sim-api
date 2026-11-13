@@ -144,6 +144,9 @@ class FakeRerunStore(FakeWindowStore):
     # The side runs a keyed report's re-run joins, by side, in place of the
     # runs it proposes.
     joined_side_runs: dict[str, UUID] = field(default_factory=dict)
+    # A keyed report with one simulation on both sides: the store inserts one
+    # run, with the baseline's proposed ID, and names it on both sides.
+    one_run_on_both_sides: bool = False
 
     def read_report_definition(self, report_id: UUID) -> ReportDefinition | None:
         if self.read_failure is not None:
@@ -178,9 +181,12 @@ class FakeRerunStore(FakeWindowStore):
                 reform={},
                 reusable_run=None if reuse is None else baseline_reusable,
             ),
+            # Current law sets no values, on either side.
             reform=SimulationInputs(
                 choice=reform.choice,
-                reform=REFORM,
+                reform=REFORM
+                if reform.choice.policy_id or reform.choice.dynamic_id
+                else {},
                 reusable_run=None if reuse is None else reform_reusable,
             ),
         )
@@ -236,7 +242,10 @@ class FakeRerunStore(FakeWindowStore):
                 "baseline", rerun.baseline.simulation_run_id
             ),
             reform_simulation_run_id=self.joined_side_runs.get(
-                "reform", rerun.reform.simulation_run_id
+                "reform",
+                rerun.baseline.simulation_run_id
+                if self.one_run_on_both_sides
+                else rerun.reform.simulation_run_id,
             ),
         )
 
