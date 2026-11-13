@@ -35,6 +35,7 @@ from policyengine_simulation_persistence.economy_run_records import (
     insert_economy_simulation,
     read_dataset,
     read_dataset_by_id,
+    read_local_area_dataset,
     read_model_id,
     read_region,
     record_report_run_call,
@@ -101,6 +102,23 @@ class UnknownRegionError(LookupError):
 
 class UnknownDatasetError(LookupError):
     """The catalog version has no dataset with the requested name."""
+
+
+class LocalAreaDatasetMismatchError(LookupError):
+    """The catalog doesn't give both area types the dataset the worker routes them to.
+
+    ``declared_dataset`` is the dataset the default worker declares it
+    calculates a report's local areas on. The catalog version's
+    constituency and local-authority regions use another, or one each.
+    """
+
+    def __init__(self, declared_dataset: str) -> None:
+        """Keep the declared dataset."""
+        super().__init__(
+            "the catalog version's constituency and local-authority regions do "
+            f"not all use {declared_dataset}"
+        )
+        self.declared_dataset = declared_dataset
 
 
 class ReportSideError(Exception):
@@ -198,11 +216,16 @@ class EconomySimulationInputs:
 
 @dataclass(frozen=True)
 class EconomyReportInputs:
-    """What an economy report is read from: the catalog rows and both sides."""
+    """What an economy report is read from: the catalog rows and both sides.
+
+    ``local_area_dataset`` is the catalog dataset the report's area part is
+    calculated on, read only when the request asked for one.
+    """
 
     catalog: EconomyCatalogRows
     baseline: SimulationInputs
     reform: SimulationInputs
+    local_area_dataset: CatalogDataset | None = None
 
 
 @dataclass(frozen=True)
@@ -264,16 +287,31 @@ class EconomyRunStore:
         baseline: SimulationChoice,
         reform: SimulationChoice,
         reuse: RunReuse | None,
+        local_area_dataset_name: str | None = None,
     ) -> EconomyReportInputs:
         """Read a report's catalog rows, both sides' values and reusable runs.
 
         With ``reuse``, each side gets the run ``find_reusable_run`` finds,
-        and the reform never gets the baseline's. Raise
+        and the reform never gets the baseline's. With
+        ``local_area_dataset_name``, the dataset the default worker calculates
+        local areas on, the catalog dataset of that name is read too. Raise
         UnknownCatalogVersionError, UnknownRegionError or UnknownDatasetError,
-        or ReportSideError naming the side whose policy or dynamic is refused.
+        ReportSideError naming the side whose policy or dynamic is refused,
+        or LocalAreaDatasetMismatchError when the catalog version doesn't
+        give both area types that dataset (``read_local_area_dataset``).
         """
         with self._transaction() as connection:
             catalog = _catalog_rows(connection, request)
+            local_area_dataset = None
+            if local_area_dataset_name is not None:
+                local_area_dataset = read_local_area_dataset(
+                    connection, catalog_version_id=catalog.catalog_version_id
+                )
+                if (
+                    local_area_dataset is None
+                    or local_area_dataset.name != local_area_dataset_name
+                ):
+                    raise LocalAreaDatasetMismatchError(local_area_dataset_name)
             population = catalog.population(request.year)
             sides = []
             excluded_run_id = None
@@ -306,7 +344,12 @@ class EconomyRunStore:
                             reusable_run=reusable_run,
                         )
                 sides.append(inputs)
-        return EconomyReportInputs(catalog=catalog, baseline=sides[0], reform=sides[1])
+        return EconomyReportInputs(
+            catalog=catalog,
+            baseline=sides[0],
+            reform=sides[1],
+            local_area_dataset=local_area_dataset,
+        )
 
     def read_budget_window_inputs(
         self,

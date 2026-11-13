@@ -82,6 +82,7 @@ from policyengine_simulation_entry.economy_workers import (
 from policyengine_simulation_entry.household_workers import (
     VersionManifestUnavailableError,
 )
+from policyengine_simulation_entry.local_area_reports import local_area_dataset_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -130,8 +131,12 @@ class EconomyRuns(Protocol):
         baseline: SimulationChoice,
         reform: SimulationChoice,
         reuse: RunReuse | None,
+        local_area_dataset_name: str | None = None,
     ) -> EconomyReportInputs:
-        """Read a report's catalog rows, both sides' values and reusable runs."""
+        """Read a report's catalog rows, both sides' values and reusable runs.
+
+        With ``local_area_dataset_name``, also the catalog's local-area dataset.
+        """
         ...
 
     def read_simulation_inputs(
@@ -259,6 +264,7 @@ class EconomySubmissionService:
         failed after its rows were inserted.
         """
         worker = await self._default_worker(request.country)
+        area_dataset_name = local_area_dataset_name(request, worker)
         options = request.options()
         reuse_prefix = self._settings.reuse_prefix
         reuse = (
@@ -277,6 +283,7 @@ class EconomySubmissionService:
                 baseline=simulation_choice(request.baseline),
                 reform=simulation_choice(request.reform),
                 reuse=reuse,
+                local_area_dataset_name=area_dataset_name,
             ),
             request=economy_request,
         )

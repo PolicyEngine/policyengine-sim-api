@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from policyengine_simulation_persistence import (
+    LocalAreaDatasetMismatchError,
     MissingPolicyParametersError,
     OverlappingReformError,
     ReportSideError,
@@ -136,7 +137,9 @@ def read_refusal(
     """Return the refusal a store read's error means, or None for any other error.
 
     A missing catalog version, region, dataset, policy or dynamic is refused
-    (400); a policy or dynamic setting parameters the catalog version lacks,
+    (400), and so is a catalog whose area regions don't use the dataset the
+    default worker calculates local areas on; a policy or dynamic setting
+    parameters the catalog version lacks,
     or both setting one, cannot be calculated (422). A report side's refusal
     (ReportSideError) is located on that side's fields. Every detail is
     written from ``request``, never from the error's text.
@@ -182,6 +185,14 @@ def _missing_row_refusal(
         refusal = (
             "unknown_dynamic",
             f"No stored dynamic matches the one {named_by} names.",
+        )
+    elif isinstance(error, LocalAreaDatasetMismatchError):
+        # The dataset is the default worker's declaration, not the request's.
+        refusal = (
+            "local_area_dataset_mismatch",
+            f"{catalog}'s constituency and local-authority regions do not all "
+            f"use {error.declared_dataset}, the dataset the default v2 worker "
+            "calculates local areas on.",
         )
     if refusal is None:
         return None

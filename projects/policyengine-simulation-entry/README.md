@@ -151,6 +151,29 @@ a run claimed meanwhile is answered with 201. Every 500 is the JSON error
 with code `internal_error`, and may follow a write. No `detail` holds an
 exception's text.
 
+### Local areas
+
+An economy report may also ask for its constituency and local-authority
+impacts with `breakdown: "local_areas"`, left out unless given (null and any
+other value are refused with 422). Only a UK report whose region is `uk` or
+one of the four `country/*` nations may ask, with or without
+`include_cliffs`; any other country or region is refused with 422 at
+`breakdown`. The report's stored options record `"breakdown": "local_areas"`
+only when asked for.
+
+The default worker's UK entry in the v2 version manifest decides the rest
+(`local_area_reports`): the input version its coordinator accepts for a
+local-area report run, and the dataset the .py release routes constituency
+and local-authority regions to, which the publisher computes by the rule
+Stage 12's national aggregation uses to leave the areas out. Without that
+declaration, or with another input version, the request is refused with 400
+`local_areas_unsupported` before anything is read. With no dataset, the
+release gives the areas none of their own, and the national run calculates
+both area levels itself. With one, the catalog version's constituency and
+local-authority regions must all use it, whatever `dataset_name` names;
+otherwise the request is refused with 400 `local_area_dataset_mismatch`.
+Both codes are the service's state, not the caller's.
+
 ### Budget windows
 
 `POST /reports` with `report_type` `budget_window` creates a budget-window

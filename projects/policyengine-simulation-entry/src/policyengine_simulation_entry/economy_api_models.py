@@ -77,6 +77,12 @@ ServiceStateRefusalCode = Literal[
     "unknown_household",
     # The default worker has no household function for the country.
     "no_household_function",
+    # The default worker's coordinator runs no local-area report runs of the
+    # input this service sends.
+    "local_areas_unsupported",
+    # The catalog version's constituency and local-authority regions don't
+    # all use the dataset the default worker calculates local areas on.
+    "local_area_dataset_mismatch",
 ]
 EconomyRefusalCode = Literal[CallerRowRefusalCode, ServiceStateRefusalCode]
 # Why stored values cannot be calculated (422).
