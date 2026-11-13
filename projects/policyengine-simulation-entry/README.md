@@ -190,6 +190,43 @@ record and its newest run (created last, ties to the larger ID): its status,
 versions, error message and times, and a report run's simulation runs. The
 Public API reads results from the tables itself.
 
+## Household reports
+
+`POST /reports` with `report_type` `household` creates a household report:
+one household the Public API stores, for its `default_year`, under a
+baseline and, optionally, a reform. It names the `country`, `label`,
+`description`, `household_id`, `baseline` and `reform` (each a stored
+`policy_id`, null for current law; a null or omitted `reform` makes a report
+of the baseline alone). It names no year, region, dataset, dynamic, .py
+version or record ID, and has no options: each side adds every variable the
+household lacks, as the Public API's stored-household route does, so the
+report holds every value, and `reports.inputs` is `{}`. A household's saved
+SPM selection is applied to both sides.
+
+The service reads the catalog version for the default worker's .py version,
+the household and each side's policy, then creates, in one transaction, a
+household simulation and a pending simulation run for each side (household
+runs are never reused), the report (type `household`) and its pending
+report run. It starts one call of the country's household function with the
+report run's ID (`household_report_run_id`) and each side's household
+contract request, whose calculation ID is the side's simulation run, and
+records the call's ID. The household function claims the report run and each
+simulation run under its own call, writes each run's result or failure
+document to `household_result`, and marks the report run succeeded only if
+every side's run did; otherwise it fails with the first such side's reason.
+The answer is 201 with the report's and its run's IDs, the run's status,
+the `year` and each side's simulation and simulation run.
+
+Refusals and outages answer as an economy report's do, with three more
+codes: 400 `unknown_household` and `no_household_function` (the default
+worker has no household function for the country), and 422
+`household_not_calculable` when the household has no default year or
+cannot be read, located at `household_id`, or when the household contract
+refuses what the report would calculate, located at the field it traces to:
+`household_id` or a side's `policy_id`.
+A policy setting parameters the catalog version lacks is 422
+`missing_parameters`, located at that side's `policy_id`.
+
 ## Re-running a report or simulation
 
 `POST /reports/{report_id}/runs` calculates a stored economy report again,

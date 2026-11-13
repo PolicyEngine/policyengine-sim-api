@@ -25,6 +25,7 @@ from .fanout import (
     run_segmented_simulation,
 )
 from .household_job_recording import run_household_job
+from .household_report_recording import run_household_report
 from .partition import (
     should_segment_simulation,
     stage12_region_groups,
@@ -73,6 +74,7 @@ __all__ = [
     "merge_segment_results",
     "redacted_failure_detail",
     "run_household_job",
+    "run_household_report",
     "run_segmented_simulation",
     "run_single_simulation",
     "should_segment_simulation",

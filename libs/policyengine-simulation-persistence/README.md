@@ -125,6 +125,29 @@ commit fails after its rows were inserted raises
 `EconomyRecordOutcomeUnknownError`: PostgreSQL may have applied the commit,
 so the rows may exist.
 
+## Household reports
+
+`household_report_records.py` holds the simulation service's writes for a
+household report: one stored household, for one year, under a baseline and,
+optionally, a reform. `insert_household_report` creates, in the caller's
+transaction, a household simulation (no dataset or region) and its first
+run for each side, never reusing one; the report, of type `household`,
+naming the household, both simulations and the reform's policy, with its
+options in `inputs`; and its first report run, trigger `initial`, naming no
+reform run for a report of the baseline alone. Every run is `pending` with
+no Modal call ID, and a row naming one that does not exist is refused as
+`EconomyRecordReferenceError`.
+
+`HouseholdReportStore` runs the steps in transactions of their own:
+`read_inputs` reads the catalog version for the .py version, the country's
+model, the stored household and each side's policy values together,
+raising `UnknownCatalogVersionError`, `UnknownHouseholdError` or
+`ReportSideError` for the side whose policy is missing or sets parameters
+the catalog version lacks; `create_report` raises
+`EconomyRecordOutcomeUnknownError` when the commit fails after the rows were
+inserted; and `record_report_call` and `fail_unstarted_report` use the
+economy report run writes.
+
 ## Re-running a report or simulation
 
 `economy_rerun_records.py` holds a re-run's reads and writes. A re-run

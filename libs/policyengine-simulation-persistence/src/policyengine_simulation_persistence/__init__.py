@@ -104,6 +104,16 @@ from policyengine_simulation_persistence.household_job_store import (
     UnknownCatalogVersionError,
     UnknownHouseholdError,
 )
+from policyengine_simulation_persistence.household_report_records import (
+    HOUSEHOLD_REPORT_TYPE,
+    HouseholdReportSimulation,
+    NewHouseholdReport,
+    insert_household_report,
+)
+from policyengine_simulation_persistence.household_report_store import (
+    HouseholdReportInputs,
+    HouseholdReportStore,
+)
 from policyengine_simulation_persistence.input_tables import input_metadata
 from policyengine_simulation_persistence.policy_reform import (
     MissingPolicyParametersError,
@@ -134,6 +144,7 @@ from policyengine_simulation_persistence.tables import (
 )
 
 __all__ = [
+    "HOUSEHOLD_REPORT_TYPE",
     "LATEST_YEAR",
     "MAX_BUDGET_WINDOW_YEARS",
     "SERVICE_TABLE_PRIVILEGES",
@@ -157,11 +168,15 @@ __all__ = [
     "HouseholdJobReferenceError",
     "HouseholdJobStatus",
     "HouseholdJobStore",
+    "HouseholdReportInputs",
+    "HouseholdReportSimulation",
+    "HouseholdReportStore",
     "MissingPolicyParametersError",
     "NewBudgetWindowReport",
     "NewEconomyReport",
     "NewEconomySimulation",
     "NewHouseholdJob",
+    "NewHouseholdReport",
     "NewReportRerun",
     "NewSimulationRerun",
     "NewWindowRerun",
@@ -215,6 +230,7 @@ __all__ = [
     "insert_economy_report",
     "insert_economy_simulation",
     "insert_household_job",
+    "insert_household_report",
     "insert_report_rerun",
     "insert_simulation_rerun",
     "insert_window_rerun",

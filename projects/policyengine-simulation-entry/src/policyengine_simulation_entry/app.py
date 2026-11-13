@@ -58,7 +58,10 @@ from policyengine_simulation_entry.economy_rerun_routes import (
     add_economy_rerun_routes,
 )
 from policyengine_simulation_entry.economy_reruns import EconomyRerunService
-from policyengine_simulation_entry.economy_routes import add_economy_routes
+from policyengine_simulation_entry.economy_routes import (
+    HouseholdReportSubmissions,
+    add_economy_routes,
+)
 from policyengine_simulation_entry.economy_submissions import ServiceSettings
 from policyengine_simulation_entry.economy_workers import (
     ManifestEconomyWorkers,
@@ -79,6 +82,9 @@ from policyengine_simulation_entry.entry_runtime import (
 )
 from policyengine_simulation_entry.household_calculations import (
     HouseholdCalculationService,
+)
+from policyengine_simulation_entry.household_report_submissions import (
+    household_reports_for,
 )
 from policyengine_simulation_entry.household_routes import (
     HouseholdCalculations,
@@ -537,16 +543,24 @@ def household_calculations_for(
     )
 
 
-def _register_economy_routes(
+def _register_economy_routes(  # noqa: PLR0913  # the app, its services and permissions
     app: FastAPI,
     entry: EntryRuntime,
     submissions: EconomyService | None,
+    household_reports: HouseholdReportSubmissions | None,
     *,
     submitter: AuthorizationDependency,
     reader: AuthorizationDependency,
 ) -> None:
-    """Add the routes that create, read and re-run economy reports and simulations."""
-    add_economy_routes(app, entry, submissions, submitter=submitter, reader=reader)
+    """Add the routes that create, read and re-run reports and economy simulations."""
+    add_economy_routes(
+        app,
+        entry,
+        submissions,
+        submitter=submitter,
+        reader=reader,
+        household_reports=household_reports,
+    )
     add_economy_rerun_routes(app, entry, submissions, submitter=submitter)
 
 
@@ -742,6 +756,7 @@ def create_app(
         app,
         entry,
         economy_submissions_for(runtime_settings, runtime_database),
+        household_reports_for(runtime_settings, runtime_database),
         submitter=simulation_submitter,
         reader=simulation_reader,
     )

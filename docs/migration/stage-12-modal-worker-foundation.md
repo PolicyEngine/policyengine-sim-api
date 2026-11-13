@@ -731,11 +731,12 @@ computed because no file existed.
 ## v2 household functions
 
 The versioned v2 application also defines a household function for each
-country, `calculate_household_us` and `calculate_household_uk`. Each call
-calculates one household, in the Public API's situation shape and with
+country, `calculate_household_us` and `calculate_household_uk`. A household
+calculation is one household, in the Public API's situation shape and with
 optional axes, for one year under one policy, as a household job or a
-household simulation run is one household, one year and one policy; a
-baseline and its reform are two calls. It takes a `HouseholdExecutionRequest`
+household simulation run is one household, one year and one policy. A call
+for a household job, or for deployment validation, makes one calculation:
+it takes a `HouseholdExecutionRequest`
 and returns a `HouseholdExecutionResult`, which holds the calculated
 household with its warnings and SPM receipt, or a typed
 `HouseholdExecutionFailure`, from
@@ -751,8 +752,8 @@ year. Otherwise the
 calculation follows the Public API's household calculation, including its
 input errors, warnings and SPM receipt. A function refuses a request for
 another country, and returns a `bundle_mismatch` failure for a request that
-names another bundle. Nothing calls these functions until the Simulation
-Entrypoint has household routes.
+names another bundle. The Simulation Entrypoint calls them for
+`/household-calculations` and for household reports on `/reports`.
 
 A call can name a household job, a `household_jobs` row the Simulation
 Entrypoint inserts pending, with the `household_job_id` keyword argument. As
@@ -771,9 +772,40 @@ only columns the role may update: `status`, `modal_call_id`,
 `error_message`, `result`, `started_at`, `completed_at` and `updated_at`. A
 call that names no job, as deployment validation makes, touches no database.
 
+A call can instead name a household report run, with the
+`household_report_run_id` keyword argument, and then takes a
+`HouseholdReportRunCalculation`
+(`policyengine_simulation_contract.household_report_execution`): the
+baseline's `HouseholdExecutionRequest` and, optionally, the reform's, each
+request's calculation ID naming its simulation run. A call names a job or a
+report run, never both. The function then:
+
+1. claims the report run under its own Modal call ID, as a report run's
+   coordinator does, and reads which baseline and reform simulation runs it
+   names;
+2. validates the payload and checks that its runs are those;
+3. for each side, claims the side's simulation run, calculates it, and
+   writes its `HouseholdExecutionResult`, or its `HouseholdExecutionFailure`
+   and one-line summary, to the run's `household_result` and
+   `error_message`;
+4. marks the report run succeeded only if every side's run did, or fails it
+   with the first such side's reason.
+
+Both sides are always calculated, so each run has its own outcome. A report
+run another call holds, or one already finished, returns `deduplicated`, the
+report run's ID and its status, without calculating. A restarted call keeps a
+side it already recorded. An error, a refused payload included, or Modal's
+cancellation fails the report run and each of its simulation runs left
+unfinished, with a summary naming only the error's type, then propagates; a
+pre-emption records nothing. An error in the report run's claim, or in the
+read of its simulation runs, fails the report run if the claim applied
+before the error, and leaves its simulation runs to the stuck-run sweep.
+
 The stuck-run sweep (`src/modal/run_sweep_app.py`) fails household jobs
 nothing will finish by the rule it applies to report runs and simulation
-runs, counting a job's age from its creation: a pending job with no call
+runs (a household report run and its simulation runs are judged as any
+report run and its simulation runs are), counting a job's age from its
+creation: a pending job with no call
 recorded ten minutes after its creation, a pending or running job once
 Modal reports its recorded call ended, and any job still unfinished 24 hours
 after its creation, whatever Modal reports.
@@ -783,7 +815,7 @@ after its creation, whatever Modal reports.
   cache. Building it needs no secret.
 - Secrets: only `policyengine-modal-worker-database`, whose
   `MODAL_WORKER_DATABASE_URL` connects as the Modal worker role, to record
-  the household job a call names. Like the coordinator and the simulation
+  the household job or household report run a call names. Like the coordinator and the simulation
   workers, the application cannot deploy to a Modal environment without it.
   A household calculation reads no private data or Cloud Storage. Telemetry
   authenticates with the identity token Modal gives every container

@@ -1,7 +1,7 @@
-"""Refused ``POST /reports`` bodies, located as before the budget-window type.
+"""Refused ``POST /reports`` bodies, located as before the report types.
 
-``POST /reports`` takes an economy report or a budget window, told apart by
-``report_type``. Pydantic puts the matched type into every refused field's
+``POST /reports`` takes an economy, budget-window or household report, told
+apart by ``report_type``. Pydantic puts the matched type into every refused field's
 location (``["body", "economy", "year"]``) and reports a missing or unknown
 ``report_type`` at the body itself. The Public API passes the locations to
 its callers, so the report route answers them as it did when it took only
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Final, get_args
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 
-from policyengine_simulation_entry.budget_window_api_models import ReportRequest
+from policyengine_simulation_entry.report_api_models import ReportRequest
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Sequence
