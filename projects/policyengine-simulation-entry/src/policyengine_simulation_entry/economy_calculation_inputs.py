@@ -35,6 +35,7 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationExecutionInput,
     SimulationRole,
     Stage12InvocationContext,
+    report_run_artifact_prefix,
 )
 
 if TYPE_CHECKING:
@@ -185,9 +186,8 @@ def _context(
         simulation_callable=worker.simulation_callable,
         version_manifest_sha256=worker.version_manifest_sha256,
         bundle_manifest_sha256=worker.bundle_manifest_sha256,
-        artifact_prefix=(
-            f"stage-12-runs/{origin.environment}/{created_at:%Y}/{created_at:%m}/"
-            f"{run_id}"
+        artifact_prefix=report_run_artifact_prefix(
+            origin.environment, created_at, run_id
         ),
         created_at=created_at,
         retention_expires_at=created_at + ARTIFACT_RETENTION,

@@ -26,10 +26,13 @@ simulation submission or polling contracts.
   and reform are separate and start before either is awaited, an eligible
   report starts 40 region-group calculation calls. These are invocations;
   Modal may reuse a warm container for more than one invocation.
-- Country-specific single-simulation functions and the report coordinator have
-  a Modal `max_containers` value of 10. The separate US region-group function
-  has a value of 300 so calculation work cannot wait behind the parent calls
-  that are collecting it. These are per-function limits, not one shared quota.
+- The report coordinator has a Modal `max_containers` value of 25: three
+  budget windows at five years each, and ten other reports. Each
+  country-specific single-simulation function has 50, both simulations of
+  every coordinator call, and the separate US region-group function has
+  1,000, every segment of every US simulation call, so calculation work
+  cannot wait behind the parent calls that are collecting it. These are
+  per-function limits, not one shared quota.
 - Stage 12 owns its partition, request and result models, orchestration, merge,
   and cache implementation. It does not import the corresponding v1 modules.
 - The v2 functions write canonical private artifacts and use a shared
@@ -365,6 +368,56 @@ functions and the household functions, not the coordinator or the economy
 workers, so it does not catch such a mismatch; a staging economy report run on
 each staging deployment would.
 
+### Budget windows
+
+A budget-window report compares the same baseline and reform in each year of a
+window of 1 to 75 consecutive years. It is an economy report whose
+`budget_window_size` is the window's length. Its calculation is one
+`budget_window_runs` row, and each year is a report run naming that row and
+the year, with its own simulation runs of that year, so a year can reuse a
+single-year report's runs, and the reverse.
+
+- **Creating and starting.** The simulation service creates every year's runs
+  in one transaction, all pending with no call, then starts the earliest
+  years within one ten-second wait for Modal, counted from the first start;
+  a later year not confirmed within it is deferred (`YearStartDeferred`)
+  and waits for a started year's coordinator. The contract's
+  `year_calculation` derives each year's coordinator
+  input and context from the first year's: only the year, its three runs, the
+  artifact prefix (`report_run_artifact_prefix`) and the call's creation time
+  differ.
+- **At most five at once.** `BudgetWindowStore.advance_window` locks the
+  window run's row, then starts the earliest waiting years (pending with no
+  call) until five are under way (running, or started with a call recorded),
+  recording each call while the year is still pending with no call. The lock
+  makes advances that run at once start each year once; a year a duplicate
+  call reaches is claimed by only one call.
+- **Each year's coordinator.** `coordinate_report` runs every call through
+  `coordinate_window_year`. It looks the year's window up once, marks the
+  window running before the coordinator runs, and advances the window once the
+  coordinator returns, fails or is cancelled. The advance starts the next
+  years in the same application, by `ModalYearStarter`, or finishes the
+  window. A pre-emption advances nothing; the restarted call advances when it
+  ends, even when it finds its year already finished. A report run outside any
+  window makes no window writes, and no window write ever changes the year's
+  own outcome.
+- **The window's outcome.** A failed year, or a start Modal refuses, fails the
+  window, its waiting years and their unstarted simulation runs, and no
+  further year starts; years already started run to their end. A start whose
+  year its own call claimed meanwhile counts as started, and a deferred
+  start fails nothing. Once every
+  year has succeeded the window succeeds.
+- **The stuck-run sweep.** It leaves a waiting year of an unfinished window to
+  the window, counts a year started later from when its call was recorded,
+  fails the window when it fails one of its years, and settles a window that
+  nothing has changed for ten minutes with no year under way: from its years
+  when they have all ended, or as stalled (`budget_window_stalled`) when years
+  are still waiting.
+
+The coordinator may run 25 calls at once (three windows at five years, and ten
+other reports), so each simulation worker may run 50 and the US segment
+function 1,000.
+
 ## Report output planning
 
 Before starting either child simulation, the Modal report coordinator resolves
@@ -666,11 +719,12 @@ computed because no file existed.
 ## v2 household functions
 
 The versioned v2 application also defines a household function for each
-country, `calculate_household_us` and `calculate_household_uk`. Each call
-calculates one household, in the Public API's situation shape and with
+country, `calculate_household_us` and `calculate_household_uk`. A household
+calculation is one household, in the Public API's situation shape and with
 optional axes, for one year under one policy, as a household job or a
-household simulation run is one household, one year and one policy; a
-baseline and its reform are two calls. It takes a `HouseholdExecutionRequest`
+household simulation run is one household, one year and one policy. A call
+for a household job, or for deployment validation, makes one calculation:
+it takes a `HouseholdExecutionRequest`
 and returns a `HouseholdExecutionResult`, which holds the calculated
 household with its warnings and SPM receipt, or a typed
 `HouseholdExecutionFailure`, from
@@ -686,8 +740,8 @@ year. Otherwise the
 calculation follows the Public API's household calculation, including its
 input errors, warnings and SPM receipt. A function refuses a request for
 another country, and returns a `bundle_mismatch` failure for a request that
-names another bundle. Nothing calls these functions until the Simulation
-Entrypoint has household routes.
+names another bundle. The Simulation Entrypoint calls them for
+`/household-calculations` and for household reports on `/reports`.
 
 A call can name a household job, a `household_jobs` row the Simulation
 Entrypoint inserts pending, with the `household_job_id` keyword argument. As
@@ -706,9 +760,40 @@ only columns the role may update: `status`, `modal_call_id`,
 `error_message`, `result`, `started_at`, `completed_at` and `updated_at`. A
 call that names no job, as deployment validation makes, touches no database.
 
+A call can instead name a household report run, with the
+`household_report_run_id` keyword argument, and then takes a
+`HouseholdReportRunCalculation`
+(`policyengine_simulation_contract.household_report_execution`): the
+baseline's `HouseholdExecutionRequest` and, optionally, the reform's, each
+request's calculation ID naming its simulation run. A call names a job or a
+report run, never both. The function then:
+
+1. claims the report run under its own Modal call ID, as a report run's
+   coordinator does, and reads which baseline and reform simulation runs it
+   names;
+2. validates the payload and checks that its runs are those;
+3. for each side, claims the side's simulation run, calculates it, and
+   writes its `HouseholdExecutionResult`, or its `HouseholdExecutionFailure`
+   and one-line summary, to the run's `household_result` and
+   `error_message`;
+4. marks the report run succeeded only if every side's run did, or fails it
+   with the first such side's reason.
+
+Both sides are always calculated, so each run has its own outcome. A report
+run another call holds, or one already finished, returns `deduplicated`, the
+report run's ID and its status, without calculating. A restarted call keeps a
+side it already recorded. An error, a refused payload included, or Modal's
+cancellation fails the report run and each of its simulation runs left
+unfinished, with a summary naming only the error's type, then propagates; a
+pre-emption records nothing. An error in the report run's claim, or in the
+read of its simulation runs, fails the report run if the claim applied
+before the error, and leaves its simulation runs to the stuck-run sweep.
+
 The stuck-run sweep (`src/modal/run_sweep_app.py`) fails household jobs
 nothing will finish by the rule it applies to report runs and simulation
-runs, counting a job's age from its creation: a pending job with no call
+runs (a household report run and its simulation runs are judged as any
+report run and its simulation runs are), counting a job's age from its
+creation: a pending job with no call
 recorded ten minutes after its creation, a pending or running job once
 Modal reports its recorded call ended, and any job still unfinished 24 hours
 after its creation, whatever Modal reports.
@@ -718,7 +803,7 @@ after its creation, whatever Modal reports.
   cache. Building it needs no secret.
 - Secrets: only `policyengine-modal-worker-database`, whose
   `MODAL_WORKER_DATABASE_URL` connects as the Modal worker role, to record
-  the household job a call names. Like the coordinator and the simulation
+  the household job or household report run a call names. Like the coordinator and the simulation
   workers, the application cannot deploy to a Modal environment without it.
   A household calculation reads no private data or Cloud Storage. Telemetry
   authenticates with the identity token Modal gives every container
@@ -926,9 +1011,9 @@ This application registers no periodic cleanup function and does not delete the
 temporary PostgreSQL rows. Those rows remain restricted operational history
 until Stage 14 removes the temporary schema.
 
-Household computation, budget-window computation, public response fields,
-public identifiers, and production persistence are outside this companion
-change.
+Household computation, public response fields, public identifiers, and
+production persistence are outside this companion change; budget windows on
+the detailed-save path are described under "Budget windows" above.
 
 ## Numerical qualification
 

@@ -61,7 +61,7 @@ def household_failure_summary(failure: HouseholdExecutionFailure) -> str:
     return summary[:kept] + _SHORTENED_SUFFIX
 
 
-def _unexpected_failure_summary(error: BaseException) -> str:
+def unexpected_failure_summary(error: BaseException) -> str:
     """Describe an error outside the calculation, or Modal's cancellation.
 
     The summary names only the error's type: its message may repeat the
@@ -170,7 +170,7 @@ def run_household_job(
         # Pre-emption: Modal runs the call again, and it resumes this claim.
         raise
     except BaseException as error:
-        recorder.fail_quietly(_unexpected_failure_summary(error), runtime=runtime)
+        recorder.fail_quietly(unexpected_failure_summary(error), runtime=runtime)
         raise
     if not recorded.changed:
         logger.warning(

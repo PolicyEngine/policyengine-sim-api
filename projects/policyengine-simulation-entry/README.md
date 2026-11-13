@@ -153,9 +153,78 @@ a run claimed meanwhile is answered with 201. Every 500 is the JSON error
 with code `internal_error`, and may follow a write. No `detail` holds an
 exception's text.
 
+### Budget windows
+
+`POST /reports` with `report_type` `budget_window` creates a budget-window
+report: the same baseline and reform in each year of a window that starts
+at `year` and lasts `budget_window_size` years (1 to 75, ending by 2200).
+It names the same fields as an economy report, except `include_cliffs`,
+which it refuses; it stores the options of a report without cliffs, so its
+years and single-year reports reuse each other's runs. In one transaction
+the service creates the report (an economy report whose
+`budget_window_size` is set), one `budget_window_runs` row, and for each
+year a report run naming it and the year, with that year's own simulations
+unless a side reuses a run of the same year. It then starts up to the
+earliest five years, as its own role, under the window run's row lock
+(`BudgetWindowStore.advance_window`): the first year's coordinator input is
+built as an economy report's, and each later year's is derived from it.
+Each year's coordinator starts the next years when its year ends. The 201
+names the report, the first year's report run, the window run, its status
+and every year's runs. A year Modal refuses fails the window, its waiting
+years and their new simulation runs, and so does the first year when Modal
+doesn't confirm it within ten seconds; the 503 (`modal_call_refused`) names
+the report. The window run's
+status needs the update grant on `budget_window_runs` that the Public API
+gives the service (PolicyEngine/policyengine-api#4267); `/ready` checks it.
+The first years share that one ten-second wait for Modal, counted from the
+first start: a later year not confirmed within it waits, with the years
+after it, for a started year's coordinator to start it. A body with no
+`report_type` is refused for that alone, before its other fields are
+checked.
+`GET /reports/{report_id}` answers a window with one of its years' runs;
+the window's own status is in `budget_window_runs`, which the Public API
+reads.
+
 `GET /reports/{report_id}` and `GET /simulations/{simulation_id}` return the
 record and its newest run (created last, ties to the larger ID): its status,
 versions, error message and times, and a report run's simulation runs and
 `modal_call_id`, the coordinator's Modal call recorded on it (null until the
 service records one). The Public API reads results from the tables itself.
+
+## Household reports
+
+`POST /reports` with `report_type` `household` creates a household report:
+one household the Public API stores, for its `default_year`, under a
+baseline and, optionally, a reform. It names the `country`, `label`,
+`description`, `household_id`, `baseline` and `reform` (each a stored
+`policy_id`, null for current law; a null or omitted `reform` makes a report
+of the baseline alone). It names no year, region, dataset, dynamic, .py
+version or record ID, and has no options: each side adds every variable the
+household lacks, as the Public API's stored-household route does, so the
+report holds every value, and `reports.inputs` is `{}`. A household's saved
+SPM selection is applied to both sides.
+
+The service reads the catalog version for the default worker's .py version,
+the household and each side's policy, then creates, in one transaction, a
+household simulation and a pending simulation run for each side (household
+runs are never reused), the report (type `household`) and its pending
+report run. It starts one call of the country's household function with the
+report run's ID (`household_report_run_id`) and each side's household
+contract request, whose calculation ID is the side's simulation run, and
+records the call's ID. The household function claims the report run and each
+simulation run under its own call, writes each run's result or failure
+document to `household_result`, and marks the report run succeeded only if
+every side's run did; otherwise it fails with the first such side's reason.
+The answer is 201 with the report's and its run's IDs, the run's status,
+the `year` and each side's simulation and simulation run.
+
+Refusals and outages answer as an economy report's do, with three more
+codes: 400 `unknown_household` and `no_household_function` (the default
+worker has no household function for the country), and 422
+`household_not_calculable` when the household has no default year or
+cannot be read, located at `household_id`, or when the household contract
+refuses what the report would calculate, located at the field it traces to:
+`household_id` or a side's `policy_id`.
+A policy setting parameters the catalog version lacks is 422
+`missing_parameters`, located at that side's `policy_id`.
 

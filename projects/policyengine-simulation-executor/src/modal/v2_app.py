@@ -3,10 +3,13 @@
 
 Besides the Stage 12 report coordinator and simulation workers, it defines a
 household function for each country, ``calculate_household_us`` and
-``calculate_household_uk``, which calculates one household under one policy
-in an image without datasets. A call that names a household job
-records it with the Modal worker role's database secret, the functions' only
-secret.
+``calculate_household_uk``, in an image without datasets. A call calculates
+one household under one policy, and records it on the household job it
+names; or it calculates a household report run's baseline and, if it has
+one, its reform, and records them on the report run and its simulation
+runs. Both record with the Modal worker role's database secret, the
+functions' only secret. A call that names neither, as deployment
+validation makes, records nothing.
 
 This module defines additional resources. It does not rename or modify the
 existing ``policyengine-simulation-py{version}`` applications.
@@ -36,6 +39,7 @@ from policyengine_simulation_executor.stage12_bundle import (
 )
 from policyengine_simulation_executor.stage12_cache.models import CacheManifest
 from policyengine_simulation_executor.stage12_cache.store import Stage12CacheStore
+from policyengine_simulation_executor.stage12_runtime import report_run_access
 from policyengine_simulation_executor.stage12_runtime.report_run_access import (
     MODAL_WORKER_DATABASE_SECRET_NAME,
     MODAL_WORKER_DATABASE_URL_ENV,
@@ -316,7 +320,9 @@ def validate_worker_uk() -> dict:
     memory=32768,
     timeout=3600,
     retries=0,
-    max_containers=300,
+    # Every segment of every US simulation call that may run at once: a
+    # segment queued behind this limit counts against its caller's wait.
+    max_containers=1000,
     secrets=worker_secrets,
 )
 def run_single_simulation_segment_us(
@@ -356,7 +362,8 @@ def run_single_simulation_segment_us(
     memory=32768,
     timeout=US_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
-    max_containers=10,
+    # Both simulations of every coordinator call that may run at once.
+    max_containers=50,
     secrets=report_run_writer_secrets,
 )
 def run_single_simulation_us(
@@ -419,7 +426,8 @@ def run_single_simulation_us(
     memory=32768,
     timeout=UK_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
-    max_containers=10,
+    # Both simulations of every coordinator call that may run at once.
+    max_containers=50,
     secrets=report_run_writer_secrets,
 )
 def run_single_simulation_uk(
@@ -471,7 +479,8 @@ def run_single_simulation_uk(
     # the production-result wait, and time to finish and record the report.
     timeout=COORDINATOR_TIMEOUT_SECONDS,
     retries=0,
-    max_containers=10,
+    # Three budget windows at five years each, and ten other reports.
+    max_containers=25,
     secrets=report_run_writer_secrets,
 )
 def coordinate_report(
@@ -522,25 +531,39 @@ def coordinate_report(
             },
             remote_context=propagated,
         ):
-            return stage12_runtime.coordinate_report(
-                payload,
-                context,
-                parent,
-                invocation=stage12_runtime.CoordinatorInvocation(
-                    application_name=APP_NAME,
-                    invocation_id=coordinator_invocation_id,
+            # A call naming a budget window's year marks the window running
+            # first and, when the year ends, starts the window's next years.
+            return stage12_runtime.coordinate_window_year(
+                lambda: stage12_runtime.coordinate_report(
+                    payload,
+                    context,
+                    parent,
+                    invocation=stage12_runtime.CoordinatorInvocation(
+                        application_name=APP_NAME,
+                        invocation_id=coordinator_invocation_id,
+                    ),
+                    dependencies=stage12_runtime.CoordinatorDependencies(
+                        runtime=runtime
+                    ),
                 ),
-                dependencies=stage12_runtime.CoordinatorDependencies(runtime=runtime),
+                payload=payload,
+                context=context,
+                windows=lambda: report_run_access.budget_window_store(runtime),
+                observability_context=runtime.capture_context,
             )
     finally:
         runtime.shutdown()
 
 
 # Household function sizing. A call holds one country model and a simulation
-# of the household, under its one policy, at every axis point. Each container
+# of the household, under one policy, at every axis point; a household report
+# run's call calculates its baseline and then its reform, which the
+# simulation service builds without axes. Each container
 # reserves 4 GiB and may use up to 16 GiB before Modal stops it, so a large
 # household calculated with every variable at many axis points still fits.
-# The timeout is three times the Public API's 300-second request timeout.
+# The timeout is three times the Public API's 300-second request timeout; a
+# household report run's two calculations, as the simulation service builds
+# them without axes, take a small part of it.
 HOUSEHOLD_FUNCTION_CPU = 2.0
 HOUSEHOLD_FUNCTION_MEMORY_MIB = (4096, 16384)
 HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS = 900
@@ -553,6 +576,7 @@ def _run_household_calculation(
     *,
     observability_context: dict | None,
     household_job_id: str | None,
+    household_report_run_id: str | None = None,
 ) -> dict:
     """Calculate one household request for ``country`` and return its outcome.
 
@@ -561,8 +585,12 @@ def _run_household_calculation(
     With ``household_job_id``, the call claims that household job under its
     Modal call ID and records the outcome on it, or returns the job's status
     without calculating when another call holds it or it has finished
-    (``stage12_runtime.run_household_job``); without it, the call touches no
-    database.
+    (``stage12_runtime.run_household_job``). With ``household_report_run_id``,
+    ``payload`` is a ``HouseholdReportRunCalculation``: the call claims the
+    report run and each side's simulation run, calculates and records each
+    side, and returns the runs' statuses
+    (``stage12_runtime.run_household_report``). A call names at most one of
+    the two; without either, the call touches no database.
     """
     from policyengine_simulation_contract.household_execution import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         HouseholdExecutionRequest,
@@ -579,9 +607,11 @@ def _run_household_calculation(
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
 
-    def calculate() -> HouseholdExecutionResult | HouseholdExecutionFailure:
+    def calculate_request(
+        request: HouseholdExecutionRequest,
+    ) -> HouseholdExecutionResult | HouseholdExecutionFailure:
         return household_calculation.calculate_household(
-            HouseholdExecutionRequest.model_validate(payload),
+            request,
             worker=HouseholdWorkerIdentity(
                 application_name=APP_NAME,
                 function_name=household_callable_name(country),
@@ -592,7 +622,13 @@ def _run_household_calculation(
             ),
         )
 
+    def calculate() -> HouseholdExecutionResult | HouseholdExecutionFailure:
+        return calculate_request(HouseholdExecutionRequest.model_validate(payload))
+
     try:
+        if household_job_id is not None and household_report_run_id is not None:
+            msg = "a household call names either a household job or a report run"
+            raise ValueError(msg)
         propagated = normalize_observability_context(observability_context)
         result = None
         with runtime.operation(
@@ -600,7 +636,17 @@ def _run_household_calculation(
             attributes={"country": country},
             remote_context=propagated,
         ):
-            if household_job_id is None:
+            if household_report_run_id is not None:
+                # The recording code validates the payload once it holds
+                # the report run, so a refused payload fails the run.
+                result = stage12_runtime.run_household_report(
+                    UUID(household_report_run_id),
+                    payload,
+                    calculate_request,
+                    modal_call_id=modal.current_function_call_id(),
+                    runtime=runtime,
+                )
+            elif household_job_id is None:
                 result = calculate().model_dump(mode="json")
             else:
                 result = stage12_runtime.run_household_job(
@@ -631,16 +677,20 @@ def calculate_household_us(
     *,
     observability_context: dict | None = None,
     household_job_id: str | None = None,
+    household_report_run_id: str | None = None,
 ) -> dict:
     """Calculate one US household under the request's policy.
 
     With ``household_job_id``, record the calculation on that household job.
+    With ``household_report_run_id``, ``payload`` is that household report
+    run's calculation: calculate and record each side, then the report run.
     """
     return _run_household_calculation(
         "us",
         payload,
         observability_context=observability_context,
         household_job_id=household_job_id,
+        household_report_run_id=household_report_run_id,
     )
 
 
@@ -658,14 +708,18 @@ def calculate_household_uk(
     *,
     observability_context: dict | None = None,
     household_job_id: str | None = None,
+    household_report_run_id: str | None = None,
 ) -> dict:
     """Calculate one UK household under the request's policy.
 
     With ``household_job_id``, record the calculation on that household job.
+    With ``household_report_run_id``, ``payload`` is that household report
+    run's calculation: calculate and record each side, then the report run.
     """
     return _run_household_calculation(
         "uk",
         payload,
         observability_context=observability_context,
         household_job_id=household_job_id,
+        household_report_run_id=household_report_run_id,
     )

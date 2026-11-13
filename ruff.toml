@@ -110,6 +110,7 @@ runtime-evaluated-base-classes = [
     "policyengine_fastapi.observability.contracts.CorrelatedRunFields",
     "policyengine_fastapi.observability.contracts.ObservabilityModel",
     "policyengine_simulation_contract.gateway_models.GatewayRequestBase",
+    "policyengine_simulation_contract.household_execution.StrictHouseholdModel",
     "policyengine_simulation_contract.macro_output.MacroOutputModel",
     "policyengine_simulation_contract.macro_output.MacroRootModel",
     "policyengine_simulation_contract.macro_output.SingleYearMacroOutput",

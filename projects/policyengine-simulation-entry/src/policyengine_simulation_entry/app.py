@@ -42,6 +42,7 @@ from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
 from policyengine_simulation_persistence import EconomyRunStore, HouseholdJobStore
+from policyengine_stage12_persistence import BudgetWindowStore
 from starlette.datastructures import MutableHeaders
 
 from policyengine_simulation_entry.auth import (
@@ -51,13 +52,16 @@ from policyengine_simulation_entry.auth import (
     CallerAuthorizer,
 )
 from policyengine_simulation_entry.backend import OldGatewayBackend, SimulationBackend
+from policyengine_simulation_entry.budget_window_submissions import (
+    ReportSubmissionService,
+)
 from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.economy_routes import (
     EconomySubmissions,
+    HouseholdReportSubmissions,
     add_economy_routes,
 )
 from policyengine_simulation_entry.economy_submissions import (
-    EconomySubmissionService,
     ServiceSettings,
 )
 from policyengine_simulation_entry.economy_workers import (
@@ -79,6 +83,9 @@ from policyengine_simulation_entry.entry_runtime import (
 )
 from policyengine_simulation_entry.household_calculations import (
     HouseholdCalculationService,
+)
+from policyengine_simulation_entry.household_report_submissions import (
+    household_reports_for,
 )
 from policyengine_simulation_entry.household_routes import (
     HouseholdCalculations,
@@ -537,16 +544,24 @@ def household_calculations_for(
     )
 
 
-def _register_economy_routes(
+def _register_economy_routes(  # noqa: PLR0913  # the app, its services and permissions
     app: FastAPI,
     entry: EntryRuntime,
     submissions: EconomySubmissions | None,
+    household_reports: HouseholdReportSubmissions | None,
     *,
     submitter: AuthorizationDependency,
     reader: AuthorizationDependency,
 ) -> None:
-    """Add the routes that create economy reports and simulations and read them."""
-    add_economy_routes(app, entry, submissions, submitter=submitter, reader=reader)
+    """Add the routes that create reports and economy simulations and read them."""
+    add_economy_routes(
+        app,
+        entry,
+        submissions,
+        submitter=submitter,
+        reader=reader,
+        household_reports=household_reports,
+    )
 
 
 def economy_submissions_for(
@@ -562,7 +577,9 @@ def economy_submissions_for(
         database, SimulationDatabase
     ):
         return None
-    return EconomySubmissionService(
+    return ReportSubmissionService(
+        # The service starts a budget window's first years as its own role.
+        windows=BudgetWindowStore(engine=database.engine),
         store=EconomyRunStore.from_engine(
             database.engine,
             statement_timeout_milliseconds=ECONOMY_STATEMENT_TIMEOUT_MILLISECONDS,
@@ -739,6 +756,7 @@ def create_app(
         app,
         entry,
         economy_submissions_for(runtime_settings, runtime_database),
+        household_reports_for(runtime_settings, runtime_database),
         submitter=simulation_submitter,
         reader=simulation_reader,
     )

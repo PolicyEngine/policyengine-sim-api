@@ -126,6 +126,29 @@ commit fails after its rows were inserted raises
 `EconomyRecordOutcomeUnknownError`: PostgreSQL may have applied the commit,
 so the rows may exist.
 
+## Household reports
+
+`household_report_records.py` holds the simulation service's writes for a
+household report: one stored household, for one year, under a baseline and,
+optionally, a reform. `insert_household_report` creates, in the caller's
+transaction, a household simulation (no dataset or region) and its first
+run for each side, never reusing one; the report, of type `household`,
+naming the household, both simulations and the reform's policy, with its
+options in `inputs`; and its first report run, trigger `initial`, naming no
+reform run for a report of the baseline alone. Every run is `pending` with
+no Modal call ID, and a row naming one that does not exist is refused as
+`EconomyRecordReferenceError`.
+
+`HouseholdReportStore` runs the steps in transactions of their own:
+`read_inputs` reads the catalog version for the .py version, the country's
+model, the stored household and each side's policy values together,
+raising `UnknownCatalogVersionError`, `UnknownHouseholdError` or
+`ReportSideError` for the side whose policy is missing or sets parameters
+the catalog version lacks; `create_report` raises
+`EconomyRecordOutcomeUnknownError` when the commit fails after the rows were
+inserted; and `record_report_call` and `fail_unstarted_report` use the
+economy report run writes.
+
 ## Reading a policy
 
 `read_policy_reform` (`policy_reform.py`) reads a stored policy as the reform
@@ -228,9 +251,12 @@ dynamic, household and catalog tables a run reads. `SERVICE_UPDATABLE_COLUMNS`
 lists the columns it may `UPDATE` on `simulation_runs`, `report_runs` and
 `household_jobs`: `status`, `modal_call_id`, `error_message`, `completed_at`
 and `updated_at`, to record a Modal call's ID once Modal accepts the call, or
-to fail the run when Modal refuses it. The role holds `UPDATE` on those
-columns only, never on a whole table, so the database refuses any other change
-to a run. The Public API's privilege manifest grants them all.
+to fail the run when Modal refuses it. On `budget_window_runs` it lists
+`status`, `error_message`, `completed_at` and `updated_at`, to fail a window
+when Modal refuses one of the first years the service starts. The role holds
+`UPDATE` on those columns only, never on a whole table, so the database
+refuses any other change to a run. The Public API's privilege manifest grants
+them all.
 
 `missing_table_privileges` returns each one the connected role lacks, ordered
 by table, as `"INSERT on reports"` or `"UPDATE (modal_call_id) on

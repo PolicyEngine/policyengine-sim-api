@@ -59,10 +59,21 @@ ServiceStateRefusalCode = Literal[
     "dataset_not_in_bundle",
     # The database refused a row: a row it names was deleted after the reads.
     "missing_reference",
+    # A household report's household is not one of the country's.
+    "unknown_household",
+    # The default worker has no household function for the country.
+    "no_household_function",
 ]
 EconomyRefusalCode = Literal[CallerRowRefusalCode, ServiceStateRefusalCode]
 # Why stored values cannot be calculated (422).
-EconomyUnprocessableCode = Literal["missing_parameters", "overlapping_parameters"]
+EconomyUnprocessableCode = Literal[
+    "missing_parameters",
+    "overlapping_parameters",
+    # A household report's stored household has no default year or cannot
+    # be read, or the household functions' contract refuses what the report
+    # would calculate: located at the household or a side's policy.
+    "household_not_calculable",
+]
 # Why a route cannot answer now (503); retry after ``Retry-After`` seconds.
 EconomyUnavailableCode = Literal[
     # The service has no database or v2 Modal environment configured.
@@ -84,7 +95,7 @@ EconomyErrorCode = Literal[
 ]
 
 
-def _omit_null_default(schema: dict[str, Any]) -> None:
+def omit_null_default(schema: dict[str, Any]) -> None:
     """Leave out a field's null default: the field is omitted rather than null."""
     schema.pop("default", None)
 
@@ -137,7 +148,7 @@ class EconomyReportRequest(_Request):
     reform: PolicyChoice
     include_cliffs: StrictBool = False
     spm: SPMSelection | SkipJsonSchema[None] = Field(
-        default=None, json_schema_extra=_omit_null_default
+        default=None, json_schema_extra=omit_null_default
     )
 
     @field_validator("spm", mode="before")
@@ -297,5 +308,5 @@ class EconomyRequestUnprocessable(_Answer):
 
     detail: list[EconomyRequestReason]
     code: EconomyUnprocessableCode | SkipJsonSchema[None] = Field(
-        default=None, json_schema_extra=_omit_null_default
+        default=None, json_schema_extra=omit_null_default
     )

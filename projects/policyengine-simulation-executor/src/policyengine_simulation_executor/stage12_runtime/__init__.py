@@ -5,6 +5,7 @@ from .aggregation import (
     build_aggregate_report,
     build_spm_result,
 )
+from .budget_window_scheduling import coordinate_window_year
 from .coordination import (
     CoordinatorDependencies,
     CoordinatorInvocation,
@@ -24,6 +25,7 @@ from .fanout import (
     run_segmented_simulation,
 )
 from .household_job_recording import run_household_job
+from .household_report_recording import run_household_report
 from .partition import (
     should_segment_simulation,
     stage12_region_groups,
@@ -68,9 +70,11 @@ __all__ = [
     "calculate_segment",
     "calculate_simulation_frames",
     "coordinate_report",
+    "coordinate_window_year",
     "merge_segment_results",
     "redacted_failure_detail",
     "run_household_job",
+    "run_household_report",
     "run_segmented_simulation",
     "run_single_simulation",
     "should_segment_simulation",
