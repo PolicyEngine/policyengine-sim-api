@@ -902,7 +902,10 @@ as a report run's coordinator does, the function waits for a side whose run
 another call holds, once the sides it can claim are done: it uses the run once
 it succeeds, takes its recorded failure as the side's, and fails it, while it
 still records that call, only once Modal reports the call ended without an
-outcome (`modal_call_ended`). A side still held
+outcome (`modal_call_ended`). The holding call is another household function,
+which goes on to its other side and its own waits once it has recorded the
+run, so the wait reads the run before each probe and takes a finished run at
+once. A side still held
 `HOUSEHOLD_SIDE_WAIT_SECONDS` (780) after the call's start, inside the
 function's 900-second Modal timeout, fails the report run and is left to its
 call; a waiting call holds one of the household functions' containers. A run

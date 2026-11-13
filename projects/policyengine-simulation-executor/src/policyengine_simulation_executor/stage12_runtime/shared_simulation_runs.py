@@ -29,7 +29,10 @@ the coordinator's own workers the same rule.
 
 A household report run's function waits for a side another call holds with
 ``wait_for_held_run``, which probes a ``WaitedRun`` until its run finishes,
-is left unstarted, or the function's own wait window closes.
+is left unstarted, or the function's own wait window closes. That holding
+call is another household function, which goes on to its other side and its
+own waits once it has recorded the run, so this wait reads the run before
+each probe (``read_run_first``) and takes a finished run at once.
 """
 
 from __future__ import annotations
@@ -117,7 +120,9 @@ class WaitedRun:
 
     ``object_id`` is the call the run recorded when the wait began, empty for
     a run to read before any call is probed; it follows the run to a new
-    holding call. ``restore`` gives the handle of a call by its ID.
+    holding call. ``restore`` gives the handle of a call by its ID. With
+    ``read_run_first``, each ``get`` reads the run before probing its call,
+    for a holding call that may go on after recording the run.
     """
 
     simulation_run_id: UUID
@@ -125,6 +130,7 @@ class WaitedRun:
     restore: Callable[[str], ChildCall]
     call_state: Callable[[str], CallState]
     object_id: str = ""
+    read_run_first: bool = False
     _holder: ChildCall | None = None
 
     def get(
@@ -135,7 +141,13 @@ class WaitedRun:
         Raises TimeoutError while the call runs, or after the run moved to
         another call, which is probed next; ``WaitedRunFailedError`` for a run
         that failed, failing it first if its call ended without an outcome.
+        With ``read_run_first``, a run the row shows finished, unstarted or
+        moved is taken from the row without probing the call.
         """
+        if self.read_run_first:
+            state = self.writer.get_simulation_run(self.simulation_run_id)
+            if not self._unfinished_under_probed_call(state):
+                return self._outcome(state)
         if self.object_id:
             try:
                 self._holding_call().get(timeout=0 if timeout is None else timeout)

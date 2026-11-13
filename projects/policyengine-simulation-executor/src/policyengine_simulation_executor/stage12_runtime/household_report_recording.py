@@ -320,6 +320,9 @@ class _ReportRunCall:
                 restore=wait.restore,
                 call_state=wait.call_state,
                 object_id=self.writer.get_simulation_run(run_id).modal_call_id or "",
+                # The holder is another household function, which goes on
+                # after recording the run.
+                read_run_first=True,
             )
             try:
                 result = wait_for_held_run(waited, wait, deadline=deadline)
