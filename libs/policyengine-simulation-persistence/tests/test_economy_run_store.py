@@ -54,6 +54,7 @@ from policyengine_simulation_persistence import (
     UnknownRegionError,
     economy_run_store,
 )
+from policyengine_simulation_persistence.economy_catalog_rows import read_catalog_rows
 from public_api_rows import StoredValue, insert_dataset, insert_dynamic, insert_policy
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
@@ -628,3 +629,15 @@ def test_every_side_refusal_is_raised_with_its_side(monkeypatch) -> None:
                 REQUEST, baseline=CURRENT_LAW, reform=CURRENT_LAW, reuse=None
             )
         assert (raised.value.side, raised.value.error) == ("baseline", refusal)
+
+
+def test_a_request_naming_a_dataset_and_the_local_area_dataset_is_refused() -> None:
+    """A re-run names its stored dataset and a create the local-area one, never both."""
+    named = EconomyRequest(**{**vars(UK_REQUEST), "dataset_name": "acs_local_2024"})
+
+    with pytest.raises(ValueError, match="either a dataset name or"):
+        read_catalog_rows(
+            None,  # refused before any read
+            named,
+            local_area_dataset_name=LOCAL_AREA_DATASET_NAME,
+        )

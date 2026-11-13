@@ -20,6 +20,12 @@ from economy_fixtures import (
     ROUTED_LOCAL_AREAS,
     local_area_worker_version,
 )
+from economy_rerun_fakes import (
+    REPORT_ID,
+    STORED_REPORT,
+    FakeRerunStore,
+    rerun_service,
+)
 from economy_service_fakes import (
     CATALOG,
     REPORT_BODY,
@@ -30,7 +36,10 @@ from economy_service_fakes import (
 )
 from policyengine_simulation_contract.stage12_execution import ReportExecutionInput
 from policyengine_simulation_contract.stage12_manifest import LocalAreaReports
-from policyengine_simulation_entry.economy_api_models import EconomyReportRequest
+from policyengine_simulation_entry.economy_api_models import (
+    EconomyReportRequest,
+    ReportRerunRequest,
+)
 from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionRefusedError,
     EconomySubmissionUnprocessableError,
@@ -190,3 +199,41 @@ def test_a_catalog_whose_area_regions_use_another_dataset_is_refused() -> None:
     # Written from the declaration, never from the error's text.
     assert LOCAL_AREA_DATASET.identity in refusal.value.detail
     assert store.reports == []
+
+
+def test_a_report_on_the_local_area_dataset_is_rerun_on_it() -> None:
+    """A re-run reads the stored report's dataset by name, and takes no data_source."""
+    stored = replace(
+        STORED_REPORT,
+        country="uk",
+        region_code="uk",
+        dataset_name=LOCAL_AREA_DATASET.identity,
+        inputs={"include_cliffs": True},
+    )
+    store = FakeRerunStore(
+        report_definition=stored,
+        catalog=replace(UK_CATALOG, dataset=CATALOG_LOCAL_AREA_DATASET),
+    )
+    caller = FakeCaller()
+
+    asyncio.run(
+        rerun_service(
+            store, workers=_workers_declaring(ROUTED_LOCAL_AREAS), caller=caller
+        ).rerun_report(
+            REPORT_ID,
+            ReportRerunRequest(),
+            request_id="observed",
+            observability_context=None,
+        )
+    )
+
+    ((request, _),) = store.rerun_reads
+    assert (request.region_code, request.dataset_name) == (
+        "uk",
+        LOCAL_AREA_DATASET.identity,
+    )
+    ((_, payload, _, _),) = caller.report_runs
+    execution = ReportExecutionInput.model_validate(payload)
+    for side in (execution.baseline, execution.reform):
+        assert side.bundle.dataset.identity == LOCAL_AREA_DATASET.identity
+        assert side.geography.region == "uk"

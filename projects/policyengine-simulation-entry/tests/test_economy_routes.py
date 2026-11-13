@@ -13,6 +13,7 @@ import pytest
 from conftest import FakeBackend, make_settings
 from economy_service_fakes import REPORT_BODY, SIMULATION_BODY
 from fastapi.testclient import TestClient
+from household_report_fakes import HOUSEHOLD_REPORT_BODY
 from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
@@ -292,6 +293,80 @@ def test_a_data_source_a_report_cannot_have_is_refused(
     (reason,) = result.json()["detail"]
     assert reason["loc"][-1] == "data_source"
     assert expected_message in reason["msg"]
+    assert submissions.reports == []
+
+
+@pytest.mark.parametrize(
+    ("failure", "status_code", "answer"),
+    [
+        (
+            EconomySubmissionRefusedError(
+                code="local_areas_unsupported", detail="no local-area report runs"
+            ),
+            400,
+            {"code": "local_areas_unsupported", "detail": "no local-area report runs"},
+        ),
+        (
+            EconomySubmissionRefusedError(
+                code="local_area_dataset_mismatch", detail="another dataset"
+            ),
+            400,
+            {"code": "local_area_dataset_mismatch", "detail": "another dataset"},
+        ),
+        (
+            EconomySubmissionUnprocessableError(
+                code="no_local_area_dataset",
+                reasons=(
+                    UnprocessableReason(
+                        loc=("body", "data_source"),
+                        msg="no local-area dataset",
+                        type="no_local_area_dataset",
+                    ),
+                ),
+            ),
+            422,
+            {
+                "detail": [
+                    {
+                        "loc": ["body", "data_source"],
+                        "msg": "no local-area dataset",
+                        "type": "no_local_area_dataset",
+                    }
+                ],
+                "code": "no_local_area_dataset",
+            },
+        ),
+    ],
+    ids=["unsupported", "mismatch", "no dataset"],
+)
+def test_a_local_area_refusal_answers_with_its_code(
+    client_for, failure, status_code, answer
+) -> None:
+    submissions = FakeEconomySubmissions(failure=failure)
+
+    with client_for(submissions) as client:
+        result = client.post("/reports", json=LOCAL_AREA_REPORT_BODY)
+
+    assert result.status_code == status_code
+    assert result.json() == answer
+
+
+@pytest.mark.parametrize(
+    "body",
+    [WINDOW_BODY, HOUSEHOLD_REPORT_BODY],
+    ids=["budget window", "household report"],
+)
+def test_only_an_economy_report_takes_a_data_source(client_for, body) -> None:
+    submissions = FakeEconomySubmissions()
+
+    with client_for(submissions) as client:
+        result = client.post(
+            "/reports", json={**body, "data_source": "local_area_dataset"}
+        )
+
+    assert result.status_code == 422
+    (reason,) = result.json()["detail"]
+    assert (reason["loc"][-1], reason["type"]) == ("data_source", "extra_forbidden")
     assert submissions.reports == []
 
 

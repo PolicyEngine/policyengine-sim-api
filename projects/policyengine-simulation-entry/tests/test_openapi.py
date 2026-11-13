@@ -610,3 +610,16 @@ def test_economy_reads_declare_every_answer():
     names = operation_ids(cast("OpenAPIDocument", spec))
     assert names[("GET", "/reports/{report_id}")] == "get_report"
     assert names[("GET", "/simulations/{simulation_id}")] == "get_simulation"
+
+
+def test_the_local_area_refusals_are_in_the_error_codes():
+    """A report on the local-area dataset has two 400 codes and one 422 code."""
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    error_codes = set(schemas["EconomyError"]["properties"]["code"]["enum"])
+    unprocessable_codes = set(
+        schemas["EconomyRequestUnprocessable"]["properties"]["code"]["enum"]
+    )
+
+    assert {"local_areas_unsupported", "local_area_dataset_mismatch"} <= error_codes
+    assert "no_local_area_dataset" in unprocessable_codes
