@@ -12,6 +12,8 @@ waiting. A report run that fails leaves the runs it names to their workers.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 from policyengine_simulation_executor import spm as runtime_spm
 from policyengine_simulation_executor.stage12_runtime.run_sweep import (
@@ -342,3 +344,29 @@ def test_a_failed_probe_of_a_running_own_worker_keeps_the_coordinator_waiting() 
             "claim_simulation_run",
             "complete_simulation_run",
         ]
+
+
+def test_a_waited_for_run_must_share_the_dataset_and_region_of_the_other_run() -> None:
+    # As for a reused run: the two sides of one report calculate one
+    # population and geography.
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
+    holder = _baseline_holder(report_runs, files, HolderEnding.SUCCEEDS)
+    other_dataset_id = UUID("00000000-0000-0000-0000-0000000000f1")
+    report_runs.simulation_runs[BASELINE_RUN_ID].dataset_id = other_dataset_id
+    invoker = HolderInvoker(report_runs, artifacts, holders=[holder])
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(report_runs, invoker, artifacts, files)
+
+    message = report_runs.report_runs[REPORT_RUN_ID].error_message
+    assert message.startswith("reused_simulation_run_mismatch: ")
+    assert f"baseline simulation run {BASELINE_RUN_ID}" in message
+    assert f"dataset_id {other_dataset_id} instead of " in message
+    # The run is its holder's: nothing is written to it.
+    assert report_runs.simulation_runs[BASELINE_RUN_ID].writes == [
+        "complete_simulation_run"
+    ]
