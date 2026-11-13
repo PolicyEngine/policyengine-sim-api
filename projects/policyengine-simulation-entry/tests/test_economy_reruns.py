@@ -170,6 +170,8 @@ def test_a_forced_rerun_recalculates_both_simulations() -> None:
 
     assert store.rerun_reads[0][1][2] is None
     (created,) = store.report_reruns
+    # An extra run, marked forced, which nothing joins (answer 3).
+    assert created.forced is True
     assert (created.baseline.reused, created.reform.reused) == (False, False)
     assert created.new_simulation_run_ids == (UUID(int=2), UUID(int=3))
     assert created.baseline.simulation_id == BASELINE_SIMULATION_ID
