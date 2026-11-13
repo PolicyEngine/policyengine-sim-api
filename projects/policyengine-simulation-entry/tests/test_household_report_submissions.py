@@ -32,7 +32,7 @@ from policyengine_simulation_contract.household_execution import (
 from policyengine_simulation_contract.household_report_execution import (
     HouseholdReportRunCalculation,
 )
-from policyengine_simulation_entry import household_report_submissions
+from policyengine_simulation_entry import household_report_calculations
 from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionOutcomeUnknownError,
     EconomySubmissionRefusedError,
@@ -598,4 +598,4 @@ def test_a_refusal_of_the_missing_variables_option_is_the_services_fault():
         HouseholdExecutionRequest.model_validate(refused_request)
 
     with pytest.raises(HouseholdReportBuildError, match="add_missing_variables"):
-        household_report_submissions._contract_reasons(refused.value, "baseline")
+        household_report_calculations._contract_reasons(refused.value, "baseline")
