@@ -190,9 +190,7 @@ def reused_outputs(
             other_named=_run_name(other_role, run_ids),
         )
         with span(Stage.STAGE12_ARTIFACT_READ, {"simulation_role": role.value}):
-            read_runs[run_id] = checked_output(
-                simulation, run_id, stored, files=reader
-            )
+            read_runs[run_id] = checked_output(simulation, run_id, stored, files=reader)
         reused[role.value] = read_runs[run_id]
     return reused
 

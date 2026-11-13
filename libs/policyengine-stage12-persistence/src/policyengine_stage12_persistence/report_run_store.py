@@ -330,8 +330,7 @@ class ReportRunStore:
         call: the simulation service records the call it starts on a run of
         its own while the run is still pending, and Modal restarts a
         pre-empted call under the same call ID. A run recording another call
-        is that call's; a report run's coordinator releases a run its earlier
-        worker holds (``release_simulation_run``) before starting another.
+        is that call's, which every report run naming the run waits for.
         """
         statement = (
             update(simulation_runs)
@@ -421,20 +420,22 @@ class ReportRunStore:
             simulation_runs, simulation_run_id, statement, "fail_simulation_run"
         )
 
-    def release_simulation_run(
+    def fail_simulation_run_held_by(
         self,
         simulation_run_id: UUID,
         *,
         modal_call_id: str,
-        released_at: datetime,
+        error_message: str,
+        failed_at: datetime,
     ) -> RunWrite:
-        """Return a run ``modal_call_id`` holds to pending, recording no call.
+        """Mark a run failed while it is unfinished and still records ``modal_call_id``.
 
-        A report run's coordinator that Modal restarted stops the worker its
-        earlier attempt started, then releases that worker's run so the
-        worker it starts next can claim it. Only a pending or running run
-        that still records ``modal_call_id`` is released; it keeps its first
-        start, from which the stuck-run sweep counts it.
+        A report run's coordinator waiting for a run another call holds fails
+        it this way once that call ended without recording an outcome: the
+        run may be running under it, or pending under a call the simulation
+        service recorded that never claimed it. A run that finished, or that
+        records another call or none, is left as it is, so coordinators
+        waiting for one run fail it once.
         """
         statement = (
             update(simulation_runs)
@@ -444,13 +445,17 @@ class ReportRunStore:
                 simulation_runs.c.modal_call_id == modal_call_id,
             )
             .values(
-                status=RunStatus.PENDING.value,
-                modal_call_id=None,
-                updated_at=released_at,
+                status=RunStatus.FAILED.value,
+                error_message=error_message,
+                completed_at=failed_at,
+                updated_at=failed_at,
             )
         )
         return self._write(
-            simulation_runs, simulation_run_id, statement, "release_simulation_run"
+            simulation_runs,
+            simulation_run_id,
+            statement,
+            "fail_simulation_run_held_by",
         )
 
     def claim_household_job(
@@ -565,9 +570,9 @@ class ReportRunStore:
         status and creation index allows. Runs are oldest first, with or
         without a recorded Modal call. A simulation run is listed only while
         no pending or running report run names it as its baseline or reform:
-        that report run's coordinator starts its children's calls, records
-        their outcomes, and stops and starts them again when Modal restarts
-        it, so they are its to judge until it has finished. A year of a
+        each such report run's coordinator starts the run or waits for the
+        call holding it, and fails it once that call ended without an
+        outcome, so it is theirs to judge until they have finished. A year of a
         pending or running budget-window run that is still pending with no
         call recorded is waiting for an earlier year to end, and is listed
         only once its window has finished: the window is judged as a whole.

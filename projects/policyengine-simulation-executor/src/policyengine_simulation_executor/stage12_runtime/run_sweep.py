@@ -17,10 +17,11 @@ decide doesn't stay unfinished for good.
 
 Modal restarts a pre-empted call under the same call ID and reports it
 pending meanwhile, so a pre-empted coordinator's or worker's run is never
-failed. A pre-empted coordinator's workers are cancelled, and the restarted
-coordinator releases their simulation runs and starts new workers on them,
-so the sweep judges a simulation run only once no pending or running report
-run names it as its baseline or reform.
+failed. Every coordinator of a pending or running report run that names a
+simulation run, as its baseline or reform, waits for the call holding it and
+fails it once that call ended without an outcome; a pre-empted coordinator's
+workers keep running meanwhile. So the sweep judges a simulation run only
+once no pending or running report run names it.
 
 Household jobs follow the same rule: the simulation service records the
 call it starts on a pending job, and a household function claims the job

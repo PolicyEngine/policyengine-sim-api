@@ -17,17 +17,17 @@ revisions and live schema. This package never changes a schema.
   stuck-run sweep fails the runs and household jobs nothing will finish.
   The coordinator also reads a simulation run's status, year, versions,
   dataset, region, output file, recorded call and failure, so a report run
-  can use a run that already succeeded instead of calculating it again, and
-  a restarted coordinator can release a run its earlier worker holds. The
-  mappings declare only the columns those statements read or write, and
-  each `UPDATE` sets only columns the role may update. Every status write is
-  one `UPDATE` conditional on the row's status and, for a call's claim,
-  completion or failure, on its recorded Modal call: a call claims a
-  pending or running row that records no call or its own, and completes or
-  fails it only while it holds it running. A report run's coordinator also
-  fails its unfinished simulation runs, whatever call they record, when the
-  report run fails, and releases one its pre-empted attempt's worker holds
-  back to pending with no call (`release_simulation_run`). A report run's
+  can use a run that already succeeded instead of calculating it again, or
+  wait for one another call holds. The mappings declare only the columns
+  those statements read or write, and each `UPDATE` sets only columns the
+  role may update. Every status write is one `UPDATE` conditional on the
+  row's status and, for a call's claim, completion or failure, on its
+  recorded Modal call: a call claims a pending or running row that records
+  no call or its own, and completes or fails it only while it holds it
+  running. A coordinator waiting for a run whose holding call ended without
+  an outcome fails it while it still records that call
+  (`fail_simulation_run_held_by`); a report run's failure writes none of its
+  simulation runs, which other report runs may share. A report run's
   completion sets its own result columns and inserts its result rows in the
   same transaction.
 - **Budget windows** (`BudgetWindowStore`): `budget_window_runs`, one row per

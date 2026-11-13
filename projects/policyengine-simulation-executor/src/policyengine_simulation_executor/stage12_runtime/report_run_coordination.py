@@ -1,21 +1,24 @@
 """A detailed-save report run's coordination, on the Public API's run tables alone.
 
 The simulation service creates the report run and its baseline and reform
-simulation runs, starts the coordinator with the report run's ID, and
-records the coordinator's call on the report run. The coordinator claims the
-report run under its own Modal call ID, reuses the stored output of each
-simulation run that already succeeded, and starts a worker for each other
-one, naming the simulation run that worker claims under its own call ID. It
-then aggregates both outputs and completes the report run with its result
-rows. No call creates or claims an evaluation record.
+simulation runs, or names runs other report runs share, starts the
+coordinator with the report run's ID, and records the coordinator's call on
+the report run. The coordinator claims the report run under its own Modal
+call ID, reuses the stored output of each simulation run that already
+succeeded, starts a worker for each run pending with no call, naming the run
+that worker claims under its own call ID, and waits for each run another call
+holds (``shared_simulation_runs``). It then aggregates both outputs and
+completes the report run with its result rows. No call creates or claims an
+evaluation record.
 
-Modal runs a pre-empted coordinator again under the same call ID: the
-restarted call resumes its claim, stops each worker its earlier attempt
-started that holds a simulation run, releases that run and starts a new
-worker on it. One that finished meanwhile is used as it finished, and one
-an uncancelled earlier worker claims later is waited for. A cancelled
-coordinator, which Modal never runs again, fails the report run and the
-simulation runs it left unfinished; so does a failed one.
+A report run's simulation runs may be other report runs' too, so the
+coordinator never cancels a worker or fails a run for its own report run's
+sake. Modal runs a pre-empted coordinator again under the same call ID: the
+pre-empted call stops nothing, and the restarted one resumes its claim and
+waits for the workers its earlier attempt started. A cancelled coordinator,
+which Modal never runs again, fails its report run, and so does a failed one;
+both leave their workers to finish. A worker's run is failed only for its own
+failure, or once its call ended without an outcome.
 """
 
 from __future__ import annotations
@@ -39,7 +42,7 @@ from policyengine_simulation_observability.stages import (
 from policyengine_stage12_persistence import RunStatus
 
 from .child_wait import wait_for_children
-from .coordinated_simulations import cancellation, simulation_failure_attributes
+from .coordinated_simulations import simulation_failure_attributes
 from .coordination_core import CoordinationCore
 from .dependencies import ModalChildInvoker, artifact_store
 from .failure_causes import (
@@ -56,7 +59,6 @@ from .failures import (
     failure_detail_from_record,
 )
 from .parent_claim import validate_dispatch_context
-from .partition import should_segment_simulation
 from .report_run_access import report_run_store
 from .report_run_recording import (
     ReportRunRecorder,
@@ -70,6 +72,12 @@ from .reused_outputs import (
     for_role,
     reused_outputs,
     simulations_to_calculate,
+)
+from .shared_simulation_runs import (
+    WaitedRun,
+    WaitedRunFailedError,
+    WaitedRunSucceeded,
+    WaitedRunUnstarted,
 )
 
 if TYPE_CHECKING:
@@ -96,16 +104,12 @@ REPORT_RUN_INPUT_MISMATCH = "report_run_input_mismatch"
 # A simulation run the report run must calculate has already failed, and
 # recorded no failure of its own to repeat.
 SIMULATION_RUN_FAILED = "simulation_run_failed"
-# A simulation run changed while the coordinator restarted it.
-SIMULATION_RUN_CHANGED = "simulation_run_changed"
 # A worker returned its output, but its simulation run doesn't record it.
 SIMULATION_RUN_NOT_RECORDED = "simulation_run_not_recorded"
 CANCELLED_DETAIL = Stage12FailureDetail(
     error_code="report_cancelled",
     error_summary="Modal cancelled the report's coordinator call.",
 )
-REPORT_FAILED = cancellation("the report failed")
-COORDINATOR_CANCELLED = cancellation("the coordinator's call was cancelled")
 ROLES = (SimulationRole.BASELINE, SimulationRole.REFORM)
 
 
@@ -122,8 +126,8 @@ def coordinate_report_run(
     ``deduplicated`` without running when another call holds the run or it
     has finished. The run stores and buckets are opened first, so a missing
     setting raises before the claim. Once this call holds the run, any error
-    fails the run with its reason, its unfinished simulation runs with it,
-    and raises a ``RuntimeError`` that carries no calculation detail.
+    fails the report run with its reason, leaving its simulation runs to their
+    workers, and raises a ``RuntimeError`` that carries no calculation detail.
     """
     # Open the shared child-wait window before any setup work.
     child_wait_deadline = dependencies.monotonic() + dependencies.wait_timeout_seconds
@@ -163,10 +167,8 @@ def coordinate_report_run(
         return coordination.run()
     except KeyboardInterrupt:
         # Modal pre-empts a call with SIGINT and runs it again under the same
-        # call ID: stop the started workers and record nothing, so the
-        # restarted call starts them again.
-        if coordination is not None:
-            coordination.stop_children()
+        # call ID: record nothing and stop no worker, since other report runs
+        # may wait for their runs; the restarted call waits for them.
         raise
     except Exception as error:  # noqa: BLE001  # every failure is recorded before a stable exception returns to Modal
         _fail_unless_cancelled(
@@ -355,9 +357,10 @@ class ReportRunCoordination(CoordinationCore):
         for simulation in calculated:
             if self._calculated_as_the_baseline(simulation):
                 continue
-            self._start_worker(simulation)
-        # Every worker has been started before the coordinator observes them
-        # together through nonblocking result probes.
+            self._start_or_wait(simulation)
+        # Every worker has been started, and every run another call holds is
+        # waited for, before the coordinator observes them together through
+        # nonblocking result probes.
         wait_for_children(self, self.calls, self.descriptors)
         self._share_the_baseline_output()
         self._require_recorded(calculated)
@@ -430,38 +433,49 @@ class ReportRunCoordination(CoordinationCore):
             ),
         )
 
-    def _start_worker(self, simulation: PlannedSimulationExecutionInput) -> None:
-        """Start the worker that claims the simulation's run, unless none is needed.
+    def _start_or_wait(self, simulation: PlannedSimulationExecutionInput) -> None:
+        """Start the run's worker, or wait for the call that already holds it.
 
-        A run an earlier attempt's worker holds is released first, after
-        that worker is asked to stop; one it finished meanwhile is used as
-        stored, and one another call holds is waited for, with no new
-        worker (see ``_release_from_earlier_worker``). A failed start fails
-        the run, stops every started peer and raises
-        ``Stage12ExecutionError``.
+        A run pending with no call is started here, whichever report run it
+        was created with; the worker's claim lets one call hold it, and a
+        worker that finds it held returns ``deduplicated``. A run pending or
+        running under a call is another report run's worker's, or an earlier
+        attempt's, and is waited for, never cancelled or released
+        (``shared_simulation_runs``).
         """
         role = simulation.role.value
-        run_id = self.simulation_run_id(role)
-        earlier_call_id = self.run_states[role].modal_call_id
-        if earlier_call_id is not None:
-            try:
-                needs_worker = self._release_from_earlier_worker(
-                    simulation, earlier_call_id
-                )
-            except Stage12ExecutionError:
-                # The workers started before this run are stopped too.
-                self.cancel_children(
-                    set(self.calls), cancellation(f"the {role} simulation failed")
-                )
-                raise
-            if not needs_worker:
-                return
+        holder_id = self.run_states[role].modal_call_id
+        if holder_id is None:
+            self._start_worker(simulation)
+        else:
+            self.calls[role] = self._waited_run(role, holder_id)
+
+    def _waited_run(self, role: str, holder_id: str | None) -> WaitedRun:
+        """Return the wait for ``role``'s run, held by ``holder_id``."""
+        return WaitedRun(
+            simulation_run_id=self.simulation_run_id(role),
+            writer=self.writer,
+            restore=self.child_invoker.restore,
+            object_id=holder_id or "",
+        )
+
+    def _start_worker(self, simulation: PlannedSimulationExecutionInput) -> None:
+        """Start the worker that claims the simulation's run.
+
+        A failed start fails the report run (``Stage12ExecutionError``) and
+        leaves the run pending with no call, for another report run naming
+        it to start, and the workers already started to finish.
+        """
+        role = simulation.role.value
         child_context = self.context.model_copy(
-            update={"report_run": None, "simulation_run_id": run_id}
+            update={
+                "report_run": None,
+                "simulation_run_id": self.simulation_run_id(role),
+            }
         )
         try:
             call = self.spawn_child(simulation, child_context.model_dump(mode="json"))
-        except Exception as error:  # noqa: BLE001  # any start failure fails the run and stops its started peers
+        except Exception as error:  # noqa: BLE001  # any start failure fails the report run
             detail = report_failure(
                 error,
                 FailureSite(
@@ -472,66 +486,8 @@ class ReportRunCoordination(CoordinationCore):
                 runtime=self.runtime,
                 progress=self.progress,
             )
-            self._fail_run(role, detail)
-            self.cancel_children(
-                set(self.calls), cancellation(f"the {role} simulation failed")
-            )
             raise Stage12ExecutionError(detail) from None
         self.calls[role] = call
-
-    def _release_from_earlier_worker(
-        self, simulation: PlannedSimulationExecutionInput, earlier_call_id: str
-    ) -> bool:
-        """Stop the earlier attempt's worker, release its run; return if one is needed.
-
-        The earlier worker may have finished the run, or another call may hold
-        it, before the release: a succeeded run's stored output is used, a
-        run another call holds is waited for, and a failed run fails the
-        report with its own cause (``Stage12ExecutionError``).
-        """
-        role = simulation.role.value
-        try:
-            self.child_invoker.restore(earlier_call_id).cancel()
-        except Exception as error:  # noqa: BLE001  # stopping an earlier attempt's worker is best effort; releasing its run refuses its writes
-            logger.warning(
-                "Could not cancel an earlier %s worker of report run %s (%s)",
-                role,
-                self.run_ids.report_run_id,
-                type(error).__name__,
-            )
-        run_id = self.simulation_run_id(role)
-        released = self.writer.release_simulation_run(
-            run_id, modal_call_id=earlier_call_id, released_at=datetime.now(UTC)
-        )
-        if released.changed:
-            return True
-        state = self.writer.get_simulation_run(run_id)
-        # Later failures leave a run read as succeeded or failed unwritten.
-        self.run_states[role] = state
-        if state.status is RunStatus.SUCCEEDED:
-            with self.span(Stage.STAGE12_ARTIFACT_READ, {"simulation_role": role}):
-                reused = checked_output(
-                    simulation, run_id, state, files=self._output_files()
-                )
-            self.reused[role] = reused
-            self.descriptors[role] = reused.descriptor
-            return False
-        if state.status is RunStatus.FAILED:
-            raise Stage12ExecutionError(self._already_failed(role, state))
-        if state.status is RunStatus.RUNNING and state.modal_call_id is not None:
-            self.calls[role] = self.child_invoker.restore(state.modal_call_id)
-            return False
-        if state.status is RunStatus.PENDING and state.modal_call_id is None:
-            return True
-        raise Stage12ExecutionError(
-            Stage12FailureDetail(
-                error_code=SIMULATION_RUN_CHANGED,
-                error_summary=(
-                    f"The {role} simulation run {run_id} became "
-                    f"{state.status.value} while it was restarted."
-                ),
-            )
-        )
 
     def _output_files(self) -> OutputFileReader:
         """Return the reader of stored output files, by default Cloud Storage's."""
@@ -563,41 +519,51 @@ class ReportRunCoordination(CoordinationCore):
     def child_descriptor(
         self, role: str, result: object
     ) -> SimulationArtifactDescriptor | None:
-        """Return a finished worker's descriptor, or None to wait on another call.
+        """Return a finished child's descriptor, or None to wait on another call.
 
-        A worker that found its run held by another call returns a
-        ``deduplicated`` summary: a worker an earlier attempt started, whose
-        cancellation didn't reach it, claimed the run first. The coordinator
-        then waits for that call, which records the run, instead. Raises
-        ``RuntimeError`` for a run that failed or holds no other call.
+        A waited-for run that succeeded is read from its stored file and
+        checked, as a reused run is. One left pending with no call gets this
+        coordinator's own worker. A worker of this coordinator that found its
+        run held by another call returns a ``deduplicated`` summary; the
+        coordinator then waits for that run instead.
         """
-        if not (isinstance(result, dict) and result.get("deduplicated")):
-            return SimulationArtifactDescriptor.model_validate(result)
-        state = self.writer.get_simulation_run(self.simulation_run_id(role))
-        holder = state.modal_call_id
-        if (
-            state.status in {RunStatus.RUNNING, RunStatus.SUCCEEDED}
-            and holder is not None
-            and holder != self.calls[role].object_id
-        ):
+        if isinstance(result, WaitedRunSucceeded):
+            simulation = self.simulations[role]
+            with self.span(Stage.STAGE12_ARTIFACT_READ, {"simulation_role": role}):
+                reused = checked_output(
+                    simulation,
+                    self.simulation_run_id(role),
+                    result.state,
+                    files=self._output_files(),
+                )
+            self.reused[role] = reused
+            return reused.descriptor
+        if isinstance(result, WaitedRunUnstarted):
+            self._start_worker(self.simulations[role])
+            return None
+        if isinstance(result, dict) and result.get("deduplicated"):
             logger.warning(
-                "The %s simulation run of report run %s is held by an earlier "
-                "worker; waiting for it",
+                "The %s simulation run of report run %s is held by another call; "
+                "waiting for it",
                 role,
                 self.run_ids.report_run_id,
             )
-            self.calls[role] = self.child_invoker.restore(holder)
+            self.calls[role] = self._waited_run(role, None)
             return None
-        msg = f"the {role} worker's run is {state.status.value} without its result"
-        raise RuntimeError(msg)
+        return SimulationArtifactDescriptor.model_validate(result)
 
     def child_failure(self, role: str, error: Exception) -> Stage12FailureDetail:
-        """Report a failed worker call; return the failure its run records.
+        """Report a failed child call; return the failure its report records.
 
-        The failure the worker recorded on its run takes precedence over the
-        error its call raised. A failed read or write of the run is logged,
-        never raised, so it never replaces the worker's failure.
+        A waited-for run's failure is the one the run recorded, and nothing
+        is written. For this coordinator's own worker, the failure the worker
+        recorded on its run takes precedence over the error its call raised;
+        a run the worker still holds is failed while it does. A failed read
+        or write of the run is logged, never raised, so it never replaces the
+        worker's failure.
         """
+        if isinstance(error, WaitedRunFailedError):
+            return error.detail
         detail = report_failure(
             error,
             FailureSite(
@@ -608,6 +574,9 @@ class ReportRunCoordination(CoordinationCore):
             runtime=self.runtime,
             progress=self.progress,
         )
+        call = self.calls[role]
+        if isinstance(call, WaitedRun):
+            return detail
         try:
             state = self.writer.get_simulation_run(self.simulation_run_id(role))
         except Exception as state_error:  # noqa: BLE001  # the call's own failure is used when the run can't be read
@@ -615,34 +584,22 @@ class ReportRunCoordination(CoordinationCore):
         else:
             if state.status is RunStatus.FAILED and state.error_message:
                 return run_failure_detail(state.error_message)
-        self._fail_run(role, detail)
+        self._fail_run(role, detail, modal_call_id=call.object_id)
         return detail
 
     def cancel_children(self, roles: set[str], detail: Stage12FailureDetail) -> None:
-        """Fail the simulation run of each started, unfinished worker, then stop it.
+        """Leave every started worker to finish, and every run as it is.
 
-        Only a pending or running run changes, so one that finished keeps its
-        outcome. A segmented worker whose run was failed learns of it from
-        its run, and cancels the region-group calls it started; Modal does
-        not cancel spawned calls, so cancelling the worker would leave them
-        running. Write and cancellation errors are logged, never raised.
+        A report run's simulation runs may be other report runs' too, so a
+        report run that fails for one side, for its wait window or for
+        anything else stops none of them: a worker finishes its run, whose
+        output stays reusable, and a waited-for run is its holder's.
         """
-        for role in sorted(roles):
-            recorded = self._fail_run(role, detail)
-            if recorded and should_segment_simulation(self.simulations[role]):
-                continue
-            try:
-                self.calls[role].cancel()
-            except Exception as error:  # noqa: BLE001  # a failed Modal cancellation is logged and must not replace the failure that caused it
-                logger.warning(
-                    "Could not cancel the %s worker of report run %s (%s)",
-                    role,
-                    self.run_ids.report_run_id,
-                    type(error).__name__,
-                )
 
-    def _fail_run(self, role: str, detail: Stage12FailureDetail) -> bool:
-        """Fail ``role``'s run while it is unfinished; return whether the write ran."""
+    def _fail_run(
+        self, role: str, detail: Stage12FailureDetail, *, modal_call_id: str
+    ) -> None:
+        """Fail ``role``'s run while ``modal_call_id`` holds it running."""
         try:
             self.writer.fail_simulation_run(
                 self.simulation_run_id(role),
@@ -650,11 +607,10 @@ class ReportRunCoordination(CoordinationCore):
                     detail.error_code, detail.error_summary
                 ),
                 failed_at=datetime.now(UTC),
+                modal_call_id=modal_call_id,
             )
         except Exception as error:  # noqa: BLE001  # a failed write is logged and must not replace the failure that caused it
             self._log_run_write_failure(role, error)
-            return False
-        return True
 
     def _log_run_write_failure(self, role: str, error: Exception) -> None:
         logger.error(
@@ -665,34 +621,14 @@ class ReportRunCoordination(CoordinationCore):
             type(error).__name__,
         )
 
-    def fail_unfinished_runs(self, detail: Stage12FailureDetail) -> None:
-        """Fail each simulation run of the report run that is still unfinished.
-
-        A report run's unfinished simulation runs are its coordinator's: the
-        simulation service starts no worker on them, and the stuck-run sweep
-        leaves them to it while the report run is unfinished. A run read as
-        succeeded or failed while preparing, or at its release, is not
-        written: other report runs may reuse a succeeded one. Any other is
-        failed only while it is still pending or running.
-        """
-        for role in ROLES:
-            state = self.run_states.get(role.value)
-            if state is not None and state.status in {
-                RunStatus.SUCCEEDED,
-                RunStatus.FAILED,
-            }:
-                continue
-            self._fail_run(role.value, detail)
-
     def fail(self, error: Exception) -> None:
-        """Record a failed report run once, after stopping its unfinished workers.
+        """Record a failed report run once, leaving its simulation runs as they are.
 
         A ``Stage12ExecutionError`` arrives already reported: a worker's,
-        start's, release's or wait window's failure, after the unfinished
-        workers were stopped, or a run found failed before any started. Any
-        other failure is reported here, before any write, and then the
-        started, unfinished workers are stopped. The report run's unfinished
-        simulation runs then fail, and the report run last.
+        start's or wait window's failure, or a run found failed before any
+        started. Any other failure is reported here. Only the report run is
+        written: its workers finish, and other report runs may name its
+        simulation runs.
         """
         if isinstance(error, Stage12ExecutionError):
             detail = error.detail
@@ -707,16 +643,7 @@ class ReportRunCoordination(CoordinationCore):
                 runtime=self.runtime,
                 progress=self.progress,
             )
-            self.cancel_children(
-                set(self.calls) - set(self.descriptors),
-                cancellation("the coordinator failed"),
-            )
         record_failure_cause(self.runtime, error, detail.error_summary)
-        persist_failure_record(
-            partial(self.fail_unfinished_runs, REPORT_FAILED),
-            runtime=self.runtime,
-            failure_scope="report_coordination",
-        )
         persist_failure_record(
             partial(self.report_run.fail, detail),
             runtime=self.runtime,
@@ -724,13 +651,5 @@ class ReportRunCoordination(CoordinationCore):
         )
 
     def record_cancellation(self) -> None:
-        """Stop and fail the unfinished workers and runs, then fail the report run."""
-        self.cancel_children(
-            set(self.calls) - set(self.descriptors), COORDINATOR_CANCELLED
-        )
-        persist_failure_record(
-            partial(self.fail_unfinished_runs, COORDINATOR_CANCELLED),
-            runtime=self.runtime,
-            failure_scope="report_coordination",
-        )
+        """Fail the report run of a cancelled call, leaving its workers to finish."""
         self.report_run.fail_quietly(CANCELLED_DETAIL, runtime=self.runtime)

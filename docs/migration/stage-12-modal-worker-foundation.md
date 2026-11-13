@@ -359,18 +359,31 @@ stored output's descriptor without calculating, and for a run another call
 holds, or one that failed, it returns `{"deduplicated": true,
 "simulation_run_id", "status"}`.
 
+**Shared simulation runs.** Identical requests share simulation runs, so a
+report run may name a run another report run's worker is calculating (C1 · 24,
+answer 5). The coordinator starts a worker on each run that is pending with no
+call, whichever report run created it: the worker's claim lets one call hold
+the run, and a second worker returns `deduplicated`. It waits for a run that is
+pending or running under another call, without cancelling or releasing that
+call: it probes the call, and once the call has ended reads the run again. A
+run that succeeded is read from its stored file and checked as a reused run is;
+one that failed fails the report run with its recorded failure; one still
+unfinished under the call that ended is failed while it still records that call
+(`fail_simulation_run_held_by`, `modal_call_ended`), so every coordinator
+waiting for it stops. Each waiting report run holds a coordinator container
+(25 at most) while it waits, within its own wait window.
+
 **Pre-emption and cancellation.** Modal runs a pre-empted call again under the
 same call ID, and each claim lets that call resume. A pre-empted coordinator
-cancels its unfinished workers and records nothing; the restarted coordinator
-asks each earlier worker that holds a simulation run to stop, releases that run
-(pending, no call, keeping its first start) and starts a new worker on it. A
-run that worker finished meanwhile is used as it finished, or fails the report
-with its own cause. A failed or cancelled coordinator fails its report run and the
-simulation runs it left unfinished, never one that succeeded. The stuck-run
-sweep judges the run tables only, leaves a report run's simulation runs to its
-coordinator while the report run is unfinished, and never fails a run whose
-call Modal still reports pending, which includes a pre-empted one, before the
-run's maximum age of 24 hours.
+records nothing and cancels no worker; the restarted coordinator waits for each
+run an earlier worker holds, as for any run another call holds. A failed or
+cancelled coordinator fails its report run only: its workers finish, and their
+outputs stay reusable, since other report runs may name their runs. A worker's
+run is failed by its coordinator only for its own failure, while that worker
+holds it. The stuck-run sweep judges the run tables only, leaves a simulation
+run to the coordinators of the unfinished report runs naming it, and never
+fails a run whose call Modal still reports pending, which includes a
+pre-empted one, before the run's maximum age of 24 hours.
 
 **Applications deployed before this change** reject both calls before writing
 anything: their `coordinate_report` requires an evaluation record, and their
