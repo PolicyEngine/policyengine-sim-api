@@ -12,14 +12,17 @@
   year's runs. A household report's new run gives each side a new run of its
   own household simulation, never reusing one, started by one household
   function call; it answers as the household report create does.
-- ``POST /simulations/{simulation_id}/runs`` (``simulation:submit``) creates
-  the stored simulation's new run and starts its simulation function,
-  answering 201 with the simulation's ID, the new run's ID and its status.
+- ``POST /simulations/{simulation_id}/runs`` (``simulation:submit``) joins
+  the stored simulation's run on the current versions that hasn't failed,
+  pending, running or succeeded, or else creates one and starts its
+  simulation function, answering 201 with the simulation's ID, the run's ID
+  and its status.
 
 Every earlier run is kept. A re-run answers 404 for a record that does not
-exist, and 409 when the record has a run pending or running
-(``run_in_progress``, naming it in ``run_id``) or is one this service does
-not re-run (``rerun_not_supported``); then nothing is written. The other
+exist, and 409 when a report has a run pending or running, unless the
+re-run is forced (``run_in_progress``, naming it in ``run_id``), or the
+record is one this service does not re-run (``rerun_not_supported``); then
+nothing is written. The other
 answers are the creates': 400 or 422 when the stored record cannot be
 calculated on the current catalog version, 503 with ``Retry-After`` before
 any write or when Modal refused the new run's call (then the run was failed,
@@ -305,9 +308,10 @@ def add_economy_rerun_routes(
         SIMULATION_RUNS_PATH,
         summary="Re-run an economy simulation",
         description=(
-            "Create the stored simulation's new run on the v2 version "
-            "manifest's default worker, and start it; every earlier run is "
-            "kept, and the new run is always calculated."
+            "Join the stored simulation's run on the v2 version manifest's "
+            "default worker's versions that hasn't failed, pending, running or "
+            "succeeded, or else create one and start it; every earlier run is "
+            "kept."
         ),
         operation_id="rerun_simulation",
         status_code=status.HTTP_201_CREATED,

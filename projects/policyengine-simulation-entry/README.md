@@ -260,15 +260,18 @@ household runs are never reused, so `force` changes nothing. The new report
 run (trigger `manual`) is started by one household function call, as a new
 household report's is, and the re-run answers 201 with the household report
 create's fields.
-`POST /simulations/{simulation_id}/runs`, with no body, creates and starts
-a stored economy simulation's new run, which is always calculated. Each
-answers 201 with the same fields as the create, naming the new run.
+`POST /simulations/{simulation_id}/runs`, with no body, joins a stored
+economy simulation's run on the default worker's versions, catalog version
+and year that hasn't failed and wasn't forced, pending, running or
+succeeded, and answers it as it is, with no Modal call; only when there is
+none does it create and start a new run. Each answers 201 with the same
+fields as the create, naming the run.
 
 A re-run is refused before anything is written: 404 (`unknown_report`,
 `unknown_simulation`) for a record that doesn't exist; 409
-`run_in_progress`, naming the run in `run_id`, while the record has a run
-pending or running (for a report, its budget-window run, or else its report
-run), unless the re-run is forced; 409 `rerun_not_supported` for a household simulation (re-run only
+`run_in_progress`, naming the run in `run_id`, while a report has a run
+pending or running (its budget-window run, or else its report run), unless
+the re-run is forced; 409 `rerun_not_supported` for a household simulation (re-run only
 through its report), a household report whose simulation names a dynamic (a
 household calculation applies none), a budget window whose newest window run
 lacks a year, or a record that names no region, dataset, year, simulation,

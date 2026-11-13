@@ -480,23 +480,24 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
                 raise
             raise refusal from None
 
-    async def _create(
+    async def _create[Created](
         self,
         record: RecordName,
-        create: Callable[[], None],
+        create: Callable[[], Created],
         *,
         rerun: bool = False,
         source: RefusalSource = REQUEST_BODY,
-    ) -> None:
+    ) -> Created:
         """Create the rows; answer a refusal, an unknown outcome or an outage.
 
-        A commit that failed after the rows were inserted may have written
-        them, so it is never answered as unavailable, which would tell the
-        caller nothing was created. ``rerun`` says the rows are a stored
-        record's new run, and ``source`` what names a refused row.
+        Return what ``create`` returns. A commit that failed after the rows
+        were inserted may have written them, so it is never answered as
+        unavailable, which would tell the caller nothing was created.
+        ``rerun`` says the rows are a stored record's new run, and ``source``
+        what names a refused row.
         """
         try:
-            await asyncio.to_thread(create)
+            return await asyncio.to_thread(create)
         except EconomyRecordReferenceError as error:
             raise reference_refusal(error, source) from None
         except EconomyRecordOutcomeUnknownError as error:
