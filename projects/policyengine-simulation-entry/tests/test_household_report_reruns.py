@@ -13,13 +13,14 @@ from dataclasses import replace
 from uuid import UUID
 
 import pytest
+from conftest import FakeBackend, make_settings
 from economy_rerun_fakes import (
     REPORT_ID,
     RUN_UNDER_WAY_ID,
     FakeRerunStore,
     rerun_service,
 )
-from economy_service_fakes import FakeCaller
+from economy_service_fakes import DYNAMIC_ID, FakeCaller
 from household_report_fakes import (
     CATALOG_VERSION_ID,
     CTC_AMOUNT,
@@ -36,6 +37,8 @@ from household_report_fakes import (
 from policyengine_simulation_contract.household_report_execution import (
     HouseholdReportRunCalculation,
 )
+from policyengine_simulation_entry import app as app_module
+from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.economy_api_models import ReportRerunRequest
 from policyengine_simulation_entry.economy_submission_errors import (
     EconomyRecordNotFoundError,
@@ -48,9 +51,13 @@ from policyengine_simulation_entry.economy_submission_errors import (
 from policyengine_simulation_entry.household_report_api_models import (
     HouseholdReportCreated,
 )
+from policyengine_simulation_entry.household_report_reruns import (
+    HouseholdReportRerunService,
+)
 from policyengine_simulation_entry.household_workers import (
     HouseholdFunctionUnavailableError,
 )
+from policyengine_simulation_entry.simulation_database import SimulationDatabase
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
@@ -72,6 +79,7 @@ from policyengine_simulation_persistence import (
 from sqlalchemy.exc import OperationalError
 
 DATABASE_ERROR = OperationalError("SELECT 1", {}, Exception("server closed"))
+DATABASE_URL = "postgresql://simulation_service:secret@db.example:5432/postgres"
 CONTEXT = {"observability_id": "observed"}
 BASELINE_SIMULATION_ID = UUID("00000000-0000-4000-8000-0000000000e1")
 REFORM_SIMULATION_ID = UUID("00000000-0000-4000-8000-0000000000e2")
@@ -238,6 +246,17 @@ def test_a_household_report_of_the_baseline_alone_is_rerun_without_a_reform() ->
         ({"baseline": None}, "baseline simulation"),
         ({"year": None}, "year"),
         ({"country": "fr"}, "country"),
+        # A household calculation applies no dynamic, so a side naming one
+        # would be calculated as it was not stored.
+        (
+            {
+                "reform": SideDefinition(
+                    simulation_id=REFORM_SIMULATION_ID,
+                    choice=SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID),
+                )
+            },
+            "dynamic",
+        ),
     ],
 )
 def test_a_household_report_the_service_cannot_rerun_is_refused(changes, named) -> None:
@@ -427,3 +446,42 @@ def test_a_household_rerun_modal_refuses_is_failed_and_named() -> None:
     )
     assert message.startswith("modal_call_refused:")
     assert households.recorded_calls == []
+
+
+def test_the_app_reruns_household_reports_through_its_household_report_service(
+    monkeypatch,
+) -> None:
+    household_reports = household_rerun_service(FakeHouseholdReportStore())
+    builders_given: list[dict] = []
+    monkeypatch.setattr(
+        app_module,
+        "household_reports_for",
+        lambda settings, database: household_reports,
+    )
+    monkeypatch.setattr(
+        app_module,
+        "economy_submissions_for",
+        lambda settings, database, **builders: builders_given.append(builders),
+    )
+
+    create_app(
+        settings=make_settings(), backend=FakeBackend(), auth_dependency=lambda: None
+    )
+
+    assert builders_given == [{"household_reports": household_reports}]
+
+
+def test_a_configured_service_builds_a_household_report_service_that_reruns() -> None:
+    """Nothing reaches the database or Modal until the first submission."""
+    database = SimulationDatabase.from_url(DATABASE_URL)
+    try:
+        household_reports = app_module.household_reports_for(
+            make_settings(
+                simulation_database_url=DATABASE_URL, v2_modal_environment="staging"
+            ),
+            database,
+        )
+    finally:
+        database.dispose()
+
+    assert isinstance(household_reports, HouseholdReportRerunService)

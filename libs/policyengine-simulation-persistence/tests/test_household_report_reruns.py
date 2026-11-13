@@ -267,7 +267,7 @@ def test_a_household_reports_rerun_is_a_manual_run_of_its_own_simulations(
         report_run["country_package_version"],
         report_run["policyengine_version"],
     ) == (LATER_VERSIONS.country_package_version, LATER_VERSIONS.policyengine_version)
-    # The restart check sees a row nothing changed since its insert.
+    # The insert left both times to the server's defaults, so they are equal.
     assert report_run["updated_at"] == report_run["created_at"]
     for side, side_run in zip(rerun.sides, side_runs, strict=True):
         assert side_run["simulation_id"] == side.simulation_id
