@@ -319,7 +319,9 @@ reports = Table(
     _identifier(),
     _timestamp("created_at", server_now=True),
     _timestamp("updated_at", server_now=True),
-    Column("label", String(255), nullable=False),
+    # Per-user columns the service no longer writes (C1 · 24's answer 6): a
+    # report's name and description live on each user's saved report.
+    Column("label", String(255), nullable=True),
     Column("description", String, nullable=True),
     Column("country", String(16), nullable=False),
     Column("type", String(128), nullable=True),
@@ -511,11 +513,16 @@ budget_window_runs = Table(
     _timestamp("updated_at", server_now=True),
     Column("report_id", Uuid, nullable=False),
     Column("tax_benefit_model_version_id", Uuid, nullable=False),
+    # The .py version the window calculates on, so a window run is found by
+    # its report and version set (answer 8); null on runs before C1 · 27.
+    Column("policyengine_version", String(128), nullable=True),
+    # Per-request, so the service no longer writes it (answer 6).
     Column(
         "trigger",
         _enum_type(ReportRunTrigger, "v2_report_run_trigger"),
-        nullable=False,
+        nullable=True,
     ),
+    # The window's forced marker: a recalculating run is never joined.
     Column("recalculate", Boolean, nullable=False),
     Column(
         "status",
@@ -551,6 +558,16 @@ budget_window_runs = Table(
         "ix_budget_window_runs_tax_benefit_model_version_id",
         "tax_benefit_model_version_id",
     ),
+    # One window run that hasn't failed and wasn't forced per report and
+    # version set: find-or-create's conflict target for a window (answer 8).
+    Index(
+        "uq_budget_window_runs_unfailed_unforced_versions",
+        "report_id",
+        "tax_benefit_model_version_id",
+        "policyengine_version",
+        unique=True,
+        postgresql_where=text("status <> 'failed' AND NOT recalculate"),
+    ),
 )
 
 report_runs = Table(
@@ -567,10 +584,11 @@ report_runs = Table(
         _enum_type(ReportRunStatus, "v2_report_run_status"),
         nullable=False,
     ),
+    # Per-request, so the service no longer writes it (answer 6).
     Column(
         "trigger",
         _enum_type(ReportRunTrigger, "v2_report_run_trigger"),
-        nullable=False,
+        nullable=True,
     ),
     Column("idempotency_key", Uuid, nullable=True),
     _timestamp("started_at"),

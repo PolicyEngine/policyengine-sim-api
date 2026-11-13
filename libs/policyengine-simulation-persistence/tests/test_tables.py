@@ -272,8 +272,8 @@ def test_a_run_is_unforced_unless_its_insert_marks_it() -> None:
         assert str(table.c.forced.server_default.arg) == "false", table.name
 
 
-def test_the_per_user_columns_are_nullable_and_the_service_writes_none() -> None:
-    """Answer 6: a shared row holds no request's label, description or trigger."""
+def test_the_per_user_columns_are_nullable() -> None:
+    """Answer 6: the service writes no request's label, description or trigger."""
     assert reports.c.label.nullable is True
     assert reports.c.description.nullable is True
     assert reports.c.user_id.nullable is True
