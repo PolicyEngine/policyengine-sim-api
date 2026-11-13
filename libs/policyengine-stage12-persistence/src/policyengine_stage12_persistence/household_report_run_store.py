@@ -9,9 +9,11 @@ ID, reads which simulation runs the report run names, then records each
 run's ``HouseholdExecutionResult`` or ``HouseholdExecutionFailure``
 document in ``household_result``, and marks the report run succeeded or
 failed. Each write here applies only while the call
-still holds its row running. A call that stops fails the runs it left
-unfinished with ``ReportRunStore.fail_simulation_run``, which, given no
-call, applies while the run is pending or running.
+still holds its row running. A call that stops fails each run it holds with
+``ReportRunStore.fail_simulation_run``, given its own call ID, so a run
+another call holds, which other report runs may share, is left alone; a run
+whose holding call ended without an outcome is failed with
+``fail_simulation_run_held_by``.
 """
 
 from __future__ import annotations

@@ -21,9 +21,12 @@ ID, so it resumes its own claims, and keeps a side it had already recorded.
 Identical requests share simulation runs, so a side's run may be another
 household report run's too. A side whose run another call holds is waited
 for once the sides this call can claim are done, as a report run's
-coordinator waits (``shared_simulation_runs``): the run is used once it
-succeeds, its failure is the side's, and it is failed only once its call
-ended without an outcome; a side still held when the wait window closes
+coordinator waits (``shared_simulation_runs``), reading the run before each
+probe of its call, since that call is another household function that goes on
+after recording it: the run is used once it succeeds, its failure is the
+side's, and it is failed only once its call ended without an outcome; one
+left pending with no call is claimed and calculated here; a side still held
+when the wait window closes
 (``HOUSEHOLD_SIDE_WAIT_SECONDS`` from the call's start) fails the report run
 and is left to its call. A run named on both sides is calculated once. A
 failing call fails only the runs it holds.
@@ -257,7 +260,7 @@ class _ReportRunCall:
             state = self.writer.get_simulation_run(run_id)
             if state.status in {RunStatus.PENDING, RunStatus.RUNNING}:
                 return None
-            return self._side_already_held(side, run_id)
+            return _finished_side(side, run_id, state)
         outcome = calculate(request)
         document = outcome.model_dump(mode="json")
         if isinstance(outcome, HouseholdExecutionFailure):
@@ -327,16 +330,23 @@ class _ReportRunCall:
             try:
                 result = wait_for_held_run(waited, wait, deadline=deadline)
             except WaitedRunFailedError:
-                return self._side_already_held(side, run_id)
+                return _finished_side(
+                    side, run_id, self.writer.get_simulation_run(run_id)
+                )
             except HeldRunWaitTimeoutError:
+                # The holder may have recorded the run since the last read.
+                state = self.writer.get_simulation_run(run_id)
+                if state.status in {RunStatus.SUCCEEDED, RunStatus.FAILED}:
+                    return _finished_side(side, run_id, state)
                 return SideOutcome(
                     side=side,
                     simulation_run_id=run_id,
-                    status=self.writer.get_simulation_run(run_id).status,
+                    status=state.status,
                     reason=(
-                        f"{SIDE_UNAVAILABLE_CODE}: The {side} simulation run is "
-                        "still running under another call after "
-                        f"{wait.timeout_seconds:g} seconds."
+                        f"{SIDE_UNAVAILABLE_CODE}: The {side} simulation run was "
+                        f"still {state.status.value} under another call when "
+                        "this call's wait window closed, "
+                        f"{wait.timeout_seconds:g} seconds after the call started."
                     ),
                 )
             if isinstance(result, WaitedRunSucceeded):
@@ -346,31 +356,6 @@ class _ReportRunCall:
             outcome = self.side(side, request, calculate, held)
             if outcome is not None:
                 return outcome
-
-    def _side_already_held(
-        self, side: HouseholdReportSide, run_id: UUID
-    ) -> SideOutcome:
-        """Return a side's run this call could not claim, as it stands.
-
-        A restarted call finds a side it finished: a succeeded run is kept,
-        and a failed one keeps its recorded failure. A run still pending or
-        running holds another call, which this call leaves alone.
-        """
-        state = self.writer.get_simulation_run(run_id)
-        if state.status is RunStatus.SUCCEEDED:
-            return SideOutcome(side=side, simulation_run_id=run_id, status=state.status)
-        if state.status is RunStatus.FAILED:
-            reason = _side_failure(
-                side, state.error_message or "no failure was recorded"
-            )
-        else:
-            reason = (
-                f"{SIDE_UNAVAILABLE_CODE}: The {side} simulation run is "
-                f"{state.status.value} under another call."
-            )
-        return SideOutcome(
-            side=side, simulation_run_id=run_id, status=state.status, reason=reason
-        )
 
     def finish(self, outcomes: list[SideOutcome]) -> RunStatus:
         """Mark the report run succeeded, or failed with its first side that wasn't.
@@ -542,6 +527,25 @@ def run_household_report(  # noqa: PLR0913  # the run, its payload and the call'
         "status": status.value,
         "simulation_runs": [outcome.as_json() for outcome in outcomes],
     }
+
+
+def _finished_side(
+    side: HouseholdReportSide, run_id: UUID, state: SimulationRunState
+) -> SideOutcome:
+    """Return a side whose run this call doesn't hold and that has finished.
+
+    A restarted call finds a side it finished, and a waited-for side may be
+    one another call finished: a succeeded run is kept, and a failed one
+    keeps its recorded failure.
+    """
+    if state.status is RunStatus.SUCCEEDED:
+        return SideOutcome(side=side, simulation_run_id=run_id, status=state.status)
+    return SideOutcome(
+        side=side,
+        simulation_run_id=run_id,
+        status=state.status,
+        reason=_side_failure(side, state.error_message or "no failure was recorded"),
+    )
 
 
 def household_side_wait() -> HeldRunWait:

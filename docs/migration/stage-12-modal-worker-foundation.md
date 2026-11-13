@@ -377,9 +377,11 @@ reads is read with them as zeros. A run that succeeded before this rule, under
 a report's plan, is reused when it holds what the new report reads from it,
 and refused (`reused_simulation_output_incompatible`) otherwise. The
 precomputed US baselines are planned the same way, so a report run's
-current-law baseline finds its precomputed files; a comparison-path call
-still plans its baseline with its report's plan, so its baseline no longer
-finds them and calculates all 20 region groups.
+current-law baseline finds its precomputed files; a comparison-path call (a
+shadow comparison with a production job, or the operator-only
+`POST /internal/stage12/reports`) still plans its baseline with its report's
+plan, so its US national baseline no longer finds them and calculates all 20
+region groups.
 
 **Shared simulation runs.** Identical requests share simulation runs, so a
 report run may name a run another report run's worker is calculating (C1 · 24,
@@ -900,9 +902,10 @@ side it already recorded.
 Identical household requests share simulation runs (C1 · 24, answer 8), so,
 as a report run's coordinator does, the function waits for a side whose run
 another call holds, once the sides it can claim are done: it uses the run once
-it succeeds, takes its recorded failure as the side's, and fails it, while it
-still records that call, only once Modal reports the call ended without an
-outcome (`modal_call_ended`). The holding call is another household function,
+it succeeds, takes its recorded failure as the side's, claims and calculates
+it here if it is left pending with no call, and fails it, while it still
+records that call, only once Modal reports the call ended without an outcome
+(`modal_call_ended`). The holding call is another household function,
 which goes on to its other side and its own waits once it has recorded the
 run, so the wait reads the run before each probe and takes a finished run at
 once. A side still held

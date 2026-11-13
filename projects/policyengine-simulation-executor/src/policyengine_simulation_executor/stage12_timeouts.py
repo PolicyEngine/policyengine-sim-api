@@ -40,8 +40,18 @@ COORDINATOR_TIMEOUT_SECONDS = (
     + REPORT_FINISHING_SECONDS
 )
 
+# The household functions' Modal timeout: three times the Public API's
+# 300-second request timeout.
+HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS = 900
+
+# Time a household function keeps after its wait window: to calculate a side
+# found pending with no call as the window closes, which takes a small part of
+# it for a report's calculations without axes, and to record its sides and its
+# report run.
+HOUSEHOLD_FINISHING_SECONDS = 120
+
 # How long a household report run's function waits, from its start, for a
-# side another call holds: the household functions' Modal timeout (v2_app's
-# HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS, 900 s) less two minutes to record its
-# sides and its report run.
-HOUSEHOLD_SIDE_WAIT_SECONDS = 780
+# side another call holds: 900 s - 120 s = 780 s.
+HOUSEHOLD_SIDE_WAIT_SECONDS = (
+    HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS - HOUSEHOLD_FINISHING_SECONDS
+)

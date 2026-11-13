@@ -48,8 +48,9 @@ revisions and live schema. This package never changes a schema.
   its simulation runs, the baseline's and any reform's, records each run's
   household result or failure document in `simulation_runs.household_result`,
   and then marks the report run succeeded or failed. It reads first which
-  simulation runs the report run names, to check them against its payload
-  and to fail them if it stops.
+  simulation runs the report run names, to check them against its payload.
+  A run another call holds is waited for; if the call stops, it fails only
+  the runs it holds.
 
 ## Tests
 
