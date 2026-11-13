@@ -61,6 +61,9 @@ from policyengine_simulation_persistence.keyed_economy_records import (
     find_or_create_economy_report,
     find_or_create_economy_simulation,
 )
+from policyengine_simulation_persistence.keyed_window_records import (
+    find_or_create_budget_window,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -94,6 +97,10 @@ if TYPE_CHECKING:
         FoundEconomySimulation,
         KeyedEconomyReport,
         KeyedEconomySimulation,
+    )
+    from policyengine_simulation_persistence.keyed_window_records import (
+        FoundBudgetWindow,
+        KeyedBudgetWindow,
     )
     from policyengine_simulation_persistence.shared_rows import (
         FoundReportRun,
@@ -359,6 +366,18 @@ class EconomyRunStore:
         """
         return self._create(
             lambda connection: find_or_create_economy_report(connection, report)
+        )
+
+    def find_or_create_budget_window(
+        self, window: KeyedBudgetWindow
+    ) -> FoundBudgetWindow:
+        """Find the window by key, with its window run, or create them.
+
+        See ``find_or_create_budget_window``; raise as
+        ``find_or_create_report`` does.
+        """
+        return self._create(
+            lambda connection: find_or_create_budget_window(connection, window)
         )
 
     def find_or_create_simulation(

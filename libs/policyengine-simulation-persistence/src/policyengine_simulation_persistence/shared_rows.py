@@ -9,7 +9,9 @@ the insert did nothing, by a read of the row that won:
 - a simulation run by simulation, year, catalog version, country package
   version and .py version, among runs that haven't failed and weren't forced;
 - a report run by report, country package version and .py version, the
-  same way, outside budget windows, whose year runs no index covers.
+  same way, outside budget windows, whose year runs no index covers;
+- a budget-window run by report, catalog version and .py version, among
+  window runs that haven't failed and aren't recalculations (answer 8).
 
 Under READ COMMITTED an insert that conflicts with another transaction's
 uncommitted row waits until that transaction ends. Once it commits, the
@@ -36,6 +38,7 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from policyengine_simulation_persistence.tables import (
     ReportRunStatus,
     SimulationStatus,
+    budget_window_runs,
     report_runs,
     reports,
     simulation_runs,
@@ -87,6 +90,15 @@ class FoundReportRun:
     status: ReportRunStatus
     baseline_simulation_run_id: UUID
     reform_simulation_run_id: UUID | None
+
+
+@dataclass(frozen=True)
+class FoundWindowRun:
+    """A budget-window run a lookup found or inserted, with its status."""
+
+    id: UUID
+    inserted: bool
+    status: ReportRunStatus
 
 
 @dataclass(frozen=True)
@@ -193,6 +205,62 @@ def find_or_insert_simulation_runs(
         simulation_id: find_or_insert_simulation_run(connection, rows[simulation_id])
         for simulation_id in sorted(rows)
     }
+
+
+_JOINABLE_WINDOW_RUN: Final = _partial_index(
+    budget_window_runs,
+    "uq_budget_window_runs_unfailed_unforced_versions",
+    (
+        budget_window_runs.c.status != ReportRunStatus.FAILED,
+        budget_window_runs.c.recalculate.is_(False),
+    ),
+)
+
+
+def find_or_insert_window_run(
+    connection: Connection, values: Mapping[str, Any]
+) -> FoundWindowRun:
+    """Return the report's joinable window run on ``values``' versions, or insert it.
+
+    A joinable window run hasn't failed and isn't a recalculation, a forced
+    re-run's, which is never looked up (ValueError). ``values`` is the
+    whole row, its ``policyengine_version`` included.
+    """
+    if values.get("recalculate"):
+        msg = "a recalculating window run is inserted directly: nothing joins it"
+        raise ValueError(msg)
+    row, inserted = _find_or_insert(
+        connection, _JOINABLE_WINDOW_RUN, values, (budget_window_runs.c.status,)
+    )
+    return FoundWindowRun(
+        id=row.id, inserted=inserted, status=ReportRunStatus(row.status)
+    )
+
+
+def find_joinable_window_run(
+    connection: Connection,
+    *,
+    report_id: UUID,
+    tax_benefit_model_version_id: UUID,
+    policyengine_version: str,
+) -> FoundWindowRun | None:
+    """Return the report's joinable window run on these versions, or None.
+
+    The one ``find_or_insert_window_run`` would join. A window run created
+    before C1 · 27 records no .py version, so it is never joined.
+    """
+    row = connection.execute(
+        select(budget_window_runs.c.id, budget_window_runs.c.status).where(
+            budget_window_runs.c.report_id == report_id,
+            budget_window_runs.c.tax_benefit_model_version_id
+            == tax_benefit_model_version_id,
+            budget_window_runs.c.policyengine_version == policyengine_version,
+            *_JOINABLE_WINDOW_RUN.read_conditions,
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return FoundWindowRun(id=row.id, inserted=False, status=ReportRunStatus(row.status))
 
 
 def find_or_insert_report_run(

@@ -111,6 +111,11 @@ class FoundSide:
     simulation_run_id: UUID
     run_inserted: bool
 
+    @property
+    def reused(self) -> bool:
+        """Whether the run is one this request didn't insert, as answers say."""
+        return not self.run_inserted
+
 
 @dataclass(frozen=True)
 class FoundEconomyReport:
@@ -165,7 +170,17 @@ def find_or_create_economy_report(
     """
     with references_checked():
         simulation_ids = _find_or_insert_simulations(connection, request)
-        report = find_or_insert_report(connection, _report_row(request, simulation_ids))
+        report = find_or_insert_report(
+            connection,
+            economy_report_row(
+                request.definition,
+                report_id=request.report_id,
+                tax_benefit_model_id=request.tax_benefit_model_id,
+                population=request.population,
+                inputs=request.inputs,
+                simulation_ids=simulation_ids,
+            ),
+        )
         versions = request.versions
         joined = find_joinable_report_run(
             connection,
@@ -203,7 +218,7 @@ def find_or_create_economy_simulation(
     with references_checked():
         simulation = find_or_insert_simulation(
             connection,
-            _simulation_row(
+            economy_simulation_row(
                 request.definition, request.simulation_id, request.population
             ),
         )
@@ -237,7 +252,7 @@ def _find_or_insert_simulations(
         sides = by_key[key]
         found = find_or_insert_simulation(
             connection,
-            _simulation_row(
+            economy_simulation_row(
                 request.definition.simulation(sides[0]),
                 proposed[sides[0]].simulation_id,
                 request.population,
@@ -313,7 +328,7 @@ def find_or_insert_side_runs(
     return {side: found[row["simulation_id"]] for side, row in side_rows.items()}
 
 
-def _simulation_row(
+def economy_simulation_row(
     definition: EconomySimulationDefinition,
     simulation_id: UUID,
     population: EconomyPopulation,
@@ -334,17 +349,25 @@ def _simulation_row(
     }
 
 
-def _report_row(
-    request: KeyedEconomyReport, simulation_ids: dict[Side, UUID]
+def economy_report_row(  # noqa: PLR0913  # the definition, then each column it doesn't name
+    definition: EconomyReportDefinition,
+    *,
+    report_id: UUID,
+    tax_benefit_model_id: UUID,
+    population: EconomyPopulation,
+    inputs: dict[str, Any],
+    simulation_ids: Mapping[Side, UUID],
 ) -> dict[str, Any]:
-    """Return a keyed economy report as inserted, naming its sides' simulations."""
-    definition = request.definition
-    population = request.population
+    """Return a keyed economy report or budget window as inserted.
+
+    It names its sides' simulations (a window's first year's), on
+    ``population``'s catalog rows (a window's first year's).
+    """
     return {
-        "id": request.report_id,
+        "id": report_id,
         "country": definition.country,
         "type": ECONOMY_REPORT_TYPE,
-        "tax_benefit_model_id": request.tax_benefit_model_id,
+        "tax_benefit_model_id": tax_benefit_model_id,
         "policy_id": definition.reform.policy_id,
         "baseline_simulation_id": simulation_ids["baseline"],
         "reform_simulation_id": simulation_ids["reform"],
@@ -353,7 +376,7 @@ def _report_row(
         "region_id": population.region_id,
         "year": definition.year,
         "budget_window_size": definition.budget_window_size,
-        "inputs": request.inputs,
+        "inputs": inputs,
         "key_version": KEY_VERSION,
         "definition_key": definition.definition_key,
         "dataset_independent_key": definition.dataset_independent_key,
