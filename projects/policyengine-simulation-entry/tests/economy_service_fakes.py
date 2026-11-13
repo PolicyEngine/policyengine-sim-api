@@ -34,6 +34,11 @@ from policyengine_simulation_persistence import (
     EconomyReportState,
     EconomySimulationInputs,
     EconomySimulationState,
+    FoundEconomyReport,
+    FoundEconomySimulation,
+    FoundReportRun,
+    FoundSide,
+    FoundSimulationRun,
     ReportRunStatus,
     ReusableRun,
     SimulationInputs,
@@ -45,8 +50,8 @@ if TYPE_CHECKING:
 
     from policyengine_simulation_persistence import (
         EconomyRequest,
-        NewEconomyReport,
-        NewEconomySimulation,
+        KeyedEconomyReport,
+        KeyedEconomySimulation,
         RunReuse,
         SimulationChoice,
     )
@@ -115,12 +120,50 @@ class FakeWorkers:
         return default_economy_worker(economy_manifest(), country)
 
 
+def created_report(report: KeyedEconomyReport) -> FoundEconomyReport:
+    """Answer a report as created with every ID the request proposed.
+
+    Both sides name one simulation and run when their keys are one.
+    """
+    definition = report.definition
+    baseline = report.baseline
+    same_simulation = (
+        definition.simulation("baseline").definition_key
+        == definition.simulation("reform").definition_key
+    )
+    reform = baseline if same_simulation else report.reform
+    sides = [
+        FoundSide(
+            simulation_id=side.simulation_id,
+            simulation_run_id=side.simulation_run_id,
+            run_inserted=True,
+        )
+        for side in (baseline, reform)
+    ]
+    return FoundEconomyReport(
+        report_id=report.report_id,
+        report_inserted=True,
+        run=FoundReportRun(
+            id=report.run_id,
+            inserted=True,
+            status=ReportRunStatus.PENDING,
+            baseline_simulation_run_id=sides[0].simulation_run_id,
+            reform_simulation_run_id=sides[1].simulation_run_id,
+        ),
+        baseline=sides[0],
+        reform=sides[1],
+    )
+
+
 @dataclass
 class FakeStore:
     """Records what the service asks of the database, and answers as told.
 
     ``claimed`` marks the run as claimed by its coordinator or function: a
-    failure write then changes nothing.
+    failure write then changes nothing. A report or simulation the service
+    finds or creates by key is answered ``found_report`` or
+    ``found_simulation`` when given, and otherwise as created with the IDs
+    the request proposed (one simulation when both sides have one key).
     """
 
     catalog: EconomyCatalogRows = CATALOG
@@ -134,8 +177,10 @@ class FakeStore:
     stored_simulation: EconomySimulationState | None = None
     report_reads: list[tuple[EconomyRequest, Any]] = field(default_factory=list)
     simulation_reads: list[tuple[EconomyRequest, Any]] = field(default_factory=list)
-    reports: list[NewEconomyReport] = field(default_factory=list)
-    simulations: list[NewEconomySimulation] = field(default_factory=list)
+    reports: list[KeyedEconomyReport] = field(default_factory=list)
+    simulations: list[KeyedEconomySimulation] = field(default_factory=list)
+    found_report: FoundEconomyReport | None = None
+    found_simulation: FoundEconomySimulation | None = None
     recorded_calls: list[tuple[UUID, str]] = field(default_factory=list)
     failed_runs: list[tuple[UUID, tuple[UUID, ...], str]] = field(default_factory=list)
 
@@ -184,15 +229,31 @@ class FakeStore:
         stored = self.stored_simulation
         return stored if stored is not None and stored.id == simulation_id else None
 
-    def create_report(self, report: NewEconomyReport) -> None:
+    def find_or_create_report(self, report: KeyedEconomyReport) -> FoundEconomyReport:
         if self.create_failure is not None:
             raise self.create_failure
         self.reports.append(report)
+        if self.found_report is not None:
+            return self.found_report
+        return created_report(report)
 
-    def create_simulation(self, simulation: NewEconomySimulation) -> None:
+    def find_or_create_simulation(
+        self, simulation: KeyedEconomySimulation
+    ) -> FoundEconomySimulation:
         if self.create_failure is not None:
             raise self.create_failure
         self.simulations.append(simulation)
+        if self.found_simulation is not None:
+            return self.found_simulation
+        return FoundEconomySimulation(
+            simulation_id=simulation.simulation_id,
+            simulation_inserted=True,
+            run=FoundSimulationRun(
+                id=simulation.run_id,
+                inserted=True,
+                status=SimulationStatus.PENDING,
+            ),
+        )
 
     def record_report_call(
         self, report_run_id: UUID, modal_call_id: str
