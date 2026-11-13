@@ -440,7 +440,7 @@ def test_economy_requests_name_no_version_and_no_record_id():
         "reform",
         "include_cliffs",
         "spm",
-        "breakdown",
+        "data_source",
     }
     assert set(schemas["EconomySimulationRequest"]["properties"]) == {
         "country",
@@ -456,12 +456,12 @@ def test_economy_requests_name_no_version_and_no_record_id():
     assert spm["$ref"] == "#/components/schemas/SPMSelection"
     assert "default" not in spm
     assert "spm" not in schemas["EconomyReportRequest"].get("required", [])
-    # Omitted, not null, unless the caller asks for the local-area breakdown.
-    breakdown = schemas["EconomyReportRequest"]["properties"]["breakdown"]
-    assert breakdown["const"] == "local_areas"
-    assert breakdown["type"] == "string"
-    assert "default" not in breakdown
-    assert "breakdown" not in schemas["EconomyReportRequest"].get("required", [])
+    # Omitted, not null, unless the caller asks for the local-area dataset.
+    data_source = schemas["EconomyReportRequest"]["properties"]["data_source"]
+    assert data_source["const"] == "local_area_dataset"
+    assert data_source["type"] == "string"
+    assert "default" not in data_source
+    assert "data_source" not in schemas["EconomyReportRequest"].get("required", [])
 
 
 def test_a_report_request_is_an_economy_report_a_budget_window_or_a_household():

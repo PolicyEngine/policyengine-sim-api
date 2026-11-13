@@ -1,10 +1,10 @@
-"""Economy reports that ask for their local areas, with the store and Modal faked.
+"""Economy reports on the local-area dataset, with the store and Modal faked.
 
-A UK-wide or nation report with ``breakdown: "local_areas"`` is calculated
-by the default worker only when its UK entry declares the local-area report
-runs its coordinator runs (``local_area_reports``). The declaration's
-dataset is the one the release routes constituencies and local authorities
-to, or None when a national run calculates them itself.
+A UK-wide or nation report created with ``data_source: "local_area_dataset"``
+is calculated on the dataset the default worker's UK entry declares for
+local-area report runs (``local_area_reports``): the one the release routes
+constituencies and local authorities to. A release that routes them to no
+dataset of its own has none, and the request is refused.
 """
 
 from __future__ import annotations
@@ -23,14 +23,17 @@ from economy_fixtures import (
 from economy_service_fakes import (
     CATALOG,
     REPORT_BODY,
+    FakeCaller,
     FakeStore,
     FakeWorkers,
     service,
 )
+from policyengine_simulation_contract.stage12_execution import ReportExecutionInput
 from policyengine_simulation_contract.stage12_manifest import LocalAreaReports
 from policyengine_simulation_entry.economy_api_models import EconomyReportRequest
 from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionRefusedError,
+    EconomySubmissionUnprocessableError,
 )
 from policyengine_simulation_persistence import (
     CatalogDataset,
@@ -65,6 +68,10 @@ def _uk_report_request(**changes: Any) -> EconomyReportRequest:
     )
 
 
+def _local_area_report_request(**changes: Any) -> EconomyReportRequest:
+    return _uk_report_request(data_source="local_area_dataset", **changes)
+
+
 def _submit(
     submissions: EconomySubmissionService, request: EconomyReportRequest
 ) -> EconomyReportCreated:
@@ -94,7 +101,7 @@ def test_the_uk_worker_fixture_calculates_on_its_default_dataset() -> None:
     ],
     ids=["no declaration", "another input version"],
 )
-def test_local_areas_the_worker_cannot_run_are_refused_before_any_read(
+def test_the_local_area_dataset_the_worker_cannot_run_is_refused_before_any_read(
     declaration,
 ) -> None:
     store = FakeStore(catalog=UK_CATALOG)
@@ -102,7 +109,7 @@ def test_local_areas_the_worker_cannot_run_are_refused_before_any_read(
     with pytest.raises(EconomySubmissionRefusedError) as refusal:
         _submit(
             service(store, workers=_workers_declaring(declaration)),
-            _uk_report_request(breakdown="local_areas"),
+            _local_area_report_request(),
         )
 
     assert refusal.value.code == "local_areas_unsupported"
@@ -110,41 +117,61 @@ def test_local_areas_the_worker_cannot_run_are_refused_before_any_read(
     assert store.reports == []
 
 
-def test_a_report_without_local_areas_needs_no_declaration() -> None:
+def test_a_report_without_a_data_source_needs_no_declaration() -> None:
     store = FakeStore(catalog=UK_CATALOG)
 
     _submit(service(store, workers=_workers_declaring(None)), _uk_report_request())
 
     assert store.local_area_reads == [None]
-    assert len(store.reports) == 1
+    (report,) = store.reports
+    assert report.population.dataset_id == UK_CATALOG.dataset.id
 
 
-def test_local_areas_on_a_release_that_routes_none_are_the_national_runs() -> None:
-    """The national run calculates both area levels, so no area part is made."""
+def test_a_release_that_routes_no_areas_has_no_local_area_dataset() -> None:
+    """Its national reports calculate both area levels themselves (decision 8)."""
     store = FakeStore(catalog=UK_CATALOG)
     declaration = LocalAreaReports(input_version=1, dataset=None)
 
-    _submit(
-        service(store, workers=_workers_declaring(declaration)),
-        _uk_report_request(breakdown="local_areas"),
-    )
+    with pytest.raises(EconomySubmissionUnprocessableError) as refusal:
+        _submit(
+            service(store, workers=_workers_declaring(declaration)),
+            _local_area_report_request(),
+        )
 
-    assert store.local_area_reads == [None]
-    (report,) = store.reports
-    # The breakdown is never stored.
-    assert report.inputs == {"include_cliffs": True}
+    assert refusal.value.code == "no_local_area_dataset"
+    (reason,) = refusal.value.reasons
+    assert reason.loc == ("body", "data_source")
+    assert "routes constituencies and local authorities to no dataset" in reason.msg
+    assert store.report_reads == []
+    assert store.reports == []
 
 
-def test_the_catalog_is_asked_for_the_local_area_dataset_the_worker_routes_to() -> None:
+def test_the_report_is_calculated_on_the_local_area_dataset_the_worker_routes_to() -> (
+    None
+):
     store = FakeStore(catalog=UK_CATALOG, local_area_dataset=CATALOG_LOCAL_AREA_DATASET)
+    caller = FakeCaller()
 
     _submit(
-        service(store, workers=_workers_declaring(ROUTED_LOCAL_AREAS)),
-        _uk_report_request(breakdown="local_areas", dataset_name=NATIONAL_DATASET_NAME),
+        service(store, workers=_workers_declaring(ROUTED_LOCAL_AREAS), caller=caller),
+        _local_area_report_request(),
     )
 
-    # Never the request's dataset_name (decision 4).
     assert store.local_area_reads == [LOCAL_AREA_DATASET.identity]
+    ((request, _),) = store.report_reads
+    # The dataset comes from the declaration, never from the request.
+    assert request.dataset_name is None
+    (report,) = store.reports
+    assert report.population.dataset_id == CATALOG_LOCAL_AREA_DATASET.id
+    # An ordinary report: its options are the request's, cliffs included.
+    assert report.inputs == {"include_cliffs": True}
+    ((_, payload, _, _),) = caller.report_runs
+    execution = ReportExecutionInput.model_validate(payload)
+    for side in (execution.baseline, execution.reform):
+        assert side.bundle.dataset.identity == LOCAL_AREA_DATASET.identity
+        assert side.population.artifact.uri == LOCAL_AREA_DATASET.uri
+        assert side.geography.region == "uk"
+        assert side.options == {"include_cliffs": True}
 
 
 def test_a_catalog_whose_area_regions_use_another_dataset_is_refused() -> None:
@@ -156,7 +183,7 @@ def test_a_catalog_whose_area_regions_use_another_dataset_is_refused() -> None:
     with pytest.raises(EconomySubmissionRefusedError) as refusal:
         _submit(
             service(store, workers=_workers_declaring(ROUTED_LOCAL_AREAS)),
-            _uk_report_request(breakdown="local_areas"),
+            _local_area_report_request(),
         )
 
     assert refusal.value.code == "local_area_dataset_mismatch"

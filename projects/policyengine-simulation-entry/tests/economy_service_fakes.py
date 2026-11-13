@@ -143,7 +143,8 @@ class FakeStore:
     claimed: bool = False
     stored_report: EconomyReportState | None = None
     stored_simulation: EconomySimulationState | None = None
-    # The catalog's local-area dataset a report read finds, when asked for one.
+    # The catalog's local-area dataset a report read calculates on, when
+    # asked for one.
     local_area_dataset: CatalogDataset | None = None
     report_reads: list[tuple[EconomyRequest, Any]] = field(default_factory=list)
     # The local-area dataset each report read was asked for, or None.
@@ -177,9 +178,11 @@ class FakeStore:
                 choice=reform, reform=REFORM, reusable_run=reform_reusable
             ),
         )
-        if local_area_dataset_name is None:
+        if local_area_dataset_name is None or self.local_area_dataset is None:
             return inputs
-        return replace(inputs, local_area_dataset=self.local_area_dataset)
+        return replace(
+            inputs, catalog=replace(self.catalog, dataset=self.local_area_dataset)
+        )
 
     def read_simulation_inputs(
         self, request: EconomyRequest, choice: SimulationChoice

@@ -147,7 +147,7 @@ UK_REQUEST = replace(REQUEST, country="uk", region_code="uk")
 LOCAL_AREA_DATASET_NAME = "microcosm_uk_2024_25_dense"
 
 
-def test_a_reports_local_area_dataset_is_read_with_its_inputs(
+def test_a_report_on_the_local_area_dataset_is_read_on_it(
     public_api_database_url,
 ) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:
@@ -164,27 +164,29 @@ def test_a_reports_local_area_dataset_is_read_with_its_inputs(
         act_as_the_service(connection)
         store = _store_on(connection)
 
-        with_areas = store.read_report_inputs(
+        on_local_areas = store.read_report_inputs(
             UK_REQUEST,
             baseline=CURRENT_LAW,
             reform=CURRENT_LAW,
             reuse=None,
             local_area_dataset_name=LOCAL_AREA_DATASET_NAME,
         )
-        without_areas = store.read_report_inputs(
+        national = store.read_report_inputs(
             UK_REQUEST, baseline=CURRENT_LAW, reform=CURRENT_LAW, reuse=None
         )
 
-    assert with_areas.local_area_dataset == CatalogDataset(
+    # The local-area dataset takes the place of the region's default.
+    assert on_local_areas.catalog.dataset == CatalogDataset(
         id=local_area_id, name=LOCAL_AREA_DATASET_NAME
     )
-    assert without_areas.local_area_dataset is None
-    # The national part is read as it is without the local areas.
-    assert with_areas.catalog == without_areas.catalog
+    assert national.catalog.dataset.id == economy.dataset_id
+    assert on_local_areas.catalog == replace(
+        national.catalog, dataset=on_local_areas.catalog.dataset
+    )
 
 
 @pytest.mark.parametrize(
-    "area_datasets", ["another dataset", "a dataset for each type"]
+    "area_datasets", ["another dataset", "a dataset for each type", "no area regions"]
 )
 def test_a_declared_dataset_the_catalog_does_not_give_both_area_types_is_refused(
     public_api_database_url, area_datasets
@@ -195,14 +197,15 @@ def test_a_declared_dataset_the_catalog_does_not_give_both_area_types_is_refused
             connection, economy.catalog, LOCAL_AREA_DATASET_NAME
         )
         other_id = insert_dataset(connection, economy.catalog, "microcosm_uk_2024_25")
-        insert_uk_area_regions(
-            connection,
-            economy.catalog,
-            constituency_dataset_id=(
-                other_id if area_datasets == "another dataset" else local_area_id
-            ),
-            local_authority_dataset_id=other_id,
-        )
+        if area_datasets != "no area regions":
+            insert_uk_area_regions(
+                connection,
+                economy.catalog,
+                constituency_dataset_id=(
+                    other_id if area_datasets == "another dataset" else local_area_id
+                ),
+                local_authority_dataset_id=other_id,
+            )
         act_as_the_service(connection)
 
         with pytest.raises(LocalAreaDatasetMismatchError) as mismatch:

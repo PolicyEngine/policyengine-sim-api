@@ -219,24 +219,29 @@ def test_a_malformed_request_is_refused_with_its_reasons(client_for, path, body)
     assert (submissions.reports, submissions.simulations) == ([], [])
 
 
-# A UK-wide report asking for its local-area breakdown, with cliffs and no
-# SPM settings.
+# A UK-wide report on the local-area dataset, with cliffs and no SPM settings.
 LOCAL_AREA_REPORT_BODY: dict[str, Any] = {
     **{name: value for name, value in REPORT_BODY.items() if name != "spm"},
     "country": "uk",
     "region_code": "uk",
-    "breakdown": "local_areas",
+    "data_source": "local_area_dataset",
 }
 
 
 @pytest.mark.parametrize(
     ("changes", "expected_message"),
     [
-        ({"breakdown": None}, 'breakdown must be "local_areas" when given'),
-        ({"breakdown": "constituencies"}, 'breakdown must be "local_areas" when given'),
+        (
+            {"data_source": None},
+            'data_source must be "local_area_dataset" when given',
+        ),
+        (
+            {"data_source": "local_areas"},
+            'data_source must be "local_area_dataset" when given',
+        ),
         (
             {"country": "us", "region_code": "us"},
-            "breakdown is supported only for UK requests",
+            "the local-area dataset is available only to UK reports",
         ),
         ({"region_code": "constituency/Aldershot"}, "UK-wide or nation region"),
         ({"region_code": "local_authority/Cardiff"}, "UK-wide or nation region"),
@@ -249,7 +254,7 @@ LOCAL_AREA_REPORT_BODY: dict[str, Any] = {
         "a local authority",
     ],
 )
-def test_a_breakdown_a_report_cannot_have_is_refused(
+def test_a_data_source_a_report_cannot_have_is_refused(
     client_for, changes, expected_message
 ) -> None:
     submissions = FakeEconomySubmissions()
@@ -259,7 +264,7 @@ def test_a_breakdown_a_report_cannot_have_is_refused(
 
     assert result.status_code == 422
     (reason,) = result.json()["detail"]
-    assert reason["loc"][-1] == "breakdown"
+    assert reason["loc"][-1] == "data_source"
     assert expected_message in reason["msg"]
     assert submissions.reports == []
 
@@ -274,7 +279,7 @@ def test_a_breakdown_a_report_cannot_have_is_refused(
         "country/northern_ireland",
     ],
 )
-def test_a_uk_wide_or_nation_report_may_ask_for_its_local_areas(
+def test_a_uk_wide_or_nation_report_may_ask_for_the_local_area_dataset(
     client_for, region_code
 ) -> None:
     submissions = FakeEconomySubmissions()
@@ -286,9 +291,10 @@ def test_a_uk_wide_or_nation_report_may_ask_for_its_local_areas(
 
     assert result.status_code == 201
     ((request, _, _),) = submissions.reports
-    assert request.breakdown == "local_areas"
-    # The report still calculates cliffs. The breakdown is a request option,
-    # never stored, so it never changes which report the request names.
+    assert request.data_source == "local_area_dataset"
+    # The report still calculates cliffs. The data source is never stored as
+    # an option: the dataset it chooses is stored with the report's
+    # simulations.
     assert request.options() == {"include_cliffs": True}
 
 
