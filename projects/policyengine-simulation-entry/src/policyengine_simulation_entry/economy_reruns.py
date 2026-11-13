@@ -263,9 +263,10 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             dataset_name=stored.dataset_name,
             year=stored.year,
         )
+        # A keyed report's sides join their runs by version set instead.
         reuse = (
             None
-            if request.force or self._settings.reuse_prefix is None
+            if request.force or definition.keyed or self._settings.reuse_prefix is None
             else RunReuse(
                 versions=worker.versions,
                 inputs=definition.inputs,
@@ -308,24 +309,14 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                 stored.reform.simulation_id, inputs.reform.reusable_run
             ),
             forced=request.force,
+            sides_join_runs=definition.keyed and not request.force,
         )
-        calculation = report_run_calculation(
+        scope = rerun_scope(
+            stored.country,
+            economy_request,
             worker,
-            rerun_scope(
-                stored.country,
-                economy_request,
-                worker,
-                inputs.catalog,
-                options=definition.inputs,
-            ),
-            self._origin(request_id),
-            run_ids=ReportRunIds(
-                report_run_id=rerun.run_id,
-                baseline_simulation_run_id=rerun.baseline.simulation_run_id,
-                reform_simulation_run_id=rerun.reform.simulation_run_id,
-            ),
-            baseline_policy=inputs.baseline.reform,
-            reform_policy=inputs.reform.reform,
+            inputs.catalog,
+            options=definition.inputs,
         )
         found = await self._create_rerun(
             _REPORT,
@@ -334,26 +325,32 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         )
         if not found.inserted:
             return _joined_report_run(stored, found)
+        answer = _created_report_run(stored, rerun, found)
+        calculation = report_run_calculation(
+            worker,
+            scope,
+            self._origin(request_id),
+            run_ids=ReportRunIds(
+                report_run_id=answer.report_run_id,
+                baseline_simulation_run_id=answer.baseline_simulation_run_id,
+                reform_simulation_run_id=answer.reform_simulation_run_id,
+            ),
+            baseline_policy=inputs.baseline.reform,
+            reform_policy=inputs.reform.reform,
+        )
         status = await self._start_report_run(
             worker,
             calculation,
             report_id=report_id,
             run_id=rerun.run_id,
-            new_simulation_run_ids=rerun.new_simulation_run_ids,
+            # A keyed report's simulation runs may be another report run's.
+            new_simulation_run_ids=()
+            if rerun.sides_join_runs
+            else rerun.new_simulation_run_ids,
             observability_context=observability_context,
             rerun=True,
         )
-        return EconomyReportCreated(
-            report_id=report_id,
-            report_run_id=rerun.run_id,
-            status=status,
-            baseline_simulation_id=rerun.baseline.simulation_id,
-            baseline_simulation_run_id=rerun.baseline.simulation_run_id,
-            baseline_reused=rerun.baseline.reused,
-            reform_simulation_id=rerun.reform.simulation_id,
-            reform_simulation_run_id=rerun.reform.simulation_run_id,
-            reform_reused=rerun.reform.reused,
-        )
+        return answer.model_copy(update={"status": status})
 
     async def rerun_simulation(
         self,
@@ -587,6 +584,33 @@ def _joined_report_run(
         reform_simulation_id=stored.reform.simulation_id,
         reform_simulation_run_id=joined.reform_simulation_run_id,
         reform_reused=True,
+    )
+
+
+def _created_report_run(
+    stored: StoredReportRows, rerun: NewReportRerun, created: FoundReportRun
+) -> EconomyReportCreated:
+    """Answer the report run a re-run created, with the side runs it names.
+
+    A side is reused when its run isn't one this re-run inserted: a reused
+    run, or, for a keyed report, its simulation's run the store joined.
+    The status is the new run's, until its call is started.
+    """
+    if created.reform_simulation_run_id is None:
+        msg = f"report run {created.id} of an economy report names no reform run"
+        raise ValueError(msg)
+    return EconomyReportCreated(
+        report_id=stored.report_id,
+        report_run_id=created.id,
+        status=created.status,
+        baseline_simulation_id=stored.baseline.simulation_id,
+        baseline_simulation_run_id=created.baseline_simulation_run_id,
+        baseline_reused=rerun.baseline.reused
+        or created.baseline_simulation_run_id != rerun.baseline.simulation_run_id,
+        reform_simulation_id=stored.reform.simulation_id,
+        reform_simulation_run_id=created.reform_simulation_run_id,
+        reform_reused=rerun.reform.reused
+        or created.reform_simulation_run_id != rerun.reform.simulation_run_id,
     )
 
 
