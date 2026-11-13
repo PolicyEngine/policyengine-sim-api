@@ -365,7 +365,7 @@ class ReportRunStore:
         """Record the run's output file and mark it succeeded while this call holds it.
 
         The run must be running under ``modal_call_id``, so a worker whose
-        run was failed or released meanwhile records nothing.
+        run was failed meanwhile records nothing.
         """
         statement = (
             update(simulation_runs)
@@ -396,10 +396,10 @@ class ReportRunStore:
     ) -> RunWrite:
         """Mark a simulation run failed with ``error_message``.
 
-        A worker passes its ``modal_call_id``, and fails the run only while
-        that call holds it running. Without one, as a report run's
-        coordinator fails the runs it left unfinished, any pending or
-        running run fails.
+        A worker, or the coordinator that started it, passes the worker's
+        ``modal_call_id``, and fails the run only while that call holds it
+        running. Without one, any pending or running run fails; no Modal call
+        fails a run that way, since other report runs may share it.
         """
         held = (
             simulation_runs.c.status.in_(ACTIVE_STATUSES)

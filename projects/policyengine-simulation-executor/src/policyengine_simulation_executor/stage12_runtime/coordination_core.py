@@ -32,7 +32,6 @@ from .aggregation import (
     validate_aligned_outputs,
     validate_uk_local_authority_metadata,
 )
-from .coordinated_simulations import logger
 from .dependencies import ChildCall, ChildInvoker, ChildSpawnRequest, ComparisonStore
 from .failure_causes import StageProgress, StageTracking, tracked_stage
 from .output_planning import (
@@ -130,7 +129,7 @@ class CoordinationCore:
     # The shared child-wait window closes at this monotonic time.
     child_wait_deadline: float
     # Each child by role: its plan, its started call and its descriptor once
-    # finished, so a failure at any point can stop the unfinished children.
+    # finished, so a failure at any point can find the unfinished children.
     simulations: dict[str, PlannedSimulationExecutionInput] = dataclasses.field(
         default_factory=dict
     )
@@ -233,23 +232,6 @@ class CoordinationCore:
                     observability_context=child_observability_context,
                 )
             )
-
-    def stop_children(self) -> None:
-        """Cancel every started, unfinished child call, recording nothing.
-
-        Each child's record or run stays as it is, so the call Modal restarts
-        starts it again. A cancellation error is logged, never raised.
-        """
-        for role in sorted(set(self.calls) - set(self.descriptors)):
-            try:
-                self.calls[role].cancel()
-            except Exception as error:  # noqa: BLE001  # every child must be asked to stop; a failed cancellation is logged
-                logger.warning(
-                    "Stage 12 could not cancel the %s simulation of report %s (%s)",
-                    role,
-                    self.report.evaluation_id,
-                    type(error).__name__,
-                )
 
     def aggregate(
         self,

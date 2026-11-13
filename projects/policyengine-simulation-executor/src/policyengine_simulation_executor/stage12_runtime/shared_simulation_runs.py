@@ -53,7 +53,22 @@ if TYPE_CHECKING:
     from .report_run_access import ReportRunWriter
 
 # A run that failed recording no failure of its own.
-SHARED_SIMULATION_RUN_FAILED = "simulation_run_failed"
+SIMULATION_RUN_FAILED = "simulation_run_failed"
+
+
+def recorded_run_failure(
+    state: SimulationRunState, *, unrecorded_summary: str
+) -> Stage12FailureDetail:
+    """Return the failure a failed run recorded, whole, so its correlation ID stays.
+
+    A run that recorded none gives ``simulation_run_failed`` with
+    ``unrecorded_summary``.
+    """
+    if state.error_message:
+        return run_failure_detail(state.error_message)
+    return failure_detail_from_record(
+        error_code=SIMULATION_RUN_FAILED, error_summary=unrecorded_summary
+    )
 
 
 @dataclass(frozen=True)
@@ -140,22 +155,19 @@ class WaitedRun:
         if state.status is RunStatus.SUCCEEDED:
             return WaitedRunSucceeded(state)
         if state.status is RunStatus.FAILED:
-            raise WaitedRunFailedError(self._recorded_failure(state))
+            raise WaitedRunFailedError(
+                recorded_run_failure(
+                    state,
+                    unrecorded_summary=(
+                        f"The simulation run {self.simulation_run_id} another "
+                        "call calculated failed."
+                    ),
+                )
+            )
         # Another call claimed it between the failure and the read.
         self._follow(state.modal_call_id)
         msg = "the waited-for run moved to another call"
         raise TimeoutError(msg)
-
-    def _recorded_failure(self, state: SimulationRunState) -> Stage12FailureDetail:
-        if state.error_message:
-            return run_failure_detail(state.error_message)
-        return failure_detail_from_record(
-            error_code=SHARED_SIMULATION_RUN_FAILED,
-            error_summary=(
-                f"The simulation run {self.simulation_run_id} another call "
-                "calculated failed."
-            ),
-        )
 
 
 @dataclass

@@ -56,7 +56,6 @@ from .failures import (
     Stage12ExecutionError,
     Stage12FailureDetail,
     Stage12InputError,
-    failure_detail_from_record,
 )
 from .output_planning import resolve_simulation_output_plan, side_read_plan
 from .parent_claim import validate_dispatch_context
@@ -82,6 +81,7 @@ from .shared_simulation_runs import (
     WaitedRunFailedError,
     WaitedRunSucceeded,
     WaitedRunUnstarted,
+    recorded_run_failure,
 )
 
 if TYPE_CHECKING:
@@ -108,9 +108,6 @@ logger = logging.getLogger(__name__)
 # A detailed-save call's report input or context names other runs than the
 # report run it claimed.
 REPORT_RUN_INPUT_MISMATCH = "report_run_input_mismatch"
-# A simulation run the report run must calculate has already failed, and
-# recorded no failure of its own to repeat.
-SIMULATION_RUN_FAILED = "simulation_run_failed"
 # A worker returned its output, but its simulation run doesn't record it.
 SIMULATION_RUN_NOT_RECORDED = "simulation_run_not_recorded"
 # The report asks for cliff impacts, which no shared simulation run stores;
@@ -460,14 +457,11 @@ class ReportRunCoordination(CoordinationCore):
         """Describe a run this report must calculate that already failed.
 
         It is the failure the run recorded, as when its worker fails during
-        the report, whole, so its correlation ID stays; a run that recorded
-        none gives ``simulation_run_failed``.
+        the report (``recorded_run_failure``).
         """
-        if state.error_message:
-            return run_failure_detail(state.error_message)
-        return failure_detail_from_record(
-            error_code=SIMULATION_RUN_FAILED,
-            error_summary=(
+        return recorded_run_failure(
+            state,
+            unrecorded_summary=(
                 f"The {role} simulation run {self.simulation_run_id(role)} "
                 "already failed."
             ),

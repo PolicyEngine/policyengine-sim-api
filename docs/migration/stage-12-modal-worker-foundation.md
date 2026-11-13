@@ -310,9 +310,9 @@ run that a pending or running report run names: those are the coordinator's.
 The coordinator claims the report run under its own Modal call ID, then checks
 the input against it: a report input or prefix naming other runs, or a report
 run row naming other simulation runs, fails the report run with
-`report_run_input_mismatch`. If a worker it starts finds its run held by a
-worker an earlier attempt started, which Modal never cancelled, the coordinator
-waits for that worker instead. It uses the stored output of each simulation run
+`report_run_input_mismatch`. If a worker it starts finds its run held by
+another call, the coordinator waits for that run instead (see "Shared
+simulation runs" below). It uses the stored output of each simulation run
 that already succeeded (see the reuse of succeeded runs above), fails the
 report run with the run's own recorded failure if a run it must calculate
 already failed (`simulation_run_failed` if it recorded none), and starts a

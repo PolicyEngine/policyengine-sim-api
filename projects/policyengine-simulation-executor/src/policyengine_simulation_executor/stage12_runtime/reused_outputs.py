@@ -8,10 +8,9 @@ dataset, region, output URI and digest from the database, and checks them
 against the simulation input and the report run's other simulation run. It
 reads the file from whichever ``gs://`` bucket the URI names, checks its
 SHA-256 digest, decodes it once, and checks the outputs the report plans and
-the SPM calculation receipt a worker would write now. (A run a pre-empted
-attempt's worker finished just before the restarted coordinator released it
-is read the same way, with ``checked_output``, without the dataset and
-region check, since this report's own worker calculated it.) It describes
+the SPM calculation receipt a worker would write now. (A run another call
+held while the report waited for it is read the same way, with
+``checked_output`` and ``require_shared_population``.) It describes
 the file as a worker describes the one it writes, and the aggregation uses
 the decoded frames in place of a worker's artifact.
 

@@ -111,10 +111,11 @@ def run_simulation_run(  # noqa: PLR0913  # the call's inputs, then the worker's
     ``{"deduplicated": True, "simulation_run_id", "status"}``. Once the call
     holds the run, a failure, of the input or the calculation, fails the run
     and raises a ``RuntimeError`` carrying no calculation detail; a run
-    failed or released meanwhile records nothing more and raises one that
-    says it was cancelled. A pre-emption propagates, since Modal runs the
-    call again; so does Modal's cancellation, and the stuck-run sweep fails
-    the run once Modal reports the call ended.
+    failed meanwhile, as the stuck-run sweep's age limit does, records
+    nothing more and raises one that says it was cancelled. A pre-emption
+    propagates, since Modal runs the call again; so does Modal's
+    cancellation, and the stuck-run sweep fails the run once Modal reports
+    the call ended.
     """
     claimed = recorder.claim()
     if not claimed.changed:
@@ -208,8 +209,9 @@ def _require_completed(
 ) -> None:
     """Record the output file; raise if the run was taken from this call meanwhile.
 
-    The coordinator fails or releases a run it stops, and the write then
-    changes nothing: ``Stage12CancellationError``.
+    A run failed meanwhile, by the stuck-run sweep's age limit or a
+    coordinator that saw this call end, takes no write from it:
+    ``Stage12CancellationError``.
     """
     if not recorder.complete(descriptor).changed:
         msg = "Stage 12 simulation was cancelled"
@@ -237,8 +239,8 @@ def _run_taken_from_call(recorder: SimulationRunRecorder) -> bool:
     """Return whether the run is no longer running under this call.
 
     A segmented calculation checks it between polls, and stops its
-    region-group calls once the coordinator failed or released the run. A
-    failed read is logged and treated as not stopped.
+    region-group calls once the run was failed or no longer records this
+    call. A failed read is logged and treated as not stopped.
     """
     try:
         return not recorder.still_held()
