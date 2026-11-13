@@ -24,6 +24,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pydantic.json_schema import SkipJsonSchema
 
 from policyengine_simulation_entry.economy_api_models import (
+    DESCRIPTION_NOT_STORED,
+    LABEL_NOT_STORED,
     CatalogKey,
     PolicyChoice,
     ReportDescription,
@@ -56,8 +58,10 @@ class BudgetWindowReportRequest(BaseModel):
 
     country: CountryId
     report_type: Literal["budget_window"]
-    label: ReportLabel
-    description: ReportDescription | None = None
+    label: ReportLabel | None = Field(default=None, description=LABEL_NOT_STORED)
+    description: ReportDescription | None = Field(
+        default=None, description=DESCRIPTION_NOT_STORED
+    )
     year: SimulationYear
     budget_window_size: BudgetWindowSize
     region_code: CatalogKey
