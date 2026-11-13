@@ -745,32 +745,46 @@ class _Holder:
     Each probe raises TimeoutError until ``probes_before_ending`` have
     passed; then it ends as ``ends_as`` says: ``succeeds`` records the run
     succeeded, ``fails`` records its failure and raises, ``stops`` raises
-    with the run still running under it, and ``never`` doesn't end.
+    with the run still running under it, and ``never`` doesn't end. With
+    ``keeps_running``, the call records the run's outcome and goes on, as
+    another household function does while it calculates its other side:
+    every probe raises TimeoutError.
     """
 
     def __init__(
-        self, runs, run_id, *, ends_as: str, probes_before_ending: int = 1
+        self,
+        runs,
+        run_id,
+        *,
+        ends_as: str,
+        probes_before_ending: int = 1,
+        keeps_running: bool = False,
     ) -> None:
         self.object_id = "fc-earlier"
         self.runs = runs
         self.run_id = run_id
         self.ends_as = ends_as
         self.probes_before_ending = probes_before_ending
+        self.keeps_running = keeps_running
         self.probes = 0
         self.cancelled = 0
 
     def get(self, *, timeout=None):
         self.probes += 1
+        still_running = "the holder call is still running"
         if self.ends_as == "never" or self.probes <= self.probes_before_ending:
-            msg = "the holder call is still running"
-            raise TimeoutError(msg)
+            raise TimeoutError(still_running)
         if self.ends_as == "succeeds":
             self.runs.simulation_states[self.run_id] = _state(RunStatus.SUCCEEDED)
+            if self.keeps_running:
+                raise TimeoutError(still_running)
             return {}
         if self.ends_as == "fails":
             self.runs.simulation_states[self.run_id] = _state(
                 RunStatus.FAILED, error_message=FAILURE_MESSAGE
             )
+            if self.keeps_running:
+                raise TimeoutError(still_running)
         msg = "the holder call ended"
         raise RuntimeError(msg)
 
@@ -929,3 +943,33 @@ def test_one_run_named_on_both_sides_is_calculated_once() -> None:
         "baseline",
         "reform",
     ]
+
+
+def test_a_held_side_recorded_by_a_call_still_running_is_used_at_once() -> None:
+    # The holding call is another household function, which goes on to its
+    # other side once it has recorded this run.
+    runs, holder = _held_baseline(
+        "succeeds", keeps_running=True, probes_before_ending=0
+    )
+
+    answer = _run(runs, _succeeded, wait=_wait(holder))
+
+    assert answer["status"] == "succeeded"
+    assert runs.of("fail_report") == []
+    # The probe that saw the call still running is the last: the next pass
+    # reads the run succeeded and stops waiting.
+    assert holder.probes == 1
+
+
+def test_a_held_side_failed_by_a_call_still_running_fails_with_its_failure() -> None:
+    runs, holder = _held_baseline("fails", keeps_running=True)
+
+    answer = _run(runs, _succeeded, wait=_wait(holder))
+
+    (failed_report,) = runs.of("fail_report")
+    assert failed_report["error_message"] == (
+        "household_calculation_failed: The baseline simulation run failed: "
+        f"{FAILURE_MESSAGE}"
+    )
+    assert runs.of("fail_held_by") == []
+    assert answer["status"] == "failed"
