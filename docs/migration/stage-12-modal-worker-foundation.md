@@ -706,8 +706,8 @@ change, once no deployed or rollback revision reads them.
 
 The UK entry's `local_area_reports` says that the worker's coordinator runs
 UK local-area report runs, the runs of UK-wide and nation reports on the
-local-area dataset, which calculate the constituency and local-authority
-results alone: the version of the runs it accepts (`input_version`,
+local-area dataset, which calculate their full results and their
+constituency and local-authority results, with withheld codes: the version of the runs it accepts (`input_version`,
 `LOCAL_AREA_REPORTS_VERSION`) and the local-area dataset (`dataset`). That
 dataset is the one the release routes constituency and local-authority
 regions to, or null when it routes them to no dataset of their own and a

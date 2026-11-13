@@ -10,7 +10,6 @@ import pandas as pd
 import pytest
 from policyengine.core import Simulation
 from policyengine_simulation_contract.stage12_execution import (
-    LOCAL_AREA_AGGREGATES,
     BundleProvenance,
     DatasetArtifactMediaType,
     DatasetArtifactReference,
@@ -25,7 +24,6 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from policyengine_simulation_executor.stage12_runtime.output_planning import (
     apply_output_plan,
-    resolve_local_area_output_plan,
     resolve_report_output_plan,
     resolve_simulation_output_plan,
     validate_output_frames,
@@ -465,88 +463,26 @@ def test_a_uk_simulation_planned_alone_copies_area_columns_on_the_local_area_dat
     )
 
 
-# Household columns a UK local-area report run's simulations must write: the
-# identifier, the income whose change disclosure control measures, the
-# weights, and the area columns copied from the local-area dataset.
-LOCAL_AREA_HOUSEHOLD_COLUMNS = {
-    "household_id",
-    "household_net_income",
-    "household_weight",
-    "constituency_code_oa",
-    "la_code_oa",
-    "region_code_oa",
-    "source_household_id",
-}
-UK_INCOME_ELASTICITY = "gov.simulation.labour_supply_responses.income_elasticity"
-
-
-def _local_area_report(
-    *, region: str = "uk", reform: dict[str, JsonValue] | None = None
-) -> ReportExecutionInput:
-    return _report("uk", region=region, reform=reform, aggregates=LOCAL_AREA_AGGREGATES)
-
-
-@pytest.mark.parametrize("region", ["uk", "country/wales"])
-def test_a_local_area_plan_writes_only_the_household_columns_disclosure_reads(
-    region: str,
+def test_a_uk_wide_report_on_the_local_area_dataset_plans_its_full_results(
+    monkeypatch,
 ) -> None:
+    # It returns its full results, cliffs included when asked, and its areas.
     from policyengine_simulation_executor import uk_local_authority_metadata
 
-    plan = resolve_local_area_output_plan(_local_area_report(region=region))
+    _route_uk_area_regions_to_the_local_area_dataset(monkeypatch)
+    national = _report("uk", region="uk", include_cliffs=True)
+    report = national.model_copy(
+        update={
+            "baseline": _on_dataset(national.baseline, UK_LOCAL_AREA_DATASET),
+            "reform": _on_dataset(national.reform, UK_LOCAL_AREA_DATASET),
+        }
+    )
 
-    assert plan.country == "uk"
-    assert plan.requirements.aggregates == LOCAL_AREA_AGGREGATES
-    assert plan.requirements.include_cliff_impacts is False
-    assert [entity.entity for entity in plan.entities] == ["household"]
-    household = plan.entities[0]
-    assert set(household.materialized_variables) == LOCAL_AREA_HOUSEHOLD_COLUMNS
-    assert household.additional_variables == ()
-    assert household.dataset_variables == (
+    plan = resolve_report_output_plan(report)
+
+    assert plan.requirements.aggregates == tuple(ReportAggregate)
+    assert plan.requirements.include_cliff_impacts is True
+    assert {"cliff_gap", "is_on_cliff"}.issubset(_additional_variables(plan, "person"))
+    assert _dataset_variables(plan, "household") == set(
         uk_local_authority_metadata.UK_AREA_DATASET_COLUMNS
     )
-
-
-def test_a_local_area_plan_has_the_same_columns_for_every_policy_pair() -> None:
-    current_law = resolve_local_area_output_plan(_local_area_report())
-    with_responses = resolve_local_area_output_plan(
-        _local_area_report(reform={UK_INCOME_ELASTICITY: 0.1})
-    )
-
-    assert with_responses.requirements.labor_supply_response_active is True
-    assert current_law.requirements.labor_supply_response_active is False
-    assert with_responses.entities == current_law.entities
-
-
-def test_a_local_area_plan_is_refused_for_a_us_report() -> None:
-    with pytest.raises(ValueError, match="UK"):
-        resolve_local_area_output_plan(_report("us", aggregates=LOCAL_AREA_AGGREGATES))
-
-
-def test_a_local_area_plan_is_refused_with_cliff_impacts() -> None:
-    report = _report(
-        "uk", include_cliffs=True, aggregates=LOCAL_AREA_AGGREGATES, region="uk"
-    )
-
-    with pytest.raises(ValueError, match="calculates no cliff impacts"):
-        resolve_local_area_output_plan(report)
-
-
-def test_a_uk_simulation_satisfies_the_local_area_plan_without_extra_variables() -> (
-    None
-):
-    from policyengine.tax_benefit_models import uk
-
-    plan = resolve_local_area_output_plan(_local_area_report())
-    simulation = Simulation.model_construct(
-        policy={},
-        dynamic=None,
-        dataset=None,
-        scoping_strategy=None,
-        extra_variables={},
-        tax_benefit_model_version=uk.model,
-        output_dataset=None,
-    )
-
-    apply_output_plan(simulation, plan)
-
-    assert simulation.extra_variables == {"household": []}

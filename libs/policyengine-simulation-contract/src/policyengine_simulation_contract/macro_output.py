@@ -325,8 +325,20 @@ class CongressionalDistrictImpactOutput(MacroOutputModel):
     districts: list[CongressionalDistrictImpactRecord]
 
 
+def _is_none(value: object) -> bool:
+    return value is None
+
+
 class SingleYearMacroOutput(MacroOutputModel):
-    """Completed response returned by a single-year macro simulation."""
+    """Completed response returned by a single-year macro simulation.
+
+    ``constituency_withheld_codes`` and ``local_authority_withheld_codes``
+    hold, sorted, the codes of each level's areas the run estimated but
+    disclosure control did not publish, as ``LocalAreaBreakdownOutput``'s do.
+    Stage 12 lists them for a UK-wide report on the local-area dataset; null
+    means the result does not report them, and the JSON then leaves both
+    keys out, so every other result is written as before.
+    """
 
     spm_provenance: SPMComparisonProvenance | None = None
 
@@ -346,11 +358,13 @@ class SingleYearMacroOutput(MacroOutputModel):
     constituency_impact: GeographicImpactOutput | None
     local_authority_impact: GeographicImpactOutput | None
     congressional_district_impact: CongressionalDistrictImpactOutput | None
+    constituency_withheld_codes: list[str] | None = Field(
+        default=None, exclude_if=_is_none
+    )
+    local_authority_withheld_codes: list[str] | None = Field(
+        default=None, exclude_if=_is_none
+    )
     cliff_impact: CliffImpactOutput | None = None
-
-
-def _is_none(value: object) -> bool:
-    return value is None
 
 
 class LocalAreaBreakdownOutput(MacroOutputModel):

@@ -21,7 +21,7 @@ from sqlalchemy.dialects.postgresql import ENUM, UUID
 from policyengine_stage12_persistence.report_run_tables import metadata
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping
 
     from policyengine_simulation_contract.macro_output import (
         AgePovertyOutput,
@@ -391,6 +391,11 @@ def report_run_result(
                 ),
                 shared_by_reports=False,
             ),
+            ResultRows(
+                withheld_area_codes,
+                _withheld_rows(economy, report_keys),
+                shared_by_reports=False,
+            ),
         ),
     )
 
@@ -548,15 +553,7 @@ def _area_rows(
 ) -> tuple[dict[str, Any], ...]:
     if areas is None:
         return ()
-    return area_record_rows(areas.root, keys, kind)
-
-
-def area_record_rows(
-    records: Sequence[ConstituencyImpactRecord | LocalAuthorityImpactRecord],
-    keys: Mapping[str, Any],
-    kind: Literal["constituency", "local_authority"],
-) -> tuple[dict[str, Any], ...]:
-    """Return one area level's rows: each record's code, name, change and fields."""
+    records: list[ConstituencyImpactRecord | LocalAuthorityImpactRecord] = areas.root
     return tuple(
         {
             "id": uuid4(),
@@ -571,6 +568,21 @@ def area_record_rows(
             **{field: getattr(record, field) for field in DISCLOSURE_FIELDS},
         }
         for record in records
+    )
+
+
+def _withheld_rows(
+    economy: SingleYearMacroOutput, keys: Mapping[str, Any]
+) -> tuple[dict[str, Any], ...]:
+    """Return a row per area disclosure control withheld, for the levels it lists."""
+    levels = (
+        ("constituency", economy.constituency_withheld_codes),
+        ("local_authority", economy.local_authority_withheld_codes),
+    )
+    return tuple(
+        {"id": uuid4(), **keys, "area_type": area_type, "code": code}
+        for area_type, codes in levels
+        for code in codes or ()
     )
 
 
