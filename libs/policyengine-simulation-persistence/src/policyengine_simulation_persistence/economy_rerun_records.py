@@ -12,7 +12,9 @@ service runs now, as a new run, and keeps every earlier run. The service:
   simulation, all ``pending`` with no Modal call ID. A report's new run has
   trigger ``manual``. A budget window's new run is a ``budget_window_runs``
   row with a report run per year, each year on the simulations its report
-  run in the report's newest window run names.
+  run in the report's newest window run names. A household report's new run
+  gives each side a new run of its own household simulation: household runs
+  are never reused.
 
 The record itself is never changed: the service may not update ``reports``
 or ``simulations``, so a report keeps naming the simulations it was created
@@ -48,6 +50,7 @@ from policyengine_simulation_persistence.economy_run_records import (
 )
 from policyengine_simulation_persistence.household_report_records import (
     HOUSEHOLD_REPORT_TYPE,
+    insert_household_simulation_run,
 )
 from policyengine_simulation_persistence.input_tables import (
     MODEL_NAME_PREFIX,
@@ -121,7 +124,8 @@ class ReportDefinition:
     report names no such simulation; a budget window's are its first
     year's. A budget window's ``window_years`` are the years of its newest
     budget-window run whose report run names both sides, earliest first,
-    empty when it has none.
+    empty when it has none. ``household_id`` is a household report's stored
+    household, None for any other report.
     """
 
     id: UUID
@@ -135,6 +139,7 @@ class ReportDefinition:
     reform: SideDefinition | None
     budget_window_size: int | None = None
     window_years: tuple[WindowYearDefinition, ...] = ()
+    household_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -225,6 +230,41 @@ class NewWindowRerun:
 
 
 @dataclass(frozen=True)
+class HouseholdRerunSide:
+    """One side of a household report's re-run: a new run of its own simulation."""
+
+    simulation_id: UUID
+    simulation_run_id: UUID
+
+
+@dataclass(frozen=True)
+class NewHouseholdReportRerun:
+    """A stored household report's new run, on the current catalog version.
+
+    Each side gets a new run of its own household simulation, in the
+    report's ``year``; ``reform`` is None for a report of the baseline alone.
+    """
+
+    report_id: UUID
+    run_id: UUID
+    tax_benefit_model_version_id: UUID
+    year: int
+    versions: RunVersions
+    baseline: HouseholdRerunSide
+    reform: HouseholdRerunSide | None
+
+    @property
+    def sides(self) -> tuple[HouseholdRerunSide, ...]:
+        """Return each side the re-run calculates, the baseline's first."""
+        return (self.baseline,) if self.reform is None else (self.baseline, self.reform)
+
+    @property
+    def simulation_run_ids(self) -> tuple[UUID, ...]:
+        """Return the IDs of the simulation runs created for the re-run."""
+        return tuple(side.simulation_run_id for side in self.sides)
+
+
+@dataclass(frozen=True)
 class NewSimulationRerun:
     """A stored simulation's new run, on the current versions and catalog rows."""
 
@@ -308,6 +348,7 @@ def read_report_definition(
         window_years=(
             _window_years(connection, report_id) if kind == "budget_window" else ()
         ),
+        household_id=row["household_id"],
     )
 
 
@@ -553,6 +594,47 @@ def insert_window_rerun(connection: Connection, rerun: NewWindowRerun) -> None:
                 )
                 for window_year in rerun.years
             ],
+        )
+
+
+def insert_household_report_rerun(
+    connection: Connection, rerun: NewHouseholdReportRerun
+) -> None:
+    """Create the household report's new run and a new run of each side, pending.
+
+    The report run has trigger ``manual`` and names no budget-window run;
+    each side's run is of the report's own household simulation, with no
+    Modal call: the service then starts one household function call for the
+    report run. Raise as ``insert_report_rerun`` does.
+    """
+    lock_reruns_of(connection, rerun.report_id)
+    _refuse_while_report_runs(connection, rerun.report_id)
+    with _record_checked(report_runs.c.report_id), references_checked():
+        for side in rerun.sides:
+            insert_household_simulation_run(
+                connection,
+                run_id=side.simulation_run_id,
+                simulation_id=side.simulation_id,
+                year=rerun.year,
+                tax_benefit_model_version_id=rerun.tax_benefit_model_version_id,
+                versions=rerun.versions,
+            )
+        connection.execute(
+            insert(report_runs).values(
+                id=rerun.run_id,
+                report_id=rerun.report_id,
+                baseline_simulation_run_id=rerun.baseline.simulation_run_id,
+                reform_simulation_run_id=(
+                    None if rerun.reform is None else rerun.reform.simulation_run_id
+                ),
+                budget_window_run_id=None,
+                year=None,
+                country_package_version=rerun.versions.country_package_version,
+                policyengine_version=rerun.versions.policyengine_version,
+                status=ReportRunStatus.PENDING,
+                trigger=ReportRunTrigger.MANUAL,
+                modal_call_id=None,
+            )
         )
 
 

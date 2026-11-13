@@ -4,14 +4,15 @@ The submission service raises these, and the routes answer each with its
 status: EconomySubmissionRefusedError 400, EconomySubmissionUnprocessableError
 422, EconomySubmissionUnavailableError 503 and
 EconomySubmissionOutcomeUnknownError 500; a re-run also raises
-EconomyRecordNotFoundError 404 and EconomyRerunConflictError 409. ``read_refusal`` and
-``reference_refusal`` turn the store's errors into them, writing each detail
-from the request rather than from an error's text, since the Public API
-passes a refusal's detail on to its callers.
+EconomyRecordNotFoundError 404 and EconomyRerunConflictError 409. ``read_refusal``,
+``reference_refusal`` and ``rerun_refusals`` turn the store's errors into
+them, writing each detail from the request rather than from an error's text,
+since the Public API passes a refusal's detail on to its callers.
 """
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -19,6 +20,8 @@ from policyengine_simulation_persistence import (
     MissingPolicyParametersError,
     OverlappingReformError,
     ReportSideError,
+    RerunRecordDeletedError,
+    RunInProgressError,
     UnknownCatalogVersionError,
     UnknownDatasetError,
     UnknownDynamicError,
@@ -27,6 +30,7 @@ from policyengine_simulation_persistence import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from uuid import UUID
 
     from policyengine_simulation_persistence import (
@@ -316,3 +320,26 @@ def reference_refusal(
     return EconomySubmissionRefusedError(
         code=code, detail=f"a {row} {source.named_by} names no longer exists"
     )
+
+
+@contextmanager
+def rerun_refusals(record: RecordName) -> Iterator[None]:
+    """Answer a re-run's create that the record's state refused.
+
+    A record deleted after the re-run read it is not found (404); a record
+    with a run pending or running is not re-run now (409 ``run_in_progress``,
+    naming that run). Nothing was created either way.
+    """
+    try:
+        yield
+    except RerunRecordDeletedError:
+        raise EconomyRecordNotFoundError(record) from None
+    except RunInProgressError as error:
+        raise EconomyRerunConflictError(
+            code="run_in_progress",
+            detail=(
+                f"The {record} has a run pending or running; re-run it once "
+                "that run has ended."
+            ),
+            run_id=error.run_id,
+        ) from None

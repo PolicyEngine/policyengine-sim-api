@@ -9,7 +9,9 @@
   A budget-window report's new run is a budget-window run with a report run
   per year, up to five of them started at once as a new window's are; it
   answers as the budget-window create does, naming the window run and every
-  year's runs.
+  year's runs. A household report's new run gives each side a new run of its
+  own household simulation, never reusing one, started by one household
+  function call; it answers as the household report create does.
 - ``POST /simulations/{simulation_id}/runs`` (``simulation:submit``) creates
   the stored simulation's new run and starts its simulation function,
   answering 201 with the simulation's ID, the new run's ID and its status.
@@ -59,6 +61,9 @@ from policyengine_simulation_entry.economy_submission_errors import (
     EconomyRecordNotFoundError,
     EconomyRerunConflictError,
 )
+from policyengine_simulation_entry.household_report_api_models import (
+    HouseholdReportCreated,
+)
 from policyengine_simulation_entry.route_support import observability_context
 
 if TYPE_CHECKING:
@@ -76,7 +81,7 @@ SIMULATION_RUNS_PATH = "/simulations/{simulation_id}/runs"
 
 
 class EconomyReruns(Protocol):
-    """Re-run stored economy reports and simulations (``EconomyRerunService``)."""
+    """Re-run stored reports and economy simulations (``EconomyRerunService``)."""
 
     async def rerun_report(
         self,
@@ -85,7 +90,7 @@ class EconomyReruns(Protocol):
         *,
         request_id: str,
         observability_context: dict[str, Any] | None,
-    ) -> EconomyReportCreated | BudgetWindowReportCreated:
+    ) -> EconomyReportCreated | BudgetWindowReportCreated | HouseholdReportCreated:
         """Create the report's new run and start it, or a window's first years."""
         ...
 
@@ -110,13 +115,30 @@ _RUN_UNDER_WAY: dict[RecordName, str] = {
     "simulation": "the simulation's run",
 }
 # The 400 codes that name a stored record's own rows on its re-run: a
-# report's re-run also names its stored simulations (missing_reference).
+# report's re-run also names its stored simulations (missing_reference) and
+# a household report's its household.
 _STORED_ROW_CODES: dict[RecordName, str] = {
     "report": (
-        "unknown_region, unknown_dataset, unknown_dynamic, unknown_policy and "
-        "missing_reference"
+        "unknown_region, unknown_dataset, unknown_dynamic, unknown_policy, "
+        "unknown_household and missing_reference"
     ),
     "simulation": "unknown_region, unknown_dataset, unknown_dynamic and unknown_policy",
+}
+# What only a household report's re-run answers, by status, after the
+# economy codes.
+_HOUSEHOLD_ANSWERS: dict[RecordName, dict[int, str]] = {
+    "report": {
+        400: (
+            "; no_household_function, a household report's, is the default "
+            "worker's state"
+        ),
+        422: (
+            "; or the stored household cannot be calculated "
+            "(household_not_calculable, located under report)"
+        ),
+        503: "Economy runs or household reports are not configured",
+    },
+    "simulation": {503: "Economy runs are not configured"},
 }
 
 
@@ -131,6 +153,7 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
                 "version, or a function it needs is missing; nothing was "
                 f"written. {_STORED_ROW_CODES[record]} name the stored "
                 f"{record}'s own rows; any other code is the service's state"
+                f"{_HOUSEHOLD_ANSWERS[record].get(400, '')}"
             ),
             **ERROR_ANSWER,
         },
@@ -153,7 +176,8 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
                 "The ID or the body is malformed, or the stored policies and "
                 "dynamics cannot be calculated on the current catalog version "
                 "(missing_parameters or overlapping_parameters, located under "
-                f"{record}); nothing was written"
+                f"{record}){_HOUSEHOLD_ANSWERS[record].get(422, '')}; nothing was "
+                "written"
             ),
             "model": EconomyRequestUnprocessable,
         },
@@ -166,7 +190,7 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
         },
         503: {
             "description": (
-                "Economy runs are not configured, or the v2 version manifest or "
+                f"{_HOUSEHOLD_ANSWERS[record][503]}, or the v2 version manifest or "
                 "the database cannot be read, and nothing was written; or Modal "
                 "refused the new run's call, or didn't accept it in time "
                 f"(modal_call_refused): then the {record} named by {record}_id "
@@ -243,7 +267,7 @@ def add_economy_rerun_routes(
 
     @router.post(
         REPORT_RUNS_PATH,
-        summary="Re-run an economy or budget-window report",
+        summary="Re-run an economy, budget-window or household report",
         description=(
             "Create the stored report's new run on the v2 version manifest's "
             "default worker, and start it; every earlier run is kept. Without "
@@ -251,11 +275,16 @@ def add_economy_rerun_routes(
             "on the same versions; with force, both simulations are "
             "calculated again. A budget-window report's new run is a "
             "budget-window run with a report run per year, up to five of them "
-            "started at once, each year on its own year's simulations."
+            "started at once, each year on its own year's simulations. A "
+            "household report's new run calculates its stored household in "
+            "the report's year with a new run of each side's own household "
+            "simulation, never reused, all in one household function call."
         ),
         operation_id="rerun_report",
         status_code=status.HTTP_201_CREATED,
-        response_model=EconomyReportCreated | BudgetWindowReportCreated,
+        response_model=(
+            EconomyReportCreated | BudgetWindowReportCreated | HouseholdReportCreated
+        ),
         responses=_responses("report"),
         dependencies=[Depends(submitter)],
     )

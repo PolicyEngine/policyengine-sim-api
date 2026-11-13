@@ -26,15 +26,19 @@ default worker, as a new run, and keeps every earlier run. The service:
 A budget-window report's re-run is a new budget-window run with a report
 run per year, each year on the simulations that year's report run of the
 report's newest window run names; its first years start as a new window's
-do. Whatever is missing or cannot be calculated is refused in steps 1 and
-2, before anything is written. A household report or simulation is refused
-for now; it gets its re-run with its own submission.
+do. A household report's re-run is the household report service's
+(``household_report_reruns``): a new run of each side's own household
+simulation, started by one household function call. A household simulation
+is re-run only through its report. Whatever is missing or cannot be
+calculated is refused in steps 1 and 2, before anything is written.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final, Protocol, get_args
+from uuid import uuid4
 
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
@@ -43,9 +47,7 @@ from policyengine_simulation_persistence import (
     NewReportRerun,
     NewSimulationRerun,
     NewWindowRerun,
-    RerunRecordDeletedError,
     RerunSide,
-    RunInProgressError,
     RunReuse,
     WindowRerunYear,
 )
@@ -77,6 +79,14 @@ from policyengine_simulation_entry.economy_submission_errors import (
     EconomyRecordNotFoundError,
     EconomyRerunConflictError,
     EconomySubmissionRefusedError,
+    EconomySubmissionUnavailableError,
+    rerun_refusals,
+)
+from policyengine_simulation_entry.economy_submissions import (
+    CALL_START_TIMEOUT_SECONDS,
+)
+from policyengine_simulation_entry.household_report_reruns import (
+    StoredHouseholdReport,
 )
 
 if TYPE_CHECKING:
@@ -96,6 +106,9 @@ if TYPE_CHECKING:
         WindowYearDefinition,
     )
 
+    from policyengine_simulation_entry.budget_window_submissions import (
+        BudgetWindowAdvancer,
+    )
     from policyengine_simulation_entry.economy_api_models import (
         ReportRerunRequest,
     )
@@ -103,14 +116,17 @@ if TYPE_CHECKING:
         RecordName,
         RefusalSource,
     )
+    from policyengine_simulation_entry.economy_submissions import ServiceSettings
     from policyengine_simulation_entry.economy_workers import (
+        EconomyRunCaller,
         EconomyWorker,
+        EconomyWorkerSource,
+    )
+    from policyengine_simulation_entry.household_report_api_models import (
+        HouseholdReportCreated,
     )
 
-# How a refusal names each kind of stored record this service does not re-run
-# yet.
-_NOT_RERUN: Final[dict[RecordKind, str]] = {"household": "household"}
-# The kinds of stored report this service re-runs.
+# The kinds of stored economy report this service re-runs itself.
 _RERUN_REPORT_KINDS: Final[frozenset[RecordKind]] = frozenset(
     {"economy", "budget_window"}
 )
@@ -172,8 +188,51 @@ class EconomyRerunRuns(BudgetWindowRuns, Protocol):
         ...
 
 
+class HouseholdReportReruns(Protocol):
+    """Re-run stored household reports (``HouseholdReportRerunService``)."""
+
+    async def rerun_report(
+        self,
+        stored: StoredHouseholdReport,
+        *,
+        observability_context: dict[str, Any] | None,
+    ) -> HouseholdReportCreated:
+        """Create the stored report's new run, and start its household function call."""
+        ...
+
+
 class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
-    """Create and re-run economy and budget-window reports and simulations."""
+    """Create and re-run economy and budget-window reports and simulations.
+
+    A household report's re-run goes to ``household_reports``; without it,
+    one answers 503.
+    """
+
+    def __init__(  # noqa: PLR0913  # the household service, then the report service's seams
+        self,
+        *,
+        household_reports: HouseholdReportReruns | None = None,
+        windows: BudgetWindowAdvancer,
+        store: EconomyRerunRuns,
+        workers: EconomyWorkerSource,
+        caller: EconomyRunCaller,
+        settings: ServiceSettings,
+        call_start_timeout_seconds: float = CALL_START_TIMEOUT_SECONDS,
+        new_id: Callable[[], UUID] = uuid4,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        """Use these seams; tests replace each of them."""
+        super().__init__(
+            windows=windows,
+            store=store,
+            workers=workers,
+            caller=caller,
+            settings=settings,
+            call_start_timeout_seconds=call_start_timeout_seconds,
+            new_id=new_id,
+            clock=clock,
+        )
+        self._household_reports = household_reports
 
     async def rerun_report(
         self,
@@ -182,21 +241,26 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         *,
         request_id: str,
         observability_context: dict[str, Any] | None,
-    ) -> EconomyReportCreated | BudgetWindowReportCreated:
+    ) -> EconomyReportCreated | BudgetWindowReportCreated | HouseholdReportCreated:
         """Create the stored report's new run on the current versions, and start it.
 
         A budget window's new run is a budget-window run with a report run
-        per year, whose first years are started (``_rerun_window``). Raise
-        EconomyRecordNotFoundError (404) or EconomyRerunConflictError (409)
-        as the module describes, and otherwise the errors ``submit_report``
-        raises, a 503 for Modal's refusal naming the new run as well as the
-        report.
+        per year, whose first years are started (``_rerun_window``); a
+        household report's is the household report service's, which
+        ``force`` changes nothing for. Raise EconomyRecordNotFoundError (404)
+        or EconomyRerunConflictError (409) as the module describes, and
+        otherwise the errors ``submit_report`` raises, a 503 for Modal's
+        refusal naming the new run as well as the report.
         """
         definition = await self._read_state(
             lambda: self._store.read_report_definition(report_id)
         )
         if definition is None:
             raise EconomyRecordNotFoundError(_REPORT)
+        if definition.kind == "household":
+            return await self._rerun_household_report(
+                definition, observability_context=observability_context
+            )
         stored = _rerunnable_report(definition)
         window_years = (
             _complete_window_years(definition)
@@ -368,6 +432,22 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             status=status,
         )
 
+    async def _rerun_household_report(
+        self,
+        definition: ReportDefinition,
+        *,
+        observability_context: dict[str, Any] | None,
+    ) -> HouseholdReportCreated:
+        """Hand a stored household report the service can re-run to its service."""
+        stored = _rerunnable_household_report(definition)
+        if self._household_reports is None:
+            raise EconomySubmissionUnavailableError(
+                code="not_configured", detail="Household reports are not configured."
+            )
+        return await self._household_reports.rerun_report(
+            stored, observability_context=observability_context
+        )
+
     async def _rerun_window(
         self,
         window: _WindowRerunRequest,
@@ -482,19 +562,8 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         row the database refuses is named as ``source``'s; for a report,
         that includes a side's simulation deleted with it.
         """
-        try:
+        with rerun_refusals(record):
             await self._create(record, create, rerun=True, source=source)
-        except RerunRecordDeletedError:
-            raise EconomyRecordNotFoundError(record) from None
-        except RunInProgressError as error:
-            raise EconomyRerunConflictError(
-                code="run_in_progress",
-                detail=(
-                    f"The {record} has a run pending or running; re-run it once "
-                    "that run has ended."
-                ),
-                run_id=error.run_id,
-            ) from None
 
 
 @dataclass(frozen=True)
@@ -534,8 +603,11 @@ def _refusal(
     """
     if kind == "unsupported":
         detail = f"The service does not re-run this type of {record}."
-    elif kind in _NOT_RERUN:
-        detail = f"The service does not re-run {_NOT_RERUN[kind]} {record}s yet."
+    elif record == _SIMULATION and kind == "household":
+        detail = (
+            "The service re-runs a household simulation only through its report "
+            "(POST /reports/{report_id}/runs)."
+        )
     else:
         lacking = next(name for name, value in missing if value is None)
         detail = f"The {record} names no {lacking}, so it cannot be re-run."
@@ -576,6 +648,33 @@ def _rerunnable_report(definition: ReportDefinition) -> _StoredReportRows:
         dataset_name=dataset_name,
         baseline=baseline,
         reform=reform,
+    )
+
+
+def _rerunnable_household_report(
+    definition: ReportDefinition,
+) -> StoredHouseholdReport:
+    """Return the stored household report's rows, or refuse one lacking a row."""
+    country, year = _calculated_country(definition.country), definition.year
+    household_id, baseline = definition.household_id, definition.baseline
+    if country is None or household_id is None or baseline is None or year is None:
+        raise _refusal(
+            _REPORT,
+            definition.kind,
+            (
+                ("country this service calculates", country),
+                ("household", household_id),
+                ("baseline simulation", baseline),
+                ("year", year),
+            ),
+        )
+    return StoredHouseholdReport(
+        report_id=definition.id,
+        country=country,
+        household_id=household_id,
+        year=year,
+        baseline=baseline,
+        reform=definition.reform,
     )
 
 

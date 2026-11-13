@@ -57,7 +57,10 @@ from policyengine_simulation_entry.economy_rerun_routes import (
     EconomyService,
     add_economy_rerun_routes,
 )
-from policyengine_simulation_entry.economy_reruns import EconomyRerunService
+from policyengine_simulation_entry.economy_reruns import (
+    EconomyRerunService,
+    HouseholdReportReruns,
+)
 from policyengine_simulation_entry.economy_routes import (
     HouseholdReportSubmissions,
     add_economy_routes,
@@ -83,7 +86,7 @@ from policyengine_simulation_entry.entry_runtime import (
 from policyengine_simulation_entry.household_calculations import (
     HouseholdCalculationService,
 )
-from policyengine_simulation_entry.household_report_submissions import (
+from policyengine_simulation_entry.household_report_reruns import (
     household_reports_for,
 )
 from policyengine_simulation_entry.household_routes import (
@@ -565,19 +568,25 @@ def _register_economy_routes(  # noqa: PLR0913  # the app, its services and perm
 
 
 def economy_submissions_for(
-    settings: Settings, database: SimulationDatabaseConnection | None
+    settings: Settings,
+    database: SimulationDatabaseConnection | None,
+    *,
+    household_reports: HouseholdReportReruns | None = None,
 ) -> EconomyService | None:
     """Build the economy submission service when the service is configured.
 
     It needs the simulation database and the v2 Modal environment; without
     them the economy routes answer 503. Nothing is read from Modal until the
-    first submission. Without the output bucket, no report reuses a run.
+    first submission. Without the output bucket, no report reuses a run. It
+    re-runs a household report through ``household_reports``, and answers
+    503 for one without it.
     """
     if not settings.economy_runs_configured or not isinstance(
         database, SimulationDatabase
     ):
         return None
     return EconomyRerunService(
+        household_reports=household_reports,
         # The service starts a budget window's first years as its own role.
         windows=BudgetWindowStore(engine=database.engine),
         store=EconomyRunStore.from_engine(
@@ -752,11 +761,15 @@ def create_app(
         submitter=simulation_submitter,
         reader=simulation_reader,
     )
+    # One household report service creates household reports and re-runs them.
+    household_reports = household_reports_for(runtime_settings, runtime_database)
     _register_economy_routes(
         app,
         entry,
-        economy_submissions_for(runtime_settings, runtime_database),
-        household_reports_for(runtime_settings, runtime_database),
+        economy_submissions_for(
+            runtime_settings, runtime_database, household_reports=household_reports
+        ),
+        household_reports,
         submitter=simulation_submitter,
         reader=simulation_reader,
     )
