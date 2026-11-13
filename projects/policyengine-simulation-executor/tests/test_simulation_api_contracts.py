@@ -4,6 +4,7 @@ from fixtures.macro_output import (
     CURRENT_REQUIRED_BUDGET_KEYS,
     CURRENT_SINGLE_YEAR_MACRO_KEYS,
     CURRENT_SINGLE_YEAR_MACRO_RESULT,
+    LOCAL_AREA_REPORT_KEYS,
 )
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowAnnualImpact,
@@ -33,7 +34,9 @@ def test_job_status_result_preserves_current_single_year_macro_dict_contract():
 
 
 def test_internal_single_year_macro_schema_matches_current_public_keys():
-    assert set(SingleYearMacroOutput.model_fields) == CURRENT_SINGLE_YEAR_MACRO_KEYS
+    assert set(SingleYearMacroOutput.model_fields) == (
+        CURRENT_SINGLE_YEAR_MACRO_KEYS | LOCAL_AREA_REPORT_KEYS
+    )
 
 
 def test_internal_single_year_macro_schema_serializes_current_public_contract():
@@ -48,7 +51,7 @@ def test_openapi_publishes_the_single_year_macro_result_schema():
 
     assert "SingleYearMacroOutput" in schemas
     assert set(schemas["SingleYearMacroOutput"]["properties"]) == (
-        CURRENT_SINGLE_YEAR_MACRO_KEYS
+        CURRENT_SINGLE_YEAR_MACRO_KEYS | LOCAL_AREA_REPORT_KEYS
     )
     result_schema = schemas["JobStatusResponse"]["properties"]["result"]
     assert result_schema == {
