@@ -23,13 +23,12 @@
   and its status.
 
 Every earlier run is kept. A re-run answers 404 for a record that does not
-exist, and 409 (``run_in_progress``, naming the run in ``run_id``) while a
-household report has a run pending or running (a household re-run ignores
-``force``), or for a record this service does not re-run
-(``rerun_not_supported``); then nothing is written. Without ``force``, a
-keyed economy report's re-run joins the report's run on the current
-versions that hasn't failed and wasn't forced, pending, running or
-succeeded, and answers it with no new call. A report stored asking for
+exist, and 409 for a record this service does not re-run
+(``rerun_not_supported``); then nothing is written. No re-run is refused
+while a run is under way. Without ``force``, a keyed economy or household
+report's re-run joins the report's run on the current versions that
+hasn't failed and wasn't forced, pending, running or succeeded, and
+answers it with no new call. A report stored asking for
 cliff impacts answers 422 ``cliffs_not_available`` until they are
 calculated per run. The other
 answers are the creates': 400 or 422 when the stored record cannot be
@@ -121,15 +120,8 @@ class EconomyService(EconomySubmissions, EconomyReruns, Protocol):
     """Create, read and re-run economy reports and simulations."""
 
 
-# The run a 409 run_in_progress names, by the record re-run.
-_CONFLICTS: dict[RecordName, str] = {
-    "report": (
-        "a household report has a run pending or running, forced or not "
-        "(run_in_progress; run_id names that report run), or the service "
-        "does not re-run it (rerun_not_supported)"
-    ),
-    "simulation": "the service does not re-run it (rerun_not_supported)",
-}
+# Why a re-run answers 409; no run under way refuses one.
+_CONFLICT = "the service does not re-run it (rerun_not_supported)"
 # The 400 codes that name a stored record's own rows on its re-run: a
 # report's re-run also names its stored simulations (missing_reference) and
 # a household report's its household.
@@ -192,8 +184,7 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
         },
         409: {
             "description": (
-                f"The {record} is not re-run now, and nothing was written: "
-                f"{_CONFLICTS[record]}"
+                f"The {record} is not re-run, and nothing was written: {_CONFLICT}"
             ),
             **ERROR_ANSWER,
         },
@@ -238,7 +229,7 @@ def _rerun_failure_response(
     if isinstance(error, EconomyRerunConflictError):
         return error_response(
             status.HTTP_409_CONFLICT,
-            EconomyError(code=error.code, detail=error.detail, run_id=error.run_id),
+            EconomyError(code=error.code, detail=error.detail),
         )
     return submission_failure_response(error, record)
 

@@ -539,9 +539,8 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
     ) -> Created:
         """Create or join the re-run's rows, answering the store's refusals.
 
-        Return what ``create`` returns: the run it joined or created. A run
-        under way the store refuses the re-run for answers 409
-        ``run_in_progress``. A record deleted after its reads is
+        Return what ``create`` returns: the run it joined or created. A
+        record deleted after its reads is
         answered as not found. Any other row the database refuses is named
         as ``source``'s; for a report, that includes a side's simulation
         deleted with it.

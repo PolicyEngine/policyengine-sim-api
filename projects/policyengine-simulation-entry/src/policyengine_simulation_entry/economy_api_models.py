@@ -18,10 +18,10 @@ Answers the Public API reads:
   is written;
 - 404 ``unknown_report`` or ``unknown_simulation`` when a re-run names no
   stored record;
-- 409 with ``code`` and ``detail`` when a stored record is not re-run now:
-  ``run_in_progress``, naming the run pending or running (``run_id``) of a
-  household report, or ``rerun_not_supported`` for a
-  record this service does not re-run. Nothing is written;
+- 409 with ``code`` and ``detail``, ``rerun_not_supported``, for a stored
+  record this service does not re-run. Nothing is written. No re-run is
+  refused while a run is under way: an unforced one joins it, and a forced
+  one is an extra run;
 - 422 when the request's fields, or the stored values it names, cannot be
   calculated. Nothing is written;
 - 503 with ``code`` and ``detail`` when the service cannot answer now. Only
@@ -91,12 +91,6 @@ EconomyUnprocessableCode = Literal[
 ]
 # Why a stored record is not re-run now (409).
 EconomyConflictCode = Literal[
-    # A budget-window report has a window run or year run pending or
-    # running and the re-run isn't forced, or a household report has a run
-    # pending or running, forced or not; ``run_id`` names the budget-window
-    # run, or else the report run. An economy report's or a simulation's
-    # re-run joins its run instead.
-    "run_in_progress",
     # The service does not re-run this kind of record, or the record lacks a
     # row it calculates on.
     "rerun_not_supported",
@@ -318,9 +312,7 @@ class EconomyError(_Answer):
     ``/simulations``) is set only with ``modal_call_refused``: it names the
     record the service created or re-ran, whose new run it failed because
     Modal refused the call or didn't accept it in time. ``run_id`` names
-    that new run on a re-run (a budget window's: its budget-window run),
-    and with ``run_in_progress`` the household report's run that is
-    pending or running.
+    that new run on a re-run (a budget window's: its budget-window run).
     """
 
     code: EconomyErrorCode

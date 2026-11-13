@@ -22,7 +22,6 @@ from policyengine_simulation_persistence import (
     OverlappingReformError,
     ReportSideError,
     RerunRecordDeletedError,
-    RunInProgressError,
     UnknownCatalogVersionError,
     UnknownDatasetError,
     UnknownDynamicError,
@@ -151,20 +150,13 @@ class EconomyRecordNotFoundError(LookupError):
 
 
 class EconomyRerunConflictError(Exception):
-    """A stored record is not re-run now (409); nothing was written.
+    """A stored record is not re-run (409); nothing was written."""
 
-    ``run_id`` names the record's run pending or running, with
-    ``run_in_progress``.
-    """
-
-    def __init__(
-        self, *, code: EconomyConflictCode, detail: str, run_id: UUID | None = None
-    ) -> None:
-        """Keep the reason's code, its description and any run under way."""
+    def __init__(self, *, code: EconomyConflictCode, detail: str) -> None:
+        """Keep the reason's code and its description."""
         super().__init__(detail)
         self.code: EconomyConflictCode = code
         self.detail = detail
-        self.run_id = run_id
 
 
 class EconomySubmissionUnavailableError(Exception):
@@ -354,20 +346,11 @@ def call_refused(
 def rerun_refusals(record: RecordName) -> Iterator[None]:
     """Answer a re-run's create that the record's state refused.
 
-    A record deleted after the re-run read it is not found (404); a record
-    with a run pending or running is not re-run now (409 ``run_in_progress``,
-    naming that run). Nothing was created either way.
+    A record deleted after the re-run read it is not found (404); nothing
+    was created. No re-run the service sends is refused while a run is
+    under way: an unforced one joins it, and a forced one is an extra run.
     """
     try:
         yield
     except RerunRecordDeletedError:
         raise EconomyRecordNotFoundError(record) from None
-    except RunInProgressError as error:
-        raise EconomyRerunConflictError(
-            code="run_in_progress",
-            detail=(
-                f"The {record} has a run pending or running; re-run it once "
-                "that run has ended."
-            ),
-            run_id=error.run_id,
-        ) from None
