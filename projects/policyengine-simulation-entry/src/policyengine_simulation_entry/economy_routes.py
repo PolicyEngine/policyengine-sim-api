@@ -8,11 +8,11 @@
   ``budget_window`` it creates a budget-window report with a report run per
   year and starts up to its first five years, answering 201 with the report, the
   first year's run, the window run, its status and every year's runs. With
-  ``household`` it creates a household report, a household simulation and
-  run for its baseline and any reform, and its first run, and starts one
-  household function call for the report run, answering 201 with the
-  report, its run, its status, its year and each side's simulation and
-  simulation run.
+  ``household`` it finds or creates a household report and a household
+  simulation for its baseline and any reform by key, and joins its run on
+  the current versions or creates one, starting one household function
+  call only for a run it created, answering 201 with the report, its run,
+  its status, its year and each side's simulation and simulation run.
 - ``POST /simulations`` (``simulation:submit``) finds or creates a
   standalone economy simulation by key and joins or creates its run on the
   current versions, starting the run's simulation function only for a run
@@ -552,8 +552,10 @@ def _submission_routes(
             "year's runs. "
             "A household report (report_type household) calculates one stored "
             "household for its default year under a baseline and, optionally, "
-            "a reform, each a new household simulation run, all in one "
-            "household function call."
+            "a reform, found or created by a key of its definition as an "
+            "economy report is, its run on the current versions joined or "
+            "created; a run it created is started by one household function "
+            "call."
         ),
         operation_id="create_report",
         status_code=status.HTTP_201_CREATED,

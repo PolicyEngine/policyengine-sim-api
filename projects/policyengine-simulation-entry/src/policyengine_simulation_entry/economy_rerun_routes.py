@@ -12,9 +12,10 @@
   A budget-window report's new run is a budget-window run with a report run
   per year, up to five of them started at once as a new window's are; it
   answers as the budget-window create does, naming the window run and every
-  year's runs. A household report's new run gives each side a new run of its
-  own household simulation, never reusing one, started by one household
-  function call; it answers as the household report create does.
+  year's runs. A household report's re-run joins or creates its run as an
+  economy report's does, each side's run of its own household simulation,
+  and a run it created is started by one household function call; it
+  answers as the household report create does.
 - ``POST /simulations/{simulation_id}/runs`` (``simulation:submit``) joins
   the stored simulation's run on the current versions that hasn't failed
   and wasn't forced, pending, running or succeeded, or else creates one and
@@ -288,21 +289,19 @@ def add_economy_rerun_routes(
         description=(
             "Create the stored report's new run on the v2 version manifest's "
             "default worker, and start it; every earlier run is kept. Without "
-            "force, an economy report created by key joins the report's run on "
-            "those versions that hasn't failed and wasn't forced, pending, "
-            "running or succeeded, and answers it with no new call; otherwise "
-            "each side joins its simulation's run on those versions or gets a "
-            "new one. With force, and always for a budget-window report or one "
-            "created before keys, the report's simulations are calculated "
-            "again, as an extra run marked forced that nothing joins; a "
-            "household report's re-run ignores force. A report stored asking "
-            "for cliff impacts is refused (422 cliffs_not_available). "
-            "A budget-window report's new run is a "
-            "budget-window run with a report run per year, up to five of them "
-            "started at once, each year on its own year's simulations. A "
-            "household report's new run calculates its stored household in "
-            "the report's year with a new run of each side's own household "
-            "simulation, never reused, all in one household function call."
+            "force, an economy or household report created by key joins the "
+            "report's run on those versions that hasn't failed and wasn't "
+            "forced, pending, running or succeeded, and answers it with no new "
+            "call; otherwise each side joins its simulation's run on those "
+            "versions or gets a new one. With force, and always for a "
+            "budget-window report or one created before keys, the report's "
+            "simulations are calculated again, as an extra run marked forced "
+            "that nothing joins. A report stored asking for cliff impacts is "
+            "refused (422 cliffs_not_available). A budget-window report's new "
+            "run is a budget-window run with a report run per year, up to five "
+            "of them started at once, each year on its own year's simulations. "
+            "A household report's run calculates its stored household in the "
+            "report's year, in one household function call."
         ),
         operation_id="rerun_report",
         status_code=status.HTTP_201_CREATED,
