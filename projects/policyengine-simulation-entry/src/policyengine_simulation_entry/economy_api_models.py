@@ -9,16 +9,25 @@ and chooses every ID.
 
 Answers the Public API reads:
 
-- 201 with the created record's ID and its first run's ID;
+- 201 with the created record's ID and its first run's ID, or, for a
+  re-run, the record's ID and its new run's ID;
 - 400 with ``code`` and ``detail``: one of ``CallerRowRefusalCode`` when
-  the region, dataset or a dynamic the request names does not exist, or
-  another code for the service's own state, such as a catalog version
-  missing while a release deploys. Nothing is written;
+  the region, dataset or a dynamic the request names (or, for a re-run, the
+  stored record names) does not exist, or another code for the service's own
+  state, such as a catalog version missing while a release deploys. Nothing
+  is written;
+- 404 ``unknown_report`` or ``unknown_simulation`` when a re-run names no
+  stored record;
+- 409 with ``code`` and ``detail`` when a stored record is not re-run now:
+  ``run_in_progress``, naming the run pending or running (``run_id``), or
+  ``rerun_not_supported`` for a record this service does not re-run.
+  Nothing is written;
 - 422 when the request's fields, or the stored values it names, cannot be
   calculated. Nothing is written;
 - 503 with ``code`` and ``detail`` when the service cannot answer now. Only
   ``modal_call_refused`` follows a write, and it names the record created
-  (``report_id`` or ``simulation_id``), whose run was failed;
+  or re-run (``report_id`` or ``simulation_id``), whose new run was failed,
+  and for a re-run that run (``run_id``);
 - 500 with ``code`` ``internal_error``, possibly after a write: an
   unexpected failure, or a commit that failed after the rows were inserted.
 
@@ -45,10 +54,13 @@ ReportLabel = Annotated[str, Field(min_length=1, max_length=255)]
 ReportDescription = Annotated[str, Field(max_length=10_000)]
 
 # Why a request is refused (400), naming a row the caller chose that doesn't
-# exist: the Public API answers these as its caller's error.
+# exist: the Public API answers these as its caller's error. On a re-run they
+# name the stored record's own region, dataset or dynamic, which the current
+# catalog version lacks or which was deleted.
 CallerRowRefusalCode = Literal["unknown_region", "unknown_dataset", "unknown_dynamic"]
 # Why a request is refused (400) for the service's own state, or a row the
-# Public API checks before asking.
+# Public API checks before asking. On a report's re-run, ``unknown_policy`` and
+# ``missing_reference`` name the stored report's own policy or simulation.
 ServiceStateRefusalCode = Literal[
     # The country has no catalog version for the default worker's .py version.
     "unknown_catalog_version",
@@ -74,6 +86,16 @@ EconomyUnprocessableCode = Literal[
     # would calculate: located at the household or a side's policy.
     "household_not_calculable",
 ]
+# Why a stored record is not re-run now (409).
+EconomyConflictCode = Literal[
+    # The record has a run pending or running; ``run_id`` names it: for a
+    # report, its budget-window run, or else its report run; for a
+    # simulation, its simulation run.
+    "run_in_progress",
+    # The service does not re-run this kind of record, or the record lacks a
+    # row it calculates on.
+    "rerun_not_supported",
+]
 # Why a route cannot answer now (503); retry after ``Retry-After`` seconds.
 EconomyUnavailableCode = Literal[
     # The service has no database or v2 Modal environment configured.
@@ -88,6 +110,7 @@ EconomyUnavailableCode = Literal[
 EconomyErrorCode = Literal[
     EconomyRefusalCode,
     EconomyUnprocessableCode,
+    EconomyConflictCode,
     EconomyUnavailableCode,
     "internal_error",
     "unknown_report",
@@ -172,12 +195,23 @@ class EconomyReportRequest(_Request):
         return options
 
 
+class ReportRerunRequest(_Request):
+    """A stored report's re-run on the default worker's versions.
+
+    Without ``force``, a side reuses a run of its own simulation that
+    succeeded on those versions, as a new report's side does; with it, both
+    simulations are calculated again.
+    """
+
+    force: StrictBool = False
+
+
 class _Answer(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class EconomySimulationCreated(_Answer):
-    """The simulation a request created, its first run and that run's status.
+    """The simulation a request created or re-ran, its new run and its status.
 
     The status is the run's when its call's ID was recorded: ``pending``, or
     whatever the simulation function had made it by then if it claimed the
@@ -191,7 +225,7 @@ class EconomySimulationCreated(_Answer):
 
 
 class EconomyReportCreated(_Answer):
-    """The report a request created, its first run and that run's status.
+    """The report a request created or re-ran, its new run and its status.
 
     The status is the run's when its call's ID was recorded: ``pending``, or
     whatever the coordinator had made it by then if it claimed the run
@@ -267,14 +301,19 @@ class EconomyError(_Answer):
 
     ``report_id`` (on ``/reports``) or ``simulation_id`` (on
     ``/simulations``) is set only with ``modal_call_refused``: it names the
-    record the service created, whose run it failed because Modal refused
-    the call or didn't accept it in time.
+    record the service created or re-ran, whose new run it failed because
+    Modal refused the call or didn't accept it in time. ``run_id`` names
+    that new run on a re-run (a budget window's: its budget-window run),
+    and with ``run_in_progress`` the record's run that is pending or
+    running: a report's budget-window run, or else its report run, or a
+    simulation's run.
     """
 
     code: EconomyErrorCode
     detail: str
     report_id: UUID | None = None
     simulation_id: UUID | None = None
+    run_id: UUID | None = None
 
 
 class EconomyRequestReason(BaseModel):

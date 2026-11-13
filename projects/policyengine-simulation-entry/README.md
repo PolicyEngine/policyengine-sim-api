@@ -44,8 +44,10 @@ Auth0 permission:
 | `GET /household-calculations/{household_job_id}` | `simulation:read` |
 | `POST /reports` | `simulation:submit` |
 | `GET /reports/{report_id}` | `simulation:read` |
+| `POST /reports/{report_id}/runs` | `simulation:submit` |
 | `POST /simulations` | `simulation:submit` |
 | `GET /simulations/{simulation_id}` | `simulation:read` |
+| `POST /simulations/{simulation_id}/runs` | `simulation:submit` |
 
 `GET /health`, `GET /ready`, `GET /versions`, `GET /versions/{kind}` and
 `POST /ping` stay public. The entrypoint answers `GET /health` and `POST /ping`
@@ -267,4 +269,69 @@ refuses what the report would calculate, located at the field it traces to:
 `household_id` or a side's `policy_id`.
 A policy setting parameters the catalog version lacks is 422
 `missing_parameters`, located at that side's `policy_id`.
+
+## Re-running a report or simulation
+
+`POST /reports/{report_id}/runs` calculates a stored economy report again,
+as a new run on the default worker's versions, and keeps every earlier run.
+Its body is required: `{}` or `{"force": false}` re-runs the report, and
+`{"force": true}` forces a recalculation. The report keeps its simulations:
+each side gets a new run of its own simulation, or, without `force`, reuses
+that simulation's newest run on the same versions, catalog version, dataset,
+region and year that a new report's side could reuse; `force` calculates
+both again. The new report run's trigger is `manual`. The service reads the
+report's region code and dataset name, finds the rows with that code and
+name in the catalog version of the default worker's .py version, and reads
+each simulation's stored policy and dynamic on it.
+A budget-window report's re-run is a new budget-window run, trigger
+`manual`, with `recalculate` set by `force`, and a report run per year. Each
+year's sides are the simulations that year's report run of the report's
+newest window run names (a year that reused another report's run names that
+report's simulation), and each reuses a run of them as a single-year side
+does. Up to five years start at once, as a new window's do (a later year
+Modal doesn't confirm in time waits for an earlier year's coordinator); it
+answers 201 with the budget-window create's fields, naming the window run
+and every year.
+A household report's re-run calculates its stored household again in the
+report's own year (not the household's current `default_year`), under each
+side's stored policy read on the current catalog version. Each side gets a
+new run of its own household simulation, recording that catalog version:
+household runs are never reused, so `force` changes nothing. The new report
+run (trigger `manual`) is started by one household function call, as a new
+household report's is, and the re-run answers 201 with the household report
+create's fields.
+`POST /simulations/{simulation_id}/runs`, with no body, creates and starts
+a stored economy simulation's new run, which is always calculated. Each
+answers 201 with the same fields as the create, naming the new run.
+
+A re-run is refused before anything is written: 404 (`unknown_report`,
+`unknown_simulation`) for a record that doesn't exist; 409
+`run_in_progress`, naming the run in `run_id`, while the record has a run
+pending or running (for a report, its budget-window run, or else its report
+run); 409 `rerun_not_supported` for a household simulation (re-run only
+through its report), a household report whose simulation names a dynamic (a
+household calculation applies none), a budget window whose newest window run
+lacks a year, or a record that names no region, dataset, year, simulation,
+household or country the service calculates (a household report names no
+region or dataset); and the create's 400 and 422 codes when the stored rows
+can't be calculated on the current catalog version, worded for the stored
+record (a 422 reason's `loc` starts with `report` or `simulation`), with a
+household report's own codes: 400 `unknown_household` and
+`no_household_function`, and 422 `household_not_calculable`, located at the
+report's `household_id` or a side's `policy_id`. Without household reports
+configured, a household report the service could re-run answers 503
+`not_configured`. The check for a run under way and the inserts run under a
+transaction-level advisory lock on the record's ID, so two re-runs of one
+record never both create a run. A report's re-run checks only the report's
+own runs: a side whose simulation has a run under way for another report, or
+for the simulation's own re-run, still gets a new run, calculated
+separately. A simulation's re-run checks every run of the simulation,
+including those reports created. A report or simulation deleted after the
+re-run read it answers 404. A report deleted with its simulations answers
+400 `missing_reference`, naming a simulation, when a side gets a new run, as
+a household report's sides always do, and 404 when both sides reuse a run; a
+deleted budget-window report always answers 404, as its window run is
+created first. When Modal refuses the new run's call, the run is failed,
+with a household report's new simulation runs, and the 503
+`modal_call_refused` names the record and the run (`run_id`).
 

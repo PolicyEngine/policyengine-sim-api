@@ -148,6 +148,59 @@ the catalog version lacks; `create_report` raises
 inserted; and `record_report_call` and `fail_unstarted_report` use the
 economy report run writes.
 
+## Re-running a report or simulation
+
+`economy_rerun_records.py` holds a re-run's reads and writes. A re-run
+calculates a stored record again on the current versions, as a new run, and
+changes no `reports` or `simulations` row, which the service's role may not
+update: a report keeps its simulations, and each new run records the catalog
+version, dataset and region it calculates on.
+
+- `read_report_definition` and `read_simulation_definition` read what the
+  record calculates: its kind (`economy`, `budget_window`, `household` or
+  `unsupported`), country, year, its region's code and dataset's name, and
+  each simulation's policy and dynamic.
+- `find_reusable_run_of` searches one simulation's runs, by its ID, under
+  `find_reusable_run`'s conditions on a run (versions, the run's own catalog
+  version, dataset, region and year, the output file, a succeeded report run
+  with the same options, no refused reuse); it doesn't compare the
+  simulation row, which keeps the catalog rows it was created on.
+- `insert_report_rerun` creates a report's new run, trigger `manual`, and a
+  new run of each side's simulation that reuses none;
+  `insert_simulation_rerun` creates a simulation's new run. Each refuses with
+  `RunInProgressError`, naming the run, while the record has a run `pending`
+  or `running` (for a report, a report run; for a simulation, any of its
+  runs), and first takes `lock_reruns_of`, a transaction-level
+  advisory lock on the record's ID, so concurrent re-runs of one record
+  wait for each other. When the database refuses the new run's key to the
+  record itself, the record was deleted after it was read:
+  `RerunRecordDeletedError`.
+
+A budget window's definition also names its newest budget-window run's
+years (`WindowYearDefinition`): each year's sides are the simulations of the
+runs that year's report run names. `insert_window_rerun` creates the
+window's new budget-window run (trigger `manual`, `recalculate` set), a
+report run per year and each year's new runs of its own simulations. Every
+report re-run is refused while a budget-window run or a report run of the
+report is `pending` or `running`.
+
+A household report's definition also names its household (`household_id`).
+`insert_household_report_rerun` creates its new report run (trigger
+`manual`) and a new run of each side's own household simulation (no dataset
+or region), recording the current catalog version and the report's year:
+household runs are never reused. It takes the same lock and makes the same
+check for a run under way, and shares `insert_household_simulation_run` with
+`insert_household_report`. `HouseholdReportStore.create_report_rerun` runs it
+in a transaction of its own; the store's `read_inputs` reads the re-run's
+household and policies as it does a new report's.
+
+`EconomyRunStore.read_report_rerun_inputs` reads a re-run's catalog rows by
+the stored region code and dataset name, and each side's values and
+reusable run of its own simulation, never giving both sides the same run.
+`read_window_rerun_inputs` does the same for each year of a window.
+`create_report_rerun`, `create_window_rerun` and `create_simulation_rerun`
+run the inserts in a transaction of their own.
+
 ## Restarting runs whose call never started
 
 `run_restart_records.py` holds the restart check's reads and writes. The

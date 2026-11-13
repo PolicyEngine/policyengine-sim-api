@@ -49,9 +49,6 @@ from policyengine_simulation_persistence.economy_run_records import (
     RunVersions,
     SimulationChoice,
 )
-from policyengine_simulation_persistence.economy_run_store import (
-    read_simulation_reform,
-)
 from policyengine_simulation_persistence.input_tables import (
     MODEL_NAME_PREFIX,
     datasets,
@@ -59,6 +56,7 @@ from policyengine_simulation_persistence.input_tables import (
     tax_benefit_model_versions,
     tax_benefit_models,
 )
+from policyengine_simulation_persistence.policy_reform import read_simulation_reform
 from policyengine_simulation_persistence.tables import (
     ReportRunStatus,
     SimulationStatus,

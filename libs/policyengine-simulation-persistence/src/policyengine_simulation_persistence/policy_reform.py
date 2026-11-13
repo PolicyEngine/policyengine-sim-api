@@ -7,7 +7,8 @@ applies them by parameter name, as ``{parameter name: {period: value}}``, the
 shape of the Public API's policy JSON that the household functions' contract
 and the economy requests take. A dynamic's values are stored and read the same
 way. A simulation applies its policy's and its dynamic's values together, and
-is refused when both set the same parameter (``combine_reforms``).
+is refused when both set the same parameter (``combine_reforms``);
+``read_simulation_reform`` reads and combines a simulation's.
 
 Each period is a range, ``YYYY-MM-DD.YYYY-MM-DD``, with the dates read in
 UTC. A value with no end date follows .py's own rule
@@ -49,6 +50,10 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy import ColumnElement, Connection
+
+    from policyengine_simulation_persistence.economy_run_records import (
+        SimulationChoice,
+    )
 
 # The last day a value without an end date is applied.
 OPEN_ENDED_STOP: Final = date(LATEST_YEAR, 12, 31)
@@ -189,6 +194,40 @@ def combine_reforms(policy: PolicyReform, dynamic: PolicyReform) -> PolicyReform
     if overlapping:
         raise OverlappingReformError(overlapping)
     return {**policy, **dynamic}
+
+
+def read_simulation_reform(
+    connection: Connection,
+    *,
+    country: str,
+    catalog_version_id: UUID,
+    choice: SimulationChoice,
+) -> PolicyReform:
+    """Read a simulation's policy and dynamic values on a catalog version, combined.
+
+    A submission and a restart of its run read them this way. Raise the
+    policy reader's errors, or OverlappingReformError.
+    """
+    policy_reform = (
+        {}
+        if choice.policy_id is None
+        else read_policy_reform(
+            connection,
+            country=country,
+            policy_id=choice.policy_id,
+            catalog_version_id=catalog_version_id,
+        )
+    )
+    dynamic_reform = (
+        {}
+        if choice.dynamic_id is None
+        else read_dynamic_reform(
+            connection,
+            dynamic_id=choice.dynamic_id,
+            catalog_version_id=catalog_version_id,
+        )
+    )
+    return combine_reforms(policy_reform, dynamic_reform)
 
 
 def _read_reform(

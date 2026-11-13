@@ -65,15 +65,16 @@ class HouseholdReportRequest(_Request):
 
 
 class HouseholdReportCreated(BaseModel):
-    """The household report a request created, its first run and that run's status.
+    """The household report a request created or re-ran, its new run and its status.
 
     The status is the run's when its call's ID was recorded: ``pending``, or
     whatever the household function had made it by then if it claimed the
     run first. A run whose call Modal didn't confirm, or whose call's ID
-    couldn't be recorded, is answered ``pending``. ``year`` is the
-    household's default year, which the report calculates. Each side names
-    its new simulation and simulation run; the reform's are null for a
-    report of the baseline alone.
+    couldn't be recorded, is answered ``pending``. ``year`` is the year the
+    report calculates: a new report's is its household's default year, and a
+    re-run keeps the report's. Each side names its simulation, new for a new
+    report and the report's own on a re-run, and its new simulation run; the
+    reform's are null for a report of the baseline alone.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

@@ -753,3 +753,25 @@ def test_the_sweep_lists_the_waiting_years_of_a_finished_window(
     listed = _listed_report_runs(run_store)
 
     assert set(_run_ids(window, ALL_YEARS)) <= set(listed)
+
+
+def test_a_reports_later_window_run_starts_only_its_own_years(
+    store, windows, window
+) -> None:
+    """A re-run's window run of the same report and simulations advances alone."""
+    _succeeded(windows, window, ALL_YEARS)
+    windows.set_window(window, status="succeeded", started_at=NOW, completed_at=NOW)
+    rerun = windows.seed_window_rerun(window)
+    starter = RecordingStarter()
+
+    advance = store.advance_window(rerun.window_run_id, now=LATER, start_year=starter)
+
+    assert starter.started == _run_ids(rerun, range(2026, 2031))
+    assert advance.started_years == (2026, 2027, 2028, 2029, 2030)
+    assert windows.window_row(window)["status"] == "succeeded"
+    assert {row["status"] for row in windows.year_rows(window).values()} == {
+        "succeeded"
+    }
+    assert {row["modal_call_id"] for row in windows.year_rows(window).values()} == {
+        "fc-finished"
+    }
