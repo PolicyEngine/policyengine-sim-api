@@ -17,12 +17,13 @@ run is read again:
 - **still unfinished under the call that ended:** the call stopped without
   recording an outcome, so the run is failed while it still records that
   call, with the stuck-run sweep's message, and every coordinator waiting for
-  it stops waiting. The sweep itself never judges a run an unfinished report
-  run names.
+  it stops waiting. The sweep leaves such a run to them until its age limit.
 
-A probe that raises counts as the call ending only once Modal reports the
-call ended (``call_state``, the sweep's ``modal_call_state``): Modal's client
-raises for a lost connection too, while the call goes on. Until then the
+Modal's client raises for a lost connection too, while the call goes on, so a
+probe that raises reads the run first: a run that finished, or moved to
+another call, is taken as above. One still unfinished under the probed call
+counts as that call ending only once Modal reports the call ended
+(``call_state``, the sweep's ``modal_call_state``); until then the
 coordinator keeps waiting, within its wait window. ``ProbedWorkerCall`` gives
 the coordinator's own workers the same rule.
 
@@ -141,11 +142,17 @@ class WaitedRun:
             except TimeoutError:
                 raise
             except Exception as error:
-                # Once Modal says the call ended, the run's row says how.
-                if self.call_state(self.object_id) is not CallState.ENDED:
+                # The row may already say how the run ended; for one still
+                # unfinished under this call, Modal must say the call ended.
+                state = self.writer.get_simulation_run(self.simulation_run_id)
+                if (
+                    self._unfinished_under_probed_call(state)
+                    and self.call_state(self.object_id) is not CallState.ENDED
+                ):
                     msg = "probing the holding call failed while it runs"
                     raise TimeoutError(msg) from error
-        return self._outcome()
+                return self._outcome(state)
+        return self._outcome(self.writer.get_simulation_run(self.simulation_run_id))
 
     def cancel(self) -> None:
         """Do nothing: another report run, or the earlier attempt, owns the call."""
@@ -159,8 +166,16 @@ class WaitedRun:
         """Probe ``modal_call_id``, the run's new holding call, from now on."""
         self.object_id, self._holder = modal_call_id or "", None
 
-    def _outcome(self) -> WaitedRunSucceeded | WaitedRunUnstarted:
-        state = self.writer.get_simulation_run(self.simulation_run_id)
+    def _unfinished_under_probed_call(self, state: SimulationRunState) -> bool:
+        return (
+            state.status in {RunStatus.PENDING, RunStatus.RUNNING}
+            and state.modal_call_id == self.object_id
+        )
+
+    def _outcome(
+        self, state: SimulationRunState
+    ) -> WaitedRunSucceeded | WaitedRunUnstarted:
+        """Return, or raise, what the run as read says, the probed call having ended."""
         if state.status in {RunStatus.PENDING, RunStatus.RUNNING}:
             if state.modal_call_id is None:
                 return WaitedRunUnstarted()

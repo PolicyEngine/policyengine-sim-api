@@ -321,8 +321,17 @@ class ReportRunCoordination(CoordinationCore):
     report_run: ReportRunRecorder
     # Each simulation run's state by role, as read while preparing.
     run_states: dict[str, SimulationRunState] = field(default_factory=dict)
-    # The report's own plan: what the aggregation reads from both sides.
+    # The report's own plan, what the aggregation reads from both sides, once
+    # preparation has resolved it.
     read_plan: Stage12OutputPlan | None = None
+
+    @property
+    def report_plan(self) -> Stage12OutputPlan:
+        """The report's own plan; raises RuntimeError before preparation resolves it."""
+        if self.read_plan is None:
+            msg = "the report's output plan is read before preparation resolved it"
+            raise RuntimeError(msg)
+        return self.read_plan
 
     @property
     def writer(self) -> ReportRunWriter:
@@ -583,10 +592,8 @@ class ReportRunCoordination(CoordinationCore):
                     self.simulation_run_id(role),
                     result.state,
                     files=self._output_files(),
-                    required_plan=(
-                        None
-                        if self.read_plan is None
-                        else side_read_plan(self.read_plan, simulation.output_plan)
+                    required_plan=side_read_plan(
+                        self.report_plan, simulation.output_plan
                     ),
                 )
             self.reused[role] = reused

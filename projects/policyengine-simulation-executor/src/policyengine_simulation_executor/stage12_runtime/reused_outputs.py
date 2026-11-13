@@ -154,7 +154,7 @@ def reused_outputs(  # noqa: PLR0913  # the simulations, then keyword-only runs,
     stored_runs: Mapping[SimulationRole, SimulationRunState],
     files: OutputFileReader | None,
     span: StageScope,
-    read_plan: Stage12OutputPlan | None = None,
+    read_plan: Stage12OutputPlan,
 ) -> dict[str, ReusedSimulationOutput]:
     """Return, by role, the checked output of each simulation whose run succeeded.
 
@@ -162,10 +162,9 @@ def reused_outputs(  # noqa: PLR0913  # the simulations, then keyword-only runs,
     coordinator read them. ``files`` reads their output files, by default
     from Cloud Storage, and each read is timed with ``span``. Each file is
     checked against what the report, planned ``read_plan``, reads from its
-    side (``side_read_plan``), or against the simulation's own plan without
-    one. A simulation run that is pending, running or failed is left to a
-    worker. Raises ``ReusedSimulationOutputError`` for a succeeded run whose
-    output can't be used.
+    side (``side_read_plan``). A simulation run that is pending, running or
+    failed is left to a worker. Raises ``ReusedSimulationOutputError`` for a
+    succeeded run whose output can't be used.
     """
     reader = files or CloudStorageOutputFiles()
     reused: dict[str, ReusedSimulationOutput] = {}
@@ -198,11 +197,7 @@ def reused_outputs(  # noqa: PLR0913  # the simulations, then keyword-only runs,
                 run_id,
                 stored,
                 files=reader,
-                required_plan=(
-                    None
-                    if read_plan is None
-                    else side_read_plan(read_plan, simulation.output_plan)
-                ),
+                required_plan=side_read_plan(read_plan, simulation.output_plan),
             )
         reused[role.value] = read_runs[run_id]
     return reused
