@@ -217,12 +217,13 @@ def _succeeded_with_output(
     return stored
 
 
-def _assert_failed_with_its_report(simulation_run) -> None:
-    """Check a simulation run the report never started failed with the report."""
-    assert simulation_run.status is RunStatus.FAILED
-    assert simulation_run.error_message == (
-        "simulation_cancelled: Cancelled after the report failed."
-    )
+def _assert_left_unstarted(simulation_run) -> None:
+    """Check a simulation run the failed report never started is left pending.
+
+    Another report run naming it may start it; otherwise the stuck-run sweep
+    fails it.
+    """
+    assert (simulation_run.status, simulation_run.writes) == (RunStatus.PENDING, [])
 
 
 def _coordinate(  # noqa: PLR0913  # the stores, the seams and the call's identity
@@ -465,10 +466,10 @@ def test_a_reused_output_that_cannot_be_used_fails_the_report_run_uncalculated(
     assert report_run.error_message.startswith(f"{error_code}: ")
     assert f"baseline simulation run {BASELINE_RUN_ID}" in report_run.error_message
     # Nothing is calculated, and the reused run is not written; the reform
-    # was never started, and fails with its report run.
+    # was never started, and is left pending.
     assert invoker.events == []
     assert report_runs.simulation_runs[BASELINE_RUN_ID] == baseline_before
-    _assert_failed_with_its_report(report_runs.simulation_runs[REFORM_RUN_ID])
+    _assert_left_unstarted(report_runs.simulation_runs[REFORM_RUN_ID])
 
 
 @pytest.mark.parametrize(
@@ -499,7 +500,7 @@ def test_a_reused_run_must_share_the_dataset_and_region_of_its_report_runs_other
     assert f"{column} {recorded or 'none'} instead of " in message
     assert invoker.events == []
     assert report_runs.simulation_runs[BASELINE_RUN_ID].writes == []
-    _assert_failed_with_its_report(report_runs.simulation_runs[REFORM_RUN_ID])
+    _assert_left_unstarted(report_runs.simulation_runs[REFORM_RUN_ID])
 
 
 def _report_with_options(options):
@@ -723,14 +724,14 @@ def test_outputs_reused_from_another_spm_selection_fail_before_any_worker_starts
     assert report_run.error_message.startswith("reused_simulation_spm_mismatch: ")
     assert f"SPM receipt {differing_field} differs" in report_run.error_message
     # Neither simulation is calculated, and no reused run is written; a run
-    # that was not reused was never started, and fails with its report run.
+    # that was not reused was never started, and is left pending.
     assert invoker.events == []
     for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
         simulation_run = report_runs.simulation_runs[run_id]
         if run_id in reused_run_ids:
             assert simulation_run.writes == []
         else:
-            _assert_failed_with_its_report(simulation_run)
+            _assert_left_unstarted(simulation_run)
 
 
 def test_an_output_whose_spm_receipt_lacks_the_report_year_fails_the_report() -> None:

@@ -269,6 +269,20 @@ class FakeReportRuns:
             error_message=error_message,
         )
 
+    def fail_simulation_run_held_by(
+        self, simulation_run_id, *, modal_call_id, error_message, failed_at
+    ):
+        run = self._run(self.simulation_runs, simulation_run_id, "simulation run")
+        return self._apply(
+            run,
+            "fail_simulation_run_held_by",
+            condition=lambda: (
+                run.status in ACTIVE and run.modal_call_id == modal_call_id
+            ),
+            status=RunStatus.FAILED,
+            error_message=error_message,
+        )
+
     def release_simulation_run(self, simulation_run_id, *, modal_call_id, released_at):
         run = self._run(self.simulation_runs, simulation_run_id, "simulation run")
         return self._apply(
