@@ -32,6 +32,7 @@ from economy_service_fakes import (
     simulation_request,
 )
 from household_fixtures import manifest_store
+from household_report_fakes import FakeHouseholdReportStore
 from policyengine_simulation_entry.economy_workers import ManifestEconomyWorkers
 from policyengine_simulation_entry.household_api_models import (
     HouseholdCalculationRequest,
@@ -82,7 +83,11 @@ if TYPE_CHECKING:
     )
     from policyengine_simulation_entry.household_workers import HouseholdWorker
     from policyengine_simulation_entry.run_restarts import RestartTarget
-    from policyengine_simulation_persistence import NewHouseholdJob, WaitingYear
+    from policyengine_simulation_persistence import (
+        NewHouseholdJob,
+        StoredHouseholdReportRun,
+        WaitingYear,
+    )
     from policyengine_stage12_persistence import WindowAdvance
 
 NOW = CREATED_AT + timedelta(minutes=4)
@@ -126,6 +131,9 @@ class FakeRestartStore:
     unstarted: tuple[UnstartedRun, ...] = ()
     report_runs: dict[UUID, StoredReportRun] = field(default_factory=dict)
     simulation_runs: dict[UUID, StoredSimulationRun] = field(default_factory=dict)
+    household_report_runs: dict[UUID, StoredHouseholdReportRun] = field(
+        default_factory=dict
+    )
     report_simulation_run_ids: dict[UUID, tuple[UUID, ...]] = field(
         default_factory=dict
     )
@@ -200,6 +208,15 @@ class FakeRestartStore:
             raise self.read_failure
         return self.simulation_runs.get(simulation_run_id)
 
+    def read_household_report_run(
+        self, report_run_id: UUID
+    ) -> StoredHouseholdReportRun | None:
+        if self.read_failure is not None:
+            raise self.read_failure
+        if report_run_id in self.read_failures:
+            raise self.read_failures[report_run_id]
+        return self.household_report_runs.get(report_run_id)
+
 
 @dataclass
 class FakeHouseholdJobs:
@@ -265,10 +282,35 @@ class FakeHouseholdJobs:
 
 @dataclass
 class FakeHouseholdCaller:
-    """Records each household function call; ``failure`` is raised instead."""
+    """Records each household function call; ``failure`` is raised instead.
+
+    A household job's call is ``spawn``, and a household report run's
+    ``start_report_run``.
+    """
 
     failure: Exception | None = None
     calls: list[dict[str, Any]] = field(default_factory=list)
+    report_runs: list[dict[str, Any]] = field(default_factory=list)
+
+    async def start_report_run(
+        self,
+        worker: HouseholdWorker,
+        payload: dict[str, Any],
+        *,
+        report_run_id: UUID,
+        observability_context: dict[str, Any] | None,
+    ) -> str:
+        if self.failure is not None:
+            raise self.failure
+        self.report_runs.append(
+            {
+                "worker": worker,
+                "payload": payload,
+                "report_run_id": report_run_id,
+                "observability_context": observability_context,
+            }
+        )
+        return "fc-household-report-restarted"
 
     async def spawn(
         self,
@@ -338,6 +380,7 @@ class RestartRig:
     windows: BudgetWindowAdvancer
     economy: FakeStore
     households: FakeHouseholdJobs
+    household_reports: FakeHouseholdReportStore
     economy_caller: FakeCaller
     household_caller: FakeHouseholdCaller
     telemetry: RecordingTelemetry
@@ -357,9 +400,11 @@ def restart_rig(  # noqa: PLR0913  # each fake a test may replace
     manifest: object | None = None,
     timer: Callable[[], float] | None = None,
     windows: BudgetWindowAdvancer | None = None,
+    household_reports: FakeHouseholdReportStore | None = None,
 ) -> RestartRig:
     restarts = restarts or FakeRestartStore()
     windows = windows or UnusedWindows()
+    household_reports = household_reports or FakeHouseholdReportStore()
     economy = economy or FakeStore()
     households = households or FakeHouseholdJobs()
     economy_caller = economy_caller or FakeCaller()
@@ -381,6 +426,7 @@ def restart_rig(  # noqa: PLR0913  # each fake a test may replace
             restarts=restarts,
             economy=economy,
             households=households,
+            household_reports=household_reports,
             windows=windows,
         ),
         workers=RestartWorkers(
@@ -400,6 +446,7 @@ def restart_rig(  # noqa: PLR0913  # each fake a test may replace
         windows=windows,
         economy=economy,
         households=households,
+        household_reports=household_reports,
         economy_caller=economy_caller,
         household_caller=household_caller,
         telemetry=telemetry,

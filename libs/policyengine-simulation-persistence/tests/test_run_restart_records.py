@@ -26,11 +26,13 @@ from economy_rows import (
 )
 from policyengine_simulation_persistence import (
     BudgetWindowYear,
+    HouseholdReportSimulation,
     IdleBudgetWindow,
     NewBudgetWindowReport,
     NewEconomyReport,
     NewEconomySimulation,
     NewHouseholdJob,
+    NewHouseholdReport,
     ReportRunTrigger,
     ReportSimulation,
     RestartKind,
@@ -38,6 +40,8 @@ from policyengine_simulation_persistence import (
     RunRestartStore,
     SimulationChoice,
     SimulationType,
+    StoredHouseholdReportRun,
+    StoredHouseholdReportSide,
     StoredRunUnreadableError,
     UnstartedRun,
     WaitingYear,
@@ -46,6 +50,7 @@ from policyengine_simulation_persistence import (
     insert_economy_report,
     insert_economy_simulation,
     insert_household_job,
+    insert_household_report,
     list_idle_budget_windows,
     list_unstarted_runs,
     mark_restart,
@@ -53,6 +58,7 @@ from policyengine_simulation_persistence import (
     read_earliest_waiting_year,
     read_report_run_simulation_run_ids,
     read_run_call,
+    read_unstarted_household_report_run,
     read_unstarted_report_run,
     read_unstarted_simulation_run,
     record_household_call,
@@ -63,6 +69,7 @@ from policyengine_simulation_persistence import (
 )
 from public_api_rows import (
     StoredValue,
+    insert_catalog_version,
     insert_dynamic,
     insert_household,
     insert_policy,
@@ -343,37 +350,149 @@ def test_a_budget_window_year_is_not_listed(connection) -> None:
     assert _listed(connection, around=created_at) == ()
 
 
-def test_a_household_simulations_run_and_report_run_are_not_listed(
-    connection,
-) -> None:
-    economy = insert_economy_catalog(connection)
-    report = _new_report(economy)
-    insert_economy_report(connection, report)
-    simulation = _new_simulation(economy)
-    insert_economy_simulation(connection, simulation)
-    household_id = insert_household(
+def _new_household_report(
+    economy: EconomyCatalog,
+    household_id: UUID,
+    *,
+    reform_policy_id: UUID | None = None,
+    with_reform: bool = True,
+) -> NewHouseholdReport:
+    reform = (
+        HouseholdReportSimulation(
+            simulation_id=uuid4(),
+            simulation_run_id=uuid4(),
+            policy_id=reform_policy_id,
+        )
+        if with_reform
+        else None
+    )
+    return NewHouseholdReport(
+        id=uuid4(),
+        run_id=uuid4(),
+        country="us",
+        label="A larger child tax credit for one family",
+        description=None,
+        tax_benefit_model_id=economy.catalog.model_id,
+        tax_benefit_model_version_id=economy.catalog.version_id,
+        household_id=household_id,
+        year=2027,
+        versions=VERSIONS,
+        inputs={},
+        baseline=HouseholdReportSimulation(
+            simulation_id=uuid4(), simulation_run_id=uuid4(), policy_id=None
+        ),
+        reform=reform,
+    )
+
+
+def _stored_household(connection: Connection) -> UUID:
+    return insert_household(
         connection, country="us", default_year=2026, document=HOUSEHOLD_DOCUMENT
     )
-    # Make every simulation a household simulation, as C1 · 15's household
-    # reports and household simulations will be.
-    for simulation_id in (
-        report.baseline.simulation_id,
-        report.reform.simulation_id,
-        simulation.id,
-    ):
-        connection.execute(
-            update(simulations)
-            .where(simulations.c.id == simulation_id)
-            .values(
-                simulation_type=SimulationType.HOUSEHOLD,
-                dataset_id=None,
-                household_id=household_id,
-            )
+
+
+def test_a_household_report_run_is_listed_as_its_own_kind_and_its_sides_are_not(
+    connection,
+) -> None:
+    """Its one household function call claims both simulation runs."""
+    economy = insert_economy_catalog(connection)
+    report = _new_household_report(economy, _stored_household(connection))
+    insert_household_report(connection, report)
+    simulation = _new_simulation(economy)
+    insert_economy_simulation(connection, simulation)
+    # A household simulation's run that no report names: there are none
+    # yet, and the check couldn't rebuild its call.
+    connection.execute(
+        update(simulations)
+        .where(simulations.c.id == simulation.id)
+        .values(
+            simulation_type=SimulationType.HOUSEHOLD,
+            dataset_id=None,
+            household_id=report.household_id,
         )
+    )
     created_at = _transaction_start(connection)
     act_as_the_modal_worker(connection)
 
-    assert _listed(connection, around=created_at) == ()
+    assert _listed(connection, around=created_at) == (
+        UnstartedRun(
+            kind=RestartKind.HOUSEHOLD_REPORT_RUN,
+            run_id=report.run_id,
+            created_at=created_at,
+        ),
+    )
+
+
+def test_a_household_report_runs_stored_rows_are_read_back(connection) -> None:
+    economy = insert_economy_catalog(connection, parameter_names=(CTC_AMOUNT,))
+    policy_id = insert_policy(
+        connection, economy.catalog, [StoredValue(CTC_AMOUNT, "2026-01-01", 3_000)]
+    )
+    report = _new_household_report(
+        economy, _stored_household(connection), reform_policy_id=policy_id
+    )
+    insert_household_report(connection, report)
+    created_at = _transaction_start(connection)
+    act_as_the_modal_worker(connection)
+
+    stored = read_unstarted_household_report_run(connection, report.run_id)
+
+    assert stored == StoredHouseholdReportRun(
+        report_run_id=report.run_id,
+        country="us",
+        versions=VERSIONS,
+        household_id=report.household_id,
+        year=2027,
+        catalog_version_id=economy.catalog.version_id,
+        baseline=StoredHouseholdReportSide(
+            simulation_run_id=report.baseline.simulation_run_id, policy_id=None
+        ),
+        reform=StoredHouseholdReportSide(
+            simulation_run_id=report.reform.simulation_run_id, policy_id=policy_id
+        ),
+        created_at=created_at,
+    )
+    assert read_unstarted_household_report_run(connection, uuid4()) is None
+
+
+def test_a_household_report_run_of_the_baseline_alone_reads_back_no_reform(
+    connection,
+) -> None:
+    economy = insert_economy_catalog(connection)
+    report = _new_household_report(
+        economy, _stored_household(connection), with_reform=False
+    )
+    insert_household_report(connection, report)
+    act_as_the_modal_worker(connection)
+
+    stored = read_unstarted_household_report_run(connection, report.run_id)
+
+    assert stored is not None
+    assert stored.reform is None
+    assert stored.baseline.simulation_run_id == report.baseline.simulation_run_id
+
+
+def test_a_household_report_run_whose_sides_differ_cannot_be_read(
+    connection,
+) -> None:
+    economy = insert_economy_catalog(connection)
+    report = _new_household_report(economy, _stored_household(connection))
+    insert_household_report(connection, report)
+    other_catalog = insert_catalog_version(
+        connection,
+        country="us",
+        model_id=economy.catalog.model_id,
+        policyengine_version="9.9.9",
+    )
+    connection.execute(
+        update(simulation_runs)
+        .where(simulation_runs.c.id == report.reform.simulation_run_id)
+        .values(tax_benefit_model_version_id=other_catalog.version_id)
+    )
+    act_as_the_modal_worker(connection)
+
+    with pytest.raises(StoredRunUnreadableError, match="catalog versions"):
+        read_unstarted_household_report_run(connection, report.run_id)
 
 
 def test_a_report_runs_stored_inputs_are_read_back(connection) -> None:
@@ -695,6 +814,8 @@ def test_the_store_lists_marks_and_reads_in_transactions_of_its_own(
     insert_economy_simulation(connection, simulation)
     window = _new_window(economy)
     insert_budget_window_report(connection, window)
+    household_report = _new_household_report(economy, _stored_household(connection))
+    insert_household_report(connection, household_report)
     created_at = _transaction_start(connection)
     act_as_the_modal_worker(connection)
 
@@ -706,6 +827,9 @@ def test_the_store_lists_marks_and_reads_in_transactions_of_its_own(
     by_kind = {run.kind: run for run in listed}
     report_run = savepoint_store.read_report_run(report.run_id)
     simulation_run = savepoint_store.read_simulation_run(simulation.run_id)
+    household_report_run = savepoint_store.read_household_report_run(
+        household_report.run_id
+    )
     marked = savepoint_store.mark_restart(by_kind[RestartKind.REPORT_RUN])
     call = savepoint_store.read_call(by_kind[RestartKind.SIMULATION_RUN])
     windows = savepoint_store.list_idle_windows(
@@ -717,7 +841,13 @@ def test_the_store_lists_marks_and_reads_in_transactions_of_its_own(
     year_marked = waiting is not None and savepoint_store.mark_waiting_year(waiting)
     sides = savepoint_store.read_report_run_simulation_run_ids(report.run_id)
 
-    assert set(by_kind) == {RestartKind.REPORT_RUN, RestartKind.SIMULATION_RUN}
+    assert set(by_kind) == {
+        RestartKind.REPORT_RUN,
+        RestartKind.SIMULATION_RUN,
+        RestartKind.HOUSEHOLD_REPORT_RUN,
+    }
+    assert household_report_run is not None
+    assert household_report_run.report_run_id == household_report.run_id
     assert call == RunCall(status="pending", modal_call_id=None)
     assert [run.run_id for run in windows] == [window.window_run_id]
     assert waiting == WaitingYear(
