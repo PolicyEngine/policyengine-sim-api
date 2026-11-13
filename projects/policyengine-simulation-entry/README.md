@@ -170,19 +170,24 @@ exception's text.
 
 ### Budget windows
 
-`POST /reports` with `report_type` `budget_window` creates a budget-window
-report: the same baseline and reform in each year of a window that starts
-at `year` and lasts `budget_window_size` years (1 to 75, ending by 2200).
-It names the same fields as an economy report, except `include_cliffs`,
-which it refuses; it stores the options of a report without cliffs, so its
-years and single-year reports reuse each other's runs. In one transaction
-the service creates the report (an economy report whose
-`budget_window_size` is set), one `budget_window_runs` row, and for each
-year a report run naming it and the year, with that year's own simulations
-unless a side reuses a run of the same year. It then starts up to the
-earliest five years, as its own role, under the window run's row lock
+`POST /reports` with `report_type` `budget_window` finds or creates a
+budget-window report: the same baseline and reform in each year of a window
+that starts at `year` and lasts `budget_window_size` years (1 to 75, ending
+by 2200). It names the same fields as an economy report, except
+`include_cliffs`, which it refuses. Identical window requests end on the
+same rows (C1 · 24's answer 8): in one transaction the service finds each
+year's simulations by that year's key, which a single-year report of that
+year shares, and the report by its key (an economy report whose
+`budget_window_size` is set, in its key too); it joins the report's
+`budget_window_runs` row on the default worker's catalog and .py versions
+that hasn't failed and isn't a recalculation, or else creates one
+(recording its .py version) and, for each year, a report run naming it and
+the year, on each side's simulation run of that year, found or inserted.
+Only for a window run it created does it then start up to the earliest
+five years, as its own role, under the window run's row lock
 (`BudgetWindowStore.advance_window`): the first year's coordinator input is
-built as an economy report's, and each later year's is derived from it.
+built as an economy report's, and each later year's is derived from it. A
+joined window run is answered as it is, with no new call.
 Each year's coordinator starts the next years when its year ends. The 201
 names the report, the first year's report run, the window run, its status
 and every year's runs. A year Modal refuses fails the window, its waiting
@@ -279,13 +284,17 @@ The service reads the
 report's region code and dataset name, finds the rows with that code and
 name in the catalog version of the default worker's .py version, and reads
 each simulation's stored policy and dynamic on it.
-A budget-window report's re-run is a new budget-window run, trigger
-`manual`, and a report run per year. A window has no keys yet, so every
-re-run recalculates it, forced or not: `recalculate` is set, and its year
-runs and new simulation runs are marked `forced`. Each year's sides are new
-runs of the simulations that year's report run of the report's newest
-window run names (a year that reused another report's run names that
-report's simulation). Up to five years start at once, as a new window's do (a later year
+A budget-window report's re-run joins or creates a budget-window run with
+a report run per year, as a single-year report's does: a window created by
+key, without `force`, joins its window run on the default worker's versions
+that hasn't failed and isn't a recalculation, with no new call, or else
+gets a new window run whose years' sides join their simulations' runs or
+get new ones. `force`, and every re-run of a window created before keys,
+recalculates it: `recalculate` is set, and its year runs and new
+simulation runs are marked `forced`. Each year's sides are runs of the
+simulations that year's report run of the report's newest window run names
+(a year that named another report's run names that report's simulation).
+Only a window run the re-run created has its first years started. Up to five years start at once, as a new window's do (a later year
 Modal doesn't confirm in time waits for an earlier year's coordinator); it
 answers 201 with the budget-window create's fields, naming the window run
 and every year.

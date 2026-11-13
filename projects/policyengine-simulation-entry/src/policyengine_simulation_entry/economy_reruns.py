@@ -23,22 +23,23 @@ default worker, as a new run, and keeps every earlier run. The service:
    before C1 · 27, may have runs whose plans depended on the report that
    calculated them, so its re-run, like a forced re-run, always creates its
    runs, marked forced: extra runs that nothing joins (interim answer B). A
-   budget window has no keys yet, so its re-run always creates its runs,
-   marked forced. Every new run is pending with no Modal call ID, and a
-   forced re-run is never refused while a run is under way;
+   keyed budget window's re-run joins its window run on those versions, or
+   creates one whose years' sides join their simulations' runs (answer 8).
+   Every new run is pending with no Modal call ID, and a forced re-run is
+   never refused while a run is under way;
 4. starts and records the call of a run it created as a new record's: the
    report run's coordinator, or the simulation function, by run ID (C1 · 8's
    coordination), failing the new runs when Modal refuses the call. A
    joined run gets no call: whoever created it started it.
 
-A budget-window report's re-run is a new budget-window run with a report
-run per year, each year on the simulations that year's report run of the
-report's newest window run names; its first years start as a new window's
-do. A household report's re-run is the household report service's
-(``household_report_reruns``): a new run of each side's own household
-simulation, marked forced as a household report has no keys yet, started
-by one household function call. A household simulation is re-run only
-through its report. Whatever is missing or cannot be calculated is refused
+A budget-window report's re-run joins or creates a budget-window run with
+a report run per year, each year on the simulations that year's report
+run of the report's newest window run names; a window run it created has
+its first years started as a new window's do. A household report's re-run
+is the household report service's (``household_report_reruns``), which
+joins or creates its run as an economy report's re-run does, a run it
+created started by one household function call. A household simulation is
+re-run only through its report. Whatever is missing or cannot be calculated is refused
 in steps 1 and 2, before anything is written.
 """
 
@@ -445,12 +446,15 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         request_id: str,
         observability_context: dict[str, Any] | None,
     ) -> BudgetWindowReportCreated:
-        """Create the window's new run and each year's runs; start its first years.
+        """Join or create the window's run on the current versions.
 
-        Each year's sides are new runs of that year's own simulations, as
-        its report run in the report's newest window run names them, marked
-        forced: a window has no keys yet (interim answer B). The years start
-        as a new window's do (``_start_first_years``).
+        Each year's sides are runs of that year's own simulations, as its
+        report run in the report's newest window run names them. A keyed
+        window's unforced re-run joins its window run, or each year's sides
+        join their simulations' runs; a forced one, or one of a window
+        created before keys (interim answer B), recalculates every year as
+        forced runs. Only a window run it created has its first years
+        started, as a new window's are (``_start_first_years``).
         """
         stored = window.stored
         inputs = await self._read_inputs(

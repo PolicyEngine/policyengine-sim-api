@@ -27,11 +27,9 @@ on those versions, catalog version and year, or the report's run on those
 versions. An unforced report re-run (economy, budget window or household)
 takes a transaction-level advisory lock on the report's ID first, which
 makes concurrent re-runs of one report wait for each other, as a row lock
-on ``reports`` would need ``UPDATE`` on it. An unforced budget window's
-re-run joins nothing: it is refused while a run of the report is
-``pending`` or ``running`` (a budget-window run or a report run); the
-service forces every window re-run, as windows have no keys yet. A
-simulation's re-run takes no lock.
+on ``reports`` would need ``UPDATE`` on it; an unforced budget window's
+re-run joins the window run on its versions the same way. A simulation's
+re-run takes no lock.
 
 A forced re-run (C1 · 24's answer 3) is an extra run instead: its report
 run, or each year's report run of a budget window, and the simulation runs

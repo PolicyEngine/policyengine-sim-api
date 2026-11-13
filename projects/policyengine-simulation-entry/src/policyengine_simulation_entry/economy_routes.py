@@ -5,9 +5,12 @@
   current versions or creates one, starting the coordinator only for a run
   it created, answering 201 with the report's ID, its run's ID and status,
   and each side's simulation and simulation run. With ``report_type``
-  ``budget_window`` it creates a budget-window report with a report run per
-  year and starts up to its first five years, answering 201 with the report, the
-  first year's run, the window run, its status and every year's runs. With
+  ``budget_window`` it finds or creates a budget-window report by key, each
+  year's simulations by their year's keys, and joins its window run on the
+  current versions or creates one with a report run per year, starting up
+  to the first five years only of a window run it created, answering 201
+  with the report, the first year's run, the window run, its status and
+  every year's runs. With
   ``household`` it finds or creates a household report and a household
   simulation for its baseline and any reform by key, and joins its run on
   the current versions or creates one, starting one household function
@@ -548,8 +551,10 @@ def _submission_routes(
             "report run is started. "
             "A budget-window report (report_type budget_window) compares them "
             "in each year of a window of 1 to 75 years, with a report run per "
-            "year, at most five running at once; each year reuses its own "
-            "year's runs. "
+            "year, at most five running at once, found or created by key as "
+            "an economy report is: its window run on the current versions is "
+            "joined, and each year's sides join their simulations' runs, which "
+            "a single-year report of that year shares. "
             "A household report (report_type household) calculates one stored "
             "household for its default year under a baseline and, optionally, "
             "a reform, found or created by a key of its definition as an "

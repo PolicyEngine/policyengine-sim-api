@@ -166,6 +166,21 @@ report and run rows (C1 · 24). Three modules do it:
   simulation. The answers say what the request inserted, so only it starts
   a Modal call. `EconomyRunStore.find_or_create_report` and
   `find_or_create_simulation` run them in a transaction of their own.
+- `keyed_window_records.py` does it for a budget window
+  (`find_or_create_budget_window`): each year's simulations by that year's
+  key, in key order across every year, so a window year and a single-year
+  report of that year share them; the report by its key (window size and
+  first year in it); its window run on the current catalog and .py versions
+  that hasn't failed and isn't a recalculation, joined with its year runs;
+  or else the window run first (`find_or_insert_window_run`, against the
+  Public API's window run index, so a concurrent identical request waits
+  for it and joins it), recording its .py version, then every year's side
+  runs, found or inserted in simulation ID order, and each year's report
+  run (`insert_window_years`, which the window re-runs share).
+  `EconomyRunStore.find_or_create_budget_window` runs it in a transaction
+  of its own. No keyed create writes a label, description, user or trigger
+  (C1 · 24's answer 6): each user's saved report and report-run record hold
+  them, in the Public API.
 
 ## Household reports
 
@@ -229,13 +244,16 @@ version, dataset and region it calculates on.
 
 A budget window's definition also names its newest budget-window run's
 years (`WindowYearDefinition`): each year's sides are the simulations of the
-runs that year's report run names. `insert_window_rerun` creates the
-window's new budget-window run (trigger `manual`, `recalculate` set), a
-report run per year and each year's new runs of its own simulations. An
-unforced window re-run is refused while a budget-window run or a report run
-of the report is `pending` or `running`; one that recalculates is a forced
-re-run, never refused, whose year runs and simulation runs are marked
-`forced`.
+runs that year's report run names. `insert_window_rerun` joins or creates
+the window's run as the window's create does: unforced (a keyed window's
+re-run), it takes the re-run lock and joins the report's window run on the
+re-run's versions that hasn't failed and isn't a recalculation, with its
+year runs, or else inserts the window run and each year's report run on
+its sides' runs, found or inserted. One that recalculates is a forced
+re-run, never refused, an extra window run whose year runs and simulation
+runs are marked `forced`. Either records the window run's .py version and
+no trigger, and `EconomyRunStore.create_window_rerun` returns the window
+run and years it ended on.
 
 A household report's definition also names its household (`household_id`).
 `insert_household_report_rerun` joins or creates its run as

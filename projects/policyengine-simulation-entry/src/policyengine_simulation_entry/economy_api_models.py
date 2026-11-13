@@ -208,14 +208,14 @@ class EconomyReportRequest(_Request):
 class ReportRerunRequest(_Request):
     """A stored report's re-run on the default worker's versions.
 
-    Without ``force``, a re-run of an economy report created by key joins
-    the report's run on those versions that hasn't failed and wasn't
-    forced, pending, running or succeeded, and otherwise each side joins
-    its simulation's run on them or gets a new one, as a new report's side
-    does. With it, and always for a budget-window report or one created
-    before keys (C1 · 24's interim answer B), the report's simulations are
-    calculated again, as an extra run marked forced that nothing joins; a
-    household report's re-run ignores it.
+    Without ``force``, a re-run of a report created by key (economy,
+    budget window or household) joins the report's run on those versions
+    that hasn't failed and wasn't forced, pending, running or succeeded,
+    and otherwise each side joins its simulation's run on them or gets a
+    new one, as a new report's side does. With it, and always for a report
+    created before keys (C1 · 24's interim answer B), the report's
+    simulations are calculated again, as an extra run marked forced that
+    nothing joins.
     """
 
     force: StrictBool = False
