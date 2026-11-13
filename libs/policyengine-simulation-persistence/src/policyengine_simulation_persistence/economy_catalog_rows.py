@@ -103,11 +103,19 @@ def read_catalog_rows(
 ) -> EconomyCatalogRows:
     """Read the catalog version, model, region and dataset a request names.
 
-    With ``local_area_dataset_name``, the dataset is the catalog version's
-    local-area dataset, which must have that name. Raise
-    UnknownCatalogVersionError, UnknownRegionError, UnknownDatasetError or
-    LocalAreaDatasetMismatchError.
+    The dataset is the region's default, or the one ``request`` names (a
+    re-run's stored dataset), or, with ``local_area_dataset_name``, the
+    catalog version's local-area dataset, which must have that name (a
+    report created with ``data_source``). Raise ValueError, before any read,
+    when both name a dataset; otherwise UnknownCatalogVersionError,
+    UnknownRegionError, UnknownDatasetError or LocalAreaDatasetMismatchError.
     """
+    if local_area_dataset_name is not None and request.dataset_name is not None:
+        msg = (
+            "a catalog read takes either a dataset name or the local-area "
+            "dataset, not both"
+        )
+        raise ValueError(msg)
     country = request.country
     catalog_version_id = read_catalog_version_id(
         connection,

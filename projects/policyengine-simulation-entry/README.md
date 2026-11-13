@@ -140,13 +140,16 @@ record's ID, its run's ID and status, and, for a report, each side's
 simulation and run and whether it was reused.
 
 A request is refused before anything is written: with 400 and a `code` when
-a row it names is missing (`unknown_region`, `unknown_dataset` and
-`unknown_dynamic` name the caller's own choice; `unknown_catalog_version`,
-`unknown_policy`, `no_economy_worker`, `dataset_not_in_bundle` and
-`missing_reference` are the service's state, such as a catalog version
-missing while a release deploys), and with 422 and a `code` when a policy or
-dynamic sets parameters the catalog version lacks (`missing_parameters`) or
-both set one (`overlapping_parameters`). The routes answer 503 with
+a row it names is missing (`unknown_region` and `unknown_dynamic` name the
+caller's own choice, and `unknown_dataset` its region's dataset;
+`unknown_catalog_version`, `unknown_policy`, `no_economy_worker`,
+`dataset_not_in_bundle` and `missing_reference` are the service's state,
+such as a catalog version missing while a release deploys, and so are the
+two local-area codes under "Local areas"), and with 422 and a `code` when a
+policy or dynamic sets parameters the catalog version lacks
+(`missing_parameters`), both set one (`overlapping_parameters`), or the
+release has no local-area dataset for `data_source`
+(`no_local_area_dataset`). The routes answer 503 with
 `Retry-After` when the manifest or the database can't be read. When Modal
 refuses the call, or doesn't confirm it within ten seconds, the run (and a
 report run's new simulation runs) is failed at once and the 503

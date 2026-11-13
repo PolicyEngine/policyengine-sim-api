@@ -120,12 +120,14 @@ FORBIDDEN_ANSWER = {
 _REFUSED = {
     "description": (
         "A row the request names, or a function it needs, is missing; nothing "
-        "was written. unknown_region, unknown_dataset and unknown_dynamic name "
-        "the caller's own region, dataset or dynamic; a household report's "
-        "unknown_household and no_household_function name its household and "
-        "the default worker's household function; any other code is the "
-        "service's state, such as a catalog version missing while a release "
-        "deploys"
+        "was written. unknown_region and unknown_dynamic name the caller's own "
+        "region or dynamic, and unknown_dataset its region's dataset (a "
+        "request names none); a household report's unknown_household and "
+        "no_household_function name its household and the default worker's "
+        "household function; any other code is the service's state, such as "
+        "a catalog version missing while a release deploys, or "
+        "local_areas_unsupported and local_area_dataset_mismatch for a report "
+        "on the local-area dataset"
     ),
     **ERROR_ANSWER,
 }
@@ -135,7 +137,8 @@ _UNPROCESSABLE = {
         "cannot be calculated; nothing was written. Stored values that cannot "
         "be calculated carry a code: missing_parameters, "
         "overlapping_parameters, or household_not_calculable for a household "
-        "report's household"
+        "report's household; no_local_area_dataset refuses data_source on a "
+        "release with no local-area dataset"
     ),
     "model": EconomyRequestUnprocessable,
 }
