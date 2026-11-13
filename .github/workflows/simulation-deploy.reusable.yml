@@ -1256,8 +1256,9 @@ jobs:
   staging_economy_check:
     name: Create a staging economy report through the candidate
     # Every staging deployment creates a small economy report, current law
-    # against current law for Wales in 2026, through the candidate's
-    # POST /reports, and requires its run to succeed. The routes use only
+    # against current law for Wales in 2026 on the local-area dataset,
+    # through the candidate's POST /reports, and requires its run, which also
+    # calculates Wales's constituencies and local authorities, to succeed. The routes use only
     # the v2 manifest's default worker, so the check runs after the default
     # has moved to the release's worker (or, in a deployment without Stage
     # 12, with the default as it is). It calls the tagged candidate URL,
