@@ -270,11 +270,11 @@ class EconomyRunStore:
         ``local_area_dataset_name``, the dataset the default worker
         calculates local-area reports on, the report is read on the catalog
         version's local-area dataset (``read_local_area_dataset``) in place
-        of the region's default. Raise UnknownCatalogVersionError,
-        UnknownRegionError or UnknownDatasetError, ReportSideError naming the
-        side whose policy or dynamic is refused, or
-        LocalAreaDatasetMismatchError when the catalog version doesn't give
-        both area types that dataset.
+        of the region's default. Raise ValueError when ``request`` also names
+        a dataset; otherwise UnknownCatalogVersionError, UnknownRegionError
+        or UnknownDatasetError, ReportSideError naming the side whose policy
+        or dynamic is refused, or LocalAreaDatasetMismatchError when the
+        catalog version doesn't give both area types that dataset.
         """
         with self._transaction() as connection:
             catalog = read_catalog_rows(

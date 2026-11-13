@@ -144,8 +144,10 @@ a row it names is missing (`unknown_region` and `unknown_dynamic` name the
 caller's own choice, and `unknown_dataset` its region's dataset;
 `unknown_catalog_version`, `unknown_policy`, `no_economy_worker`,
 `dataset_not_in_bundle` and `missing_reference` are the service's state,
-such as a catalog version missing while a release deploys, and so are the
-two local-area codes under "Local areas"), and with 422 and a `code` when a
+such as a catalog version missing while a release deploys), or, for a report
+on the local-area dataset, when the default worker or the catalog can't
+serve it (`local_areas_unsupported` and `local_area_dataset_mismatch`, also
+the service's state; see "Local areas"); and with 422 and a `code` when a
 policy or dynamic sets parameters the catalog version lacks
 (`missing_parameters`), both set one (`overlapping_parameters`), or the
 release has no local-area dataset for `data_source`

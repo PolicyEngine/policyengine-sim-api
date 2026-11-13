@@ -125,7 +125,8 @@ reads each take their own. The catalog rows come from
 region's default, a re-run's stored dataset by name (`EconomyRequest`'s
 `dataset_name`), or, for a report created with `data_source`
 (`read_report_inputs`'s `local_area_dataset_name`), the catalog version's
-local-area dataset, never two of these at once. A missing region or dataset
+local-area dataset; a request naming two of them is refused with
+`ValueError` before any read. A missing region or dataset
 raises `UnknownRegionError` or `UnknownDatasetError`, a local-area dataset
 the catalog doesn't give both area types raises
 `LocalAreaDatasetMismatchError`, and a report side's refused policy or

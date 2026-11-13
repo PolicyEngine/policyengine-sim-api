@@ -119,15 +119,17 @@ FORBIDDEN_ANSWER = {
 }
 _REFUSED = {
     "description": (
-        "A row the request names, or a function it needs, is missing; nothing "
-        "was written. unknown_region and unknown_dynamic name the caller's own "
-        "region or dynamic, and unknown_dataset its region's dataset (a "
-        "request names none); a household report's unknown_household and "
+        "A row the request names, or a function it needs, is missing, or the "
+        "catalog disagrees with the default worker; nothing was written. "
+        "unknown_region and unknown_dynamic name the caller's own region or "
+        "dynamic, and unknown_dataset its region's dataset (a request names "
+        "none); a household report's unknown_household and "
         "no_household_function name its household and the default worker's "
         "household function; any other code is the service's state, such as "
-        "a catalog version missing while a release deploys, or "
-        "local_areas_unsupported and local_area_dataset_mismatch for a report "
-        "on the local-area dataset"
+        "a catalog version missing while a release deploys, or, for a report "
+        "on the local-area dataset, local_areas_unsupported (the default "
+        "worker runs no such reports) and local_area_dataset_mismatch (the "
+        "catalog's area regions use another dataset)"
     ),
     **ERROR_ANSWER,
 }

@@ -633,7 +633,7 @@ def test_every_side_refusal_is_raised_with_its_side(monkeypatch) -> None:
 
 def test_a_request_naming_a_dataset_and_the_local_area_dataset_is_refused() -> None:
     """A re-run names its stored dataset and a create the local-area one, never both."""
-    named = EconomyRequest(**{**vars(UK_REQUEST), "dataset_name": "acs_local_2024"})
+    named = replace(UK_REQUEST, dataset_name="microcosm_uk_2024_25")
 
     with pytest.raises(ValueError, match="either a dataset name or"):
         read_catalog_rows(

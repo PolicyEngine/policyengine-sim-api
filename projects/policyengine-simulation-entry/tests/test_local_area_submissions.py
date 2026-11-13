@@ -202,7 +202,11 @@ def test_a_catalog_whose_area_regions_use_another_dataset_is_refused() -> None:
 
 
 def test_a_report_on_the_local_area_dataset_is_rerun_on_it() -> None:
-    """A re-run reads the stored report's dataset by name, and takes no data_source."""
+    """A re-run reads the stored report's dataset by name, and takes no data_source.
+
+    It never reads the worker's local-area declaration, so a worker declaring
+    none still re-runs the report on its dataset.
+    """
     stored = replace(
         STORED_REPORT,
         country="uk",
@@ -218,7 +222,7 @@ def test_a_report_on_the_local_area_dataset_is_rerun_on_it() -> None:
 
     asyncio.run(
         rerun_service(
-            store, workers=_workers_declaring(ROUTED_LOCAL_AREAS), caller=caller
+            store, workers=_workers_declaring(None), caller=caller
         ).rerun_report(
             REPORT_ID,
             ReportRerunRequest(),
