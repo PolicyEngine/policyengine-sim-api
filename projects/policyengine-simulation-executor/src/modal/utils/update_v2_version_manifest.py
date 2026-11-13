@@ -20,10 +20,11 @@ from policyengine_simulation_contract.household_execution import (
     household_callable_name,
 )
 from policyengine_simulation_contract.stage12_manifest import (
-    SCHEMA_2_MANIFEST_KEY,
+    LOCAL_AREA_REPORTS_VERSION,
     V1_ROUTING_STATE_NAME,
     V2_MANIFEST_KEYS,
     V2_VERSION_MANIFEST_NAME,
+    LocalAreaReports,
     V2CountryWorker,
     V2ManifestLoader,
     V2ManifestStore,
@@ -42,6 +43,23 @@ from policyengine_simulation_contract.stage12_manifest import (
     write_v2_manifest,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+from policyengine_simulation_executor.uk_local_authority_metadata import (
+    routed_uk_area_dataset_name,
+    uk_area_regions_routed,
+)
+
+
+def uk_local_area_reports() -> LocalAreaReports:
+    """Return the UK local-area report runs this code's coordinator runs.
+
+    The dataset is the one the installed release routes UK area regions to,
+    or None when it routes them to none, by the rule the worker and Stage
+    12's national aggregation use; it reads only the packaged release.
+    """
+    return LocalAreaReports(
+        input_version=LOCAL_AREA_REPORTS_VERSION,
+        dataset=routed_uk_area_dataset_name() if uk_area_regions_routed() else None,
+    )
 
 
 def build_worker(validation_payload: object) -> V2WorkerVersion:
@@ -49,7 +67,9 @@ def build_worker(validation_payload: object) -> V2WorkerVersion:
 
     Every bundle country has a single-simulation worker, so each is recorded
     as economy-capable. A country's household function is recorded when the
-    record shows that it calculated the validation household. Raises
+    record shows that it calculated the validation household. The UK entry
+    records that this code's coordinator runs local-area report runs, and on
+    which dataset (``uk_local_area_reports``). Raises
     ValueError if the record is invalid or the entry carries a credential-like
     key.
     """
@@ -67,6 +87,9 @@ def build_worker(validation_payload: object) -> V2WorkerVersion:
                     household_callable_name(country.country)
                     if country.country in validation.household_validation_invocation_ids
                     else None
+                ),
+                local_area_reports=(
+                    uk_local_area_reports() if country.country == "uk" else None
                 ),
             )
             for country in resolved.bundle.countries
@@ -188,14 +211,14 @@ def _key_holds(store: V2ManifestStore, key: str, copies: tuple[object, ...]) -> 
     """Return whether ``key`` holds one of ``copies``, or is an older key that expired.
 
     Modal expires a Dict entry after 7 days without a read or write, and
-    current readers read the schema version 1 keys only when the schema
-    version 2 key is missing or out of date, so they can expire between
-    deployments. A write never deletes a key, so a missing older key is never
-    one a part-way write left behind, and the next write restores it. The
-    schema version 2 key, which current readers read first, is required.
+    current readers read the older keys only when the newest key is missing
+    or out of date, so they can expire between deployments. A write never
+    deletes a key, so a missing older key is never one a part-way write left
+    behind, and the next write restores it. The newest key, which current
+    readers read first, is required.
     """
     value = store.get(key)
-    if value is None and key != SCHEMA_2_MANIFEST_KEY:
+    if value is None and key != V2_MANIFEST_KEYS[0]:
         return True
     return value in copies
 
