@@ -11,7 +11,10 @@ format never matches an older key, and ``record``, what it keys.
 Only the service computes keys; the Public API compares the stored columns.
 A definition names catalog rows by dataset name and region code, never by
 ID, because each catalog version has its own rows: one report spans
-releases, and each release's calculation is a new run of it.
+releases, and each release's calculation is a new run of it. A report also
+stores a ``dataset_independent_key``: its key object without the dataset,
+keeping the options (C1 · 24's revised answer 1a), which a national report
+and its local-area report with the same options share.
 """
 
 from __future__ import annotations
@@ -107,3 +110,15 @@ class EconomyReportDefinition:
     def definition_key(self) -> str:
         """The report's ``definition_key``."""
         return definition_key(self.key_object())
+
+    def dataset_independent_key_object(self) -> dict[str, object]:
+        """Return the key object without the dataset, under its own record name."""
+        key_object = self.key_object()
+        del key_object["dataset"]
+        key_object["record"] = "report_dataset_independent"
+        return key_object
+
+    @property
+    def dataset_independent_key(self) -> str:
+        """The report's ``dataset_independent_key``."""
+        return definition_key(self.dataset_independent_key_object())
