@@ -19,15 +19,18 @@ service runs now, as a new run, and keeps every earlier run. The service:
 The record itself is never changed: the service may not update ``reports``
 or ``simulations``, so a report keeps naming the simulations it was created
 with, and each new run records the catalog version, dataset and region it
-calculates on. A re-run joins the record's run that hasn't failed on the
-current versions, when there is one, pending, running or succeeded, rather
-than create one (C1 · 24's answers 2 and 3; ``shared_rows``): a
-simulation's run on those versions, catalog version and year, or a
-report's run on those versions. A report's re-run takes a
-transaction-level advisory lock on its ID first, which makes concurrent
-re-runs of one report wait for each other, as a row lock on ``reports``
-would need ``UPDATE`` on it; nothing is created while a budget window's
-run of the report is ``pending`` or ``running``.
+calculates on. A simulation's re-run, and an unforced economy report's,
+joins the record's run that hasn't failed and wasn't forced on the current
+versions, pending, running or succeeded, rather than create one (C1 · 24's
+answers 2 and 3; ``shared_rows``): the simulation's run on those versions,
+catalog version and year, or the report's run on those versions. An
+unforced report re-run (economy, budget window or household) takes a
+transaction-level advisory lock on the report's ID first, which makes
+concurrent re-runs of one report wait for each other, as a row lock on
+``reports`` would need ``UPDATE`` on it. An unforced budget window's
+re-run, and every household report's, joins nothing: it is refused while a
+run of the report is ``pending`` or ``running`` (a budget-window run or a
+report run). A simulation's re-run takes no lock.
 
 A forced re-run (C1 · 24's answer 3) is an extra run instead: its report
 run, or each year's report run of a budget window, and the simulation runs

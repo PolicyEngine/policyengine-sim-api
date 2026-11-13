@@ -370,22 +370,26 @@ def _second_report_run(  # noqa: PLR0913  # the run, then what it names and whos
     return second_id
 
 
+# A report's definition keys, unique to it, which a copy leaves out.
+_REPORT_KEY_COLUMNS = ("key_version", "definition_key", "dataset_independent_key")
+
+
 def _copy_of_report(seeder, report_id):
-    """Insert a new report copying ``report_id``'s columns; return its ID."""
+    """Insert a new report copying ``report_id``'s columns; return its ID.
+
+    The copy has no definition keys, as a report created before keys existed,
+    so it never conflicts with the report it copies.
+    """
     report = seeder.row("reports", report_id)
     copy_id = uuid4()
+    copied = {
+        name: None if name in _REPORT_KEY_COLUMNS else value
+        for name, value in report.items()
+        if name not in {"id", "created_at", "updated_at"}
+    }
     with seeder.engine.begin() as connection:
         connection.execute(
-            insert(seeder.table("reports")).values(
-                {
-                    **{
-                        name: value
-                        for name, value in report.items()
-                        if name not in {"id", "created_at", "updated_at"}
-                    },
-                    "id": copy_id,
-                }
-            )
+            insert(seeder.table("reports")).values({**copied, "id": copy_id})
         )
     return copy_id
 

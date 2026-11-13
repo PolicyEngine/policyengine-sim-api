@@ -280,28 +280,27 @@ def _used_on_later_catalog(
 ) -> StoredRun:
     """Insert a succeeded later run of the baseline that another report used.
 
-    The other report, created on ``economy`` beside the stored one, reused
-    its simulations' runs; its re-run on the later catalog created the later
-    runs, and succeeded. The stored report itself has no run on the later
-    versions, so a re-run of it has none to join.
+    The other report, created on ``economy`` beside the stored one, compares
+    the stored report's baseline simulation (reusing its run) with a reform
+    simulation of its own; its initial run succeeded, and its manual re-run
+    on the later catalog created both sides' later runs and succeeded. The
+    stored report has no run on the later versions, so a re-run of it has
+    none to join, and its reform simulation has no later run.
     """
-    later_shape = RunShape(versions=LATER_VERSIONS)
-    later_baseline = insert_run_of(
-        connection, stored.baseline.simulation_id, later.population(), later_shape
-    )
-    later_reform = insert_run_of(
-        connection,
-        stored.reform.simulation_id,
-        later.population(),
-        replace(later_shape, status=SimulationStatus.FAILED),
-    )
+    other_reform = insert_simulation_run(connection, economy.population())
     other_report_id = insert_report_of(
-        connection, economy, (stored.baseline, stored.reform)
+        connection, economy, (stored.baseline, other_reform)
+    )
+    insert_report_run_of(connection, other_report_id, (stored.baseline, other_reform))
+    later_shape = RunShape(versions=LATER_VERSIONS)
+    later_baseline, later_other_reform = (
+        insert_run_of(connection, simulation_id, later.population(), later_shape)
+        for simulation_id in (stored.baseline.simulation_id, other_reform.simulation_id)
     )
     insert_report_run_of(
         connection,
         other_report_id,
-        (later_baseline, later_reform),
+        (later_baseline, later_other_reform),
         ReportRunOutcome(versions=LATER_VERSIONS, trigger=ReportRunTrigger.MANUAL),
     )
     return later_baseline

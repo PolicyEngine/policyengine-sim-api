@@ -305,9 +305,12 @@ unforced economy report re-run whose side has a run on the current
 versions that hasn't failed but isn't reused is refused by that index:
 for example a succeeded run whose report run failed for the other side,
 one a coordinator refused to reuse, one used with other options, or one
-another report run is calculating. The service answers that database error
-503 `database_unavailable`, though asking again fails the same way while
-that run is there. A re-run's answer names
+another report run is calculating. So, until C1 · 24's answer 8, is a
+household report's re-run, forced or not, once its earlier run has ended
+on the current versions without failing (each side's new run is unforced),
+and an unforced budget window's whose year side has such a run. The
+service answers that database error 503 `database_unavailable`, though
+asking again fails the same way while that run is there. A re-run's answer names
 the run it ended on; `GET /reports/{report_id}` and
 `GET /simulations/{simulation_id}` read the newest run, which may be a later
 one, such as a forced re-run's. A report or simulation deleted after the

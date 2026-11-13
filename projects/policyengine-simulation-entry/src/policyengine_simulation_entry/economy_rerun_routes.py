@@ -15,8 +15,9 @@
   own household simulation, never reusing one, started by one household
   function call; it answers as the household report create does.
 - ``POST /simulations/{simulation_id}/runs`` (``simulation:submit``) joins
-  the stored simulation's run on the current versions that hasn't failed,
-  pending, running or succeeded, or else creates one and starts its
+  the stored simulation's run on the current versions that hasn't failed
+  and wasn't forced, pending, running or succeeded, or else creates one and
+  starts its
   simulation function, answering 201 with the simulation's ID, the run's ID
   and its status.
 
@@ -330,9 +331,9 @@ def add_economy_rerun_routes(
         summary="Re-run an economy simulation",
         description=(
             "Join the stored simulation's run on the v2 version manifest's "
-            "default worker's versions that hasn't failed, pending, running or "
-            "succeeded, or else create one and start it; every earlier run is "
-            "kept."
+            "default worker's versions that hasn't failed and wasn't forced, "
+            "pending, running or succeeded, or else create one and start it; "
+            "every earlier run is kept."
         ),
         operation_id="rerun_simulation",
         status_code=status.HTTP_201_CREATED,

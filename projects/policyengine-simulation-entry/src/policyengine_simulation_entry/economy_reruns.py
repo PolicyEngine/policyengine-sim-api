@@ -15,11 +15,12 @@ default worker, as a new run, and keeps every earlier run. The service:
    report, unless the re-run is forced, each side's reusable run is a run of
    that side's own simulation that succeeded on the current versions, as a
    new report's would be (``find_reusable_run_of``);
-3. joins, in one transaction, the record's run on the current versions
-   that hasn't failed and wasn't forced, pending, running or succeeded
-   (C1 · 24's answers 2 and 3), or else creates the new run (a report's
-   with trigger ``manual``) and each report side's new simulation run of
-   its own simulation, all pending with no Modal call ID. A forced re-run
+3. for a simulation or an economy report, joins, in one transaction, the
+   record's run on the current versions that hasn't failed and wasn't
+   forced, pending, running or succeeded (C1 · 24's answers 2 and 3), or
+   else creates the new run (a report's with trigger ``manual``) and each
+   report side's new simulation run of its own simulation, all pending with
+   no Modal call ID; a budget window's re-run always creates its runs. A forced re-run
    always creates its runs, marked forced, an extra run that nothing joins.
    An unforced budget window's re-run is refused while a window run or year
    run of the report is pending or running (409 ``run_in_progress``);
