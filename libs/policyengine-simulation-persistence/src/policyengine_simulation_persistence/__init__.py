@@ -13,6 +13,12 @@ from policyengine_simulation_persistence.budget_window_records import (
     WindowYearRuns,
     insert_budget_window_report,
 )
+from policyengine_simulation_persistence.definition_keys import (
+    KEY_VERSION,
+    EconomyReportDefinition,
+    canonical_json,
+    definition_key,
+)
 from policyengine_simulation_persistence.economy_rerun_records import (
     HouseholdRerunSide,
     NewHouseholdReportRerun,
@@ -148,6 +154,7 @@ from policyengine_simulation_persistence.tables import (
 
 __all__ = [
     "HOUSEHOLD_REPORT_TYPE",
+    "KEY_VERSION",
     "LATEST_YEAR",
     "MAX_BUDGET_WINDOW_YEARS",
     "SERVICE_TABLE_PRIVILEGES",
@@ -160,6 +167,7 @@ __all__ = [
     "EconomyPopulation",
     "EconomyRecordOutcomeUnknownError",
     "EconomyRecordReferenceError",
+    "EconomyReportDefinition",
     "EconomyReportInputs",
     "EconomyReportState",
     "EconomyRequest",
@@ -222,8 +230,10 @@ __all__ = [
     "WindowYearRuns",
     "bounded_transaction",
     "budget_window_runs",
+    "canonical_json",
     "combine_reforms",
     "create_simulation_engine",
+    "definition_key",
     "fail_unstarted_household_job",
     "fail_unstarted_report_run",
     "fail_unstarted_simulation_run",
