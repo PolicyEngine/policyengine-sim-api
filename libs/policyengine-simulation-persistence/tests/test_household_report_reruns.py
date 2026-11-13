@@ -28,7 +28,6 @@ from policyengine_simulation_persistence import (
     ReportRunStatus,
     ReportRunTrigger,
     RerunRecordDeletedError,
-    RunInProgressError,
     RunVersions,
     SideDefinition,
     SimulationChoice,
@@ -173,7 +172,11 @@ def _succeed_first_runs(connection: Connection, report: NewHouseholdReport) -> N
 def _rerun_of(
     report: NewHouseholdReport, catalog: CatalogVersion
 ) -> NewHouseholdReportRerun:
-    """Return the report's re-run on ``catalog``: a new run of each side's own."""
+    """Return the report's re-run on ``catalog``: a new run of each side's own.
+
+    Forced, as the service re-runs a household report without keys
+    (interim answer B).
+    """
     return NewHouseholdReportRerun(
         report_id=report.id,
         run_id=uuid4(),
@@ -190,6 +193,7 @@ def _rerun_of(
                 simulation_id=report.reform.simulation_id, simulation_run_id=uuid4()
             )
         ),
+        forced=True,
     )
 
 
@@ -360,16 +364,17 @@ def test_a_rerun_of_a_report_of_the_baseline_alone_names_no_reform_run(
     assert baseline_runs == 2
 
 
-def test_a_household_report_with_a_run_under_way_is_not_rerun(
+def test_a_forced_household_rerun_beside_a_run_under_way_is_an_extra_run(
     public_api_database_url,
 ) -> None:
+    """Answer 3: a forced run is never refused, so the 409 goes."""
     with rolled_back_transaction(public_api_database_url) as connection:
         catalog, later_catalog = _catalogs(connection)
         report = _stored_report(connection, catalog, first_run_ended=False)
         act_as_the_service(connection)
+        rerun = _rerun_of(report, later_catalog)
 
-        with pytest.raises(RunInProgressError) as under_way:
-            _store_on(connection).create_report_rerun(_rerun_of(report, later_catalog))
+        created = _store_on(connection).create_report_rerun(rerun)
         report_runs = _count(connection, "report_runs", "report_id", report.id)
         baseline_runs = _count(
             connection,
@@ -377,9 +382,19 @@ def test_a_household_report_with_a_run_under_way_is_not_rerun(
             "simulation_id",
             report.baseline.simulation_id,
         )
+        first_run = _row(connection, "report_runs", report.run_id)
 
-    assert under_way.value.run_id == report.run_id
-    assert (report_runs, baseline_runs) == (1, 1)
+    assert (created.id, created.inserted, created.status) == (
+        rerun.run_id,
+        True,
+        ReportRunStatus.PENDING,
+    )
+    assert (
+        created.baseline_simulation_run_id,
+        created.reform_simulation_run_id,
+    ) == rerun.simulation_run_ids
+    assert (report_runs, baseline_runs) == (2, 2)
+    assert first_run["status"] == ReportRunStatus.PENDING
 
 
 def test_a_rerun_naming_a_deleted_report_or_simulation_is_refused_by_its_key(
@@ -458,6 +473,7 @@ def test_a_rerun_whose_commit_fails_may_have_been_written() -> None:
                     simulation_id=uuid4(), simulation_run_id=uuid4()
                 ),
                 reform=None,
+                forced=True,
             )
         )
 

@@ -18,10 +18,13 @@ import pytest
 from conftest import act_as_the_service, rolled_back_transaction
 from policyengine_simulation_persistence import (
     KEY_VERSION,
+    FoundHouseholdReport,
     FoundSide,
     HouseholdReportDefinition,
     HouseholdReportStore,
+    HouseholdRerunSide,
     KeyedHouseholdReport,
+    NewHouseholdReportRerun,
     ProposedSide,
     ReportRunStatus,
     ReportRunTrigger,
@@ -29,6 +32,7 @@ from policyengine_simulation_persistence import (
     SimulationChoice,
     SimulationStatus,
     find_or_create_household_report,
+    insert_household_report_rerun,
 )
 from public_api_rows import (
     CatalogVersion,
@@ -403,3 +407,102 @@ def test_a_request_proposing_a_reform_side_for_a_report_without_one_is_refused()
             request,
             reform=ProposedSide(simulation_id=uuid4(), simulation_run_id=uuid4()),
         )
+
+
+def _rerun_of(
+    found: FoundHouseholdReport, stored: _StoredInputs, *, forced: bool = False
+) -> NewHouseholdReportRerun:
+    """Return a re-run of a keyed report on its versions, proposing new run IDs."""
+    return NewHouseholdReportRerun(
+        report_id=found.report_id,
+        run_id=uuid4(),
+        tax_benefit_model_version_id=stored.catalog.version_id,
+        year=2026,
+        versions=VERSIONS,
+        baseline=HouseholdRerunSide(
+            simulation_id=found.baseline.simulation_id, simulation_run_id=uuid4()
+        ),
+        reform=(
+            None
+            if found.reform is None
+            else HouseholdRerunSide(
+                simulation_id=found.reform.simulation_id, simulation_run_id=uuid4()
+            )
+        ),
+        forced=forced,
+    )
+
+
+def test_a_keyed_household_reports_rerun_joins_its_run_on_the_versions(
+    public_api_database_url,
+) -> None:
+    """Answers 3 and 8: a re-run joins the run under way, creating nothing."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        stored = _stored_inputs(connection)
+        act_as_the_service(connection)
+        found = find_or_create_household_report(
+            connection, _keyed_report(stored, reform=stored.reform)
+        )
+        counts = [
+            _count(connection, name) for name in ("simulation_runs", "report_runs")
+        ]
+
+        joined = insert_household_report_rerun(connection, _rerun_of(found, stored))
+        counts_after = [
+            _count(connection, name) for name in ("simulation_runs", "report_runs")
+        ]
+
+    assert joined == found.run
+    assert counts_after == counts
+
+
+def test_a_keyed_household_rerun_after_a_failed_run_names_its_simulations_runs(
+    public_api_database_url,
+) -> None:
+    """Each side joins its simulation's run on the versions, as a create's does."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        stored = _stored_inputs(connection)
+        act_as_the_service(connection)
+        found = find_or_create_household_report(
+            connection, _keyed_report(stored, reform=stored.reform)
+        )
+        _fail_report_run(connection, found.run.id)
+        rerun = _rerun_of(found, stored)
+
+        created = insert_household_report_rerun(connection, rerun)
+        report_run = _row(connection, "report_runs", created.id)
+
+    assert found.reform is not None
+    assert (created.id, created.inserted) == (rerun.run_id, True)
+    assert (
+        created.baseline_simulation_run_id,
+        created.reform_simulation_run_id,
+    ) == (found.baseline.simulation_run_id, found.reform.simulation_run_id)
+    assert (report_run["trigger"], report_run["forced"]) == (
+        ReportRunTrigger.MANUAL,
+        False,
+    )
+
+
+def test_a_forced_keyed_household_rerun_is_an_extra_run_beside_the_one_under_way(
+    public_api_database_url,
+) -> None:
+    """Answer 3: never joined, never refused, on new runs of both sides."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        stored = _stored_inputs(connection)
+        act_as_the_service(connection)
+        found = find_or_create_household_report(
+            connection, _keyed_report(stored, reform=stored.reform)
+        )
+        rerun = _rerun_of(found, stored, forced=True)
+
+        created = insert_household_report_rerun(connection, rerun)
+        report_run = _row(connection, "report_runs", created.id)
+        side_runs = [
+            _row(connection, "simulation_runs", run_id)
+            for run_id in rerun.simulation_run_ids
+        ]
+
+    assert (created.id, created.inserted) == (rerun.run_id, True)
+    assert report_run["forced"] is True
+    assert [side_run["forced"] for side_run in side_runs] == [True, True]
