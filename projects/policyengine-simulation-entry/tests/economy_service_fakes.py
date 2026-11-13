@@ -79,7 +79,6 @@ REPORT_BODY: dict[str, Any] = {
     "description": "Raises the credit to $3,000",
     "year": 2026,
     "region_code": "us",
-    "dataset_name": None,
     "baseline": {"policy_id": None, "dynamic_id": None},
     "reform": {"policy_id": str(POLICY_ID), "dynamic_id": str(DYNAMIC_ID)},
     "include_cliffs": True,
@@ -90,7 +89,6 @@ SIMULATION_BODY: dict[str, Any] = {
     "simulation_type": "economy",
     "year": 2026,
     "region_code": "us",
-    "dataset_name": None,
     "policy_id": str(POLICY_ID),
     "dynamic_id": None,
 }

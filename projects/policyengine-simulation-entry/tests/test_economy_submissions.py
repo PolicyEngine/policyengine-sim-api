@@ -36,6 +36,7 @@ from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionRefusedError,
     EconomySubmissionUnavailableError,
     EconomySubmissionUnprocessableError,
+    read_refusal,
 )
 from policyengine_simulation_entry.economy_workers import (
     EconomyWorkerUnavailableError,
@@ -48,6 +49,7 @@ from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
     EconomyReportState,
+    EconomyRequest,
     EconomySimulationState,
     MissingPolicyParametersError,
     OverlappingReformError,
@@ -262,24 +264,20 @@ def test_a_parameter_the_policy_and_dynamic_both_set_cannot_be_calculated() -> N
     ]
 
 
-@pytest.mark.parametrize(
-    ("dataset_name", "code"),
-    [(None, "dataset_not_in_bundle"), ("enhanced_cps_2024", "unknown_dataset")],
-)
-def test_a_catalog_dataset_the_bundle_lacks_is_refused(dataset_name, code) -> None:
+def test_a_region_dataset_the_bundle_lacks_is_the_services_state() -> None:
     catalog = replace(
         CATALOG, dataset=CatalogDataset(id=CATALOG.dataset.id, name="enhanced_cps_2024")
     )
     store = FakeStore(catalog=catalog)
 
     with pytest.raises(EconomySubmissionRefusedError) as refusal:
-        _submit_report(service(store), report_request(dataset_name=dataset_name))
+        _submit_report(service(store), report_request())
 
-    assert refusal.value.code == code
+    assert refusal.value.code == "dataset_not_in_bundle"
     assert store.reports == []
 
 
-def test_a_named_dataset_in_the_bundle_is_the_one_calculated() -> None:
+def test_the_catalog_dataset_in_the_bundle_is_the_one_calculated() -> None:
     catalog = replace(
         CATALOG,
         dataset=CatalogDataset(id=CATALOG.dataset.id, name=STATE_DATASET.identity),
@@ -287,10 +285,7 @@ def test_a_named_dataset_in_the_bundle_is_the_one_calculated() -> None:
     store = FakeStore(catalog=catalog)
     caller = FakeCaller()
 
-    _submit_report(
-        service(store, caller=caller),
-        report_request(dataset_name=STATE_DATASET.identity),
-    )
+    _submit_report(service(store, caller=caller), report_request())
 
     payload = ReportExecutionInput.model_validate(caller.report_runs[0][1])
     assert payload.baseline.bundle.dataset.identity == STATE_DATASET.identity
@@ -587,13 +582,6 @@ ERROR_TEXT = "internal text that must not be passed on"
         ),
         (
             UnknownDatasetError(ERROR_TEXT),
-            {"dataset_name": "acs_2099"},
-            "unknown_dataset",
-            f"us's catalog version for .py {POLICYENGINE_VERSION} has no dataset "
-            "acs_2099.",
-        ),
-        (
-            UnknownDatasetError(ERROR_TEXT),
             {},
             "unknown_dataset",
             f"us's catalog version for .py {POLICYENGINE_VERSION} has no default "
@@ -623,6 +611,25 @@ def test_a_refusals_detail_is_built_from_the_request_not_the_error(
 
     assert (refusal.value.code, refusal.value.detail) == (code, detail)
     assert ERROR_TEXT not in refusal.value.detail
+
+
+def test_a_stored_dataset_the_catalog_lacks_is_named_in_the_refusal() -> None:
+    """A request names no dataset, but a re-run reads its stored report's by name."""
+    stored = EconomyRequest(
+        country="us",
+        policyengine_version=POLICYENGINE_VERSION,
+        region_code="us",
+        dataset_name="acs_2099",
+        year=2026,
+    )
+
+    refusal = read_refusal(UnknownDatasetError(ERROR_TEXT), stored)
+
+    assert isinstance(refusal, EconomySubmissionRefusedError)
+    assert (refusal.code, refusal.detail) == (
+        "unknown_dataset",
+        f"us's catalog version for .py {POLICYENGINE_VERSION} has no dataset acs_2099.",
+    )
 
 
 def test_a_standalone_simulations_unknown_rows_name_its_own_fields() -> None:

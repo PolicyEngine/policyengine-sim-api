@@ -39,7 +39,6 @@ REPORT_BODY = {
     "description": None,
     "year": 2026,
     "region_code": "us",
-    "dataset_name": None,
     "baseline": {"policy_id": None, "dynamic_id": None},
     "reform": {"policy_id": POLICY_ID, "dynamic_id": None},
     "include_cliffs": False,
@@ -49,7 +48,6 @@ SIMULATION_BODY = {
     "simulation_type": "economy",
     "year": 2026,
     "region_code": "country/wales",
-    "dataset_name": None,
     "policy_id": None,
     "dynamic_id": None,
 }

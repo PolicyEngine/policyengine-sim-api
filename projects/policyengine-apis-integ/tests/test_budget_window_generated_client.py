@@ -26,7 +26,6 @@ WINDOW_BODY = {
     "year": 2026,
     "budget_window_size": 2,
     "region_code": "us",
-    "dataset_name": None,
     "baseline": {"policy_id": None, "dynamic_id": None},
     "reform": {"policy_id": POLICY_ID, "dynamic_id": None},
 }

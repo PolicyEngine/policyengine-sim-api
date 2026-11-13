@@ -42,6 +42,7 @@ from policyengine_simulation_persistence import (
     ReportRunStatus,
     SimulationStatus,
 )
+from test_budget_window_requests import WINDOW_BODY
 
 OBSERVABILITY_ID = "6e1f3d4c-0a5b-4c39-9d2e-7f8a9b0c1d2e"
 RECORD_ID = UUID("00000000-0000-4000-8000-0000000000e1")
@@ -216,6 +217,31 @@ def test_a_malformed_request_is_refused_with_its_reasons(client_for, path, body)
 
     assert result.status_code == 422
     assert all({"loc", "msg"} <= set(reason) for reason in result.json()["detail"])
+    assert (submissions.reports, submissions.simulations) == ([], [])
+
+
+@pytest.mark.parametrize("dataset_name", ["enhanced_cps_2024", None])
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("/reports", REPORT_BODY),
+        ("/simulations", SIMULATION_BODY),
+        ("/reports", WINDOW_BODY),
+    ],
+    ids=["report", "simulation", "budget window"],
+)
+def test_a_request_naming_a_dataset_is_refused(
+    client_for, path, body, dataset_name
+) -> None:
+    """No request chooses a dataset: each runs on its region's (or data_source's)."""
+    submissions = FakeEconomySubmissions()
+
+    with client_for(submissions) as client:
+        result = client.post(path, json={**body, "dataset_name": dataset_name})
+
+    assert result.status_code == 422
+    (reason,) = result.json()["detail"]
+    assert (reason["loc"][-1], reason["type"]) == ("dataset_name", "extra_forbidden")
     assert (submissions.reports, submissions.simulations) == ([], [])
 
 
