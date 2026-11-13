@@ -692,6 +692,24 @@ not read while `active-with-cache` exists; a rollback that far needs the newer
 keys deleted from the Modal Dict first. Removing the older copies needs a later
 change, once no deployed or rollback revision reads them.
 
+Each worker's `local_area_reports`, the version of the UK local-area report
+runs its coordinator runs (`LOCAL_AREA_REPORTS_VERSION`), is written only under
+the `active-schema-2-with-local-area-reports` key, which current readers read
+first; `active-schema-2` holds the same manifest without it, for readers
+released before it. A worker that runs none leaves the field out, so its
+document and digest are as before. The publisher sets it on every worker it
+publishes. Readers use the new key's document only while, without the field,
+it equals the `active-schema-2` document and that document is current; code
+released before the field republishes only the older keys, so after a rollback
+the out-of-date copy stops matching and is no longer read. The same window as
+for region datasets applies: a rollback deploys the older coordinator before
+its publish job runs, so until then updated entry services may start a
+local-area report run, which the older coordinator refuses (its input names an
+unknown `breakdown`), failing only that run with its error recorded. To avoid
+it, delete the `active-schema-2-with-local-area-reports` key from the
+`simulation-api-v2-version-manifest` Modal Dict before deploying the older
+code.
+
 A rollback to code released before region datasets has one window: the older
 worker is deployed before its publish job runs, and until that publish the
 region dataset copy still matches, so updated entry services keep sending

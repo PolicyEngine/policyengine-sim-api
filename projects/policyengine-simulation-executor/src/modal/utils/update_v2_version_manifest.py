@@ -20,7 +20,7 @@ from policyengine_simulation_contract.household_execution import (
     household_callable_name,
 )
 from policyengine_simulation_contract.stage12_manifest import (
-    SCHEMA_2_MANIFEST_KEY,
+    LOCAL_AREA_REPORTS_VERSION,
     V1_ROUTING_STATE_NAME,
     V2_MANIFEST_KEYS,
     V2_VERSION_MANIFEST_NAME,
@@ -75,6 +75,8 @@ def build_worker(validation_payload: object) -> V2WorkerVersion:
         bundle_manifest_sha256=resolved.bundle_manifest_sha256,
         validation=validation,
         cache=validation.cache,
+        # This code's coordinator runs local-area report runs.
+        local_area_reports=LOCAL_AREA_REPORTS_VERSION,
     )
     validate_manifest_has_no_credentials(worker.model_dump(mode="json"))
     return worker
@@ -188,14 +190,14 @@ def _key_holds(store: V2ManifestStore, key: str, copies: tuple[object, ...]) -> 
     """Return whether ``key`` holds one of ``copies``, or is an older key that expired.
 
     Modal expires a Dict entry after 7 days without a read or write, and
-    current readers read the schema version 1 keys only when the schema
-    version 2 key is missing or out of date, so they can expire between
-    deployments. A write never deletes a key, so a missing older key is never
-    one a part-way write left behind, and the next write restores it. The
-    schema version 2 key, which current readers read first, is required.
+    current readers read the older keys only when the newest key is missing
+    or out of date, so they can expire between deployments. A write never
+    deletes a key, so a missing older key is never one a part-way write left
+    behind, and the next write restores it. The newest key, which current
+    readers read first, is required.
     """
     value = store.get(key)
-    if value is None and key != SCHEMA_2_MANIFEST_KEY:
+    if value is None and key != V2_MANIFEST_KEYS[0]:
         return True
     return value in copies
 

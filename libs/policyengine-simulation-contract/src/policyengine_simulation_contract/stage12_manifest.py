@@ -5,7 +5,9 @@ whether it can run economy reports and which function calculates its
 households. It is stored under its own key. Whenever schema version 1 can
 describe the same manifest, it is also written in that form, without those
 fields, under the keys that readers released before schema version 2 read:
-with region datasets, without them, and without them or cache releases.
+with region datasets, without them, and without them or cache releases. Each
+worker's ``local_area_reports`` is written only under its own key, which
+readers released with it read first.
 """
 
 from __future__ import annotations
@@ -32,8 +34,11 @@ if TYPE_CHECKING:
 
 V1_ROUTING_STATE_NAME = "simulation-api-routing-state"
 V2_VERSION_MANIFEST_NAME = "simulation-api-v2-version-manifest"
-# The schema version 2 manifest. Readers released with schema version 2 read
-# this key first.
+# The schema version 2 manifest with each worker's ``local_area_reports``.
+# Readers released with it read this key first.
+LOCAL_AREA_REPORTS_MANIFEST_KEY = "active-schema-2-with-local-area-reports"
+# The schema version 2 manifest without ``local_area_reports``, which readers
+# released before it forbid. They read this key first.
 SCHEMA_2_MANIFEST_KEY = "active-schema-2"
 # Readers released before schema version 2 forbid unknown fields, so they read
 # the keys below, which hold the same manifest in schema version 1 form. This
@@ -50,6 +55,7 @@ PRE_CACHE_MANIFEST_KEY = "active"
 # A write leaves the schema version 1 keys alone when schema version 1 can't
 # describe the manifest.
 V2_MANIFEST_KEYS = (
+    LOCAL_AREA_REPORTS_MANIFEST_KEY,
     SCHEMA_2_MANIFEST_KEY,
     REGION_DATASETS_MANIFEST_KEY,
     ACTIVE_MANIFEST_KEY,
@@ -59,6 +65,10 @@ V2_APPLICATION_PREFIX = "policyengine-simulation-v2-py"
 V1_APPLICATION_PREFIX = "policyengine-simulation-py"
 _MAX_MODAL_APPLICATION_NAME_LENGTH = 64
 _CALLABLE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
+# The UK local-area report run input a coordinator runs: ``breakdown:
+# "local_areas"`` with the geographic aggregate alone. A later change to that
+# input raises it.
+LOCAL_AREA_REPORTS_VERSION = 1
 
 ManifestText = Annotated[str, Field(min_length=1, max_length=255)]
 CallableName = Annotated[str, Field(pattern=_CALLABLE_PATTERN.pattern)]
@@ -170,6 +180,12 @@ class V2WorkerVersion(StrictManifestModel):
     bundle_manifest_sha256: Sha256Digest
     validation: V2WorkerValidation
     cache: Stage12CacheRelease | None = None
+    # The LOCAL_AREA_REPORTS_VERSION of the local-area report runs the
+    # coordinator runs; None for one that runs none. Left out of the JSON
+    # when None, so a worker without it is written, and digested, as before.
+    local_area_reports: Annotated[int, Field(ge=1)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_worker(self) -> V2WorkerVersion:
@@ -355,6 +371,7 @@ def schema_1_manifest_payload(
     worker_exclude: dict[str, IncEx | bool] = {
         "countries": {"__all__": {"economy_capable", "household_callable"}},
         "validation": validation_exclude,
+        "local_area_reports": True,
     }
     if not include_region_datasets:
         worker_exclude["bundle"] = {"countries": {"__all__": {"region_datasets"}}}
@@ -367,6 +384,13 @@ def schema_1_manifest_payload(
     )
     payload["schema_version"] = 1
     return payload
+
+
+def schema_2_manifest_payload(manifest: V2VersionManifest) -> dict[str, object]:
+    """Return the manifest as readers released before local-area reports accept it."""
+    return manifest.model_dump(
+        mode="json", exclude={"versions": {"__all__": {"local_area_reports"}}}
+    )
 
 
 def pre_region_datasets_manifest_payload(
@@ -501,7 +525,31 @@ def _is_current_schema_2_document(store: V2ManifestStore, document: object) -> b
     return _newest_validation(older_manifest) <= _newest_validation(manifest)
 
 
+def _is_current_local_area_copy(store: V2ManifestStore, document: object) -> bool:
+    """Return whether ``document``, under the local-area report key, is the latest.
+
+    Code released before ``local_area_reports`` publishes only the older keys,
+    for example after a rollback, which leaves an out-of-date copy behind. A
+    current copy, without the field, is exactly the manifest under
+    ``active-schema-2``, which is itself current. An unreadable document
+    counts as current, so readers and publishers report it.
+    """
+    try:
+        manifest = parse_v2_manifest(document)
+    except (TypeError, ValueError):
+        return True
+    without_field = schema_2_manifest_payload(manifest)
+    if store.get(SCHEMA_2_MANIFEST_KEY) not in (None, without_field):
+        return False
+    return _is_current_schema_2_document(store, without_field)
+
+
 def _current_manifest(store: V2ManifestStore) -> object:
+    local_area_document = store.get(LOCAL_AREA_REPORTS_MANIFEST_KEY)
+    if local_area_document is not None and _is_current_local_area_copy(
+        store, local_area_document
+    ):
+        return local_area_document
     # Until the first schema version 2 publish, only the older keys exist.
     schema_2_document = store.get(SCHEMA_2_MANIFEST_KEY)
     if schema_2_document is not None and _is_current_schema_2_document(
@@ -618,7 +666,8 @@ def v2_manifest_copies(manifest: V2VersionManifest) -> dict[str, object]:
     keep the last manifest written there.
     """
     copies: dict[str, object] = {
-        SCHEMA_2_MANIFEST_KEY: manifest.model_dump(mode="json")
+        LOCAL_AREA_REPORTS_MANIFEST_KEY: manifest.model_dump(mode="json"),
+        SCHEMA_2_MANIFEST_KEY: schema_2_manifest_payload(manifest),
     }
     schema_1_copies = _schema_1_copies(manifest)
     if schema_1_copies is not None:
