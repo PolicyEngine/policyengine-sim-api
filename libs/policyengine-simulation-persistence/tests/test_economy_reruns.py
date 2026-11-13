@@ -43,6 +43,7 @@ from policyengine_simulation_persistence import (
     EconomyRecordReferenceError,
     EconomyRequest,
     EconomyRunStore,
+    FoundReportRun,
     MissingPolicyParametersError,
     NewReportRerun,
     NewSimulationRerun,
@@ -53,7 +54,6 @@ from policyengine_simulation_persistence import (
     RerunRecordDeletedError,
     RerunSide,
     ReusableRun,
-    RunInProgressError,
     RunReuse,
     SideDefinition,
     SimulationChoice,
@@ -79,7 +79,7 @@ from public_api_rows import (
     insert_policy,
     insert_region,
 )
-from sqlalchemy import insert, text
+from sqlalchemy import bindparam, insert, text
 from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
@@ -447,26 +447,65 @@ def test_a_report_rerun_creates_runs_of_the_reports_own_simulations(
     assert baseline_runs == 2
 
 
-@pytest.mark.parametrize("status", [ReportRunStatus.PENDING, ReportRunStatus.RUNNING])
-def test_a_report_rerun_is_refused_while_a_run_is_pending_or_running(
+def _unforced_rerun_on_unchanged_versions(
+    stored: StoredReport, economy: EconomyCatalog
+) -> NewReportRerun:
+    """Return a re-run of ``stored`` on the versions it already ran on."""
+    return replace(_forced_rerun_of(stored, economy), run_id=uuid4(), forced=False)
+
+
+@pytest.mark.parametrize(
+    "status",
+    [ReportRunStatus.PENDING, ReportRunStatus.RUNNING, ReportRunStatus.SUCCEEDED],
+)
+def test_a_report_rerun_joins_the_reports_run_on_its_versions(
     public_api_database_url, status: ReportRunStatus
 ) -> None:
+    """Answer 3: a re-run joins a run under way, so #1059's 409 goes."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        stored = _stored_report(connection, economy, run_status=status)
+        rerun = _unforced_rerun_on_unchanged_versions(stored, economy)
+        act_as_the_service(connection)
+
+        joined = insert_report_rerun(connection, rerun)
+        created = connection.execute(
+            text(
+                "SELECT count(*) FROM public.simulation_runs WHERE id IN :ids"
+            ).bindparams(bindparam("ids", expanding=True)),
+            {"ids": [rerun.run_id, *rerun.new_simulation_run_ids]},
+        ).scalar_one()
+
+    assert joined == FoundReportRun(
+        id=stored.report_run_id,
+        inserted=False,
+        status=status,
+        baseline_simulation_run_id=stored.baseline.simulation_run_id,
+        reform_simulation_run_id=stored.reform.simulation_run_id,
+    )
+    assert created == 0
+
+
+def test_a_report_rerun_beside_a_run_under_way_on_older_versions_creates_its_own(
+    public_api_database_url,
+) -> None:
+    """A run on other versions is no run to join; the re-run is for the current ones."""
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         later = insert_later_catalog(connection, economy)
-        stored = _stored_report(connection, economy, run_status=status)
+        stored = _stored_report(connection, economy, run_status=ReportRunStatus.RUNNING)
         rerun = _rerun_of(stored, later)
         act_as_the_service(connection)
 
-        with pytest.raises(RunInProgressError) as refused:
-            insert_report_rerun(connection, rerun)
-        created = connection.execute(
-            text("SELECT count(*) FROM public.report_runs WHERE id = :id"),
-            {"id": rerun.run_id},
-        ).scalar_one()
+        created = insert_report_rerun(connection, rerun)
+        report_run = _row(connection, "report_runs", rerun.run_id)
 
-    assert refused.value.run_id == stored.report_run_id
-    assert created == 0
+    assert (created.id, created.inserted, created.status) == (
+        rerun.run_id,
+        True,
+        ReportRunStatus.PENDING,
+    )
+    assert report_run["policyengine_version"] == LATER_POLICYENGINE_VERSION
 
 
 def test_a_report_whose_runs_have_ended_is_rerun_again(public_api_database_url) -> None:
@@ -752,8 +791,9 @@ def test_a_rerun_and_its_runs_are_created_through_the_store(
         store.create_simulation_rerun(simulation_rerun)
         definition = store.read_report_definition(stored.report_id)
         simulation = store.read_simulation_definition(simulation_rerun.simulation_id)
-        with pytest.raises(RunInProgressError):
-            store.create_report_rerun(_rerun_of(stored, later))
+        # A second re-run joins the first's run, which is still pending.
+        joined = store.create_report_rerun(_rerun_of(stored, later))
+        assert (joined.id, joined.inserted) == (rerun.run_id, False)
 
         assert _row(connection, "report_runs", rerun.run_id)["trigger"] == (
             ReportRunTrigger.MANUAL
