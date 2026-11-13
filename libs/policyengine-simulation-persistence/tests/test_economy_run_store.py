@@ -50,6 +50,7 @@ from policyengine_simulation_persistence import (
     UnknownDynamicError,
     UnknownPolicyError,
     UnknownRegionError,
+    economy_inputs,
     economy_run_store,
 )
 from public_api_rows import StoredValue, insert_dataset, insert_dynamic, insert_policy
@@ -521,7 +522,8 @@ def test_every_side_refusal_is_raised_with_its_side(monkeypatch) -> None:
         region=CatalogRegion(id=uuid4(), code="us", default_dataset_id=uuid4()),
         dataset=CatalogDataset(id=uuid4(), name="populace_us_2024"),
     )
-    monkeypatch.setattr(economy_run_store, "_catalog_rows", lambda *_: catalog)
+    # Each patch replaces the name where its caller looks it up.
+    monkeypatch.setattr(economy_run_store, "read_catalog_rows", lambda *_: catalog)
     refusals = {
         UnknownPolicyError: UnknownPolicyError("no policy"),
         UnknownDynamicError: UnknownDynamicError("no dynamic"),
@@ -540,7 +542,7 @@ def test_every_side_refusal_is_raised_with_its_side(monkeypatch) -> None:
         def refuse(*_, refusal=refusal):
             raise refusal
 
-        monkeypatch.setattr(economy_run_store, "_simulation_inputs", refuse)
+        monkeypatch.setattr(economy_inputs, "read_simulation_values", refuse)
         with pytest.raises(ReportSideError) as raised:
             store.read_report_inputs(
                 REQUEST, baseline=CURRENT_LAW, reform=CURRENT_LAW, reuse=None
