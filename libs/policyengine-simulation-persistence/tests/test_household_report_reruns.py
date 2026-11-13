@@ -155,6 +155,21 @@ def _stored_report(
     return report
 
 
+def _succeed_first_runs(connection: Connection, report: NewHouseholdReport) -> None:
+    """Mark the report's first run and its side runs succeeded, as the superuser."""
+    for table_name, run_ids in (
+        ("report_runs", [report.run_id]),
+        ("simulation_runs", list(report.simulation_run_ids)),
+    ):
+        connection.execute(
+            text(
+                f"UPDATE public.{table_name} SET status = 'succeeded', "  # noqa: S608  # fixed table names
+                "completed_at = now() WHERE id = ANY(:run_ids)"
+            ),
+            {"run_ids": run_ids},
+        )
+
+
 def _rerun_of(
     report: NewHouseholdReport, catalog: CatalogVersion
 ) -> NewHouseholdReportRerun:
@@ -290,6 +305,35 @@ def test_a_household_reports_rerun_is_a_manual_run_of_its_own_simulations(
         simulation["tax_benefit_model_version_id"] for simulation in stored_simulations
     ] == [catalog.version_id, catalog.version_id]
     assert first_run["status"] == ReportRunStatus.FAILED
+
+
+def test_a_rerun_on_the_versions_of_a_succeeded_run_is_a_forced_extra_run(
+    public_api_database_url,
+) -> None:
+    """Interim answer B: a household report has no keys yet, so nothing joins.
+
+    Its runs are marked forced, so the one-unfailed-run indexes leave them
+    out beside the succeeded runs on the same versions.
+    """
+    with rolled_back_transaction(public_api_database_url) as connection:
+        catalog, _ = _catalogs(connection)
+        report = _stored_report(connection, catalog, first_run_ended=False)
+        _succeed_first_runs(connection, report)
+        act_as_the_service(connection)
+        rerun = replace(_rerun_of(report, catalog), versions=VERSIONS)
+
+        _store_on(connection).create_report_rerun(rerun)
+        report_run = _row(connection, "report_runs", rerun.run_id)
+        side_runs = [
+            _row(connection, "simulation_runs", run_id)
+            for run_id in rerun.simulation_run_ids
+        ]
+        first_run = _row(connection, "report_runs", report.run_id)
+
+    assert report_run["forced"] is True
+    assert [side_run["forced"] for side_run in side_runs] == [True, True]
+    assert first_run["forced"] is False
+    assert first_run["status"] == ReportRunStatus.SUCCEEDED
 
 
 def test_a_rerun_of_a_report_of_the_baseline_alone_names_no_reform_run(

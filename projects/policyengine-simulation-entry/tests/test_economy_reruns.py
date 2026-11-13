@@ -23,7 +23,6 @@ from economy_rerun_fakes import (
 )
 from economy_service_fakes import (
     CATALOG,
-    OUTPUT_BUCKET,
     REFORM,
     FakeCaller,
 )
@@ -57,7 +56,6 @@ from policyengine_simulation_persistence import (
     RerunSide,
     ReusableRun,
     RunInProgressError,
-    RunReuse,
     RunVersions,
     SharedRowNotSettledError,
     SimulationStatus,
@@ -100,7 +98,10 @@ def _rerun_simulation(service, simulation_id: UUID = SIMULATION_ID):
     )
 
 
-def test_a_report_is_rerun_on_the_default_workers_versions_as_a_new_run() -> None:
+def test_a_report_with_no_keys_is_rerun_as_forced_runs_on_the_current_versions() -> (
+    None
+):
+    """Interim answer B: its simulations' runs may have report-dependent plans."""
     store = FakeRerunStore(reusable=(REUSED_BASELINE, None))
     caller = FakeCaller()
 
@@ -114,11 +115,8 @@ def test_a_report_is_rerun_on_the_default_workers_versions_as_a_new_run() -> Non
     )
     assert (request.region_code, request.dataset_name) == ("us", "populace_us_2024")
     assert (baseline, reform) == (STORED_REPORT.baseline, STORED_REPORT.reform)
-    assert reuse == RunReuse(
-        versions=VERSIONS,
-        inputs=STORED_OPTIONS,
-        output_uri_prefix=f"gs://{OUTPUT_BUCKET}/",
-    )
+    assert reuse is None
+    # Extra runs, marked forced, which nothing joins and no index refuses.
     assert store.report_reruns == [
         NewReportRerun(
             report_id=REPORT_ID,
@@ -127,30 +125,31 @@ def test_a_report_is_rerun_on_the_default_workers_versions_as_a_new_run() -> Non
             versions=VERSIONS,
             baseline=RerunSide(
                 simulation_id=BASELINE_SIMULATION_ID,
-                simulation_run_id=REUSED_BASELINE.simulation_run_id,
-                reused=True,
-            ),
-            reform=RerunSide(
-                simulation_id=REFORM_SIMULATION_ID,
                 simulation_run_id=UUID(int=2),
                 reused=False,
             ),
+            reform=RerunSide(
+                simulation_id=REFORM_SIMULATION_ID,
+                simulation_run_id=UUID(int=3),
+                reused=False,
+            ),
+            forced=True,
         )
     ]
     ((_, payload, context, observed),) = caller.report_runs
     assert observed == OBSERVED
     report = ReportExecutionInput.model_validate(payload)
     assert report.evaluation_id == UUID(int=1)
-    assert report.baseline.simulation_execution_id == REUSED_BASELINE.simulation_run_id
+    assert report.baseline.simulation_execution_id == UUID(int=2)
     assert (report.reform.simulation_execution_id, report.reform.policy) == (
-        UUID(int=2),
+        UUID(int=3),
         REFORM,
     )
     assert report.reform.options == STORED_OPTIONS
     assert Stage12InvocationContext.model_validate(context).report_run == ReportRunIds(
         report_run_id=UUID(int=1),
-        baseline_simulation_run_id=REUSED_BASELINE.simulation_run_id,
-        reform_simulation_run_id=UUID(int=2),
+        baseline_simulation_run_id=UUID(int=2),
+        reform_simulation_run_id=UUID(int=3),
     )
     assert store.recorded_calls == [(UUID(int=1), "fc-coordinator")]
     assert rerun.model_dump() == {
@@ -158,10 +157,10 @@ def test_a_report_is_rerun_on_the_default_workers_versions_as_a_new_run() -> Non
         "report_run_id": UUID(int=1),
         "status": ReportRunStatus.PENDING,
         "baseline_simulation_id": BASELINE_SIMULATION_ID,
-        "baseline_simulation_run_id": REUSED_BASELINE.simulation_run_id,
-        "baseline_reused": True,
+        "baseline_simulation_run_id": UUID(int=2),
+        "baseline_reused": False,
         "reform_simulation_id": REFORM_SIMULATION_ID,
-        "reform_simulation_run_id": UUID(int=2),
+        "reform_simulation_run_id": UUID(int=3),
         "reform_reused": False,
     }
 
@@ -265,6 +264,32 @@ def test_a_keyed_rerun_with_one_simulation_on_both_sides_reuses_neither() -> Non
     assert (rerun.baseline_reused, rerun.reform_reused) == (False, False)
 
 
+def test_a_keyed_reports_forced_rerun_joins_nothing() -> None:
+    """Answer 3: a forced run is an extra run, on new runs of both sides."""
+    store = FakeRerunStore(
+        report_definition=replace(STORED_REPORT, keyed=True),
+        joined_report_run=FoundReportRun(
+            id=UUID(int=90),
+            inserted=False,
+            status=ReportRunStatus.SUCCEEDED,
+            baseline_simulation_run_id=UUID(int=91),
+            reform_simulation_run_id=UUID(int=92),
+        ),
+    )
+    caller = FakeCaller()
+
+    rerun = _rerun_report(
+        rerun_service(store, caller=caller), ReportRerunRequest(force=True)
+    )
+
+    (created,) = store.report_reruns
+    assert (created.forced, created.sides_join_runs) == (True, False)
+    assert created.new_simulation_run_ids == (UUID(int=2), UUID(int=3))
+    assert rerun.report_run_id == UUID(int=1)
+    assert (rerun.baseline_reused, rerun.reform_reused) == (False, False)
+    assert len(caller.report_runs) == 1
+
+
 def test_a_keyed_reports_refused_rerun_fails_only_the_report_run() -> None:
     """Its simulation runs may already be another report run's."""
     store = FakeRerunStore(report_definition=replace(STORED_REPORT, keyed=True))
@@ -277,14 +302,6 @@ def test_a_keyed_reports_refused_rerun_fails_only_the_report_run() -> None:
     ((run_id, simulation_run_ids, _message),) = store.failed_runs
     assert run_id == store.report_reruns[0].run_id
     assert simulation_run_ids == ()
-
-
-def test_without_the_output_bucket_a_rerun_looks_for_no_run_to_reuse() -> None:
-    store = FakeRerunStore(reusable=(REUSED_BASELINE, None))
-
-    _rerun_report(rerun_service(store, output_bucket=None))
-
-    assert store.rerun_reads[0][1][2] is None
 
 
 def test_an_unknown_report_or_simulation_is_not_found() -> None:
@@ -366,7 +383,7 @@ def test_a_rerun_modal_refuses_fails_only_its_new_runs_and_names_them() -> None:
     )
     assert "the report's new run" in error.detail
     ((run_id, simulation_run_ids, message),) = store.failed_runs
-    assert (run_id, simulation_run_ids) == (UUID(int=1), (UUID(int=2),))
+    assert (run_id, simulation_run_ids) == (UUID(int=1), (UUID(int=2), UUID(int=3)))
     assert message.startswith("modal_call_refused: Modal did not accept the report")
 
 
@@ -398,6 +415,41 @@ def test_a_stored_policy_the_current_catalog_cannot_set_is_located_on_its_side()
     assert reason.loc == ("report", "reform", "policy_id", "gov.old.parameter")
     assert POLICYENGINE_VERSION in reason.msg
     assert store.report_reruns == []
+
+
+@pytest.mark.parametrize("stored", [STORED_REPORT, STORED_WINDOW])
+def test_a_stored_report_asking_for_cliffs_is_not_rerun_until_cliffs_exist(
+    stored,
+) -> None:
+    """Interim answer A: created before C1 · 27 with ``include_cliffs: true``."""
+    store = FakeRerunStore(
+        report_definition=replace(
+            stored, inputs={**STORED_OPTIONS, "include_cliffs": True}
+        )
+    )
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionUnprocessableError) as refused:
+        _rerun_report(rerun_service(store, caller=caller))
+
+    assert refused.value.code == "cliffs_not_available"
+    ((reason,),) = (refused.value.reasons,)
+    assert reason.loc == ("report", "inputs", "include_cliffs")
+    assert "cliff impacts" in reason.msg
+    assert (store.rerun_reads, store.report_reruns, store.windows) == ([], [], [])
+    assert caller.report_runs == []
+
+
+def test_a_stored_report_whose_cliffs_were_not_asked_for_is_rerun() -> None:
+    store = FakeRerunStore(
+        report_definition=replace(
+            STORED_REPORT, inputs={**STORED_OPTIONS, "include_cliffs": False}
+        )
+    )
+
+    _rerun_report(rerun_service(store))
+
+    assert len(store.report_reruns) == 1
 
 
 def test_a_stored_region_the_current_catalog_lacks_is_refused_naming_the_report() -> (
@@ -620,6 +672,7 @@ def test_a_row_deleted_after_a_reruns_reads_is_refused_naming_the_report(
 
 
 def test_a_budget_window_is_rerun_as_a_new_window_run_and_its_first_years_started():
+    """Interim answer B: a window has no keys yet, so every year is recalculated."""
     store = FakeRerunStore(
         report_definition=STORED_WINDOW, reusable_by_year={2027: (REUSED_2027, None)}
     )
@@ -636,16 +689,12 @@ def test_a_budget_window_is_rerun_as_a_new_window_run_and_its_first_years_starte
         STORED_WINDOW.reform.choice,
         STORED_WINDOW.window_years,
     )
-    assert reuse == RunReuse(
-        versions=VERSIONS,
-        inputs=STORED_OPTIONS,
-        output_uri_prefix=f"gs://{OUTPUT_BUCKET}/",
-    )
+    assert reuse is None
     (window,) = store.windows
     assert (window.report_id, window.window_run_id, window.recalculate) == (
         REPORT_ID,
         UUID(int=1),
-        False,
+        True,
     )
     assert (window.population, window.versions) == (CATALOG.population(2026), VERSIONS)
     assert [window_year.year for window_year in window.years] == [2026, 2027, 2028]
@@ -653,11 +702,7 @@ def test_a_budget_window_is_rerun_as_a_new_window_run_and_its_first_years_starte
         baseline_id, reform_id = WINDOW_SIMULATION_IDS[window_year.year]
         assert window_year.baseline.simulation_id == baseline_id
         assert window_year.reform.simulation_id == reform_id
-    year_2027 = window.years[1]
-    assert (year_2027.baseline.simulation_run_id, year_2027.baseline.reused) == (
-        REUSED_2027.simulation_run_id,
-        True,
-    )
+    assert not any(window_year.baseline.reused for window_year in window.years)
     assert advancer.advances == [window.window_run_id]
     assert len(caller.report_runs) == 3
     for (year_to_start, _), (_, payload, context, observed) in zip(

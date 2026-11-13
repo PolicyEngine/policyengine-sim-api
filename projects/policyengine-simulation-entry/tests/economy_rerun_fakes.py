@@ -60,8 +60,10 @@ SIMULATION_ID = UUID("00000000-0000-4000-8000-0000000000a4")
 RUN_UNDER_WAY_ID = UUID("00000000-0000-4000-8000-0000000000a5")
 CURRENT_LAW = SimulationChoice(policy_id=None, dynamic_id=None)
 REFORM_CHOICE = SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID)
+# A report stored before C1 · 27 kept the request's options; one asking for
+# cliffs is refused until cliffs are calculated per run (interim answer A).
 STORED_OPTIONS: dict[str, Any] = {
-    "include_cliffs": True,
+    "include_cliffs": False,
     "spm": {"geography_kind": "national"},
 }
 STORED_REPORT = ReportDefinition(
@@ -232,7 +234,8 @@ class FakeRerunStore(FakeWindowStore):
         if self.rerun_failure is not None:
             raise self.rerun_failure
         self.report_reruns.append(rerun)
-        if self.joined_report_run is not None:
+        # As the store does, a forced re-run joins nothing.
+        if self.joined_report_run is not None and not rerun.forced:
             return self.joined_report_run
         return FoundReportRun(
             id=rerun.run_id,
