@@ -11,7 +11,6 @@ from economy_rerun_fakes import (
     BASELINE_SIMULATION_ID,
     REFORM_SIMULATION_ID,
     REPORT_ID,
-    RUN_UNDER_WAY_ID,
     SIMULATION_ID,
     STORED_OPTIONS,
     STORED_REPORT,
@@ -55,7 +54,6 @@ from policyengine_simulation_persistence import (
     RerunRecordDeletedError,
     RerunSide,
     ReusableRun,
-    RunInProgressError,
     RunVersions,
     SharedRowNotSettledError,
     SimulationStatus,
@@ -354,23 +352,6 @@ def test_a_report_missing_a_row_it_calculates_on_is_not_rerun(missing, named) ->
     assert refused.value.code == "rerun_not_supported"
     assert named in refused.value.detail
     assert store.rerun_reads == []
-
-
-def test_a_rerun_is_refused_while_a_run_is_under_way() -> None:
-    store = FakeRerunStore(rerun_failure=RunInProgressError(RUN_UNDER_WAY_ID))
-    caller = FakeCaller()
-    service = rerun_service(store, caller=caller)
-
-    with pytest.raises(EconomyRerunConflictError) as report:
-        _rerun_report(service)
-    with pytest.raises(EconomyRerunConflictError) as simulation:
-        _rerun_simulation(service)
-
-    for refused, record in ((report, "report"), (simulation, "simulation")):
-        assert refused.value.code == "run_in_progress"
-        assert refused.value.run_id == RUN_UNDER_WAY_ID
-        assert f"The {record} has a run" in refused.value.detail
-    assert (caller.report_runs, caller.simulation_runs) == ([], [])
 
 
 def test_a_rerun_modal_refuses_fails_only_its_new_runs_and_names_them() -> None:

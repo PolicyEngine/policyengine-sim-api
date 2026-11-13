@@ -464,18 +464,17 @@ def test_rerun_routes_declare_every_answer():
         assert "run_id" in responses["503"]["description"]
         # Both answer the run they ended on, created or joined.
         assert "joined" in responses["201"]["description"]
-    # Only a report's re-run is refused while a run is under way; a
-    # simulation's joins its run (C1 · 24's answer 3).
-    report_conflict = _responses(spec, "post", "/reports/{report_id}/runs")["409"]
-    simulation_conflict = _responses(spec, "post", "/simulations/{simulation_id}/runs")[
-        "409"
-    ]
-    assert "run_id" in report_conflict["description"]
-    assert "run_in_progress" not in simulation_conflict["description"]
+    # No re-run is refused while a run is under way: an unforced one joins
+    # it, and a forced one is an extra run (C1 · 24's answers 3 and 8).
+    for path in ("/reports/{report_id}/runs", "/simulations/{simulation_id}/runs"):
+        conflict = _responses(spec, "post", path)["409"]
+        assert "run_in_progress" not in conflict["description"]
+        assert "rerun_not_supported" in conflict["description"]
     codes = set(
         spec["components"]["schemas"]["EconomyError"]["properties"]["code"]["enum"]
     )
-    assert {"run_in_progress", "rerun_not_supported"} <= codes
+    assert "rerun_not_supported" in codes
+    assert "run_in_progress" not in codes
     # A household report's re-run names its household's own codes.
     report_answers = _responses(spec, "post", "/reports/{report_id}/runs")
     assert "unknown_household" in report_answers["400"]["description"]

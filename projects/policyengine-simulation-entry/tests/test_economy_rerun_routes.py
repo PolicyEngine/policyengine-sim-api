@@ -265,25 +265,6 @@ def test_an_unknown_record_answers_404(client_for, path, body, record) -> None:
 
 
 @pytest.mark.parametrize(("path", "body"), ROUTES)
-def test_a_run_under_way_answers_409_naming_it(client_for, path, body) -> None:
-    reruns = FakeEconomyReruns(
-        failure=EconomyRerunConflictError(
-            code="run_in_progress", detail="a run is under way", run_id=RUN_ID
-        )
-    )
-
-    with client_for(reruns) as client:
-        result = client.post(path, json=body)
-
-    assert result.status_code == 409
-    assert result.json() == {
-        "code": "run_in_progress",
-        "detail": "a run is under way",
-        "run_id": str(RUN_ID),
-    }
-
-
-@pytest.mark.parametrize(("path", "body"), ROUTES)
 def test_a_record_the_service_cannot_rerun_answers_409(client_for, path, body) -> None:
     reruns = FakeEconomyReruns(
         failure=EconomyRerunConflictError(
