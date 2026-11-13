@@ -49,13 +49,13 @@ from policyengine_simulation_entry.budget_window_api_models import (
 from policyengine_simulation_entry.economy_calculation_inputs import (
     report_run_calculation,
 )
+from policyengine_simulation_entry.economy_submission_errors import call_refused
 from policyengine_simulation_entry.economy_submissions import (
     CALL_START_TIMEOUT_SECONDS,
     EconomyRuns,
     EconomySubmissionService,
     ServiceSettings,
     calculation_scope,
-    call_refused,
     economy_request_for,
     simulation_choice,
 )
@@ -68,6 +68,7 @@ if TYPE_CHECKING:
         EconomyRequest,
         ReusableRun,
         SimulationInputs,
+        WindowYearRuns,
     )
     from policyengine_stage12_persistence import (
         WindowAdvance,
@@ -124,14 +125,19 @@ class BudgetWindowAdvancer(Protocol):
         ...
 
 
-class ReportSubmissionService(EconomySubmissionService):
-    """Create economy and budget-window reports and simulations, and start them."""
+class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
+    EconomySubmissionService[Store]
+):
+    """Create economy and budget-window reports and simulations, and start them.
+
+    ``Store`` is the store's type, as for ``EconomySubmissionService``.
+    """
 
     def __init__(  # noqa: PLR0913  # the window seams, then the economy service's
         self,
         *,
         windows: BudgetWindowAdvancer,
-        store: BudgetWindowRuns,
+        store: Store,
         workers: EconomyWorkerSource,
         caller: EconomyRunCaller,
         settings: ServiceSettings,
@@ -150,7 +156,6 @@ class ReportSubmissionService(EconomySubmissionService):
             clock=clock,
         )
         self._windows = windows
-        self._window_store = store
 
     async def submit_budget_window(
         self,
@@ -178,7 +183,7 @@ class ReportSubmissionService(EconomySubmissionService):
         )
         economy_request = economy_request_for(request, worker)
         inputs = await self._read_inputs(
-            lambda: self._window_store.read_budget_window_inputs(
+            lambda: self._store.read_budget_window_inputs(
                 economy_request,
                 baseline=simulation_choice(request.baseline),
                 reform=simulation_choice(request.reform),
@@ -204,17 +209,19 @@ class ReportSubmissionService(EconomySubmissionService):
             worker,
             calculation_scope(request, worker, inputs.catalog, spm=options.get("spm")),
             self._origin(request_id),
-            run_ids=_run_ids(first_year),
+            run_ids=year_run_ids(first_year),
             baseline_policy=inputs.baseline.reform,
             reform_policy=inputs.reform.reform,
         )
         await self._create(
-            "report", lambda: self._window_store.create_budget_window_report(report)
+            "report", lambda: self._store.create_budget_window_report(report)
         )
         status = await self._start_first_years(
             worker,
-            report,
             first_calculation,
+            report_id=report.id,
+            window_run_id=report.window_run_id,
+            first_year=first_year.year,
             observability_context=observability_context,
         )
         return BudgetWindowReportCreated(
@@ -222,7 +229,7 @@ class ReportSubmissionService(EconomySubmissionService):
             report_run_id=first_year.report_run_id,
             budget_window_run_id=report.window_run_id,
             status=status,
-            years=[_year_created(window_year) for window_year in report.years],
+            years=[year_created(window_year) for window_year in report.years],
         )
 
     def _window_year(self, inputs: BudgetWindowInputs, year: int) -> BudgetWindowYear:
@@ -235,15 +242,18 @@ class ReportSubmissionService(EconomySubmissionService):
             reform=self._side(_with_reusable(inputs.reform, reform_run)),
         )
 
-    async def _start_first_years(
+    async def _start_first_years(  # noqa: PLR0913  # the call, then the window it starts
         self,
         worker: EconomyWorker,
-        report: NewBudgetWindowReport,
         first_calculation: RunCalculation,
         *,
+        report_id: UUID,
+        window_run_id: UUID,
+        first_year: int,
         observability_context: dict[str, Any] | None,
+        rerun: bool = False,
     ) -> ReportRunStatus:
-        """Advance the new window, starting its first years; return its status.
+        """Advance the new window run, starting its first years; return its status.
 
         Raise EconomySubmissionUnavailableError naming the report when the
         window failed because Modal refused a year, or didn't confirm the
@@ -251,12 +261,13 @@ class ReportSubmissionService(EconomySubmissionService):
         left waiting. An advance that can't be written leaves the window pending:
         the report exists, so it is answered as created, and a year Modal
         started claims itself, while the stuck-run sweep fails a window no
-        year advances.
+        year advances. ``rerun`` says the report existed before the window
+        run, which the 503 then names.
         """
         start_year = _YearStarts(
             worker=worker,
             caller=self._caller,
-            first_year=report.first_year.year,
+            first_year=first_year,
             first_calculation=first_calculation,
             observability_context=observability_context,
             loop=asyncio.get_running_loop(),
@@ -266,7 +277,7 @@ class ReportSubmissionService(EconomySubmissionService):
         try:
             advance = await asyncio.to_thread(
                 self._windows.advance_window,
-                report.window_run_id,
+                window_run_id,
                 now=self._clock(),
                 start_year=start_year,
             )
@@ -275,7 +286,7 @@ class ReportSubmissionService(EconomySubmissionService):
                 "budget_window_not_started",
                 extra={
                     "record": "report",
-                    "record_id": str(report.id),
+                    "record_id": str(report_id),
                     "error_type": type(error).__name__,
                 },
             )
@@ -286,11 +297,13 @@ class ReportSubmissionService(EconomySubmissionService):
                 "budget_window_call_unconfirmed",
                 extra={
                     "record": "report",
-                    "record_id": str(report.id),
+                    "record_id": str(report_id),
                     "started_years": list(advance.started_years),
                 },
             )
-            refused = call_refused("report", report.id)
+            refused = call_refused(
+                "report", report_id, rerun_id=window_run_id if rerun else None
+            )
             raise refused from None
         return ReportRunStatus(advance.status.value)
 
@@ -398,7 +411,8 @@ def _deferral(year_to_start: YearToStart) -> dict[str, Any]:
     }
 
 
-def _run_ids(window_year: BudgetWindowYear) -> ReportRunIds:
+def year_run_ids(window_year: WindowYearRuns) -> ReportRunIds:
+    """Return a window year's report run and its sides' runs, as its call names them."""
     return ReportRunIds(
         report_run_id=window_year.report_run_id,
         baseline_simulation_run_id=window_year.baseline.simulation_run_id,
@@ -406,7 +420,8 @@ def _run_ids(window_year: BudgetWindowYear) -> ReportRunIds:
     )
 
 
-def _year_created(window_year: BudgetWindowYear) -> BudgetWindowYearCreated:
+def year_created(window_year: WindowYearRuns) -> BudgetWindowYearCreated:
+    """Return a new window's year, or a re-run's, as the answer lists it."""
     return BudgetWindowYearCreated(
         year=window_year.year,
         report_run_id=window_year.report_run_id,

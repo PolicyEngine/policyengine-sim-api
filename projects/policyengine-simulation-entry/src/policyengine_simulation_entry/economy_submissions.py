@@ -69,10 +69,13 @@ from policyengine_simulation_entry.economy_calculation_inputs import (
     simulation_run_calculation,
 )
 from policyengine_simulation_entry.economy_submission_errors import (
+    REQUEST_BODY,
     EconomySubmissionOutcomeUnknownError,
     EconomySubmissionRefusedError,
     EconomySubmissionUnavailableError,
     RecordName,
+    RefusalSource,
+    call_refused,
     read_refusal,
     reference_refusal,
 )
@@ -214,17 +217,18 @@ def simulation_choice(policy: PolicyChoice) -> SimulationChoice:
     return SimulationChoice(policy_id=policy.policy_id, dynamic_id=policy.dynamic_id)
 
 
-class EconomySubmissionService:
+class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
     """Create economy reports and simulations, and start their calls.
 
     The database and the manifest are read on threads, so the event loop
-    never waits on them.
+    never waits on them. ``Store`` is the store's type: a subclass that
+    reads more of the database names a protocol with more methods.
     """
 
     def __init__(  # noqa: PLR0913  # each seam tests replace
         self,
         *,
-        store: EconomyRuns,
+        store: Store,
         workers: EconomyWorkerSource,
         caller: EconomyRunCaller,
         settings: ServiceSettings,
@@ -310,7 +314,12 @@ class EconomySubmissionService:
         )
         await self._create("report", lambda: self._store.create_report(report))
         status = await self._start_report_run(
-            worker, report, calculation, observability_context=observability_context
+            worker,
+            calculation,
+            report_id=report.id,
+            run_id=report.run_id,
+            new_simulation_run_ids=report.new_simulation_run_ids,
+            observability_context=observability_context,
         )
         return EconomyReportCreated(
             report_id=report.id,
@@ -365,8 +374,9 @@ class EconomySubmissionService:
         )
         status = await self._start_simulation_run(
             worker,
-            simulation,
             calculation,
+            simulation_id=simulation.id,
+            run_id=simulation.run_id,
             observability_context=observability_context,
         )
         return EconomySimulationCreated(
@@ -449,9 +459,13 @@ class EconomySubmissionService:
             ) from None
 
     async def _read_inputs[Inputs](
-        self, read: Callable[[], Inputs], *, request: EconomyRequest
+        self,
+        read: Callable[[], Inputs],
+        *,
+        request: EconomyRequest,
+        source: RefusalSource = REQUEST_BODY,
     ) -> Inputs:
-        """Run ``read`` on a thread; answer each refusal as the request's error."""
+        """Run ``read`` on a thread; answer each refusal as ``source``'s error."""
         try:
             return await asyncio.to_thread(read)
         except SQLAlchemyError as error:
@@ -461,26 +475,34 @@ class EconomySubmissionService:
             )
             raise _database_unavailable() from None
         except Exception as error:
-            refusal = read_refusal(error, request)
+            refusal = read_refusal(error, request, source)
             if refusal is None:
                 raise
             raise refusal from None
 
-    async def _create(self, record: RecordName, create: Callable[[], None]) -> None:
+    async def _create(
+        self,
+        record: RecordName,
+        create: Callable[[], None],
+        *,
+        rerun: bool = False,
+        source: RefusalSource = REQUEST_BODY,
+    ) -> None:
         """Create the rows; answer a refusal, an unknown outcome or an outage.
 
         A commit that failed after the rows were inserted may have written
         them, so it is never answered as unavailable, which would tell the
-        caller nothing was created.
+        caller nothing was created. ``rerun`` says the rows are a stored
+        record's new run, and ``source`` what names a refused row.
         """
         try:
             await asyncio.to_thread(create)
         except EconomyRecordReferenceError as error:
-            raise reference_refusal(error) from None
+            raise reference_refusal(error, source) from None
         except EconomyRecordOutcomeUnknownError as error:
             # The route logs it, with the commit error's type.
             raise EconomySubmissionOutcomeUnknownError(
-                record, error_type=type(error.__cause__).__name__
+                record, error_type=type(error.__cause__).__name__, rerun=rerun
             ) from None
         except SQLAlchemyError as error:
             logger.warning(
@@ -489,14 +511,23 @@ class EconomySubmissionService:
             )
             raise _database_unavailable() from None
 
-    async def _start_report_run(
+    async def _start_report_run(  # noqa: PLR0913  # the call, then the runs it calculates
         self,
         worker: EconomyWorker,
-        report: NewEconomyReport,
         calculation: RunCalculation,
         *,
+        report_id: UUID,
+        run_id: UUID,
+        new_simulation_run_ids: Sequence[UUID],
         observability_context: dict[str, Any] | None,
+        rerun: bool = False,
     ) -> ReportRunStatus:
+        """Start the report run's coordinator and record its call, or fail the run.
+
+        ``new_simulation_run_ids`` are the simulation runs created with the
+        report run, which fail with it; ``rerun`` says the report existed
+        before its new run.
+        """
         try:
             call_id = await asyncio.wait_for(
                 self._caller.start_report_run(
@@ -512,31 +543,39 @@ class EconomySubmissionService:
         except Exception as error:  # noqa: BLE001  # every unconfirmed call is answered alike
             failed = await self._fail_unconfirmed(
                 "report",
-                report.id,
+                report_id,
                 error,
                 lambda message: self._store.fail_unstarted_report(
-                    report.run_id, report.new_simulation_run_ids, message
+                    run_id, new_simulation_run_ids, message
                 ),
             )
             if failed:
-                refused = call_refused("report", report.id)
+                refused = call_refused(
+                    "report", report_id, rerun_id=run_id if rerun else None
+                )
                 raise refused from None
             return ReportRunStatus.PENDING
         status = await self._record_call(
             "report",
-            report.id,
-            lambda: self._store.record_report_call(report.run_id, call_id),
+            report_id,
+            lambda: self._store.record_report_call(run_id, call_id),
         )
         return ReportRunStatus.PENDING if status is None else ReportRunStatus(status)
 
-    async def _start_simulation_run(
+    async def _start_simulation_run(  # noqa: PLR0913  # the call, then the run it calculates
         self,
         worker: EconomyWorker,
-        simulation: NewEconomySimulation,
         calculation: RunCalculation,
         *,
+        simulation_id: UUID,
+        run_id: UUID,
         observability_context: dict[str, Any] | None,
+        rerun: bool = False,
     ) -> SimulationStatus:
+        """Start the simulation run's function and record its call, or fail the run.
+
+        ``rerun`` says the simulation existed before its new run.
+        """
         try:
             call_id = await asyncio.wait_for(
                 self._caller.start_simulation_run(
@@ -551,20 +590,20 @@ class EconomySubmissionService:
         except Exception as error:  # noqa: BLE001  # every unconfirmed call is answered alike
             failed = await self._fail_unconfirmed(
                 "simulation",
-                simulation.id,
+                simulation_id,
                 error,
-                lambda message: self._store.fail_unstarted_simulation(
-                    simulation.run_id, message
-                ),
+                lambda message: self._store.fail_unstarted_simulation(run_id, message),
             )
             if failed:
-                refused = call_refused("simulation", simulation.id)
+                refused = call_refused(
+                    "simulation", simulation_id, rerun_id=run_id if rerun else None
+                )
                 raise refused from None
             return SimulationStatus.PENDING
         status = await self._record_call(
             "simulation",
-            simulation.id,
-            lambda: self._store.record_simulation_call(simulation.run_id, call_id),
+            simulation_id,
+            lambda: self._store.record_simulation_call(run_id, call_id),
         )
         return SimulationStatus.PENDING if status is None else SimulationStatus(status)
 
@@ -633,20 +672,6 @@ class EconomySubmissionService:
             )
             return None
         return None if status is None else str(status)
-
-
-def call_refused(
-    record: RecordName, record_id: UUID
-) -> EconomySubmissionUnavailableError:
-    """Return the 503 naming a record whose run's call Modal did not accept."""
-    return EconomySubmissionUnavailableError(
-        code="modal_call_refused",
-        detail=(
-            f"Modal did not accept the {record}'s call; the {record} was created "
-            "and its run failed."
-        ),
-        record_id=record_id,
-    )
 
 
 def economy_request_for(

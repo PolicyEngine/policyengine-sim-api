@@ -1,0 +1,1 @@
+`POST /reports/{report_id}/runs` also re-runs a stored household report, in the report's own year, as a new report run with a new run of each side's own household simulation, started by one household function call; household runs are never reused, so `force` changes nothing.

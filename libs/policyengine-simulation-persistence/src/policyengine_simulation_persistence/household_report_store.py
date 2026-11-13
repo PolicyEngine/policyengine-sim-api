@@ -3,9 +3,12 @@
 The Simulation Entrypoint creates a household report in three steps, each
 its own transaction, with the household function's call started between
 them: it reads the report's inputs, creates the rows, then records the call
-on the report run or fails the run. ``HouseholdReportStore`` runs the reads
-and writes of ``household_report_records``, ``household_job_records``,
-``policy_reform`` and ``economy_run_records``' report run writes that way.
+on the report run or fails the run. A stored report's re-run takes the same
+steps, creating the report's new runs instead. ``HouseholdReportStore`` runs
+the reads and writes of ``household_report_records``,
+``household_job_records``, ``policy_reform``, ``economy_rerun_records``'
+household report re-run and ``economy_run_records``' report run writes that
+way.
 """
 
 from __future__ import annotations
@@ -15,6 +18,9 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from policyengine_simulation_persistence.economy_rerun_records import (
+    insert_household_report_rerun,
+)
 from policyengine_simulation_persistence.economy_run_records import (
     fail_unstarted_report_run,
     read_model_id,
@@ -49,6 +55,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy import Connection, Engine
 
+    from policyengine_simulation_persistence.economy_rerun_records import (
+        NewHouseholdReportRerun,
+    )
     from policyengine_simulation_persistence.economy_run_store import ReportSide
     from policyengine_simulation_persistence.household_job_records import (
         StoredHousehold,
@@ -174,10 +183,24 @@ class HouseholdReportStore:
         EconomyRecordOutcomeUnknownError when the commit fails after the
         rows were inserted: they may exist.
         """
+        self._create(lambda connection: insert_household_report(connection, report))
+
+    def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> None:
+        """Create a stored report's new run and each side's new simulation run.
+
+        Raise ``insert_household_report_rerun``'s errors, and
+        EconomyRecordOutcomeUnknownError as ``create_report`` does.
+        """
+        self._create(
+            lambda connection: insert_household_report_rerun(connection, rerun)
+        )
+
+    def _create(self, insert_rows: Callable[[Connection], None]) -> None:
+        """Insert the rows in a transaction; tell a lost commit from a refusal."""
         inserted = False
         try:
             with self._transaction() as connection:
-                insert_household_report(connection, report)
+                insert_rows(connection)
                 inserted = True
         except SQLAlchemyError as error:
             if not inserted:

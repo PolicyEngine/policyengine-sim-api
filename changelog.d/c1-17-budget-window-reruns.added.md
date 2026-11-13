@@ -1,0 +1,1 @@
+`POST /reports/{report_id}/runs` also re-runs a stored budget-window report, as a new budget-window run with a report run per year on each year's own simulations, its first years started as a new window's are.

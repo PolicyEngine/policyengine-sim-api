@@ -27,7 +27,8 @@ run and each simulation run, writes each run's household document, and
 finishes the report run; the stuck-run sweep fails a pending run no call
 was recorded for. The errors are the economy routes'
 (``economy_submission_errors``), so ``POST /reports`` answers both kinds
-alike.
+alike. A stored report's re-run (``household_report_reruns``) takes the same
+steps through this service's reads, writes and call.
 """
 
 from __future__ import annotations
@@ -48,7 +49,6 @@ from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
     HouseholdReportSimulation,
-    HouseholdReportStore,
     MissingPolicyParametersError,
     NewHouseholdReport,
     ReportRunStatus,
@@ -62,11 +62,13 @@ from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
 from policyengine_simulation_entry.economy_submission_errors import (
+    REQUEST_BODY,
     EconomySubmissionOutcomeUnknownError,
     EconomySubmissionRefusedError,
     EconomySubmissionUnavailableError,
     EconomySubmissionUnprocessableError,
     UnprocessableReason,
+    call_refused,
     reference_refusal,
 )
 from policyengine_simulation_entry.household_contract_fields import (
@@ -83,11 +85,8 @@ from policyengine_simulation_entry.household_report_api_models import (
 )
 from policyengine_simulation_entry.household_workers import (
     HouseholdFunctionUnavailableError,
-    ManifestHouseholdWorkers,
-    ModalHouseholdFunctionCaller,
     VersionManifestUnavailableError,
 )
-from policyengine_simulation_entry.simulation_database import SimulationDatabase
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -99,10 +98,9 @@ if TYPE_CHECKING:
         StoredHousehold,
     )
 
-    from policyengine_simulation_entry.config import Settings
-    from policyengine_simulation_entry.economy_submission_errors import RecordName
-    from policyengine_simulation_entry.entry_runtime import (
-        SimulationDatabaseConnection,
+    from policyengine_simulation_entry.economy_submission_errors import (
+        RecordName,
+        RefusalSource,
     )
     from policyengine_simulation_entry.household_report_api_models import (
         HouseholdReportRequest,
@@ -118,8 +116,6 @@ logger = logging.getLogger(__name__)
 # How long a submission waits for Modal to accept the household function's
 # call before failing the report run.
 CALL_START_TIMEOUT_SECONDS = 10.0
-# How long one of the service's statements may run, as a household job's.
-STATEMENT_TIMEOUT_MILLISECONDS = 5_000
 
 
 class HouseholdReports(Protocol):
@@ -156,6 +152,45 @@ class HouseholdReports(Protocol):
         ...
 
 
+class HouseholdReportSideRuns(Protocol):
+    """A report side's simulation and the simulation run its report run names."""
+
+    @property
+    def simulation_id(self) -> UUID:
+        """Return the side's simulation."""
+        ...
+
+    @property
+    def simulation_run_id(self) -> UUID:
+        """Return the side's simulation run."""
+        ...
+
+
+def household_report_created(  # noqa: PLR0913  # the report, its run and each side's
+    *,
+    report_id: UUID,
+    run_id: UUID,
+    status: ReportRunStatus,
+    year: int,
+    baseline: HouseholdReportSideRuns,
+    reform: HouseholdReportSideRuns | None,
+) -> HouseholdReportCreated:
+    """Return the 201 answer naming the report, its new run and each side's runs.
+
+    ``reform`` is None for a report of the baseline alone.
+    """
+    return HouseholdReportCreated(
+        report_id=report_id,
+        report_run_id=run_id,
+        status=status,
+        year=year,
+        baseline_simulation_id=baseline.simulation_id,
+        baseline_simulation_run_id=baseline.simulation_run_id,
+        reform_simulation_id=None if reform is None else reform.simulation_id,
+        reform_simulation_run_id=None if reform is None else reform.simulation_run_id,
+    )
+
+
 class HouseholdReportBuildError(Exception):
     """The household function's contract refused a field the service built.
 
@@ -187,24 +222,30 @@ def _policy_ids(request: HouseholdReportRequest) -> dict[ReportSide, UUID | None
 
 
 def _read_refusal(
-    error: Exception, request: HouseholdReportRequest, policyengine_version: str
+    error: Exception,
+    *,
+    country: str,
+    policyengine_version: str,
+    source: RefusalSource,
 ) -> EconomySubmissionRefusedError | EconomySubmissionUnprocessableError | None:
     """Return the refusal a store read's error means, or None for another error.
 
-    Every detail is written from the request, never from the error's text.
+    ``source`` is what names the household and policies: the request, or
+    the stored report a re-run reads. Every detail is written from it,
+    never from the error's text.
     """
     if isinstance(error, UnknownCatalogVersionError):
         return EconomySubmissionRefusedError(
             code="unknown_catalog_version",
             detail=(
-                f"{request.country} has no catalog version for .py "
+                f"{country} has no catalog version for .py "
                 f"{policyengine_version}, the default v2 worker's version."
             ),
         )
     if isinstance(error, UnknownHouseholdError):
         return EconomySubmissionRefusedError(
             code="unknown_household",
-            detail=f"{request.country} has no stored household the request names.",
+            detail=f"{country} has no stored household {source.named_by} names.",
         )
     if not isinstance(error, ReportSideError):
         return None
@@ -213,7 +254,7 @@ def _read_refusal(
         return EconomySubmissionRefusedError(
             code="unknown_policy",
             detail=(
-                f"{request.country} has no stored policy the request's {side} names."
+                f"{country} has no stored policy {source.named_by}'s {side} names."
             ),
         )
     if isinstance(refused, MissingPolicyParametersError):
@@ -221,7 +262,7 @@ def _read_refusal(
             code="missing_parameters",
             reasons=tuple(
                 UnprocessableReason(
-                    loc=("body", side, "policy_id", name),
+                    loc=(source.location, side, "policy_id", name),
                     msg=(
                         f"the catalog version for .py {policyengine_version} has "
                         "no such parameter"
@@ -398,17 +439,18 @@ def _report_year(household: StoredHousehold) -> int:
     return household.default_year
 
 
-class HouseholdReportSubmissionService:
+class HouseholdReportSubmissionService[Store: HouseholdReports = HouseholdReports]:
     """Create household reports and start the household function call for each.
 
     The database and the manifest are read on threads, so the event loop
-    never waits on them.
+    never waits on them. ``Store`` is the store's type: a subclass that
+    writes more of the database names a protocol with more methods.
     """
 
     def __init__(
         self,
         *,
-        store: HouseholdReports,
+        store: Store,
         workers: HouseholdWorkerSource,
         caller: HouseholdReportRunCaller,
         call_start_timeout_seconds: float = CALL_START_TIMEOUT_SECONDS,
@@ -439,25 +481,29 @@ class HouseholdReportSubmissionService:
         (500) when the service built a request the contract refuses.
         """
         worker = await self._default_worker(request.country)
-        inputs = await self._read_inputs(request, worker)
-        report, calculation = self._prepare(request, worker, inputs)
-        await self._create(report)
-        status = await self._start_report_run(
-            worker, report, calculation, observability_context=observability_context
+        inputs = await self._read_inputs(
+            country=request.country,
+            household_id=request.household_id,
+            policy_ids=_policy_ids(request),
+            worker=worker,
         )
-        return HouseholdReportCreated(
+        report, calculation = self._prepare(request, worker, inputs)
+        await self._create(lambda: self._store.create_report(report))
+        status = await self._start_report_run(
+            worker,
+            calculation,
             report_id=report.id,
-            report_run_id=report.run_id,
+            run_id=report.run_id,
+            simulation_run_ids=report.simulation_run_ids,
+            observability_context=observability_context,
+        )
+        return household_report_created(
+            report_id=report.id,
+            run_id=report.run_id,
             status=status,
             year=report.year,
-            baseline_simulation_id=report.baseline.simulation_id,
-            baseline_simulation_run_id=report.baseline.simulation_run_id,
-            reform_simulation_id=(
-                None if report.reform is None else report.reform.simulation_id
-            ),
-            reform_simulation_run_id=(
-                None if report.reform is None else report.reform.simulation_run_id
-            ),
+            baseline=report.baseline,
+            reform=report.reform,
         )
 
     async def _default_worker(self, country: str) -> HouseholdWorker:
@@ -481,15 +527,22 @@ class HouseholdReportSubmissionService:
             ) from None
 
     async def _read_inputs(
-        self, request: HouseholdReportRequest, worker: HouseholdWorker
+        self,
+        *,
+        country: str,
+        household_id: UUID,
+        policy_ids: Mapping[ReportSide, UUID | None],
+        worker: HouseholdWorker,
+        source: RefusalSource = REQUEST_BODY,
     ) -> HouseholdReportInputs:
+        """Read the report's inputs; answer each refusal as ``source``'s error."""
         policyengine_version = worker.bundle.policyengine_version
         try:
             return await asyncio.to_thread(
                 lambda: self._store.read_inputs(
-                    country=request.country,
-                    household_id=request.household_id,
-                    policy_ids=_policy_ids(request),
+                    country=country,
+                    household_id=household_id,
+                    policy_ids=policy_ids,
                     policyengine_version=policyengine_version,
                 )
             )
@@ -500,7 +553,12 @@ class HouseholdReportSubmissionService:
             )
             raise _database_unavailable() from None
         except Exception as error:
-            refusal = _read_refusal(error, request, policyengine_version)
+            refusal = _read_refusal(
+                error,
+                country=country,
+                policyengine_version=policyengine_version,
+                source=source,
+            )
             if refusal is None:
                 raise
             raise refusal from None
@@ -557,22 +615,29 @@ class HouseholdReportSubmissionService:
         )
         return report, calculation
 
-    async def _create(self, report: NewHouseholdReport) -> None:
+    async def _create(
+        self,
+        create: Callable[[], None],
+        *,
+        rerun: bool = False,
+        source: RefusalSource = REQUEST_BODY,
+    ) -> None:
         """Create the rows; answer a refusal, an unknown outcome or an outage.
 
         A commit that failed after the rows were inserted may have written
         them, so it is never answered as unavailable, which would tell the
-        caller nothing was created.
+        caller nothing was created. ``rerun`` says the rows are a stored
+        report's new run, and ``source`` what names a refused row.
         """
         try:
-            await asyncio.to_thread(self._store.create_report, report)
+            await asyncio.to_thread(create)
         except EconomyRecordReferenceError as error:
-            raise reference_refusal(error) from None
+            raise reference_refusal(error, source) from None
         except EconomyRecordOutcomeUnknownError as error:
             # The route logs it, with the commit error's type.
             record: RecordName = "report"
             raise EconomySubmissionOutcomeUnknownError(
-                record, error_type=type(error.__cause__).__name__
+                record, error_type=type(error.__cause__).__name__, rerun=rerun
             ) from None
         except SQLAlchemyError as error:
             logger.warning(
@@ -581,20 +646,29 @@ class HouseholdReportSubmissionService:
             )
             raise _database_unavailable() from None
 
-    async def _start_report_run(
+    async def _start_report_run(  # noqa: PLR0913  # the call, then the runs it calculates
         self,
         worker: HouseholdWorker,
-        report: NewHouseholdReport,
         calculation: HouseholdReportRunCalculation,
         *,
+        report_id: UUID,
+        run_id: UUID,
+        simulation_run_ids: Sequence[UUID],
         observability_context: dict[str, Any] | None,
+        rerun: bool = False,
     ) -> ReportRunStatus:
+        """Start the report run's household function call and record it, or fail it.
+
+        ``simulation_run_ids`` are the simulation runs created with the
+        report run, which fail with it; ``rerun`` says the report existed
+        before its new run.
+        """
         try:
             call_id = await asyncio.wait_for(
                 self._caller.start_report_run(
                     worker,
                     calculation.model_dump(mode="json"),
-                    report_run_id=report.run_id,
+                    report_run_id=run_id,
                     observability_context=observability_context,
                 ),
                 timeout=self._call_start_timeout_seconds,
@@ -602,19 +676,21 @@ class HouseholdReportSubmissionService:
         # Modal raises its own errors; any of them, or the timeout, means the
         # call was not confirmed, and the run is failed unless it has started.
         except Exception as error:  # noqa: BLE001  # every unconfirmed call is answered alike
-            if await self._fail_unconfirmed(report, error):
-                raise EconomySubmissionUnavailableError(
-                    code="modal_call_refused",
-                    detail=(
-                        "Modal did not accept the report's call; the report was "
-                        "created and its run failed."
-                    ),
-                    record_id=report.id,
-                ) from None
+            failed = await self._fail_unconfirmed(
+                error,
+                report_id=report_id,
+                run_id=run_id,
+                simulation_run_ids=simulation_run_ids,
+            )
+            if failed:
+                refused = call_refused(
+                    "report", report_id, rerun_id=run_id if rerun else None
+                )
+                raise refused from None
             return ReportRunStatus.PENDING
         try:
             status = await asyncio.to_thread(
-                self._store.record_report_call, report.run_id, call_id
+                self._store.record_report_call, run_id, call_id
             )
         except SQLAlchemyError as error:
             # The household function claims a pending run with no call ID
@@ -622,7 +698,7 @@ class HouseholdReportSubmissionService:
             logger.warning(
                 "household_report_call_not_recorded",
                 extra={
-                    "report_id": str(report.id),
+                    "report_id": str(report_id),
                     "error_type": type(error).__name__,
                 },
             )
@@ -630,7 +706,12 @@ class HouseholdReportSubmissionService:
         return ReportRunStatus.PENDING if status is None else status
 
     async def _fail_unconfirmed(
-        self, report: NewHouseholdReport, error: BaseException
+        self,
+        error: BaseException,
+        *,
+        report_id: UUID,
+        run_id: UUID,
+        simulation_run_ids: Sequence[UUID],
     ) -> bool:
         """Fail the report run of a call Modal didn't confirm, unless it started.
 
@@ -643,7 +724,7 @@ class HouseholdReportSubmissionService:
         # The log names the error type only; its text could repeat request data.
         logger.error(
             "household_report_call_unconfirmed",
-            extra={"report_id": str(report.id), "error_type": type(error).__name__},
+            extra={"report_id": str(report_id), "error_type": type(error).__name__},
         )
         message = (
             "modal_call_refused: Modal did not accept the report's call "
@@ -652,42 +733,16 @@ class HouseholdReportSubmissionService:
         try:
             return await asyncio.to_thread(
                 self._store.fail_unstarted_report,
-                report.run_id,
-                report.simulation_run_ids,
+                run_id,
+                simulation_run_ids,
                 message,
             )
         except SQLAlchemyError as write_error:
             logger.warning(
                 "household_report_run_not_failed",
                 extra={
-                    "report_id": str(report.id),
+                    "report_id": str(report_id),
                     "error_type": type(write_error).__name__,
                 },
             )
             return False
-
-
-def household_reports_for(
-    settings: Settings, database: SimulationDatabaseConnection | None
-) -> HouseholdReportSubmissionService | None:
-    """Build the household report service as the household calculation one is.
-
-    It needs the simulation database and the v2 Modal environment; without
-    them household reports answer 503. Nothing is read from Modal until the
-    first submission.
-    """
-    if not settings.household_calculations_configured or not isinstance(
-        database, SimulationDatabase
-    ):
-        return None
-    return HouseholdReportSubmissionService(
-        store=HouseholdReportStore.from_engine(
-            database.engine,
-            statement_timeout_milliseconds=STATEMENT_TIMEOUT_MILLISECONDS,
-        ),
-        workers=ManifestHouseholdWorkers.from_modal(
-            manifest_name=settings.v2_manifest_name,
-            environment=settings.v2_modal_environment,
-        ),
-        caller=ModalHouseholdFunctionCaller(settings.v2_modal_environment),
-    )

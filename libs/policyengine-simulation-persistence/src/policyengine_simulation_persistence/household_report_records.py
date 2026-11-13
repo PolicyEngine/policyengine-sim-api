@@ -19,7 +19,8 @@ The service then starts one household function call for the report run and
 records the call's ID on it, or fails it and its simulation runs at once,
 with ``economy_run_records``' report run writes. The household function
 writes the rest: each run's ``household_result``, and every status after
-``pending``.
+``pending``. A re-run (``economy_rerun_records``) adds a run to each of a
+stored report's household simulations with ``insert_household_simulation_run``.
 """
 
 from __future__ import annotations
@@ -165,14 +166,38 @@ def _insert_household_simulation(
             year=report.year,
         )
     )
+    insert_household_simulation_run(
+        connection,
+        run_id=side.simulation_run_id,
+        simulation_id=side.simulation_id,
+        year=report.year,
+        tax_benefit_model_version_id=report.tax_benefit_model_version_id,
+        versions=report.versions,
+    )
+
+
+def insert_household_simulation_run(  # noqa: PLR0913  # the run and what it calculates on
+    connection: Connection,
+    *,
+    run_id: UUID,
+    simulation_id: UUID,
+    year: int,
+    tax_benefit_model_version_id: UUID,
+    versions: RunVersions,
+) -> None:
+    """Create a run of a household simulation, pending with no Modal call ID.
+
+    It records the year, catalog version and versions it calculates on; a
+    household run names no dataset or region.
+    """
     connection.execute(
         insert(simulation_runs).values(
-            id=side.simulation_run_id,
-            simulation_id=side.simulation_id,
-            year=report.year,
-            tax_benefit_model_version_id=report.tax_benefit_model_version_id,
-            country_package_version=report.versions.country_package_version,
-            policyengine_version=report.versions.policyengine_version,
+            id=run_id,
+            simulation_id=simulation_id,
+            year=year,
+            tax_benefit_model_version_id=tax_benefit_model_version_id,
+            country_package_version=versions.country_package_version,
+            policyengine_version=versions.policyengine_version,
             dataset_id=None,
             region_id=None,
             status=SimulationStatus.PENDING,
