@@ -5,35 +5,90 @@ whether it can run economy reports and which function calculates its
 households. It is stored under its own key. Whenever schema version 1 can
 describe the same manifest, it is also written in that form, without those
 fields, under the keys that readers released before schema version 2 read:
-with region datasets, without them, and without them or cache releases.
+with region datasets, without them, and without them or cache releases. The
+UK entry's ``local_area_reports`` is written only under its own key, which
+readers released with it read first.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping
 from copy import deepcopy
-from datetime import datetime
 from hashlib import sha256
-from typing import TYPE_CHECKING, Annotated, Literal, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from packaging.version import InvalidVersion, Version
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from policyengine_simulation_contract.stage12_bundle import (
-    CountryId,
-    Sha256Digest,
-    Stage12BundleManifest,
+from policyengine_simulation_contract.stage12_manifest_models import (
+    LOCAL_AREA_REPORTS_VERSION,
+    V1_APPLICATION_PREFIX,
+    V2_APPLICATION_PREFIX,
+    CallableName,
+    LocalAreaReports,
+    ManifestText,
+    Stage12CacheRelease,
+    StrictManifestModel,
+    V2CountryWorker,
+    V2VersionManifest,
+    V2WorkerValidation,
+    V2WorkerVersion,
+    v2_application_name,
 )
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from pydantic.main import IncEx
+
+__all__ = [
+    "ACTIVE_MANIFEST_KEY",
+    "LOCAL_AREA_REPORTS_MANIFEST_KEY",
+    "LOCAL_AREA_REPORTS_VERSION",
+    "PRE_CACHE_MANIFEST_KEY",
+    "REGION_DATASETS_MANIFEST_KEY",
+    "SCHEMA_2_MANIFEST_KEY",
+    "V1_APPLICATION_PREFIX",
+    "V1_ROUTING_STATE_NAME",
+    "V2_APPLICATION_PREFIX",
+    "V2_MANIFEST_KEYS",
+    "V2_VERSION_MANIFEST_NAME",
+    "CallableName",
+    "LocalAreaReports",
+    "ManifestText",
+    "Stage12CacheRelease",
+    "StrictManifestModel",
+    "V2CountryWorker",
+    "V2ManifestLoader",
+    "V2ManifestStore",
+    "V2VersionManifest",
+    "V2WorkerValidation",
+    "V2WorkerVersion",
+    "add_v2_worker",
+    "assert_separate_manifest_names",
+    "build_next_v2_manifest",
+    "manifest_digest",
+    "move_v2_default",
+    "parse_v2_manifest",
+    "pre_cache_manifest_payload",
+    "pre_region_datasets_manifest_payload",
+    "publish_v2_manifest",
+    "read_v2_manifest",
+    "schema_1_manifest_payload",
+    "schema_2_manifest_payload",
+    "v2_application_name",
+    "v2_manifest_copies",
+    "validate_manifest_has_no_credentials",
+    "write_v2_manifest",
+]
 
 V1_ROUTING_STATE_NAME = "simulation-api-routing-state"
 V2_VERSION_MANIFEST_NAME = "simulation-api-v2-version-manifest"
-# The schema version 2 manifest. Readers released with schema version 2 read
-# this key first.
+# The schema version 2 manifest with the UK entry's ``local_area_reports``.
+# Readers released with it read this key first.
+LOCAL_AREA_REPORTS_MANIFEST_KEY = "active-schema-2-with-local-area-reports"
+# The schema version 2 manifest without ``local_area_reports``, which readers
+# released before it forbid. They read this key first.
 SCHEMA_2_MANIFEST_KEY = "active-schema-2"
 # Readers released before schema version 2 forbid unknown fields, so they read
 # the keys below, which hold the same manifest in schema version 1 form. This
@@ -50,229 +105,12 @@ PRE_CACHE_MANIFEST_KEY = "active"
 # A write leaves the schema version 1 keys alone when schema version 1 can't
 # describe the manifest.
 V2_MANIFEST_KEYS = (
+    LOCAL_AREA_REPORTS_MANIFEST_KEY,
     SCHEMA_2_MANIFEST_KEY,
     REGION_DATASETS_MANIFEST_KEY,
     ACTIVE_MANIFEST_KEY,
     PRE_CACHE_MANIFEST_KEY,
 )
-V2_APPLICATION_PREFIX = "policyengine-simulation-v2-py"
-V1_APPLICATION_PREFIX = "policyengine-simulation-py"
-_MAX_MODAL_APPLICATION_NAME_LENGTH = 64
-_CALLABLE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
-
-ManifestText = Annotated[str, Field(min_length=1, max_length=255)]
-CallableName = Annotated[str, Field(pattern=_CALLABLE_PATTERN.pattern)]
-
-
-class StrictManifestModel(BaseModel):
-    """Base for v2 version manifest models; unknown fields are rejected."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class V2CountryWorker(StrictManifestModel):
-    """A country served by a v2 worker application, and what it can calculate.
-
-    An economy-capable country names the callable that runs one of its report
-    simulations; only such a country's reports are given to the report
-    coordinator. ``household_callable`` names the function that calculates
-    its households, and is None when the application has none or it was not
-    validated.
-    """
-
-    country: CountryId
-    economy_capable: bool
-    single_simulation_callable: CallableName | None = None
-    household_callable: CallableName | None = None
-
-    @model_validator(mode="after")
-    def validate_capabilities(self) -> V2CountryWorker:
-        """Require a simulation callable exactly when the country is economy-capable.
-
-        A country must also have at least one capability.
-        """
-        if self.economy_capable != (self.single_simulation_callable is not None):
-            msg = (
-                "an economy-capable country, and only one, names a simulation callable"
-            )
-            raise ValueError(msg)
-        if not self.economy_capable and self.household_callable is None:
-            msg = "a country needs at least one capability"
-            raise ValueError(msg)
-        return self
-
-
-class Stage12CacheRelease(StrictManifestModel):
-    """The US cache a worker image holds: its manifest digest and coverage.
-
-    The cache covers 3 datasets and 60 baselines, one per region-group segment
-    and year.
-    """
-
-    manifest_sha256: Sha256Digest
-    partition_sha256: Sha256Digest
-    years: tuple[int, ...]
-    segment_count: Literal[20] = 20
-    dataset_count: Literal[3] = 3
-    baseline_count: Literal[60] = 60
-
-
-class V2WorkerValidation(StrictManifestModel):
-    """Receipt for a successful validation of a deployed v2 worker application.
-
-    Names the application and bundle digest that were validated, when, and the
-    validation invocation IDs: overall, for each economy-capable country's
-    simulation worker, and for each country's household function.
-    """
-
-    validated: Literal[True]
-    application_name: ManifestText
-    bundle_manifest_sha256: Sha256Digest
-    validated_at: datetime
-    validation_invocation_id: ManifestText
-    country_validation_invocation_ids: dict[CountryId, ManifestText]
-    household_validation_invocation_ids: dict[CountryId, ManifestText] = Field(
-        default_factory=dict
-    )
-    cache: Stage12CacheRelease | None = None
-
-
-def _require_function_receipts(
-    countries: tuple[V2CountryWorker, ...], validation: V2WorkerValidation
-) -> None:
-    """Require a validation invocation for exactly the functions countries name."""
-    economy_countries = {
-        worker.country for worker in countries if worker.economy_capable
-    }
-    if set(validation.country_validation_invocation_ids) != economy_countries:
-        msg = "worker validation does not cover exactly the economy-capable countries"
-        raise ValueError(msg)
-    household_countries = {
-        worker.country for worker in countries if worker.household_callable is not None
-    }
-    if set(validation.household_validation_invocation_ids) != household_countries:
-        msg = "worker validation does not cover exactly the household functions"
-        raise ValueError(msg)
-
-
-class V2WorkerVersion(StrictManifestModel):
-    """One deployed v2 worker application and the bundle it runs.
-
-    Lists its report coordinator callable, its per-country workers and its
-    validation receipt; the countries must match the bundle's, in order, and
-    every function a country names must have been validated.
-    """
-
-    application_name: ManifestText
-    report_coordinator_callable: CallableName
-    countries: tuple[V2CountryWorker, ...]
-    bundle: Stage12BundleManifest
-    bundle_manifest_sha256: Sha256Digest
-    validation: V2WorkerValidation
-    cache: Stage12CacheRelease | None = None
-
-    @model_validator(mode="after")
-    def validate_worker(self) -> V2WorkerVersion:
-        """Check the worker's name, validation receipt and countries match its bundle.
-
-        The application name must be the v2 name derived from the bundle's
-        PolicyEngine.py version, the validation must name this application and
-        bundle digest, and the countries must equal the bundle's, in order,
-        each named function with a validation invocation.
-        """
-        if not self.application_name.startswith(V2_APPLICATION_PREFIX):
-            msg = "v2 application uses an invalid name prefix"
-            raise ValueError(msg)
-        if self.application_name.startswith(V1_APPLICATION_PREFIX):
-            msg = "v2 application name collides with the v1 prefix"
-            raise ValueError(msg)
-        expected_name = v2_application_name(self.bundle.policyengine_version)
-        if self.application_name != expected_name:
-            msg = "v2 application name does not match its bundle version"
-            raise ValueError(msg)
-        if self.validation.application_name != self.application_name:
-            msg = "worker validation names another application"
-            raise ValueError(msg)
-        if self.validation.bundle_manifest_sha256 != self.bundle_manifest_sha256:
-            msg = "worker validation names another bundle digest"
-            raise ValueError(msg)
-        if self.validation.cache != self.cache:
-            msg = "worker cache metadata differs from worker validation"
-            raise ValueError(msg)
-        countries = tuple(worker.country for worker in self.countries)
-        bundle_countries = tuple(country.country for country in self.bundle.countries)
-        if len(countries) != len(set(countries)):
-            msg = "v2 worker countries must be unique"
-            raise ValueError(msg)
-        if countries != bundle_countries:
-            msg = "v2 worker countries do not match the normalized bundle"
-            raise ValueError(msg)
-        _require_function_receipts(self.countries, self.validation)
-        return self
-
-    def economy_worker(self, country: str) -> V2CountryWorker | None:
-        """Return ``country``'s worker when it can run economy reports."""
-        return next(
-            (
-                worker
-                for worker in self.countries
-                if worker.country == country and worker.economy_capable
-            ),
-            None,
-        )
-
-    def economy_simulation_callable(self, country: str) -> str:
-        """Return the callable that runs one of ``country``'s report simulations.
-
-        Raises LookupError when the manifest does not mark ``country`` as
-        economy-capable.
-        """
-        worker = self.economy_worker(country)
-        if worker is None or worker.single_simulation_callable is None:
-            msg = (
-                f"country {country!r} is not economy-capable in {self.application_name}"
-            )
-            raise LookupError(msg)
-        return worker.single_simulation_callable
-
-    def household_worker(self, country: str) -> V2CountryWorker | None:
-        """Return ``country``'s worker when it has a household function."""
-        return next(
-            (
-                worker
-                for worker in self.countries
-                if worker.country == country and worker.household_callable is not None
-            ),
-            None,
-        )
-
-
-class V2VersionManifest(StrictManifestModel):
-    """Registry of deployed v2 worker versions, keyed by PolicyEngine.py version.
-
-    ``default_version`` is the version used when a request does not pin one, and
-    ``generation`` identifies the publish that produced this manifest.
-    """
-
-    schema_version: Literal[2] = 2
-    generation: ManifestText
-    default_version: ManifestText
-    versions: dict[str, V2WorkerVersion]
-
-    @model_validator(mode="after")
-    def validate_versions(self) -> V2VersionManifest:
-        """Check the default has an entry and each key is its bundle's version."""
-        if not self.versions:
-            msg = "v2 manifest must contain a worker version"
-            raise ValueError(msg)
-        if self.default_version not in self.versions:
-            msg = "v2 default version has no worker entry"
-            raise ValueError(msg)
-        for version, worker in self.versions.items():
-            if version != worker.bundle.policyengine_version:
-                msg = "v2 manifest version key does not match its bundle"
-                raise ValueError(msg)
-        return self
 
 
 class V2ManifestStore(Protocol):
@@ -285,29 +123,6 @@ class V2ManifestStore(Protocol):
     def __setitem__(self, key: str, value: object) -> None:
         """Store ``value`` under ``key``, replacing any previous value."""
         ...
-
-
-def v2_application_name(policyengine_version: str) -> str:
-    """Derive the v2 Modal application name from a PolicyEngine.py version.
-
-    Dots and plus signs become hyphens. Raises ValueError for a version with
-    characters a Modal name cannot hold, or a name over 64 characters.
-    """
-    if not policyengine_version or not re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9._+-]*", policyengine_version
-    ):
-        msg = "PolicyEngine.py version cannot form a Modal application name"
-        raise ValueError(msg)
-    name = V2_APPLICATION_PREFIX + policyengine_version.replace(".", "-").replace(
-        "+", "-"
-    )
-    if len(name) > _MAX_MODAL_APPLICATION_NAME_LENGTH:
-        msg = (
-            "v2 Modal application name exceeds "
-            f"{_MAX_MODAL_APPLICATION_NAME_LENGTH} characters"
-        )
-        raise ValueError(msg)
-    return name
 
 
 def manifest_digest(manifest: V2VersionManifest) -> str:
@@ -353,7 +168,9 @@ def schema_1_manifest_payload(
         return None
     validation_exclude = {"household_validation_invocation_ids"}
     worker_exclude: dict[str, IncEx | bool] = {
-        "countries": {"__all__": {"economy_capable", "household_callable"}},
+        "countries": {
+            "__all__": {"economy_capable", "household_callable", "local_area_reports"}
+        },
         "validation": validation_exclude,
     }
     if not include_region_datasets:
@@ -367,6 +184,16 @@ def schema_1_manifest_payload(
     )
     payload["schema_version"] = 1
     return payload
+
+
+def schema_2_manifest_payload(manifest: V2VersionManifest) -> dict[str, object]:
+    """Return the manifest as readers released before local-area reports accept it."""
+    return manifest.model_dump(
+        mode="json",
+        exclude={
+            "versions": {"__all__": {"countries": {"__all__": {"local_area_reports"}}}}
+        },
+    )
 
 
 def pre_region_datasets_manifest_payload(
@@ -501,7 +328,34 @@ def _is_current_schema_2_document(store: V2ManifestStore, document: object) -> b
     return _newest_validation(older_manifest) <= _newest_validation(manifest)
 
 
+def _is_current_local_area_copy(store: V2ManifestStore, document: object) -> bool:
+    """Return whether ``document``, under the local-area report key, is the latest.
+
+    Code released before ``LocalAreaReports`` publishes only the older keys,
+    for example after a rollback, which leaves an out-of-date copy behind. A
+    current copy, without the field, is exactly the manifest under
+    ``active-schema-2``, which is itself current. Without an
+    ``active-schema-2`` copy it is not current: deleting that key is how an
+    operator sends every reader back to the older keys before a rollback.
+    An unreadable document counts as current, so readers and publishers
+    report it.
+    """
+    try:
+        manifest = parse_v2_manifest(document)
+    except (TypeError, ValueError):
+        return True
+    without_field = schema_2_manifest_payload(manifest)
+    if store.get(SCHEMA_2_MANIFEST_KEY) != without_field:
+        return False
+    return _is_current_schema_2_document(store, without_field)
+
+
 def _current_manifest(store: V2ManifestStore) -> object:
+    local_area_document = store.get(LOCAL_AREA_REPORTS_MANIFEST_KEY)
+    if local_area_document is not None and _is_current_local_area_copy(
+        store, local_area_document
+    ):
+        return local_area_document
     # Until the first schema version 2 publish, only the older keys exist.
     schema_2_document = store.get(SCHEMA_2_MANIFEST_KEY)
     if schema_2_document is not None and _is_current_schema_2_document(
@@ -618,7 +472,8 @@ def v2_manifest_copies(manifest: V2VersionManifest) -> dict[str, object]:
     keep the last manifest written there.
     """
     copies: dict[str, object] = {
-        SCHEMA_2_MANIFEST_KEY: manifest.model_dump(mode="json")
+        LOCAL_AREA_REPORTS_MANIFEST_KEY: manifest.model_dump(mode="json"),
+        SCHEMA_2_MANIFEST_KEY: schema_2_manifest_payload(manifest),
     }
     schema_1_copies = _schema_1_copies(manifest)
     if schema_1_copies is not None:

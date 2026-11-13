@@ -26,6 +26,13 @@ CURRENT_SINGLE_YEAR_MACRO_KEYS = {
     "cliff_impact",
 }
 
+# Listed only by a UK-wide or nation report on the local-area dataset, and
+# left out of every other result, so the result keys above are unchanged.
+LOCAL_AREA_WITHHELD_CODE_KEYS = {
+    "constituency_withheld_codes",
+    "local_authority_withheld_codes",
+}
+
 CURRENT_REQUIRED_BUDGET_KEYS = {
     "budgetary_impact",
     "tax_revenue_impact",
