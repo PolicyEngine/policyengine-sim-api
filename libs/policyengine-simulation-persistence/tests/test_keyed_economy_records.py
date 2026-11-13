@@ -33,12 +33,16 @@ from policyengine_simulation_persistence import (
     EconomySimulationDefinition,
     KeyedEconomyReport,
     KeyedEconomySimulation,
+    NewReportRerun,
     ProposedSide,
     ReportRunStatus,
+    RerunSide,
     SimulationChoice,
     SimulationStatus,
     find_or_create_economy_report,
     find_or_create_economy_simulation,
+    insert_report_rerun,
+    read_report_definition,
     report_runs,
     simulation_runs,
 )
@@ -610,4 +614,45 @@ def test_the_store_finds_or_creates_reports_and_simulations_in_a_transaction(
     assert (simulation.simulation_id, simulation.run.id) == (
         created.baseline.simulation_id,
         created.baseline.simulation_run_id,
+    )
+
+
+def test_a_keyed_reports_rerun_joins_each_sides_run_on_its_versions(
+    public_api_database_url,
+) -> None:
+    """Answers 4 and 5: a side joins its simulation's unfailed run, in any state."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        policy_id = insert_policy(connection, economy.catalog)
+        act_as_the_service(connection)
+        created = find_or_create_economy_report(
+            connection,
+            _keyed_report(economy, reform=SimulationChoice(policy_id, None)),
+        )
+        _set_status(
+            connection,
+            "simulation_runs",
+            created.baseline.simulation_run_id,
+            "succeeded",
+        )
+        _set_status(connection, "report_runs", created.run.id, "failed")
+        definition = read_report_definition(connection, created.report_id)
+        rerun = NewReportRerun(
+            report_id=created.report_id,
+            run_id=uuid4(),
+            population=economy.population(),
+            versions=VERSIONS,
+            baseline=RerunSide(created.baseline.simulation_id, uuid4(), reused=False),
+            reform=RerunSide(created.reform.simulation_id, uuid4(), reused=False),
+            sides_join_runs=True,
+        )
+
+        found = insert_report_rerun(connection, rerun)
+
+    assert definition is not None
+    assert definition.keyed is True
+    assert (found.id, found.inserted) == (rerun.run_id, True)
+    assert (found.baseline_simulation_run_id, found.reform_simulation_run_id) == (
+        created.baseline.simulation_run_id,
+        created.reform.simulation_run_id,
     )
