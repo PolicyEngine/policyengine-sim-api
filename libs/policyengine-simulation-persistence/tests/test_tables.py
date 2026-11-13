@@ -5,6 +5,7 @@ from __future__ import annotations
 from policyengine_simulation_persistence import (
     SERVICE_TABLE_PRIVILEGES,
     SimulationStatus,
+    budget_window_runs,
     household_jobs,
     input_metadata,
     referenced_metadata,
@@ -269,3 +270,31 @@ def test_a_run_is_unforced_unless_its_insert_marks_it() -> None:
     for table in (simulation_runs, report_runs):
         assert table.c.forced.nullable is False, table.name
         assert str(table.c.forced.server_default.arg) == "false", table.name
+
+
+def test_the_per_user_columns_are_nullable_and_the_service_writes_none() -> None:
+    """Answer 6: a shared row holds no request's label, description or trigger."""
+    assert reports.c.label.nullable is True
+    assert reports.c.description.nullable is True
+    assert reports.c.user_id.nullable is True
+    assert report_runs.c.trigger.nullable is True
+    assert budget_window_runs.c.trigger.nullable is True
+
+
+def test_a_window_run_is_one_per_report_and_version_set_unless_recalculated() -> None:
+    """Answer 8: a window run on the versions is joined; a forced one is extra."""
+    assert budget_window_runs.c.policyengine_version.nullable is True
+    assert budget_window_runs.c.policyengine_version.type.length == 128
+    window_run_index = _index(
+        budget_window_runs, "uq_budget_window_runs_unfailed_unforced_versions"
+    )
+
+    assert window_run_index.unique is True
+    assert tuple(column.name for column in window_run_index.columns) == (
+        "report_id",
+        "tax_benefit_model_version_id",
+        "policyengine_version",
+    )
+    assert str(window_run_index.dialect_options["postgresql"]["where"]) == (
+        "status <> 'failed' AND NOT recalculate"
+    )
