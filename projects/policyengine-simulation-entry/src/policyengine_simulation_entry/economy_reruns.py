@@ -250,7 +250,9 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             raise EconomyRecordNotFoundError(_REPORT)
         if definition.kind == "household":
             return await self._rerun_household_report(
-                definition, observability_context=observability_context
+                definition,
+                force=request.force,
+                observability_context=observability_context,
             )
         stored = rerunnable_report(definition)
         refuse_stored_cliffs(definition.inputs)
@@ -421,6 +423,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         self,
         definition: ReportDefinition,
         *,
+        force: bool,
         observability_context: dict[str, Any] | None,
     ) -> HouseholdReportCreated:
         """Hand a stored household report the service can re-run to its service."""
@@ -430,7 +433,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                 code="not_configured", detail="Household reports are not configured."
             )
         return await self._household_reports.rerun_report(
-            stored, observability_context=observability_context
+            stored, force=force, observability_context=observability_context
         )
 
     async def _rerun_window(

@@ -178,6 +178,7 @@ def rerunnable_household_report(
         year=year,
         baseline=baseline,
         reform=definition.reform,
+        keyed=definition.keyed,
     )
 
 
