@@ -94,7 +94,9 @@ its first report run, trigger `initial`; every run is `pending` with no
 Modal call ID. A side may instead name a run that already succeeded
 (`ReportSimulation.reused`), for which nothing is created.
 `insert_economy_simulation` creates a standalone simulation and its first
-run. A row naming one that does not exist is refused by its foreign key with
+run. Both create unkeyed rows; the Simulation Entrypoint now creates by key
+("Shared simulations, reports and runs" below), and budget windows still
+create this way. A row naming one that does not exist is refused by its foreign key with
 SQLSTATE `23503`; `EconomyRecordReferenceError` names the table and column.
 
 `find_reusable_run` returns the run a new report's side may reuse: the
@@ -124,6 +126,42 @@ policy or dynamic raises `ReportSideError`, naming the side. A create whose
 commit fails after its rows were inserted raises
 `EconomyRecordOutcomeUnknownError`: PostgreSQL may have applied the commit,
 so the rows may exist.
+
+## Shared simulations, reports and runs
+
+Identical requests, together or a minute apart, end on the same simulation,
+report and run rows (C1 · 24). Three modules do it:
+
+- `definition_keys.py` builds each record's key: the lowercase SHA-256 of
+  a definition's canonical JSON (keys sorted, no spaces, UTF-8, UUIDs as
+  lowercase strings, missing values null), with `KEY_VERSION` 1 inside the
+  object and in its own column. `EconomySimulationDefinition` keys a
+  simulation by its country, policy, dynamic, dataset name, region code,
+  year, a null filter and the SPM selection; `EconomyReportDefinition` keys
+  a report by both sides' policies and dynamics, the dataset, region, year
+  and SPM selection they share, and its budget window size, with no other
+  option, and gives its `dataset_independent_key` (the same without the
+  dataset) and each side's simulation definition. Names and codes, not
+  catalog IDs, so a record keeps its key across releases.
+- `shared_rows.py` finds a row by its definition or version set, or inserts
+  it: one `INSERT … ON CONFLICT DO NOTHING` against the Public API's unique
+  index (a simulation's or report's `(key_version, definition_key)`; a
+  simulation run's simulation, year, catalog version and versions, or a
+  report run's report and versions, among runs that haven't failed and
+  weren't forced, outside budget windows), then a read of the row that
+  won, retried when that run fails in between (`SharedRowNotSettledError`
+  after three tries). A forced run is inserted directly and never looked
+  up, joined or offered for reuse.
+- `keyed_economy_records.py` runs a report's find-or-create in one
+  transaction: each side's simulation by key, in key order; the report by
+  key; the report's joinable run on the current versions, joined with the
+  simulation runs it names; or else, inside a savepoint, each distinct
+  simulation's joinable run (whatever report first calculated it) and the
+  report run naming them, a competing report run joined with the savepoint
+  rolled back. `find_or_create_economy_simulation` does the same for one
+  simulation. The answers say what the request inserted, so only it starts
+  a Modal call. `EconomyRunStore.find_or_create_report` and
+  `find_or_create_simulation` run them in a transaction of their own.
 
 ## Household reports
 

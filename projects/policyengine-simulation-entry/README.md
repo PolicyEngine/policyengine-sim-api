@@ -254,7 +254,10 @@ refused while a run is under way. The new report run's trigger is `manual`.
 Without `force`, a re-run while the report has a run on the default
 worker's versions that hasn't failed and wasn't forced, pending, running or
 succeeded, joins that run instead and answers it as it is, with both sides reused and no
-Modal call; a run still under way on older versions is no run to join. The service reads the
+Modal call; a run still under way on older versions is no run to join. A
+report created by key re-runs with no search for reusable runs: each side
+joins its simulation's run on those versions that hasn't failed and wasn't
+forced, in any state, or gets a new one. The service reads the
 report's region code and dataset name, finds the rows with that code and
 name in the catalog version of the default worker's .py version, and reads
 each simulation's stored policy and dynamic on it.
