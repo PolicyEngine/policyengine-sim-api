@@ -46,6 +46,9 @@ from policyengine_simulation_persistence.economy_run_records import (
     insert_simulation_run,
     references_checked,
 )
+from policyengine_simulation_persistence.household_report_records import (
+    HOUSEHOLD_REPORT_TYPE,
+)
 from policyengine_simulation_persistence.input_tables import (
     MODEL_NAME_PREFIX,
     datasets,
@@ -81,8 +84,6 @@ if TYPE_CHECKING:
 # report or simulation, or anything else, such as a simulation of a filtered
 # population.
 type RecordKind = Literal["economy", "budget_window", "household", "unsupported"]
-# A household report's type, as the household reports' service writes it.
-_HOUSEHOLD_TYPE: Final = "household"
 # Every run table's statuses (simulation, report and budget-window runs) use
 # these values for a run under way.
 _UNDER_WAY: Final = (SimulationStatus.PENDING.value, SimulationStatus.RUNNING.value)
@@ -354,7 +355,7 @@ def _window_years(
 def _report_kind(
     report_type: str | None, household_id: UUID | None, budget_window_size: int | None
 ) -> RecordKind:
-    if household_id is not None or report_type == _HOUSEHOLD_TYPE:
+    if household_id is not None or report_type == HOUSEHOLD_REPORT_TYPE:
         return "household"
     if report_type != ECONOMY_REPORT_TYPE:
         return "unsupported"
