@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 LOCAL_AREA_RUN_REGION_TYPES = frozenset({"national", "country"})
 
 
-def _calculates_on_local_area_dataset(simulation: SimulationExecutionInput) -> bool:
+def calculates_on_local_area_dataset(simulation: SimulationExecutionInput) -> bool:
     """Whether ``simulation`` is of the UK or a nation, on the local-area dataset.
 
     That is the dataset the release routes UK area regions to, on a release
@@ -65,7 +65,7 @@ def is_local_area_report(report: ReportExecutionInput) -> bool:
     links to the national report with the same policies, region and year.
     Both of a report's simulations share its dataset and region.
     """
-    return _calculates_on_local_area_dataset(report.baseline)
+    return calculates_on_local_area_dataset(report.baseline)
 
 
 def named_local_area_dataset(
@@ -78,7 +78,7 @@ def named_local_area_dataset(
     provenance names that dataset. The caller still checks the provenance's
     URI and revision against it.
     """
-    if country.country != "uk" or not _calculates_on_local_area_dataset(simulation):
+    if country.country != "uk" or not calculates_on_local_area_dataset(simulation):
         return None
     identity = simulation.bundle.dataset.identity
     return next((item for item in country.datasets if item.identity == identity), None)
