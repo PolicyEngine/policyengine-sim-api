@@ -2717,7 +2717,7 @@
           "congressional_district_impact"
         ],
         "title": "SingleYearMacroOutput",
-        "description": "Completed response returned by a single-year macro simulation.\n\n``constituency_withheld_codes`` and ``local_authority_withheld_codes``\nhold, sorted, the codes of each level's areas the run estimated but\ndisclosure control did not publish, as ``LocalAreaBreakdownOutput``'s do.\nStage 12 lists them for a UK-wide report on the local-area dataset; null\nmeans the result does not report them, and the JSON then leaves both\nkeys out, so every other result is written as before."
+        "description": "Completed response returned by a single-year macro simulation.\n\n``constituency_withheld_codes`` and ``local_authority_withheld_codes``\nhold, sorted, the codes of each level's areas the run estimated but\ndisclosure control did not publish, as ``LocalAreaBreakdownOutput``'s do.\nThey are listed for a UK-wide or nation report on the local-area dataset;\nnull means the result does not report them, and the JSON then leaves both\nkeys out, so every other result is written as before."
       },
       "TelemetryEnvelope": {
         "properties": {

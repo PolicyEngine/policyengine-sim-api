@@ -60,3 +60,8 @@ unless both URLs are set:
 - `REPORT_RUN_TEST_DATABASE_URL`: logs in as `policyengine_v2_modal_worker`;
 - `REPORT_RUN_TEST_SEED_DATABASE_URL`: logs in as a role that may insert the
   rows the simulation service would create.
+
+The tests of a run's withheld area codes need the chain at the revision that
+adds `withheld_area_codes` (`1e1e3f079f2c`) or later. On an older database
+they fail at the completion's insert, which names the missing table; the
+other tests don't read that table.

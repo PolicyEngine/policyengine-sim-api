@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from economy_output import uk_economy_output, uk_output_with_areas
+from economy_output import (
+    uk_economy_output,
+    uk_output_with_areas,
+    uk_output_with_withheld_codes,
+)
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_stage12_persistence.report_run_results import (
@@ -36,13 +40,7 @@ def _withheld_rows(output: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def test_a_uk_result_stores_one_row_per_withheld_area() -> None:
-    output = {
-        **uk_output_with_areas(),
-        "constituency_withheld_codes": ["S14000045"],
-        "local_authority_withheld_codes": ["E06000064", "W06000015"],
-    }
-
-    assert _withheld_rows(output) == [
+    assert _withheld_rows(uk_output_with_withheld_codes()) == [
         {**RUN_KEYS, "area_type": "constituency", "code": "S14000045"},
         {**RUN_KEYS, "area_type": "local_authority", "code": "E06000064"},
         {**RUN_KEYS, "area_type": "local_authority", "code": "W06000015"},

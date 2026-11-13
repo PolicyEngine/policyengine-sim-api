@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 import pandas as pd
 import pytest
-from policyengine_simulation_contract.stage12_execution import ReportExecutionInput
+from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
+from policyengine_simulation_contract.stage12_execution import (
+    AggregateReportArtifactPayload,
+    ReportExecutionInput,
+)
 from policyengine_simulation_executor import (
     simulation_output_builder,
     simulation_output_geographic,
@@ -23,6 +28,11 @@ from policyengine_simulation_executor.stage12_runtime import (
     build_aggregate_report,
     local_area_datasets,
 )
+from policyengine_stage12_persistence.report_run_results import (
+    report_run_result,
+    withheld_area_codes,
+)
+from stage12_fake_report_runs import REPORT_RUN_IDS
 from stage12_fake_stores import FakeArtifacts
 from stage12_runtime_support import bundle_provenance, report_execution_input
 
@@ -142,13 +152,14 @@ def _aggregate(monkeypatch, report: ReportExecutionInput) -> dict[str, Any]:
     )["result"]
 
 
-def test_a_uk_wide_report_on_the_local_area_dataset_gets_its_areas(
-    monkeypatch,
+@pytest.mark.parametrize("region", ["uk", "country/wales"])
+def test_a_uk_wide_or_nation_report_on_the_local_area_dataset_gets_its_areas(
+    monkeypatch, region: str
 ) -> None:
     _route_uk_area_regions(monkeypatch)
 
     result = _aggregate(
-        monkeypatch, _uk_report(region="uk", dataset=LOCAL_AREA_DATASET)
+        monkeypatch, _uk_report(region=region, dataset=LOCAL_AREA_DATASET)
     )
 
     assert _CapturingBuilder.built["omit_uk_area_breakdowns"] is False
@@ -185,7 +196,7 @@ def test_an_area_report_keeps_its_area_and_lists_no_withheld_codes(
     assert "constituency_withheld_codes" not in result
 
 
-def test_the_builder_lists_each_levels_withheld_codes_from_its_disclosure_pass(
+def test_the_builder_lists_each_levels_withheld_codes_from_one_disclosure_pass(
     monkeypatch,
 ) -> None:
     passes = []
@@ -226,3 +237,133 @@ def test_a_builder_outside_the_uk_lists_no_withheld_codes() -> None:
     )
 
     assert builder.uk_withheld_area_codes() is None
+
+
+class _FullOutputBuilder(_CapturingBuilder):
+    """Stands in for the output builder with a complete economy output."""
+
+    def serialize(self) -> dict[str, Any]:
+        output = copy.deepcopy(CURRENT_SINGLE_YEAR_MACRO_RESULT)
+        # A UK result: its areas, and no congressional districts.
+        output.update(
+            congressional_district_impact=None,
+            constituency_impact=[],
+            local_authority_impact=[],
+        )
+        return output
+
+
+def test_a_local_area_aggregate_is_stored_with_its_withheld_codes(monkeypatch) -> None:
+    _route_uk_area_regions(monkeypatch)
+    monkeypatch.setattr(
+        simulation_output_builder, "SimulationOutputBuilder", _FullOutputBuilder
+    )
+    report = _uk_report(region="uk", dataset=LOCAL_AREA_DATASET)
+    frames = {
+        entity: pd.DataFrame({f"{entity}_id": [1]})
+        for entity in ("person", "benunit", "household")
+    }
+    artifacts = FakeArtifacts()
+    aggregate = build_aggregate_report(
+        report=report,
+        baseline=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.baseline)
+        ),
+        reform=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.reform)
+        ),
+    )
+
+    # The coordinator validates the aggregate, then stores its result.
+    result = AggregateReportArtifactPayload.model_validate(aggregate).result
+    stored = report_run_result(result, run_ids=REPORT_RUN_IDS, country="uk")
+    (withheld,) = [rows for rows in stored.rows if rows.table is withheld_area_codes]
+    assert [(row["area_type"], row["code"]) for row in withheld.rows] == [
+        ("constituency", "W07000081"),
+        ("local_authority", "E06000064"),
+        ("local_authority", "W06000015"),
+    ]
+
+
+class _AreaBuilder(_CapturingBuilder):
+    """Stands in for an output builder with given published and withheld areas."""
+
+    published: dict[str, list[dict[str, Any]]]
+    withheld: dict[str, list[str]]
+
+    def serialize(self) -> dict[str, Any]:
+        return {f"{level}_impact": records for level, records in self.published.items()}
+
+    def uk_withheld_area_codes(self) -> dict[str, list[str]]:
+        return self.withheld
+
+
+def _aggregate_wales(monkeypatch) -> dict[str, Any]:
+    monkeypatch.setattr(
+        simulation_output_builder, "SimulationOutputBuilder", _AreaBuilder
+    )
+    report = _uk_report(region="country/wales", dataset=LOCAL_AREA_DATASET)
+    frames = {
+        entity: pd.DataFrame({f"{entity}_id": [1]})
+        for entity in ("person", "benunit", "household")
+    }
+    artifacts = FakeArtifacts()
+    return build_aggregate_report(
+        report=report,
+        baseline=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.baseline)
+        ),
+        reform=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.reform)
+        ),
+    )["result"]
+
+
+@pytest.mark.parametrize("level", ["constituency", "local_authority"])
+def test_a_local_area_report_that_estimated_no_area_of_a_level_fails(
+    monkeypatch, level: str
+) -> None:
+    # A succeeded run then proves each level's area or withheld-code rows
+    # exist, which a staging check reading only the run's status relies on.
+    _route_uk_area_regions(monkeypatch)
+    monkeypatch.setattr(
+        _AreaBuilder,
+        "published",
+        {"constituency": [], "local_authority": []},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        _AreaBuilder,
+        "withheld",
+        {"constituency": ["W07000081"], "local_authority": ["W06000015"], level: []},
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match=f"estimated no {level} area"):
+        _aggregate_wales(monkeypatch)
+
+
+def test_a_local_area_report_with_every_area_of_a_level_published_succeeds(
+    monkeypatch,
+) -> None:
+    # Disclosure control may withhold nothing at a level, likely for a
+    # nation's few local authorities.
+    _route_uk_area_regions(monkeypatch)
+    published = {"local_authority_code": "W06000015", "local_authority_name": "Cardiff"}
+    monkeypatch.setattr(
+        _AreaBuilder,
+        "published",
+        {"constituency": [], "local_authority": [published]},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        _AreaBuilder,
+        "withheld",
+        {"constituency": ["W07000081"], "local_authority": []},
+        raising=False,
+    )
+
+    result = _aggregate_wales(monkeypatch)
+
+    assert result["local_authority_impact"] == [published]
+    assert result["local_authority_withheld_codes"] == []

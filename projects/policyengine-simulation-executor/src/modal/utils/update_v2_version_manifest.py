@@ -20,7 +20,9 @@ from policyengine_simulation_contract.household_execution import (
     household_callable_name,
 )
 from policyengine_simulation_contract.stage12_manifest import (
+    LOCAL_AREA_REPORTS_MANIFEST_KEY,
     LOCAL_AREA_REPORTS_VERSION,
+    SCHEMA_2_MANIFEST_KEY,
     V1_ROUTING_STATE_NAME,
     V2_MANIFEST_KEYS,
     V2_VERSION_MANIFEST_NAME,
@@ -207,6 +209,11 @@ def _refresh(store: V2ManifestStore) -> V2VersionManifest:
     return manifest
 
 
+# Current readers read the local-area report key first, and use it only
+# while the schema version 2 key holds its copy.
+REQUIRED_KEYS = frozenset({LOCAL_AREA_REPORTS_MANIFEST_KEY, SCHEMA_2_MANIFEST_KEY})
+
+
 def _key_holds(store: V2ManifestStore, key: str, copies: tuple[object, ...]) -> bool:
     """Return whether ``key`` holds one of ``copies``, or is an older key that expired.
 
@@ -214,11 +221,11 @@ def _key_holds(store: V2ManifestStore, key: str, copies: tuple[object, ...]) -> 
     current readers read the older keys only when the newest key is missing
     or out of date, so they can expire between deployments. A write never
     deletes a key, so a missing older key is never one a part-way write left
-    behind, and the next write restores it. The newest key, which current
-    readers read first, is required.
+    behind, and the next write restores it. The two keys current readers
+    need are required (``REQUIRED_KEYS``).
     """
     value = store.get(key)
-    if value is None and key != V2_MANIFEST_KEYS[0]:
+    if value is None and key not in REQUIRED_KEYS:
         return True
     return value in copies
 
