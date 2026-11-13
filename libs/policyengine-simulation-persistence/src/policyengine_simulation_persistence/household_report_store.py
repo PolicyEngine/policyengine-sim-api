@@ -42,6 +42,9 @@ from policyengine_simulation_persistence.household_job_store import (
 from policyengine_simulation_persistence.household_report_records import (
     insert_household_report,
 )
+from policyengine_simulation_persistence.keyed_household_records import (
+    find_or_create_household_report,
+)
 from policyengine_simulation_persistence.policy_reform import (
     MissingPolicyParametersError,
     UnknownPolicyError,
@@ -64,6 +67,10 @@ if TYPE_CHECKING:
     )
     from policyengine_simulation_persistence.household_report_records import (
         NewHouseholdReport,
+    )
+    from policyengine_simulation_persistence.keyed_household_records import (
+        FoundHouseholdReport,
+        KeyedHouseholdReport,
     )
     from policyengine_simulation_persistence.policy_reform import PolicyReform
     from policyengine_simulation_persistence.tables import ReportRunStatus
@@ -176,6 +183,19 @@ class HouseholdReportStore:
             reforms=reforms,
         )
 
+    def find_or_create_report(
+        self, report: KeyedHouseholdReport
+    ) -> FoundHouseholdReport:
+        """Find the report by key, with its run, or create them.
+
+        See ``find_or_create_household_report``; raise its errors, and
+        EconomyRecordOutcomeUnknownError when the commit fails after the
+        rows were inserted.
+        """
+        return self._create(
+            lambda connection: find_or_create_household_report(connection, report)
+        )
+
     def create_report(self, report: NewHouseholdReport) -> None:
         """Create the report, its simulations and its runs.
 
@@ -195,18 +215,22 @@ class HouseholdReportStore:
             lambda connection: insert_household_report_rerun(connection, rerun)
         )
 
-    def _create(self, insert_rows: Callable[[Connection], None]) -> None:
-        """Insert the rows in a transaction; tell a lost commit from a refusal."""
+    def _create[Created](self, insert_rows: Callable[[Connection], Created]) -> Created:
+        """Insert the rows in a transaction; tell a lost commit from a refusal.
+
+        Return what ``insert_rows`` returns.
+        """
         inserted = False
         try:
             with self._transaction() as connection:
-                insert_rows(connection)
+                created = insert_rows(connection)
                 inserted = True
         except SQLAlchemyError as error:
             if not inserted:
                 raise
             msg = "the create's commit failed after its rows were inserted"
             raise EconomyRecordOutcomeUnknownError(msg) from error
+        return created
 
     def record_report_call(
         self, report_run_id: UUID, modal_call_id: str

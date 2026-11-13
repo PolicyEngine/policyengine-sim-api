@@ -137,6 +137,11 @@ from policyengine_simulation_persistence.keyed_economy_records import (
     find_or_create_economy_report,
     find_or_create_economy_simulation,
 )
+from policyengine_simulation_persistence.keyed_household_records import (
+    FoundHouseholdReport,
+    KeyedHouseholdReport,
+    find_or_create_household_report,
+)
 from policyengine_simulation_persistence.policy_reform import (
     MissingPolicyParametersError,
     OverlappingReformError,
@@ -202,6 +207,7 @@ __all__ = [
     "EconomySimulationState",
     "FoundEconomyReport",
     "FoundEconomySimulation",
+    "FoundHouseholdReport",
     "FoundReportRun",
     "FoundRow",
     "FoundSide",
@@ -219,6 +225,7 @@ __all__ = [
     "HouseholdSimulationDefinition",
     "KeyedEconomyReport",
     "KeyedEconomySimulation",
+    "KeyedHouseholdReport",
     "MissingPolicyParametersError",
     "NewBudgetWindowReport",
     "NewEconomyReport",
@@ -278,6 +285,7 @@ __all__ = [
     "find_joinable_report_run",
     "find_or_create_economy_report",
     "find_or_create_economy_simulation",
+    "find_or_create_household_report",
     "find_or_insert_report",
     "find_or_insert_report_run",
     "find_or_insert_simulation",

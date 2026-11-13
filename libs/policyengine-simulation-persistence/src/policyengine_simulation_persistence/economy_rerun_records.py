@@ -101,6 +101,7 @@ if TYPE_CHECKING:
         EconomyPopulation,
         RunVersions,
     )
+    from policyengine_simulation_persistence.keyed_economy_records import Side
     from policyengine_simulation_persistence.shared_rows import FoundSimulationRun
 
 # Every run table's statuses (simulation, report and budget-window runs) use
@@ -384,18 +385,18 @@ def _side_runs(connection: Connection, rerun: NewReportRerun) -> tuple[UUID, UUI
                 forced=True,
             )
         return rerun.baseline.simulation_run_id, rerun.reform.simulation_run_id
+    sides: dict[Side, RerunSide] = {"baseline": rerun.baseline, "reform": rerun.reform}
     found = find_or_insert_side_runs(
         connection,
-        simulation_ids={
-            "baseline": rerun.baseline.simulation_id,
-            "reform": rerun.reform.simulation_id,
+        {
+            name: simulation_run_row(
+                run_id=side.simulation_run_id,
+                simulation_id=side.simulation_id,
+                population=rerun.population,
+                versions=rerun.versions,
+            )
+            for name, side in sides.items()
         },
-        proposed_run_ids={
-            "baseline": rerun.baseline.simulation_run_id,
-            "reform": rerun.reform.simulation_run_id,
-        },
-        population=rerun.population,
-        versions=rerun.versions,
     )
     return found["baseline"].id, found["reform"].id
 

@@ -182,15 +182,18 @@ def find_or_create_economy_report(
         # and the savepoint takes back this request's simulation runs.
         savepoint = connection.begin_nested()
         try:
+            proposed = {"baseline": request.baseline, "reform": request.reform}
             runs = find_or_insert_side_runs(
                 connection,
-                simulation_ids=simulation_ids,
-                proposed_run_ids={
-                    "baseline": request.baseline.simulation_run_id,
-                    "reform": request.reform.simulation_run_id,
+                {
+                    side: simulation_run_row(
+                        run_id=proposed[side].simulation_run_id,
+                        simulation_id=simulation_ids[side],
+                        population=request.population,
+                        versions=request.versions,
+                    )
+                    for side in _SIDES
                 },
-                population=request.population,
-                versions=request.versions,
             )
             side_runs: dict[Side, UUID] = {side: runs[side].id for side in _SIDES}
             run = find_or_insert_report_run(
@@ -263,35 +266,29 @@ def _find_or_insert_simulations(
 
 
 def find_or_insert_side_runs(
-    connection: Connection,
-    *,
-    simulation_ids: Mapping[Side, UUID],
-    proposed_run_ids: Mapping[Side, UUID],
-    population: EconomyPopulation,
-    versions: RunVersions,
+    connection: Connection, side_rows: Mapping[Side, Mapping[str, Any]]
 ) -> dict[Side, FoundSimulationRun]:
-    """Return each side's run of its simulation on these versions, found or inserted.
+    """Return each side's run of its simulation, found or inserted.
 
-    Each distinct simulation's run on ``versions`` and ``population``'s
-    catalog version and year that hasn't failed and wasn't forced is found,
-    or inserted with its side's proposed ID, in simulation ID order
+    ``side_rows`` holds each side's run as it would be inserted, with the
+    ID the side proposes: an economy run (``simulation_run_row``) or a
+    household one (``household_simulation_run_row``); a household report
+    of the baseline alone has no reform. Each distinct simulation's run on
+    the row's year, catalog version and versions that hasn't failed and
+    wasn't forced is found, or inserted, in simulation ID order
     (``find_or_insert_simulation_runs``). One simulation on both sides gets
-    one run, with the baseline's proposed ID. A keyed report's create and
-    an unforced re-run of it both name their sides' runs this way.
+    one run, with the baseline's proposed ID. Keyed reports' creates and
+    unforced re-runs name their sides' runs this way.
     """
     rows = {
-        simulation_ids[side]: simulation_run_row(
-            run_id=proposed_run_ids[side],
-            simulation_id=simulation_ids[side],
-            population=population,
-            versions=versions,
-        )
+        side_rows[side]["simulation_id"]: side_rows[side]
         # The reform first, so one simulation on both sides keeps the
         # baseline's proposed ID.
         for side in reversed(_SIDES)
+        if side in side_rows
     }
     found = find_or_insert_simulation_runs(connection, rows)
-    return {side: found[simulation_ids[side]] for side in _SIDES}
+    return {side: found[row["simulation_id"]] for side, row in side_rows.items()}
 
 
 def _simulation_row(
