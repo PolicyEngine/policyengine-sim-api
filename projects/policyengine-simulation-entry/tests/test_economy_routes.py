@@ -287,8 +287,9 @@ def test_a_uk_wide_or_nation_report_may_ask_for_its_local_areas(
     assert result.status_code == 201
     ((request, _, _),) = submissions.reports
     assert request.breakdown == "local_areas"
-    # The report still calculates cliffs, and stores that it asked for areas.
-    assert request.options() == {"include_cliffs": True, "breakdown": "local_areas"}
+    # The report still calculates cliffs. The breakdown is a request option,
+    # never stored, so it never changes which report the request names.
+    assert request.options() == {"include_cliffs": True}
 
 
 @pytest.mark.parametrize(("path", "body"), ROUTES)

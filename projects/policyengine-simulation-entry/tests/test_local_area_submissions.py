@@ -131,7 +131,8 @@ def test_local_areas_on_a_release_that_routes_none_are_the_national_runs() -> No
 
     assert store.local_area_reads == [None]
     (report,) = store.reports
-    assert report.inputs == {"include_cliffs": True, "breakdown": "local_areas"}
+    # The breakdown is never stored.
+    assert report.inputs == {"include_cliffs": True}
 
 
 def test_the_catalog_is_asked_for_the_local_area_dataset_the_worker_routes_to() -> None:
