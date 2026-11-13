@@ -53,7 +53,6 @@ from sqlalchemy import func, insert, literal, select
 
 from policyengine_simulation_persistence.budget_window_records import (
     check_window_years,
-    year_run_row,
 )
 from policyengine_simulation_persistence.economy_run_records import (
     EconomyRecordReferenceError,
@@ -68,6 +67,13 @@ from policyengine_simulation_persistence.household_report_records import (
 from policyengine_simulation_persistence.keyed_economy_records import (
     find_or_insert_report_run_on_sides,
 )
+from policyengine_simulation_persistence.keyed_window_records import (
+    FoundBudgetWindow,
+    WindowYearToInsert,
+    insert_window_years,
+    stored_window_years,
+    window_run_row,
+)
 from policyengine_simulation_persistence.rerun_definitions import (
     RecordKind,
     ReportDefinition,
@@ -79,12 +85,14 @@ from policyengine_simulation_persistence.rerun_definitions import (
 )
 from policyengine_simulation_persistence.shared_rows import (
     FoundReportRun,
+    FoundWindowRun,
     find_joinable_report_run,
+    find_joinable_window_run,
     find_or_insert_simulation_run,
+    find_or_insert_window_run,
 )
 from policyengine_simulation_persistence.tables import (
     ReportRunStatus,
-    ReportRunTrigger,
     SimulationStatus,
     budget_window_runs,
     report_runs,
@@ -176,7 +184,11 @@ class NewWindowRerun:
 
     ``population`` is the first year's, on the current catalog version;
     each year calculates on the same catalog version, region and dataset in
-    its own year. ``recalculate`` records whether the re-run was forced.
+    its own year. ``recalculate`` records whether the re-run was forced: an
+    extra window run on new runs of every year. Unforced, a keyed window's
+    re-run joins its window run on the versions, or each year's sides join
+    their simulations' runs; a side's ``simulation_run_id`` is the ID it
+    proposes. No side names a reused run.
     """
 
     report_id: UUID
@@ -187,8 +199,13 @@ class NewWindowRerun:
     years: tuple[WindowRerunYear, ...]
 
     def __post_init__(self) -> None:
-        """Refuse years that aren't 1 to 75 consecutive ones from the first."""
+        """Refuse years that aren't 1 to 75 from the first, or a reused side."""
         check_window_years(self.population.year, [year.year for year in self.years])
+        if any(
+            side.reused for year in self.years for side in (year.baseline, year.reform)
+        ):
+            msg = "a window re-run's sides join or create their runs, reusing none"
+            raise ValueError(msg)
 
     def population_in(self, year: int) -> EconomyPopulation:
         """Return what the window's simulations of ``year`` calculate on."""
@@ -424,62 +441,104 @@ def _insert_forced_report_run(
     )
 
 
-def insert_window_rerun(connection: Connection, rerun: NewWindowRerun) -> None:
-    """Create the budget window's new run, each year's report run and new runs.
+def insert_window_rerun(
+    connection: Connection, rerun: NewWindowRerun
+) -> FoundBudgetWindow:
+    """Join the window's run on the re-run's versions, or create it, pending.
 
-    The budget-window run has trigger ``manual`` and records ``recalculate``;
-    each year's report run names it and its year, and each side reusing no
-    run gets a new run of its year's simulation. All are pending with no
-    Modal call; the service then starts the first years. Raise as
-    ``insert_report_rerun`` does. A re-run that recalculates is a forced
-    one: no lock or refusal, and its year runs and simulation runs are
-    marked forced.
+    Unforced (a keyed window's re-run), take the report's re-run lock and
+    join the report's window run on the re-run's catalog and .py versions
+    that hasn't failed and isn't a recalculation, with its year runs;
+    otherwise insert the window run (``find_or_insert_window_run``, so a
+    concurrent one is joined) and each year's report run on its sides'
+    simulation runs, found or inserted (``insert_window_years``), as the
+    window's create does (C1 · 24's answer 8). A forced re-run
+    (``recalculate``) takes no lock, is never refused, and inserts an extra
+    window run on new runs of every year, all marked forced. Every new run
+    is pending with no Modal call; the window run records its .py version
+    and no trigger (answer 6). Return the window run and its years, which
+    only when this call inserted the window run need their first years
+    started. Raise as ``insert_report_rerun`` does.
     """
-    if not rerun.recalculate:
-        lock_reruns_of(connection, rerun.report_id)
-        _refuse_while_report_runs(connection, rerun.report_id)
-    population = rerun.population
+    versions = rerun.versions
+    years = tuple(
+        WindowYearToInsert(
+            year=window_year.year,
+            report_run_id=window_year.report_run_id,
+            simulation_ids={
+                "baseline": window_year.baseline.simulation_id,
+                "reform": window_year.reform.simulation_id,
+            },
+            proposed_run_ids={
+                "baseline": window_year.baseline.simulation_run_id,
+                "reform": window_year.reform.simulation_run_id,
+            },
+        )
+        for window_year in rerun.years
+    )
+    row = window_run_row(
+        run_id=rerun.window_run_id,
+        report_id=rerun.report_id,
+        population=rerun.population,
+        versions=versions,
+        recalculate=rerun.recalculate,
+    )
     with (
         _record_checked(budget_window_runs.c.report_id, report_runs.c.report_id),
         references_checked(),
     ):
-        # First, so a report deleted after its reads is told apart from a
-        # year's simulation deleted with it.
-        connection.execute(
-            insert(budget_window_runs).values(
-                id=rerun.window_run_id,
-                report_id=rerun.report_id,
-                tax_benefit_model_version_id=population.tax_benefit_model_version_id,
-                trigger=ReportRunTrigger.MANUAL,
-                recalculate=rerun.recalculate,
-                status=ReportRunStatus.PENDING,
+        if rerun.recalculate:
+            # First, so a report deleted after its reads is told apart from
+            # a year's simulation deleted with it.
+            connection.execute(insert(budget_window_runs).values(row))
+            window_run = FoundWindowRun(
+                id=rerun.window_run_id, inserted=True, status=ReportRunStatus.PENDING
             )
-        )
-        for window_year in rerun.years:
-            for side in (window_year.baseline, window_year.reform):
-                if not side.reused:
-                    insert_simulation_run(
-                        connection,
-                        run_id=side.simulation_run_id,
-                        simulation_id=side.simulation_id,
-                        population=rerun.population_in(window_year.year),
-                        versions=rerun.versions,
-                        forced=rerun.recalculate,
-                    )
-        connection.execute(
-            insert(report_runs),
-            [
-                year_run_row(
-                    window_year,
+        else:
+            lock_reruns_of(connection, rerun.report_id)
+            joined = find_joinable_window_run(
+                connection,
+                report_id=rerun.report_id,
+                tax_benefit_model_version_id=(
+                    rerun.population.tax_benefit_model_version_id
+                ),
+                policyengine_version=versions.policyengine_version,
+            )
+            window_run = (
+                joined
+                if joined is not None
+                else find_or_insert_window_run(connection, row)
+            )
+            if not window_run.inserted:
+                return FoundBudgetWindow(
                     report_id=rerun.report_id,
-                    window_run_id=rerun.window_run_id,
-                    versions=rerun.versions,
-                    trigger=ReportRunTrigger.MANUAL,
-                    forced=rerun.recalculate,
+                    report_inserted=False,
+                    window_run=window_run,
+                    years=stored_window_years(
+                        connection,
+                        window_run.id,
+                        {
+                            (year.year, side): year.simulation_ids[side]
+                            for year in years
+                            for side in ("baseline", "reform")
+                        },
+                    ),
                 )
-                for window_year in rerun.years
-            ],
+        found_years = insert_window_years(
+            connection,
+            years,
+            report_id=rerun.report_id,
+            window_run_id=rerun.window_run_id,
+            population=rerun.population,
+            versions=versions,
+            forced=rerun.recalculate,
         )
+    return FoundBudgetWindow(
+        report_id=rerun.report_id,
+        report_inserted=False,
+        window_run=window_run,
+        years=found_years,
+    )
 
 
 def insert_household_report_rerun(
@@ -552,19 +611,6 @@ def _refuse_while_window_runs(connection: Connection, report_id: UUID) -> None:
     """Raise RunInProgressError while the report has a budget-window run under way."""
     under_way = _run_under_way(
         connection, budget_window_runs, budget_window_runs.c.report_id == report_id
-    )
-    if under_way is not None:
-        raise RunInProgressError(under_way)
-
-
-def _refuse_while_report_runs(connection: Connection, report_id: UUID) -> None:
-    """Raise RunInProgressError while the report has a run pending or running.
-
-    A budget-window run under way is named first, then a report run.
-    """
-    _refuse_while_window_runs(connection, report_id)
-    under_way = _run_under_way(
-        connection, report_runs, report_runs.c.report_id == report_id
     )
     if under_way is not None:
         raise RunInProgressError(under_way)

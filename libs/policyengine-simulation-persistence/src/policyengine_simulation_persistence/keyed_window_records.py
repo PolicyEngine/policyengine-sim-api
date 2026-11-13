@@ -39,6 +39,7 @@ from policyengine_simulation_persistence.budget_window_records import (
     check_window_years,
 )
 from policyengine_simulation_persistence.economy_run_records import (
+    insert_simulation_run,
     references_checked,
     simulation_run_row,
 )
@@ -63,6 +64,7 @@ from policyengine_simulation_persistence.tables import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
     from sqlalchemy import Connection
@@ -77,6 +79,20 @@ if TYPE_CHECKING:
 
 # A window year's side: its year and the side's name.
 type YearSide = tuple[int, Side]
+_SIDE_NAMES: tuple[Side, Side] = ("baseline", "reform")
+
+
+@dataclass(frozen=True)
+class WindowYearToInsert:
+    """A window year to insert: its report run and each side's simulation.
+
+    ``proposed_run_ids`` are the IDs each side's run gets if it is inserted.
+    """
+
+    year: int
+    report_run_id: UUID
+    simulation_ids: dict[Side, UUID]
+    proposed_run_ids: dict[Side, UUID]
 
 
 @dataclass(frozen=True)
@@ -197,7 +213,15 @@ def find_or_create_budget_window(
                 ),
             )
             if window_run.inserted:
-                years = _insert_years(connection, request, report.id, simulation_ids)
+                years = insert_window_years(
+                    connection,
+                    _years_to_insert(request, simulation_ids),
+                    report_id=report.id,
+                    window_run_id=request.window_run_id,
+                    population=request.population,
+                    versions=versions,
+                    forced=False,
+                )
                 return FoundBudgetWindow(
                     report_id=report.id,
                     report_inserted=report.inserted,
@@ -209,7 +233,7 @@ def find_or_create_budget_window(
             report_id=report.id,
             report_inserted=report.inserted,
             window_run=joined,
-            years=_stored_years(connection, joined.id, simulation_ids),
+            years=stored_window_years(connection, joined.id, simulation_ids),
         )
 
 
@@ -295,54 +319,112 @@ def _find_or_insert_simulations(
     return simulation_ids
 
 
-def _insert_years(
+def insert_window_years(  # noqa: PLR0913  # the years, then the window they belong to
     connection: Connection,
-    request: KeyedBudgetWindow,
+    years: Sequence[WindowYearToInsert],
+    *,
     report_id: UUID,
-    simulation_ids: dict[YearSide, UUID],
+    window_run_id: UUID,
+    population: EconomyPopulation,
+    versions: RunVersions,
+    forced: bool,
 ) -> tuple[FoundWindowYear, ...]:
-    """Find or insert every year's side runs, then insert each year's report run."""
-    rows: dict[UUID, dict[str, Any]] = {}
-    for window_year in request.years:
-        # The reform first, so one simulation on both sides keeps the
-        # baseline's proposed ID.
-        for side, side_ids in _sides(window_year, reform_first=True):
-            simulation_id = simulation_ids[window_year.year, side]
-            rows[simulation_id] = simulation_run_row(
-                run_id=side_ids.simulation_run_id,
-                simulation_id=simulation_id,
-                population=request.population_in(window_year.year),
-                versions=request.versions,
+    """Name each year's side runs, then insert each year's report run, pending.
+
+    Unforced, each distinct simulation's run on ``versions`` and its year's
+    catalog rows (``population`` is the first year's) that hasn't failed
+    and wasn't forced is found, or inserted with its side's proposed ID, in
+    simulation ID order; one simulation on both sides of a year gets one
+    run. Forced, each side gets a new run, marked forced like the year's
+    report run. A keyed window's create and every window re-run share this.
+    """
+    if forced:
+        for window_year in years:
+            for side in _SIDE_NAMES:
+                insert_simulation_run(
+                    connection,
+                    run_id=window_year.proposed_run_ids[side],
+                    simulation_id=window_year.simulation_ids[side],
+                    population=replace(population, year=window_year.year),
+                    versions=versions,
+                    forced=True,
+                )
+        found_years = tuple(
+            _found_year(
+                window_year,
+                {
+                    side: (window_year.proposed_run_ids[side], True)
+                    for side in _SIDE_NAMES
+                },
             )
-    runs = find_or_insert_simulation_runs(connection, rows)
-    years = tuple(
-        FoundWindowYear(
-            year=window_year.year,
-            report_run_id=window_year.report_run_id,
-            baseline=_found_side(runs, simulation_ids[window_year.year, "baseline"]),
-            reform=_found_side(runs, simulation_ids[window_year.year, "reform"]),
+            for window_year in years
         )
-        for window_year in request.years
-    )
+    else:
+        rows: dict[UUID, dict[str, Any]] = {}
+        for window_year in years:
+            # The reform first, so one simulation on both sides keeps the
+            # baseline's proposed ID.
+            for side in reversed(_SIDE_NAMES):
+                simulation_id = window_year.simulation_ids[side]
+                rows[simulation_id] = simulation_run_row(
+                    run_id=window_year.proposed_run_ids[side],
+                    simulation_id=simulation_id,
+                    population=replace(population, year=window_year.year),
+                    versions=versions,
+                )
+        runs = find_or_insert_simulation_runs(connection, rows)
+        found_years = tuple(
+            _found_year(
+                window_year,
+                {
+                    side: (
+                        runs[window_year.simulation_ids[side]].id,
+                        runs[window_year.simulation_ids[side]].inserted,
+                    )
+                    for side in _SIDE_NAMES
+                },
+            )
+            for window_year in years
+        )
     connection.execute(
         insert(report_runs),
         [
             window_year_run_row(
                 run_id=year.report_run_id,
                 report_id=report_id,
-                window_run_id=request.window_run_id,
+                window_run_id=window_run_id,
                 year=year.year,
                 side_runs={
                     "baseline": year.baseline.simulation_run_id,
                     "reform": year.reform.simulation_run_id,
                 },
-                versions=request.versions,
-                forced=False,
+                versions=versions,
+                forced=forced,
             )
-            for year in years
+            for year in found_years
         ],
     )
-    return years
+    return found_years
+
+
+def _found_year(
+    window_year: WindowYearToInsert, side_runs: dict[Side, tuple[UUID, bool]]
+) -> FoundWindowYear:
+    """Return a year as inserted, naming each side's run and who inserted it."""
+    sides = {
+        side: FoundSide(
+            simulation_id=window_year.simulation_ids[side],
+            simulation_run_id=side_runs[side][0],
+            run_inserted=side_runs[side][1],
+        )
+        for side in _SIDE_NAMES
+    }
+    return FoundWindowYear(
+        year=window_year.year,
+        report_run_id=window_year.report_run_id,
+        baseline=sides["baseline"],
+        reform=sides["reform"],
+    )
 
 
 def _sides(
@@ -356,19 +438,32 @@ def _sides(
     return sides[::-1] if reform_first else sides
 
 
-def _found_side(runs: dict[UUID, Any], simulation_id: UUID) -> FoundSide:
-    run = runs[simulation_id]
-    return FoundSide(
-        simulation_id=simulation_id, simulation_run_id=run.id, run_inserted=run.inserted
+def _years_to_insert(
+    request: KeyedBudgetWindow, simulation_ids: dict[YearSide, UUID]
+) -> tuple[WindowYearToInsert, ...]:
+    """Return the request's years on the simulations their keys found."""
+    return tuple(
+        WindowYearToInsert(
+            year=window_year.year,
+            report_run_id=window_year.report_run_id,
+            simulation_ids={
+                side: simulation_ids[window_year.year, side] for side in _SIDE_NAMES
+            },
+            proposed_run_ids={
+                side: side_ids.simulation_run_id
+                for side, side_ids in _sides(window_year, reform_first=False)
+            },
+        )
+        for window_year in request.years
     )
 
 
-def _stored_years(
+def stored_window_years(
     connection: Connection,
     window_run_id: UUID,
     simulation_ids: dict[YearSide, UUID],
 ) -> tuple[FoundWindowYear, ...]:
-    """Return a joined window run's years, as its year runs name them.
+    """Return a window run's years, as its year runs name them, none inserted now.
 
     Raise ValueError when its years aren't the request's: a window run of
     one report always has them.

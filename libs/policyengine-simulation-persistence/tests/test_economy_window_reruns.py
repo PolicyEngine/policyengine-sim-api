@@ -252,7 +252,7 @@ def test_a_budget_windows_definition_names_each_years_simulations(
 def test_a_definitions_years_come_from_the_newest_window_run(
     public_api_database_url,
 ) -> None:
-    """A year that reused another report's run names that report's simulation."""
+    """A year naming another report's simulation run names that simulation."""
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         later = insert_later_catalog(connection, economy)
@@ -264,8 +264,8 @@ def test_a_definitions_years_come_from_the_newest_window_run(
             years[1],
             baseline=RerunSide(
                 simulation_id=other_2027.baseline.simulation_id,
-                simulation_run_id=other_2027.baseline.simulation_run_id,
-                reused=True,
+                simulation_run_id=uuid4(),
+                reused=False,
             ),
         )
         act_as_the_service(connection)

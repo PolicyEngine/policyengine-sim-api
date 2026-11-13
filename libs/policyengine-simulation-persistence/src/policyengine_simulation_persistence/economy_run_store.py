@@ -287,12 +287,12 @@ class EconomyRunStore:
                 ),
             )
 
-    def create_window_rerun(self, rerun: NewWindowRerun) -> None:
-        """Create the window's new run and its years' runs; see ``insert_window_rerun``.
+    def create_window_rerun(self, rerun: NewWindowRerun) -> FoundBudgetWindow:
+        """Join or create the window's run and its years; see ``insert_window_rerun``.
 
         Raise EconomyRecordOutcomeUnknownError as ``create_report`` does.
         """
-        self._create(lambda connection: insert_window_rerun(connection, rerun))
+        return self._create(lambda connection: insert_window_rerun(connection, rerun))
 
     def create_report_rerun(self, rerun: NewReportRerun) -> FoundReportRun:
         """Join or create the report's run; see ``insert_report_rerun``.

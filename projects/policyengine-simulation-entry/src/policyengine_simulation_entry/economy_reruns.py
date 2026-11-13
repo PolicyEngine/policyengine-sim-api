@@ -103,6 +103,7 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence import (
         BudgetWindowInputs,
         EconomyReportInputs,
+        FoundBudgetWindow,
         FoundReportRun,
         FoundSimulationRun,
         ReportDefinition,
@@ -179,8 +180,8 @@ class EconomyRerunRuns(BudgetWindowRuns, Protocol):
         """Read a window re-run's catalog rows, both sides' values and years' runs."""
         ...
 
-    def create_window_rerun(self, rerun: NewWindowRerun) -> None:
-        """Create the window's new run, each year's report run and new runs."""
+    def create_window_rerun(self, rerun: NewWindowRerun) -> FoundBudgetWindow:
+        """Join the window's run on the re-run's versions, or create it."""
         ...
 
     def create_report_rerun(self, rerun: NewReportRerun) -> FoundReportRun:
