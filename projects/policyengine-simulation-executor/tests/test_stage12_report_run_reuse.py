@@ -909,9 +909,9 @@ def test_a_restarted_call_reuses_the_output_its_own_baseline_worker_recorded() -
     # The first attempt starts both children, then Modal pre-empts it.
     with pytest.raises(KeyboardInterrupt):
         _coordinate(report_runs, TimeoutInvoker(), artifacts, files, sleep=_preempt)
-    # Before the pre-empted call cancelled it, the baseline's worker wrote its
-    # output and completed its simulation run; the reform's never claimed its
-    # run.
+    # Meanwhile the baseline's worker, which the pre-empted call left running,
+    # wrote its output and completed its simulation run; the reform's never
+    # claimed its run.
     stored = _succeeded_with_output(report_runs, files, BASELINE_RUN_ID)
     baseline_run = report_runs.simulation_runs[BASELINE_RUN_ID]
     baseline_run.modal_call_id = "fc-baseline-worker"
