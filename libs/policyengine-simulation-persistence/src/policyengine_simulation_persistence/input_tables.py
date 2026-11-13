@@ -15,7 +15,16 @@ from __future__ import annotations
 
 from typing import Final
 
-from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, Uuid
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Enum,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Uuid,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 
 from policyengine_simulation_persistence.tables import TABLE_SCHEMA
@@ -24,6 +33,20 @@ input_metadata = MetaData(schema=TABLE_SCHEMA)
 
 # A country's tax-benefit model is named "policyengine-<country>".
 MODEL_NAME_PREFIX: Final = "policyengine-"
+# The kinds of geography a region covers, as the Public API's
+# ``v2_region_type`` lists them.
+REGION_TYPES: Final = (
+    "national",
+    "country",
+    "state",
+    "congressional_district",
+    "constituency",
+    "local_authority",
+    "city",
+    "place",
+)
+# The UK region types a local-area breakdown covers.
+UK_AREA_REGION_TYPES: Final = ("constituency", "local_authority")
 
 tax_benefit_models = Table(
     "tax_benefit_models",
@@ -49,6 +72,12 @@ regions = Table(
     input_metadata,
     Column("id", Uuid, nullable=False),
     Column("code", String(255), nullable=False),
+    # The enum names its schema itself, as the service tables' enums do.
+    Column(
+        "region_type",
+        Enum(*REGION_TYPES, name="v2_region_type", schema=TABLE_SCHEMA),
+        nullable=False,
+    ),
     Column("tax_benefit_model_version_id", Uuid, nullable=False),
     Column("default_dataset_id", Uuid, nullable=False),
 )
