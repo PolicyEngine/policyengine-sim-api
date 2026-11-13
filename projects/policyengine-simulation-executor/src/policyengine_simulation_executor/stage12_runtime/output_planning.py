@@ -29,6 +29,8 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
     uk_area_codes_required,
 )
 
+from .local_area_datasets import calculates_on_local_area_dataset
+
 if TYPE_CHECKING:
     import pandas as pd
     from policyengine_simulation_contract.stage12_bundle import CountryId
@@ -120,9 +122,8 @@ def _include_cliff_impacts(simulation: SimulationExecutionInput) -> bool:
 
 
 def _required_dataset_variables(
+    simulation: SimulationExecutionInput,
     *,
-    country: CountryId,
-    region: str,
     aggregates: tuple[ReportAggregate, ...],
 ) -> dict[str, tuple[str, ...]]:
     """Return input-dataset columns copied into the materialized output.
@@ -131,11 +132,21 @@ def _required_dataset_variables(
     simulations, except in a national or nation-level report whose bundle
     routes UK area regions to another dataset. Its national dataset may then
     carry no area codes, so none are planned, and the aggregate leaves the
-    area breakdowns out (``build_aggregate_report``).
+    area breakdowns out (``build_aggregate_report``). A UK-wide or nation
+    simulation on the dataset the release routes area regions to
+    (``calculates_on_local_area_dataset``) has them, and a local-area report
+    reads them, so they are planned there too, also when the simulation is
+    planned alone: its run's file then holds what a local-area report reads.
     """
-    if country != "uk" or ReportAggregate.GEOGRAPHIC not in aggregates:
+    if (
+        simulation.geography.country != "uk"
+        or ReportAggregate.GEOGRAPHIC not in aggregates
+    ):
         return {}
-    if not uk_area_codes_required(region):
+    if not (
+        uk_area_codes_required(simulation.geography.region)
+        or calculates_on_local_area_dataset(simulation)
+    ):
         return {}
     return UK_GEOGRAPHIC_DATASET_VARIABLES
 
@@ -283,9 +294,7 @@ def _resolve_output_plan(
         baseline_variables = model.resolve_entity_variables(baseline)
         reform_variables = model.resolve_entity_variables(reform)
         dataset_variables = _required_dataset_variables(
-            country=country,
-            region=baseline_input.geography.region,
-            aggregates=requirements.aggregates,
+            baseline_input, aggregates=requirements.aggregates
         )
         entities = []
         for entity in sorted(
