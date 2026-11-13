@@ -469,11 +469,15 @@ def test_a_report_rerun_joins_the_reports_run_on_its_versions(
         act_as_the_service(connection)
 
         joined = insert_report_rerun(connection, rerun)
-        created = connection.execute(
+        created_report_runs = connection.execute(
+            text("SELECT count(*) FROM public.report_runs WHERE id = :id"),
+            {"id": rerun.run_id},
+        ).scalar_one()
+        created_simulation_runs = connection.execute(
             text(
                 "SELECT count(*) FROM public.simulation_runs WHERE id IN :ids"
             ).bindparams(bindparam("ids", expanding=True)),
-            {"ids": [rerun.run_id, *rerun.new_simulation_run_ids]},
+            {"ids": list(rerun.new_simulation_run_ids)},
         ).scalar_one()
 
     assert joined == FoundReportRun(
@@ -483,7 +487,7 @@ def test_a_report_rerun_joins_the_reports_run_on_its_versions(
         baseline_simulation_run_id=stored.baseline.simulation_run_id,
         reform_simulation_run_id=stored.reform.simulation_run_id,
     )
-    assert created == 0
+    assert (created_report_runs, created_simulation_runs) == (0, 0)
 
 
 def test_a_report_rerun_beside_a_run_under_way_on_older_versions_creates_its_own(

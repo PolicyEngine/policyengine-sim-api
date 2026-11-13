@@ -40,6 +40,8 @@ from policyengine_simulation_persistence import (
 from sqlalchemy import event, insert, text, update
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy import Connection, Engine
 
 pytestmark = pytest.mark.public_api_schema
@@ -275,16 +277,17 @@ def test_a_report_run_is_joined_on_its_versions_outside_budget_windows(
             )
 
 
-def _wait_for_a_statement_waiting_on_a_lock(engine: Engine) -> None:
-    """Return once another backend of this database waits for a lock."""
+def _wait_until_another_backend_waits_for(engine: Engine, holder_pid: int) -> None:
+    """Return once a backend waits for a lock the backend ``holder_pid`` holds."""
     deadline = time.monotonic() + LOCK_WAIT_TIMEOUT_SECONDS
     with engine.connect() as connection:
         while time.monotonic() < deadline:
             waiting = connection.execute(
                 text(
                     "SELECT count(*) FROM pg_stat_activity "
-                    "WHERE datname = current_database() AND wait_event_type = 'Lock'"
-                )
+                    "WHERE :holder_pid = ANY(pg_blocking_pids(pid))"
+                ),
+                {"holder_pid": holder_pid},
             ).scalar_one()
             connection.rollback()
             if waiting:
@@ -305,6 +308,17 @@ def test_a_transaction_inserting_a_run_another_has_inserted_waits_and_joins_it(
         )
     first_has_inserted = threading.Event()
     found: dict[str, Any] = {}
+    errors: list[BaseException] = []
+
+    def recording_errors(work: Callable[[], None]) -> Callable[[], None]:
+        def run() -> None:
+            try:
+                work()
+            except BaseException as error:  # noqa: BLE001  # re-raised by the test's thread
+                errors.append(error)
+                first_has_inserted.set()
+
+        return run
 
     def insert_then_commit_once_the_other_waits() -> None:
         with committed_engine.begin() as connection:
@@ -312,8 +326,11 @@ def test_a_transaction_inserting_a_run_another_has_inserted_waits_and_joins_it(
             found["first"] = find_or_insert_simulation_run(
                 connection, _simulation_run_values(economy, simulation.id)
             )
+            holder_pid = connection.execute(
+                text("SELECT pg_backend_pid()")
+            ).scalar_one()
             first_has_inserted.set()
-            _wait_for_a_statement_waiting_on_a_lock(committed_engine)
+            _wait_until_another_backend_waits_for(committed_engine, holder_pid)
 
     def insert_once_the_first_has() -> None:
         assert first_has_inserted.wait(LOCK_WAIT_TIMEOUT_SECONDS)
@@ -324,14 +341,16 @@ def test_a_transaction_inserting_a_run_another_has_inserted_waits_and_joins_it(
             )
 
     threads = [
-        threading.Thread(target=insert_then_commit_once_the_other_waits),
-        threading.Thread(target=insert_once_the_first_has),
+        threading.Thread(target=recording_errors(work))
+        for work in (insert_then_commit_once_the_other_waits, insert_once_the_first_has)
     ]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join(LOCK_WAIT_TIMEOUT_SECONDS * 2)
 
+    if errors:
+        raise errors[0]
     assert found["first"].inserted is True
     assert (found["second"].id, found["second"].inserted) == (found["first"].id, False)
 
