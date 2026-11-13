@@ -1,9 +1,11 @@
 """Request and response models of the economy simulation and report routes.
 
-The Public API names a region and dataset of the country's catalog by code
-and name, and each simulation's stored policy and dynamic by ID; the
-Simulation Entrypoint reads them from the Public API's tables itself, and
-calculates on the v2 version manifest's default worker. A request names no
+The Public API names a region of the country's catalog by code, and each
+simulation's stored policy and dynamic by ID; the Simulation Entrypoint
+reads them, and the dataset the catalog gives the region, from the Public
+API's tables itself, and calculates on the v2 version manifest's default
+worker. No request names a dataset: only a UK-wide or nation report may
+choose the bundle's local-area dataset instead (``data_source``). A request names no
 .py version and no record ID: the service runs its default worker's version
 and chooses every ID.
 
@@ -60,7 +62,8 @@ LocalAreaDataSource = Literal["local_area_dataset"]
 LOCAL_AREA_DATA_SOURCE_REGIONS = frozenset({"uk", *UK_NATION_REGIONS})
 
 # Why a request is refused (400), naming a row the caller chose that doesn't
-# exist: the Public API answers these as its caller's error.
+# exist, or its region's dataset (a stored report's, on a re-run): the Public
+# API answers these as its caller's error.
 CallerRowRefusalCode = Literal["unknown_region", "unknown_dataset", "unknown_dynamic"]
 # Why a request is refused (400) for the service's own state, or a row the
 # Public API checks before asking.
@@ -140,23 +143,21 @@ class EconomySimulationRequest(PolicyChoice):
     """An economy simulation: a policy and dynamic applied to one region's data.
 
     ``region_code`` is a region of the country's catalog version for the
-    default worker's .py version (``us``, ``state/ca``, ``country/wales``),
-    and ``dataset_name`` one of that version's datasets; without it, the
-    region's default dataset is used.
+    default worker's .py version (``us``, ``state/ca``, ``country/wales``);
+    the simulation runs on the dataset that version gives the region.
     """
 
     country: CountryId
     simulation_type: Literal["economy"]
     year: SimulationYear
     region_code: CatalogKey
-    dataset_name: CatalogKey | None = None
 
 
 class EconomyReportRequest(_Request):
     """An economy report: a baseline and a reform simulation of one region's data.
 
-    Both simulations use the report's year, region and dataset, as
-    ``EconomySimulationRequest`` describes them. ``include_cliffs`` also
+    Both simulations use the report's year and region, and the region's
+    dataset, as ``EconomySimulationRequest`` describes them. ``include_cliffs`` also
     calculates the baseline's and reform's cliff impact. ``spm`` selects the
     SPM forecast scenario and geography; omit it, rather than sending null,
     to use the bundle's certified defaults.
@@ -177,7 +178,6 @@ class EconomyReportRequest(_Request):
     description: ReportDescription | None = None
     year: SimulationYear
     region_code: CatalogKey
-    dataset_name: CatalogKey | None = None
     baseline: PolicyChoice
     reform: PolicyChoice
     include_cliffs: StrictBool = False

@@ -111,11 +111,13 @@ staging check.
 `POST /reports` creates an economy report: a baseline and a reform
 simulation of one region's data for one year. It names the `country`,
 `report_type` (`economy`), `label`, `description`, `year`, `region_code`
-and `dataset_name` (a region and dataset of the country's catalog version
-for the default worker's .py version; null for the region's default
-dataset), each side's stored `policy_id` and `dynamic_id` (null for current
-law), `include_cliffs`, and `spm` (SPM settings; omit it, since null is
-refused). `POST /simulations` creates a standalone economy simulation from
+(a region of the country's catalog version for the default worker's .py
+version), each side's stored `policy_id` and `dynamic_id` (null for current
+law), `include_cliffs`, `spm` (SPM settings; omit it, since null is
+refused) and, for a UK-wide or nation report, `data_source` (see "Local
+areas"). No request names a dataset: a report or simulation runs on the
+dataset the catalog version gives its region, and `dataset_name` is refused
+with 422. `POST /simulations` creates a standalone economy simulation from
 the same fields for one policy and dynamic. Neither names a .py version or a
 record ID: the service runs the v2 version manifest's default worker and
 chooses every ID.

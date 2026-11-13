@@ -42,9 +42,10 @@ if TYPE_CHECKING:
     )
 
 # Each column whose foreign key can refuse a submission's rows: the code the
-# refusal answers with and the row it names. A region, dataset or dynamic is
-# the caller's own choice; any other row is one the Public API checked first,
-# or one the service chose, so its refusal is the service's state.
+# refusal answers with and the row it names. A region or dynamic is the
+# caller's own choice, and a dataset its region's (or a stored report's, on a
+# re-run); any other row is one the Public API checked first, or one the
+# service chose, so its refusal is the service's state.
 REFERENCE_REFUSALS: dict[str, tuple[EconomyRefusalCode, str]] = {
     "region_id": ("unknown_region", "region"),
     "dataset_id": ("unknown_dataset", "dataset"),
