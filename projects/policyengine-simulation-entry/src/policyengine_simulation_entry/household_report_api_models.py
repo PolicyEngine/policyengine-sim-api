@@ -18,9 +18,11 @@ from uuid import UUID
 
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_persistence import ReportRunStatus
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from policyengine_simulation_entry.economy_api_models import (
+    DESCRIPTION_NOT_STORED,
+    LABEL_NOT_STORED,
     ReportDescription,
     ReportLabel,
 )
@@ -50,8 +52,10 @@ class HouseholdReportRequest(_Request):
 
     country: CountryId
     report_type: Literal["household"]
-    label: ReportLabel
-    description: ReportDescription | None = None
+    label: ReportLabel | None = Field(default=None, description=LABEL_NOT_STORED)
+    description: ReportDescription | None = Field(
+        default=None, description=DESCRIPTION_NOT_STORED
+    )
     household_id: UUID
     baseline: HouseholdPolicyChoice
     reform: HouseholdPolicyChoice | None = None

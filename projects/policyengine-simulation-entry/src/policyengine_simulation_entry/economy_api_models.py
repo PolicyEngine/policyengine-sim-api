@@ -52,6 +52,15 @@ SimulationYear = Annotated[int, Field(ge=1900, le=2200, description="The year")]
 CatalogKey = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^\S+$")]
 ReportLabel = Annotated[str, Field(min_length=1, max_length=255)]
 ReportDescription = Annotated[str, Field(max_length=10_000)]
+# A report's name and description are accepted and not stored: each user's
+# saved report in the Public API holds them (C1 · 24's answer 6).
+LABEL_NOT_STORED = (
+    "The report's name, accepted for the Public API's callers and not stored: "
+    "each user's saved report holds it."
+)
+DESCRIPTION_NOT_STORED = (
+    "The report's description, accepted and not stored, as the label is."
+)
 
 # Why a request is refused (400), naming a row the caller chose that doesn't
 # exist: the Public API answers these as its caller's error. On a re-run they
@@ -161,8 +170,10 @@ class EconomyReportRequest(_Request):
 
     country: CountryId
     report_type: Literal["economy"]
-    label: ReportLabel
-    description: ReportDescription | None = None
+    label: ReportLabel | None = Field(default=None, description=LABEL_NOT_STORED)
+    description: ReportDescription | None = Field(
+        default=None, description=DESCRIPTION_NOT_STORED
+    )
     year: SimulationYear
     region_code: CatalogKey
     dataset_name: CatalogKey | None = None
