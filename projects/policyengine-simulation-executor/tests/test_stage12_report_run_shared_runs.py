@@ -370,3 +370,88 @@ def test_a_waited_for_run_must_share_the_dataset_and_region_of_the_other_run() -
     assert report_runs.simulation_runs[BASELINE_RUN_ID].writes == [
         "complete_simulation_run"
     ]
+
+
+NEXT_HOLDER_CALL_ID = "fc-next-holder"
+
+
+class HandedToAnotherCall(HolderCall):
+    """A holder that, as it ends, leaves its run to another call."""
+
+    def get(self, *, timeout=None):
+        try:
+            return super().get(timeout=timeout)
+        except RuntimeError:
+            run = self.report_runs.simulation_runs[self.simulation_run_id]
+            run.modal_call_id = NEXT_HOLDER_CALL_ID
+            raise
+
+
+def test_a_waited_for_run_held_by_a_new_call_is_waited_for_under_it() -> None:
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
+    _held_by_another_call(report_runs, BASELINE_RUN_ID, OTHER_WORKER_CALL_ID)
+    first = HandedToAnotherCall(
+        OTHER_WORKER_CALL_ID,
+        report_runs=report_runs,
+        simulation_run_id=BASELINE_RUN_ID,
+        files=files,
+        ending=HolderEnding.STOPS,
+    )
+    second = HolderCall(
+        NEXT_HOLDER_CALL_ID,
+        report_runs=report_runs,
+        simulation_run_id=BASELINE_RUN_ID,
+        files=files,
+        ending=HolderEnding.SUCCEEDS,
+    )
+    invoker = HolderInvoker(report_runs, artifacts, holders=[first, second])
+
+    result = _coordinate(report_runs, invoker, artifacts, files)
+
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
+    assert set(invoker.restored) == {OTHER_WORKER_CALL_ID, NEXT_HOLDER_CALL_ID}
+    # The first call's end didn't fail a run the next call holds.
+    assert report_runs.simulation_runs[BASELINE_RUN_ID].writes == [
+        "complete_simulation_run"
+    ]
+
+
+class LeftUnstarted(HolderCall):
+    """A holder whose run is returned to pending with no call as it ends."""
+
+    def get(self, *, timeout=None):
+        try:
+            return super().get(timeout=timeout)
+        except RuntimeError:
+            run = self.report_runs.simulation_runs[self.simulation_run_id]
+            run.status, run.modal_call_id = RunStatus.PENDING, None
+            raise
+
+
+def test_a_waited_for_run_left_unstarted_gets_this_coordinators_worker() -> None:
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
+    _held_by_another_call(report_runs, BASELINE_RUN_ID, OTHER_WORKER_CALL_ID)
+    holder = LeftUnstarted(
+        OTHER_WORKER_CALL_ID,
+        report_runs=report_runs,
+        simulation_run_id=BASELINE_RUN_ID,
+        files=files,
+        ending=HolderEnding.STOPS,
+    )
+    invoker = HolderInvoker(report_runs, artifacts, holders=[holder])
+
+    result = _coordinate(report_runs, invoker, artifacts, files)
+
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
+    assert sorted(invoker.events) == ["spawn:baseline", "spawn:reform"]
+    baseline = report_runs.simulation_runs[BASELINE_RUN_ID]
+    assert baseline.status is RunStatus.SUCCEEDED
+    assert baseline.modal_call_id in invoker.call_ids

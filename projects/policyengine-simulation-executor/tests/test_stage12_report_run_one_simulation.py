@@ -33,6 +33,13 @@ from stage12_fake_report_runs import (
 from stage12_fake_stores import FakeArtifacts, simulation_frames
 from stage12_run_worker_support import RunWorkerInvoker
 from stage12_runtime_support import coordinate_report
+from stage12_shared_run_support import (
+    HolderCall,
+    HolderEnding,
+    HolderInvoker,
+    StoredOutputFiles,
+    stored_output_uri,
+)
 
 COORDINATOR_CALL_ID = "fc-coordinator"
 STORED_OUTPUT_URI = f"gs://detailed-save-outputs/simulations/{BASELINE_RUN_ID}.parquet"
@@ -176,3 +183,30 @@ def test_one_run_on_both_sides_whose_worker_fails_fails_the_report_run() -> None
     report_run = report_runs.report_runs[REPORT_RUN_ID]
     assert report_run.status is RunStatus.FAILED
     assert report_run.error_message == simulation_run.error_message
+
+
+def test_one_run_on_both_sides_that_another_call_holds_is_waited_for_once() -> None:
+    report_runs, files, artifacts = _report_runs(), StoredOutputFiles(), FakeArtifacts()
+    run = report_runs.simulation_runs[BASELINE_RUN_ID]
+    run.status, run.modal_call_id = RunStatus.RUNNING, "fc-other-worker"
+    holder = HolderCall(
+        "fc-other-worker",
+        report_runs=report_runs,
+        simulation_run_id=BASELINE_RUN_ID,
+        files=files,
+        ending=HolderEnding.SUCCEEDS,
+    )
+    invoker = HolderInvoker(report_runs, artifacts, holders=[holder])
+    aggregated = []
+
+    result = _coordinate(report_runs, invoker, artifacts, files, aggregated)
+
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
+    assert invoker.events == []
+    assert files.reads == [stored_output_uri(BASELINE_RUN_ID)]
+    (inputs,) = aggregated
+    assert inputs["baseline"].descriptor.role is SimulationRole.BASELINE
+    assert inputs["reform"].descriptor.role is SimulationRole.REFORM
+    assert (
+        inputs["baseline"].descriptor.artifact == inputs["reform"].descriptor.artifact
+    )
