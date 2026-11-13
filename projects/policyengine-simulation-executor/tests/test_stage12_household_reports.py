@@ -31,12 +31,12 @@ from policyengine_simulation_contract.household_report_execution import (
     HouseholdReportRunCalculation,
 )
 from policyengine_simulation_executor.stage12_runtime import household_report_recording
-from policyengine_simulation_executor.stage12_runtime.shared_simulation_runs import (
-    HeldRunWait,
-)
 from policyengine_simulation_executor.stage12_runtime.run_sweep import (
     ENDED_CALL_MESSAGE,
     CallState,
+)
+from policyengine_simulation_executor.stage12_runtime.shared_simulation_runs import (
+    HeldRunWait,
 )
 from policyengine_stage12_persistence import RunStatus, RunWrite, SimulationRunState
 from pydantic import ValidationError

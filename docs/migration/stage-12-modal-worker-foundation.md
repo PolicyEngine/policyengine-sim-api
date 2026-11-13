@@ -889,9 +889,22 @@ report run, never both. The function then:
 Both sides are always calculated, so each run has its own outcome. A report
 run another call holds, or one already finished, returns `deduplicated`, the
 report run's ID and its status, without calculating. A restarted call keeps a
-side it already recorded. An error, a refused payload included, or Modal's
-cancellation fails the report run and each of its simulation runs left
-unfinished, with a summary naming only the error's type, then propagates; a
+side it already recorded.
+
+Identical household requests share simulation runs (C1 · 24, answer 8), so,
+as a report run's coordinator does, the function waits for a side whose run
+another call holds, once the sides it can claim are done: it uses the run once
+it succeeds, takes its recorded failure as the side's, and fails it, while it
+still records that call, only once Modal reports the call ended without an
+outcome (`modal_call_ended`). A side still held
+`HOUSEHOLD_SIDE_WAIT_SECONDS` (780) after the call's start, inside the
+function's 900-second Modal timeout, fails the report run and is left to its
+call; a waiting call holds one of the household functions' containers. A run
+named on both sides, as a report comparing a policy with itself names one, is
+calculated once and is both sides' outcome. An error, a refused payload
+included, or Modal's cancellation fails the report run and each simulation run
+this call holds, with a summary naming only the error's type, then propagates;
+a run it never claimed, which other report runs may share, is left as it is. A
 pre-emption records nothing. An error in the report run's claim, or in the
 read of its simulation runs, fails the report run if the claim applied
 before the error, and leaves its simulation runs to the stuck-run sweep.

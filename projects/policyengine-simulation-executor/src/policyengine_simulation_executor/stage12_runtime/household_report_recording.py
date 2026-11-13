@@ -17,13 +17,23 @@ as the Modal worker role.
 A report run another call holds, or one already finished, is not calculated
 again. A call Modal restarts after a pre-emption runs under the same call
 ID, so it resumes its own claims, and keeps a side it had already recorded.
+
+Identical requests share simulation runs, so a side's run may be another
+household report run's too. A side whose run another call holds is waited
+for once the sides this call can claim are done, as a report run's
+coordinator waits (``shared_simulation_runs``): the run is used once it
+succeeds, its failure is the side's, and it is failed only once its call
+ended without an outcome; a side still held when the wait window closes
+(``HOUSEHOLD_SIDE_WAIT_SECONDS`` from the call's start) fails the report run
+and is left to its call. A run named on both sides is calculated once. A
+failing call fails only the runs it holds.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol
@@ -36,13 +46,27 @@ from policyengine_simulation_contract.household_report_execution import (
 )
 from policyengine_stage12_persistence import HouseholdReportRunStore, RunStatus
 
+from policyengine_simulation_executor.stage12_timeouts import (
+    HOUSEHOLD_SIDE_WAIT_SECONDS,
+)
+
 from .database_retry import open_connection_with_retry
+from .dependencies import ModalChildInvoker
 from .failure_recording import persist_failure_record
 from .household_job_recording import (
     household_failure_summary,
     unexpected_failure_summary,
 )
 from .report_run_access import MODAL_WORKER_DATABASE_URL_ENV
+from .run_sweep import modal_call_state
+from .shared_simulation_runs import (
+    HeldRunWait,
+    HeldRunWaitTimeoutError,
+    WaitedRun,
+    WaitedRunFailedError,
+    WaitedRunSucceeded,
+    wait_for_held_run,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -135,6 +159,17 @@ class HouseholdReportRunWriter(Protocol):
         """Mark the run failed: while ``modal_call_id`` holds it, or while active."""
         ...
 
+    def fail_simulation_run_held_by(
+        self,
+        simulation_run_id: UUID,
+        *,
+        modal_call_id: str,
+        error_message: str,
+        failed_at: datetime,
+    ) -> RunWrite:
+        """Mark the run failed while it is unfinished and records ``modal_call_id``."""
+        ...
+
     def complete_household_report_run(
         self, report_run_id: UUID, *, modal_call_id: str, completed_at: datetime
     ) -> RunWrite:
@@ -203,15 +238,25 @@ class _ReportRunCall:
         side: HouseholdReportSide,
         request: HouseholdExecutionRequest,
         calculate: HouseholdCalculation,
-        unfinished: list[UUID],
-    ) -> SideOutcome:
-        """Claim, calculate and record one side; return what its run ended as."""
+        held: list[UUID],
+    ) -> SideOutcome | None:
+        """Claim, calculate and record one side; return what its run ended as.
+
+        ``held`` gains the run before its claim, since a claim that raises may
+        have applied, and loses it once the run is finished or another call
+        holds it. None means another call holds the run: the side is waited
+        for once the others are done (``waited_side``).
+        """
         run_id = request.calculation_id
+        held.append(run_id)
         claimed = self.writer.claim_simulation_run(
             run_id, modal_call_id=self.modal_call_id, claimed_at=datetime.now(UTC)
         )
         if not claimed.changed:
-            unfinished.remove(run_id)
+            held.remove(run_id)
+            state = self.writer.get_simulation_run(run_id)
+            if state.status in {RunStatus.PENDING, RunStatus.RUNNING}:
+                return None
             return self._side_already_held(side, run_id)
         outcome = calculate(request)
         document = outcome.model_dump(mode="json")
@@ -232,7 +277,7 @@ class _ReportRunCall:
                 household_result=document,
                 completed_at=datetime.now(UTC),
             )
-        unfinished.remove(run_id)
+        held.remove(run_id)
         if recorded.changed:
             reason = "" if summary is None else _side_failure(side, summary)
         else:
@@ -250,6 +295,54 @@ class _ReportRunCall:
         return SideOutcome(
             side=side, simulation_run_id=run_id, status=recorded.status, reason=reason
         )
+
+    def waited_side(  # noqa: PLR0913  # the side, its calculation, then the wait
+        self,
+        side: HouseholdReportSide,
+        request: HouseholdExecutionRequest,
+        calculate: HouseholdCalculation,
+        held: list[UUID],
+        *,
+        wait: HeldRunWait,
+        deadline: float,
+    ) -> SideOutcome:
+        """Wait for a side's run another call holds; return what it ended as.
+
+        A run left pending with no call is claimed and calculated here, and
+        one that moves to another call is waited for under it, until the
+        wait window closes.
+        """
+        run_id = request.calculation_id
+        while True:
+            waited = WaitedRun(
+                simulation_run_id=run_id,
+                writer=self.writer,
+                restore=wait.restore,
+                call_state=wait.call_state,
+                object_id=self.writer.get_simulation_run(run_id).modal_call_id or "",
+            )
+            try:
+                result = wait_for_held_run(waited, wait, deadline=deadline)
+            except WaitedRunFailedError:
+                return self._side_already_held(side, run_id)
+            except HeldRunWaitTimeoutError:
+                return SideOutcome(
+                    side=side,
+                    simulation_run_id=run_id,
+                    status=self.writer.get_simulation_run(run_id).status,
+                    reason=(
+                        f"{SIDE_UNAVAILABLE_CODE}: The {side} simulation run is "
+                        "still running under another call after "
+                        f"{wait.timeout_seconds:g} seconds."
+                    ),
+                )
+            if isinstance(result, WaitedRunSucceeded):
+                return SideOutcome(
+                    side=side, simulation_run_id=run_id, status=RunStatus.SUCCEEDED
+                )
+            outcome = self.side(side, request, calculate, held)
+            if outcome is not None:
+                return outcome
 
     def _side_already_held(
         self, side: HouseholdReportSide, run_id: UUID
@@ -315,25 +408,25 @@ class _ReportRunCall:
             return recorded.status
         return status
 
-    def fail_unfinished(self, error: BaseException, *, unfinished: list[UUID]) -> None:
-        """Fail every run this call left unfinished, logging rather than raising.
+    def fail_unfinished(self, error: BaseException, *, held: list[UUID]) -> None:
+        """Fail each run this call may hold, logging rather than raising.
 
-        ``unfinished`` holds the report run's simulation runs this call has
-        neither finished nor found held by another call (``side`` takes each
-        out of it). Each is failed while still active, whether this call
-        holds it or its claim rolled back. The write checks no call: the
-        simulation service creates new simulation runs for each household
-        report, so only this call works on the runs left in the list. Then
-        the report run is failed while this call holds it.
+        ``held`` holds the report run's simulation runs this call claimed, or
+        tried to, and has neither finished nor found held by another call
+        (``side`` keeps it). Each is failed only while this call holds it
+        running, so a claim that rolled back, and a run other report runs
+        share, are left alone. Then the report run is failed while this call
+        holds it.
         """
         summary = unexpected_failure_summary(error)
-        for run_id in unfinished:
+        for run_id in held:
             persist_failure_record(
                 partial(
                     self.writer.fail_simulation_run,
                     run_id,
                     error_message=summary,
                     failed_at=datetime.now(UTC),
+                    modal_call_id=self.modal_call_id,
                 ),
                 runtime=self.runtime,
                 failure_scope="household_simulation_run",
@@ -383,6 +476,7 @@ def run_household_report(  # noqa: PLR0913  # the run, its payload and the call'
     modal_call_id: str | None,
     runtime: ObservabilityRuntime | None = None,
     writer: HouseholdReportRunWriter | None = None,
+    wait: HeldRunWait | None = None,
 ) -> dict[str, Any]:
     """Claim the report run, calculate and record each side, then finish the run.
 
@@ -392,10 +486,11 @@ def run_household_report(  # noqa: PLR0913  # the run, its payload and the call'
     each side's status, or, for a report run another call holds or one
     already finished, a summary of the report run without calculating.
     ``writer`` defaults to the store the Modal worker role's database URL
-    names. An error or Modal's cancellation fails the report run, and each
-    of its simulation runs the call left unfinished, with a generic summary,
-    then propagates; a pre-emption doesn't, because Modal runs the call
-    again under the same call ID. The simulation runs are known once the
+    names, and ``wait``, how a side another call holds is waited for, to
+    Modal's (``household_side_wait``). An error or Modal's cancellation fails
+    the report run, and each of its simulation runs this call holds, with a
+    generic summary, then propagates; a pre-emption doesn't, because Modal
+    runs the call again under the same call ID. The simulation runs are known once the
     call has read them, so an error in the report run's claim, or in that
     read, fails the report run if the claim applied before the error, and
     leaves its simulation runs to the stuck-run sweep.
@@ -410,9 +505,11 @@ def run_household_report(  # noqa: PLR0913  # the run, its payload and the call'
         modal_call_id=modal_call_id,
         runtime=runtime,
     )
-    # The report run's simulation runs this call may still have to fail if
-    # it stops, as the database names them.
-    unfinished: list[UUID] = []
+    # The window for a side another call holds opens as the call starts.
+    held_wait = wait or household_side_wait()
+    deadline = held_wait.monotonic() + held_wait.timeout_seconds
+    # The simulation runs this call may hold, and so fail if it stops.
+    held: list[UUID] = []
     try:
         claimed = call.writer.claim_report_run(
             report_run_id, modal_call_id=modal_call_id, claimed_at=datetime.now(UTC)
@@ -424,22 +521,72 @@ def run_household_report(  # noqa: PLR0913  # the run, its payload and the call'
                 "status": claimed.status.value,
             }
         named = call.writer.household_report_simulation_runs(report_run_id)
-        unfinished.extend(run_id for run_id in named if run_id is not None)
         calculation = HouseholdReportRunCalculation.model_validate(payload)
         sides = calculation.sides()
         _require_named_runs(report_run_id, named, calculation)
-        outcomes = []
-        for side, request in sides:
-            outcomes.append(call.side(side, request, calculate, unfinished))
+        outcomes = _side_outcomes(
+            call, sides, calculate, held, wait=held_wait, deadline=deadline
+        )
         status = call.finish(outcomes)
     except KeyboardInterrupt:
         # Pre-emption: Modal runs the call again, and it resumes its claims.
         raise
     except BaseException as error:
-        call.fail_unfinished(error, unfinished=unfinished)
+        call.fail_unfinished(error, held=held)
         raise
     return {
         "report_run_id": str(report_run_id),
         "status": status.value,
         "simulation_runs": [outcome.as_json() for outcome in outcomes],
     }
+
+
+def household_side_wait() -> HeldRunWait:
+    """Return how a household function waits for a side another call holds.
+
+    It probes Modal's calls (``ModalChildInvoker.restore``), reads their
+    state as the stuck-run sweep does, and waits until
+    ``HOUSEHOLD_SIDE_WAIT_SECONDS`` after the call's start.
+    """
+    return HeldRunWait(
+        restore=ModalChildInvoker().restore,
+        call_state=modal_call_state,
+        timeout_seconds=HOUSEHOLD_SIDE_WAIT_SECONDS,
+    )
+
+
+def _side_outcomes(  # noqa: PLR0913  # the call, its sides and calculation, then the wait
+    call: _ReportRunCall,
+    sides: tuple[tuple[HouseholdReportSide, HouseholdExecutionRequest], ...],
+    calculate: HouseholdCalculation,
+    held: list[UUID],
+    *,
+    wait: HeldRunWait,
+    deadline: float,
+) -> list[SideOutcome]:
+    """Return each side's outcome, in the sides' order.
+
+    The sides whose runs this call can claim are calculated first; then each
+    side another call holds is waited for. A run named on both sides is
+    calculated, or waited for, once, and its outcome is both sides'.
+    """
+    by_run: dict[UUID, SideOutcome] = {}
+    deferred: list[tuple[HouseholdReportSide, HouseholdExecutionRequest]] = []
+    for side, request in sides:
+        run_id = request.calculation_id
+        if run_id in by_run or any(
+            waiting.calculation_id == run_id for _, waiting in deferred
+        ):
+            continue
+        outcome = call.side(side, request, calculate, held)
+        if outcome is None:
+            deferred.append((side, request))
+        else:
+            by_run[run_id] = outcome
+    for side, request in deferred:
+        by_run[request.calculation_id] = call.waited_side(
+            side, request, calculate, held, wait=wait, deadline=deadline
+        )
+    return [
+        replace(by_run[request.calculation_id], side=side) for side, request in sides
+    ]

@@ -25,13 +25,18 @@ call ended (``call_state``, the sweep's ``modal_call_state``): Modal's client
 raises for a lost connection too, while the call goes on. Until then the
 coordinator keeps waiting, within its wait window. ``ProbedWorkerCall`` gives
 the coordinator's own workers the same rule.
+
+A household report run's function waits for a side another call holds with
+``wait_for_held_run``, which probes a ``WaitedRun`` until its run finishes,
+is left unstarted, or the function's own wait window closes.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from policyengine_stage12_persistence import RunStatus
 
@@ -47,10 +52,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from uuid import UUID
 
-    from policyengine_stage12_persistence import SimulationRunState
+    from policyengine_stage12_persistence import RunWrite, SimulationRunState
 
     from .dependencies import ChildCall
-    from .report_run_access import ReportRunWriter
 
 # A run that failed recording no failure of its own.
 SIMULATION_RUN_FAILED = "simulation_run_failed"
@@ -87,6 +91,25 @@ class WaitedRunFailedError(Stage12ExecutionError):
     """A waited-for run failed; ``detail`` is the failure it recorded."""
 
 
+class HeldRunStore(Protocol):
+    """The reads and the one write a wait for a held run makes."""
+
+    def get_simulation_run(self, simulation_run_id: UUID) -> SimulationRunState:
+        """Return the run's state, with its recorded call and failure."""
+        ...
+
+    def fail_simulation_run_held_by(
+        self,
+        simulation_run_id: UUID,
+        *,
+        modal_call_id: str,
+        error_message: str,
+        failed_at: datetime,
+    ) -> RunWrite:
+        """Mark the run failed while it is unfinished and records ``modal_call_id``."""
+        ...
+
+
 @dataclass
 class WaitedRun:
     """The call holding a simulation run, as a child call the coordinator probes.
@@ -97,7 +120,7 @@ class WaitedRun:
     """
 
     simulation_run_id: UUID
-    writer: ReportRunWriter
+    writer: HeldRunStore
     restore: Callable[[str], ChildCall]
     call_state: Callable[[str], CallState]
     object_id: str = ""
@@ -202,3 +225,53 @@ class ProbedWorkerCall:
     def cancel(self) -> None:
         """Ask Modal to stop the worker call."""
         self.call.cancel()
+
+
+# How often a household function probes a held run: from a quarter of a
+# second, doubling while nothing changes, up to every second.
+HELD_RUN_POLL_INITIAL_SECONDS = 0.25
+HELD_RUN_POLL_MAX_SECONDS = 1.0
+
+
+class HeldRunWaitTimeoutError(Exception):
+    """A held run was still unfinished when the wait window closed."""
+
+
+@dataclass(frozen=True)
+class HeldRunWait:
+    """How a function that is no coordinator waits for a run another call holds.
+
+    ``restore`` gives a call's handle by its ID and ``call_state`` Modal's
+    state of a call, as for the coordinator; the window is
+    ``timeout_seconds`` from the function's start, on ``monotonic``.
+    """
+
+    restore: Callable[[str], ChildCall]
+    call_state: Callable[[str], CallState]
+    timeout_seconds: float
+    sleep: Callable[[float], None] = field(default=time.sleep)
+    monotonic: Callable[[], float] = field(default=time.monotonic)
+
+
+def wait_for_held_run(
+    waited: WaitedRun, wait: HeldRunWait, *, deadline: float
+) -> WaitedRunSucceeded | WaitedRunUnstarted:
+    """Probe ``waited`` until its run finishes or is unstarted, until ``deadline``.
+
+    Raises ``WaitedRunFailedError`` for a run that failed, and
+    ``HeldRunWaitTimeoutError`` once the monotonic ``deadline`` passes with
+    the run still unfinished. Between probes it sleeps, backing off, never
+    past the deadline.
+    """
+    poll_interval = HELD_RUN_POLL_INITIAL_SECONDS
+    while True:
+        try:
+            return waited.get(timeout=0)
+        except TimeoutError:
+            pass
+        remaining_seconds = deadline - wait.monotonic()
+        if remaining_seconds <= 0:
+            msg = "the held run was still unfinished when the wait window closed"
+            raise HeldRunWaitTimeoutError(msg)
+        wait.sleep(min(poll_interval, remaining_seconds))
+        poll_interval = min(poll_interval * 2, HELD_RUN_POLL_MAX_SECONDS)

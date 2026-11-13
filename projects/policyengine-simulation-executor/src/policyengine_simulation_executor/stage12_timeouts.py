@@ -39,3 +39,9 @@ COORDINATOR_TIMEOUT_SECONDS = (
     + PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS
     + REPORT_FINISHING_SECONDS
 )
+
+# How long a household report run's function waits, from its start, for a
+# side another call holds: the household functions' Modal timeout (v2_app's
+# HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS, 900 s) less two minutes to record its
+# sides and its report run.
+HOUSEHOLD_SIDE_WAIT_SECONDS = 780
