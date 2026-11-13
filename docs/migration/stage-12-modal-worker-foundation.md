@@ -470,10 +470,13 @@ scoping, and check the area columns as it loads; the plan copies
 `UK_AREA_DATASET_COLUMNS` for them; and the aggregate keeps both area levels,
 with each level's withheld codes (`constituency_withheld_codes`,
 `local_authority_withheld_codes`) from the same disclosure pass, which the
-report run stores as `withheld_area_codes` rows beside its full results. All
-three decide by `calculates_on_local_area_dataset`
-(`stage12_runtime/local_area_datasets.py`), on the same routing rule as
-`uk_area_breakdowns_omitted`.
+report run stores as `withheld_area_codes` rows beside its full results.
+Disclosure control may withhold every area of a level, but a run whose
+disclosure pass estimated no area of a level fails
+(`report_coordination_failed`), so a succeeded run always has area or
+withheld-code rows for each level. All three decide by
+`calculates_on_local_area_dataset` (`stage12_runtime/local_area_datasets.py`),
+on the same routing rule as `uk_area_breakdowns_omitted`.
 
 Aggregation uses the retained output tables without rerunning either model.
 The precomputed baseline and reform simulations retain their original policy

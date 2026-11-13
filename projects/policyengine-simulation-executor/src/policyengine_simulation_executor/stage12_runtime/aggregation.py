@@ -179,7 +179,9 @@ def build_aggregate_report(
     codes in its frames (see ``output_planning``), so its constituency and
     local-authority breakdowns are left out, unless the report is on that
     dataset (``is_local_area_report``): it then gets both levels and their
-    withheld codes, from the same disclosure pass.
+    withheld codes, from the same disclosure pass, and raises ``ValueError``
+    when a level has neither published nor withheld areas, so a succeeded run
+    always has rows for each level.
     """
     from policyengine_simulation_executor.simulation_output_builder import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_output_builder.SimulationOutputBuilder
         SimulationOutputBuilder,
