@@ -11,6 +11,7 @@ from policyengine_stage12_persistence.budget_window_store import (
 from policyengine_stage12_persistence.household_report_run_store import (
     HouseholdReportRunStore,
 )
+from policyengine_stage12_persistence.local_area_results import local_area_result
 from policyengine_stage12_persistence.report_run_results import (
     DistrictCodes,
     ReportRunResult,
@@ -55,6 +56,7 @@ __all__ = [
     "YearStarter",
     "YearToStart",
     "create_stage12_engine",
+    "local_area_result",
     "normalized_database_url",
     "report_run_result",
     "validate_runtime_database",

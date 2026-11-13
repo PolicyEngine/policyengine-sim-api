@@ -21,7 +21,7 @@ from sqlalchemy.dialects.postgresql import ENUM, UUID
 from policyengine_stage12_persistence.report_run_tables import metadata
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from policyengine_simulation_contract.macro_output import (
         AgePovertyOutput,
@@ -38,6 +38,9 @@ if TYPE_CHECKING:
     from policyengine_simulation_contract.stage12_execution import ReportRunIds
 
 decile_type_type = ENUM("income", "wealth", name="v2_decile_type", create_type=False)
+uk_area_type_type = ENUM(
+    "constituency", "local_authority", name="v2_uk_area_type", create_type=False
+)
 
 
 def _report_run_keys() -> tuple[Column[Any], ...]:
@@ -149,6 +152,15 @@ local_authority_impacts = Table(
     *_disclosure_values(),
     Column("local_authority_code", String(64), nullable=False),
     Column("local_authority_name", String(255), nullable=False),
+)
+# The codes of the areas a local-area run estimated but disclosure control did
+# not publish, one row per area: none means none were withheld.
+withheld_area_codes = Table(
+    "withheld_area_codes",
+    metadata,
+    *_report_run_keys(),
+    Column("area_type", uk_area_type_type, nullable=False),
+    Column("code", String(64), nullable=False),
 )
 budget_summary = Table(
     "budget_summary",
@@ -536,7 +548,15 @@ def _area_rows(
 ) -> tuple[dict[str, Any], ...]:
     if areas is None:
         return ()
-    records: list[ConstituencyImpactRecord | LocalAuthorityImpactRecord] = areas.root
+    return area_record_rows(areas.root, keys, kind)
+
+
+def area_record_rows(
+    records: Sequence[ConstituencyImpactRecord | LocalAuthorityImpactRecord],
+    keys: Mapping[str, Any],
+    kind: Literal["constituency", "local_authority"],
+) -> tuple[dict[str, Any], ...]:
+    """Return one area level's rows: each record's code, name, change and fields."""
     return tuple(
         {
             "id": uuid4(),
