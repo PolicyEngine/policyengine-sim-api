@@ -44,11 +44,22 @@ class HouseholdReportRunCalculation(StrictHouseholdModel):
 
     @model_validator(mode="after")
     def validate_one_household(self) -> HouseholdReportRunCalculation:
-        """Require two sides to record different runs of one household calculation."""
+        """Require two sides to calculate one household the same way.
+
+        They record different simulation runs, except a report comparing a
+        policy with itself, which names that simulation's one run on both
+        sides: its two sides are then one calculation, policy included.
+        """
         if self.reform is None:
             return self
-        if self.reform.calculation_id == self.baseline.calculation_id:
-            msg = "the baseline and the reform must record different simulation runs"
+        if (
+            self.reform.calculation_id == self.baseline.calculation_id
+            and self.reform.policy != self.baseline.policy
+        ):
+            msg = (
+                "a household report naming one simulation run on both sides "
+                "must give both the same policy"
+            )
             raise ValueError(msg)
         baseline = self.baseline.model_dump(include=_SHARED_FIELDS)
         reform = self.reform.model_dump(include=_SHARED_FIELDS)
