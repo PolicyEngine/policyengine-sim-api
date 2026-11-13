@@ -1,15 +1,16 @@
 """The staging economy check, run on every staging deploy.
 
-``simulation-staging-economy-check.sh`` finds or creates a small economy
-report, current law against current law for Wales in 2026, through the
-deployed candidate's ``POST /reports``, then forces a new run of it with
-``POST /reports/{report_id}/runs``, follows that run through
-``GET /reports/{report_id}`` and requires it to succeed. An identical
-request ends on the report's existing run (C1 · 24), which a check on the
-same versions has already calculated, so only a forced run, which nothing
-joins, calculates on every deploy (answer 3). It runs after the v2
-manifest's default has moved to the release's worker, so the run calculates
-on the release's own coordinator and workers.
+``simulation-staging-economy-check.sh`` sends a small economy report
+request, current law against current law for Wales in 2026, through the
+deployed candidate's ``POST /reports``, then forces a new run of the report
+with ``POST /reports/{report_id}/runs``, follows that run through
+``GET /reports/{report_id}`` and requires it to succeed. The request reuses
+the simulation runs an earlier check on the same versions calculated (and,
+once reports are found by key, ends on that check's report run; C1 · 24), so
+only a forced run, which nothing joins or reuses, calculates on every deploy
+(answer 3). It runs after the v2 manifest's default has moved to the
+release's worker, so the run calculates on the release's own coordinator and
+workers.
 """
 
 from __future__ import annotations

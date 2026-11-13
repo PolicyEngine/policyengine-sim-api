@@ -19,9 +19,9 @@ Answers the Public API reads:
 - 404 ``unknown_report`` or ``unknown_simulation`` when a re-run names no
   stored record;
 - 409 with ``code`` and ``detail`` when a stored record is not re-run now:
-  ``run_in_progress``, naming the run pending or running (``run_id``), or
-  ``rerun_not_supported`` for a record this service does not re-run.
-  Nothing is written;
+  ``run_in_progress``, naming the run pending or running (``run_id``) of a
+  budget-window or household report, or ``rerun_not_supported`` for a
+  record this service does not re-run. Nothing is written;
 - 422 when the request's fields, or the stored values it names, cannot be
   calculated. Nothing is written;
 - 503 with ``code`` and ``detail`` when the service cannot answer now. Only
@@ -88,9 +88,10 @@ EconomyUnprocessableCode = Literal[
 ]
 # Why a stored record is not re-run now (409).
 EconomyConflictCode = Literal[
-    # The record has a run pending or running; ``run_id`` names it: for a
-    # report, its budget-window run, or else its report run; for a
-    # simulation, its simulation run.
+    # A budget-window report has a window run or year run pending or
+    # running, or a household report a run, and the re-run isn't forced;
+    # ``run_id`` names the budget-window run, or else the report run. An
+    # economy report's or a simulation's re-run joins its run instead.
     "run_in_progress",
     # The service does not re-run this kind of record, or the record lacks a
     # row it calculates on.
@@ -198,9 +199,11 @@ class EconomyReportRequest(_Request):
 class ReportRerunRequest(_Request):
     """A stored report's re-run on the default worker's versions.
 
-    Without ``force``, a side reuses a run of its own simulation that
-    succeeded on those versions, as a new report's side does; with it, both
-    simulations are calculated again.
+    Without ``force``, an economy report's re-run joins the report's run on
+    those versions that hasn't failed, pending, running or succeeded, and
+    otherwise a side reuses a run of its own simulation that succeeded on
+    them, as a new report's side does. With it, both simulations are
+    calculated again, as an extra run marked forced that nothing joins.
     """
 
     force: StrictBool = False
@@ -211,12 +214,14 @@ class _Answer(BaseModel):
 
 
 class EconomySimulationCreated(_Answer):
-    """The simulation a request created or re-ran, its new run and its status.
+    """The simulation a request created or re-ran, its run and that run's status.
 
-    The status is the run's when its call's ID was recorded: ``pending``, or
-    whatever the simulation function had made it by then if it claimed the
-    run first. A run whose call Modal didn't confirm, or whose call's ID
-    couldn't be recorded, is answered ``pending``.
+    For a run the request created, the status is the run's when its call's
+    ID was recorded: ``pending``, or whatever the simulation function had
+    made it by then if it claimed the run first. A run whose call Modal
+    didn't confirm, or whose call's ID couldn't be recorded, is answered
+    ``pending``. A re-run that joined a run answers that run's status as
+    read.
     """
 
     simulation_id: UUID
@@ -225,14 +230,16 @@ class EconomySimulationCreated(_Answer):
 
 
 class EconomyReportCreated(_Answer):
-    """The report a request created or re-ran, its new run and its status.
+    """The report a request created or re-ran, its run and that run's status.
 
-    The status is the run's when its call's ID was recorded: ``pending``, or
-    whatever the coordinator had made it by then if it claimed the run
-    first. A run whose call Modal didn't confirm, or whose call's ID couldn't
-    be recorded, is answered ``pending``. Each side names its
-    simulation and simulation run; ``…_reused`` is true for a side that
-    names a run that already succeeded, rather than a new one.
+    For a run the request created, the status is the run's when its call's
+    ID was recorded: ``pending``, or whatever the coordinator had made it by
+    then if it claimed the run first. A run whose call Modal didn't confirm,
+    or whose call's ID couldn't be recorded, is answered ``pending``. A
+    re-run that joined a run answers that run's status as read. Each side
+    names its simulation and simulation run; ``…_reused`` is true for a side
+    whose run this request didn't create: a run that already succeeded, or,
+    on a joined run, that run's own.
     """
 
     report_id: UUID

@@ -165,14 +165,19 @@ version, dataset and region it calculates on.
   version, dataset, region and year, the output file, a succeeded report run
   with the same options, no refused reuse); it doesn't compare the
   simulation row, which keeps the catalog rows it was created on.
-- `insert_report_rerun` creates a report's new run, trigger `manual`, and a
-  new run of each side's simulation that reuses none;
-  `insert_simulation_rerun` creates a simulation's new run. Each refuses with
-  `RunInProgressError`, naming the run, while the record has a run `pending`
-  or `running` (for a report, a report run; for a simulation, any of its
-  runs), and first takes `lock_reruns_of`, a transaction-level
-  advisory lock on the record's ID, so concurrent re-runs of one record
-  wait for each other. When the database refuses the new run's key to the
+- `insert_report_rerun` joins the report's run on the re-run's versions
+  that hasn't failed and wasn't forced (pending, running or succeeded),
+  creating nothing, or else creates the report's new run, trigger `manual`,
+  and a new run of each side's simulation that reuses none. An unforced one
+  first takes `lock_reruns_of`, a transaction-level advisory lock on the
+  report's ID, so concurrent re-runs of one report wait for each other and
+  end on one run; it refuses with `RunInProgressError` only while a
+  budget-window run of the report is under way. A forced one
+  (`NewReportRerun.forced`) takes no lock, always creates its runs, marked
+  `forced`, and reuses none. `insert_simulation_rerun` joins or creates the
+  simulation's run on the re-run's versions, catalog version and year
+  through `shared_rows`, with no lock. Each returns the run, its status and
+  whether it created it. When the database refuses the new run's key to the
   record itself, the record was deleted after it was read:
   `RerunRecordDeletedError`.
 

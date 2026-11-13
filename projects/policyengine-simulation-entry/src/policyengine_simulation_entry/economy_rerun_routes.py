@@ -115,9 +115,15 @@ class EconomyService(EconomySubmissions, EconomyReruns, Protocol):
 
 
 # The run a 409 run_in_progress names, by the record re-run.
-_RUN_UNDER_WAY: dict[RecordName, str] = {
-    "report": "the report's budget-window run, or else its report run",
-    "simulation": "the simulation's run",
+_CONFLICTS: dict[RecordName, str] = {
+    "report": (
+        "a budget-window report has a window run or year run pending or "
+        "running, or a household report a run, and the re-run isn't forced "
+        "(run_in_progress; run_id names the report's budget-window run, or "
+        "else its report run), or the service does not re-run it "
+        "(rerun_not_supported)"
+    ),
+    "simulation": "the service does not re-run it (rerun_not_supported)",
 }
 # The 400 codes that name a stored record's own rows on its re-run: a
 # report's re-run also names its stored simulations (missing_reference) and
@@ -147,7 +153,13 @@ _HOUSEHOLD_ANSWERS: dict[RecordName, dict[int, str]] = {
 def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
     """Return every answer a re-run of ``record`` declares."""
     return {
-        201: {"description": f"The {record}'s new run was created and started"},
+        201: {
+            "description": (
+                f"The {record}'s run the re-run ended on: one it joined, pending, "
+                "running or succeeded on the default worker's versions, which "
+                "gets no new call, or one it created and started"
+            )
+        },
         400: {
             "description": (
                 f"The stored {record}'s region, dataset, policy or dynamic is "
@@ -166,10 +178,8 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
         },
         409: {
             "description": (
-                f"The {record} is not re-run now, and nothing was written: it "
-                "has a run pending or running (run_in_progress; run_id names "
-                f"{_RUN_UNDER_WAY[record]}), or the service does not re-run it "
-                "(rerun_not_supported)"
+                f"The {record} is not re-run now, and nothing was written: "
+                f"{_CONFLICTS[record]}"
             ),
             **ERROR_ANSWER,
         },
@@ -273,9 +283,12 @@ def add_economy_rerun_routes(
         description=(
             "Create the stored report's new run on the v2 version manifest's "
             "default worker, and start it; every earlier run is kept. Without "
-            "force, a side reuses a run of its own simulation that succeeded "
-            "on the same versions; with force, both simulations are "
-            "calculated again. A budget-window report's new run is a "
+            "force, an economy report's re-run joins the report's run on those "
+            "versions that hasn't failed, pending, running or succeeded, and "
+            "answers it with no new call; otherwise a side reuses a run of its "
+            "own simulation that succeeded on the same versions. With force, "
+            "both simulations are calculated again, as an extra run marked "
+            "forced that nothing joins. A budget-window report's new run is a "
             "budget-window run with a report run per year, up to five of them "
             "started at once, each year on its own year's simulations. A "
             "household report's new run calculates its stored household in "

@@ -1,10 +1,11 @@
 #!/bin/bash
-# Find or create a small economy report through a deployed Simulation
-# Entrypoint, force a new run of it, and require that run to succeed: current
-# law against current law for Wales in 2026, which needs no stored policy.
-# An identical request ends on the report's existing run, which a check on
-# the same versions has already calculated, so only a forced run, which
-# nothing joins, calculates on every deploy.
+# Send a small economy report request through a deployed Simulation
+# Entrypoint, force a new run of the report, and require that run to succeed:
+# current law against current law for Wales in 2026, which needs no stored
+# policy. The request reuses the simulation runs an earlier check on the same
+# versions calculated (and, once reports are found by key, ends on that
+# check's report run), so only a forced run, which nothing joins or reuses,
+# calculates both simulations on every deploy.
 # Usage: simulation-staging-economy-check.sh <base-url>
 # Required env vars: the test client's SIMULATION_TEST_AUTH_ISSUER,
 # SIMULATION_TEST_AUTH_AUDIENCE, SIMULATION_TEST_AUTH_CLIENT_ID and

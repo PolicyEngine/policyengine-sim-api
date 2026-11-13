@@ -229,7 +229,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         request_id: str,
         observability_context: dict[str, Any] | None,
     ) -> EconomyReportCreated | BudgetWindowReportCreated | HouseholdReportCreated:
-        """Create the stored report's new run on the current versions, and start it.
+        """Join or create the stored report's run on the current versions.
 
         A budget window's new run is a budget-window run with a report run
         per year, whose first years are started (``_rerun_window``); a
@@ -552,9 +552,11 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         *,
         source: RefusalSource,
     ) -> Created:
-        """Create the re-run's rows; refuse it while the record has a run under way.
+        """Create or join the re-run's rows, answering the store's refusals.
 
-        Return what ``create`` returns. A record deleted after its reads is
+        Return what ``create`` returns: the run it joined or created. A
+        budget-window or household report with a run under way is refused
+        (409 ``run_in_progress``). A record deleted after its reads is
         answered as not found. Any other row the database refuses is named
         as ``source``'s; for a report, that includes a side's simulation
         deleted with it.

@@ -510,8 +510,10 @@ def lock_reruns_of(connection: Connection, record_id: UUID) -> None:
     """Wait for, then hold until the transaction ends, the record's re-run lock.
 
     It is a transaction-level advisory lock keyed on the record's ID, which
-    any role may take: a second re-run of the same report or simulation
-    waits here until the first one's transaction ends, then sees its run.
+    any role may take: a second unforced re-run of the same report waits
+    here until the first one's transaction ends, then sees its run. A
+    simulation's re-run and a forced one take none: the Public API's index
+    on runs lets one joinable run exist, and nothing joins a forced run.
     """
     connection.execute(
         select(
@@ -540,12 +542,21 @@ def insert_report_rerun(
     """Join the report's run on the re-run's versions, or create it, pending.
 
     Unless the re-run is forced, take the report's re-run lock, raise
-    RunInProgressError, creating nothing, while a budget window's run of
-    the report is pending or running, and join the report's run on the
-    re-run's versions that hasn't failed and wasn't forced, when there is
-    one. Otherwise create the new run and its sides' new simulation runs; a
-    forced re-run's are marked forced, and never joined. Return the run and
-    whether this call created it, which only then needs its Modal call.
+    RunInProgressError, creating nothing, while a budget-window run of the
+    report is pending or running (the service re-runs a budget window with
+    ``insert_window_rerun``; one passed here directly is refused that way),
+    and join the report's run on the re-run's versions that hasn't failed
+    and wasn't forced, when there is one. Otherwise create the new run and
+    its sides' new simulation runs; a forced re-run's are marked forced, and
+    never joined. Return the run and whether this call created it, which
+    only then needs its Modal call.
+
+    A side's new simulation run is a plain insert, so while that side's
+    simulation has another run on these versions that hasn't failed (one
+    another report run is calculating, or one ``find_reusable_run_of``
+    didn't offer), the Public API's index refuses it and the database error
+    propagates; finding a side's run by version set waits for C1 · 24's
+    answers 4 and 5.
 
     Raise RerunRecordDeletedError when the database refuses the new run's
     key to the report, which no longer exists, and
@@ -733,9 +744,10 @@ def _refuse_while_report_runs(connection: Connection, report_id: UUID) -> None:
 
     A budget-window run under way is named first, then a report run.
     """
+    _refuse_while_window_runs(connection, report_id)
     under_way = _run_under_way(
-        connection, budget_window_runs, budget_window_runs.c.report_id == report_id
-    ) or _run_under_way(connection, report_runs, report_runs.c.report_id == report_id)
+        connection, report_runs, report_runs.c.report_id == report_id
+    )
     if under_way is not None:
         raise RunInProgressError(under_way)
 

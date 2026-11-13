@@ -1263,8 +1263,9 @@ jobs:
     # 12, with the default as it is). It calls the tagged candidate URL,
     # which serves this release's revision whether or not it was promoted.
     # The report's rows are written in the staging database, and its
-    # coordinator records the run. Once a .py version's first check has
-    # succeeded, later checks on it reuse those simulation runs.
+    # coordinator records the run. The check then forces a new run of the
+    # report, which nothing joins or reuses, so both simulations are
+    # calculated on every deploy.
     if: >-
       ${{
         !cancelled() &&
