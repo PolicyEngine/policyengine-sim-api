@@ -135,7 +135,7 @@ class EconomyRunStore:
 
         return cls(transaction)
 
-    def readread_simulation_values(
+    def read_simulation_inputs(
         self, request: EconomyRequest, choice: SimulationChoice
     ) -> EconomySimulationInputs:
         """Read a standalone simulation's catalog rows and values together.
@@ -152,7 +152,7 @@ class EconomyRunStore:
             )
         return EconomySimulationInputs(catalog=catalog, simulation=simulation)
 
-    def readread_report_sides(
+    def read_report_inputs(
         self,
         request: EconomyRequest,
         *,
@@ -304,7 +304,7 @@ class EconomyRunStore:
             lambda connection: insert_simulation_rerun(connection, rerun)
         )
 
-    def read_budgetread_window_sides(
+    def read_budget_window_inputs(
         self,
         request: EconomyRequest,
         *,
