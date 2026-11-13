@@ -335,8 +335,8 @@ class SingleYearMacroOutput(MacroOutputModel):
     ``constituency_withheld_codes`` and ``local_authority_withheld_codes``
     hold, sorted, the codes of each level's areas the run estimated but
     disclosure control did not publish, as ``LocalAreaBreakdownOutput``'s do.
-    Stage 12 lists them for a UK-wide report on the local-area dataset; null
-    means the result does not report them, and the JSON then leaves both
+    They are listed for a UK-wide or nation report on the local-area dataset;
+    null means the result does not report them, and the JSON then leaves both
     keys out, so every other result is written as before.
     """
 

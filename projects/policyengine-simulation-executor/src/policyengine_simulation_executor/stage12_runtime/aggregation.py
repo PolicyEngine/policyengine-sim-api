@@ -15,6 +15,8 @@ from policyengine_simulation_contract.stage12_execution import (
     stage12_output_plan_sha256,
 )
 
+from .local_area_datasets import is_local_area_report
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -188,10 +190,6 @@ def build_aggregate_report(
     )
     from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
         uk_area_breakdowns_omitted,
-    )
-
-    from .local_area_datasets import (  # noqa: PLC0415  # loads the UK metadata module, which is not loaded at import
-        is_local_area_report,
     )
 
     country = report.baseline.geography.country

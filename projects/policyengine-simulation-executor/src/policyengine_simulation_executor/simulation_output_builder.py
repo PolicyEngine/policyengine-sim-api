@@ -61,8 +61,10 @@ class SimulationOutputBuilder:
     ``runtime`` is given. ``omit_uk_area_breakdowns`` leaves the UK
     constituency and local-authority breakdowns out, for a UK-wide or
     nation-level run on a bundle that routes area regions to a local-area
-    dataset (``uk_area_breakdowns_omitted``); those results come from a
-    separate local-area breakdown run (``LocalAreaBreakdownBuilder``).
+    dataset (``uk_area_breakdowns_omitted``); in the runtime those results
+    come from a separate local-area breakdown run
+    (``LocalAreaBreakdownBuilder``), and Stage 12 keeps them for a report on
+    the local-area dataset itself, with ``uk_withheld_area_codes``.
     """
 
     country: str
