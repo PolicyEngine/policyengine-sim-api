@@ -6,7 +6,8 @@ status: EconomySubmissionRefusedError 400, EconomySubmissionUnprocessableError
 EconomySubmissionOutcomeUnknownError 500; a re-run also raises
 EconomyRecordNotFoundError 404 and EconomyRerunConflictError 409. ``read_refusal``,
 ``reference_refusal`` and ``rerun_refusals`` turn the store's errors into
-them, writing each detail from the request rather than from an error's text,
+them, and ``call_refused`` builds the 503 for a call Modal did not accept,
+writing each detail from the request rather than from an error's text,
 since the Public API passes a refusal's detail on to its callers.
 """
 

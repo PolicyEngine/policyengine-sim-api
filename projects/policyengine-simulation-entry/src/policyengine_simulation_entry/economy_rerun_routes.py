@@ -128,7 +128,7 @@ _STORED_ROW_CODES: dict[RecordName, str] = {
 # economy codes.
 _HOUSEHOLD_ANSWERS: dict[RecordName, dict[int, str]] = {
     "report": {
-        400: ", or a household report's household no longer exists",
+        400: "; or a household report's household no longer exists",
         422: (
             "; or the stored household cannot be calculated "
             "(household_not_calculable, located under report)"
@@ -147,8 +147,8 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
             "description": (
                 f"The stored {record}'s region, dataset, policy or dynamic is "
                 "missing from the catalog version of the default worker's .py "
-                f"version{_HOUSEHOLD_ANSWERS[record].get(400, '')}, or a "
-                "function it needs is missing; nothing was written. "
+                f"version, or a function the {record} needs is missing"
+                f"{_HOUSEHOLD_ANSWERS[record].get(400, '')}; nothing was written. "
                 f"{_STORED_ROW_CODES[record]} name the stored {record}'s own "
                 "rows; any other code is the service's state"
             ),

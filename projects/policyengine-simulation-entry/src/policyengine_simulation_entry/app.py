@@ -57,10 +57,7 @@ from policyengine_simulation_entry.economy_rerun_routes import (
     EconomyService,
     add_economy_rerun_routes,
 )
-from policyengine_simulation_entry.economy_reruns import (
-    EconomyRerunService,
-    HouseholdReportReruns,
-)
+from policyengine_simulation_entry.economy_reruns import EconomyRerunService
 from policyengine_simulation_entry.economy_routes import (
     HouseholdReportSubmissions,
     add_economy_routes,
@@ -87,6 +84,7 @@ from policyengine_simulation_entry.household_calculations import (
     HouseholdCalculationService,
 )
 from policyengine_simulation_entry.household_report_reruns import (
+    HouseholdReportReruns,
     household_reports_for,
 )
 from policyengine_simulation_entry.household_routes import (

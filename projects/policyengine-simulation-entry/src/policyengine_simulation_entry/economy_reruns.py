@@ -125,6 +125,9 @@ if TYPE_CHECKING:
     from policyengine_simulation_entry.household_report_api_models import (
         HouseholdReportCreated,
     )
+    from policyengine_simulation_entry.household_report_reruns import (
+        HouseholdReportReruns,
+    )
 
 # The kinds of stored economy report this service re-runs itself.
 _RERUN_REPORT_KINDS: Final[frozenset[RecordKind]] = frozenset(
@@ -185,19 +188,6 @@ class EconomyRerunRuns(BudgetWindowRuns, Protocol):
 
     def create_simulation_rerun(self, rerun: NewSimulationRerun) -> None:
         """Create the simulation's new run."""
-        ...
-
-
-class HouseholdReportReruns(Protocol):
-    """Re-run stored household reports (``HouseholdReportRerunService``)."""
-
-    async def rerun_report(
-        self,
-        stored: StoredHouseholdReport,
-        *,
-        observability_context: dict[str, Any] | None,
-    ) -> HouseholdReportCreated:
-        """Create the stored report's new run, and start its household function call."""
         ...
 
 
@@ -654,7 +644,10 @@ def _rerunnable_report(definition: ReportDefinition) -> _StoredReportRows:
 def _rerunnable_household_report(
     definition: ReportDefinition,
 ) -> StoredHouseholdReport:
-    """Return the stored household report's rows, or refuse one lacking a row."""
+    """Return the stored household report's rows, or refuse one it can't re-run.
+
+    A side naming a dynamic is refused: a household calculation applies none.
+    """
     country, year = _calculated_country(definition.country), definition.year
     household_id, baseline = definition.household_id, definition.baseline
     if country is None or household_id is None or baseline is None or year is None:
@@ -666,6 +659,17 @@ def _rerunnable_household_report(
                 ("household", household_id),
                 ("baseline simulation", baseline),
                 ("year", year),
+            ),
+        )
+    if any(
+        side is not None and side.choice.dynamic_id is not None
+        for side in (baseline, definition.reform)
+    ):
+        raise EconomyRerunConflictError(
+            code="rerun_not_supported",
+            detail=(
+                "The report's household simulation names a dynamic, which a "
+                "household calculation does not apply, so it cannot be re-run."
             ),
         )
     return StoredHouseholdReport(

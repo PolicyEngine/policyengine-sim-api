@@ -38,7 +38,9 @@ from test_budget_window_submissions import FakeAdvancer, FakeWindowStore
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from policyengine_simulation_entry.economy_reruns import HouseholdReportReruns
+    from policyengine_simulation_entry.household_report_reruns import (
+        HouseholdReportReruns,
+    )
     from policyengine_simulation_persistence import (
         EconomyRequest,
         NewReportRerun,
