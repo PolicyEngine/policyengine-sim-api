@@ -128,8 +128,9 @@ _REFUSED = {
         "household function; any other code is the service's state, such as "
         "a catalog version missing while a release deploys, or, for a report "
         "on the local-area dataset, local_areas_unsupported (the default "
-        "worker runs no such reports) and local_area_dataset_mismatch (the "
-        "catalog's area regions use another dataset)"
+        "worker declares no local-area report runs of this service's input "
+        "version) and local_area_dataset_mismatch (the catalog version doesn't "
+        "give its constituency and local-authority regions that one dataset)"
     ),
     **ERROR_ANSWER,
 }
