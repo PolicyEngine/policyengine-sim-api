@@ -142,6 +142,67 @@ check has succeeded, later checks on that version reuse its simulation runs,
 so they check the coordinator's use of stored outputs rather than the
 workers', which the v2 deployment's own validation calls.
 
+### The staging preemption check
+
+Every staging deployment runs `staging_preemption_check` once the economy
+check has succeeded. `.github/scripts/simulation-staging-preemption-check.sh`
+runs twice, from the executor project, whose environment has the Modal
+client:
+
+- `household` calculates the staging household that
+  `SIMULATION_STAGING_HOUSEHOLD_ID` names, as the household check does;
+- `report` creates the economy check's report again (labelled "Staging
+  preemption check"), whose simulation runs reuse that check's, so it costs
+  no new simulation.
+
+Once the household job or report run is `running`, that is once the
+household function or coordinator has claimed it, the check takes the
+`modal_call_id` its read answers, asks Modal's call graph which container
+runs that call (`src/modal/utils/describe_call_inputs.py`), and stops that
+container with `modal container stop`. Modal sends the container SIGINT and
+gives the input to another container under the same call ID, as it does
+after a pre-emption. The check requires the record to succeed under that
+call, completed at least 5 seconds after the stop, and the call graph to
+show the call's input finished in another container. A record completed
+sooner proves nothing, and that attempt counts as missed: the stopped
+container may have written the success before the signal reached it, and
+Modal's rerun then finds the record finished and only returns its summary.
+A rerun in a new container can't finish within 5 seconds of the stop (both
+times are counted in whole seconds). Run again, the household function or
+coordinator resumes its claim. The report's simulation runs are reused, so
+its coordinator starts no worker, and the check doesn't cover a coordinator
+starting its workers again.
+
+A calculation that finishes before its container is stopped, for example on
+a warm container, proves nothing, so the check submits a new one, up to
+three attempts. Each new attempt starts 90 seconds after the last one ended.
+Modal stops a container left idle for 60 seconds by default, and these
+functions don't change that. A container that finished the last calculation
+unstopped went idle when the record finished, so the wait covers it, and the
+next calculation starts in a new container. A container that Modal ran a
+stopped call in again goes idle only when that rerun returns, which may be
+after the attempt ended, so the wait covers it only when the rerun returns
+within about 30 seconds of the attempt's end. A record that fails, or
+doesn't finish within its deadline (10 minutes for the household, 15 for the
+report, per attempt), fails the check at once. Modal refuses to stop a
+container that has ended; when a stop fails, the check doesn't stop it again
+or submit another calculation, but follows the record to its end, so a
+record left running by a container that ended for another reason, such as
+running out of memory, fails the check at its deadline. Every Modal command
+may take 60 seconds.
+
+It uses the repository's Modal token (the repository secrets
+`MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`), which must be allowed to read
+call graphs and to list and stop containers. Production's deploy jobs use
+the same token, and `modal container stop` takes a container ID in any
+environment, so the script refuses any `MODAL_ENVIRONMENT` but `staging` and
+stops only a container that `modal container list --env staging` lists. It
+also uses the authenticated tests' client credentials. `deployment_ready`
+requires the check to pass in staging, so a failure stops the production
+deployment.
+Each attempt adds a household job, or a report and its run, to the staging
+database.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`

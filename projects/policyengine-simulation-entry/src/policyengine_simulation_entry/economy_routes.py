@@ -17,8 +17,9 @@
   function, answering 201 with the simulation's ID, its run's ID and status.
 - ``GET /reports/{report_id}`` and ``GET /simulations/{simulation_id}``
   (``simulation:read``) return the record with its newest run's status,
-  versions, error message and times. The Public API reads results from the
-  tables itself; these reads let a deploy check follow a run.
+  versions, error message and times, and a report run's coordinator call.
+  The Public API reads results from the tables itself; these reads let a
+  deploy check follow a run.
 
 A refused request answers 400 (a row it names, or a function it needs, is
 missing; ``code`` says which) or 422 (its fields, or the stored values it
@@ -376,6 +377,7 @@ def _report_state(stored: StoredReport) -> EconomyReportState:
             completed_at=run.completed_at,
             baseline_simulation_run_id=run.baseline_simulation_run_id,
             reform_simulation_run_id=run.reform_simulation_run_id,
+            modal_call_id=run.modal_call_id,
         ),
     )
 
@@ -652,7 +654,8 @@ def _read_routes(
         summary="Get a report's newest run",
         description=(
             "Return the report, its two simulations and its newest run's "
-            "status, versions, error message and times."
+            "status, versions, error message, times and coordinator's Modal "
+            "call (null until one is recorded)."
         ),
         operation_id="get_report",
         response_model=EconomyReportState,

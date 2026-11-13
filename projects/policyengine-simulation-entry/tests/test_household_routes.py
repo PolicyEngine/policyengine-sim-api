@@ -322,6 +322,7 @@ def test_a_job_is_read_with_its_result_document(client_for):
         "year": 2026,
         "policyengine_version": "6.17.1",
         "country_package_version": "2.2.1",
+        "modal_call_id": "fc-1",
         "result": RESULT_DOCUMENT,
         "error_message": None,
         "created_at": "2026-11-10T12:00:00Z",
@@ -338,6 +339,7 @@ def test_a_failed_job_is_read_with_its_error_message(client_for):
             result=None,
             error_message="Modal did not accept the household function's call.",
             started_at=None,
+            modal_call_id=None,
         )
     )
 
@@ -346,6 +348,7 @@ def test_a_failed_job_is_read_with_its_error_message(client_for):
 
     assert result.status_code == 200
     assert result.json()["status"] == "failed"
+    assert result.json()["modal_call_id"] is None
     assert result.json()["result"] is None
     assert result.json()["error_message"] == (
         "Modal did not accept the household function's call."

@@ -7,7 +7,8 @@
   read: poll the job rather than submitting again.
 - ``GET /household-calculations/{household_job_id}`` (``simulation:read``)
   returns the job as it stands: its status, the household function's result
-  document once it has one, and its error message.
+  document once it has one, its error message, and the household function's
+  Modal call recorded on it.
 
 A refused submission answers 400 (a row it names, or the household function
 it needs, is missing) or 422 (its fields, or the stored data it names, cannot
@@ -242,6 +243,7 @@ def _state(record: HouseholdJobRecord) -> HouseholdCalculationState:
         year=record.year,
         policyengine_version=record.policyengine_version,
         country_package_version=record.country_package_version,
+        modal_call_id=record.modal_call_id,
         result=record.result,
         error_message=record.error_message,
         created_at=record.created_at,
@@ -324,7 +326,9 @@ def add_household_calculation_routes(
         summary="Get a household calculation",
         description=(
             "Return the household job as it stands: its status, the household "
-            "function's result document once it has one, and its error message."
+            "function's result document once it has one, its error message, "
+            "and the household function's Modal call recorded on it (null "
+            "until one is recorded)."
         ),
         operation_id="get_household_calculation",
         response_model=HouseholdCalculationState,

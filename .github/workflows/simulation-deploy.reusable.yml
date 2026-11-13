@@ -1290,6 +1290,78 @@ jobs:
           SIMULATION_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
         run: .github/scripts/simulation-staging-economy-check.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}"
 
+  staging_preemption_check:
+    name: Stop staging calculations' Modal containers and require them to succeed
+    # Every staging deployment calculates the staging household, then
+    # creates the staging economy check's report, through the candidate, and
+    # stops the Modal container running each one's call with `modal
+    # container stop` once the household function or coordinator has claimed
+    # it. That sends SIGINT and gives the input to another container under
+    # the same call ID, as a pre-emption does; each must still succeed. It
+    # runs after the economy check, so the report reuses that check's
+    # simulation runs and stopping the coordinator costs no new simulation.
+    # The script refuses any Modal environment but staging, and stops only a
+    # container Modal lists there. Each calculation writes rows in the
+    # staging database, as the other staging checks' do.
+    if: >-
+      ${{
+        !cancelled() &&
+        inputs.deployment_environment == 'staging' &&
+        needs.deploy_entrypoint.result == 'success' &&
+        needs.authenticated_test.result == 'success' &&
+        needs.staging_economy_check.result == 'success' &&
+        ((inputs.deploy_stage12_v2 && needs.publish_stage12_v2_default.result == 'success') ||
+         (!inputs.deploy_stage12_v2 && needs.publish_stage12_v2_default.result == 'skipped'))
+      }}
+    needs: [deploy_entrypoint, authenticated_test, publish_stage12_v2_default, staging_economy_check]
+    runs-on: ubuntu-latest
+    # Longer than both steps' worst case together, so the script fails
+    # first: about 126 minutes, with every request and Modal command taking
+    # its full time limit (three attempts of up to 17.5 minutes for the
+    # household and 22.5 for the report, and a 90-second wait before each
+    # new attempt), and the install.
+    timeout-minutes: 150
+    environment: ${{ inputs.release_environment }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.13.6"
+
+      - name: Install the Modal client
+        working-directory: projects/policyengine-simulation-executor
+        run: uv sync --frozen
+
+      - name: Stop a staging household calculation's container and require it to succeed
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          STAGING_HOUSEHOLD_ID: ${{ vars.SIMULATION_STAGING_HOUSEHOLD_ID }}
+          SIMULATION_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+          SIMULATION_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+          SIMULATION_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
+          SIMULATION_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
+        run: ../../.github/scripts/simulation-staging-preemption-check.sh household "${{ needs.deploy_entrypoint.outputs.candidate_url }}"
+
+      - name: Stop a staging report's coordinator container and require it to succeed
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          SIMULATION_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+          SIMULATION_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+          SIMULATION_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
+          SIMULATION_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
+        run: ../../.github/scripts/simulation-staging-preemption-check.sh report "${{ needs.deploy_entrypoint.outputs.candidate_url }}"
+
   finalize_routing:
     name: Finalize the Modal routing publication
     # Finish the durable journal after every gate, including failed uploads
@@ -1348,7 +1420,7 @@ jobs:
     # The reporter only reads job results. Journal completion happens before
     # it, so a failure or cancellation here cannot strand a publication.
     if: ${{ !cancelled() }}
-    needs: [deploy_entrypoint, update_routing, integration, authenticated_test, promote_entrypoint, publish_latest, finalize_routing, publish_stage12_v2_default, staging_household_check, staging_economy_check]
+    needs: [deploy_entrypoint, update_routing, integration, authenticated_test, promote_entrypoint, publish_latest, finalize_routing, publish_stage12_v2_default, staging_household_check, staging_economy_check, staging_preemption_check]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -1388,6 +1460,12 @@ jobs:
           REQUESTED: ${{ inputs.deployment_environment == 'staging' }}
           CHECK_RESULT: ${{ needs.staging_economy_check.result }}
         run: .github/scripts/simulation-staging-economy-ready.sh
+
+      - name: Check the staging preemption check result
+        env:
+          REQUESTED: ${{ inputs.deployment_environment == 'staging' }}
+          CHECK_RESULT: ${{ needs.staging_preemption_check.result }}
+        run: .github/scripts/simulation-staging-preemption-ready.sh
 
   cleanup_entrypoint_revisions:
     name: Remove superseded Cloud Run revisions

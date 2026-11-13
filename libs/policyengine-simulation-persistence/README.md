@@ -111,7 +111,8 @@ call's ID, and `fail_unstarted_report_run` and
 `fail_unstarted_simulation_run` fail a run at once, each only while it is
 `pending` with no call ID; failing a report run also fails the simulation
 runs created for it. `economy_run_reads.py` reads a report, or a simulation,
-with its newest run's state.
+with its newest run's state; a report run's state includes the Modal call
+recorded on it.
 
 `EconomyRunStore` runs them as the Simulation Entrypoint does, each step in
 a transaction of its own: `read_report_inputs` reads the catalog version,

@@ -74,6 +74,7 @@ def test_a_job_keeps_its_result_document_whole():
         "year": 2026,
         "policyengine_version": "6.17.1",
         "country_package_version": "2.2.1",
+        "modal_call_id": "fc-1",
         "result": document,
         "error_message": None,
         "created_at": "2026-11-10T12:00:00Z",
@@ -84,6 +85,7 @@ def test_a_job_keeps_its_result_document_whole():
     parsed = HouseholdCalculationState.from_dict(state)
 
     assert parsed.status is HouseholdJobStatus.SUCCEEDED
+    assert parsed.modal_call_id == "fc-1"
     assert parsed.to_dict()["result"] == document
 
 

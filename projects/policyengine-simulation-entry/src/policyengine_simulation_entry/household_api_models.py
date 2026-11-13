@@ -130,7 +130,10 @@ class HouseholdCalculationState(BaseModel):
     calculated household in ``output``) or a ``HouseholdExecutionFailure``
     (``status`` ``failed``, with the reason in ``error``). ``error_message``
     summarizes a failure in one line; a job that failed before its function
-    ran has an ``error_message`` and no ``result``.
+    ran has an ``error_message`` and no ``result``. ``modal_call_id`` is the
+    household function's Modal call recorded on the job, or null before the
+    service has recorded one; Modal runs a pre-empted call again under the
+    same ID.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -143,6 +146,7 @@ class HouseholdCalculationState(BaseModel):
     year: int
     policyengine_version: str
     country_package_version: str
+    modal_call_id: str | None
     result: dict[str, JsonValue] | None
     error_message: str | None
     created_at: datetime
