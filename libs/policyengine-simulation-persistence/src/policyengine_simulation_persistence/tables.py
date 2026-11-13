@@ -401,12 +401,9 @@ reports = Table(
         "definition_key",
         name="uq_reports_key_version_definition_key",
     ),
-    # Reports that differ only in their dataset share this key.
-    Index(
-        "ix_reports_key_version_dataset_independent_key",
-        "key_version",
-        "dataset_independent_key",
-    ),
+    # Reports that differ only in their dataset share this key, by which
+    # the app finds one from the other.
+    Index("ix_reports_dataset_independent_key", "dataset_independent_key"),
     Index("ix_reports_country_type_created_at", "country", "type", "created_at"),
     Index("ix_reports_tax_benefit_model_id", "tax_benefit_model_id"),
     # Deleting a user sets its reports' user_id to null.
