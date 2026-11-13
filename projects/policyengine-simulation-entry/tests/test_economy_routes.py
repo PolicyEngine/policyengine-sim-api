@@ -232,8 +232,8 @@ LOCAL_AREA_REPORT_BODY: dict[str, Any] = {
 @pytest.mark.parametrize(
     ("changes", "expected_message"),
     [
-        ({"breakdown": None}, "omit it to ask for no breakdown"),
-        ({"breakdown": "constituencies"}, "Input should be 'local_areas'"),
+        ({"breakdown": None}, 'breakdown must be "local_areas" when given'),
+        ({"breakdown": "constituencies"}, 'breakdown must be "local_areas" when given'),
         (
             {"country": "us", "region_code": "us"},
             "breakdown is supported only for UK requests",

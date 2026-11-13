@@ -32,10 +32,21 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
+from policyengine_simulation_contract.local_area_breakdown import (
+    LOCAL_AREAS_BREAKDOWN,
+    local_area_breakdown_error,
+)
 from policyengine_simulation_contract.spm import SPMSelection
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_persistence import ReportRunStatus, SimulationStatus
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    ValidationInfo,
+    field_validator,
+)
 from pydantic.json_schema import SkipJsonSchema
 
 # The bounds the tables accept.
@@ -43,6 +54,9 @@ SimulationYear = Annotated[int, Field(ge=1900, le=2200, description="The year")]
 CatalogKey = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^\S+$")]
 ReportLabel = Annotated[str, Field(min_length=1, max_length=255)]
 ReportDescription = Annotated[str, Field(max_length=10_000)]
+# The one breakdown a report may ask for: its constituency and local-authority
+# impacts, calculated on the local-area dataset beside the national result.
+LocalAreasBreakdown = Literal["local_areas"]
 
 # Why a request is refused (400), naming a row the caller chose that doesn't
 # exist: the Public API answers these as its caller's error.
@@ -135,6 +149,12 @@ class EconomyReportRequest(_Request):
     calculates the baseline's and reform's cliff impact. ``spm`` selects the
     SPM forecast scenario and geography; omit it, rather than sending null,
     to use the bundle's certified defaults.
+
+    ``breakdown: "local_areas"`` also asks for the report's constituency and
+    local-authority impacts, calculated on the catalog version's local-area
+    dataset whatever ``dataset_name`` names. Only a UK report whose region is
+    ``uk`` or one of the four ``country/*`` nations may ask, with or without
+    ``include_cliffs``; omit it, rather than sending null, to ask for none.
     """
 
     country: CountryId
@@ -150,6 +170,10 @@ class EconomyReportRequest(_Request):
     spm: SPMSelection | SkipJsonSchema[None] = Field(
         default=None, json_schema_extra=omit_null_default
     )
+    # Last, so its check can read the country and region.
+    breakdown: LocalAreasBreakdown | SkipJsonSchema[None] = Field(
+        default=None, json_schema_extra=omit_null_default
+    )
 
     @field_validator("spm", mode="before")
     @classmethod
@@ -160,15 +184,60 @@ class EconomyReportRequest(_Request):
             raise ValueError(msg)
         return value
 
+    @field_validator("breakdown", mode="before")
+    @classmethod
+    def refuse_another_breakdown(cls, value: object) -> object:
+        """Refuse null and any other value with one reason.
+
+        Omit ``breakdown`` to ask for none. Without this, another value would
+        be refused once by each member of the field's type.
+        """
+        if value != LOCAL_AREAS_BREAKDOWN:
+            msg = (
+                f'breakdown must be "{LOCAL_AREAS_BREAKDOWN}" when given; omit it '
+                "to ask for no breakdown"
+            )
+            raise ValueError(msg)
+        return value
+
+    @field_validator("breakdown")
+    @classmethod
+    def refuse_a_breakdown_the_region_cannot_have(
+        cls, breakdown: LocalAreasBreakdown | None, info: ValidationInfo
+    ) -> LocalAreasBreakdown | None:
+        """Refuse local areas for another country, or a region not UK-wide or a nation.
+
+        A country or region that failed its own validation is reported by
+        that field alone.
+        """
+        country = info.data.get("country")
+        region_code = info.data.get("region_code")
+        if breakdown is None or country is None or region_code is None:
+            return breakdown
+        # The breakdown's own calculation has no cliffs and no segments, so
+        # neither option is passed: the national run calculates the cliffs.
+        reason = local_area_breakdown_error(
+            country=country,
+            region=region_code,
+            region_group=None,
+            include_cliffs=None,
+            segmented=None,
+        )
+        if reason is not None:
+            raise ValueError(reason)
+        return breakdown
+
     def options(self) -> dict[str, Any]:
         """Return the report's options as it stores them (``reports.inputs``).
 
         ``spm`` holds only the settings the request gave, and is left out
-        when it gave none.
+        when it gave none; ``breakdown`` is there only when asked for.
         """
         options: dict[str, Any] = {"include_cliffs": self.include_cliffs}
         if self.spm is not None:
             options["spm"] = self.spm.model_dump(mode="json")
+        if self.breakdown is not None:
+            options["breakdown"] = self.breakdown
         return options
 
 
