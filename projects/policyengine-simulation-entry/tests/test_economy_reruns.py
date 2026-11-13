@@ -46,6 +46,7 @@ from policyengine_simulation_persistence import (
     CatalogDataset,
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
+    FoundSimulationRun,
     MissingPolicyParametersError,
     NewReportRerun,
     NewSimulationRerun,
@@ -385,6 +386,29 @@ def test_a_simulation_is_rerun_as_a_new_run_of_it() -> None:
         "simulation_id": SIMULATION_ID,
         "simulation_run_id": UUID(int=1),
         "status": SimulationStatus.PENDING,
+    }
+
+
+@pytest.mark.parametrize(
+    "status", [SimulationStatus.PENDING, SimulationStatus.SUCCEEDED]
+)
+def test_a_simulation_rerun_joining_a_run_answers_it_and_starts_no_call(
+    status: SimulationStatus,
+) -> None:
+    """Answer 3: a run under way, or one that succeeded on these versions."""
+    joined = FoundSimulationRun(id=UUID(int=99), inserted=False, status=status)
+    store = FakeRerunStore(joined_simulation_run=joined)
+    caller = FakeCaller()
+
+    rerun = _rerun_simulation(rerun_service(store, caller=caller))
+
+    assert caller.simulation_runs == []
+    assert store.recorded_calls == []
+    assert store.failed_runs == []
+    assert rerun.model_dump() == {
+        "simulation_id": SIMULATION_ID,
+        "simulation_run_id": UUID(int=99),
+        "status": status,
     }
 
 

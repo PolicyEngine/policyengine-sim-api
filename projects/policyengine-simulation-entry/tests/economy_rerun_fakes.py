@@ -26,11 +26,13 @@ from policyengine_simulation_persistence import (
     BudgetWindowInputs,
     EconomyReportInputs,
     EconomySimulationInputs,
+    FoundSimulationRun,
     ReportDefinition,
     SideDefinition,
     SimulationChoice,
     SimulationDefinition,
     SimulationInputs,
+    SimulationStatus,
     WindowYearDefinition,
 )
 from test_budget_window_submissions import FakeAdvancer, FakeWindowStore
@@ -122,7 +124,9 @@ class FakeRerunStore(FakeWindowStore):
     window is, and recorded in ``windows``, where the fake advancer finds it.
 
     ``inputs_failure`` is raised by a re-run's read of its inputs, and
-    ``rerun_failure`` by its create instead of recording it.
+    ``rerun_failure`` by its create instead of recording it. A simulation
+    re-run joins ``joined_simulation_run`` when one is given, and otherwise
+    creates its own run.
     """
 
     report_definition: ReportDefinition | None = STORED_REPORT
@@ -132,6 +136,7 @@ class FakeRerunStore(FakeWindowStore):
     rerun_reads: list[tuple[EconomyRequest, Any]] = field(default_factory=list)
     report_reruns: list[NewReportRerun] = field(default_factory=list)
     simulation_reruns: list[NewSimulationRerun] = field(default_factory=list)
+    joined_simulation_run: FoundSimulationRun | None = None
 
     def read_report_definition(self, report_id: UUID) -> ReportDefinition | None:
         if self.read_failure is not None:
@@ -215,10 +220,15 @@ class FakeRerunStore(FakeWindowStore):
             raise self.rerun_failure
         self.report_reruns.append(rerun)
 
-    def create_simulation_rerun(self, rerun: NewSimulationRerun) -> None:
+    def create_simulation_rerun(self, rerun: NewSimulationRerun) -> FoundSimulationRun:
         if self.rerun_failure is not None:
             raise self.rerun_failure
         self.simulation_reruns.append(rerun)
+        if self.joined_simulation_run is not None:
+            return self.joined_simulation_run
+        return FoundSimulationRun(
+            id=rerun.run_id, inserted=True, status=SimulationStatus.PENDING
+        )
 
 
 class UnusedAdvancer:
