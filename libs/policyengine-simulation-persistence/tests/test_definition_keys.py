@@ -121,3 +121,34 @@ def test_each_part_of_a_report_definition_changes_its_key() -> None:
     ]
 
     assert len({variant.definition_key for variant in variants}) == len(variants)
+
+
+def test_the_dataset_independent_key_is_the_report_key_without_its_dataset() -> None:
+    """Revised answer 1a: the options stay, so each national report has one match."""
+    report_n = _report_n()
+    expected = {
+        name: value
+        for name, value in report_n.key_object().items()
+        if name != "dataset"
+    }
+    expected["record"] = "report_dataset_independent"
+
+    assert report_n.dataset_independent_key_object() == expected
+    assert report_n.dataset_independent_key == definition_key(expected)
+    assert report_n.dataset_independent_key[:16] == "b00bdfd986dd6ab7"
+
+
+def test_reports_differing_only_in_their_dataset_share_that_key() -> None:
+    national = _report_n()
+    local_area = _report_n(dataset_name=LOCAL_AREA_DATASET)
+    with_cliffs = _report_n(
+        dataset_name=LOCAL_AREA_DATASET, options={"include_cliffs": True}
+    )
+    other_region = _report_n(
+        dataset_name=LOCAL_AREA_DATASET, region_code="country/wales"
+    )
+
+    assert national.dataset_independent_key == local_area.dataset_independent_key
+    assert national.definition_key != local_area.definition_key
+    assert with_cliffs.dataset_independent_key != national.dataset_independent_key
+    assert other_region.dataset_independent_key != national.dataset_independent_key
