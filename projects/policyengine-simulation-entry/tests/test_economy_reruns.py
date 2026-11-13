@@ -46,6 +46,7 @@ from policyengine_simulation_persistence import (
     CatalogDataset,
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
+    FoundReportRun,
     FoundSimulationRun,
     MissingPolicyParametersError,
     NewReportRerun,
@@ -177,6 +178,42 @@ def test_a_forced_rerun_recalculates_both_simulations() -> None:
     assert created.new_simulation_run_ids == (UUID(int=2), UUID(int=3))
     assert created.baseline.simulation_id == BASELINE_SIMULATION_ID
     assert (rerun.baseline_reused, rerun.reform_reused) == (False, False)
+
+
+@pytest.mark.parametrize(
+    "status",
+    [ReportRunStatus.PENDING, ReportRunStatus.RUNNING, ReportRunStatus.SUCCEEDED],
+)
+def test_a_report_rerun_joining_a_run_answers_it_and_starts_no_call(
+    status: ReportRunStatus,
+) -> None:
+    """Answer 3: a run under way, or one that succeeded on these versions."""
+    joined = FoundReportRun(
+        id=UUID(int=90),
+        inserted=False,
+        status=status,
+        baseline_simulation_run_id=UUID(int=91),
+        reform_simulation_run_id=UUID(int=92),
+    )
+    store = FakeRerunStore(joined_report_run=joined)
+    caller = FakeCaller()
+
+    rerun = _rerun_report(rerun_service(store, caller=caller))
+
+    assert caller.report_runs == []
+    assert store.recorded_calls == []
+    assert store.failed_runs == []
+    assert rerun.model_dump() == {
+        "report_id": REPORT_ID,
+        "report_run_id": UUID(int=90),
+        "status": status,
+        "baseline_simulation_id": BASELINE_SIMULATION_ID,
+        "baseline_simulation_run_id": UUID(int=91),
+        "baseline_reused": True,
+        "reform_simulation_id": REFORM_SIMULATION_ID,
+        "reform_simulation_run_id": UUID(int=92),
+        "reform_reused": True,
+    }
 
 
 def test_without_the_output_bucket_a_rerun_looks_for_no_run_to_reuse() -> None:

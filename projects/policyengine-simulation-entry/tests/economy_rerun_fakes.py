@@ -26,8 +26,10 @@ from policyengine_simulation_persistence import (
     BudgetWindowInputs,
     EconomyReportInputs,
     EconomySimulationInputs,
+    FoundReportRun,
     FoundSimulationRun,
     ReportDefinition,
+    ReportRunStatus,
     SideDefinition,
     SimulationChoice,
     SimulationDefinition,
@@ -126,7 +128,8 @@ class FakeRerunStore(FakeWindowStore):
     ``inputs_failure`` is raised by a re-run's read of its inputs, and
     ``rerun_failure`` by its create instead of recording it. A simulation
     re-run joins ``joined_simulation_run`` when one is given, and otherwise
-    creates its own run.
+    creates its own run; a report re-run joins ``joined_report_run`` the
+    same way.
     """
 
     report_definition: ReportDefinition | None = STORED_REPORT
@@ -137,6 +140,7 @@ class FakeRerunStore(FakeWindowStore):
     report_reruns: list[NewReportRerun] = field(default_factory=list)
     simulation_reruns: list[NewSimulationRerun] = field(default_factory=list)
     joined_simulation_run: FoundSimulationRun | None = None
+    joined_report_run: FoundReportRun | None = None
 
     def read_report_definition(self, report_id: UUID) -> ReportDefinition | None:
         if self.read_failure is not None:
@@ -215,10 +219,19 @@ class FakeRerunStore(FakeWindowStore):
             raise self.rerun_failure
         self.windows.append(rerun)
 
-    def create_report_rerun(self, rerun: NewReportRerun) -> None:
+    def create_report_rerun(self, rerun: NewReportRerun) -> FoundReportRun:
         if self.rerun_failure is not None:
             raise self.rerun_failure
         self.report_reruns.append(rerun)
+        if self.joined_report_run is not None:
+            return self.joined_report_run
+        return FoundReportRun(
+            id=rerun.run_id,
+            inserted=True,
+            status=ReportRunStatus.PENDING,
+            baseline_simulation_run_id=rerun.baseline.simulation_run_id,
+            reform_simulation_run_id=rerun.reform.simulation_run_id,
+        )
 
     def create_simulation_rerun(self, rerun: NewSimulationRerun) -> FoundSimulationRun:
         if self.rerun_failure is not None:
