@@ -19,6 +19,12 @@ run is read again:
   call, with the stuck-run sweep's message, and every coordinator waiting for
   it stops waiting. The sweep itself never judges a run an unfinished report
   run names.
+
+A probe that raises counts as the call ending only once Modal reports the
+call ended (``call_state``, the sweep's ``modal_call_state``): Modal's client
+raises for a lost connection too, while the call goes on. Until then the
+coordinator keeps waiting, within its wait window. ``ProbedWorkerCall`` gives
+the coordinator's own workers the same rule.
 """
 
 from __future__ import annotations
@@ -35,7 +41,7 @@ from .failures import (
     failure_detail_from_record,
 )
 from .report_run_recording import run_failure_detail
-from .run_sweep import ENDED_CALL_MESSAGE
+from .run_sweep import ENDED_CALL_MESSAGE, CallState
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -78,6 +84,7 @@ class WaitedRun:
     simulation_run_id: UUID
     writer: ReportRunWriter
     restore: Callable[[str], ChildCall]
+    call_state: Callable[[str], CallState]
     object_id: str = ""
     _holder: ChildCall | None = None
 
@@ -95,8 +102,11 @@ class WaitedRun:
                 self._holding_call().get(timeout=0 if timeout is None else timeout)
             except TimeoutError:
                 raise
-            except Exception:  # noqa: BLE001, S110  # the holder ended; the run's row says how
-                pass
+            except Exception as error:
+                # Once Modal says the call ended, the run's row says how.
+                if self.call_state(self.object_id) is not CallState.ENDED:
+                    msg = "probing the holding call failed while it runs"
+                    raise TimeoutError(msg) from error
         return self._outcome()
 
     def cancel(self) -> None:
@@ -146,3 +156,37 @@ class WaitedRun:
                 "calculated failed."
             ),
         )
+
+
+@dataclass
+class ProbedWorkerCall:
+    """A worker call this coordinator started, whose failed probe may be Modal's.
+
+    A probe that raises is passed on only once Modal reports the call ended;
+    while Modal reports it running, or can't say, the coordinator keeps
+    waiting, so a lost connection never fails a worker's run.
+    """
+
+    call: ChildCall
+    call_state: Callable[[str], CallState]
+    object_id: str = ""
+
+    def __post_init__(self) -> None:
+        """Take the worker call's ID."""
+        self.object_id = self.call.object_id
+
+    def get(self, *, timeout: float | None = None) -> object:
+        """Return the worker's result, or raise as it ended once Modal says it did."""
+        try:
+            return self.call.get(timeout=timeout)
+        except TimeoutError:
+            raise
+        except Exception as error:
+            if self.call_state(self.object_id) is CallState.ENDED:
+                raise
+            msg = "probing the worker call failed while it runs"
+            raise TimeoutError(msg) from error
+
+    def cancel(self) -> None:
+        """Ask Modal to stop the worker call."""
+        self.call.cancel()

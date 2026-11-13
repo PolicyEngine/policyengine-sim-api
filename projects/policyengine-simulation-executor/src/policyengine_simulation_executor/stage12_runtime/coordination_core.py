@@ -59,6 +59,7 @@ if TYPE_CHECKING:
 
     from .report_run_access import ReportRunWriter
     from .reused_outputs import OutputFileReader, ReusedSimulationOutput
+    from .run_sweep import CallState
 
 
 def require_artifact_digest(
@@ -88,8 +89,9 @@ class CoordinatorDependencies:
     bucket, Modal child invocation, the standard aggregate builder and output
     plan resolution, no telemetry runtime, the real clock and sleep, the
     standard child wait window, and the report run store, the Cloud Storage
-    reader of reused output files and the stored output plan of each
-    simulation (``resolve_simulation_output_plan``), which only a call that
+    reader of reused output files, the stored output plan of each
+    simulation (``resolve_simulation_output_plan``) and Modal's state of a
+    call whose probe failed (``modal_call_state``), which only a call that
     names a report run uses.
     """
 
@@ -109,6 +111,7 @@ class CoordinatorDependencies:
     stored_plan_resolver: (
         Callable[[SimulationExecutionInput], Stage12OutputPlan] | None
     ) = None
+    call_state: Callable[[str], CallState] | None = None
 
 
 @dataclass(kw_only=True)

@@ -74,7 +74,9 @@ from .reused_outputs import (
     reused_outputs,
     simulations_to_calculate,
 )
+from .run_sweep import modal_call_state
 from .shared_simulation_runs import (
+    ProbedWorkerCall,
     WaitedRun,
     WaitedRunFailedError,
     WaitedRunSucceeded,
@@ -82,7 +84,7 @@ from .shared_simulation_runs import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from uuid import UUID
 
     from policyengine_observability import ObservabilityRuntime
@@ -98,6 +100,7 @@ if TYPE_CHECKING:
     from .coordination_core import CoordinatorDependencies, CoordinatorInvocation
     from .report_run_access import ReportRunWriter
     from .reused_outputs import OutputFileReader
+    from .run_sweep import CallState
 
 logger = logging.getLogger(__name__)
 
@@ -492,8 +495,13 @@ class ReportRunCoordination(CoordinationCore):
             simulation_run_id=self.simulation_run_id(role),
             writer=self.writer,
             restore=self.child_invoker.restore,
+            call_state=self._call_state(),
             object_id=holder_id or "",
         )
+
+    def _call_state(self) -> Callable[[str], CallState]:
+        """Return how Modal's state of a call is read, by default the sweep's way."""
+        return self.dependencies.call_state or modal_call_state
 
     def _start_worker(self, simulation: PlannedSimulationExecutionInput) -> None:
         """Start the worker that claims the simulation's run.
@@ -523,7 +531,7 @@ class ReportRunCoordination(CoordinationCore):
                 progress=self.progress,
             )
             raise Stage12ExecutionError(detail) from None
-        self.calls[role] = call
+        self.calls[role] = ProbedWorkerCall(call, self._call_state())
 
     def _output_files(self) -> OutputFileReader:
         """Return the reader of stored output files, by default Cloud Storage's."""
