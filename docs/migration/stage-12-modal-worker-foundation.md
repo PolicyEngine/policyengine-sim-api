@@ -334,10 +334,8 @@ its `simulation_runs` row (pending, no call), starts the country's
 both the run's ID) and a context naming the run in `simulation_run_id`, with
 an `artifact_prefix` that contains the run's ID (for example
 `stage-12-runs/<environment>/<YYYY>/<MM>/<simulation_run_id>`), and records the
-call as for a report run. A prefix without it fails the run. The worker plans the simulation's outputs
-as for a report comparing it with itself, so a report whose plan needs more
-columns, for example a reform that turns on labour supply responses, can't
-reuse it and fails with `reused_simulation_output_incompatible`.
+call as for a report run. A prefix without it fails the run. The worker plans the simulation's
+outputs with its stored plan, as a report run's coordinator does (below).
 
 **A re-run.** The service re-runs a stored report or simulation with the same
 two calls, by run ID. It creates the record's new run (a report run with
@@ -358,6 +356,22 @@ its failure, only while it holds the run running. It returns the output's
 stored output's descriptor without calculating, and for a run another call
 holds, or one that failed, it returns `{"deduplicated": true,
 "simulation_run_id", "status"}`.
+
+**What a simulation run stores** (C1 · 24, answer 4). A run's output file
+depends on its simulation alone, never on a report naming it
+(`resolve_simulation_output_plan`): every column that doesn't depend on the
+other side, the area columns on the local-area dataset and the US budget
+columns; the labour-supply response columns only when the simulation's own
+policy turns a response on; in the US, the two inputs .py's labour-supply
+output reads from either side (`self_employment_income`,
+`weekly_hours_worked`); and never the cliff columns, so a US national run keeps
+its region-group split. The coordinator gives each worker its simulation's
+stored plan, and keeps the report's own plan, from its pair, for what the
+aggregation reads. A reused or waited-for file must hold what the report reads
+from its side (`side_read_plan`); a side that stores no responses the report
+reads is read with them as zeros. A run that succeeded before this rule, under
+a report's plan, is reused when it holds what the new report reads from it,
+and refused (`reused_simulation_output_incompatible`) otherwise.
 
 **Shared simulation runs.** Identical requests share simulation runs, so a
 report run may name a run another report run's worker is calculating (C1 · 24,

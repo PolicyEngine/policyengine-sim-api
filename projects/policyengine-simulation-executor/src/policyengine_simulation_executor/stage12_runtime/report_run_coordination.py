@@ -58,6 +58,7 @@ from .failures import (
     Stage12InputError,
     failure_detail_from_record,
 )
+from .output_planning import resolve_simulation_output_plan, side_read_plan
 from .parent_claim import validate_dispatch_context
 from .report_run_access import report_run_store
 from .report_run_recording import (
@@ -88,7 +89,9 @@ if TYPE_CHECKING:
     from policyengine_simulation_contract.stage12_execution import (
         PlannedSimulationExecutionInput,
         ReportRunIds,
+        SimulationExecutionInput,
         Stage12InvocationContext,
+        Stage12OutputPlan,
     )
     from policyengine_stage12_persistence import SimulationRunState
 
@@ -314,6 +317,8 @@ class ReportRunCoordination(CoordinationCore):
     report_run: ReportRunRecorder
     # Each simulation run's state by role, as read while preparing.
     run_states: dict[str, SimulationRunState] = field(default_factory=dict)
+    # The report's own plan: what the aggregation reads from both sides.
+    read_plan: Stage12OutputPlan | None = None
 
     @property
     def writer(self) -> ReportRunWriter:
@@ -333,6 +338,7 @@ class ReportRunCoordination(CoordinationCore):
         """Reuse or calculate both simulations, aggregate them, record the result."""
         with self.stage_scope(Stage.STAGE12_COORDINATOR_PREPARATION):
             output_plan, planned_simulations = self.plan_simulations()
+            self.read_plan = output_plan
             self.run_states = {
                 role.value: self.writer.get_simulation_run(
                     self.run_ids.simulation_run_id(role)
@@ -345,6 +351,7 @@ class ReportRunCoordination(CoordinationCore):
                 stored_runs={role: self.run_states[role.value] for role in ROLES},
                 files=self.dependencies.output_files,
                 span=self.span,
+                read_plan=output_plan,
             )
         self.simulations = {
             simulation.role.value: simulation for simulation in planned_simulations
@@ -379,6 +386,21 @@ class ReportRunCoordination(CoordinationCore):
             "report_run_id": str(self.run_ids.report_run_id),
             "status": written.status.value,
         }
+
+    def child_output_plan(
+        self,
+        simulation: SimulationExecutionInput,
+        output_plan: Stage12OutputPlan,  # noqa: ARG002  # the report's plan, which a stored plan never depends on
+    ) -> Stage12OutputPlan:
+        """Return ``simulation``'s stored plan, whatever report names its run.
+
+        Identical requests share simulation runs, so a run's file holds what
+        any report reads from that side; this report reads ``output_plan``.
+        """
+        resolver = self.dependencies.stored_plan_resolver
+        if resolver is not None:
+            return resolver(simulation)
+        return resolve_simulation_output_plan(simulation, stage_scope=self.stage_scope)
 
     def _calculated_as_the_baseline(
         self, simulation: PlannedSimulationExecutionInput
@@ -535,6 +557,11 @@ class ReportRunCoordination(CoordinationCore):
                     self.simulation_run_id(role),
                     result.state,
                     files=self._output_files(),
+                    required_plan=(
+                        None
+                        if self.read_plan is None
+                        else side_read_plan(self.read_plan, simulation.output_plan)
+                    ),
                 )
             self.reused[role] = reused
             return reused.descriptor

@@ -172,6 +172,7 @@ def aggregate_payload(result=None) -> dict:
 
 def coordinate_report(*payloads, application_name, coordinator_invocation_id, **seams):
     seams.setdefault("output_plan_resolver", lambda _: shared_output_plan())
+    seams.setdefault("stored_plan_resolver", lambda _: shared_output_plan())
     return coordinate_report_impl(
         *payloads,
         invocation=CoordinatorInvocation(
