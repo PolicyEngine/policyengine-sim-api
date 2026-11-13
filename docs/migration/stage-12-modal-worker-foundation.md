@@ -692,13 +692,21 @@ not read while `active-with-cache` exists; a rollback that far needs the newer
 keys deleted from the Modal Dict first. Removing the older copies needs a later
 change, once no deployed or rollback revision reads them.
 
-Each worker's `local_area_reports`, the version of the UK local-area report
-runs its coordinator runs (`LOCAL_AREA_REPORTS_VERSION`), is written only under
-the `active-schema-2-with-local-area-reports` key, which current readers read
-first; `active-schema-2` holds the same manifest without it, for readers
-released before it. A worker that runs none leaves the field out, so its
-document and digest are as before. The publisher sets it on every worker it
-publishes. Readers use the new key's document only while, without the field,
+The UK entry's `local_area_reports` says that the worker's coordinator runs
+UK local-area report runs: the version of the input it accepts
+(`input_version`, `LOCAL_AREA_REPORTS_VERSION`) and the dataset their area
+part is calculated on (`dataset`). That dataset is the one the release routes
+constituency and local-authority regions to, or null when it routes them to no
+dataset of their own and a UK-wide or nation run calculates both area levels
+itself. The publisher decides it by `uk_area_regions_routed` and
+`routed_uk_area_dataset_name`, the rule the national aggregation's
+`uk_area_breakdowns_omitted` and the UK worker use, so the simulation service,
+which can't read the release kind from the catalog, creates an area part
+exactly when the national run leaves the areas out. The field is written only
+under the `active-schema-2-with-local-area-reports` key, which current readers
+read first; `active-schema-2` holds the same manifest without it, for readers
+released before it. An entry without it leaves the field out, so its document
+and digest are as before. Readers use the new key's document only while, without the field,
 it equals the `active-schema-2` document and that document is current; code
 released before the field republishes only the older keys, so after a rollback
 the out-of-date copy stops matching and is no longer read. The same window as

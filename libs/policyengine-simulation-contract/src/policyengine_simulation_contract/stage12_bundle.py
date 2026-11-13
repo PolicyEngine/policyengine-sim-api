@@ -10,8 +10,6 @@ NonEmptyText = Annotated[str, Field(min_length=1)]
 Sha256Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 CountryId = Literal["us", "uk"]
 SUPPORTED_COUNTRIES: tuple[CountryId, ...] = ("us", "uk")
-# The UK region types whose results a local-area report run calculates.
-UK_AREA_REGION_TYPES = ("constituency", "local_authority")
 # A bare two-letter US region is a state code, such as "ut".
 _US_STATE_CODE_LENGTH = 2
 
@@ -101,27 +99,6 @@ class Stage12CountryBundle(StrictBundleModel):
     def dataset_for_region(self, region: str | None) -> str | None:
         """Return the dataset identity a requested region code loads, or None."""
         return self.dataset_for_region_type(region_type_of(self.country, region))
-
-    def local_area_dataset(self) -> str | None:
-        """Return the dataset a UK local-area report run calculates on, or None.
-
-        It is the one dataset both UK area region types (constituencies and
-        local authorities) load, when that is not the dataset national
-        regions load. None means a national run on this bundle calculates
-        the area results itself: the area region types load the national
-        dataset, name two datasets or none, or the bundle names no region
-        datasets.
-        """
-        datasets = {
-            self.dataset_for_region_type(region_type)
-            for region_type in UK_AREA_REGION_TYPES
-        }
-        if len(datasets) != 1:
-            return None
-        dataset = datasets.pop()
-        if dataset is None or dataset == self.dataset_for_region_type("national"):
-            return None
-        return dataset
 
 
 class Stage12BundleManifest(StrictBundleModel):

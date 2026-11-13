@@ -24,6 +24,7 @@ from policyengine_simulation_contract.stage12_manifest import (
     V1_ROUTING_STATE_NAME,
     V2_MANIFEST_KEYS,
     V2_VERSION_MANIFEST_NAME,
+    LocalAreaReports,
     V2CountryWorker,
     V2ManifestLoader,
     V2ManifestStore,
@@ -42,6 +43,23 @@ from policyengine_simulation_contract.stage12_manifest import (
     write_v2_manifest,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+from policyengine_simulation_executor.uk_local_authority_metadata import (
+    routed_uk_area_dataset_name,
+    uk_area_regions_routed,
+)
+
+
+def uk_local_area_reports() -> LocalAreaReports:
+    """Return the UK local-area report runs this code's coordinator runs.
+
+    The dataset is the one the installed release routes UK area regions to,
+    or None when it routes them to none, by the rule the worker and Stage
+    12's national aggregation use; it reads only the packaged release.
+    """
+    return LocalAreaReports(
+        input_version=LOCAL_AREA_REPORTS_VERSION,
+        dataset=routed_uk_area_dataset_name() if uk_area_regions_routed() else None,
+    )
 
 
 def build_worker(validation_payload: object) -> V2WorkerVersion:
@@ -49,7 +67,9 @@ def build_worker(validation_payload: object) -> V2WorkerVersion:
 
     Every bundle country has a single-simulation worker, so each is recorded
     as economy-capable. A country's household function is recorded when the
-    record shows that it calculated the validation household. Raises
+    record shows that it calculated the validation household. The UK entry
+    records that this code's coordinator runs local-area report runs, and on
+    which dataset (``uk_local_area_reports``). Raises
     ValueError if the record is invalid or the entry carries a credential-like
     key.
     """
@@ -68,6 +88,9 @@ def build_worker(validation_payload: object) -> V2WorkerVersion:
                     if country.country in validation.household_validation_invocation_ids
                     else None
                 ),
+                local_area_reports=(
+                    uk_local_area_reports() if country.country == "uk" else None
+                ),
             )
             for country in resolved.bundle.countries
         ),
@@ -75,8 +98,6 @@ def build_worker(validation_payload: object) -> V2WorkerVersion:
         bundle_manifest_sha256=resolved.bundle_manifest_sha256,
         validation=validation,
         cache=validation.cache,
-        # This code's coordinator runs local-area report runs.
-        local_area_reports=LOCAL_AREA_REPORTS_VERSION,
     )
     validate_manifest_has_no_credentials(worker.model_dump(mode="json"))
     return worker
