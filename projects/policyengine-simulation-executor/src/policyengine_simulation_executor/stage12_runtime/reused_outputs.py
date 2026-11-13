@@ -187,7 +187,7 @@ def reused_outputs(  # noqa: PLR0913  # the simulations, then keyword-only runs,
             if role is SimulationRole.BASELINE
             else SimulationRole.BASELINE
         )
-        _require_shared_population(
+        require_shared_population(
             stored,
             stored_runs[other_role],
             named=f"The reused {_run_name(role, run_ids)}",
@@ -233,7 +233,7 @@ def _run_name(role: SimulationRole, run_ids: ReportRunIds) -> str:
     return f"{role.value} simulation run {run_ids.simulation_run_id(role)}"
 
 
-def _require_shared_population(
+def require_shared_population(
     stored: SimulationRunState,
     other: SimulationRunState,
     *,
@@ -241,6 +241,9 @@ def _require_shared_population(
     other_named: str,
 ) -> None:
     """Raise unless the run names the dataset and region of its report run's other run.
+
+    It is checked for a run this report's own worker didn't calculate: one
+    that already succeeded, or one another call held while the report waited.
 
     The baseline and reform of one report calculate one population and
     geography. The report's input names them by the bundle's dataset identity

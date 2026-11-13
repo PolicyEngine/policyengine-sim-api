@@ -71,6 +71,7 @@ from .reused_outputs import (
     checked_output,
     descriptor_for_role,
     for_role,
+    require_shared_population,
     reused_outputs,
     simulations_to_calculate,
 )
@@ -573,6 +574,15 @@ class ReportRunCoordination(CoordinationCore):
         """
         if isinstance(result, WaitedRunSucceeded):
             simulation = self.simulations[role]
+            other_role = "reform" if role == "baseline" else "baseline"
+            require_shared_population(
+                result.state,
+                self.run_states[other_role],
+                named=f"The waited-for {role} simulation run "
+                f"{self.simulation_run_id(role)}",
+                other_named=f"{other_role} simulation run "
+                f"{self.simulation_run_id(other_role)}",
+            )
             with self.span(Stage.STAGE12_ARTIFACT_READ, {"simulation_role": role}):
                 reused = checked_output(
                     simulation,
