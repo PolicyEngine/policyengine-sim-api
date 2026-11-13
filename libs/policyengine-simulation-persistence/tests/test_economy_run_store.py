@@ -24,6 +24,7 @@ from economy_rows import (
     VERSIONS,
     insert_economy_catalog,
     insert_reusable_run,
+    insert_uk_area_regions,
 )
 from policyengine_simulation_persistence import (
     CatalogDataset,
@@ -33,6 +34,7 @@ from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRequest,
     EconomyRunStore,
+    LocalAreaDatasetMismatchError,
     MissingPolicyParametersError,
     NewEconomyReport,
     NewEconomySimulation,
@@ -138,6 +140,81 @@ def test_a_reports_inputs_are_read_together(public_api_database_url) -> None:
     )
     assert inputs.reform.reusable_run is None
     assert without_reuse.baseline.reusable_run is None
+
+
+UK_REQUEST = replace(REQUEST, country="uk", region_code="uk")
+# The dataset the UK worker declares it calculates local areas on.
+LOCAL_AREA_DATASET_NAME = "microcosm_uk_2024_25_dense"
+
+
+def test_a_reports_local_area_dataset_is_read_with_its_inputs(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection, country="uk")
+        local_area_id = insert_dataset(
+            connection, economy.catalog, LOCAL_AREA_DATASET_NAME
+        )
+        insert_uk_area_regions(
+            connection,
+            economy.catalog,
+            constituency_dataset_id=local_area_id,
+            local_authority_dataset_id=local_area_id,
+        )
+        act_as_the_service(connection)
+        store = _store_on(connection)
+
+        with_areas = store.read_report_inputs(
+            UK_REQUEST,
+            baseline=CURRENT_LAW,
+            reform=CURRENT_LAW,
+            reuse=None,
+            local_area_dataset_name=LOCAL_AREA_DATASET_NAME,
+        )
+        without_areas = store.read_report_inputs(
+            UK_REQUEST, baseline=CURRENT_LAW, reform=CURRENT_LAW, reuse=None
+        )
+
+    assert with_areas.local_area_dataset == CatalogDataset(
+        id=local_area_id, name=LOCAL_AREA_DATASET_NAME
+    )
+    assert without_areas.local_area_dataset is None
+    # The national part is read as it is without the local areas.
+    assert with_areas.catalog == without_areas.catalog
+
+
+@pytest.mark.parametrize(
+    "area_datasets", ["another dataset", "a dataset for each type"]
+)
+def test_a_declared_dataset_the_catalog_does_not_give_both_area_types_is_refused(
+    public_api_database_url, area_datasets
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection, country="uk")
+        local_area_id = insert_dataset(
+            connection, economy.catalog, LOCAL_AREA_DATASET_NAME
+        )
+        other_id = insert_dataset(connection, economy.catalog, "microcosm_uk_2024_25")
+        insert_uk_area_regions(
+            connection,
+            economy.catalog,
+            constituency_dataset_id=(
+                other_id if area_datasets == "another dataset" else local_area_id
+            ),
+            local_authority_dataset_id=other_id,
+        )
+        act_as_the_service(connection)
+
+        with pytest.raises(LocalAreaDatasetMismatchError) as mismatch:
+            _store_on(connection).read_report_inputs(
+                UK_REQUEST,
+                baseline=CURRENT_LAW,
+                reform=CURRENT_LAW,
+                reuse=None,
+                local_area_dataset_name=LOCAL_AREA_DATASET_NAME,
+            )
+
+    assert mismatch.value.declared_dataset == LOCAL_AREA_DATASET_NAME
 
 
 def test_the_two_sides_never_reuse_the_same_run(public_api_database_url) -> None:

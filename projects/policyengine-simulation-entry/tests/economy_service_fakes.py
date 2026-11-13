@@ -7,7 +7,7 @@ persistence library; here a fake records what the service asks of it.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from itertools import count
 from typing import TYPE_CHECKING, Any
@@ -43,6 +43,7 @@ from policyengine_simulation_persistence import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from policyengine_simulation_contract.stage12_manifest import V2WorkerVersion
     from policyengine_simulation_persistence import (
         EconomyRequest,
         NewEconomyReport,
@@ -104,15 +105,25 @@ def simulation_request(**changes: Any) -> EconomySimulationRequest:
 
 
 class FakeWorkers:
-    """The default worker's economy functions, or the lookup's failure."""
+    """The default worker's economy functions, or the lookup's failure.
 
-    def __init__(self, failure: Exception | None = None) -> None:
+    ``worker_version`` is the manifest's default worker; without it, the
+    economy fixtures' worker.
+    """
+
+    def __init__(
+        self,
+        failure: Exception | None = None,
+        *,
+        worker_version: V2WorkerVersion | None = None,
+    ) -> None:
         self.failure = failure
+        self.worker_version = worker_version
 
     def default_worker(self, country: str) -> EconomyWorker:
         if self.failure is not None:
             raise self.failure
-        return default_economy_worker(economy_manifest(), country)
+        return default_economy_worker(economy_manifest(self.worker_version), country)
 
 
 @dataclass
@@ -132,7 +143,11 @@ class FakeStore:
     claimed: bool = False
     stored_report: EconomyReportState | None = None
     stored_simulation: EconomySimulationState | None = None
+    # The catalog's local-area dataset a report read finds, when asked for one.
+    local_area_dataset: CatalogDataset | None = None
     report_reads: list[tuple[EconomyRequest, Any]] = field(default_factory=list)
+    # The local-area dataset each report read was asked for, or None.
+    local_area_reads: list[str | None] = field(default_factory=list)
     simulation_reads: list[tuple[EconomyRequest, Any]] = field(default_factory=list)
     reports: list[NewEconomyReport] = field(default_factory=list)
     simulations: list[NewEconomySimulation] = field(default_factory=list)
@@ -146,12 +161,14 @@ class FakeStore:
         baseline: SimulationChoice,
         reform: SimulationChoice,
         reuse: RunReuse | None,
+        local_area_dataset_name: str | None = None,
     ) -> EconomyReportInputs:
         self.report_reads.append((request, (baseline, reform, reuse)))
+        self.local_area_reads.append(local_area_dataset_name)
         if self.read_failure is not None:
             raise self.read_failure
         baseline_reusable, reform_reusable = self.reusable
-        return EconomyReportInputs(
+        inputs = EconomyReportInputs(
             catalog=self.catalog,
             baseline=SimulationInputs(
                 choice=baseline, reform={}, reusable_run=baseline_reusable
@@ -160,6 +177,9 @@ class FakeStore:
                 choice=reform, reform=REFORM, reusable_run=reform_reusable
             ),
         )
+        if local_area_dataset_name is None:
+            return inputs
+        return replace(inputs, local_area_dataset=self.local_area_dataset)
 
     def read_simulation_inputs(
         self, request: EconomyRequest, choice: SimulationChoice

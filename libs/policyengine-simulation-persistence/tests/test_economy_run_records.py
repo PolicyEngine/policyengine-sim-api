@@ -20,6 +20,7 @@ from economy_rows import (
     EconomyCatalog,
     insert_economy_catalog,
     insert_reusable_run,
+    insert_uk_area_regions,
 )
 from policyengine_simulation_persistence import (
     EconomyRecordReferenceError,
@@ -52,7 +53,6 @@ from public_api_rows import (
 from sqlalchemy import select, text, update
 
 if TYPE_CHECKING:
-    from public_api_rows import CatalogVersion
     from sqlalchemy import Connection
 
 pytestmark = pytest.mark.public_api_schema
@@ -186,31 +186,6 @@ def test_a_dataset_is_found_by_name_or_id_in_its_catalog_version_only(
     assert (by_id.id, by_id.name) == (economy.dataset_id, "populace_us_2024")
 
 
-def _insert_area_regions(
-    connection: Connection,
-    catalog: CatalogVersion,
-    *,
-    constituency_dataset_id: UUID,
-    local_authority_dataset_id: UUID,
-) -> None:
-    """Insert two constituencies and a local authority, each using its dataset."""
-    for code in ("constituency/Aldershot", "constituency/Cardiff West"):
-        insert_region(
-            connection,
-            catalog,
-            code,
-            default_dataset_id=constituency_dataset_id,
-            region_type="constituency",
-        )
-    insert_region(
-        connection,
-        catalog,
-        "local_authority/Cardiff",
-        default_dataset_id=local_authority_dataset_id,
-        region_type="local_authority",
-    )
-
-
 def test_the_local_area_dataset_is_the_one_both_area_types_use(
     public_api_database_url,
 ) -> None:
@@ -219,7 +194,7 @@ def test_the_local_area_dataset_is_the_one_both_area_types_use(
         local_area_id = insert_dataset(
             connection, economy.catalog, "microcosm_uk_2024_25_dense"
         )
-        _insert_area_regions(
+        insert_uk_area_regions(
             connection,
             economy.catalog,
             constituency_dataset_id=local_area_id,
@@ -233,7 +208,7 @@ def test_the_local_area_dataset_is_the_one_both_area_types_use(
             policyengine_version="6.16.0",
         )
         older_dataset_id = insert_dataset(connection, older, "microcosm_uk_2024_25")
-        _insert_area_regions(
+        insert_uk_area_regions(
             connection,
             older,
             constituency_dataset_id=older_dataset_id,
@@ -272,7 +247,7 @@ def test_a_catalog_version_without_one_dataset_for_both_area_types_has_none(
                 region_type="constituency",
             )
         elif area_regions == "a dataset for each type":
-            _insert_area_regions(
+            insert_uk_area_regions(
                 connection,
                 economy.catalog,
                 constituency_dataset_id=constituency_dataset_id,
@@ -293,7 +268,7 @@ def test_the_local_area_dataset_may_be_the_national_default(
     """Stage 12 leaves the areas out of a national run whenever both use one file."""
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection, country="uk")
-        _insert_area_regions(
+        insert_uk_area_regions(
             connection,
             economy.catalog,
             constituency_dataset_id=economy.dataset_id,
