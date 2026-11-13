@@ -385,12 +385,14 @@ def test_a_run_that_keeps_failing_before_it_is_read_is_answered_unavailable(
 ) -> None:
     """Nothing was written, so the caller is told to ask again (503)."""
     store = FakeRerunStore(rerun_failure=SharedRowNotSettledError("kept failing"))
+    caller = FakeCaller()
     rerun = _rerun_report if record == "report" else _rerun_simulation
 
     with pytest.raises(EconomySubmissionUnavailableError) as unavailable:
-        rerun(rerun_service(store))
+        rerun(rerun_service(store, caller=caller))
 
     assert unavailable.value.code == "database_unavailable"
+    assert (caller.report_runs, caller.simulation_runs) == ([], [])
 
 
 def test_a_rerun_whose_commit_is_unconfirmed_may_have_written_its_run() -> None:

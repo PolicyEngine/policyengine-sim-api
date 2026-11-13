@@ -273,13 +273,17 @@ def _find_later_run_of(
 
 
 def _used_on_later_catalog(
-    connection: Connection, stored: StoredReport, later: EconomyCatalog
+    connection: Connection,
+    stored: StoredReport,
+    economy: EconomyCatalog,
+    later: EconomyCatalog,
 ) -> StoredRun:
     """Insert a succeeded later run of the baseline that another report used.
 
-    The other report, created on the later catalog, reused the baseline's
-    run; its succeeded run is on the later versions. The stored report itself
-    has no run on them, so a re-run of it has none to join.
+    The other report, created on ``economy`` beside the stored one, reused
+    its simulations' runs; its re-run on the later catalog created the later
+    runs, and succeeded. The stored report itself has no run on the later
+    versions, so a re-run of it has none to join.
     """
     later_shape = RunShape(versions=LATER_VERSIONS)
     later_baseline = insert_run_of(
@@ -292,13 +296,13 @@ def _used_on_later_catalog(
         replace(later_shape, status=SimulationStatus.FAILED),
     )
     other_report_id = insert_report_of(
-        connection, later, (later_baseline, later_reform)
+        connection, economy, (stored.baseline, stored.reform)
     )
     insert_report_run_of(
         connection,
         other_report_id,
         (later_baseline, later_reform),
-        ReportRunOutcome(versions=LATER_VERSIONS),
+        ReportRunOutcome(versions=LATER_VERSIONS, trigger=ReportRunTrigger.MANUAL),
     )
     return later_baseline
 
@@ -310,7 +314,7 @@ def test_a_simulations_own_run_on_a_later_catalog_version_is_reused(
         economy = insert_economy_catalog(connection)
         later = insert_later_catalog(connection, economy)
         stored = _stored_report(connection, economy)
-        later_baseline = _used_on_later_catalog(connection, stored, later)
+        later_baseline = _used_on_later_catalog(connection, stored, economy, later)
         act_as_the_service(connection)
 
         found = _find_later_run_of(connection, stored.baseline.simulation_id, later)
@@ -345,7 +349,7 @@ def test_another_simulations_run_is_not_reused_for_a_simulations_rerun(
         economy = insert_economy_catalog(connection)
         later = insert_later_catalog(connection, economy)
         stored = _stored_report(connection, economy)
-        _used_on_later_catalog(connection, stored, later)
+        _used_on_later_catalog(connection, stored, economy, later)
         other = _stored_report(connection, economy)
         act_as_the_service(connection)
 
@@ -394,7 +398,7 @@ def test_a_report_rerun_creates_runs_of_the_reports_own_simulations(
         economy = insert_economy_catalog(connection)
         later = insert_later_catalog(connection, economy)
         stored = _stored_report(connection, economy)
-        reused = _used_on_later_catalog(connection, stored, later)
+        reused = _used_on_later_catalog(connection, stored, economy, later)
         rerun = _rerun_of(stored, later, baseline_reused=reused)
         act_as_the_service(connection)
 
@@ -660,7 +664,7 @@ def test_a_report_reruns_inputs_are_read_on_the_current_catalog_version(
         )
         reform_choice = SimulationChoice(policy_id=policy_id, dynamic_id=None)
         stored = _stored_report(connection, economy, reform_choice=reform_choice)
-        reused = _used_on_later_catalog(connection, stored, later)
+        reused = _used_on_later_catalog(connection, stored, economy, later)
         act_as_the_service(connection)
         store = _store_on(connection)
         sides = {
@@ -694,7 +698,7 @@ def test_both_sides_of_one_simulation_never_reuse_the_same_run(
         economy = insert_economy_catalog(connection)
         later = insert_later_catalog(connection, economy)
         stored = _stored_report(connection, economy)
-        reused = _used_on_later_catalog(connection, stored, later)
+        reused = _used_on_later_catalog(connection, stored, economy, later)
         act_as_the_service(connection)
         side = SideDefinition(stored.baseline.simulation_id, CURRENT_LAW)
 
