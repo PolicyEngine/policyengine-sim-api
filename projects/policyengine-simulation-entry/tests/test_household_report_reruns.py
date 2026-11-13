@@ -250,6 +250,15 @@ def test_a_household_report_of_the_baseline_alone_is_rerun_without_a_reform() ->
         # would be calculated as it was not stored.
         (
             {
+                "baseline": SideDefinition(
+                    simulation_id=BASELINE_SIMULATION_ID,
+                    choice=SimulationChoice(policy_id=None, dynamic_id=DYNAMIC_ID),
+                )
+            },
+            "dynamic",
+        ),
+        (
+            {
                 "reform": SideDefinition(
                     simulation_id=REFORM_SIMULATION_ID,
                     choice=SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID),
@@ -283,6 +292,23 @@ def test_a_household_rerun_answers_503_when_household_reports_are_not_configured
 
     assert unavailable.value.code == "not_configured"
     assert unavailable.value.detail == "Household reports are not configured."
+
+
+def test_a_household_report_that_cannot_be_rerun_is_refused_even_unconfigured() -> None:
+    """A report that can never be re-run is not answered as one to retry."""
+    dynamic_reform = replace(
+        STORED_HOUSEHOLD_REPORT,
+        reform=SideDefinition(
+            simulation_id=REFORM_SIMULATION_ID,
+            choice=SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID),
+        ),
+    )
+    store = FakeRerunStore(report_definition=dynamic_reform)
+
+    with pytest.raises(EconomyRerunConflictError) as refused:
+        _rerun(rerun_service(store))
+
+    assert refused.value.code == "rerun_not_supported"
 
 
 def test_no_household_function_for_the_country_is_refused() -> None:
