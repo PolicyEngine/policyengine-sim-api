@@ -72,7 +72,7 @@ def client_for(monkeypatch):
         monkeypatch.setattr(
             app_module,
             "economy_submissions_for",
-            lambda settings, database: submissions,
+            lambda settings, database, **_: submissions,
         )
         return TestClient(
             create_app(

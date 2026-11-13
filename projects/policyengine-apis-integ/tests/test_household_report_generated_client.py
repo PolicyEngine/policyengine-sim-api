@@ -3,18 +3,22 @@
 The Public API sends a household report to ``POST /reports`` with
 ``report_type`` ``household``, and reads the 201 naming the report, its run,
 its year and each side's simulation and simulation run, or the error
-answers economy reports share.
+answers economy reports share. A household report's re-run
+(``POST /reports/{report_id}/runs``) answers with the same 201.
 """
+
+from uuid import UUID
 
 import httpx
 from policyengine_api_simulation_client import AuthenticatedClient
-from policyengine_api_simulation_client.api.default import create_report
+from policyengine_api_simulation_client.api.default import create_report, rerun_report
 from policyengine_api_simulation_client.models import (
     EconomyError,
     EconomyReportCreated,
     EconomyRequestUnprocessable,
     HouseholdReportCreated,
     HouseholdReportRequest,
+    ReportRerunRequest,
     ReportRunStatus,
 )
 
@@ -112,6 +116,25 @@ def test_a_created_report_of_the_baseline_alone_has_no_reform():
     assert isinstance(response.parsed, HouseholdReportCreated)
     assert response.parsed.reform_simulation_id is None
     assert response.parsed.reform_simulation_run_id is None
+
+
+def test_a_household_report_rerun_is_read_with_its_new_run():
+    client = AuthenticatedClient(base_url="https://simulation.example", token="test")
+    client.set_httpx_client(
+        httpx.Client(
+            base_url="https://simulation.example",
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(201, json=CREATED_HOUSEHOLD_REPORT)
+            ),
+        )
+    )
+
+    response = rerun_report.sync_detailed(
+        UUID(REPORT_ID), client=client, body=ReportRerunRequest()
+    )
+
+    assert isinstance(response.parsed, HouseholdReportCreated)
+    assert response.parsed.to_dict() == CREATED_HOUSEHOLD_REPORT
 
 
 def test_a_created_economy_report_is_still_read_as_one():

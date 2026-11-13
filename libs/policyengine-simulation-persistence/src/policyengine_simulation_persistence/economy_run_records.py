@@ -293,7 +293,7 @@ def find_reusable_run(  # noqa: PLR0913  # each keyword is one part of the match
     - of an economy simulation with the same policy, dynamic, catalog
       version, dataset, region and year;
     - that succeeded on the same country package and .py versions, for that
-      year, dataset and region;
+      catalog version, year, dataset and region;
     - whose output file is under ``output_uri_prefix``, the output bucket,
       which never deletes a file;
     - that a succeeded report run used, in a report with the same ``inputs``
@@ -309,6 +309,77 @@ def find_reusable_run(  # noqa: PLR0913  # each keyword is one part of the match
     responses: the refusal fails that report run, and the run is not offered
     again.
     """
+    return _newest_reusable_run(
+        connection,
+        (
+            simulations.c.simulation_type == SimulationType.ECONOMY,
+            simulations.c.policy_id.is_not_distinct_from(choice.policy_id),
+            simulations.c.dynamic_id.is_not_distinct_from(choice.dynamic_id),
+            simulations.c.tax_benefit_model_version_id
+            == population.tax_benefit_model_version_id,
+            simulations.c.dataset_id == population.dataset_id,
+            simulations.c.region_id == population.region_id,
+            simulations.c.year == population.year,
+            simulations.c.filter_field.is_(None),
+        ),
+        _WantedRun(
+            population=population,
+            versions=versions,
+            inputs=inputs,
+            output_uri_prefix=output_uri_prefix,
+            excluded_run_id=excluded_run_id,
+        ),
+    )
+
+
+def find_reusable_run_of(  # noqa: PLR0913  # the simulation, then each part of the match
+    connection: Connection,
+    *,
+    simulation_id: UUID,
+    population: EconomyPopulation,
+    versions: RunVersions,
+    inputs: dict[str, Any],
+    output_uri_prefix: str,
+    excluded_run_id: UUID | None = None,
+) -> ReusableRun | None:
+    """Return the succeeded run of one simulation a re-run of its report may name.
+
+    The run is the newest, by completion, of the simulation's runs that meets
+    every condition ``find_reusable_run`` sets on a run, or None. Its catalog
+    version, dataset and region are compared on the run itself: a re-run on
+    a later .py version calculates the simulation on that version's catalog
+    rows, while the simulation keeps the ones it was created on.
+    """
+    return _newest_reusable_run(
+        connection,
+        (simulation_runs.c.simulation_id == simulation_id,),
+        _WantedRun(
+            population=population,
+            versions=versions,
+            inputs=inputs,
+            output_uri_prefix=output_uri_prefix,
+            excluded_run_id=excluded_run_id,
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class _WantedRun:
+    """What a reusable run must have calculated, and the run it must not be."""
+
+    population: EconomyPopulation
+    versions: RunVersions
+    inputs: dict[str, Any]
+    output_uri_prefix: str
+    excluded_run_id: UUID | None
+
+
+def _newest_reusable_run(
+    connection: Connection,
+    simulation_conditions: tuple[ColumnElement[bool], ...],
+    wanted: _WantedRun,
+) -> ReusableRun | None:
+    """Return the newest run meeting the conditions and every run condition."""
     used_by = report_runs.alias("used_by_report_run")
     refused_by = report_runs.alias("refused_by_report_run")
     used_with_same_options = (
@@ -317,7 +388,7 @@ def find_reusable_run(  # noqa: PLR0913  # each keyword is one part of the match
         .where(
             used_by.c.status == ReportRunStatus.SUCCEEDED,
             _names_run(used_by),
-            cast(reports.c.inputs, JSONB) == literal(inputs, JSONB),
+            cast(reports.c.inputs, JSONB) == literal(wanted.inputs, JSONB),
         )
         .exists()
     )
@@ -332,29 +403,27 @@ def find_reusable_run(  # noqa: PLR0913  # each keyword is one part of the match
         )
         .exists()
     )
+    population = wanted.population
+    versions = wanted.versions
     conditions = [
-        simulations.c.simulation_type == SimulationType.ECONOMY,
-        simulations.c.policy_id.is_not_distinct_from(choice.policy_id),
-        simulations.c.dynamic_id.is_not_distinct_from(choice.dynamic_id),
-        simulations.c.tax_benefit_model_version_id
-        == population.tax_benefit_model_version_id,
-        simulations.c.dataset_id == population.dataset_id,
-        simulations.c.region_id == population.region_id,
-        simulations.c.year == population.year,
-        simulations.c.filter_field.is_(None),
+        *simulation_conditions,
         simulation_runs.c.status == SimulationStatus.SUCCEEDED,
         simulation_runs.c.year == population.year,
+        simulation_runs.c.tax_benefit_model_version_id
+        == population.tax_benefit_model_version_id,
         simulation_runs.c.country_package_version == versions.country_package_version,
         simulation_runs.c.policyengine_version == versions.policyengine_version,
         simulation_runs.c.dataset_id == population.dataset_id,
         simulation_runs.c.region_id == population.region_id,
-        simulation_runs.c.output_uri.startswith(output_uri_prefix, autoescape=True),
+        simulation_runs.c.output_uri.startswith(
+            wanted.output_uri_prefix, autoescape=True
+        ),
         simulation_runs.c.output_sha256.is_not(None),
         used_with_same_options,
         ~refused,
     ]
-    if excluded_run_id is not None:
-        conditions.append(simulation_runs.c.id != excluded_run_id)
+    if wanted.excluded_run_id is not None:
+        conditions.append(simulation_runs.c.id != wanted.excluded_run_id)
     row = connection.execute(
         select(simulation_runs.c.id, simulation_runs.c.simulation_id)
         .join(simulations, simulations.c.id == simulation_runs.c.simulation_id)
@@ -472,6 +541,28 @@ def insert_simulation_with_run(  # noqa: PLR0913  # the simulation's and its run
             year=population.year,
         )
     )
+    insert_simulation_run(
+        connection,
+        run_id=run_id,
+        simulation_id=simulation_id,
+        population=population,
+        versions=versions,
+    )
+
+
+def insert_simulation_run(
+    connection: Connection,
+    *,
+    run_id: UUID,
+    simulation_id: UUID,
+    population: EconomyPopulation,
+    versions: RunVersions,
+) -> None:
+    """Create a run of a stored simulation on ``population``, pending with no call.
+
+    The run records the catalog version, dataset and region it calculates
+    on, which a re-run's may differ from its simulation's.
+    """
     connection.execute(
         insert(simulation_runs).values(
             id=run_id,
