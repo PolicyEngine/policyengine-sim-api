@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 from policyengine_simulation_contract.stage12_manifest import (
     LOCAL_AREA_REPORTS_VERSION,
+    LocalAreaReports,
     V2WorkerValidation,
 )
 from src.modal.utils import update_v2_version_manifest as publisher
@@ -59,10 +60,38 @@ def test_publisher_records_every_bundle_country_as_economy_capable() -> None:
     ]
 
 
-def test_publisher_records_that_its_coordinator_runs_local_area_report_runs() -> None:
+def _local_area_reports(worker) -> dict[str, LocalAreaReports | None]:
+    return {country.country: country.local_area_reports for country in worker.countries}
+
+
+def test_publisher_records_the_uk_local_area_dataset_its_coordinator_runs_on() -> None:
+    from policyengine_simulation_executor.uk_local_authority_metadata import (
+        routed_uk_area_dataset_name,
+        uk_area_regions_routed,
+    )
+
+    assert uk_area_regions_routed()
     worker = publisher.build_worker(_validation().model_dump(mode="json"))
 
-    assert worker.local_area_reports == LOCAL_AREA_REPORTS_VERSION
+    assert _local_area_reports(worker) == {
+        "us": None,
+        "uk": LocalAreaReports(
+            input_version=LOCAL_AREA_REPORTS_VERSION,
+            dataset=routed_uk_area_dataset_name(),
+        ),
+    }
+
+
+def test_publisher_records_no_dataset_when_uk_national_runs_keep_the_areas(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(publisher, "uk_area_regions_routed", lambda: False)
+
+    worker = publisher.build_worker(_validation().model_dump(mode="json"))
+
+    assert _local_area_reports(worker)["uk"] == LocalAreaReports(
+        input_version=LOCAL_AREA_REPORTS_VERSION, dataset=None
+    )
 
 
 def test_publisher_records_each_validated_household_function() -> None:

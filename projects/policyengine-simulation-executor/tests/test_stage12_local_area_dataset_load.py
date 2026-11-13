@@ -67,16 +67,22 @@ def _dataset(identity: str) -> Stage12Dataset:
     )
 
 
-def _installed_uk_bundle(
-    area_dataset: str = LOCAL_AREA_DATASET,
-) -> ResolvedStage12Bundle:
-    """Return an installed bundle whose UK area regions load ``area_dataset``."""
+def _route_uk_area_regions(monkeypatch, *, routed: bool = True) -> None:
+    """Make the installed release route UK area regions to the local-area dataset."""
+    monkeypatch.setattr(local_area_datasets, "uk_area_regions_routed", lambda: routed)
+    monkeypatch.setattr(
+        local_area_datasets, "routed_uk_area_dataset_name", lambda: LOCAL_AREA_DATASET
+    )
+
+
+def _installed_uk_bundle() -> ResolvedStage12Bundle:
+    """Return an installed bundle holding the national and local-area datasets."""
     national = _dataset(NATIONAL_DATASET)
     region_datasets = {
         "national": NATIONAL_DATASET,
         "country": NATIONAL_DATASET,
-        "constituency": area_dataset,
-        "local_authority": area_dataset,
+        "constituency": LOCAL_AREA_DATASET,
+        "local_authority": LOCAL_AREA_DATASET,
     }
     return ResolvedStage12Bundle(
         bundle=Stage12BundleManifest(
@@ -167,19 +173,19 @@ def _uk_simulation(
 def test_the_installed_bundle_accepts_the_local_area_dataset_for_uk_and_a_nation(
     monkeypatch, region: str
 ) -> None:
+    _route_uk_area_regions(monkeypatch)
     monkeypatch.setattr(worker, "load_stage12_bundle", _installed_uk_bundle)
 
     worker._require_installed_bundle(_uk_simulation(region, LOCAL_AREA_DATASET))
 
 
-def test_the_installed_bundle_refuses_a_dataset_area_regions_do_not_load_on_their_own(
+def test_the_installed_bundle_refuses_the_dataset_when_the_release_does_not_route(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(
-        worker,
-        "load_stage12_bundle",
-        lambda: _installed_uk_bundle(area_dataset=NATIONAL_DATASET),
-    )
+    # On such a release a UK-wide run calculates the area results itself, as
+    # Stage 12's national aggregation decides (uk_area_breakdowns_omitted).
+    _route_uk_area_regions(monkeypatch, routed=False)
+    monkeypatch.setattr(worker, "load_stage12_bundle", _installed_uk_bundle)
 
     with pytest.raises(RuntimeError, match="differs from the installed bundle"):
         worker._require_installed_bundle(_uk_simulation("uk", LOCAL_AREA_DATASET))
@@ -188,6 +194,7 @@ def test_the_installed_bundle_refuses_a_dataset_area_regions_do_not_load_on_thei
 def test_the_installed_bundle_refuses_the_local_area_dataset_at_another_revision(
     monkeypatch,
 ) -> None:
+    _route_uk_area_regions(monkeypatch)
     monkeypatch.setattr(worker, "load_stage12_bundle", _installed_uk_bundle)
     provenance = _provenance(LOCAL_AREA_DATASET)
     provenance = provenance.model_copy(
@@ -264,6 +271,7 @@ def _run_until_built(
         raise _StoppedBeforeSimulatingError
 
     monkeypatch.setattr(worker, "_require_installed_bundle", lambda _: None)
+    _route_uk_area_regions(monkeypatch)
     monkeypatch.setattr(
         local_area_datasets, "load_stage12_bundle", _installed_uk_bundle
     )
