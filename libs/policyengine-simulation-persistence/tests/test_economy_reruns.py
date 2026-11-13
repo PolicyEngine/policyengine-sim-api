@@ -496,9 +496,10 @@ def test_a_report_whose_runs_have_ended_is_rerun_again(public_api_database_url) 
         )
 
 
-def test_a_simulation_rerun_creates_a_run_and_is_refused_while_one_is_under_way(
+def test_a_simulation_rerun_joins_its_run_on_the_current_versions_until_it_fails(
     public_api_database_url,
 ) -> None:
+    """Answer 3: a re-run joins a run under way or succeeded; 2: never a failed one."""
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         later = insert_later_catalog(connection, economy)
@@ -511,25 +512,61 @@ def test_a_simulation_rerun_creates_a_run_and_is_refused_while_one_is_under_way(
         )
         act_as_the_service(connection)
 
-        insert_simulation_rerun(connection, rerun)
+        inserted = insert_simulation_rerun(connection, rerun)
         created = _row(connection, "simulation_runs", rerun.run_id)
-        with pytest.raises(RunInProgressError) as refused:
-            insert_simulation_rerun(connection, replace(rerun, run_id=uuid4()))
-        earlier = _row(connection, "simulation_runs", stored.simulation_run_id)
+        joined_under_way = insert_simulation_rerun(
+            connection, replace(rerun, run_id=uuid4())
+        )
+        joined_succeeded = insert_simulation_rerun(
+            connection,
+            NewSimulationRerun(
+                simulation_id=stored.simulation_id,
+                run_id=uuid4(),
+                population=economy.population(),
+                versions=VERSIONS,
+            ),
+        )
+        connection.execute(text("RESET ROLE"))
+        connection.execute(
+            text(
+                "UPDATE public.simulation_runs SET status = 'failed', "
+                "completed_at = now() WHERE id = :id"
+            ),
+            {"id": rerun.run_id},
+        )
+        act_as_the_service(connection)
+        after_failure = insert_simulation_rerun(
+            connection, replace(rerun, run_id=uuid4())
+        )
+        runs_of_the_simulation = _count_runs_of(connection, stored.simulation_id)
 
+    assert (inserted.id, inserted.inserted, inserted.status) == (
+        rerun.run_id,
+        True,
+        SimulationStatus.PENDING,
+    )
     assert (
         created["simulation_id"],
         created["tax_benefit_model_version_id"],
         created["policyengine_version"],
         created["status"],
+        created["forced"],
     ) == (
         stored.simulation_id,
         later.catalog.version_id,
         LATER_POLICYENGINE_VERSION,
         SimulationStatus.PENDING,
+        False,
     )
-    assert refused.value.run_id == rerun.run_id
-    assert earlier["status"] == SimulationStatus.SUCCEEDED
+    assert (joined_under_way.id, joined_under_way.inserted) == (rerun.run_id, False)
+    assert (
+        joined_succeeded.id,
+        joined_succeeded.inserted,
+        joined_succeeded.status,
+    ) == (stored.simulation_run_id, False, SimulationStatus.SUCCEEDED)
+    assert after_failure.inserted is True
+    assert after_failure.id not in {rerun.run_id, stored.simulation_run_id}
+    assert runs_of_the_simulation == 3
 
 
 def test_a_rerun_holds_its_records_lock_until_its_transaction_ends(
