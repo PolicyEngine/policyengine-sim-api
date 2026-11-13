@@ -131,16 +131,20 @@ Stage 12 secret sync writes.
 ### The staging economy check
 
 Every staging deployment runs `staging_economy_check` when the household
-check runs: `.github/scripts/simulation-staging-economy-check.sh` creates a
-small report, current law against current law for `country/wales` in 2026,
-through the candidate's tagged URL with the authenticated tests' client
-credentials, follows it through `GET /reports/{report_id}`, and requires its
-run to succeed within 30 minutes. `deployment_ready` requires the check to
+check runs: `.github/scripts/simulation-staging-economy-check.sh` finds or
+creates a small report, current law against current law for `country/wales`
+in 2026, through the candidate's tagged URL with the authenticated tests'
+client credentials (`POST /reports`), then forces a new run of it
+(`POST /reports/{report_id}/runs` with `{"force": true}`), follows that run
+through `GET /reports/{report_id}`, and requires it to succeed within 30
+minutes. An identical request ends on the report's existing run, which an
+earlier check on the same versions already calculated, so the forced run,
+which nothing joins, is what calculates on every deploy: both simulations
+on the release's workers and the comparison on its coordinator. Both
+requests need `simulation:submit`. `deployment_ready` requires the check to
 pass in staging, so a failure stops the production deployment. Each run adds
-a report and its runs to the staging database. Once a .py version's first
-check has succeeded, later checks on that version reuse its simulation runs,
-so they check the coordinator's use of stored outputs rather than the
-workers', which the v2 deployment's own validation calls.
+a forced report run and its two simulation runs to the staging database,
+and the first check on a .py version also its ordinary run.
 
 ## Candidate qualification
 
