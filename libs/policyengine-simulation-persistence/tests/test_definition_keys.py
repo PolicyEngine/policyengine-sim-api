@@ -12,6 +12,8 @@ from policyengine_simulation_persistence import (
     KEY_VERSION,
     EconomyReportDefinition,
     EconomySimulationDefinition,
+    HouseholdReportDefinition,
+    HouseholdSimulationDefinition,
     SimulationChoice,
     canonical_json,
     definition_key,
@@ -213,3 +215,119 @@ def test_reports_differing_only_in_their_dataset_share_that_key() -> None:
     assert national.definition_key != local_area.definition_key
     assert other_spm.dataset_independent_key != national.dataset_independent_key
     assert other_region.dataset_independent_key != national.dataset_independent_key
+
+
+HOUSEHOLD_ID = UUID("33333333-4444-5555-6666-777777777777")
+
+
+def _household_report(**changes: Any) -> HouseholdReportDefinition:
+    """Return a household report: current law against reform P, US, 2026."""
+    report = HouseholdReportDefinition(
+        country="us",
+        baseline=CURRENT_LAW,
+        reform=REFORM_P,
+        household_id=HOUSEHOLD_ID,
+        year=2026,
+    )
+    return replace(report, **changes)
+
+
+def _household_reform(**changes: Any) -> HouseholdSimulationDefinition:
+    """Return that household report's reform simulation."""
+    simulation = HouseholdSimulationDefinition(
+        country="us", choice=REFORM_P, household_id=HOUSEHOLD_ID, year=2026
+    )
+    return replace(simulation, **changes)
+
+
+def test_a_household_simulation_key_names_its_household_for_dataset_and_region() -> (
+    None
+):
+    """Answers 1a and 8: a household simulation is keyed by its household's ID."""
+    assert _household_reform().key_object() == {
+        "country": "us",
+        "dynamic_id": None,
+        "filter": None,
+        "household_id": HOUSEHOLD_ID,
+        "key_version": 1,
+        "policy_id": REFORM_POLICY_ID,
+        "record": "simulation",
+        "simulation_type": "household",
+        "year": 2026,
+    }
+    assert _household_reform().definition_key[:16] == "18d9f70b8310de76"
+
+
+def test_each_part_of_a_household_simulation_definition_changes_its_key() -> None:
+    variants = [
+        _household_reform(),
+        _household_reform(country="uk"),
+        _household_reform(choice=CURRENT_LAW),
+        _household_reform(
+            choice=SimulationChoice(policy_id=REFORM_POLICY_ID, dynamic_id=DYNAMIC_ID)
+        ),
+        _household_reform(household_id=UUID(int=1)),
+        _household_reform(year=2027),
+    ]
+
+    assert len({variant.definition_key for variant in variants}) == len(variants)
+
+
+def test_a_household_report_key_names_its_sides_household_and_year() -> None:
+    """A report of the baseline alone names no reform."""
+    assert _household_report().key_object() == {
+        "baseline": {"dynamic_id": None, "policy_id": None},
+        "budget_window_size": None,
+        "country": "us",
+        "household_id": HOUSEHOLD_ID,
+        "key_version": 1,
+        "record": "report",
+        "reform": {"dynamic_id": None, "policy_id": REFORM_POLICY_ID},
+        "report_type": "household",
+        "year": 2026,
+    }
+    assert _household_report(reform=None).key_object()["reform"] is None
+    assert _household_report().definition_key[:16] == "4b769456e6d9b01a"
+
+
+def test_each_part_of_a_household_report_definition_changes_its_key() -> None:
+    variants = [
+        _household_report(),
+        _household_report(country="uk"),
+        _household_report(baseline=REFORM_P, reform=CURRENT_LAW),
+        _household_report(reform=None),
+        _household_report(reform=CURRENT_LAW),
+        _household_report(household_id=UUID(int=1)),
+        _household_report(year=2027),
+    ]
+
+    assert len({variant.definition_key for variant in variants}) == len(variants)
+
+
+def test_a_household_reports_dataset_independent_key_has_its_own_record_name() -> (
+    None
+):
+    """A household report has no dataset, so only the record name differs."""
+    report = _household_report()
+    expected = {**report.key_object(), "record": "report_dataset_independent"}
+
+    assert report.dataset_independent_key_object() == expected
+    assert report.dataset_independent_key == definition_key(expected)
+    assert report.dataset_independent_key != report.definition_key
+
+
+def test_a_household_reports_sides_are_the_simulations_it_names() -> None:
+    report = _household_report()
+
+    assert report.sides == ("baseline", "reform")
+    assert report.simulation("reform") == _household_reform()
+    assert report.simulation("baseline") == _household_reform(choice=CURRENT_LAW)
+    assert _household_report(reform=None).sides == ("baseline",)
+    with pytest.raises(ValueError, match="no reform"):
+        _household_report(reform=None).simulation("reform")
+    # A policy compared with itself names one simulation on both sides.
+    same_policy = _household_report(reform=CURRENT_LAW)
+    assert (
+        same_policy.simulation("baseline").definition_key
+        == same_policy.simulation("reform").definition_key
+    )
