@@ -14,9 +14,10 @@ function, starts such a run's call once more:
    are left out, and household simulations too: the check can't rebuild
    their calls yet.
    ``list_idle_budget_windows`` lists, apart, the budget windows that
-   stopped: no year is under way and years are still waiting, untouched,
-   since a time in the window. ``read_earliest_waiting_year`` names the year
-   a restart starts the window from, and marks.
+   stopped (``IdleBudgetWindow``): no year is under way and years are still
+   waiting, untouched, since a time in the window.
+   ``read_earliest_waiting_year`` names the year a restart starts the window
+   from, and marks just before its first start.
 2. ``mark_restart`` sets the row's ``updated_at`` before the check starts its
    call, so the row is never listed again and is restarted at most once. It
    uses the statement's clock rather than the transaction's, so the mark
@@ -37,7 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, ClassVar, Final
 
 from sqlalchemy import and_, exists, func, or_, select, update
 
@@ -85,8 +86,9 @@ class RestartKind(StrEnum):
     HOUSEHOLD_JOB = "household_job"
     REPORT_RUN = "report_run"
     SIMULATION_RUN = "simulation_run"
-    # A budget window none of whose years is under way: a restart starts its
-    # earliest waiting years, as the service starts a new window's.
+    # A budget window none of whose years is under way (``IdleBudgetWindow``):
+    # a restart starts its earliest waiting years, as the service starts a
+    # new window's.
     BUDGET_WINDOW = "budget_window"
 
 
@@ -100,15 +102,25 @@ RESTART_TABLES: Final[dict[RestartKind, Table]] = {
 
 @dataclass(frozen=True)
 class UnstartedRun:
-    """A row still pending with no Modal call, and since when it has waited.
-
-    ``created_at`` is a row's creation, and a budget window's last change:
-    the latest change of the window or any of its years.
-    """
+    """A row still pending with no Modal call, and when it was created."""
 
     kind: RestartKind
     run_id: UUID
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class IdleBudgetWindow:
+    """A budget window that stopped with years still waiting, and when.
+
+    ``last_changed_at`` is the latest ``updated_at`` of the window and its
+    years. A window is restarted as a whole, never as one row, so it is a
+    type of its own, kept apart from the row-only reads and writes.
+    """
+
+    kind: ClassVar[RestartKind] = RestartKind.BUDGET_WINDOW
+    run_id: UUID
+    last_changed_at: datetime
 
 
 class StoredRunUnreadableError(LookupError):
@@ -299,7 +311,7 @@ def list_idle_budget_windows(
     idle_after: datetime,
     idle_before: datetime,
     limit: int,
-) -> tuple[UnstartedRun, ...]:
+) -> tuple[IdleBudgetWindow, ...]:
     """Return the stopped budget windows last changed in the window, oldest first.
 
     A window has stopped when it is pending or running, none of its years is
@@ -337,9 +349,7 @@ def list_idle_budget_windows(
         .limit(limit)
     )
     return tuple(
-        UnstartedRun(
-            kind=RestartKind.BUDGET_WINDOW, run_id=row.id, created_at=row.last_change
-        )
+        IdleBudgetWindow(run_id=row.id, last_changed_at=row.last_change)
         for row in connection.execute(statement)
     )
 

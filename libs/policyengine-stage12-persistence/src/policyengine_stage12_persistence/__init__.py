@@ -6,6 +6,7 @@ from policyengine_stage12_persistence.budget_window_store import (
     WindowAdvance,
     YearStartDeferred,
     YearStarter,
+    YearStartRefused,
     YearToStart,
 )
 from policyengine_stage12_persistence.report_run_results import (
@@ -48,6 +49,7 @@ __all__ = [
     "Stage12RuntimeAccessError",
     "WindowAdvance",
     "YearStartDeferred",
+    "YearStartRefused",
     "YearStarter",
     "YearToStart",
     "create_stage12_engine",

@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from sqlalchemy import Connection, Engine
 
     from policyengine_simulation_persistence.run_restart_records import (
+        IdleBudgetWindow,
         RunCall,
         StoredReportRun,
         StoredSimulationRun,
@@ -104,7 +105,7 @@ class RunRestartStore:
 
     def list_idle_windows(
         self, *, idle_after: datetime, idle_before: datetime, limit: int
-    ) -> tuple[UnstartedRun, ...]:
+    ) -> tuple[IdleBudgetWindow, ...]:
         """Return the stopped budget windows last changed in the window."""
         with self._transaction() as connection:
             return list_idle_budget_windows(

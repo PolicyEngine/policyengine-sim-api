@@ -96,6 +96,7 @@ from policyengine_simulation_persistence.policy_reform import (
 from policyengine_simulation_persistence.run_restart_records import (
     RESTART_TABLES,
     EconomyScope,
+    IdleBudgetWindow,
     RestartKind,
     RunCall,
     StoredEconomySide,
@@ -158,6 +159,7 @@ __all__ = [
     "HouseholdJobReferenceError",
     "HouseholdJobStatus",
     "HouseholdJobStore",
+    "IdleBudgetWindow",
     "MissingPolicyParametersError",
     "NewBudgetWindowReport",
     "NewEconomyReport",

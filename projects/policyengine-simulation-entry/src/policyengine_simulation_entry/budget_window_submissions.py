@@ -250,8 +250,9 @@ class ReportSubmissionService(EconomySubmissionService):
         first in time; a later year not confirmed within the shared wait is
         left waiting. An advance that can't be written leaves the window pending:
         the report exists, so it is answered as created, and a year Modal
-        started claims itself, while the stuck-run sweep fails a window no
-        year advances.
+        started claims itself. A window no year advances is started again by
+        the restart check (``run_restart_windows``), and failed as stalled by
+        the stuck-run sweep when that start is lost too.
         """
         start_year = YearStarts(
             worker=worker,

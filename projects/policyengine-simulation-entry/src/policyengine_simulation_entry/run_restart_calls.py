@@ -67,6 +67,7 @@ if TYPE_CHECKING:
         HouseholdCalculationInputs,
         HouseholdJobRecord,
         HouseholdJobStatus,
+        IdleBudgetWindow,
         NewHouseholdJob,
         RunCall,
         RunVersions,
@@ -158,7 +159,7 @@ class UnstartedRunSource(Protocol):
 
     def list_idle_windows(
         self, *, idle_after: datetime, idle_before: datetime, limit: int
-    ) -> tuple[UnstartedRun, ...]:
+    ) -> tuple[IdleBudgetWindow, ...]:
         """Return the stopped budget windows last changed in the window."""
         ...
 
@@ -465,8 +466,8 @@ class RestartCallBuilder:
         A budget window is restarted from its earliest waiting year's call,
         and the service's year starter derives each later year's from it.
         Raise DeferredRestartError or CallNotRebuiltError as ``build`` does,
-        the latter naming no simulation runs: a window's years are failed by
-        the window, never by the restart.
+        the latter naming no simulation runs: a window's year is failed
+        through the window's advance, which fails its own simulation runs.
         """
         try:
             stored = self._restarts.read_report_run(report_run_id)

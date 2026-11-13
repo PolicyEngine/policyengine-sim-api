@@ -10,24 +10,34 @@ its minimum age.
 
 The restart check starts a stopped window again, as the service starts a
 new window's first years. ``WindowRestarter`` rebuilds the earliest waiting
-year's coordinator call from its stored rows, marks that year, so the window
-is restarted once each time it stops, and advances the window
+year's coordinator call from its stored rows, then advances the window
 (``BudgetWindowStore.advance_window``) with the service's own year starter
 (``YearStarts``). That starter derives each later year's call from the
 first's, and shares one wait for Modal among them; under the window's row
 lock, the earliest years are started, at most five under way, and their
-calls recorded. A year Modal refuses fails the window, as it would at the
-service's start. A window whose first call can't be rebuilt is marked and
-left, and the sweep fails it as stalled.
+calls recorded.
+
+Just before the advance's first start, the restart marks the earliest
+waiting year, so the window is restarted once each time it stops. An
+advance whose lock or reads fail starts and marks nothing, so the next
+check takes the window up again. A year Modal refuses fails the window, as
+it would at the service's start. A window whose first call can't be
+rebuilt is failed at once, through the same advance: that year records
+``run_not_started`` and why, as a row the check can't rebuild is failed.
 """
 
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 from typing import TYPE_CHECKING
 
 from policyengine_simulation_persistence import RestartKind, UnstartedRun
-from policyengine_stage12_persistence import RunStatus
+from policyengine_stage12_persistence import (
+    RunStatus,
+    YearStartDeferred,
+    YearStartRefused,
+)
 from sqlalchemy.exc import SQLAlchemyError
 
 from policyengine_simulation_entry.budget_window_submissions import YearStarts
@@ -35,40 +45,130 @@ from policyengine_simulation_entry.run_restart_calls import (
     CallNotRebuiltError,
     DeferredRestartError,
 )
-from policyengine_simulation_entry.run_restart_outcomes import RestartOutcome
+from policyengine_simulation_entry.run_restart_outcomes import (
+    NOT_STARTED_MESSAGE,
+    RestartOutcome,
+    log_unexpected_error,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
 
-    from policyengine_simulation_persistence import WaitingYear
-    from policyengine_stage12_persistence import WindowAdvance
+    from policyengine_simulation_persistence import IdleBudgetWindow
+    from policyengine_stage12_persistence import WindowAdvance, YearToStart
 
     from policyengine_simulation_entry.budget_window_submissions import (
         BudgetWindowAdvancer,
     )
-    from policyengine_simulation_entry.economy_calculation_inputs import (
-        RunCalculation,
-    )
-    from policyengine_simulation_entry.economy_workers import (
-        EconomyRunCaller,
-        EconomyWorker,
-    )
+    from policyengine_simulation_entry.economy_workers import EconomyRunCaller
     from policyengine_simulation_entry.run_restart_calls import (
         RestartCallBuilder,
         UnstartedRunSource,
     )
     from policyengine_simulation_entry.run_restarts import RestartTelemetry
 
+type _Ended = tuple[RestartOutcome, str | None]
 
-class _RestartEnded(Exception):  # noqa: N818  # it names an outcome, not a fault
-    """The window's restart ended early, with this outcome."""
 
-    def __init__(self, outcome: RestartOutcome, error_type: str | None = None) -> None:
-        """Keep the outcome and the error type that ended it, if any."""
-        super().__init__(outcome.value)
-        self.outcome = outcome
-        self.error_type = error_type
+class _MarkedYearStarts:
+    """Start a window's years with ``YearStarts``, marking the restart first.
+
+    Before the first start, it marks the earliest waiting year. A mark that
+    changes nothing (the year changed meanwhile) or can't be written defers
+    the year, so the advance starts nothing more. It records what happened,
+    so the restart can say how it ended.
+    """
+
+    def __init__(self, *, mark: Callable[[], bool], start_year: YearStarts) -> None:
+        """Mark with ``mark``, then start each year with ``start_year``."""
+        self._mark = mark
+        self._start_year = start_year
+        self.marked = False
+        self.mark_error_type: str | None = None
+        self.start_error_type: str | None = None
+        self.calls_started = 0
+
+    def __call__(self, year_to_start: YearToStart, /) -> str:
+        """Start the year's coordinator and return its Modal call ID."""
+        if not self.marked:
+            try:
+                self.marked = self._mark()
+            except SQLAlchemyError as error:
+                self.mark_error_type = type(error).__name__
+                raise YearStartDeferred from None
+            if not self.marked:
+                raise YearStartDeferred
+        try:
+            call_id = self._start_year(year_to_start)
+        except YearStartDeferred:
+            raise
+        except Exception as error:
+            # The advance fails the year as refused, and logs it.
+            self.start_error_type = type(error).__name__
+            raise
+        self.calls_started += 1
+        return call_id
+
+    def ended(self, advance: WindowAdvance) -> _Ended:
+        """Return how the restart ended, from the advance it made."""
+        if self.mark_error_type is not None:
+            return RestartOutcome.DEFERRED, self.mark_error_type
+        if not self.marked:
+            # Nothing was started: the window finished, or a failed year
+            # failed it, or its year changed before the mark.
+            return RestartOutcome.LEFT, None
+        if advance.status is RunStatus.FAILED:
+            return RestartOutcome.FAILED, self.start_error_type
+        if advance.started_years:
+            return RestartOutcome.RESTARTED, None
+        return RestartOutcome.LEFT, None
+
+    def ended_by_error(self) -> RestartOutcome:
+        """Return how the restart ended when its advance raised."""
+        if self.calls_started:
+            # A year whose call Modal accepted claims itself.
+            return RestartOutcome.CALL_NOT_RECORDED
+        if self.marked:
+            # Its failure wasn't written; the sweep fails the window.
+            return RestartOutcome.LEFT
+        return RestartOutcome.DEFERRED
+
+
+class _RefusedFirstYear:
+    """Fail the first year offered with why its call can't be rebuilt.
+
+    The advance fails that year, and so the window, unless the year's own
+    call claimed it meanwhile; any later year is deferred to its
+    coordinator. Nothing is marked, so a failure that isn't written leaves
+    the window for the next check.
+    """
+
+    def __init__(self, cannot: CallNotRebuiltError) -> None:
+        """Refuse with the reason ``cannot`` gives."""
+        self._error_message = (
+            f"{NOT_STARTED_MESSAGE}, and its call could not be built again: "
+            f"{cannot.reason}."
+        )
+        self._error_type = cannot.error_type
+        self.offered = False
+
+    def __call__(self, year_to_start: YearToStart, /) -> str:  # noqa: ARG002  # the YearStarter protocol's argument
+        """Refuse the first year offered; defer any later one."""
+        if self.offered:
+            raise YearStartDeferred
+        self.offered = True
+        raise YearStartRefused(self._error_message)
+
+    def ended(self, advance: WindowAdvance) -> _Ended:
+        """Return how the restart ended, from the advance it made."""
+        if self.offered and advance.status is RunStatus.FAILED:
+            return RestartOutcome.FAILED, self._error_type
+        return RestartOutcome.LEFT, None
+
+    def ended_by_error(self) -> RestartOutcome:
+        """Return how the restart ended when its advance raised."""
+        return RestartOutcome.DEFERRED
 
 
 class WindowRestarter:
@@ -96,106 +196,84 @@ class WindowRestarter:
         self._out_of_time = out_of_time
         self._call_start_timeout_seconds = call_start_timeout_seconds
 
-    async def restart(self, window: UnstartedRun) -> tuple[RestartOutcome, str | None]:
-        """Start the window's earliest waiting years; return how it ended."""
-        try:
-            waiting, built = await self._first_year_call(window)
-            worker, calculation = await self._mark(window, waiting, built)
-            advance = await self._advance(window, waiting, worker, calculation)
-        except _RestartEnded as ended:
-            return ended.outcome, ended.error_type
-        if advance.status is RunStatus.FAILED:
-            return RestartOutcome.FAILED, None
-        if advance.started_years:
-            return RestartOutcome.RESTARTED, None
-        return RestartOutcome.LEFT, None
+    async def restart(self, window: IdleBudgetWindow) -> _Ended:
+        """Start the window's earliest waiting years; return how it ended.
 
-    async def _first_year_call(
-        self, window: UnstartedRun
-    ) -> tuple[WaitingYear, tuple[EconomyWorker, RunCalculation] | CallNotRebuiltError]:
-        """Return the earliest waiting year and its rebuilt call, or why there's none.
-
-        A call that can't be rebuilt is returned, not raised, so the year is
-        still marked.
+        Any error no step expects is logged with its traceback, and the
+        window is left as its marks and starts so far leave it.
         """
+        starts: _MarkedYearStarts | _RefusedFirstYear | None = None
+        try:
+            prepared = await self._starts(window)
+            if isinstance(prepared, tuple):
+                return prepared
+            starts = prepared
+            return await self._advance(window, starts)
+        except Exception as error:  # noqa: BLE001  # one window's fault never ends the check
+            log_unexpected_error(window)
+            outcome = (
+                RestartOutcome.DEFERRED if starts is None else starts.ended_by_error()
+            )
+            return outcome, type(error).__name__
+
+    async def _starts(
+        self, window: IdleBudgetWindow
+    ) -> _MarkedYearStarts | _RefusedFirstYear | _Ended:
+        """Return the earliest waiting year's starter, or how the restart ended."""
         try:
             waiting = await asyncio.to_thread(
                 self._restarts.read_earliest_waiting_year, window.run_id
             )
         except SQLAlchemyError as error:
-            raise _RestartEnded(RestartOutcome.DEFERRED, type(error).__name__) from None
+            return RestartOutcome.DEFERRED, type(error).__name__
         if waiting is None:
-            raise _RestartEnded(RestartOutcome.LEFT)
+            return RestartOutcome.LEFT, None
         try:
             built = await asyncio.to_thread(
                 self._calls.report_calculation, waiting.report_run_id
             )
         except DeferredRestartError as deferred:
-            raise _RestartEnded(RestartOutcome.DEFERRED, str(deferred)) from None
+            return RestartOutcome.DEFERRED, str(deferred)
         except CallNotRebuiltError as cannot:
-            return waiting, cannot
+            return _RefusedFirstYear(cannot)
         if built is None:
-            raise _RestartEnded(RestartOutcome.LEFT)
-        return waiting, built
-
-    async def _mark(
-        self,
-        window: UnstartedRun,
-        waiting: WaitingYear,
-        built: tuple[EconomyWorker, RunCalculation] | CallNotRebuiltError,
-    ) -> tuple[EconomyWorker, RunCalculation]:
-        """Mark the earliest waiting year, so the window restarts once per stop.
-
-        Return the year's rebuilt call. Raise _RestartEnded when time is up,
-        the year changed meanwhile, the mark can't be written, or the year's
-        call can't be rebuilt (once marked).
-        """
-        if self._out_of_time():
-            raise _RestartEnded(RestartOutcome.DEFERRED)
+            return RestartOutcome.LEFT, None
+        worker, calculation = built
         first_year = UnstartedRun(
             kind=RestartKind.REPORT_RUN,
             run_id=waiting.report_run_id,
-            created_at=window.created_at,
+            # The mark reads only the row's kind and ID.
+            created_at=window.last_changed_at,
         )
-        try:
-            marked = await asyncio.to_thread(self._restarts.mark_restart, first_year)
-        except SQLAlchemyError as error:
-            raise _RestartEnded(RestartOutcome.DEFERRED, type(error).__name__) from None
-        if not marked:
-            raise _RestartEnded(RestartOutcome.LEFT)
-        if isinstance(built, CallNotRebuiltError):
-            raise _RestartEnded(RestartOutcome.LEFT, built.error_type)
-        return built
+        return _MarkedYearStarts(
+            mark=partial(self._restarts.mark_restart, first_year),
+            start_year=YearStarts(
+                worker=worker,
+                caller=self._caller,
+                first_year=waiting.year,
+                first_calculation=calculation,
+                observability_context=self._telemetry.capture_context(),
+                loop=asyncio.get_running_loop(),
+                timeout_seconds=self._call_start_timeout_seconds,
+                clock=self._clock,
+            ),
+        )
 
     async def _advance(
-        self,
-        window: UnstartedRun,
-        waiting: WaitingYear,
-        worker: EconomyWorker,
-        calculation: RunCalculation,
-    ) -> WindowAdvance:
-        """Advance the window with the service's year starter, from the first year."""
-        start_year = YearStarts(
-            worker=worker,
-            caller=self._caller,
-            first_year=waiting.year,
-            first_calculation=calculation,
-            observability_context=self._telemetry.capture_context(),
-            loop=asyncio.get_running_loop(),
-            timeout_seconds=self._call_start_timeout_seconds,
-            clock=self._clock,
-        )
+        self, window: IdleBudgetWindow, starts: _MarkedYearStarts | _RefusedFirstYear
+    ) -> _Ended:
+        """Advance the window with ``starts``; return how the restart ended."""
+        if self._out_of_time():
+            return RestartOutcome.DEFERRED, None
         try:
-            return await asyncio.to_thread(
+            advance = await asyncio.to_thread(
                 self._windows.advance_window,
                 window.run_id,
                 now=self._clock(),
-                start_year=start_year,
+                start_year=starts,
             )
         except SQLAlchemyError as error:
-            # A year whose call Modal accepted claims itself.
-            raise _RestartEnded(
-                RestartOutcome.CALL_NOT_RECORDED, type(error).__name__
-            ) from None
+            return starts.ended_by_error(), type(error).__name__
         except LookupError:
-            raise _RestartEnded(RestartOutcome.LEFT) from None
+            return RestartOutcome.LEFT, None
+        return starts.ended(advance)

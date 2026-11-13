@@ -10,11 +10,13 @@ beside the sweep, starts such a row's call once more:
 
 1. it lists the rows created 3 to 10 minutes ago that are still pending with
    no call and that nothing has changed since their insert, and the budget
-   windows that stopped 3 to 10 minutes ago (``run_restart_windows``);
+   windows that stopped 3 to 10 minutes ago, and takes them up oldest first;
 2. for each, it reads back what the service built the call from and builds
    the same call, on the worker of the .py version the row records;
 3. it marks the row, so it is never restarted twice, starts the call, and
-   records the call's ID while the row is still pending with none.
+   records the call's ID while the row is still pending with none. A
+   window is advanced instead, from its earliest waiting year's call
+   (``run_restart_windows``).
 
 A row whose call can't be built again (its worker left the version manifest,
 or its stored rows changed), or whose new call Modal refuses, is failed at
@@ -29,15 +31,15 @@ no call or that call's own ID, so once the restart records its call, the
 earlier call's claim is refused; if the earlier call claimed it first, the
 restart's call is refused instead.
 
-Each listed row is one telemetry scope, ``restart_scope``, with its age, and
-its outcome is reported through ``record_outcome``, so how often runs need a
-restart, and how each restart ended, can be counted.
+Each listed row or window is one telemetry scope, ``restart_scope``, with
+how long it has waited, and its outcome is reported through
+``record_outcome``, so how often runs need a restart, and how each restart
+ended, can be counted.
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 import uuid
 from collections import Counter
@@ -48,7 +50,7 @@ from heapq import merge
 from itertools import islice
 from typing import TYPE_CHECKING, Final, Protocol
 
-from policyengine_simulation_persistence import RestartKind
+from policyengine_simulation_persistence import IdleBudgetWindow, RestartKind
 from sqlalchemy.exc import SQLAlchemyError
 
 from policyengine_simulation_entry.run_restart_calls import (
@@ -61,7 +63,12 @@ from policyengine_simulation_entry.run_restart_calls import (
     RestartWorkers,
     UnstartedRunSource,
 )
-from policyengine_simulation_entry.run_restart_outcomes import RestartOutcome
+from policyengine_simulation_entry.run_restart_outcomes import (
+    NOT_STARTED_MESSAGE,
+    RestartOutcome,
+    RestartTarget,
+    log_unexpected_error,
+)
 from policyengine_simulation_entry.run_restart_windows import WindowRestarter
 
 if TYPE_CHECKING:
@@ -93,12 +100,11 @@ __all__ = [
     "RestartSettings",
     "RestartStores",
     "RestartSummary",
+    "RestartTarget",
     "RestartTelemetry",
     "RestartWorkers",
     "RunRestartService",
 ]
-
-logger = logging.getLogger(__name__)
 
 # A row is restarted once it has stayed pending with no call this long, which
 # is far longer than a submission takes to start and record its call.
@@ -117,9 +123,6 @@ CALL_START_TIMEOUT_SECONDS: Final = 10.0
 # bounded statements, so the check ends within the scheduled function's
 # timeout and no row it marks is left without its call.
 CHECK_TIME_LIMIT: Final = timedelta(minutes=3)
-_NOT_STARTED: Final = (
-    "run_not_started: The run stayed pending with no Modal call recorded for it"
-)
 
 
 @dataclass(frozen=True)
@@ -170,19 +173,19 @@ class RestartTelemetry(Protocol):
     """Where the check reports each listed row (``ObservabilityRestartTelemetry``)."""
 
     def restart_scope(
-        self, run: UnstartedRun, *, age_seconds: float
+        self, run: RestartTarget, *, age_seconds: float
     ) -> AbstractContextManager[None]:
-        """Return the scope one row's restart runs in."""
+        """Return the scope one row's or window's restart runs in."""
         ...
 
     def record_outcome(
         self,
-        run: UnstartedRun,
+        run: RestartTarget,
         outcome: RestartOutcome,
         *,
         error_type: str | None = None,
     ) -> None:
-        """Report how the row's restart ended, and the error type that ended it."""
+        """Report how the restart ended, and the error type that ended it."""
         ...
 
     def capture_context(self) -> dict[str, str] | None:
@@ -195,7 +198,7 @@ class NoRestartTelemetry:
 
     def restart_scope(
         self,
-        run: UnstartedRun,  # noqa: ARG002  # the protocol's argument
+        run: RestartTarget,  # noqa: ARG002  # the protocol's argument
         *,
         age_seconds: float,  # noqa: ARG002  # the protocol's argument
     ) -> AbstractContextManager[None]:
@@ -204,7 +207,7 @@ class NoRestartTelemetry:
 
     def record_outcome(
         self,
-        run: UnstartedRun,
+        run: RestartTarget,
         outcome: RestartOutcome,
         *,
         error_type: str | None = None,
@@ -295,18 +298,15 @@ class RunRestartService:
             limit=RESTARTS_PER_CHECK,
         )
         # Each listing is oldest first; together, oldest first too.
-        runs = list(
-            islice(
-                merge(rows, windows, key=lambda run: run.created_at),
-                RESTARTS_PER_CHECK,
-            )
+        runs: list[RestartTarget] = list(
+            islice(merge(rows, windows, key=_waiting_since), RESTARTS_PER_CHECK)
         )
         outcomes: Counter[RestartOutcome] = Counter()
         for position, run in enumerate(runs):
             if self._out_of_time():
                 outcomes[RestartOutcome.DEFERRED] += len(runs) - position
                 break
-            age_seconds = (now - run.created_at).total_seconds()
+            age_seconds = (now - _waiting_since(run)).total_seconds()
             with self._telemetry.restart_scope(run, age_seconds=age_seconds):
                 outcome, error_type = await self._restart(run)
                 self._telemetry.record_outcome(run, outcome, error_type=error_type)
@@ -319,9 +319,9 @@ class RunRestartService:
     def _out_of_time(self) -> bool:
         return self._timer() >= self._deadline
 
-    async def _restart(self, run: UnstartedRun) -> tuple[RestartOutcome, str | None]:
+    async def _restart(self, run: RestartTarget) -> tuple[RestartOutcome, str | None]:
         """Start the row's call once more; return how it ended and any error type."""
-        if run.kind is RestartKind.BUDGET_WINDOW:
+        if isinstance(run, IdleBudgetWindow):
             return await self._windows.restart(run)
         try:
             rebuilt = await asyncio.to_thread(self._calls.build, run)
@@ -329,7 +329,7 @@ class RunRestartService:
             return RestartOutcome.DEFERRED, str(deferred)
         except CallNotRebuiltError as cannot:
             message = (
-                f"{_NOT_STARTED}, and its call could not be built again: "
+                f"{NOT_STARTED_MESSAGE}, and its call could not be built again: "
                 f"{cannot.reason}."
             )
             failed = self._fail(run, message, cannot.simulation_run_ids)
@@ -342,14 +342,8 @@ class RunRestartService:
             return outcome, cannot.error_type
         # Any other error leaves this row unmarked for the next check, and
         # the check goes on to the next row; its traceback is logged.
-        except Exception as error:
-            fields = {"run_kind": run.kind.value, "run_id": str(run.run_id)}
-            # The observability runtime's log handler writes only
-            # ``policyengine_attributes``, as route_support's own log does.
-            logger.exception(
-                "v2_run_restart_unexpected_error",
-                extra={**fields, "policyengine_attributes": fields},
-            )
+        except Exception as error:  # noqa: BLE001  # logged with its traceback by log_unexpected_error
+            log_unexpected_error(run)
             return RestartOutcome.DEFERRED, type(error).__name__
         if rebuilt is None:
             return RestartOutcome.LEFT, None
@@ -378,8 +372,8 @@ class RunRestartService:
         # call was not confirmed, and the row is failed unless it has started.
         except Exception as error:  # noqa: BLE001  # every unconfirmed call is answered alike
             message = (
-                f"{_NOT_STARTED}, and Modal did not accept the call that started it "
-                f"again ({type(error).__name__})."
+                f"{NOT_STARTED_MESSAGE}, and Modal did not accept the call that "
+                f"started it again ({type(error).__name__})."
             )
             failed = self._fail(run, message, simulation_run_ids)
             # A failure that changed nothing means a call holds the row now,
@@ -449,3 +443,10 @@ class RunRestartService:
             self._stores.economy.record_simulation_call(run.run_id, call_id)
         else:
             self._stores.households.record_call(run.run_id, call_id)
+
+
+def _waiting_since(run: RestartTarget) -> datetime:
+    """Return since when the row or window has waited: its creation or last change."""
+    if isinstance(run, IdleBudgetWindow):
+        return run.last_changed_at
+    return run.created_at

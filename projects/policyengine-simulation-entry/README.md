@@ -122,7 +122,8 @@ runs it every two minutes as the Modal worker role.
   a check, oldest first, with the budget windows that stopped 3 to 10
   minutes ago (`run_restart_windows`). A window is restarted as
   `budget_window_submissions` starts a new one: from its earliest waiting
-  year's rebuilt call, with `YearStarts`. Household simulations' runs are
+  year's rebuilt call, with `YearStarts`, marking that year just before the
+  first start. Household simulations' runs are
   left out. After three minutes a check marks no more rows and leaves the
   rest for the next.
 - It rebuilds each call with this service's own builders

@@ -10,19 +10,20 @@ How often runs need a restart is the check's telemetry:
 - each check is one ``v2_run_restart_check`` operation, with the number of
   rows it listed and how each ended (``restart_listed``, ``restart_failed``
   and the rest) set on it;
-- each row it takes up is one ``v2_run_restart`` operation, with the row's
-  kind, ID and age. A row left ``deferred`` is taken up again by the next
+- each row or budget window it takes up is one ``v2_run_restart``
+  operation, with its kind, ID and age (for a window, the time since its
+  last change). A row left ``deferred`` is taken up again by the next
   check, so the operation count metric counts restart attempts, and the
   distinct ``run_id`` values are the runs whose call never started that a
   check took up. A row no check took up (more rows at once than the checks
   in its window had time for) is failed by the sweep with
   ``run_not_started`` instead; a count of the outcomes other than
   ``deferred`` also leaves out the rows deferred in every check.
-- each row's outcome is set on its operation (``restart_outcome``, with
+- each outcome is set on its operation (``restart_outcome``, with
   ``restart_error_type`` when an error ended it) and logged as a
-  ``v2_run_restart_outcome`` event, at WARNING when the row could not be
-  started again or its rows could not be read; an unexpected error
-  rebuilding a row's call is also logged with its traceback
+  ``v2_run_restart_outcome`` event, at WARNING when the row or window could
+  not be started again or its rows could not be read; an unexpected error
+  in a restart is also logged with its traceback
   (``v2_run_restart_unexpected_error``).
 
 This module imports none of the web service, so the sweep's image, which
@@ -69,10 +70,12 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from contextlib import AbstractContextManager
 
-    from policyengine_simulation_persistence import UnstartedRun
     from sqlalchemy import Engine
 
-    from policyengine_simulation_entry.run_restarts import RestartSummary
+    from policyengine_simulation_entry.run_restarts import (
+        RestartSummary,
+        RestartTarget,
+    )
 
 # The longest any one statement of a check may take.
 RESTART_STATEMENT_TIMEOUT_MILLISECONDS: Final = 5_000
@@ -124,9 +127,9 @@ class ObservabilityRestartTelemetry:
         self._runtime = runtime
 
     def restart_scope(
-        self, run: UnstartedRun, *, age_seconds: float
+        self, run: RestartTarget, *, age_seconds: float
     ) -> AbstractContextManager[Any]:
-        """Return the operation one row's restart runs in."""
+        """Return the operation one row's or window's restart runs in."""
         return self._runtime.operation(
             V2_RUN_RESTART_STAGES.name(Stage.V2_RUN_RESTART),
             attributes={
@@ -138,7 +141,7 @@ class ObservabilityRestartTelemetry:
 
     def record_outcome(
         self,
-        run: UnstartedRun,
+        run: RestartTarget,
         outcome: RestartOutcome,
         *,
         error_type: str | None = None,
@@ -216,7 +219,9 @@ def scheduled_restart_service(
             households=HouseholdJobStore.from_engine(
                 engine, statement_timeout_milliseconds=timeout
             ),
-            windows=BudgetWindowStore(engine=engine),
+            windows=BudgetWindowStore(
+                engine=engine, statement_timeout_milliseconds=timeout
+            ),
         ),
         workers=RestartWorkers(
             economy=ManifestEconomyWorkers.from_modal(
