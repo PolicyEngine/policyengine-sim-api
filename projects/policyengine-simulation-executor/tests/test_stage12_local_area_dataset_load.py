@@ -17,7 +17,6 @@ from policyengine_simulation_contract.stage12_bundle import (
     Stage12RegionDataset,
 )
 from policyengine_simulation_contract.stage12_execution import (
-    LOCAL_AREA_AGGREGATES,
     BundleProvenance,
     DatasetArtifactMediaType,
     DatasetArtifactReference,
@@ -163,7 +162,7 @@ def _uk_simulation(
         output_plan=Stage12OutputPlan(
             country="uk",
             requirements=ReportOutputRequirements(
-                aggregates=LOCAL_AREA_AGGREGATES,
+                aggregates=tuple(ReportAggregate),
                 include_cliff_impacts=False,
                 labor_supply_response_active=False,
             ),

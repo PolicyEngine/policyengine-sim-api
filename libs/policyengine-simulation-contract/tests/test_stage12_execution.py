@@ -13,7 +13,6 @@ from policyengine_simulation_contract.spm import (
     build_spm_provenance,
 )
 from policyengine_simulation_contract.stage12_execution import (
-    LOCAL_AREA_AGGREGATES,
     SIMULATION_PARQUET_PAYLOAD_CONTRACT,
     AggregateReportArtifactPayload,
     BundleProvenance,
@@ -268,41 +267,3 @@ def test_aggregate_artifact_accepts_only_canonical_spm_provenance() -> None:
             bundle=artifact.bundle,
             result={"spm_provenance": mismatched},
         )
-
-
-def _requirements(
-    aggregates: tuple[ReportAggregate, ...], *, include_cliff_impacts: bool = False
-) -> ReportOutputRequirements:
-    return ReportOutputRequirements(
-        aggregates=aggregates,
-        include_cliff_impacts=include_cliff_impacts,
-        labor_supply_response_active=False,
-    )
-
-
-def test_output_requirements_accept_the_local_area_profile() -> None:
-    requirements = _requirements(LOCAL_AREA_AGGREGATES)
-
-    assert requirements.aggregates == (ReportAggregate.GEOGRAPHIC,)
-
-
-def test_the_local_area_profile_calculates_no_cliff_impacts() -> None:
-    with pytest.raises(ValidationError, match="calculates no cliff impacts"):
-        _requirements(LOCAL_AREA_AGGREGATES, include_cliff_impacts=True)
-
-
-@pytest.mark.parametrize(
-    "aggregates",
-    [
-        (ReportAggregate.BUDGET,),
-        (ReportAggregate.GEOGRAPHIC, ReportAggregate.BUDGET),
-        tuple(reversed(ReportAggregate)),
-    ],
-)
-def test_output_requirements_refuse_any_other_partial_profile(
-    aggregates: tuple[ReportAggregate, ...],
-) -> None:
-    with pytest.raises(
-        ValidationError, match="complete aggregate profile or the local-area profile"
-    ):
-        _requirements(aggregates)
