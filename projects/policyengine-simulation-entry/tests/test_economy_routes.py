@@ -219,6 +219,78 @@ def test_a_malformed_request_is_refused_with_its_reasons(client_for, path, body)
     assert (submissions.reports, submissions.simulations) == ([], [])
 
 
+# A UK-wide report asking for its local-area breakdown, with cliffs and no
+# SPM settings.
+LOCAL_AREA_REPORT_BODY: dict[str, Any] = {
+    **{name: value for name, value in REPORT_BODY.items() if name != "spm"},
+    "country": "uk",
+    "region_code": "uk",
+    "breakdown": "local_areas",
+}
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected_message"),
+    [
+        ({"breakdown": None}, "omit it to ask for no breakdown"),
+        ({"breakdown": "constituencies"}, "Input should be 'local_areas'"),
+        (
+            {"country": "us", "region_code": "us"},
+            "breakdown is supported only for UK requests",
+        ),
+        ({"region_code": "constituency/Aldershot"}, "UK-wide or nation region"),
+        ({"region_code": "local_authority/Cardiff"}, "UK-wide or nation region"),
+    ],
+    ids=[
+        "null",
+        "another value",
+        "another country",
+        "a constituency",
+        "a local authority",
+    ],
+)
+def test_a_breakdown_a_report_cannot_have_is_refused(
+    client_for, changes, expected_message
+) -> None:
+    submissions = FakeEconomySubmissions()
+
+    with client_for(submissions) as client:
+        result = client.post("/reports", json={**LOCAL_AREA_REPORT_BODY, **changes})
+
+    assert result.status_code == 422
+    (reason,) = result.json()["detail"]
+    assert reason["loc"][-1] == "breakdown"
+    assert expected_message in reason["msg"]
+    assert submissions.reports == []
+
+
+@pytest.mark.parametrize(
+    "region_code",
+    [
+        "uk",
+        "country/england",
+        "country/scotland",
+        "country/wales",
+        "country/northern_ireland",
+    ],
+)
+def test_a_uk_wide_or_nation_report_may_ask_for_its_local_areas(
+    client_for, region_code
+) -> None:
+    submissions = FakeEconomySubmissions()
+
+    with client_for(submissions) as client:
+        result = client.post(
+            "/reports", json={**LOCAL_AREA_REPORT_BODY, "region_code": region_code}
+        )
+
+    assert result.status_code == 201
+    ((request, _, _),) = submissions.reports
+    assert request.breakdown == "local_areas"
+    # The report still calculates cliffs, and stores that it asked for areas.
+    assert request.options() == {"include_cliffs": True, "breakdown": "local_areas"}
+
+
 @pytest.mark.parametrize(("path", "body"), ROUTES)
 def test_a_refusal_answers_400_with_its_code(client_for, path, body) -> None:
     submissions = FakeEconomySubmissions(
