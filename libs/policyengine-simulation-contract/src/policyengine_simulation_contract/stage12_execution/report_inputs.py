@@ -35,8 +35,18 @@ class ReportAggregate(StrEnum):
     PROGRAM_STATISTICS = "program_statistics"
 
 
+# A UK local-area report run's one aggregate: the constituency and
+# local-authority impacts, with the codes disclosure control withholds.
+LOCAL_AREA_AGGREGATES: tuple[ReportAggregate, ...] = (ReportAggregate.GEOGRAPHIC,)
+
+
 class ReportOutputRequirements(StrictContractModel):
-    """Report features that determine which simulation columns must exist."""
+    """Report features that determine which simulation columns must exist.
+
+    ``aggregates`` is either the complete profile, every ``ReportAggregate``
+    in declaration order, or the local-area profile
+    (``LOCAL_AREA_AGGREGATES``), which calculates no cliff impacts.
+    """
 
     schema_version: Literal[1] = 1
     aggregates: Annotated[tuple[ReportAggregate, ...], Field(min_length=1)]
@@ -45,18 +55,31 @@ class ReportOutputRequirements(StrictContractModel):
 
     @field_validator("aggregates")
     @classmethod
-    def require_complete_aggregate_profile(
+    def require_a_supported_aggregate_profile(
         cls,
         value: tuple[ReportAggregate, ...],
     ) -> tuple[ReportAggregate, ...]:
-        """Require every ``ReportAggregate``, once each and in declaration order."""
+        """Require the complete profile or the local-area profile, once each."""
         if len(value) != len(set(value)):
             msg = "report output aggregates must be unique"
             raise ValueError(msg)
-        if value != tuple(ReportAggregate):
-            msg = "Stage 12 currently requires the complete aggregate profile"
+        if value not in (tuple(ReportAggregate), LOCAL_AREA_AGGREGATES):
+            msg = (
+                "Stage 12 requires the complete aggregate profile or the "
+                "local-area profile"
+            )
             raise ValueError(msg)
         return value
+
+    @model_validator(mode="after")
+    def require_no_cliffs_in_the_local_area_profile(
+        self,
+    ) -> ReportOutputRequirements:
+        """Refuse cliff impacts with the local-area profile."""
+        if self.aggregates == LOCAL_AREA_AGGREGATES and self.include_cliff_impacts:
+            msg = "the local-area profile calculates no cliff impacts"
+            raise ValueError(msg)
+        return self
 
 
 class EntityOutputPlan(StrictContractModel):
