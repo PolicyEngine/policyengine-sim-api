@@ -237,16 +237,17 @@ class EconomySimulationCreated(_Answer):
 
 
 class EconomyReportCreated(_Answer):
-    """The report a request created or re-ran, its run and that run's status.
+    """The report a request ended on, its run and that run's status.
 
-    For a run the request created, the status is the run's when its call's
-    ID was recorded: ``pending``, or whatever the coordinator had made it by
-    then if it claimed the run first. A run whose call Modal didn't confirm,
-    or whose call's ID couldn't be recorded, is answered ``pending``. A
-    re-run that joined a run answers that run's status as read. Each side
+    The report and run are the ones a create found or created by key, or a
+    re-run joined or created. For a run the request created, the status is
+    the run's when its call's ID was recorded: ``pending``, or whatever the
+    coordinator had made it by then if it claimed the run first. A run whose
+    call Modal didn't confirm, or whose call's ID couldn't be recorded, is
+    answered ``pending``. A joined run answers its status as read. Each side
     names its simulation and simulation run; ``…_reused`` is true for a side
-    whose run this request didn't create: a run that already succeeded, or,
-    on a joined run, that run's own.
+    whose run this request didn't create: another request's run, in any
+    state, that the side joined, or, on a joined report run, that run's own.
     """
 
     report_id: UUID

@@ -7,14 +7,15 @@ service runs now, as a new run, and keeps every earlier run. The service:
   ``read_simulation_definition``): its country, year, region code, dataset
   name and each simulation's policy and dynamic, so the current catalog
   version's rows with the same code and name can be found;
-- creates, in one transaction, the new run and, for each report side not
-  reusing a run of its own simulation, a new ``simulation_runs`` row of that
-  simulation, all ``pending`` with no Modal call ID. A report's new run has
-  trigger ``manual``. A budget window's new run is a ``budget_window_runs``
-  row with a report run per year, each year on the simulations its report
-  run in the report's newest window run names. A household report's new run
-  gives each side a new run of its own household simulation: household runs
-  are never reused.
+- creates, in one transaction, the new run and each report side's run of
+  its own simulation, all ``pending`` with no Modal call ID; an unforced
+  economy report re-run's side joins its simulation's run on the current
+  versions instead, when there is one. A report's new run has trigger
+  ``manual``. A budget window's new run is a ``budget_window_runs`` row with
+  a report run per year, each year on the simulations its report run in the
+  report's newest window run names. A household report's new run gives each
+  side a new run of its own household simulation, marked forced: household
+  runs are never reused or joined.
 
 The record itself is never changed: the service may not update ``reports``
 or ``simulations``, so a report keeps naming the simulations it was created
@@ -63,6 +64,9 @@ from policyengine_simulation_persistence.economy_run_records import (
 from policyengine_simulation_persistence.household_report_records import (
     insert_household_simulation_run,
 )
+from policyengine_simulation_persistence.keyed_economy_records import (
+    find_or_insert_side_runs,
+)
 from policyengine_simulation_persistence.rerun_definitions import (
     RecordKind,
     ReportDefinition,
@@ -77,7 +81,6 @@ from policyengine_simulation_persistence.shared_rows import (
     find_joinable_report_run,
     find_or_insert_report_run,
     find_or_insert_simulation_run,
-    find_or_insert_simulation_runs,
 )
 from policyengine_simulation_persistence.tables import (
     ReportRunStatus,
@@ -107,11 +110,13 @@ _UNDER_WAY: Final = (SimulationStatus.PENDING.value, SimulationStatus.RUNNING.va
 
 @dataclass(frozen=True)
 class RerunSide:
-    """The simulation run one side of a report's re-run names.
+    """The simulation run one side of a report's or a window year's re-run names.
 
-    The simulation is always the report's own. With ``reused``, the run is
-    one of its runs that succeeded on the current versions, and nothing is
-    created for the side; otherwise the run is created, pending.
+    The simulation is always the report's own. With ``reused`` (an unforced
+    budget window's year only), the run is one of its runs that succeeded
+    on the current versions, and nothing is created for the side; otherwise
+    ``simulation_run_id`` is the run created, pending, or the ID an economy
+    report's side proposes, used only if it inserts the run.
     """
 
     simulation_id: UUID
@@ -123,11 +128,11 @@ class RerunSide:
 class NewReportRerun:
     """A stored report's new run, on the current versions and catalog rows.
 
-    ``forced`` makes it a forced re-run's extra run, which calculates both
-    sides. ``sides_join_runs`` (a keyed report's unforced re-run) makes each
-    side join its simulation's unfailed, unforced run on the re-run's
-    versions rather than insert one; a side's ``simulation_run_id`` is then
-    the ID it proposes, used only if it inserts the run.
+    Unforced, each side joins its simulation's run on the re-run's versions
+    that hasn't failed and wasn't forced, or inserts one; a side's
+    ``simulation_run_id`` is the ID it proposes, used only if it inserts the
+    run. ``forced`` makes it a forced re-run's extra run, which inserts a
+    new run of each side, marked forced. No side names a reused run.
     """
 
     report_id: UUID
@@ -137,24 +142,21 @@ class NewReportRerun:
     baseline: RerunSide
     reform: RerunSide
     forced: bool = False
-    sides_join_runs: bool = False
 
     def __post_init__(self) -> None:
-        """Refuse a forced re-run naming a run it doesn't create, or joining one."""
-        if self.forced and (
-            self.baseline.reused or self.reform.reused or self.sides_join_runs
-        ):
-            msg = "a forced re-run calculates both sides, reusing and joining no run"
+        """Refuse a side naming a reused run: each side joins or creates its run."""
+        if self.baseline.reused or self.reform.reused:
+            msg = "a report re-run's sides join or create their runs, reusing none"
             raise ValueError(msg)
 
     @property
     def new_simulation_run_ids(self) -> tuple[UUID, ...]:
-        """Return the IDs of the simulation runs created for the re-run."""
-        return tuple(
-            side.simulation_run_id
-            for side in (self.baseline, self.reform)
-            if not side.reused
-        )
+        """Return the IDs of the simulation runs a forced re-run creates.
+
+        An unforced re-run's sides propose these IDs; each is used only for
+        a run the re-run inserts.
+        """
+        return (self.baseline.simulation_run_id, self.reform.simulation_run_id)
 
 
 @dataclass(frozen=True)
@@ -301,18 +303,14 @@ def insert_report_rerun(
     report is pending or running (the service re-runs a budget window with
     ``insert_window_rerun``; one passed here directly is refused that way),
     and join the report's run on the re-run's versions that hasn't failed
-    and wasn't forced, when there is one. Otherwise create the new run and
-    its sides' new simulation runs; a forced re-run's are marked forced, and
-    never joined. Return the run and whether this call created it, which
-    only then needs its Modal call.
-
-    A side's new simulation run is a plain insert, so while that side's
-    simulation has another run on these versions that hasn't failed (one
-    another report run is calculating, or one ``find_reusable_run_of``
-    didn't offer), the Public API's index refuses it and the database error
-    propagates, which the service answers 503 ``database_unavailable``;
-    finding a side's run by version set waits for C1 · 24's answers 4 and
-    5.
+    and wasn't forced, when there is one. Otherwise each side joins its
+    simulation's run on those versions, or inserts one
+    (``find_or_insert_side_runs``), and the report run naming them is
+    inserted, unless another request inserted one after the lookup: that
+    run is joined, and this call's simulation runs are taken back. A forced
+    re-run inserts its runs, marked forced, and is never joined. Return the
+    run and whether this call created it, which only then needs its Modal
+    call.
 
     Raise RerunRecordDeletedError when the database refuses the new run's
     key to the report, which no longer exists, and
@@ -370,43 +368,36 @@ def insert_report_rerun(
 def _side_runs(connection: Connection, rerun: NewReportRerun) -> tuple[UUID, UUID]:
     """Return the baseline's and the reform's run, joined or inserted for the re-run.
 
-    A reused side names its run. With ``sides_join_runs`` (a keyed report's
-    unforced re-run), every other side joins its simulation's run on the
-    re-run's versions that hasn't failed and wasn't forced, or inserts one,
-    in simulation ID order, one run for one simulation on both sides.
-    Otherwise each other side inserts a new run, forced on a forced re-run.
+    A forced re-run inserts a new run of each side's simulation, marked
+    forced. Otherwise each side joins its simulation's run on the re-run's
+    versions that hasn't failed and wasn't forced, or inserts one, one run
+    for one simulation on both sides (``find_or_insert_side_runs``).
     """
-    sides = (rerun.baseline, rerun.reform)
-    if not rerun.sides_join_runs:
-        for side in sides:
-            if not side.reused:
-                insert_simulation_run(
-                    connection,
-                    run_id=side.simulation_run_id,
-                    simulation_id=side.simulation_id,
-                    population=rerun.population,
-                    versions=rerun.versions,
-                    forced=rerun.forced,
-                )
+    if rerun.forced:
+        for side in (rerun.baseline, rerun.reform):
+            insert_simulation_run(
+                connection,
+                run_id=side.simulation_run_id,
+                simulation_id=side.simulation_id,
+                population=rerun.population,
+                versions=rerun.versions,
+                forced=True,
+            )
         return rerun.baseline.simulation_run_id, rerun.reform.simulation_run_id
-    # The reform first, so one simulation on both sides keeps the baseline's
-    # proposed ID.
-    rows = {
-        side.simulation_id: simulation_run_row(
-            run_id=side.simulation_run_id,
-            simulation_id=side.simulation_id,
-            population=rerun.population,
-            versions=rerun.versions,
-        )
-        for side in reversed(sides)
-        if not side.reused
-    }
-    found = find_or_insert_simulation_runs(connection, rows)
-    baseline_run_id, reform_run_id = (
-        side.simulation_run_id if side.reused else found[side.simulation_id].id
-        for side in sides
+    found = find_or_insert_side_runs(
+        connection,
+        simulation_ids={
+            "baseline": rerun.baseline.simulation_id,
+            "reform": rerun.reform.simulation_id,
+        },
+        proposed_run_ids={
+            "baseline": rerun.baseline.simulation_run_id,
+            "reform": rerun.reform.simulation_run_id,
+        },
+        population=rerun.population,
+        versions=rerun.versions,
     )
-    return baseline_run_id, reform_run_id
+    return found["baseline"].id, found["reform"].id
 
 
 def _created(rerun: NewReportRerun) -> FoundReportRun:

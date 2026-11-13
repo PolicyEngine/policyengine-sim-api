@@ -27,8 +27,9 @@ A refused request answers 400 (a row it names, or a function it needs, is
 missing; ``code`` says which) or 422 (its fields, or the stored values it
 names, cannot be calculated), and writes nothing. Either route answers 503
 with ``Retry-After`` when it is not configured or a dependency cannot be
-read, before writing anything, or when Modal refused the run's call: then
-the record was created and its run failed, and the answer names it. Every
+read, before writing anything, or when Modal refused the call of the run
+the request created: then the record it found or created is kept, that
+run failed, and the answer names the record. Every
 500 the routes answer is the JSON error with code ``internal_error``, and may
 follow a write; a failure outside a handler's ``try`` gets the request
 middleware's own plain-text 500, which the Public API reads alike.
@@ -176,9 +177,10 @@ def _unavailable_description(record: RecordName) -> dict[str, Any]:
         "description": (
             "Economy runs are not configured, or the v2 version manifest or the "
             "database cannot be read, and nothing was written; or Modal refused "
-            "the run's call, or didn't accept it in time "
-            f"(modal_call_refused): then the {record} named by {record}_id was "
-            "created and its run failed. Retry after Retry-After seconds"
+            "the call of the run this request created, or didn't accept it in "
+            f"time (modal_call_refused): then the {record} named by {record}_id, "
+            "found or created, is kept and that run failed. Retry after "
+            "Retry-After seconds"
         ),
         "headers": RETRY_AFTER_HEADER,
         **ERROR_ANSWER,
@@ -559,7 +561,15 @@ def _submission_routes(
             EconomyReportCreated | BudgetWindowReportCreated | HouseholdReportCreated
         ),
         responses={
-            201: {"description": "The report and its first runs were created"},
+            201: {
+                "description": (
+                    "The report the request ended on and its run: an economy "
+                    "report found or created by key, with its run on the default "
+                    "worker's versions, joined (no new call) or created and "
+                    "started; a budget-window or household report and its first "
+                    "runs, created"
+                )
+            },
             400: _REFUSED,
             403: FORBIDDEN_ANSWER,
             422: _UNPROCESSABLE,
@@ -597,7 +607,13 @@ def _submission_routes(
         status_code=status.HTTP_201_CREATED,
         response_model=EconomySimulationCreated,
         responses={
-            201: {"description": "The simulation and its first run were created"},
+            201: {
+                "description": (
+                    "The simulation the request ended on, found or created by "
+                    "key, and its run on the default worker's versions, joined "
+                    "(no new call) or created and started"
+                )
+            },
             400: _REFUSED,
             403: FORBIDDEN_ANSWER,
             422: _UNPROCESSABLE,

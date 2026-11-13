@@ -156,9 +156,10 @@ report and run rows (C1 · 24). Three modules do it:
   transaction: each side's simulation by key, in key order; the report by
   key; the report's joinable run on the current versions, joined with the
   simulation runs it names; or else, inside a savepoint, each distinct
-  simulation's joinable run (whatever report first calculated it) and the
-  report run naming them, a competing report run joined with the savepoint
-  rolled back. `find_or_create_economy_simulation` does the same for one
+  simulation's joinable run (whatever report first calculated it), found
+  or inserted by `find_or_insert_side_runs`, and the report run naming
+  them, a competing report run joined with the savepoint rolled back.
+  `find_or_create_economy_simulation` does the same for one
   simulation. The answers say what the request inserted, so only it starts
   a Modal call. `EconomyRunStore.find_or_create_report` and
   `find_or_create_simulation` run them in a transaction of their own.
@@ -206,13 +207,17 @@ version, dataset and region it calculates on.
 - `insert_report_rerun` joins the report's run on the re-run's versions
   that hasn't failed and wasn't forced (pending, running or succeeded),
   creating nothing, or else creates the report's new run, trigger `manual`,
-  and a new run of each side's simulation that reuses none. An unforced one
-  first takes `lock_reruns_of`, a transaction-level advisory lock on the
-  report's ID, so concurrent re-runs of one report wait for each other and
-  end on one run; it refuses with `RunInProgressError` only while a
-  budget-window run of the report is under way. A forced one
-  (`NewReportRerun.forced`) takes no lock, always creates its runs, marked
-  `forced`, and reuses none. `insert_simulation_rerun` joins or creates the
+  each side joining its simulation's run on those versions that hasn't
+  failed and wasn't forced, in any state, or inserting one
+  (`find_or_insert_side_runs`, as a keyed create does). A report run another
+  request inserts after the lookup is joined, and a savepoint takes back
+  this call's simulation runs. An unforced one first takes `lock_reruns_of`,
+  a transaction-level advisory lock on the report's ID, so concurrent
+  re-runs of one report wait for each other and end on one run; it refuses
+  with `RunInProgressError` only while a budget-window run of the report is
+  under way. A forced one (`NewReportRerun.forced`) takes no lock, always
+  creates a new run of each side, marked `forced`, and joins none. No side
+  of a report's re-run names a reused run. `insert_simulation_rerun` joins or creates the
   simulation's run on the re-run's versions, catalog version and year
   through `shared_rows`, with no lock. Each returns the run, its status and
   whether it created it. When the database refuses the new run's key to the
@@ -243,8 +248,9 @@ in a transaction of its own; the store's `read_inputs` reads the re-run's
 household and policies as it does a new report's.
 
 `EconomyRunStore.read_report_rerun_inputs` reads a re-run's catalog rows by
-the stored region code and dataset name, and each side's values and
-reusable run of its own simulation, never giving both sides the same run.
+the stored region code and dataset name, and each side's values, with, given
+`reuse`, its reusable run of its own simulation, never giving both sides the
+same run; the service passes none, as its re-runs join or force their runs.
 `read_window_rerun_inputs` does the same for each year of a window.
 `create_report_rerun`, `create_window_rerun` and `create_simulation_rerun`
 run the inserts in a transaction of their own.

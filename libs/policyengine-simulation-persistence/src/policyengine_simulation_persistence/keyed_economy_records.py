@@ -54,6 +54,7 @@ from policyengine_simulation_persistence.tables import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from uuid import UUID
 
     from sqlalchemy import Connection
@@ -181,10 +182,17 @@ def find_or_create_economy_report(
         # and the savepoint takes back this request's simulation runs.
         savepoint = connection.begin_nested()
         try:
-            runs = _find_or_insert_simulation_runs(connection, request, simulation_ids)
-            side_runs: dict[Side, UUID] = {
-                side: runs[simulation_ids[side]].id for side in _SIDES
-            }
+            runs = find_or_insert_side_runs(
+                connection,
+                simulation_ids=simulation_ids,
+                proposed_run_ids={
+                    "baseline": request.baseline.simulation_run_id,
+                    "reform": request.reform.simulation_run_id,
+                },
+                population=request.population,
+                versions=request.versions,
+            )
+            side_runs: dict[Side, UUID] = {side: runs[side].id for side in _SIDES}
             run = find_or_insert_report_run(
                 connection, _report_run_row(request, report.id, side_runs)
             )
@@ -254,29 +262,36 @@ def _find_or_insert_simulations(
     return simulation_ids
 
 
-def _find_or_insert_simulation_runs(
+def find_or_insert_side_runs(
     connection: Connection,
-    request: KeyedEconomyReport,
-    simulation_ids: dict[Side, UUID],
-) -> dict[UUID, FoundSimulationRun]:
-    """Return each distinct simulation's run, found or inserted, by simulation ID.
+    *,
+    simulation_ids: Mapping[Side, UUID],
+    proposed_run_ids: Mapping[Side, UUID],
+    population: EconomyPopulation,
+    versions: RunVersions,
+) -> dict[Side, FoundSimulationRun]:
+    """Return each side's run of its simulation on these versions, found or inserted.
 
-    Inserted in simulation ID order; one simulation on both sides gets one
-    run, with the baseline's proposed ID.
+    Each distinct simulation's run on ``versions`` and ``population``'s
+    catalog version and year that hasn't failed and wasn't forced is found,
+    or inserted with its side's proposed ID, in simulation ID order
+    (``find_or_insert_simulation_runs``). One simulation on both sides gets
+    one run, with the baseline's proposed ID. A keyed report's create and
+    an unforced re-run of it both name their sides' runs this way.
     """
-    proposed_sides = {"baseline": request.baseline, "reform": request.reform}
     rows = {
         simulation_ids[side]: simulation_run_row(
-            run_id=proposed_sides[side].simulation_run_id,
+            run_id=proposed_run_ids[side],
             simulation_id=simulation_ids[side],
-            population=request.population,
-            versions=request.versions,
+            population=population,
+            versions=versions,
         )
         # The reform first, so one simulation on both sides keeps the
         # baseline's proposed ID.
         for side in reversed(_SIDES)
     }
-    return find_or_insert_simulation_runs(connection, rows)
+    found = find_or_insert_simulation_runs(connection, rows)
+    return {side: found[simulation_ids[side]] for side in _SIDES}
 
 
 def _simulation_row(

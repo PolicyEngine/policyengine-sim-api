@@ -235,7 +235,7 @@ def test_a_keyed_reports_rerun_has_each_side_join_its_run_on_the_versions() -> N
 
     assert store.rerun_reads[0][1][2] is None
     (created,) = store.report_reruns
-    assert created.sides_join_runs is True
+    assert created.forced is False
     assert (created.baseline.reused, created.reform.reused) == (False, False)
     payload = ReportExecutionInput.model_validate(caller.report_runs[0][1])
     assert payload.baseline.simulation_execution_id == joined_baseline_run
@@ -289,7 +289,7 @@ def test_a_keyed_reports_forced_rerun_joins_nothing() -> None:
     )
 
     (created,) = store.report_reruns
-    assert (created.forced, created.sides_join_runs) == (True, False)
+    assert created.forced is True
     assert created.new_simulation_run_ids == (UUID(int=2), UUID(int=3))
     assert rerun.report_run_id == UUID(int=1)
     assert (rerun.baseline_reused, rerun.reform_reused) == (False, False)

@@ -394,6 +394,9 @@ def test_economy_routes_declare_every_answer():
         record = path.removeprefix("/").removesuffix("s")
         assert f"{record}_id" in responses["503"]["description"]
         assert "nothing was written" in responses["400"]["description"]
+        # A create answers the record and run it ended on, joined or created.
+        assert "joined" in responses["201"]["description"]
+        assert "found or created" in responses["503"]["description"]
     error_properties = spec["components"]["schemas"]["EconomyError"]["properties"]
     assert {"code", "detail", "report_id", "simulation_id", "run_id"} == set(
         error_properties

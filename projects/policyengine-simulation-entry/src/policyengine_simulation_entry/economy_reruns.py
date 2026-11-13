@@ -303,7 +303,6 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             baseline=self._new_side(stored.baseline.simulation_id),
             reform=self._new_side(stored.reform.simulation_id),
             forced=forced,
-            sides_join_runs=not forced,
         )
         scope = rerun_scope(
             stored.country,
@@ -337,10 +336,8 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             calculation,
             report_id=report_id,
             run_id=rerun.run_id,
-            # A keyed report's simulation runs may be another report run's.
-            new_simulation_run_ids=()
-            if rerun.sides_join_runs
-            else rerun.new_simulation_run_ids,
+            # An unforced re-run's simulation runs may be another report run's.
+            new_simulation_run_ids=rerun.new_simulation_run_ids if forced else (),
             observability_context=observability_context,
             rerun=True,
         )

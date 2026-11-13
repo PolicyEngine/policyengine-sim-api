@@ -357,31 +357,18 @@ def test_another_simulations_run_is_not_reused_for_a_simulations_rerun(
     assert found is None
 
 
-def _rerun_of(
-    stored: StoredReport,
-    later: EconomyCatalog,
-    *,
-    baseline_reused: StoredRun | None = None,
-) -> NewReportRerun:
-    baseline = (
-        RerunSide(
-            simulation_id=stored.baseline.simulation_id,
-            simulation_run_id=uuid4(),
-            reused=False,
-        )
-        if baseline_reused is None
-        else RerunSide(
-            simulation_id=baseline_reused.simulation_id,
-            simulation_run_id=baseline_reused.simulation_run_id,
-            reused=True,
-        )
-    )
+def _rerun_of(stored: StoredReport, later: EconomyCatalog) -> NewReportRerun:
+    """Return an unforced re-run of ``stored`` on the later catalog's versions."""
     return NewReportRerun(
         report_id=stored.report_id,
         run_id=uuid4(),
         population=later.population(),
         versions=LATER_VERSIONS,
-        baseline=baseline,
+        baseline=RerunSide(
+            simulation_id=stored.baseline.simulation_id,
+            simulation_run_id=uuid4(),
+            reused=False,
+        ),
         reform=RerunSide(
             simulation_id=stored.reform.simulation_id,
             simulation_run_id=uuid4(),
@@ -390,15 +377,19 @@ def _rerun_of(
     )
 
 
-def test_a_report_rerun_creates_runs_of_the_reports_own_simulations(
+def test_a_report_rerun_joins_or_creates_runs_of_the_reports_own_simulations(
     public_api_database_url,
 ) -> None:
+    """Answers 4 and 5: a side joins its simulation's run on the versions.
+
+    The baseline's later run is another report's; the reform has none.
+    """
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         later = insert_later_catalog(connection, economy)
         stored = _stored_report(connection, economy)
-        reused = _used_on_later_catalog(connection, stored, economy, later)
-        rerun = _rerun_of(stored, later, baseline_reused=reused)
+        joined = _used_on_later_catalog(connection, stored, economy, later)
+        rerun = _rerun_of(stored, later)
         act_as_the_service(connection)
 
         insert_report_rerun(connection, rerun)
@@ -407,7 +398,6 @@ def test_a_report_rerun_creates_runs_of_the_reports_own_simulations(
         earlier_run = _row(connection, "report_runs", stored.report_run_id)
         baseline_runs = _count_runs_of(connection, stored.baseline.simulation_id)
 
-    assert rerun.new_simulation_run_ids == (rerun.reform.simulation_run_id,)
     assert {
         key: report_run[key]
         for key in (
@@ -424,7 +414,7 @@ def test_a_report_rerun_creates_runs_of_the_reports_own_simulations(
         )
     } == {
         "report_id": stored.report_id,
-        "baseline_simulation_run_id": reused.simulation_run_id,
+        "baseline_simulation_run_id": joined.simulation_run_id,
         "reform_simulation_run_id": rerun.reform.simulation_run_id,
         "country_package_version": LATER_VERSIONS.country_package_version,
         "policyengine_version": LATER_VERSIONS.policyengine_version,
@@ -458,9 +448,10 @@ def test_a_report_rerun_creates_runs_of_the_reports_own_simulations(
         "status": SimulationStatus.PENDING,
         "modal_call_id": None,
     }
-    # The earlier run is kept, and the reused side gets no new run.
+    # The earlier run is kept, and the joining side gets no new run.
     assert earlier_run["status"] == ReportRunStatus.SUCCEEDED
     assert baseline_runs == 2
+    assert reform_run["forced"] is False
 
 
 def _unforced_rerun_on_unchanged_versions(
@@ -1060,12 +1051,13 @@ def test_a_forced_report_rerun_is_an_extra_run_beside_any_run_on_its_versions(
     assert earlier_run["forced"] is False
 
 
-def test_a_forced_rerun_calculates_both_sides() -> None:
-    """A forced re-run never names a run it didn't create (answer 3)."""
+@pytest.mark.parametrize("forced", [True, False])
+def test_a_report_rerun_names_no_reused_run(forced: bool) -> None:  # noqa: FBT001  # the parameter
+    """Each side joins or creates its run; a forced one creates it (answer 3)."""
     reused = RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4(), reused=True)
     created = RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4(), reused=False)
 
-    with pytest.raises(ValueError, match="forced"):
+    with pytest.raises(ValueError, match="reusing none"):
         NewReportRerun(
             report_id=uuid4(),
             run_id=uuid4(),
@@ -1078,7 +1070,7 @@ def test_a_forced_rerun_calculates_both_sides() -> None:
             versions=VERSIONS,
             baseline=reused,
             reform=created,
-            forced=True,
+            forced=forced,
         )
 
 
