@@ -12,10 +12,11 @@ from policyengine_simulation_persistence import (
     reports,
     service_metadata,
     simulation_runs,
+    simulations,
 )
 from policyengine_simulation_persistence import tables as tables_module
 from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
-from sqlalchemy import Enum, ForeignKeyConstraint, Table, UniqueConstraint
+from sqlalchemy import Enum, ForeignKeyConstraint, Index, Table, UniqueConstraint
 
 
 def _key(constraint: ForeignKeyConstraint) -> tuple[tuple[str, ...], str, str]:
@@ -211,3 +212,59 @@ def test_the_input_models_share_no_table_with_the_service_models() -> None:
     assert input_metadata.schema == "public"
     assert input_tables.isdisjoint(service_metadata.tables.values())
     assert input_tables.isdisjoint(referenced_metadata.tables.values())
+
+
+def _index(table: Table, index_name: str) -> Index:
+    (index,) = (index for index in table.indexes if index.name == index_name)
+    return index
+
+
+def test_simulations_and_reports_are_unique_on_their_definition_key() -> None:
+    """Find-or-create names this pair as its conflict target (C1 · 25)."""
+    for table in (simulations, reports):
+        assert table.c.key_version.nullable is True, table.name
+        assert table.c.definition_key.nullable is True, table.name
+        assert table.c.definition_key.type.length == 64, table.name
+        assert _unique_keys(table)[f"uq_{table.name}_key_version_definition_key"] == (
+            "key_version",
+            "definition_key",
+        )
+    assert reports.c.dataset_independent_key.nullable is True
+    assert _indexed_columns(
+        reports, "ix_reports_key_version_dataset_independent_key"
+    ) == ("key_version", "dataset_independent_key")
+
+
+def test_a_definition_and_version_set_has_one_unfailed_unforced_run() -> None:
+    """A failed or forced run is left out, so it never takes a joinable run's place."""
+    simulation_run_index = _index(
+        simulation_runs, "uq_simulation_runs_unfailed_unforced_versions"
+    )
+    report_run_index = _index(report_runs, "uq_report_runs_unfailed_unforced_versions")
+
+    assert simulation_run_index.unique is True
+    assert tuple(column.name for column in simulation_run_index.columns) == (
+        "simulation_id",
+        "year",
+        "tax_benefit_model_version_id",
+        "country_package_version",
+        "policyengine_version",
+    )
+    assert str(simulation_run_index.dialect_options["postgresql"]["where"]) == (
+        "status <> 'failed' AND NOT forced"
+    )
+    assert report_run_index.unique is True
+    assert tuple(column.name for column in report_run_index.columns) == (
+        "report_id",
+        "country_package_version",
+        "policyengine_version",
+    )
+    assert str(report_run_index.dialect_options["postgresql"]["where"]) == (
+        "budget_window_run_id IS NULL AND status <> 'failed' AND NOT forced"
+    )
+
+
+def test_a_run_is_unforced_unless_its_insert_marks_it() -> None:
+    for table in (simulation_runs, report_runs):
+        assert table.c.forced.nullable is False, table.name
+        assert str(table.c.forced.server_default.arg) == "false", table.name
