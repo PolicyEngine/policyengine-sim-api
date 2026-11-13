@@ -141,6 +141,9 @@ class FakeRerunStore(FakeWindowStore):
     simulation_reruns: list[NewSimulationRerun] = field(default_factory=list)
     joined_simulation_run: FoundSimulationRun | None = None
     joined_report_run: FoundReportRun | None = None
+    # The side runs a keyed report's re-run joins, by side, in place of the
+    # runs it proposes.
+    joined_side_runs: dict[str, UUID] = field(default_factory=dict)
 
     def read_report_definition(self, report_id: UUID) -> ReportDefinition | None:
         if self.read_failure is not None:
@@ -229,8 +232,12 @@ class FakeRerunStore(FakeWindowStore):
             id=rerun.run_id,
             inserted=True,
             status=ReportRunStatus.PENDING,
-            baseline_simulation_run_id=rerun.baseline.simulation_run_id,
-            reform_simulation_run_id=rerun.reform.simulation_run_id,
+            baseline_simulation_run_id=self.joined_side_runs.get(
+                "baseline", rerun.baseline.simulation_run_id
+            ),
+            reform_simulation_run_id=self.joined_side_runs.get(
+                "reform", rerun.reform.simulation_run_id
+            ),
         )
 
     def create_simulation_rerun(self, rerun: NewSimulationRerun) -> FoundSimulationRun:

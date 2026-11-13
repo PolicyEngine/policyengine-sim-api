@@ -217,6 +217,48 @@ def test_a_report_rerun_joining_a_run_answers_it_and_starts_no_call(
     }
 
 
+def test_a_keyed_reports_rerun_has_each_side_join_its_run_on_the_versions() -> None:
+    """Answers 4 and 5: a side joins its simulation's unfailed run, in any state."""
+    joined_baseline_run = UUID(int=77)
+    store = FakeRerunStore(
+        report_definition=replace(STORED_REPORT, keyed=True),
+        joined_side_runs={"baseline": joined_baseline_run},
+    )
+    caller = FakeCaller()
+
+    rerun = _rerun_report(rerun_service(store, caller=caller))
+
+    assert store.rerun_reads[0][1][2] is None
+    (created,) = store.report_reruns
+    assert created.sides_join_runs is True
+    assert (created.baseline.reused, created.reform.reused) == (False, False)
+    payload = ReportExecutionInput.model_validate(caller.report_runs[0][1])
+    assert payload.baseline.simulation_execution_id == joined_baseline_run
+    assert payload.reform.simulation_execution_id == created.reform.simulation_run_id
+    assert (rerun.baseline_simulation_run_id, rerun.baseline_reused) == (
+        joined_baseline_run,
+        True,
+    )
+    assert (rerun.reform_simulation_run_id, rerun.reform_reused) == (
+        created.reform.simulation_run_id,
+        False,
+    )
+
+
+def test_a_keyed_reports_refused_rerun_fails_only_the_report_run() -> None:
+    """Its simulation runs may already be another report run's."""
+    store = FakeRerunStore(report_definition=replace(STORED_REPORT, keyed=True))
+
+    with pytest.raises(EconomySubmissionUnavailableError):
+        _rerun_report(
+            rerun_service(store, caller=FakeCaller(failure=ConnectionError("no")))
+        )
+
+    ((run_id, simulation_run_ids, _message),) = store.failed_runs
+    assert run_id == store.report_reruns[0].run_id
+    assert simulation_run_ids == ()
+
+
 def test_without_the_output_bucket_a_rerun_looks_for_no_run_to_reuse() -> None:
     store = FakeRerunStore(reusable=(REUSED_BASELINE, None))
 
