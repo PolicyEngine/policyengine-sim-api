@@ -201,8 +201,11 @@ class FakeStore:
             baseline=SimulationInputs(
                 choice=baseline, reform={}, reusable_run=baseline_reusable
             ),
+            # Current law sets no values, on either side.
             reform=SimulationInputs(
-                choice=reform, reform=REFORM, reusable_run=reform_reusable
+                choice=reform,
+                reform=REFORM if reform.policy_id or reform.dynamic_id else {},
+                reusable_run=reform_reusable,
             ),
         )
 
