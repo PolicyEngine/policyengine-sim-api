@@ -193,8 +193,7 @@ class ReportExecutionInput(StrictContractModel):
             msg = "reform evaluation_id must match the report"
             raise ValueError(msg)
         if (
-            self.baseline.simulation_execution_id
-            == self.reform.simulation_execution_id
+            self.baseline.simulation_execution_id == self.reform.simulation_execution_id
             and self.baseline.policy != self.reform.policy
         ):
             msg = (
