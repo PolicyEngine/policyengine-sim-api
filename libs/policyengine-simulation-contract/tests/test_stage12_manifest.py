@@ -15,27 +15,36 @@ from policyengine_simulation_contract.stage12_bundle import (
 )
 from policyengine_simulation_contract.stage12_manifest import (
     ACTIVE_MANIFEST_KEY,
+    LOCAL_AREA_REPORTS_MANIFEST_KEY,
+    LOCAL_AREA_REPORTS_VERSION,
     PRE_CACHE_MANIFEST_KEY,
     REGION_DATASETS_MANIFEST_KEY,
     SCHEMA_2_MANIFEST_KEY,
     V1_ROUTING_STATE_NAME,
     V2_VERSION_MANIFEST_NAME,
+    LocalAreaReports,
     Stage12CacheRelease,
     V2CountryWorker,
     V2ManifestLoader,
     V2VersionManifest,
     V2WorkerValidation,
     V2WorkerVersion,
+    add_v2_worker,
     assert_separate_manifest_names,
     manifest_digest,
+    move_v2_default,
     parse_v2_manifest,
     pre_cache_manifest_payload,
     pre_region_datasets_manifest_payload,
     publish_v2_manifest,
+    read_v2_manifest,
     schema_1_manifest_payload,
+    schema_2_manifest_payload,
     v2_application_name,
+    v2_manifest_copies,
     validate_manifest_has_no_credentials,
 )
+from pydantic import ValidationError
 
 
 class FakeStore:
@@ -227,7 +236,8 @@ def test_publish_writes_one_complete_v2_document_per_key() -> None:
     )
 
     assert store.writes == [
-        (SCHEMA_2_MANIFEST_KEY, manifest.model_dump(mode="json")),
+        (LOCAL_AREA_REPORTS_MANIFEST_KEY, manifest.model_dump(mode="json")),
+        (SCHEMA_2_MANIFEST_KEY, schema_2_manifest_payload(manifest)),
         (REGION_DATASETS_MANIFEST_KEY, schema_1_manifest_payload(manifest)),
         (ACTIVE_MANIFEST_KEY, pre_region_datasets_manifest_payload(manifest)),
         (PRE_CACHE_MANIFEST_KEY, pre_cache_manifest_payload(manifest)),
@@ -835,3 +845,177 @@ def test_a_household_only_manifest_is_read_until_an_older_publish_follows() -> N
     store.values[ACTIVE_MANIFEST_KEY] = pre_region_datasets_manifest_payload(older)
 
     assert V2ManifestLoader(store).load().default_version == "5.3.0"
+
+
+# The fields of a country entry before local-area report runs. Readers
+# released before them forbid any other field, so adding one would stop them
+# loading.
+_COUNTRY_FIELDS_BEFORE_LOCAL_AREA_REPORTS = {
+    "country",
+    "economy_capable",
+    "household_callable",
+    "single_simulation_callable",
+}
+_UK_LOCAL_AREA_DATASET = "populace_uk_2023_local"
+
+
+def _local_area_worker(
+    version: str = "5.2.0", *, dataset: str | None = _UK_LOCAL_AREA_DATASET
+) -> V2WorkerVersion:
+    """Return a worker whose UK coordinator runs local-area report runs.
+
+    Its UK bundle also holds the local-area dataset ``dataset`` names.
+    """
+    worker = _regional_worker(version, with_household_functions=True).model_dump(
+        mode="json"
+    )
+    for country in worker["bundle"]["countries"]:
+        if country["country"] == "uk":
+            local_area = dict(country["datasets"][0])
+            local_area["identity"] = _UK_LOCAL_AREA_DATASET
+            country["datasets"].append(local_area)
+    for country in worker["countries"]:
+        if country["country"] == "uk":
+            country["local_area_reports"] = {
+                "input_version": LOCAL_AREA_REPORTS_VERSION,
+                "dataset": dataset,
+            }
+    return V2WorkerVersion.model_validate(worker)
+
+
+def _uk(worker: V2WorkerVersion) -> V2CountryWorker:
+    return next(country for country in worker.countries if country.country == "uk")
+
+
+def _stored_countries(document: dict, version: str = "5.2.0") -> list[dict]:
+    return document["versions"][version]["countries"]
+
+
+def test_a_publish_writes_the_local_area_declaration_under_its_own_key() -> None:
+    store = FakeStore()
+
+    manifest = publish_v2_manifest(store=store, worker=_local_area_worker())
+
+    stored = store.values[LOCAL_AREA_REPORTS_MANIFEST_KEY]
+    assert stored == manifest.model_dump(mode="json")
+    (uk,) = [
+        country for country in _stored_countries(stored) if country["country"] == "uk"
+    ]
+    assert uk["local_area_reports"] == {
+        "input_version": 1,
+        "dataset": _UK_LOCAL_AREA_DATASET,
+    }
+    loaded = _uk(V2ManifestLoader(store).load().versions["5.2.0"])
+    assert loaded.local_area_reports == LocalAreaReports(
+        input_version=LOCAL_AREA_REPORTS_VERSION, dataset=_UK_LOCAL_AREA_DATASET
+    )
+
+
+def test_a_uk_worker_whose_national_runs_keep_the_areas_declares_no_dataset() -> None:
+    worker = _local_area_worker(dataset=None)
+
+    assert _uk(worker).local_area_reports == LocalAreaReports(
+        input_version=LOCAL_AREA_REPORTS_VERSION, dataset=None
+    )
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        SCHEMA_2_MANIFEST_KEY,
+        REGION_DATASETS_MANIFEST_KEY,
+        ACTIVE_MANIFEST_KEY,
+        PRE_CACHE_MANIFEST_KEY,
+    ],
+)
+def test_readers_released_before_local_area_reports_never_see_the_field(
+    key: str,
+) -> None:
+    store = FakeStore()
+    publish_v2_manifest(store=store, worker=_local_area_worker())
+
+    for country in _stored_countries(store.values[key]):
+        assert set(country) <= _COUNTRY_FIELDS_BEFORE_LOCAL_AREA_REPORTS
+
+
+def test_the_schema_2_key_holds_the_manifest_as_its_readers_accept_it() -> None:
+    store = FakeStore()
+    manifest = publish_v2_manifest(store=store, worker=_local_area_worker())
+
+    schema_2 = store.values[SCHEMA_2_MANIFEST_KEY]
+    for country in _stored_countries(schema_2):
+        assert set(country) == _COUNTRY_FIELDS_BEFORE_LOCAL_AREA_REPORTS
+    worker = manifest.versions["5.2.0"]
+    without_declaration = worker.model_copy(
+        update={
+            "countries": tuple(
+                country.model_copy(update={"local_area_reports": None})
+                for country in worker.countries
+            )
+        }
+    )
+    assert parse_v2_manifest(schema_2) == manifest.model_copy(
+        update={"versions": {"5.2.0": without_declaration}}
+    )
+
+
+def test_a_worker_without_the_declaration_is_written_as_before() -> None:
+    worker = _regional_worker(with_household_functions=True)
+    manifest = add_v2_worker(current=None, worker=worker)
+
+    for country in worker.model_dump(mode="json")["countries"]:
+        assert "local_area_reports" not in country
+    copies = v2_manifest_copies(manifest)
+    assert copies[LOCAL_AREA_REPORTS_MANIFEST_KEY] == copies[SCHEMA_2_MANIFEST_KEY]
+
+
+def test_a_local_area_copy_left_behind_by_an_older_publish_is_not_read() -> None:
+    """After a rollback, code released before the field writes only older keys."""
+    store = FakeStore()
+    publish_v2_manifest(store=store, worker=_local_area_worker())
+    older = add_v2_worker(
+        current=read_v2_manifest(store),
+        worker=_regional_worker("5.3.0", with_household_functions=True),
+    )
+    older = move_v2_default(current=older, version="5.3.0")
+    for key, copy in v2_manifest_copies(older).items():
+        if key != LOCAL_AREA_REPORTS_MANIFEST_KEY:
+            store.values[key] = copy
+
+    loaded = V2ManifestLoader(store).load()
+
+    assert loaded.default_version == "5.3.0"
+    assert _uk(loaded.versions["5.2.0"]).local_area_reports is None
+
+
+def test_the_declaration_names_an_input_version_of_one_or_more() -> None:
+    with pytest.raises(ValidationError, match="input_version"):
+        LocalAreaReports(input_version=0, dataset=None)
+
+
+def test_only_an_economy_capable_uk_entry_declares_local_area_reports() -> None:
+    declaration = LocalAreaReports(
+        input_version=LOCAL_AREA_REPORTS_VERSION, dataset=None
+    )
+
+    with pytest.raises(ValidationError, match="UK"):
+        V2CountryWorker.model_validate(
+            {
+                **_country_worker("us").model_dump(mode="json"),
+                "local_area_reports": declaration.model_dump(mode="json"),
+            }
+        )
+    with pytest.raises(ValidationError, match="economy-capable"):
+        V2CountryWorker.model_validate(
+            {
+                **_country_worker("uk", economy=False, household=True).model_dump(
+                    mode="json"
+                ),
+                "local_area_reports": declaration.model_dump(mode="json"),
+            }
+        )
+
+
+def test_the_declared_dataset_is_a_dataset_of_the_uk_bundle() -> None:
+    with pytest.raises(ValidationError, match="populace_uk_2023_missing"):
+        _local_area_worker(dataset="populace_uk_2023_missing")

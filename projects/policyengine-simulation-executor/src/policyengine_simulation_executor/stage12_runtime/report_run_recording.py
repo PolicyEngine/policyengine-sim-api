@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from policyengine_stage12_persistence import (
     DistrictCodes,
     RunStatus,
+    local_area_result,
     report_run_result,
 )
 
@@ -110,6 +111,21 @@ class ReportRunRecorder:
                 country=country,
                 district_codes=us_district_codes() if country == "us" else None,
             ),
+        )
+
+    def complete_local_areas(self, area_output: Mapping[str, Any]) -> RunWrite:
+        """Mark a local-area report run succeeded, storing its area results.
+
+        Its constituency, local-authority and withheld-code rows are written,
+        and its data version set, in the completion's transaction, only while
+        this call holds the run. An output that cannot be stored raises
+        ValueError.
+        """
+        return self.writer.complete_report_run(
+            self.run_ids,
+            modal_call_id=self.modal_call_id,
+            completed_at=datetime.now(UTC),
+            result=local_area_result(area_output, run_ids=self.run_ids),
         )
 
     def fail_quietly(

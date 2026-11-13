@@ -37,6 +37,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 from policyengine_simulation_executor.uk_local_authority_metadata import (
+    detect_uk_area_dataset_metadata,
     detect_uk_run_dataset_metadata,
 )
 
@@ -55,6 +56,11 @@ from .failures import (
     Stage12ExecutionError,
     Stage12FailureDetail,
     validate_policy_periods,
+)
+from .local_area_datasets import (
+    dataset_region,
+    local_area_dataset_name,
+    named_local_area_dataset,
 )
 from .output_planning import (
     apply_output_plan,
@@ -172,12 +178,13 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
         for item in resolved.bundle.countries
         if item.country == simulation.geography.country
     )
-    # A region loads the dataset the bundle names for its region type. Entry
+    # A region loads the dataset the bundle names for its region type, and a
+    # local-area run of the UK or a nation the local-area dataset. Entry
     # services released before regional provenance name the default dataset
     # for every region, so the default stays accepted until they are updated.
     regional = country.dataset_for_region(simulation.geography.region)
     named = simulation.bundle.dataset.identity
-    regional_entry = next(
+    regional_entry = named_local_area_dataset(country, simulation) or next(
         (item for item in country.datasets if item.identity == regional), None
     )
     if regional_entry is not None and named == regional_entry.identity:
@@ -258,6 +265,7 @@ def calculate_simulation_frames(
         msg = "population artifact differs from bundle dataset provenance"
         raise ValueError(msg)
     _require_installed_bundle(simulation)
+    local_area_dataset = local_area_dataset_name(simulation)
     country = simulation.geography.country
     params = simulation_runtime_params(simulation)
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
@@ -288,7 +296,7 @@ def calculate_simulation_frames(
         with stage_span(Stage.DATASET_RESOLUTION):
             dataset_selection = _resolve_dataset_selection(
                 params,
-                region_resolution=region,
+                region_resolution=dataset_region(region, local_area_dataset),
             )
         _require_loaded_dataset_matches_provenance(simulation, dataset_selection)
         with stage_span(Stage.DATASET_LOAD):
@@ -308,11 +316,18 @@ def calculate_simulation_frames(
                 ),
                 dataset_name=dataset_selection.name,
             )
-        uk_local_authority_metadata = detect_uk_run_dataset_metadata(
-            country,
-            dataset,
-            region_code=region.code,
-            dataset_name=dataset_selection.name,
+        uk_local_authority_metadata = (
+            detect_uk_run_dataset_metadata(
+                country,
+                dataset,
+                region_code=region.code,
+                dataset_name=dataset_selection.name,
+            )
+            if local_area_dataset is None
+            # It must carry every column the area outputs read.
+            else detect_uk_area_dataset_metadata(
+                dataset, dataset_name=dataset_selection.name
+            )
         )
         with stage_span(Stage.POLICY_NORMALIZATION):
             policy = normalise_policy(simulation.policy)

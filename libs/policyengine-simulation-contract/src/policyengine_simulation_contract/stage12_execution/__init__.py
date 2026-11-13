@@ -48,6 +48,7 @@ from policyengine_simulation_contract.stage12_execution.comparison_runs import (
     Stage12InvocationContext,
 )
 from policyengine_simulation_contract.stage12_execution.report_inputs import (
+    LOCAL_AREA_AGGREGATES,
     EntityOutputPlan,
     PlannedSimulationExecutionInput,
     ReportAggregate,
@@ -70,6 +71,7 @@ from policyengine_simulation_contract.uk_geography import (
 )
 
 __all__ = [
+    "LOCAL_AREA_AGGREGATES",
     "MAX_COMPARISON_RUN_ARTIFACT_RETENTION",
     "SIMULATION_PARQUET_PAYLOAD_CONTRACT",
     "AggregateReportArtifactDescriptor",
