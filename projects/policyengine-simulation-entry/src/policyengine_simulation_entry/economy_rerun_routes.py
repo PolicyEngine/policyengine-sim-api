@@ -4,10 +4,11 @@
   joins the stored report's run on the v2 version manifest's default
   worker's versions, or creates its new run and starts its coordinator,
   answering 201 with the report's ID, the run's ID and status, and each
-  side's simulation and simulation run. For an economy or budget-window
-  report, ``{"force": true}`` calculates both simulations again, as an
-  extra run marked forced that nothing joins; otherwise a side reuses a run
-  of its own simulation that succeeded on the same versions.
+  side's simulation and simulation run. An economy report created by key
+  has each side join its simulation's run on those versions, or get a new
+  one. ``{"force": true}``, and every re-run of a budget-window report or
+  of one created before keys, calculates both simulations again, as an
+  extra run marked forced that nothing joins.
   A budget-window report's new run is a budget-window run with a report run
   per year, up to five of them started at once as a new window's are; it
   answers as the budget-window create does, naming the window run and every
@@ -23,13 +24,14 @@
 
 Every earlier run is kept. A re-run answers 404 for a record that does not
 exist, and 409 (``run_in_progress``, naming the run in ``run_id``) while a
-budget-window report has a window run or year run pending or running and
-the re-run isn't forced, or while a household report has a run pending or
-running (a household re-run ignores ``force``), or for a record this
-service does not re-run (``rerun_not_supported``); then nothing is
-written. Without ``force``, an economy report's re-run joins the report's
-run on the current versions that hasn't failed and wasn't forced, pending,
-running or succeeded, and answers it with no new call. The other
+household report has a run pending or running (a household re-run ignores
+``force``), or for a record this service does not re-run
+(``rerun_not_supported``); then nothing is written. Without ``force``, a
+keyed economy report's re-run joins the report's run on the current
+versions that hasn't failed and wasn't forced, pending, running or
+succeeded, and answers it with no new call. A report stored asking for
+cliff impacts answers 422 ``cliffs_not_available`` until they are
+calculated per run. The other
 answers are the creates': 400 or 422 when the stored record cannot be
 calculated on the current catalog version, 503 with ``Retry-After`` before
 any write or when Modal refused the new run's call (then the run was failed,
@@ -122,11 +124,9 @@ class EconomyService(EconomySubmissions, EconomyReruns, Protocol):
 # The run a 409 run_in_progress names, by the record re-run.
 _CONFLICTS: dict[RecordName, str] = {
     "report": (
-        "a budget-window report has a window run or year run pending or "
-        "running and the re-run isn't forced, or a household report has a "
-        "run pending or running, forced or not (run_in_progress; run_id "
-        "names the report's budget-window run, or else its report run), or "
-        "the service does not re-run it (rerun_not_supported)"
+        "a household report has a run pending or running, forced or not "
+        "(run_in_progress; run_id names that report run), or the service "
+        "does not re-run it (rerun_not_supported)"
     ),
     "simulation": "the service does not re-run it (rerun_not_supported)",
 }
@@ -152,6 +152,15 @@ _HOUSEHOLD_ANSWERS: dict[RecordName, dict[int, str]] = {
         503: "Economy runs or household reports are not configured",
     },
     "simulation": {503: "Economy runs are not configured"},
+}
+# A report stored before C1 · 27 asking for cliff impacts is refused until
+# they are calculated per run (C1 · 24's interim answer A).
+_STORED_CLIFFS: dict[RecordName, str] = {
+    "report": (
+        "; or the stored report asks for cliff impacts, which are not "
+        "calculated yet (cliffs_not_available, located under report)"
+    ),
+    "simulation": "",
 }
 
 
@@ -193,8 +202,8 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
                 "The ID or the body is malformed, or the stored policies and "
                 "dynamics cannot be calculated on the current catalog version "
                 "(missing_parameters or overlapping_parameters, located under "
-                f"{record}){_HOUSEHOLD_ANSWERS[record].get(422, '')}; nothing was "
-                "written"
+                f"{record}){_HOUSEHOLD_ANSWERS[record].get(422, '')}"
+                f"{_STORED_CLIFFS[record]}; nothing was written"
             ),
             "model": EconomyRequestUnprocessable,
         },
@@ -288,13 +297,15 @@ def add_economy_rerun_routes(
         description=(
             "Create the stored report's new run on the v2 version manifest's "
             "default worker, and start it; every earlier run is kept. Without "
-            "force, an economy report's re-run joins the report's run on those "
-            "versions that hasn't failed and wasn't forced, pending, running "
-            "or succeeded, and answers it with no new call; otherwise a side "
-            "reuses a run of its own simulation that succeeded on the same "
-            "versions. With force, an economy or budget-window report's "
-            "simulations are calculated again, as an extra run marked forced "
-            "that nothing joins; a household report's re-run ignores force. "
+            "force, an economy report created by key joins the report's run on "
+            "those versions that hasn't failed and wasn't forced, pending, "
+            "running or succeeded, and answers it with no new call; otherwise "
+            "each side joins its simulation's run on those versions or gets a "
+            "new one. With force, and always for a budget-window report or one "
+            "created before keys, the report's simulations are calculated "
+            "again, as an extra run marked forced that nothing joins; a "
+            "household report's re-run ignores force. A report stored asking "
+            "for cliff impacts is refused (422 cliffs_not_available). "
             "A budget-window report's new run is a "
             "budget-window run with a report run per year, up to five of them "
             "started at once, each year on its own year's simulations. A "

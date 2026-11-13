@@ -205,7 +205,8 @@ class NewHouseholdReportRerun:
     """A stored household report's new run, on the current catalog version.
 
     Each side gets a new run of its own household simulation, in the
-    report's ``year``; ``reform`` is None for a report of the baseline alone.
+    report's ``year``, marked forced like the report run; ``reform`` is None
+    for a report of the baseline alone.
     """
 
     report_id: UUID
@@ -485,7 +486,10 @@ def insert_household_report_rerun(
     The report run has trigger ``manual`` and names no budget-window run;
     each side's run is of the report's own household simulation, with no
     Modal call: the service then starts one household function call for the
-    report run. Raise as ``insert_report_rerun`` does.
+    report run. A household report has no keys yet, so its runs may have
+    been calculated for it alone: each is an extra run, marked forced, that
+    nothing joins and the one-unfailed-run indexes leave out (C1 · 24's
+    interim answer B). Raise as ``insert_report_rerun`` does.
     """
     lock_reruns_of(connection, rerun.report_id)
     _refuse_while_report_runs(connection, rerun.report_id)
@@ -498,6 +502,7 @@ def insert_household_report_rerun(
                 year=rerun.year,
                 tax_benefit_model_version_id=rerun.tax_benefit_model_version_id,
                 versions=rerun.versions,
+                forced=True,
             )
         connection.execute(
             insert(report_runs).values(
@@ -514,6 +519,7 @@ def insert_household_report_rerun(
                 status=ReportRunStatus.PENDING,
                 trigger=ReportRunTrigger.MANUAL,
                 modal_call_id=None,
+                forced=True,
             )
         )
 

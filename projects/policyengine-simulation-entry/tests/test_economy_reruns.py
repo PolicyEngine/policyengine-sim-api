@@ -145,7 +145,7 @@ def test_a_report_with_no_keys_is_rerun_as_forced_runs_on_the_current_versions()
         UUID(int=3),
         REFORM,
     )
-    assert report.reform.options == STORED_OPTIONS
+    assert report.reform.options == {"spm": STORED_OPTIONS["spm"]}
     assert Stage12InvocationContext.model_validate(context).report_run == ReportRunIds(
         report_run_id=UUID(int=1),
         baseline_simulation_run_id=UUID(int=2),
@@ -187,7 +187,10 @@ def test_a_forced_rerun_recalculates_both_simulations() -> None:
 def test_a_report_rerun_joining_a_run_answers_it_and_starts_no_call(
     status: ReportRunStatus,
 ) -> None:
-    """Answer 3: a run under way, or one that succeeded on these versions."""
+    """Answer 3: a run under way, or one that succeeded on these versions.
+
+    Only a keyed report's re-run joins a run (interim answer B).
+    """
     joined = FoundReportRun(
         id=UUID(int=90),
         inserted=False,
@@ -195,7 +198,10 @@ def test_a_report_rerun_joining_a_run_answers_it_and_starts_no_call(
         baseline_simulation_run_id=UUID(int=91),
         reform_simulation_run_id=UUID(int=92),
     )
-    store = FakeRerunStore(joined_report_run=joined)
+    store = FakeRerunStore(
+        report_definition=replace(STORED_REPORT, keyed=True),
+        joined_report_run=joined,
+    )
     caller = FakeCaller()
 
     rerun = _rerun_report(rerun_service(store, caller=caller))
@@ -711,7 +717,7 @@ def test_a_budget_window_is_rerun_as_a_new_window_run_and_its_first_years_starte
         report = ReportExecutionInput.model_validate(payload)
         assert report.baseline.year == report.reform.year == year_to_start.year
         assert report.reform.policy == REFORM
-        assert report.reform.options == STORED_OPTIONS
+        assert report.reform.options == {"spm": STORED_OPTIONS["spm"]}
         assert Stage12InvocationContext.model_validate(context).report_run == (
             year_to_start.run_ids
         )

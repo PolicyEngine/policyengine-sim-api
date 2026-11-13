@@ -2,7 +2,8 @@
 
 The submission services (``economy_submissions``, ``budget_window_submissions``)
 turn a request into the persistence library's ``EconomyRequest``, refuse what
-can't be calculated yet, choose what a report stores of the request's
+can't be calculated yet (as the re-run service does for a stored report),
+choose what a report stores of the request's
 options, the calculation's scope on the default worker's bundle, and the
 answer for the report and run a request ended on.
 """
@@ -27,6 +28,8 @@ from policyengine_simulation_entry.economy_submission_errors import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from policyengine_simulation_persistence import (
         EconomyCatalogRows,
         FoundEconomyReport,
@@ -52,20 +55,39 @@ def refuse_cliffs(request: EconomyReportRequest) -> None:
     cliffs on its own instead (C1 · 24's interim answer A).
     """
     if request.include_cliffs:
-        raise EconomySubmissionUnprocessableError(
-            code="cliffs_not_available",
-            reasons=(
-                UnprocessableReason(
-                    loc=("body", "include_cliffs"),
-                    msg=(
-                        "Cliff impacts are not calculated yet: they will be "
-                        "calculated for each simulation run on its own. Send "
-                        "include_cliffs: false."
-                    ),
-                    type="cliffs_not_available",
-                ),
-            ),
+        raise _cliffs_refused(
+            ("body", "include_cliffs"),
+            "Cliff impacts are not calculated yet: they will be calculated "
+            "for each simulation run on its own. Send include_cliffs: false.",
         )
+
+
+def refuse_stored_cliffs(stored_inputs: Mapping[str, Any]) -> None:
+    """Refuse re-running a report stored asking for cliffs, until they exist.
+
+    A report created before C1 · 27 stored its request's options; one whose
+    ``include_cliffs`` is true is refused as such a request now is (the
+    scope of C1 · 24's interim answer A).
+    """
+    if stored_inputs.get("include_cliffs"):
+        raise _cliffs_refused(
+            ("report", "inputs", "include_cliffs"),
+            "This report was created asking for cliff impacts, which are not "
+            "calculated yet: they will be calculated for each simulation run "
+            "on its own.",
+        )
+
+
+def _cliffs_refused(
+    loc: tuple[str, ...], message: str
+) -> EconomySubmissionUnprocessableError:
+    """Return the 422 refusing a cliff calculation, naming what asked for it."""
+    return EconomySubmissionUnprocessableError(
+        code="cliffs_not_available",
+        reasons=(
+            UnprocessableReason(loc=loc, msg=message, type="cliffs_not_available"),
+        ),
+    )
 
 
 def stored_options(options: dict[str, Any]) -> dict[str, Any]:

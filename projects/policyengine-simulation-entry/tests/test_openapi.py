@@ -477,6 +477,10 @@ def test_rerun_routes_declare_every_answer():
     report_answers = _responses(spec, "post", "/reports/{report_id}/runs")
     assert "unknown_household" in report_answers["400"]["description"]
     assert "household_not_calculable" in report_answers["422"]["description"]
+    # A report stored asking for cliffs is refused until they exist.
+    assert "cliffs_not_available" in report_answers["422"]["description"]
+    simulation_answers = _responses(spec, "post", "/simulations/{simulation_id}/runs")
+    assert "cliffs_not_available" not in simulation_answers["422"]["description"]
     report_rerun = spec["components"]["schemas"]["ReportRerunRequest"]
     assert set(report_rerun["properties"]) == {"force"}
     assert (

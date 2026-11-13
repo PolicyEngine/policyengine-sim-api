@@ -233,7 +233,10 @@ A household report's definition also names its household (`household_id`).
 `insert_household_report_rerun` creates its new report run (trigger
 `manual`) and a new run of each side's own household simulation (no dataset
 or region), recording the current catalog version and the report's year:
-household runs are never reused. It takes the same lock and makes the same
+household runs are never reused. A household report has no keys yet, so the
+report run and both simulation runs are marked `forced`, extra runs that
+nothing joins and the one-unfailed-run indexes leave out (C1 · 24's interim
+answer B). It takes the same lock and makes the same
 check for a run under way, and shares `insert_household_simulation_run` with
 `insert_household_report`. `HouseholdReportStore.create_report_rerun` runs it
 in a transaction of its own; the store's `read_inputs` reads the re-run's

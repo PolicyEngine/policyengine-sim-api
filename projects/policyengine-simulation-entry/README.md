@@ -247,30 +247,36 @@ A policy setting parameters the catalog version lacks is 422
 `POST /reports/{report_id}/runs` calculates a stored economy report again,
 as a new run on the default worker's versions, and keeps every earlier run.
 Its body is required: `{}` or `{"force": false}` re-runs the report, and
-`{"force": true}` forces a recalculation. The report keeps its simulations:
-each side gets a new run of its own simulation, or, without `force`, reuses
-that simulation's newest run on the same versions, catalog version, dataset,
-region and year that a new report's side could reuse; `force` calculates
-both again, as an extra run: the new report run and both simulation runs
-are marked `forced`, so nothing joins them, and a forced re-run is never
-refused while a run is under way. The new report run's trigger is `manual`.
-Without `force`, a re-run while the report has a run on the default
-worker's versions that hasn't failed and wasn't forced, pending, running or
-succeeded, joins that run instead and answers it as it is, with both sides reused and no
-Modal call; a run still under way on older versions is no run to join. A
-report created by key re-runs with no search for reusable runs: each side
-joins its simulation's run on those versions that hasn't failed and wasn't
-forced, in any state, or gets a new one. The service reads the
+`{"force": true}` forces a recalculation. The report keeps its simulations.
+Without `force`, a re-run of a report created by key while the report has
+a run on the default worker's versions that hasn't failed and wasn't
+forced, pending, running or succeeded, joins that run instead and answers
+it as it is, with both sides reused and no Modal call; a run still under
+way on older versions is no run to join. Otherwise each side joins its
+simulation's run on those versions, catalog version and year that hasn't
+failed and wasn't forced, in any state, or gets a new one, under a new
+report run. `force` calculates both sides again, as an extra run: the new
+report run and both simulation runs are marked `forced`, so nothing joins
+them and the Public API's one-unfailed-run indexes leave them out, and a
+forced re-run is never refused while a run is under way. A report created
+before keys (C1 · 27), whose simulations have none, is always re-run that
+way, forced or not: its runs may have been calculated with plans that
+depended on that report (C1 · 24's interim answer B). The new report run's
+trigger is `manual`. Such a report stored asking for cliff impacts
+(`include_cliffs: true` in its options) is refused with 422
+`cliffs_not_available`, located at `report.inputs.include_cliffs`, until
+cliffs are calculated for each simulation run (C1 · 39; interim answer A).
+The service reads the
 report's region code and dataset name, finds the rows with that code and
 name in the catalog version of the default worker's .py version, and reads
 each simulation's stored policy and dynamic on it.
 A budget-window report's re-run is a new budget-window run, trigger
-`manual`, with `recalculate` set by `force`, and a report run per year;
-a forced one's year runs and new simulation runs are marked `forced`. Each
-year's sides are the simulations that year's report run of the report's
-newest window run names (a year that reused another report's run names that
-report's simulation), and each reuses a run of them as a single-year side
-does. Up to five years start at once, as a new window's do (a later year
+`manual`, and a report run per year. A window has no keys yet, so every
+re-run recalculates it, forced or not: `recalculate` is set, and its year
+runs and new simulation runs are marked `forced`. Each year's sides are new
+runs of the simulations that year's report run of the report's newest
+window run names (a year that reused another report's run names that
+report's simulation). Up to five years start at once, as a new window's do (a later year
 Modal doesn't confirm in time waits for an earlier year's coordinator); it
 answers 201 with the budget-window create's fields, naming the window run
 and every year.
@@ -278,7 +284,8 @@ A household report's re-run calculates its stored household again in the
 report's own year (not the household's current `default_year`), under each
 side's stored policy read on the current catalog version. Each side gets a
 new run of its own household simulation, recording that catalog version:
-household runs are never reused, so `force` changes nothing. The new report
+household runs are never reused, so `force` changes nothing, and each is
+marked `forced`, as a household report has no keys yet. The new report
 run (trigger `manual`) is started by one household function call, as a new
 household report's is, and the re-run answers 201 with the household report
 create's fields.
@@ -291,9 +298,8 @@ fields as the create, naming the run.
 
 A re-run is refused before anything is written: 404 (`unknown_report`,
 `unknown_simulation`) for a record that doesn't exist; 409
-`run_in_progress`, naming the run in `run_id`, while a budget window's run
-of the report, or one of its year runs, is pending or running, unless the
-re-run is forced, or while a household report has a run pending or running;
+`run_in_progress`, naming the run in `run_id`, while a household report has
+a run pending or running;
 409 `rerun_not_supported` for a household simulation (re-run only
 through its report), a household report whose simulation names a dynamic (a
 household calculation applies none), a budget window whose newest window run
@@ -306,28 +312,17 @@ household report's own codes: 400 `unknown_household` and
 `no_household_function`, and 422 `household_not_calculable`, located at the
 report's `household_id` or a side's `policy_id`. Without household reports
 configured, a household report the service could re-run answers 503
-`not_configured`. An unforced economy or budget-window report re-run, and
-every household report re-run, looks for the run to join, or for a run
-under way, and inserts under a transaction-level advisory lock on the
-report's ID: a second economy report re-run waits, then joins the first's
-run; a second budget-window or household one waits, then is refused with
-409 naming it. A simulation's re-run takes no lock: the Public API's index
-on runs lets only one run that hasn't failed exist on a version set, so
-concurrent re-runs end on it. A forced economy or budget-window re-run
-takes none either, as nothing joins it. A household report's re-run ignores
-`force`, so it takes the lock and is refused with 409 `run_in_progress`
-while any run of the report is pending or running. Until a report's sides
-find their simulation runs by version set (C1 · 24's answers 4 and 5), an
-unforced economy report re-run whose side has a run on the current
-versions that hasn't failed but isn't reused is refused by that index:
-for example a succeeded run whose report run failed for the other side,
-one a coordinator refused to reuse, one used with other options, or one
-another report run is calculating. So, until C1 · 24's answer 8, is a
-household report's re-run, forced or not, once its earlier run has ended
-on the current versions without failing (each side's new run is unforced),
-and an unforced budget window's whose year side has such a run. The
-service answers that database error 503 `database_unavailable`, though
-asking again fails the same way while that run is there. A re-run's answer names
+`not_configured`. An unforced re-run of a report created by key, and every
+household report re-run, looks for the run to join, or for a run under way,
+and inserts under a transaction-level advisory lock on the report's ID: a
+second keyed economy report re-run waits, then joins the first's run; a
+second household one waits, then is refused with 409 naming it. A
+simulation's re-run takes no lock: the Public API's index on runs lets only
+one run that hasn't failed and wasn't forced exist on a version set, so
+concurrent re-runs end on it. A forced re-run takes none either, as nothing
+joins it. A household report's re-run ignores `force`, so it takes the lock
+and is refused with 409 `run_in_progress` while any run of the report is
+pending or running. A re-run's answer names
 the run it ended on; `GET /reports/{report_id}` and
 `GET /simulations/{simulation_id}` read the newest run, which may be a later
 one, such as a forced re-run's. A report or simulation deleted after the

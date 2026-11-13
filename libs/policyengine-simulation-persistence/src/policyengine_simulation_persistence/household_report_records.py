@@ -184,11 +184,13 @@ def insert_household_simulation_run(  # noqa: PLR0913  # the run and what it cal
     year: int,
     tax_benefit_model_version_id: UUID,
     versions: RunVersions,
+    forced: bool = False,
 ) -> None:
     """Create a run of a household simulation, pending with no Modal call ID.
 
     It records the year, catalog version and versions it calculates on; a
-    household run names no dataset or region.
+    household run names no dataset or region. A ``forced`` run is an extra
+    run that nothing joins.
     """
     connection.execute(
         insert(simulation_runs).values(
@@ -202,5 +204,6 @@ def insert_household_simulation_run(  # noqa: PLR0913  # the run and what it cal
             region_id=None,
             status=SimulationStatus.PENDING,
             modal_call_id=None,
+            forced=forced,
         )
     )

@@ -4,26 +4,28 @@ A re-run calculates a stored record again on the v2 version manifest's
 default worker, as a new run, and keeps every earlier run. The service:
 
 1. reads what the record calculates: its country, year, region code,
-   dataset name and each simulation's policy and dynamic. A record this
-   service does not re-run, or one missing a row it calculates on, is
-   refused (409 ``rerun_not_supported``), as is one that does not exist
-   (404);
+   dataset name, stored options and each simulation's policy and dynamic.
+   A record this service does not re-run, or one missing a row it
+   calculates on, is refused (409 ``rerun_not_supported``), as is one that
+   does not exist (404), and a report stored before C1 · 27 asking for
+   cliff impacts (422 ``cliffs_not_available``) until they are calculated
+   per run (C1 · 24's interim answer A);
 2. finds the default worker's economy functions for the country, and reads,
    in one transaction, the country's catalog version for that worker's .py
    version, its region and dataset with the record's code and name, and each
-   simulation's policy and dynamic values on that catalog version. For a
-   report, unless the re-run is forced, each side's reusable run is a run of
-   that side's own simulation that succeeded on the current versions, as a
-   new report's would be (``find_reusable_run_of``);
-3. for a simulation or an economy report, joins, in one transaction, the
-   record's run on the current versions that hasn't failed and wasn't
+   simulation's policy and dynamic values on that catalog version;
+3. for a simulation or a keyed economy report, joins, in one transaction,
+   the record's run on the current versions that hasn't failed and wasn't
    forced, pending, running or succeeded (C1 · 24's answers 2 and 3), or
-   else creates the new run (a report's with trigger ``manual``) and each
-   report side's new simulation run of its own simulation, all pending with
-   no Modal call ID; a budget window's re-run always creates its runs. A forced re-run
-   always creates its runs, marked forced, an extra run that nothing joins.
-   An unforced budget window's re-run is refused while a window run or year
-   run of the report is pending or running (409 ``run_in_progress``);
+   else creates the new run (a report's with trigger ``manual``); a keyed
+   report's sides join their simulations' runs on those versions the same
+   way, or create them. A report whose simulations have no key, created
+   before C1 · 27, may have runs whose plans depended on the report that
+   calculated them, so its re-run, like a forced re-run, always creates its
+   runs, marked forced: extra runs that nothing joins (interim answer B). A
+   budget window has no keys yet, so its re-run always creates its runs,
+   marked forced. Every new run is pending with no Modal call ID, and a
+   forced re-run is never refused while a run is under way;
 4. starts and records the call of a run it created as a new record's: the
    report run's coordinator, or the simulation function, by run ID (C1 · 8's
    coordination), failing the new runs when Modal refuses the call. A
@@ -34,9 +36,10 @@ run per year, each year on the simulations that year's report run of the
 report's newest window run names; its first years start as a new window's
 do. A household report's re-run is the household report service's
 (``household_report_reruns``): a new run of each side's own household
-simulation, started by one household function call. A household simulation
-is re-run only through its report. Whatever is missing or cannot be
-calculated is refused in steps 1 and 2, before anything is written.
+simulation, marked forced as a household report has no keys yet, started
+by one household function call. A household simulation is re-run only
+through its report. Whatever is missing or cannot be calculated is refused
+in steps 1 and 2, before anything is written.
 """
 
 from __future__ import annotations
@@ -53,7 +56,6 @@ from policyengine_simulation_persistence import (
     NewSimulationRerun,
     NewWindowRerun,
     RerunSide,
-    RunReuse,
     WindowRerunYear,
 )
 
@@ -74,6 +76,7 @@ from policyengine_simulation_entry.economy_calculation_inputs import (
     report_run_calculation,
     simulation_run_calculation,
 )
+from policyengine_simulation_entry.economy_requests import refuse_stored_cliffs
 from policyengine_simulation_entry.economy_submission_errors import (
     STORED_REPORT,
     STORED_SIMULATION,
@@ -103,7 +106,7 @@ if TYPE_CHECKING:
         FoundReportRun,
         FoundSimulationRun,
         ReportDefinition,
-        ReusableRun,
+        RunReuse,
         SideDefinition,
         SimulationChoice,
         SimulationDefinition,
@@ -250,6 +253,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                 definition, observability_context=observability_context
             )
         stored = rerunnable_report(definition)
+        refuse_stored_cliffs(definition.inputs)
         window_years = (
             complete_window_years(definition)
             if definition.kind == "budget_window"
@@ -263,16 +267,10 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             dataset_name=stored.dataset_name,
             year=stored.year,
         )
-        # A keyed report's sides join their runs by version set instead.
-        reuse = (
-            None
-            if request.force or definition.keyed or self._settings.reuse_prefix is None
-            else RunReuse(
-                versions=worker.versions,
-                inputs=definition.inputs,
-                output_uri_prefix=self._settings.reuse_prefix,
-            )
-        )
+        # A report with no keys gets extra runs, marked forced, which
+        # nothing joins (interim answer B); a keyed report's sides join
+        # their simulations' runs on these versions instead.
+        forced = request.force or not definition.keyed
         if window_years:
             return await self._rerun_window(
                 _WindowRerunRequest(
@@ -280,8 +278,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                     options=definition.inputs,
                     years=window_years,
                     economy_request=economy_request,
-                    reuse=reuse,
-                    recalculate=request.force,
+                    recalculate=forced,
                 ),
                 worker,
                 request_id=request_id,
@@ -292,7 +289,8 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                 economy_request,
                 baseline=stored.baseline,
                 reform=stored.reform,
-                reuse=reuse,
+                # A re-run reuses no run: its sides join or are forced.
+                reuse=None,
             ),
             request=economy_request,
             source=STORED_REPORT,
@@ -302,14 +300,10 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             run_id=self._new_id(),
             population=inputs.catalog.population(stored.year),
             versions=worker.versions,
-            baseline=self._rerun_side(
-                stored.baseline.simulation_id, inputs.baseline.reusable_run
-            ),
-            reform=self._rerun_side(
-                stored.reform.simulation_id, inputs.reform.reusable_run
-            ),
-            forced=request.force,
-            sides_join_runs=definition.keyed and not request.force,
+            baseline=self._new_side(stored.baseline.simulation_id),
+            reform=self._new_side(stored.reform.simulation_id),
+            forced=forced,
+            sides_join_runs=not forced,
         )
         scope = rerun_scope(
             stored.country,
@@ -452,10 +446,10 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
     ) -> BudgetWindowReportCreated:
         """Create the window's new run and each year's runs; start its first years.
 
-        Each year's sides are that year's own simulations, as its report run
-        in the report's newest window run names them, and each year reuses a
-        run of its own simulations unless the re-run is forced. The years
-        start as a new window's do (``_start_first_years``).
+        Each year's sides are new runs of that year's own simulations, as
+        its report run in the report's newest window run names them, marked
+        forced: a window has no keys yet (interim answer B). The years start
+        as a new window's do (``_start_first_years``).
         """
         stored = window.stored
         inputs = await self._read_inputs(
@@ -464,7 +458,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                 baseline=stored.baseline.choice,
                 reform=stored.reform.choice,
                 years=window.years,
-                reuse=window.reuse,
+                reuse=None,
             ),
             request=window.economy_request,
             source=STORED_REPORT,
@@ -476,7 +470,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             population=inputs.catalog.population(stored.year),
             versions=worker.versions,
             recalculate=window.recalculate,
-            years=tuple(self._window_rerun_year(year, inputs) for year in window.years),
+            years=tuple(self._window_rerun_year(year) for year in window.years),
         )
         first_year = rerun.years[0]
         first_calculation = report_run_calculation(
@@ -515,28 +509,21 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             years=[year_created(window_year) for window_year in rerun.years],
         )
 
-    def _window_rerun_year(
-        self, year: WindowYearDefinition, inputs: BudgetWindowInputs
-    ) -> WindowRerunYear:
-        """Return a year naming its own simulations' reusable runs, or new runs."""
-        baseline_run, reform_run = inputs.reusable_runs[year.year]
+    def _window_rerun_year(self, year: WindowYearDefinition) -> WindowRerunYear:
+        """Return a year naming new runs of its own simulations."""
         return WindowRerunYear(
             year=year.year,
             report_run_id=self._new_id(),
-            baseline=self._rerun_side(year.baseline_simulation_id, baseline_run),
-            reform=self._rerun_side(year.reform_simulation_id, reform_run),
+            baseline=self._new_side(year.baseline_simulation_id),
+            reform=self._new_side(year.reform_simulation_id),
         )
 
-    def _rerun_side(
-        self, simulation_id: UUID, reusable_run: ReusableRun | None
-    ) -> RerunSide:
-        """Return a side naming its own simulation's reusable run, or a new run."""
-        if reusable_run is not None:
-            return RerunSide(
-                simulation_id=simulation_id,
-                simulation_run_id=reusable_run.simulation_run_id,
-                reused=True,
-            )
+    def _new_side(self, simulation_id: UUID) -> RerunSide:
+        """Return a side proposing a new run of its own simulation.
+
+        The run is created, unless a keyed report's side joins its
+        simulation's run on the re-run's versions.
+        """
         return RerunSide(
             simulation_id=simulation_id,
             simulation_run_id=self._new_id(),
@@ -552,9 +539,9 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
     ) -> Created:
         """Create or join the re-run's rows, answering the store's refusals.
 
-        Return what ``create`` returns: the run it joined or created. A
-        budget-window or household report with a run under way is refused
-        (409 ``run_in_progress``). A record deleted after its reads is
+        Return what ``create`` returns: the run it joined or created. A run
+        under way the store refuses the re-run for answers 409
+        ``run_in_progress``. A record deleted after its reads is
         answered as not found. Any other row the database refuses is named
         as ``source``'s; for a report, that includes a side's simulation
         deleted with it.
@@ -568,8 +555,9 @@ def _joined_report_run(
 ) -> EconomyReportCreated:
     """Answer the report's run a re-run joined, as it is; this call created nothing.
 
-    The run names runs of the report's own simulations; a side reusing no
-    run never joins, so both sides are reused.
+    Only a keyed report's unforced re-run joins a run; it names runs of the
+    report's own simulations, which this call didn't create, so both sides
+    are reused.
     """
     if joined.reform_simulation_run_id is None:
         msg = f"report run {joined.id} of an economy report names no reform run"
@@ -592,20 +580,16 @@ def _created_report_run(
 ) -> EconomyReportCreated:
     """Answer the report run a re-run created, with the side runs it names.
 
-    A side is reused when its run isn't one this re-run inserted: a reused
-    run, or, for a keyed report, its simulation's run the store joined. The
-    runs this re-run may have inserted have the IDs its unreused sides
-    proposed; one simulation on both sides gets one run, with the
-    baseline's. The status is the new run's, until its call is started.
+    A side is reused when its run isn't one this re-run inserted: for a
+    keyed report, its simulation's run the store joined. The runs this
+    re-run may have inserted have the IDs its sides proposed; one
+    simulation on both sides gets one run, with the baseline's. The status
+    is the new run's, until its call is started.
     """
     if created.reform_simulation_run_id is None:
         msg = f"report run {created.id} of an economy report names no reform run"
         raise ValueError(msg)
-    proposed = {
-        side.simulation_run_id
-        for side in (rerun.baseline, rerun.reform)
-        if not side.reused
-    }
+    proposed = {rerun.baseline.simulation_run_id, rerun.reform.simulation_run_id}
     return EconomyReportCreated(
         report_id=stored.report_id,
         report_run_id=created.id,
@@ -627,5 +611,4 @@ class _WindowRerunRequest:
     options: dict[str, Any]
     years: tuple[WindowYearDefinition, ...]
     economy_request: EconomyRequest
-    reuse: RunReuse | None
     recalculate: bool
