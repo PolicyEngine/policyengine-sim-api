@@ -13,6 +13,7 @@ import pytest
 from conftest import FakeBackend, make_settings
 from economy_service_fakes import REPORT_BODY, SIMULATION_BODY
 from fastapi.testclient import TestClient
+from household_report_fakes import HOUSEHOLD_REPORT_BODY
 from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
@@ -42,6 +43,7 @@ from policyengine_simulation_persistence import (
     ReportRunStatus,
     SimulationStatus,
 )
+from test_budget_window_requests import WINDOW_BODY
 
 OBSERVABILITY_ID = "6e1f3d4c-0a5b-4c39-9d2e-7f8a9b0c1d2e"
 RECORD_ID = UUID("00000000-0000-4000-8000-0000000000e1")
@@ -217,6 +219,184 @@ def test_a_malformed_request_is_refused_with_its_reasons(client_for, path, body)
     assert result.status_code == 422
     assert all({"loc", "msg"} <= set(reason) for reason in result.json()["detail"])
     assert (submissions.reports, submissions.simulations) == ([], [])
+
+
+@pytest.mark.parametrize("dataset_name", ["enhanced_cps_2024", None])
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("/reports", REPORT_BODY),
+        ("/simulations", SIMULATION_BODY),
+        ("/reports", WINDOW_BODY),
+    ],
+    ids=["report", "simulation", "budget window"],
+)
+def test_a_request_naming_a_dataset_is_refused(
+    client_for, path, body, dataset_name
+) -> None:
+    """No request chooses a dataset: each runs on its region's (or data_source's)."""
+    submissions = FakeEconomySubmissions()
+
+    with client_for(submissions) as client:
+        result = client.post(path, json={**body, "dataset_name": dataset_name})
+
+    assert result.status_code == 422
+    (reason,) = result.json()["detail"]
+    assert (reason["loc"][-1], reason["type"]) == ("dataset_name", "extra_forbidden")
+    assert (submissions.reports, submissions.simulations) == ([], [])
+
+
+# A UK-wide report on the local-area dataset, with cliffs and no SPM settings.
+LOCAL_AREA_REPORT_BODY: dict[str, Any] = {
+    **{name: value for name, value in REPORT_BODY.items() if name != "spm"},
+    "country": "uk",
+    "region_code": "uk",
+    "data_source": "local_area_dataset",
+}
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected_message"),
+    [
+        (
+            {"data_source": None},
+            'data_source must be "local_area_dataset" when given',
+        ),
+        (
+            {"data_source": "local_areas"},
+            'data_source must be "local_area_dataset" when given',
+        ),
+        (
+            {"country": "us", "region_code": "us"},
+            "the local-area dataset is available only to UK reports",
+        ),
+        ({"region_code": "constituency/Aldershot"}, "UK-wide or nation region"),
+        ({"region_code": "local_authority/Cardiff"}, "UK-wide or nation region"),
+    ],
+    ids=[
+        "null",
+        "another value",
+        "another country",
+        "a constituency",
+        "a local authority",
+    ],
+)
+def test_a_data_source_a_report_cannot_have_is_refused(
+    client_for, changes, expected_message
+) -> None:
+    submissions = FakeEconomySubmissions()
+
+    with client_for(submissions) as client:
+        result = client.post("/reports", json={**LOCAL_AREA_REPORT_BODY, **changes})
+
+    assert result.status_code == 422
+    (reason,) = result.json()["detail"]
+    assert reason["loc"][-1] == "data_source"
+    assert expected_message in reason["msg"]
+    assert submissions.reports == []
+
+
+@pytest.mark.parametrize(
+    ("failure", "status_code", "answer"),
+    [
+        (
+            EconomySubmissionRefusedError(
+                code="local_areas_unsupported", detail="no local-area report runs"
+            ),
+            400,
+            {"code": "local_areas_unsupported", "detail": "no local-area report runs"},
+        ),
+        (
+            EconomySubmissionRefusedError(
+                code="local_area_dataset_mismatch", detail="another dataset"
+            ),
+            400,
+            {"code": "local_area_dataset_mismatch", "detail": "another dataset"},
+        ),
+        (
+            EconomySubmissionUnprocessableError(
+                code="no_local_area_dataset",
+                reasons=(
+                    UnprocessableReason(
+                        loc=("body", "data_source"),
+                        msg="no local-area dataset",
+                        type="no_local_area_dataset",
+                    ),
+                ),
+            ),
+            422,
+            {
+                "detail": [
+                    {
+                        "loc": ["body", "data_source"],
+                        "msg": "no local-area dataset",
+                        "type": "no_local_area_dataset",
+                    }
+                ],
+                "code": "no_local_area_dataset",
+            },
+        ),
+    ],
+    ids=["unsupported", "mismatch", "no dataset"],
+)
+def test_a_local_area_refusal_answers_with_its_code(
+    client_for, failure, status_code, answer
+) -> None:
+    submissions = FakeEconomySubmissions(failure=failure)
+
+    with client_for(submissions) as client:
+        result = client.post("/reports", json=LOCAL_AREA_REPORT_BODY)
+
+    assert result.status_code == status_code
+    assert result.json() == answer
+
+
+@pytest.mark.parametrize(
+    "body",
+    [WINDOW_BODY, HOUSEHOLD_REPORT_BODY],
+    ids=["budget window", "household report"],
+)
+def test_only_an_economy_report_takes_a_data_source(client_for, body) -> None:
+    submissions = FakeEconomySubmissions()
+
+    with client_for(submissions) as client:
+        result = client.post(
+            "/reports", json={**body, "data_source": "local_area_dataset"}
+        )
+
+    assert result.status_code == 422
+    (reason,) = result.json()["detail"]
+    assert (reason["loc"][-1], reason["type"]) == ("data_source", "extra_forbidden")
+    assert submissions.reports == []
+
+
+@pytest.mark.parametrize(
+    "region_code",
+    [
+        "uk",
+        "country/england",
+        "country/scotland",
+        "country/wales",
+        "country/northern_ireland",
+    ],
+)
+def test_a_uk_wide_or_nation_report_may_ask_for_the_local_area_dataset(
+    client_for, region_code
+) -> None:
+    submissions = FakeEconomySubmissions()
+
+    with client_for(submissions) as client:
+        result = client.post(
+            "/reports", json={**LOCAL_AREA_REPORT_BODY, "region_code": region_code}
+        )
+
+    assert result.status_code == 201
+    ((request, _, _),) = submissions.reports
+    assert request.data_source == "local_area_dataset"
+    # The report still calculates cliffs. The data source is never stored as
+    # an option: the dataset it chooses is stored with the report's
+    # simulations.
+    assert request.options() == {"include_cliffs": True}
 
 
 @pytest.mark.parametrize(("path", "body"), ROUTES)

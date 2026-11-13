@@ -20,6 +20,7 @@ from economy_rows import (
     EconomyCatalog,
     insert_economy_catalog,
     insert_reusable_run,
+    insert_uk_area_regions,
 )
 from policyengine_simulation_persistence import (
     EconomyRecordReferenceError,
@@ -35,6 +36,7 @@ from policyengine_simulation_persistence import (
     insert_economy_simulation,
     read_dataset,
     read_dataset_by_id,
+    read_local_area_dataset,
     read_model_id,
     read_region,
     record_report_run_call,
@@ -42,7 +44,12 @@ from policyengine_simulation_persistence import (
     report_runs,
     simulation_runs,
 )
-from public_api_rows import insert_dataset, insert_policy, insert_region
+from public_api_rows import (
+    insert_catalog_version,
+    insert_dataset,
+    insert_policy,
+    insert_region,
+)
 from sqlalchemy import select, text, update
 
 if TYPE_CHECKING:
@@ -177,6 +184,104 @@ def test_a_dataset_is_found_by_name_or_id_in_its_catalog_version_only(
     assert (by_name.id, by_name.name) == (local_id, "acs_local_2024")
     assert by_id is not None
     assert (by_id.id, by_id.name) == (economy.dataset_id, "populace_us_2024")
+
+
+def test_the_local_area_dataset_is_the_one_both_area_types_use(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection, country="uk")
+        local_area_id = insert_dataset(
+            connection, economy.catalog, "microcosm_uk_2024_25_dense"
+        )
+        insert_uk_area_regions(
+            connection,
+            economy.catalog,
+            constituency_dataset_id=local_area_id,
+            local_authority_dataset_id=local_area_id,
+        )
+        # Another catalog version of the model routes its areas elsewhere.
+        older = insert_catalog_version(
+            connection,
+            country="uk",
+            model_id=economy.catalog.model_id,
+            policyengine_version="6.16.0",
+        )
+        older_dataset_id = insert_dataset(connection, older, "microcosm_uk_2024_25")
+        insert_uk_area_regions(
+            connection,
+            older,
+            constituency_dataset_id=older_dataset_id,
+            local_authority_dataset_id=older_dataset_id,
+        )
+        act_as_the_service(connection)
+
+        found = read_local_area_dataset(
+            connection, catalog_version_id=economy.catalog.version_id
+        )
+
+    assert found is not None
+    assert (found.id, found.name) == (local_area_id, "microcosm_uk_2024_25_dense")
+
+
+@pytest.mark.parametrize(
+    "area_regions", ["none", "constituencies only", "a dataset for each type"]
+)
+def test_a_catalog_version_without_one_dataset_for_both_area_types_has_none(
+    public_api_database_url, area_regions
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection, country="uk")
+        constituency_dataset_id = insert_dataset(
+            connection, economy.catalog, "microcosm_uk_constituencies"
+        )
+        local_authority_dataset_id = insert_dataset(
+            connection, economy.catalog, "microcosm_uk_local_authorities"
+        )
+        if area_regions == "constituencies only":
+            insert_region(
+                connection,
+                economy.catalog,
+                "constituency/Aldershot",
+                default_dataset_id=constituency_dataset_id,
+                region_type="constituency",
+            )
+        elif area_regions == "a dataset for each type":
+            insert_uk_area_regions(
+                connection,
+                economy.catalog,
+                constituency_dataset_id=constituency_dataset_id,
+                local_authority_dataset_id=local_authority_dataset_id,
+            )
+        act_as_the_service(connection)
+
+        found = read_local_area_dataset(
+            connection, catalog_version_id=economy.catalog.version_id
+        )
+
+    assert found is None
+
+
+def test_the_local_area_dataset_may_be_the_national_default(
+    public_api_database_url,
+) -> None:
+    """Stage 12 leaves the areas out of a national run whenever both use one file."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection, country="uk")
+        insert_uk_area_regions(
+            connection,
+            economy.catalog,
+            constituency_dataset_id=economy.dataset_id,
+            local_authority_dataset_id=economy.dataset_id,
+        )
+        act_as_the_service(connection)
+
+        found = read_local_area_dataset(
+            connection, catalog_version_id=economy.catalog.version_id
+        )
+
+    assert found is not None
+    assert (found.id, found.name) == (economy.dataset_id, "populace_uk_2024")
 
 
 def test_a_report_its_simulations_and_runs_are_created_pending(

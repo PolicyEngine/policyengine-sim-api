@@ -46,10 +46,10 @@ class BudgetWindowReportRequest(BaseModel):
     """A budget-window report: a baseline and a reform in each year of a window.
 
     ``year`` is the window's first year, and ``budget_window_size`` its
-    length. Every year uses the request's region and dataset, as an economy
-    report does. ``spm`` selects the SPM forecast scenario and geography;
-    omit it, rather than sending null, to use the bundle's certified
-    defaults.
+    length. Every year uses the request's region and its dataset, as an
+    economy report does; no request names a dataset. ``spm`` selects the SPM
+    forecast scenario and geography; omit it, rather than sending null, to
+    use the bundle's certified defaults.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
@@ -61,7 +61,6 @@ class BudgetWindowReportRequest(BaseModel):
     year: SimulationYear
     budget_window_size: BudgetWindowSize
     region_code: CatalogKey
-    dataset_name: CatalogKey | None = None
     baseline: PolicyChoice
     reform: PolicyChoice
     spm: SPMSelection | SkipJsonSchema[None] = Field(

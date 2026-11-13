@@ -133,9 +133,12 @@ Stage 12 secret sync writes.
 Every staging deployment runs `staging_economy_check` when the household
 check runs: `.github/scripts/simulation-staging-economy-check.sh` creates a
 small report, current law against current law for `country/wales` in 2026,
+on the bundle's local-area dataset (`data_source: "local_area_dataset"`),
 through the candidate's tagged URL with the authenticated tests' client
 credentials, follows it through `GET /reports/{report_id}`, and requires its
-run to succeed within 30 minutes. `deployment_ready` requires the check to
+run to succeed within 30 minutes. The run also calculates Wales's
+constituencies and local authorities, and the coordinator fails it unless
+both area levels have rows or withheld codes, so its success covers them. `deployment_ready` requires the check to
 pass in staging, so a failure stops the production deployment. Each run adds
 a report and its runs to the staging database. Once a .py version's first
 check has succeeded, later checks on that version reuse its simulation runs,

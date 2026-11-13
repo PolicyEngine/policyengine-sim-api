@@ -134,6 +134,31 @@ def _insert_catalog_rows(
     return EconomyCatalog(catalog=catalog, dataset_id=dataset_id, region_id=region_id)
 
 
+def insert_uk_area_regions(
+    connection: Connection,
+    catalog: CatalogVersion,
+    *,
+    constituency_dataset_id: UUID,
+    local_authority_dataset_id: UUID,
+) -> None:
+    """Insert two constituencies and a local authority, each using its dataset."""
+    for code in ("constituency/Aldershot", "constituency/Cardiff West"):
+        insert_region(
+            connection,
+            catalog,
+            code,
+            default_dataset_id=constituency_dataset_id,
+            region_type="constituency",
+        )
+    insert_region(
+        connection,
+        catalog,
+        "local_authority/Cardiff",
+        default_dataset_id=local_authority_dataset_id,
+        region_type="local_authority",
+    )
+
+
 @dataclass(frozen=True)
 class StoredRun:
     """A simulation and one of its runs, as stored."""

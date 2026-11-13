@@ -13,6 +13,13 @@ from policyengine_simulation_persistence.budget_window_records import (
     WindowYearRuns,
     insert_budget_window_report,
 )
+from policyengine_simulation_persistence.economy_catalog_rows import (
+    EconomyCatalogRows,
+    EconomyRequest,
+    LocalAreaDatasetMismatchError,
+    UnknownDatasetError,
+    UnknownRegionError,
+)
 from policyengine_simulation_persistence.economy_rerun_records import (
     HouseholdRerunSide,
     NewHouseholdReportRerun,
@@ -63,6 +70,7 @@ from policyengine_simulation_persistence.economy_run_records import (
     insert_economy_simulation,
     read_dataset,
     read_dataset_by_id,
+    read_local_area_dataset,
     read_model_id,
     read_region,
     record_report_run_call,
@@ -70,10 +78,8 @@ from policyengine_simulation_persistence.economy_run_records import (
 )
 from policyengine_simulation_persistence.economy_run_store import (
     BudgetWindowInputs,
-    EconomyCatalogRows,
     EconomyRecordOutcomeUnknownError,
     EconomyReportInputs,
-    EconomyRequest,
     EconomyRunStore,
     EconomySimulationInputs,
     ReportSide,
@@ -81,8 +87,6 @@ from policyengine_simulation_persistence.economy_run_store import (
     RunReuse,
     SideRefusal,
     SimulationInputs,
-    UnknownDatasetError,
-    UnknownRegionError,
 )
 from policyengine_simulation_persistence.engine import (
     bounded_transaction,
@@ -175,6 +179,7 @@ __all__ = [
     "HouseholdReportSimulation",
     "HouseholdReportStore",
     "HouseholdRerunSide",
+    "LocalAreaDatasetMismatchError",
     "MissingPolicyParametersError",
     "NewBudgetWindowReport",
     "NewEconomyReport",
@@ -250,6 +255,7 @@ __all__ = [
     "read_economy_report",
     "read_economy_simulation",
     "read_household_job",
+    "read_local_area_dataset",
     "read_missing_table_privileges",
     "read_model_id",
     "read_policy_reform",

@@ -17,6 +17,14 @@ from sqlalchemy.exc import SQLAlchemyError
 from policyengine_simulation_persistence.budget_window_records import (
     insert_budget_window_report,
 )
+from policyengine_simulation_persistence.economy_catalog_rows import (
+    EconomyCatalogRows,
+    EconomyRequest,
+    LocalAreaDatasetMismatchError,
+    UnknownDatasetError,
+    UnknownRegionError,
+    read_catalog_rows,
+)
 from policyengine_simulation_persistence.economy_rerun_records import (
     insert_report_rerun,
     insert_simulation_rerun,
@@ -29,8 +37,6 @@ from policyengine_simulation_persistence.economy_run_reads import (
     read_economy_simulation,
 )
 from policyengine_simulation_persistence.economy_run_records import (
-    CatalogDataset,
-    CatalogRegion,
     EconomyPopulation,
     ReusableRun,
     RunVersions,
@@ -41,20 +47,10 @@ from policyengine_simulation_persistence.economy_run_records import (
     find_reusable_run_of,
     insert_economy_report,
     insert_economy_simulation,
-    read_dataset,
-    read_dataset_by_id,
-    read_model_id,
-    read_region,
     record_report_run_call,
     record_simulation_run_call,
 )
 from policyengine_simulation_persistence.engine import bounded_transaction
-from policyengine_simulation_persistence.household_job_records import (
-    read_catalog_version_id,
-)
-from policyengine_simulation_persistence.household_job_store import (
-    UnknownCatalogVersionError,
-)
 from policyengine_simulation_persistence.policy_reform import (
     MissingPolicyParametersError,
     OverlappingReformError,
@@ -64,6 +60,28 @@ from policyengine_simulation_persistence.policy_reform import (
     read_dynamic_reform,
     read_policy_reform,
 )
+
+# The public names, with the catalog-row ones moved to economy_catalog_rows,
+# which stay importable from here.
+__all__ = [
+    "BudgetWindowInputs",
+    "EconomyCatalogRows",
+    "EconomyRecordOutcomeUnknownError",
+    "EconomyReportInputs",
+    "EconomyRequest",
+    "EconomyRunStore",
+    "EconomySimulationInputs",
+    "LocalAreaDatasetMismatchError",
+    "ReportSide",
+    "ReportSideError",
+    "ReusableRunSearch",
+    "RunReuse",
+    "SideRefusal",
+    "SimulationInputs",
+    "TransactionFactory",
+    "UnknownDatasetError",
+    "UnknownRegionError",
+]
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -117,14 +135,6 @@ type SideRefusal = (
 _SIDE_ERRORS: tuple[type[SideRefusal], ...] = get_args(SideRefusal.__value__)
 
 
-class UnknownRegionError(LookupError):
-    """The catalog version has no region with the requested code."""
-
-
-class UnknownDatasetError(LookupError):
-    """The catalog version has no dataset with the requested name."""
-
-
 class ReportSideError(Exception):
     """A report side's policy or dynamic is refused.
 
@@ -149,22 +159,6 @@ class EconomyRecordOutcomeUnknownError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class EconomyRequest:
-    """What an economy simulation or report request names, apart from policies.
-
-    ``policyengine_version`` is the .py version the calculation runs on,
-    which chooses the country's catalog version. ``dataset_name`` None means
-    the region's default dataset.
-    """
-
-    country: str
-    policyengine_version: str
-    region_code: str
-    dataset_name: str | None
-    year: int
-
-
-@dataclass(frozen=True)
 class RunReuse:
     """How a report looks for simulation runs to reuse (``find_reusable_run``).
 
@@ -176,25 +170,6 @@ class RunReuse:
     versions: RunVersions
     inputs: dict[str, Any]
     output_uri_prefix: str
-
-
-@dataclass(frozen=True)
-class EconomyCatalogRows:
-    """The catalog rows a request is calculated on."""
-
-    catalog_version_id: UUID
-    model_id: UUID
-    region: CatalogRegion
-    dataset: CatalogDataset
-
-    def population(self, year: int) -> EconomyPopulation:
-        """Return what every simulation of the request calculates on."""
-        return EconomyPopulation(
-            tax_benefit_model_version_id=self.catalog_version_id,
-            region_id=self.region.id,
-            dataset_id=self.dataset.id,
-            year=year,
-        )
 
 
 @dataclass(frozen=True)
@@ -273,7 +248,7 @@ class EconomyRunStore:
         OverlappingReformError.
         """
         with self._transaction() as connection:
-            catalog = _catalog_rows(connection, request)
+            catalog = read_catalog_rows(connection, request)
             simulation = _simulation_inputs(
                 connection, request.country, catalog.catalog_version_id, choice
             )
@@ -286,16 +261,25 @@ class EconomyRunStore:
         baseline: SimulationChoice,
         reform: SimulationChoice,
         reuse: RunReuse | None,
+        local_area_dataset_name: str | None = None,
     ) -> EconomyReportInputs:
         """Read a report's catalog rows, both sides' values and reusable runs.
 
         With ``reuse``, each side gets the run ``find_reusable_run`` finds,
-        and the reform never gets the baseline's. Raise
-        UnknownCatalogVersionError, UnknownRegionError or UnknownDatasetError,
-        or ReportSideError naming the side whose policy or dynamic is refused.
+        and the reform never gets the baseline's. With
+        ``local_area_dataset_name``, the dataset the default worker
+        calculates local-area reports on, the report is read on the catalog
+        version's local-area dataset (``read_local_area_dataset``) in place
+        of the region's default. Raise ValueError when ``request`` also names
+        a dataset; otherwise UnknownCatalogVersionError, UnknownRegionError
+        or UnknownDatasetError, ReportSideError naming the side whose policy
+        or dynamic is refused, or LocalAreaDatasetMismatchError when the
+        catalog version doesn't give both area types that dataset.
         """
         with self._transaction() as connection:
-            catalog = _catalog_rows(connection, request)
+            catalog = read_catalog_rows(
+                connection, request, local_area_dataset_name=local_area_dataset_name
+            )
             search = (
                 None
                 if reuse is None
@@ -341,7 +325,7 @@ class EconomyRunStore:
         Raise the errors ``read_report_inputs`` raises.
         """
         with self._transaction() as connection:
-            catalog = _catalog_rows(connection, request)
+            catalog = read_catalog_rows(connection, request)
             search = (
                 None
                 if reuse is None
@@ -381,7 +365,7 @@ class EconomyRunStore:
         baseline's. Raise the errors ``read_report_inputs`` raises.
         """
         with self._transaction() as connection:
-            catalog = _catalog_rows(connection, request)
+            catalog = read_catalog_rows(connection, request)
             return _window_inputs(
                 connection,
                 request,
@@ -446,7 +430,7 @@ class EconomyRunStore:
         ``read_report_inputs`` raises.
         """
         with self._transaction() as connection:
-            catalog = _catalog_rows(connection, request)
+            catalog = read_catalog_rows(connection, request)
             return _window_inputs(
                 connection,
                 request,
@@ -566,62 +550,6 @@ class EconomyRunStore:
         """Return the simulation with its newest run, or None when there is none."""
         with self._transaction() as connection:
             return read_economy_simulation(connection, simulation_id)
-
-
-def _catalog_rows(
-    connection: Connection, request: EconomyRequest
-) -> EconomyCatalogRows:
-    """Read the catalog version, model, region and dataset a request names.
-
-    Raise UnknownCatalogVersionError, UnknownRegionError or
-    UnknownDatasetError.
-    """
-    country = request.country
-    catalog_version_id = read_catalog_version_id(
-        connection,
-        country=country,
-        policyengine_version=request.policyengine_version,
-    )
-    model_id = read_model_id(connection, country=country)
-    if catalog_version_id is None or model_id is None:
-        msg = f"{country} has no catalog version for .py {request.policyengine_version}"
-        raise UnknownCatalogVersionError(msg)
-    region = read_region(
-        connection,
-        catalog_version_id=catalog_version_id,
-        region_code=request.region_code,
-    )
-    if region is None:
-        msg = (
-            f"{country}'s catalog version for .py {request.policyengine_version} "
-            f"has no region {request.region_code}"
-        )
-        raise UnknownRegionError(msg)
-    dataset = (
-        read_dataset_by_id(
-            connection,
-            catalog_version_id=catalog_version_id,
-            dataset_id=region.default_dataset_id,
-        )
-        if request.dataset_name is None
-        else read_dataset(
-            connection,
-            catalog_version_id=catalog_version_id,
-            name=request.dataset_name,
-        )
-    )
-    if dataset is None:
-        msg = (
-            f"{country}'s catalog version for .py {request.policyengine_version} "
-            f"has no dataset {request.dataset_name}"
-        )
-        raise UnknownDatasetError(msg)
-    return EconomyCatalogRows(
-        catalog_version_id=catalog_version_id,
-        model_id=model_id,
-        region=region,
-        dataset=dataset,
-    )
 
 
 def _simulation_inputs(

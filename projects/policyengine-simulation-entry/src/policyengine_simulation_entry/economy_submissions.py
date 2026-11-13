@@ -1,16 +1,18 @@
 """Create economy reports and simulations, and start the calls that calculate them.
 
-A report submission names a region, a dataset, a year and each side's
-stored policy and dynamic. The service:
+A report submission names a region, a year and each side's stored policy
+and dynamic, and runs on the region's dataset, or, with ``data_source``, on
+the bundle's local-area dataset. The service:
 
 1. finds the v2 version manifest's default worker's economy functions for
-   the country, and its bundle;
+   the country, and its bundle, and, for a report with ``data_source``, the
+   local-area dataset its UK entry declares (``local_area_reports``);
 2. reads, in one transaction, the country's catalog version for that
-   worker's .py version, the region and dataset, each side's policy and
-   dynamic values, and, when the output bucket is configured, each side's
-   reusable run: a run of the same simulation that succeeded on the same
-   versions, used by a succeeded report run with the same options, and
-   never refused for reuse;
+   worker's .py version, the region and its dataset (or the catalog's
+   local-area dataset), each side's policy and dynamic values, and, when
+   the output bucket is configured, each side's reusable run: a run of the
+   same simulation that succeeded on the same versions, used by a succeeded
+   report run with the same options, and never refused for reuse;
 3. creates, in one transaction, each side's new simulation and pending run
    (none for a reused side), the report with its options, and its first
    report run, pending with no Modal call ID;
@@ -85,6 +87,7 @@ from policyengine_simulation_entry.economy_workers import (
 from policyengine_simulation_entry.household_workers import (
     VersionManifestUnavailableError,
 )
+from policyengine_simulation_entry.local_area_reports import local_area_dataset_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -102,7 +105,6 @@ if TYPE_CHECKING:
         BudgetWindowReportRequest,
     )
     from policyengine_simulation_entry.economy_api_models import (
-        EconomyRefusalCode,
         EconomyReportRequest,
         EconomySimulationRequest,
         PolicyChoice,
@@ -133,8 +135,13 @@ class EconomyRuns(Protocol):
         baseline: SimulationChoice,
         reform: SimulationChoice,
         reuse: RunReuse | None,
+        local_area_dataset_name: str | None = None,
     ) -> EconomyReportInputs:
-        """Read a report's catalog rows, both sides' values and reusable runs."""
+        """Read a report's catalog rows, both sides' values and reusable runs.
+
+        With ``local_area_dataset_name``, the report is read on the catalog's
+        local-area dataset, which must have that name.
+        """
         ...
 
     def read_simulation_inputs(
@@ -263,6 +270,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         failed after its rows were inserted.
         """
         worker = await self._default_worker(request.country)
+        area_dataset_name = local_area_dataset_name(request, worker)
         options = request.options()
         reuse_prefix = self._settings.reuse_prefix
         reuse = (
@@ -281,6 +289,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
                 baseline=simulation_choice(request.baseline),
                 reform=simulation_choice(request.reform),
                 reuse=reuse,
+                local_area_dataset_name=area_dataset_name,
             ),
             request=economy_request,
         )
@@ -680,12 +689,16 @@ def economy_request_for(
     | BudgetWindowReportRequest,
     worker: EconomyWorker,
 ) -> EconomyRequest:
-    """Return what the request names apart from policies, for the default worker."""
+    """Return what the request names apart from policies, for the default worker.
+
+    It names no dataset: the store reads the region's, or the local-area
+    dataset a report on it asks for.
+    """
     return EconomyRequest(
         country=request.country,
         policyengine_version=worker.policyengine_version,
         region_code=request.region_code,
-        dataset_name=request.dataset_name,
+        dataset_name=None,
         year=request.year,
     )
 
@@ -701,23 +714,20 @@ def calculation_scope(
 ) -> CalculationScope:
     """Return what the calculation runs on, with the bundle's dataset.
 
-    Raise EconomySubmissionRefusedError when the bundle lacks the catalog
-    dataset: ``unknown_dataset`` when the request named it, and
-    ``dataset_not_in_bundle`` for the region's default.
+    Raise EconomySubmissionRefusedError (``dataset_not_in_bundle``, the
+    service's state) when the bundle lacks the catalog dataset: no request
+    names one.
     """
     try:
         dataset = bundle_dataset(worker, catalog.dataset.name)
     except DatasetNotInBundleError:
-        code: EconomyRefusalCode = (
-            "dataset_not_in_bundle"
-            if request.dataset_name is None
-            else "unknown_dataset"
-        )
         detail = (
             f"The default v2 worker, .py {worker.version}, has no dataset "
             f"{catalog.dataset.name}."
         )
-        raise EconomySubmissionRefusedError(code=code, detail=detail) from None
+        raise EconomySubmissionRefusedError(
+            code="dataset_not_in_bundle", detail=detail
+        ) from None
     return CalculationScope(
         country=request.country,
         region_code=catalog.region.code,

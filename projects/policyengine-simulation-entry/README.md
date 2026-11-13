@@ -113,11 +113,13 @@ staging check.
 `POST /reports` creates an economy report: a baseline and a reform
 simulation of one region's data for one year. It names the `country`,
 `report_type` (`economy`), `label`, `description`, `year`, `region_code`
-and `dataset_name` (a region and dataset of the country's catalog version
-for the default worker's .py version; null for the region's default
-dataset), each side's stored `policy_id` and `dynamic_id` (null for current
-law), `include_cliffs`, and `spm` (SPM settings; omit it, since null is
-refused). `POST /simulations` creates a standalone economy simulation from
+(a region of the country's catalog version for the default worker's .py
+version), each side's stored `policy_id` and `dynamic_id` (null for current
+law), `include_cliffs`, `spm` (SPM settings; omit it, since null is
+refused) and, for a UK-wide or nation report, `data_source` (see "Local
+areas"). No request names a dataset: a report or simulation runs on the
+dataset the catalog version gives its region, and `dataset_name` is refused
+with 422. `POST /simulations` creates a standalone economy simulation from
 the same fields for one policy and dynamic. Neither names a .py version or a
 record ID: the service runs the v2 version manifest's default worker and
 chooses every ID.
@@ -138,13 +140,18 @@ record's ID, its run's ID and status, and, for a report, each side's
 simulation and run and whether it was reused.
 
 A request is refused before anything is written: with 400 and a `code` when
-a row it names is missing (`unknown_region`, `unknown_dataset` and
-`unknown_dynamic` name the caller's own choice; `unknown_catalog_version`,
-`unknown_policy`, `no_economy_worker`, `dataset_not_in_bundle` and
-`missing_reference` are the service's state, such as a catalog version
-missing while a release deploys), and with 422 and a `code` when a policy or
-dynamic sets parameters the catalog version lacks (`missing_parameters`) or
-both set one (`overlapping_parameters`). The routes answer 503 with
+a row it names is missing (`unknown_region` and `unknown_dynamic` name the
+caller's own choice, and `unknown_dataset` its region's dataset;
+`unknown_catalog_version`, `unknown_policy`, `no_economy_worker`,
+`dataset_not_in_bundle` and `missing_reference` are the service's state,
+such as a catalog version missing while a release deploys), or, for a report
+on the local-area dataset, when the default worker or the catalog can't
+serve it (`local_areas_unsupported` and `local_area_dataset_mismatch`, also
+the service's state; see "Local areas"); and with 422 and a `code` when a
+policy or dynamic sets parameters the catalog version lacks
+(`missing_parameters`), both set one (`overlapping_parameters`), or the
+release has no local-area dataset for `data_source`
+(`no_local_area_dataset`). The routes answer 503 with
 `Retry-After` when the manifest or the database can't be read. When Modal
 refuses the call, or doesn't confirm it within ten seconds, the run (and a
 report run's new simulation runs) is failed at once and the 503
@@ -152,6 +159,37 @@ report run's new simulation runs) is failed at once and the 503
 a run claimed meanwhile is answered with 201. Every 500 is the JSON error
 with code `internal_error`, and may follow a write. No `detail` holds an
 exception's text.
+
+### Local areas
+
+An economy report created with `data_source: "local_area_dataset"` runs on
+the bundle's local-area dataset, the one the .py release routes
+constituencies and local authorities to, in place of its region's dataset.
+It is an ordinary report: it returns its full results, cliffs included when
+asked, and its constituency and local-authority impacts, and is re-run on
+the same dataset. `data_source` is left out unless given (null and any other
+value are refused with 422), and is never stored as an option: the dataset
+is stored with the report's simulations. Only a UK report whose region is
+`uk` or one of the four `country/*` nations may ask; any other country or
+region is refused with 422 at `data_source`.
+
+The default worker's UK entry in the v2 version manifest decides the rest
+(`local_area_reports`): the input version its coordinator accepts for a
+local-area report run, and the dataset the .py release routes constituency
+and local-authority regions to, which the publisher computes by the rule
+Stage 12's national aggregation uses to leave the areas out. Before anything
+is read:
+
+- without that declaration, or with another input version, the request is
+  refused with 400 `local_areas_unsupported`, the service's state;
+- with no dataset, the release routes the areas to none of their own, and
+  the request is refused with 422 `no_local_area_dataset` at `data_source`:
+  that release's national reports calculate both area levels themselves.
+
+With a dataset, the catalog version's constituency and local-authority
+regions must all use it, or the request is refused with 400
+`local_area_dataset_mismatch`, the service's state; the report is then
+calculated on the catalog's row for that dataset.
 
 ### Budget windows
 

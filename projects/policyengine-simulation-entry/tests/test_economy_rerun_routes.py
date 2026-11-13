@@ -416,3 +416,16 @@ def test_an_unconfigured_service_answers_503(client_for, path, body) -> None:
 
     assert result.status_code == 503
     assert result.json()["code"] == "not_configured"
+
+
+def test_a_report_rerun_takes_no_data_source(client_for) -> None:
+    """A re-run keeps the stored report's dataset, whatever it was created with."""
+    reruns = FakeEconomyReruns()
+
+    with client_for(reruns) as client:
+        result = client.post(REPORT_RUNS, json={"data_source": "local_area_dataset"})
+
+    assert result.status_code == 422
+    (reason,) = result.json()["detail"]
+    assert (reason["loc"][-1], reason["type"]) == ("data_source", "extra_forbidden")
+    assert reruns.report_reruns == []

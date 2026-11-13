@@ -1,7 +1,10 @@
 #!/bin/bash
 # Create a small economy report through a deployed Simulation Entrypoint, and
 # require its run to succeed: current law against current law for Wales in
-# 2026, which needs no stored policy.
+# 2026, which needs no stored policy, on the bundle's local-area dataset
+# (data_source), so the run also calculates Wales's constituencies and local
+# authorities. The coordinator fails a run of such a report unless both area
+# levels have rows or withheld codes, so its success covers them.
 # Usage: simulation-staging-economy-check.sh <base-url>
 # Required env vars: the test client's SIMULATION_TEST_AUTH_ISSUER,
 # SIMULATION_TEST_AUTH_AUDIENCE, SIMULATION_TEST_AUTH_CLIENT_ID and
@@ -76,7 +79,8 @@ submission_status="$(
       region_code: "country/wales",
       baseline: {policy_id: null, dynamic_id: null},
       reform: {policy_id: null, dynamic_id: null},
-      include_cliffs: false
+      include_cliffs: false,
+      data_source: "local_area_dataset"
     }' \
     | send submission "${submission_timeout_seconds}" --request POST --header "@${authorization_header}" \
       --header 'Content-Type: application/json' --data @- \

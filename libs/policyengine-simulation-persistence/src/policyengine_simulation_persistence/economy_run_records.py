@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
 from sqlalchemy import (
+    String,
     cast,
     func,
     insert,
@@ -51,6 +52,7 @@ from sqlalchemy.exc import IntegrityError
 
 from policyengine_simulation_persistence.input_tables import (
     MODEL_NAME_PREFIX,
+    UK_AREA_REGION_TYPES,
     datasets,
     regions,
     tax_benefit_models,
@@ -263,6 +265,46 @@ def read_dataset_by_id(
 ) -> CatalogDataset | None:
     """Return the catalog version's dataset with this id, or None."""
     return _dataset(connection, catalog_version_id, datasets.c.id == dataset_id)
+
+
+def read_local_area_dataset(
+    connection: Connection, *, catalog_version_id: UUID
+) -> CatalogDataset | None:
+    """Return the catalog version's local-area dataset, or None when it has none.
+
+    It is the one default dataset every constituency and local-authority
+    region of the version uses. The Public API's catalog lists those regions
+    only when the .py release routes them to a dataset of their own, and
+    gives them that dataset, so a version with no such regions, with only
+    one of the two types, or with a dataset for each type has none: its
+    national reports calculate both area levels themselves. A report created
+    with ``data_source`` runs on this dataset, which may be the national
+    file: Stage 12 leaves the areas out of a UK-wide or nation run whenever
+    the release routes both types to one dataset
+    (``uk_area_breakdowns_omitted``).
+    """
+    region_type = cast(regions.c.region_type, String)
+    rows = connection.execute(
+        select(region_type.label("region_type"), datasets.c.id, datasets.c.name)
+        .distinct()
+        .join(
+            datasets,
+            (datasets.c.id == regions.c.default_dataset_id)
+            & (
+                datasets.c.tax_benefit_model_version_id
+                == regions.c.tax_benefit_model_version_id
+            ),
+        )
+        .where(
+            regions.c.tax_benefit_model_version_id == catalog_version_id,
+            region_type.in_(UK_AREA_REGION_TYPES),
+        )
+    ).all()
+    region_types = {row.region_type for row in rows}
+    found = {CatalogDataset(id=row.id, name=row.name) for row in rows}
+    if region_types != set(UK_AREA_REGION_TYPES) or len(found) != 1:
+        return None
+    return found.pop()
 
 
 def _dataset(
