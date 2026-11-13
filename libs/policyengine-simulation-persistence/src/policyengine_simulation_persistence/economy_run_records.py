@@ -301,7 +301,9 @@ def find_reusable_run(  # noqa: PLR0913  # each keyword is one part of the match
       planned;
     - that no report run has refused to reuse (an error message starting
       ``reused_simulation_``), so a submission after a refused reuse
-      calculates the simulation again; and
+      calculates the simulation again;
+    - that wasn't forced: a forced re-run's run is never named by another
+      report run (C1 · 24's answer 3); and
     - that is not ``excluded_run_id``, the other side's run.
 
     The coordinator may still refuse it, when the new report plans outputs
@@ -408,6 +410,7 @@ def _newest_reusable_run(
     conditions = [
         *simulation_conditions,
         simulation_runs.c.status == SimulationStatus.SUCCEEDED,
+        simulation_runs.c.forced.is_(False),
         simulation_runs.c.year == population.year,
         simulation_runs.c.tax_benefit_model_version_id
         == population.tax_benefit_model_version_id,
