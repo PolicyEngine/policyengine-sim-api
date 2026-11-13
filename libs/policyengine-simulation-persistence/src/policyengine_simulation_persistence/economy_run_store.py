@@ -49,6 +49,10 @@ from policyengine_simulation_persistence.economy_run_records import (
     record_simulation_run_call,
 )
 from policyengine_simulation_persistence.engine import bounded_transaction
+from policyengine_simulation_persistence.keyed_economy_records import (
+    find_or_create_economy_report,
+    find_or_create_economy_simulation,
+)
 from policyengine_simulation_persistence.household_job_records import (
     read_catalog_version_id,
 )
@@ -91,6 +95,12 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence.economy_run_records import (
         NewEconomyReport,
         NewEconomySimulation,
+    )
+    from policyengine_simulation_persistence.keyed_economy_records import (
+        FoundEconomyReport,
+        FoundEconomySimulation,
+        KeyedEconomyReport,
+        KeyedEconomySimulation,
     )
     from policyengine_simulation_persistence.policy_reform import PolicyReform
     from policyengine_simulation_persistence.shared_rows import (
@@ -480,6 +490,28 @@ class EconomyRunStore:
         rows were inserted.
         """
         self._create(lambda connection: insert_budget_window_report(connection, report))
+
+    def find_or_create_report(self, report: KeyedEconomyReport) -> FoundEconomyReport:
+        """Find the report by key, with its run, or create them.
+
+        See ``find_or_create_economy_report``; raise its errors, and
+        EconomyRecordOutcomeUnknownError when the commit fails after the
+        rows were inserted.
+        """
+        return self._create(
+            lambda connection: find_or_create_economy_report(connection, report)
+        )
+
+    def find_or_create_simulation(
+        self, simulation: KeyedEconomySimulation
+    ) -> FoundEconomySimulation:
+        """Find the simulation by key, with its run, or create them.
+
+        Raise as ``find_or_create_report`` does.
+        """
+        return self._create(
+            lambda connection: find_or_create_economy_simulation(connection, simulation)
+        )
 
     def create_report(self, report: NewEconomyReport) -> None:
         """Create the report, its new simulations and its runs.
