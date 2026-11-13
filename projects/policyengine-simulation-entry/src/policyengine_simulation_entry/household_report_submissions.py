@@ -68,9 +68,9 @@ from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionUnavailableError,
     EconomySubmissionUnprocessableError,
     UnprocessableReason,
+    call_refused,
     reference_refusal,
 )
-from policyengine_simulation_entry.economy_submissions import call_refused
 from policyengine_simulation_entry.household_contract_fields import (
     job_policy_fields,
     request_field_of,
@@ -150,6 +150,45 @@ class HouseholdReports(Protocol):
     ) -> bool:
         """Fail the report run, and its simulation runs, while unstarted."""
         ...
+
+
+class HouseholdReportSideRuns(Protocol):
+    """A report side's simulation and the simulation run its report run names."""
+
+    @property
+    def simulation_id(self) -> UUID:
+        """Return the side's simulation."""
+        ...
+
+    @property
+    def simulation_run_id(self) -> UUID:
+        """Return the side's simulation run."""
+        ...
+
+
+def household_report_created(  # noqa: PLR0913  # the report, its run and each side's
+    *,
+    report_id: UUID,
+    run_id: UUID,
+    status: ReportRunStatus,
+    year: int,
+    baseline: HouseholdReportSideRuns,
+    reform: HouseholdReportSideRuns | None,
+) -> HouseholdReportCreated:
+    """Return the 201 answer naming the report, its new run and each side's runs.
+
+    ``reform`` is None for a report of the baseline alone.
+    """
+    return HouseholdReportCreated(
+        report_id=report_id,
+        report_run_id=run_id,
+        status=status,
+        year=year,
+        baseline_simulation_id=baseline.simulation_id,
+        baseline_simulation_run_id=baseline.simulation_run_id,
+        reform_simulation_id=None if reform is None else reform.simulation_id,
+        reform_simulation_run_id=None if reform is None else reform.simulation_run_id,
+    )
 
 
 class HouseholdReportBuildError(Exception):
@@ -458,19 +497,13 @@ class HouseholdReportSubmissionService[Store: HouseholdReports = HouseholdReport
             simulation_run_ids=report.simulation_run_ids,
             observability_context=observability_context,
         )
-        return HouseholdReportCreated(
+        return household_report_created(
             report_id=report.id,
-            report_run_id=report.run_id,
+            run_id=report.run_id,
             status=status,
             year=report.year,
-            baseline_simulation_id=report.baseline.simulation_id,
-            baseline_simulation_run_id=report.baseline.simulation_run_id,
-            reform_simulation_id=(
-                None if report.reform is None else report.reform.simulation_id
-            ),
-            reform_simulation_run_id=(
-                None if report.reform is None else report.reform.simulation_run_id
-            ),
+            baseline=report.baseline,
+            reform=report.reform,
         )
 
     async def _default_worker(self, country: str) -> HouseholdWorker:

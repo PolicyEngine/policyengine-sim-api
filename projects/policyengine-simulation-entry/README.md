@@ -266,8 +266,9 @@ A re-run is refused before anything is written: 404 (`unknown_report`,
 `run_in_progress`, naming the run in `run_id`, while the record has a run
 pending or running (for a report, its budget-window run, or else its report
 run); 409 `rerun_not_supported` for a household simulation, which is re-run
-only through its report, a budget window whose newest window run lacks a
-year, or a record that names no region, dataset, year, simulation, household
+only through its report, a household report whose simulation names a
+dynamic, which a household calculation does not apply, a budget window whose
+newest window run lacks a year, or a record that names no region, dataset, year, simulation, household
 or country the service calculates (a household report names no region or
 dataset); and the create's 400 and 422 codes when the stored rows can't be
 calculated on the current catalog version, worded for the stored record (a

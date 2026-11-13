@@ -20,8 +20,10 @@ which:
    call.
 
 A household run is never reused, so a forced re-run creates the same runs.
-Whatever is missing or cannot be calculated is refused in steps 1 and 2,
-before anything is written, located at the stored report.
+A side naming a dynamic is refused (409 ``rerun_not_supported``), since a
+household calculation applies none. Whatever is missing or cannot be
+calculated is refused in steps 1 and 2, before anything is written, located
+at the stored report.
 """
 
 from __future__ import annotations
@@ -39,17 +41,16 @@ from policyengine_simulation_persistence import (
 from policyengine_simulation_entry.economy_submission_errors import (
     REQUEST_BODY,
     STORED_REPORT,
+    EconomyRerunConflictError,
     EconomySubmissionUnprocessableError,
     rerun_refusals,
-)
-from policyengine_simulation_entry.household_report_api_models import (
-    HouseholdReportCreated,
 )
 from policyengine_simulation_entry.household_report_submissions import (
     HouseholdReports,
     HouseholdReportSideInputs,
     HouseholdReportSubmissionService,
     household_report_calculation,
+    household_report_created,
 )
 from policyengine_simulation_entry.household_workers import (
     ManifestHouseholdWorkers,
@@ -77,6 +78,9 @@ if TYPE_CHECKING:
     )
     from policyengine_simulation_entry.entry_runtime import (
         SimulationDatabaseConnection,
+    )
+    from policyengine_simulation_entry.household_report_api_models import (
+        HouseholdReportCreated,
     )
     from policyengine_simulation_entry.household_workers import HouseholdWorker
 
@@ -133,12 +137,21 @@ class HouseholdReportRerunService(
     ) -> HouseholdReportCreated:
         """Create the stored report's new run on the current versions, and start it.
 
-        Raise EconomyRecordNotFoundError (404) for a report deleted after it
-        was read, EconomyRerunConflictError (409 ``run_in_progress``) while
-        it has a run pending or running, and otherwise the errors
+        Raise EconomyRerunConflictError (409) for a side naming a dynamic
+        (``rerun_not_supported``) or while the report has a run pending or
+        running (``run_in_progress``), EconomyRecordNotFoundError (404) for a
+        report deleted after it was read, and otherwise the errors
         ``submit_report`` raises, located at the stored report; a 503 for
         Modal's refusal names the new run as well as the report.
         """
+        if any(side.choice.dynamic_id is not None for side in stored.sides.values()):
+            raise EconomyRerunConflictError(
+                code="rerun_not_supported",
+                detail=(
+                    "The report's household simulation names a dynamic, which a "
+                    "household calculation does not apply, so it cannot be re-run."
+                ),
+            )
         worker = await self._default_worker(stored.country)
         inputs = await self._read_inputs(
             country=stored.country,
@@ -188,19 +201,13 @@ class HouseholdReportRerunService(
             observability_context=observability_context,
             rerun=True,
         )
-        return HouseholdReportCreated(
+        return household_report_created(
             report_id=rerun.report_id,
-            report_run_id=rerun.run_id,
+            run_id=rerun.run_id,
             status=status,
             year=rerun.year,
-            baseline_simulation_id=rerun.baseline.simulation_id,
-            baseline_simulation_run_id=rerun.baseline.simulation_run_id,
-            reform_simulation_id=(
-                None if rerun.reform is None else rerun.reform.simulation_id
-            ),
-            reform_simulation_run_id=(
-                None if rerun.reform is None else rerun.reform.simulation_run_id
-            ),
+            baseline=rerun.baseline,
+            reform=rerun.reform,
         )
 
 

@@ -75,6 +75,7 @@ from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionUnavailableError,
     RecordName,
     RefusalSource,
+    call_refused,
     read_refusal,
     reference_refusal,
 )
@@ -671,33 +672,6 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
             )
             return None
         return None if status is None else str(status)
-
-
-def call_refused(
-    record: RecordName, record_id: UUID, *, rerun_id: UUID | None = None
-) -> EconomySubmissionUnavailableError:
-    """Return the 503 naming a record whose new run's call Modal did not accept.
-
-    ``rerun_id`` names a stored record's new run, which was failed.
-    """
-    if rerun_id is not None:
-        return EconomySubmissionUnavailableError(
-            code="modal_call_refused",
-            detail=(
-                f"Modal did not accept the call of the {record}'s new run; "
-                "that run was failed."
-            ),
-            record_id=record_id,
-            run_id=rerun_id,
-        )
-    return EconomySubmissionUnavailableError(
-        code="modal_call_refused",
-        detail=(
-            f"Modal did not accept the {record}'s call; the {record} was created "
-            "and its run failed."
-        ),
-        record_id=record_id,
-    )
 
 
 def economy_request_for(

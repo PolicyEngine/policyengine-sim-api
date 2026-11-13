@@ -49,13 +49,13 @@ from policyengine_simulation_entry.budget_window_api_models import (
 from policyengine_simulation_entry.economy_calculation_inputs import (
     report_run_calculation,
 )
+from policyengine_simulation_entry.economy_submission_errors import call_refused
 from policyengine_simulation_entry.economy_submissions import (
     CALL_START_TIMEOUT_SECONDS,
     EconomyRuns,
     EconomySubmissionService,
     ServiceSettings,
     calculation_scope,
-    call_refused,
     economy_request_for,
     simulation_choice,
 )
