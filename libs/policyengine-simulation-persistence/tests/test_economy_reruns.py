@@ -79,7 +79,7 @@ from public_api_rows import (
     insert_policy,
     insert_region,
 )
-from sqlalchemy import bindparam, insert, text
+from sqlalchemy import bindparam, event, insert, text
 from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
@@ -1055,3 +1055,59 @@ def test_a_forced_rerun_calculates_both_sides() -> None:
             reform=created,
             forced=True,
         )
+
+
+def test_a_report_rerun_losing_to_a_run_created_after_its_lookup_joins_it(
+    committed_engine, committed_catalog
+) -> None:
+    """It joins that run and takes back the simulation runs it had inserted."""
+    economy = committed_catalog
+    failed = RunShape(status=SimulationStatus.FAILED)
+    with committed_engine.begin() as connection:
+        baseline = insert_simulation_run(connection, economy.population(), failed)
+        reform = insert_simulation_run(connection, economy.population(), failed)
+        report_id = insert_report_of(connection, economy, (baseline, reform))
+    stored = StoredReport(
+        report_id=report_id,
+        baseline=baseline,
+        reform=reform,
+        report_run_id=uuid4(),
+    )
+    rerun = _unforced_rerun_on_unchanged_versions(stored, economy)
+    competing_run_ids: list[UUID] = []
+
+    def create_a_competing_run_first(
+        _connection, _cursor, statement, _parameters, _context, _executemany
+    ) -> None:
+        if competing_run_ids or not statement.lstrip().startswith(
+            "INSERT INTO public.report_runs"
+        ):
+            return
+        with committed_engine.begin() as other:
+            competing_run_ids.append(
+                insert_report_run_of(
+                    other,
+                    report_id,
+                    (baseline, reform),
+                    ReportRunOutcome(status=ReportRunStatus.PENDING),
+                )
+            )
+
+    with committed_engine.begin() as connection:
+        act_as_the_service(connection)
+        event.listen(connection, "before_cursor_execute", create_a_competing_run_first)
+        try:
+            joined = insert_report_rerun(connection, rerun)
+        finally:
+            event.remove(
+                connection, "before_cursor_execute", create_a_competing_run_first
+            )
+        kept = connection.execute(
+            text(
+                "SELECT count(*) FROM public.simulation_runs WHERE id IN :ids"
+            ).bindparams(bindparam("ids", expanding=True)),
+            {"ids": list(rerun.new_simulation_run_ids)},
+        ).scalar_one()
+
+    assert (joined.id, joined.inserted) == (competing_run_ids[0], False)
+    assert kept == 0

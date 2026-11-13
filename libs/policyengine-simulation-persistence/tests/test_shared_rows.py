@@ -30,7 +30,6 @@ from policyengine_simulation_persistence import (
     RunVersions,
     SimulationStatus,
     SimulationType,
-    create_simulation_engine,
     definition_key,
     find_or_insert_report,
     find_or_insert_report_run,
@@ -41,8 +40,6 @@ from policyengine_simulation_persistence import (
 from sqlalchemy import event, insert, text, update
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from sqlalchemy import Connection, Engine
 
 pytestmark = pytest.mark.public_api_schema
@@ -276,49 +273,6 @@ def test_a_report_run_is_joined_on_its_versions_outside_budget_windows(
                     "year": 2026,
                 },
             )
-
-
-@pytest.fixture
-def committed_engine(public_api_database_url) -> Iterator[Engine]:
-    engine = create_simulation_engine(public_api_database_url)
-    try:
-        yield engine
-    finally:
-        engine.dispose()
-
-
-@pytest.fixture
-def committed_catalog(committed_engine) -> Iterator[EconomyCatalog]:
-    """Commit a catalog of a country no other test uses; delete its rows after."""
-    with committed_engine.begin() as connection:
-        economy = insert_economy_catalog(connection, country=f"zz{uuid4().hex[:8]}")
-    try:
-        yield economy
-    finally:
-        with committed_engine.begin() as connection:
-            _delete_catalog_rows(connection, economy)
-
-
-def _delete_catalog_rows(connection: Connection, economy: EconomyCatalog) -> None:
-    """Delete every row of the catalog and the rows naming it, as the superuser."""
-    parameters = {
-        "model_id": economy.catalog.model_id,
-        "version_id": economy.catalog.version_id,
-    }
-    for statement in (
-        "DELETE FROM public.report_runs WHERE report_id IN "
-        "(SELECT id FROM public.reports WHERE tax_benefit_model_id = :model_id)",
-        "DELETE FROM public.reports WHERE tax_benefit_model_id = :model_id",
-        "DELETE FROM public.simulation_runs "
-        "WHERE tax_benefit_model_version_id = :version_id",
-        "DELETE FROM public.simulations "
-        "WHERE tax_benefit_model_version_id = :version_id",
-        "DELETE FROM public.regions WHERE tax_benefit_model_version_id = :version_id",
-        "DELETE FROM public.datasets WHERE tax_benefit_model_version_id = :version_id",
-        "DELETE FROM public.tax_benefit_model_versions WHERE id = :version_id",
-        "DELETE FROM public.tax_benefit_models WHERE id = :model_id",
-    ):
-        connection.execute(text(statement), parameters)
 
 
 def _wait_for_a_statement_waiting_on_a_lock(engine: Engine) -> None:
