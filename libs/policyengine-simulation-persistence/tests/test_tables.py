@@ -230,9 +230,10 @@ def test_simulations_and_reports_are_unique_on_their_definition_key() -> None:
             "definition_key",
         )
     assert reports.c.dataset_independent_key.nullable is True
-    assert _indexed_columns(
-        reports, "ix_reports_key_version_dataset_independent_key"
-    ) == ("key_version", "dataset_independent_key")
+    # The app finds a report on another dataset by this key alone.
+    assert _indexed_columns(reports, "ix_reports_dataset_independent_key") == (
+        "dataset_independent_key",
+    )
 
 
 def test_a_definition_and_version_set_has_one_unfailed_unforced_run() -> None:
