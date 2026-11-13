@@ -157,9 +157,12 @@ report and run rows (C1 · 24). Three modules do it:
   key; the report's joinable run on the current versions, joined with the
   simulation runs it names; or else, inside a savepoint, each distinct
   simulation's joinable run (whatever report first calculated it), found
-  or inserted by `find_or_insert_side_runs`, and the report run naming
-  them, a competing report run joined with the savepoint rolled back.
-  `find_or_create_economy_simulation` does the same for one
+  or inserted, and the report run naming them, a competing report run
+  joined with the savepoint rolled back (`find_or_insert_report_run_on_sides`,
+  which the keyed re-runs share).
+  `find_or_create_household_report` (`keyed_household_records.py`) does
+  the same for a household report, its simulations keyed by household, and
+  `find_or_create_economy_simulation` for one
   simulation. The answers say what the request inserted, so only it starts
   a Modal call. `EconomyRunStore.find_or_create_report` and
   `find_or_create_simulation` run them in a transaction of their own.
@@ -235,17 +238,17 @@ re-run, never refused, whose year runs and simulation runs are marked
 `forced`.
 
 A household report's definition also names its household (`household_id`).
-`insert_household_report_rerun` creates its new report run (trigger
-`manual`) and a new run of each side's own household simulation (no dataset
-or region), recording the current catalog version and the report's year:
-household runs are never reused. A household report has no keys yet, so the
-report run and both simulation runs are marked `forced`, extra runs that
-nothing joins and the one-unfailed-run indexes leave out (C1 · 24's interim
-answer B). It takes the same lock and makes the same
-check for a run under way, and shares `insert_household_simulation_run` with
-`insert_household_report`. `HouseholdReportStore.create_report_rerun` runs it
-in a transaction of its own; the store's `read_inputs` reads the re-run's
-household and policies as it does a new report's.
+`insert_household_report_rerun` joins or creates its run as
+`insert_report_rerun` does (C1 · 24's answer 8): unforced, as a keyed
+report's re-run is, it takes the same lock and joins the report's run on
+the re-run's versions, or else each side joins its own household
+simulation's run on those versions (no dataset or region, the report's
+year) or inserts one, under a new report run (trigger `manual`). A forced
+one, as every re-run of a household report without keys is (interim answer
+B), takes no lock, is never refused, and marks its report run and a new run
+of each side `forced`. `HouseholdReportStore.create_report_rerun` runs it
+in a transaction of its own and returns the run; the store's `read_inputs`
+reads the re-run's household and policies as it does a new report's.
 
 `EconomyRunStore.read_report_rerun_inputs` reads a re-run's catalog rows by
 the stored region code and dataset name, and each side's values, with, given

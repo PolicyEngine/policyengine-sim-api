@@ -9,29 +9,29 @@ service runs now, as a new run, and keeps every earlier run. The service:
   version's rows with the same code and name can be found;
 - creates, in one transaction, the new run and each report side's run of
   its own simulation, all ``pending`` with no Modal call ID; an unforced
-  economy report re-run's side joins its simulation's run on the current
-  versions instead, when there is one. A report's new run has trigger
-  ``manual``. A budget window's new run is a ``budget_window_runs`` row with
-  a report run per year, each year on the simulations its report run in the
-  report's newest window run names. A household report's new run gives each
-  side a new run of its own household simulation, marked forced: household
-  runs are never reused or joined.
+  economy or household report re-run's side joins its simulation's run on
+  the current versions instead, when there is one. A report's new run has
+  trigger ``manual``. A budget window's new run is a ``budget_window_runs``
+  row with a report run per year, each year on the simulations its report
+  run in the report's newest window run names. A household report's new
+  run names runs of its own household simulations.
 
 The record itself is never changed: the service may not update ``reports``
 or ``simulations``, so a report keeps naming the simulations it was created
 with, and each new run records the catalog version, dataset and region it
-calculates on. A simulation's re-run, and an unforced economy report's,
-joins the record's run that hasn't failed and wasn't forced on the current
-versions, pending, running or succeeded, rather than create one (C1 · 24's
-answers 2 and 3; ``shared_rows``): the simulation's run on those versions,
-catalog version and year, or the report's run on those versions. An
-unforced report re-run (economy, budget window or household) takes a
-transaction-level advisory lock on the report's ID first, which makes
-concurrent re-runs of one report wait for each other, as a row lock on
-``reports`` would need ``UPDATE`` on it. An unforced budget window's
-re-run, and every household report's, joins nothing: it is refused while a
-run of the report is ``pending`` or ``running`` (a budget-window run or a
-report run). A simulation's re-run takes no lock.
+calculates on. A simulation's re-run, and an unforced economy or household
+report's, joins the record's run that hasn't failed and wasn't forced on
+the current versions, pending, running or succeeded, rather than create
+one (C1 · 24's answers 2, 3 and 8; ``shared_rows``): the simulation's run
+on those versions, catalog version and year, or the report's run on those
+versions. An unforced report re-run (economy, budget window or household)
+takes a transaction-level advisory lock on the report's ID first, which
+makes concurrent re-runs of one report wait for each other, as a row lock
+on ``reports`` would need ``UPDATE`` on it. An unforced budget window's
+re-run joins nothing: it is refused while a run of the report is
+``pending`` or ``running`` (a budget-window run or a report run); the
+service forces every window re-run, as windows have no keys yet. A
+simulation's re-run takes no lock.
 
 A forced re-run (C1 · 24's answer 3) is an extra run instead: its report
 run, or each year's report run of a budget window, and the simulation runs
@@ -62,10 +62,11 @@ from policyengine_simulation_persistence.economy_run_records import (
     simulation_run_row,
 )
 from policyengine_simulation_persistence.household_report_records import (
+    household_simulation_run_row,
     insert_household_simulation_run,
 )
 from policyengine_simulation_persistence.keyed_economy_records import (
-    find_or_insert_side_runs,
+    find_or_insert_report_run_on_sides,
 )
 from policyengine_simulation_persistence.rerun_definitions import (
     RecordKind,
@@ -79,7 +80,6 @@ from policyengine_simulation_persistence.rerun_definitions import (
 from policyengine_simulation_persistence.shared_rows import (
     FoundReportRun,
     find_joinable_report_run,
-    find_or_insert_report_run,
     find_or_insert_simulation_run,
 )
 from policyengine_simulation_persistence.tables import (
@@ -92,7 +92,7 @@ from policyengine_simulation_persistence.tables import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
     from uuid import UUID
 
     from sqlalchemy import Column, ColumnElement, Connection, Table
@@ -207,9 +207,11 @@ class HouseholdRerunSide:
 class NewHouseholdReportRerun:
     """A stored household report's new run, on the current catalog version.
 
-    Each side gets a new run of its own household simulation, in the
-    report's ``year``, marked forced like the report run; ``reform`` is None
-    for a report of the baseline alone.
+    Unforced (a keyed report's re-run), each side joins its own household
+    simulation's run in the report's ``year`` on the re-run's versions, or
+    inserts one with the ID it proposes. ``forced`` makes it an extra run,
+    on a new run of each side, all marked forced. ``reform`` is None for a
+    report of the baseline alone.
     """
 
     report_id: UUID
@@ -219,6 +221,15 @@ class NewHouseholdReportRerun:
     versions: RunVersions
     baseline: HouseholdRerunSide
     reform: HouseholdRerunSide | None
+    forced: bool = False
+
+    @property
+    def named_sides(self) -> dict[Side, HouseholdRerunSide]:
+        """Return each side the re-run calculates, by its name."""
+        sides: dict[Side, HouseholdRerunSide] = {"baseline": self.baseline}
+        if self.reform is not None:
+            sides["reform"] = self.reform
+        return sides
 
     @property
     def sides(self) -> tuple[HouseholdRerunSide, ...]:
@@ -227,7 +238,11 @@ class NewHouseholdReportRerun:
 
     @property
     def simulation_run_ids(self) -> tuple[UUID, ...]:
-        """Return the IDs of the simulation runs created for the re-run."""
+        """Return the IDs the re-run's sides propose for their simulation runs.
+
+        A forced re-run creates them all; an unforced one only those it
+        inserts.
+        """
         return tuple(side.simulation_run_id for side in self.sides)
 
 
@@ -267,11 +282,10 @@ def lock_reruns_of(connection: Connection, record_id: UUID) -> None:
     It is a transaction-level advisory lock keyed on the record's ID, which
     any role may take: a second re-run of the same report waits here until
     the first one's transaction ends, then sees its run, which an economy
-    report's re-run joins and a budget-window or household report's is
-    refused for. A simulation's re-run takes none, as the Public API's index
-    on runs lets one joinable run exist, and neither does a forced economy
-    or budget-window re-run, which nothing joins; a household report's
-    re-run takes it, forced or not.
+    or household report's re-run joins and a budget window's is refused
+    for. A simulation's re-run takes none, as the Public API's index on runs
+    lets one joinable run exist, and neither does a forced re-run, which
+    nothing joins.
     """
     connection.execute(
         select(
@@ -331,9 +345,45 @@ def insert_report_rerun(
         )
         if joined is not None:
             return joined
-    row: dict[str, Any] = {
-        "id": rerun.run_id,
-        "report_id": rerun.report_id,
+    row = _rerun_report_run_row(
+        run_id=rerun.run_id, report_id=rerun.report_id, versions=versions
+    )
+    sides: dict[Side, RerunSide] = {"baseline": rerun.baseline, "reform": rerun.reform}
+    with _record_checked(report_runs.c.report_id), references_checked():
+        if rerun.forced:
+            for side in sides.values():
+                insert_simulation_run(
+                    connection,
+                    run_id=side.simulation_run_id,
+                    simulation_id=side.simulation_id,
+                    population=rerun.population,
+                    versions=versions,
+                    forced=True,
+                )
+            return _insert_forced_report_run(connection, row, sides)
+        found, _ = find_or_insert_report_run_on_sides(
+            connection,
+            row,
+            {
+                name: simulation_run_row(
+                    run_id=side.simulation_run_id,
+                    simulation_id=side.simulation_id,
+                    population=rerun.population,
+                    versions=versions,
+                )
+                for name, side in sides.items()
+            },
+        )
+        return found
+
+
+def _rerun_report_run_row(
+    *, run_id: UUID, report_id: UUID, versions: RunVersions
+) -> dict[str, Any]:
+    """Return a re-run's report run as inserted, without its sides' runs."""
+    return {
+        "id": run_id,
+        "report_id": report_id,
         "budget_window_run_id": None,
         "year": None,
         "country_package_version": versions.country_package_version,
@@ -341,74 +391,34 @@ def insert_report_rerun(
         "status": ReportRunStatus.PENDING,
         "trigger": ReportRunTrigger.MANUAL,
         "modal_call_id": None,
-        "forced": rerun.forced,
     }
-    with _record_checked(report_runs.c.report_id), references_checked():
-        # A run another request created after the lookup above is joined,
-        # and the savepoint takes back this call's simulation runs with it.
-        savepoint = connection.begin_nested()
-        try:
-            baseline_run_id, reform_run_id = _side_runs(connection, rerun)
-            row["baseline_simulation_run_id"] = baseline_run_id
-            row["reform_simulation_run_id"] = reform_run_id
-            if rerun.forced:
-                connection.execute(insert(report_runs).values(row))
-                found = _created(rerun)
-            else:
-                found = find_or_insert_report_run(connection, row)
-        except BaseException:
-            savepoint.rollback()
-            raise
-        if found.inserted:
-            savepoint.commit()
-        else:
-            savepoint.rollback()
-        return found
 
 
-def _side_runs(connection: Connection, rerun: NewReportRerun) -> tuple[UUID, UUID]:
-    """Return the baseline's and the reform's run, joined or inserted for the re-run.
-
-    A forced re-run inserts a new run of each side's simulation, marked
-    forced. Otherwise each side joins its simulation's run on the re-run's
-    versions that hasn't failed and wasn't forced, or inserts one, one run
-    for one simulation on both sides (``find_or_insert_side_runs``).
-    """
-    if rerun.forced:
-        for side in (rerun.baseline, rerun.reform):
-            insert_simulation_run(
-                connection,
-                run_id=side.simulation_run_id,
-                simulation_id=side.simulation_id,
-                population=rerun.population,
-                versions=rerun.versions,
-                forced=True,
-            )
-        return rerun.baseline.simulation_run_id, rerun.reform.simulation_run_id
-    sides: dict[Side, RerunSide] = {"baseline": rerun.baseline, "reform": rerun.reform}
-    found = find_or_insert_side_runs(
-        connection,
-        {
-            name: simulation_run_row(
-                run_id=side.simulation_run_id,
-                simulation_id=side.simulation_id,
-                population=rerun.population,
-                versions=rerun.versions,
-            )
-            for name, side in sides.items()
-        },
+def _insert_forced_report_run(
+    connection: Connection,
+    row: dict[str, Any],
+    side_runs: Mapping[Side, RerunSide | HouseholdRerunSide],
+) -> FoundReportRun:
+    """Insert a forced re-run's report run, naming its sides' new runs."""
+    reform = side_runs.get("reform")
+    baseline_run_id = side_runs["baseline"].simulation_run_id
+    reform_run_id = None if reform is None else reform.simulation_run_id
+    connection.execute(
+        insert(report_runs).values(
+            {
+                **row,
+                "baseline_simulation_run_id": baseline_run_id,
+                "reform_simulation_run_id": reform_run_id,
+                "forced": True,
+            }
+        )
     )
-    return found["baseline"].id, found["reform"].id
-
-
-def _created(rerun: NewReportRerun) -> FoundReportRun:
-    """Return the report run a re-run created, as a lookup would."""
     return FoundReportRun(
-        id=rerun.run_id,
+        id=row["id"],
         inserted=True,
         status=ReportRunStatus.PENDING,
-        baseline_simulation_run_id=rerun.baseline.simulation_run_id,
-        reform_simulation_run_id=rerun.reform.simulation_run_id,
+        baseline_simulation_run_id=baseline_run_id,
+        reform_simulation_run_id=reform_run_id,
     )
 
 
@@ -472,48 +482,68 @@ def insert_window_rerun(connection: Connection, rerun: NewWindowRerun) -> None:
 
 def insert_household_report_rerun(
     connection: Connection, rerun: NewHouseholdReportRerun
-) -> None:
-    """Create the household report's new run and a new run of each side, pending.
+) -> FoundReportRun:
+    """Join the household report's run on the re-run's versions, or create it.
 
     The report run has trigger ``manual`` and names no budget-window run;
     each side's run is of the report's own household simulation, with no
-    Modal call: the service then starts one household function call for the
-    report run. A household report has no keys yet, so its runs may have
-    been calculated for it alone: each is an extra run, marked forced, that
-    nothing joins and the one-unfailed-run indexes leave out (C1 · 24's
-    interim answer B). Raise as ``insert_report_rerun`` does.
+    Modal call: the service then starts one household function call for a
+    report run it created. Unforced (a keyed report's re-run), take the
+    report's re-run lock and join the report's run on the re-run's versions
+    that hasn't failed and wasn't forced, when there is one; otherwise each
+    side joins its simulation's run on those versions, or inserts one, under
+    a new report run (``find_or_insert_report_run_on_sides``), as an
+    economy report's re-run does (C1 · 24's answer 8). A forced re-run, as
+    every re-run of a household report without keys is (interim answer B),
+    takes no lock and is never refused: its report run and a new run of
+    each side are marked forced, which nothing joins and the
+    one-unfailed-run indexes leave out. Return the run and whether this call
+    created it, which only then needs its call. Raise as
+    ``insert_report_rerun`` does.
     """
-    lock_reruns_of(connection, rerun.report_id)
-    _refuse_while_report_runs(connection, rerun.report_id)
-    with _record_checked(report_runs.c.report_id), references_checked():
-        for side in rerun.sides:
-            insert_household_simulation_run(
-                connection,
-                run_id=side.simulation_run_id,
-                simulation_id=side.simulation_id,
-                year=rerun.year,
-                tax_benefit_model_version_id=rerun.tax_benefit_model_version_id,
-                versions=rerun.versions,
-                forced=True,
-            )
-        connection.execute(
-            insert(report_runs).values(
-                id=rerun.run_id,
-                report_id=rerun.report_id,
-                baseline_simulation_run_id=rerun.baseline.simulation_run_id,
-                reform_simulation_run_id=(
-                    None if rerun.reform is None else rerun.reform.simulation_run_id
-                ),
-                budget_window_run_id=None,
-                year=None,
-                country_package_version=rerun.versions.country_package_version,
-                policyengine_version=rerun.versions.policyengine_version,
-                status=ReportRunStatus.PENDING,
-                trigger=ReportRunTrigger.MANUAL,
-                modal_call_id=None,
-                forced=True,
-            )
+    versions = rerun.versions
+    row = _rerun_report_run_row(
+        run_id=rerun.run_id, report_id=rerun.report_id, versions=versions
+    )
+    sides = rerun.named_sides
+    if not rerun.forced:
+        lock_reruns_of(connection, rerun.report_id)
+        joined = find_joinable_report_run(
+            connection,
+            report_id=rerun.report_id,
+            country_package_version=versions.country_package_version,
+            policyengine_version=versions.policyengine_version,
         )
+        if joined is not None:
+            return joined
+    with _record_checked(report_runs.c.report_id), references_checked():
+        if rerun.forced:
+            for side in sides.values():
+                insert_household_simulation_run(
+                    connection,
+                    run_id=side.simulation_run_id,
+                    simulation_id=side.simulation_id,
+                    year=rerun.year,
+                    tax_benefit_model_version_id=rerun.tax_benefit_model_version_id,
+                    versions=versions,
+                    forced=True,
+                )
+            return _insert_forced_report_run(connection, row, sides)
+        found, _ = find_or_insert_report_run_on_sides(
+            connection,
+            row,
+            {
+                name: household_simulation_run_row(
+                    run_id=side.simulation_run_id,
+                    simulation_id=side.simulation_id,
+                    year=rerun.year,
+                    tax_benefit_model_version_id=rerun.tax_benefit_model_version_id,
+                    versions=versions,
+                )
+                for name, side in sides.items()
+            },
+        )
+        return found
 
 
 def _refuse_while_window_runs(connection: Connection, report_id: UUID) -> None:

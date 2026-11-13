@@ -28,7 +28,7 @@ for the rows it inserts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 from policyengine_simulation_persistence.definition_keys import KEY_VERSION
@@ -178,34 +178,20 @@ def find_or_create_economy_report(
         )
         if joined is not None:
             return _found(report.id, report.inserted, joined, simulation_ids, set())
-        # A report run another request inserts after the lookup is joined,
-        # and the savepoint takes back this request's simulation runs.
-        savepoint = connection.begin_nested()
-        try:
-            proposed = {"baseline": request.baseline, "reform": request.reform}
-            runs = find_or_insert_side_runs(
-                connection,
-                {
-                    side: simulation_run_row(
-                        run_id=proposed[side].simulation_run_id,
-                        simulation_id=simulation_ids[side],
-                        population=request.population,
-                        versions=request.versions,
-                    )
-                    for side in _SIDES
-                },
-            )
-            side_runs: dict[Side, UUID] = {side: runs[side].id for side in _SIDES}
-            run = find_or_insert_report_run(
-                connection, _report_run_row(request, report.id, side_runs)
-            )
-        except BaseException:
-            savepoint.rollback()
-            raise
-        if not run.inserted:
-            savepoint.rollback()
-            return _found(report.id, report.inserted, run, simulation_ids, set())
-        savepoint.commit()
+        proposed = {"baseline": request.baseline, "reform": request.reform}
+        run, runs = find_or_insert_report_run_on_sides(
+            connection,
+            _report_run_row(request, report.id),
+            {
+                side: simulation_run_row(
+                    run_id=proposed[side].simulation_run_id,
+                    simulation_id=simulation_ids[side],
+                    population=request.population,
+                    versions=request.versions,
+                )
+                for side in _SIDES
+            },
+        )
         inserted = {found.id for found in runs.values() if found.inserted}
         return _found(report.id, report.inserted, run, simulation_ids, inserted)
 
@@ -263,6 +249,45 @@ def _find_or_insert_simulations(
         for side in sides:
             simulation_ids[side] = found.id
     return simulation_ids
+
+
+def find_or_insert_report_run_on_sides(
+    connection: Connection,
+    report_run_row: Mapping[str, Any],
+    side_rows: Mapping[Side, Mapping[str, Any]],
+) -> tuple[FoundReportRun, dict[Side, FoundSimulationRun]]:
+    """Find or insert each side's run, then the report run naming them.
+
+    ``report_run_row`` is the report run as inserted, without its sides'
+    runs, and ``side_rows`` each side's run (``find_or_insert_side_runs``).
+    It runs in a savepoint: a report run another request inserted after the
+    caller looked for one is joined instead, and the savepoint takes back
+    this call's simulation runs. Return the report run, and each side's run
+    with whether this call inserted it, which holds only when this call
+    inserted the report run (otherwise nothing it inserted is kept).
+    """
+    savepoint = connection.begin_nested()
+    try:
+        runs = find_or_insert_side_runs(connection, side_rows)
+        reform = runs.get("reform")
+        run = find_or_insert_report_run(
+            connection,
+            {
+                **report_run_row,
+                "baseline_simulation_run_id": runs["baseline"].id,
+                "reform_simulation_run_id": None if reform is None else reform.id,
+            },
+        )
+    except BaseException:
+        savepoint.rollback()
+        raise
+    if not run.inserted:
+        savepoint.rollback()
+        return run, {
+            side: replace(found, inserted=False) for side, found in runs.items()
+        }
+    savepoint.commit()
+    return run, runs
 
 
 def find_or_insert_side_runs(
@@ -341,17 +366,11 @@ def _report_row(
     }
 
 
-def _report_run_row(
-    request: KeyedEconomyReport,
-    report_id: UUID,
-    side_runs: dict[Side, UUID],
-) -> dict[str, Any]:
-    """Return the report's first run on these versions, naming its sides' runs."""
+def _report_run_row(request: KeyedEconomyReport, report_id: UUID) -> dict[str, Any]:
+    """Return the report's first run on these versions, without its sides' runs."""
     return {
         "id": request.run_id,
         "report_id": report_id,
-        "baseline_simulation_run_id": side_runs["baseline"],
-        "reform_simulation_run_id": side_runs["reform"],
         "budget_window_run_id": None,
         "year": None,
         "country_package_version": request.versions.country_package_version,

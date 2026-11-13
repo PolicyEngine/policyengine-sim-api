@@ -14,9 +14,10 @@ transaction:
    joins it, with the simulation runs it names, and inserts nothing more;
 4. otherwise, inside a savepoint, each distinct simulation's run on those
    versions, catalog version and year that hasn't failed and wasn't forced,
-   found or inserted (``find_or_insert_side_runs``), then the report run
-   naming them. A report run another request inserted after step 3 is
-   joined, and the savepoint takes back this request's simulation runs.
+   found or inserted, then the report run naming them
+   (``find_or_insert_report_run_on_sides``). A report run another request
+   inserted after step 3 is joined, and the savepoint takes back this
+   request's simulation runs.
 
 A household simulation run may be another report run's, pending, running
 or succeeded: the household function waits for a run another call holds
@@ -42,13 +43,12 @@ from policyengine_simulation_persistence.keyed_economy_records import (
     FoundSide,
     ProposedSide,
     Side,
-    find_or_insert_side_runs,
+    find_or_insert_report_run_on_sides,
 )
 from policyengine_simulation_persistence.shared_rows import (
     FoundReportRun,
     find_joinable_report_run,
     find_or_insert_report,
-    find_or_insert_report_run,
     find_or_insert_simulation,
 )
 from policyengine_simulation_persistence.tables import (
@@ -140,38 +140,20 @@ def find_or_create_household_report(
         )
         if joined is not None:
             return _found(report.id, report.inserted, joined, simulation_ids, set())
-        # A report run another request inserts after the lookup is joined,
-        # and the savepoint takes back this request's simulation runs.
-        savepoint = connection.begin_nested()
-        try:
-            runs = find_or_insert_side_runs(
-                connection,
-                {
-                    side: household_simulation_run_row(
-                        run_id=proposed.simulation_run_id,
-                        simulation_id=simulation_ids[side],
-                        year=request.definition.year,
-                        tax_benefit_model_version_id=(
-                            request.tax_benefit_model_version_id
-                        ),
-                        versions=versions,
-                    )
-                    for side, proposed in request.proposed_sides.items()
-                },
-            )
-            run = find_or_insert_report_run(
-                connection,
-                _report_run_row(
-                    request, report.id, {side: found.id for side, found in runs.items()}
-                ),
-            )
-        except BaseException:
-            savepoint.rollback()
-            raise
-        if not run.inserted:
-            savepoint.rollback()
-            return _found(report.id, report.inserted, run, simulation_ids, set())
-        savepoint.commit()
+        run, runs = find_or_insert_report_run_on_sides(
+            connection,
+            _report_run_row(request, report.id),
+            {
+                side: household_simulation_run_row(
+                    run_id=proposed.simulation_run_id,
+                    simulation_id=simulation_ids[side],
+                    year=request.definition.year,
+                    tax_benefit_model_version_id=request.tax_benefit_model_version_id,
+                    versions=versions,
+                )
+                for side, proposed in request.proposed_sides.items()
+            },
+        )
         inserted = {found.id for found in runs.values() if found.inserted}
         return _found(report.id, report.inserted, run, simulation_ids, inserted)
 
@@ -247,17 +229,11 @@ def _report_row(
     }
 
 
-def _report_run_row(
-    request: KeyedHouseholdReport,
-    report_id: UUID,
-    side_runs: dict[Side, UUID],
-) -> dict[str, Any]:
-    """Return the report's first run on these versions, naming its sides' runs."""
+def _report_run_row(request: KeyedHouseholdReport, report_id: UUID) -> dict[str, Any]:
+    """Return the report's first run on these versions, without its sides' runs."""
     return {
         "id": request.run_id,
         "report_id": report_id,
-        "baseline_simulation_run_id": side_runs["baseline"],
-        "reform_simulation_run_id": side_runs.get("reform"),
         "budget_window_run_id": None,
         "year": None,
         "country_package_version": request.versions.country_package_version,

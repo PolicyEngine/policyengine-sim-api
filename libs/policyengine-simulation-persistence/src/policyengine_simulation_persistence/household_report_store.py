@@ -73,6 +73,7 @@ if TYPE_CHECKING:
         KeyedHouseholdReport,
     )
     from policyengine_simulation_persistence.policy_reform import PolicyReform
+    from policyengine_simulation_persistence.shared_rows import FoundReportRun
     from policyengine_simulation_persistence.tables import ReportRunStatus
 
 type TransactionFactory = Callable[[], AbstractContextManager[Connection]]
@@ -205,13 +206,13 @@ class HouseholdReportStore:
         """
         self._create(lambda connection: insert_household_report(connection, report))
 
-    def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> None:
-        """Create a stored report's new run and each side's new simulation run.
+    def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> FoundReportRun:
+        """Join a stored report's run on the re-run's versions, or create it.
 
-        Raise ``insert_household_report_rerun``'s errors, and
+        See ``insert_household_report_rerun``; raise its errors, and
         EconomyRecordOutcomeUnknownError as ``create_report`` does.
         """
-        self._create(
+        return self._create(
             lambda connection: insert_household_report_rerun(connection, rerun)
         )
 

@@ -452,7 +452,7 @@ def test_a_keyed_household_reports_rerun_joins_its_run_on_the_versions(
             _count(connection, name) for name in ("simulation_runs", "report_runs")
         ]
 
-    assert joined == found.run
+    assert joined == replace(found.run, inserted=False)
     assert counts_after == counts
 
 
