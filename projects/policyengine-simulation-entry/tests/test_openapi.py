@@ -537,8 +537,11 @@ def test_a_reports_label_and_description_are_optional_and_never_stored():
     """Answer 6: each user's saved report holds them, in the Public API."""
     schemas = create_app().openapi()["components"]["schemas"]
 
-    # A budget window's come with its keys (answer 8).
-    for name in ("EconomyReportRequest", "HouseholdReportRequest"):
+    for name in (
+        "EconomyReportRequest",
+        "BudgetWindowReportRequest",
+        "HouseholdReportRequest",
+    ):
         request = schemas[name]
         assert {"label", "description"} <= set(request["properties"]), name
         assert "label" not in request.get("required", []), name
