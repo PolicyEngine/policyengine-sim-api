@@ -86,8 +86,8 @@ def _installed_uk_bundle() -> ResolvedStage12Bundle:
     """Return an installed bundle holding the national and local-area datasets."""
     national = _dataset(NATIONAL_DATASET)
     region_datasets = {
+        # As .py 6.17.1's bundle: nations have no region dataset of their own.
         "national": NATIONAL_DATASET,
-        "country": NATIONAL_DATASET,
         "constituency": LOCAL_AREA_DATASET,
         "local_authority": LOCAL_AREA_DATASET,
     }
@@ -394,7 +394,7 @@ def _uk_report(region: str, identity: str) -> ReportExecutionInput:
 
 
 @pytest.mark.parametrize("region", ["uk", "country/wales"])
-def test_a_uk_wide_or_nation_report_on_the_local_area_dataset_calculates_areas(
+def test_a_uk_wide_or_nation_report_on_the_local_area_dataset_is_recognised(
     monkeypatch, region: str
 ) -> None:
     _route_uk_area_regions(monkeypatch)
