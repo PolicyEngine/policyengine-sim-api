@@ -163,7 +163,7 @@ version, dataset and region it calculates on.
 - `find_reusable_run_of` searches one simulation's runs, by its ID, under
   `find_reusable_run`'s conditions on a run (versions, the run's own catalog
   version, dataset, region and year, the output file, a succeeded report run
-  with the same options, no refused reuse); it doesn't compare the
+  with the same options, no refused reuse, not forced); it doesn't compare the
   simulation row, which keeps the catalog rows it was created on.
 - `insert_report_rerun` joins the report's run on the re-run's versions
   that hasn't failed and wasn't forced (pending, running or succeeded),
@@ -185,9 +185,11 @@ A budget window's definition also names its newest budget-window run's
 years (`WindowYearDefinition`): each year's sides are the simulations of the
 runs that year's report run names. `insert_window_rerun` creates the
 window's new budget-window run (trigger `manual`, `recalculate` set), a
-report run per year and each year's new runs of its own simulations. Every
-report re-run is refused while a budget-window run or a report run of the
-report is `pending` or `running`.
+report run per year and each year's new runs of its own simulations. An
+unforced window re-run is refused while a budget-window run or a report run
+of the report is `pending` or `running`; one that recalculates is a forced
+re-run, never refused, whose year runs and simulation runs are marked
+`forced`.
 
 A household report's definition also names its household (`household_id`).
 `insert_household_report_rerun` creates its new report run (trigger

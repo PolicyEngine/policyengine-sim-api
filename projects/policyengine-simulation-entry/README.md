@@ -129,7 +129,8 @@ one, when it is the newest run of the same policy, dynamic, catalog
 version, dataset, region and year on the same country package and .py
 versions, its output file is in the output bucket
 (`V2_SIMULATION_OUTPUT_BUCKET`), a succeeded report run with the same
-options used it, and no report run has refused to reuse it; the two sides
+options used it, no report run has refused to reuse it, and it wasn't
+a forced re-run's (nothing reuses those); the two sides
 never name the same run. The service then starts the run's Modal call by
 name: the report run's coordinator, given the report and its run IDs and no
 Stage 12 evaluation record, or a standalone run's simulation function,
@@ -240,8 +241,8 @@ both again, as an extra run: the new report run and both simulation runs
 are marked `forced`, so nothing joins them, and a forced re-run is never
 refused while a run is under way. The new report run's trigger is `manual`.
 Without `force`, a re-run while the report has a run on the default
-worker's versions that hasn't failed, pending, running or succeeded, joins
-that run instead and answers it as it is, with both sides reused and no
+worker's versions that hasn't failed and wasn't forced, pending, running or
+succeeded, joins that run instead and answers it as it is, with both sides reused and no
 Modal call; a run still under way on older versions is no run to join. The service reads the
 report's region code and dataset name, finds the rows with that code and
 name in the catalog version of the default worker's .py version, and reads
@@ -288,19 +289,25 @@ household report's own codes: 400 `unknown_household` and
 `no_household_function`, and 422 `household_not_calculable`, located at the
 report's `household_id` or a side's `policy_id`. Without household reports
 configured, a household report the service could re-run answers 503
-`not_configured`. An unforced report re-run (economy, budget-window or
-household) looks for the run to join, or for a run under way, and inserts
-under a transaction-level advisory lock on the report's ID, so two such
-re-runs of one report end on one run. A simulation's re-run takes no lock:
-the Public API's index on runs lets only one run that hasn't failed exist on
-a version set, so concurrent re-runs end on it. A forced re-run takes none
-either, as nothing joins it. A household report's re-run, forced or not, is
-still refused with 409 `run_in_progress` while any run of the report is
-pending or running. Until a report's sides find their simulation runs by
-version set (C1 · 24's answers 4 and 5), an unforced economy report re-run
-whose side has a run on the current versions that hasn't failed but isn't
-reused (one another report run is calculating, or one used with other
-options) is refused by that index and answered 500. A re-run's answer names
+`not_configured`. An unforced economy or budget-window report re-run, and
+every household report re-run, looks for the run to join, or for a run
+under way, and inserts under a transaction-level advisory lock on the
+report's ID: a second economy report re-run waits, then joins the first's
+run; a second budget-window or household one waits, then is refused with
+409 naming it. A simulation's re-run takes no lock: the Public API's index
+on runs lets only one run that hasn't failed exist on a version set, so
+concurrent re-runs end on it. A forced economy or budget-window re-run
+takes none either, as nothing joins it. A household report's re-run ignores
+`force`, so it takes the lock and is refused with 409 `run_in_progress`
+while any run of the report is pending or running. Until a report's sides
+find their simulation runs by version set (C1 · 24's answers 4 and 5), an
+unforced economy report re-run whose side has a run on the current
+versions that hasn't failed but isn't reused is refused by that index:
+for example a succeeded run whose report run failed for the other side,
+one a coordinator refused to reuse, one used with other options, or one
+another report run is calculating. The service answers that database error
+503 `database_unavailable`, though asking again fails the same way while
+that run is there. A re-run's answer names
 the run it ended on; `GET /reports/{report_id}` and
 `GET /simulations/{simulation_id}` read the newest run, which may be a later
 one, such as a forced re-run's. A report or simulation deleted after the

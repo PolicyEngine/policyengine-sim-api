@@ -89,9 +89,10 @@ EconomyUnprocessableCode = Literal[
 # Why a stored record is not re-run now (409).
 EconomyConflictCode = Literal[
     # A budget-window report has a window run or year run pending or
-    # running, or a household report a run, and the re-run isn't forced;
-    # ``run_id`` names the budget-window run, or else the report run. An
-    # economy report's or a simulation's re-run joins its run instead.
+    # running and the re-run isn't forced, or a household report has a run
+    # pending or running, forced or not; ``run_id`` names the budget-window
+    # run, or else the report run. An economy report's or a simulation's
+    # re-run joins its run instead.
     "run_in_progress",
     # The service does not re-run this kind of record, or the record lacks a
     # row it calculates on.
@@ -200,10 +201,12 @@ class ReportRerunRequest(_Request):
     """A stored report's re-run on the default worker's versions.
 
     Without ``force``, an economy report's re-run joins the report's run on
-    those versions that hasn't failed, pending, running or succeeded, and
-    otherwise a side reuses a run of its own simulation that succeeded on
-    them, as a new report's side does. With it, both simulations are
-    calculated again, as an extra run marked forced that nothing joins.
+    those versions that hasn't failed and wasn't forced, pending, running or
+    succeeded, and otherwise a side reuses a run of its own simulation that
+    succeeded on them, as a new report's side does. With it, an economy or
+    budget-window report's simulations are calculated again, as an extra run
+    marked forced that nothing joins; a household report's re-run ignores
+    it.
     """
 
     force: StrictBool = False

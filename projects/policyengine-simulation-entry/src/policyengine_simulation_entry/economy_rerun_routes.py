@@ -1,11 +1,13 @@
 """The re-run routes: calculate a stored report or simulation again as a new run.
 
 - ``POST /reports/{report_id}/runs`` (permission ``simulation:submit``)
-  creates the stored report's new run on the v2 version manifest's default
-  worker and starts its coordinator, answering 201 with the report's ID, the
-  new run's ID and status, and each side's simulation and simulation run.
-  ``{"force": true}`` calculates both simulations again; otherwise a side
-  reuses a run of its own simulation that succeeded on the same versions.
+  joins the stored report's run on the v2 version manifest's default
+  worker's versions, or creates its new run and starts its coordinator,
+  answering 201 with the report's ID, the run's ID and status, and each
+  side's simulation and simulation run. For an economy or budget-window
+  report, ``{"force": true}`` calculates both simulations again, as an
+  extra run marked forced that nothing joins; otherwise a side reuses a run
+  of its own simulation that succeeded on the same versions.
   A budget-window report's new run is a budget-window run with a report run
   per year, up to five of them started at once as a new window's are; it
   answers as the budget-window create does, naming the window run and every
@@ -19,12 +21,14 @@
   and its status.
 
 Every earlier run is kept. A re-run answers 404 for a record that does not
-exist, and 409 while a budget window's run of the report is pending or
-running, unless the re-run is forced (``run_in_progress``, naming it in
-``run_id``), or for a record this service does not re-run
-(``rerun_not_supported``); then nothing is written. Without ``force``, a
-report's re-run joins the report's run on the current versions that hasn't
-failed, pending, running or succeeded, and answers it with no new call. The other
+exist, and 409 (``run_in_progress``, naming the run in ``run_id``) while a
+budget-window report has a window run or year run pending or running and
+the re-run isn't forced, or while a household report has a run pending or
+running (a household re-run ignores ``force``), or for a record this
+service does not re-run (``rerun_not_supported``); then nothing is
+written. Without ``force``, an economy report's re-run joins the report's
+run on the current versions that hasn't failed and wasn't forced, pending,
+running or succeeded, and answers it with no new call. The other
 answers are the creates': 400 or 422 when the stored record cannot be
 calculated on the current catalog version, 503 with ``Retry-After`` before
 any write or when Modal refused the new run's call (then the run was failed,
@@ -118,10 +122,10 @@ class EconomyService(EconomySubmissions, EconomyReruns, Protocol):
 _CONFLICTS: dict[RecordName, str] = {
     "report": (
         "a budget-window report has a window run or year run pending or "
-        "running, or a household report a run, and the re-run isn't forced "
-        "(run_in_progress; run_id names the report's budget-window run, or "
-        "else its report run), or the service does not re-run it "
-        "(rerun_not_supported)"
+        "running and the re-run isn't forced, or a household report has a "
+        "run pending or running, forced or not (run_in_progress; run_id "
+        "names the report's budget-window run, or else its report run), or "
+        "the service does not re-run it (rerun_not_supported)"
     ),
     "simulation": "the service does not re-run it (rerun_not_supported)",
 }
@@ -284,11 +288,13 @@ def add_economy_rerun_routes(
             "Create the stored report's new run on the v2 version manifest's "
             "default worker, and start it; every earlier run is kept. Without "
             "force, an economy report's re-run joins the report's run on those "
-            "versions that hasn't failed, pending, running or succeeded, and "
-            "answers it with no new call; otherwise a side reuses a run of its "
-            "own simulation that succeeded on the same versions. With force, "
-            "both simulations are calculated again, as an extra run marked "
-            "forced that nothing joins. A budget-window report's new run is a "
+            "versions that hasn't failed and wasn't forced, pending, running "
+            "or succeeded, and answers it with no new call; otherwise a side "
+            "reuses a run of its own simulation that succeeded on the same "
+            "versions. With force, an economy or budget-window report's "
+            "simulations are calculated again, as an extra run marked forced "
+            "that nothing joins; a household report's re-run ignores force. "
+            "A budget-window report's new run is a "
             "budget-window run with a report run per year, up to five of them "
             "started at once, each year on its own year's simulations. A "
             "household report's new run calculates its stored household in "

@@ -93,7 +93,7 @@ report_id="$(jq -r '.report_id // empty' "${submission}")"
 found_run_id="$(jq -r '.report_run_id // empty' "${submission}")"
 [[ "${report_id}" =~ ${uuid_pattern} ]] || fail "the submission named no report"
 [[ "${found_run_id}" =~ ${uuid_pattern} ]] || fail "the submission named no report run"
-printf 'Found or created report %s, run %s (%s)\n' \
+printf 'Report request answered report %s, run %s (%s)\n' \
   "${report_id}" "${found_run_id}" "$(jq -r '.status' "${submission}")"
 
 rerun_url="${base_url}/reports/${report_id}/runs"

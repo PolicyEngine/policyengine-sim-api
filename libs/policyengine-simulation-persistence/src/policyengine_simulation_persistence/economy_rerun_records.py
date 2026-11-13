@@ -510,10 +510,13 @@ def lock_reruns_of(connection: Connection, record_id: UUID) -> None:
     """Wait for, then hold until the transaction ends, the record's re-run lock.
 
     It is a transaction-level advisory lock keyed on the record's ID, which
-    any role may take: a second unforced re-run of the same report waits
-    here until the first one's transaction ends, then sees its run. A
-    simulation's re-run and a forced one take none: the Public API's index
-    on runs lets one joinable run exist, and nothing joins a forced run.
+    any role may take: a second re-run of the same report waits here until
+    the first one's transaction ends, then sees its run, which an economy
+    report's re-run joins and a budget-window or household report's is
+    refused for. A simulation's re-run takes none, as the Public API's index
+    on runs lets one joinable run exist, and neither does a forced economy
+    or budget-window re-run, which nothing joins; a household report's
+    re-run takes it, forced or not.
     """
     connection.execute(
         select(
@@ -555,8 +558,9 @@ def insert_report_rerun(
     simulation has another run on these versions that hasn't failed (one
     another report run is calculating, or one ``find_reusable_run_of``
     didn't offer), the Public API's index refuses it and the database error
-    propagates; finding a side's run by version set waits for C1 · 24's
-    answers 4 and 5.
+    propagates, which the service answers 503 ``database_unavailable``;
+    finding a side's run by version set waits for C1 · 24's answers 4 and
+    5.
 
     Raise RerunRecordDeletedError when the database refuses the new run's
     key to the report, which no longer exists, and

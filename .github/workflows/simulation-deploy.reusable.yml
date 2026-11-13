@@ -1255,9 +1255,10 @@ jobs:
 
   staging_economy_check:
     name: Create a staging economy report through the candidate
-    # Every staging deployment creates a small economy report, current law
-    # against current law for Wales in 2026, through the candidate's
-    # POST /reports, and requires its run to succeed. The routes use only
+    # Every staging deployment sends a small economy report request, current
+    # law against current law for Wales in 2026, through the candidate's
+    # POST /reports, forces a new run of the report, and requires that run
+    # to succeed. The routes use only
     # the v2 manifest's default worker, so the check runs after the default
     # has moved to the release's worker (or, in a deployment without Stage
     # 12, with the default as it is). It calls the tagged candidate URL,
@@ -1283,7 +1284,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Create the staging economy report and require its run to succeed
+      - name: Force a run of the staging economy report and require it to succeed
         env:
           SIMULATION_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
           SIMULATION_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}

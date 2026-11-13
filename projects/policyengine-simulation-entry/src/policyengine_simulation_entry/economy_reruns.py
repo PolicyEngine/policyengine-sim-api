@@ -21,8 +21,8 @@ default worker, as a new run, and keeps every earlier run. The service:
    with trigger ``manual``) and each report side's new simulation run of
    its own simulation, all pending with no Modal call ID. A forced re-run
    always creates its runs, marked forced, an extra run that nothing joins.
-   A budget window's re-run is refused while a window run of the report is
-   pending or running (409 ``run_in_progress``);
+   An unforced budget window's re-run is refused while a window run or year
+   run of the report is pending or running (409 ``run_in_progress``);
 4. starts and records the call of a run it created as a new record's: the
    report run's coordinator, or the simulation function, by run ID (C1 · 8's
    coordination), failing the new runs when Modal refuses the call. A
