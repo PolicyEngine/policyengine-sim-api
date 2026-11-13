@@ -25,9 +25,11 @@ V2_APPLICATION_PREFIX = "policyengine-simulation-v2-py"
 V1_APPLICATION_PREFIX = "policyengine-simulation-py"
 _MAX_MODAL_APPLICATION_NAME_LENGTH = 64
 _CALLABLE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
-# The UK local-area report run input a coordinator runs: ``breakdown:
-# "local_areas"`` with the geographic aggregate alone. A later change to that
-# input raises it.
+# The local-area report runs a coordinator runs: a run of a UK-wide or nation
+# report on the local-area dataset, given as any report run is, calculates its
+# full results and its constituency and local-authority results, with the
+# codes disclosure control withholds. A later change to what such a run
+# accepts or writes raises it.
 LOCAL_AREA_REPORTS_VERSION = 1
 
 ManifestText = Annotated[str, Field(min_length=1, max_length=255)]
@@ -43,13 +45,14 @@ class StrictManifestModel(BaseModel):
 class LocalAreaReports(StrictManifestModel):
     """The UK local-area report runs a worker application's coordinator runs.
 
-    ``input_version`` is the ``LOCAL_AREA_REPORTS_VERSION`` of the input it
-    accepts. ``dataset`` is the dataset a UK-wide or nation report's area part
-    is calculated on, which the release routes constituency and
-    local-authority regions to; None when the release routes them to no
-    dataset of their own, so a national run calculates both area levels
-    itself. The worker decides both by the rule its national aggregation
-    uses (``uk_area_regions_routed``).
+    ``input_version`` is the ``LOCAL_AREA_REPORTS_VERSION`` of the runs it
+    accepts. ``dataset`` is the local-area dataset, which the release routes
+    constituency and local-authority regions to: a run of a UK-wide or nation
+    report on it also calculates the area results. It is None when the
+    release routes them to no dataset of their own, so a UK-wide or nation
+    run on the national dataset calculates both area levels itself. The
+    worker decides both by the rule its national aggregation uses
+    (``uk_area_regions_routed``).
     """
 
     input_version: Annotated[int, Field(ge=1)]

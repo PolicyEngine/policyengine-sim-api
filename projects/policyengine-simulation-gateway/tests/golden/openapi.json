@@ -2657,6 +2657,34 @@
               }
             ]
           },
+          "constituency_withheld_codes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Constituency Withheld Codes"
+          },
+          "local_authority_withheld_codes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Authority Withheld Codes"
+          },
           "cliff_impact": {
             "anyOf": [
               {
@@ -2689,7 +2717,7 @@
           "congressional_district_impact"
         ],
         "title": "SingleYearMacroOutput",
-        "description": "Completed response returned by a single-year macro simulation."
+        "description": "Completed response returned by a single-year macro simulation.\n\n``constituency_withheld_codes`` and ``local_authority_withheld_codes``\nhold, sorted, the codes of each level's areas the run estimated but\ndisclosure control did not publish, as ``LocalAreaBreakdownOutput``'s do.\nThey are listed for a UK-wide or nation report on the local-area dataset;\nnull means the result does not report them, and the JSON then leaves both\nkeys out, so every other result is written as before."
       },
       "TelemetryEnvelope": {
         "properties": {

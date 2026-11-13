@@ -33,6 +33,7 @@ if TYPE_CHECKING:
         Stage12Dataset,
     )
     from policyengine_simulation_contract.stage12_execution import (
+        ReportExecutionInput,
         SimulationExecutionInput,
     )
 
@@ -40,6 +41,32 @@ if TYPE_CHECKING:
 
 # The region types a local-area report run covers: the UK and its nations.
 LOCAL_AREA_RUN_REGION_TYPES = frozenset({"national", "country"})
+
+
+def calculates_on_local_area_dataset(simulation: SimulationExecutionInput) -> bool:
+    """Whether ``simulation`` is of the UK or a nation, on the local-area dataset.
+
+    That is the dataset the release routes UK area regions to, on a release
+    that routes them to one.
+    """
+    if simulation.geography.country != "uk":
+        return False
+    region_type = region_type_of("uk", simulation.geography.region)
+    if region_type not in LOCAL_AREA_RUN_REGION_TYPES or not uk_area_regions_routed():
+        return False
+    return simulation.bundle.dataset.identity == routed_uk_area_dataset_name()
+
+
+def is_local_area_report(report: ReportExecutionInput) -> bool:
+    """Whether a run of ``report`` also calculates the UK area results.
+
+    It does for a report of the UK or a nation whose simulations are on the
+    local-area dataset, an ordinary report whose simulations the simulation
+    service names on that dataset: it returns its full results and its
+    constituency and local-authority results, with their withheld codes.
+    Both of a report's simulations share its dataset and region.
+    """
+    return calculates_on_local_area_dataset(report.baseline)
 
 
 def named_local_area_dataset(
@@ -52,14 +79,9 @@ def named_local_area_dataset(
     provenance names that dataset. The caller still checks the provenance's
     URI and revision against it.
     """
-    if country.country != "uk":
+    if country.country != "uk" or not calculates_on_local_area_dataset(simulation):
         return None
-    region_type = region_type_of(country.country, simulation.geography.region)
-    if region_type not in LOCAL_AREA_RUN_REGION_TYPES or not uk_area_regions_routed():
-        return None
-    identity = routed_uk_area_dataset_name()
-    if simulation.bundle.dataset.identity != identity:
-        return None
+    identity = simulation.bundle.dataset.identity
     return next((item for item in country.datasets if item.identity == identity), None)
 
 

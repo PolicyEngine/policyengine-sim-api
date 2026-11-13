@@ -17,7 +17,6 @@ from policyengine_simulation_contract.stage12_bundle import (
     Stage12RegionDataset,
 )
 from policyengine_simulation_contract.stage12_execution import (
-    LOCAL_AREA_AGGREGATES,
     BundleProvenance,
     DatasetArtifactMediaType,
     DatasetArtifactReference,
@@ -26,7 +25,10 @@ from policyengine_simulation_contract.stage12_execution import (
     EntityOutputPlan,
     GeographySelection,
     PlannedSimulationExecutionInput,
+    ReportAggregate,
+    ReportExecutionInput,
     ReportOutputRequirements,
+    SimulationExecutionInput,
     SimulationRole,
     Stage12OutputPlan,
 )
@@ -41,7 +43,12 @@ from policyengine_simulation_executor.stage12_runtime import (
     local_area_datasets,
 )
 from policyengine_simulation_executor.stage12_runtime import simulation as worker
-from stage12_runtime_support import BASELINE_ID, EVALUATION_ID
+from stage12_runtime_support import (
+    BASELINE_ID,
+    EVALUATION_ID,
+    REFORM_ID,
+    report_execution_input,
+)
 
 NATIONAL_DATASET = "microcosm_uk_2024_25"
 LOCAL_AREA_DATASET = "microcosm_uk_2024_25_dense"
@@ -79,8 +86,8 @@ def _installed_uk_bundle() -> ResolvedStage12Bundle:
     """Return an installed bundle holding the national and local-area datasets."""
     national = _dataset(NATIONAL_DATASET)
     region_datasets = {
+        # As .py 6.17.1's bundle: nations have no region dataset of their own.
         "national": NATIONAL_DATASET,
-        "country": NATIONAL_DATASET,
         "constituency": LOCAL_AREA_DATASET,
         "local_authority": LOCAL_AREA_DATASET,
     }
@@ -155,7 +162,7 @@ def _uk_simulation(
         output_plan=Stage12OutputPlan(
             country="uk",
             requirements=ReportOutputRequirements(
-                aggregates=LOCAL_AREA_AGGREGATES,
+                aggregates=tuple(ReportAggregate),
                 include_cliff_impacts=False,
                 labor_supply_response_active=False,
             ),
@@ -365,3 +372,145 @@ def test_a_local_area_dataset_without_an_area_column_fails_before_simulating(
             _uk_simulation("uk", LOCAL_AREA_DATASET),
             household=_area_household().drop(columns=[missing]),
         )
+
+
+def _uk_report(region: str, identity: str) -> ReportExecutionInput:
+    """Return a UK report whose two simulations are on the dataset ``identity``."""
+    baseline = _uk_simulation(region, identity).model_dump(
+        mode="json", exclude={"output_plan"}
+    )
+    reform = {
+        **baseline,
+        "simulation_execution_id": str(REFORM_ID),
+        "role": SimulationRole.REFORM.value,
+        "policy": {"gov.hmrc.income_tax.rates.uk[0].rate": {"2026-01-01": 0.21}},
+    }
+    return ReportExecutionInput(
+        evaluation_id=EVALUATION_ID,
+        baseline=SimulationExecutionInput.model_validate(baseline),
+        reform=SimulationExecutionInput.model_validate(reform),
+        requested_aggregates=tuple(ReportAggregate),
+    )
+
+
+@pytest.mark.parametrize("region", ["uk", "country/wales"])
+def test_a_uk_wide_or_nation_report_on_the_local_area_dataset_is_recognised(
+    monkeypatch, region: str
+) -> None:
+    _route_uk_area_regions(monkeypatch)
+
+    assert local_area_datasets.is_local_area_report(
+        _uk_report(region, LOCAL_AREA_DATASET)
+    )
+
+
+def test_a_report_on_the_national_dataset_is_no_local_area_report(
+    monkeypatch,
+) -> None:
+    _route_uk_area_regions(monkeypatch)
+
+    assert not local_area_datasets.is_local_area_report(
+        _uk_report("uk", NATIONAL_DATASET)
+    )
+
+
+def test_a_constituency_report_on_the_local_area_dataset_is_an_ordinary_report(
+    monkeypatch,
+) -> None:
+    # Its national aggregation already calculates its one area.
+    _route_uk_area_regions(monkeypatch)
+
+    assert not local_area_datasets.is_local_area_report(
+        _uk_report("constituency/W07000081", LOCAL_AREA_DATASET)
+    )
+
+
+def test_no_report_is_a_local_area_report_where_the_release_does_not_route(
+    monkeypatch,
+) -> None:
+    _route_uk_area_regions(monkeypatch, routed=False)
+
+    assert not local_area_datasets.is_local_area_report(
+        _uk_report("uk", LOCAL_AREA_DATASET)
+    )
+
+
+def test_a_us_report_is_no_local_area_report(monkeypatch) -> None:
+    _route_uk_area_regions(monkeypatch)
+
+    assert not local_area_datasets.is_local_area_report(report_execution_input())
+
+
+@pytest.mark.parametrize(
+    ("region", "identity", "on_local_area_dataset"),
+    [
+        ("uk", LOCAL_AREA_DATASET, True),
+        ("country/wales", LOCAL_AREA_DATASET, True),
+        ("uk", NATIONAL_DATASET, False),
+        ("constituency/W07000081", LOCAL_AREA_DATASET, False),
+    ],
+)
+def test_a_simulation_is_on_the_local_area_dataset_by_its_region_and_dataset(
+    monkeypatch, region: str, identity: str, *, on_local_area_dataset: bool
+) -> None:
+    # The rule a simulation's stored output plan uses for its area columns.
+    _route_uk_area_regions(monkeypatch)
+
+    assert (
+        local_area_datasets.calculates_on_local_area_dataset(
+            _uk_simulation(region, identity)
+        )
+        is on_local_area_dataset
+    )
+
+
+def test_the_installed_release_accepts_and_selects_its_own_local_area_dataset() -> None:
+    # Over the installed .py bundle and its routing, unpatched: a release
+    # upgrade that renames or moves the dataset fails here, not in staging.
+    from policyengine_simulation_executor.simulation_runtime import (
+        _resolve_dataset_selection,
+    )
+    from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+    from policyengine_simulation_executor.stage12_runtime.worker_inputs import (
+        simulation_runtime_params,
+    )
+    from policyengine_simulation_executor.uk_local_authority_metadata import (
+        routed_uk_area_dataset_name,
+        uk_area_regions_routed,
+    )
+
+    assert uk_area_regions_routed()
+    resolved = load_stage12_bundle()
+    uk = next(item for item in resolved.bundle.countries if item.country == "uk")
+    dataset = next(
+        item for item in uk.datasets if item.identity == routed_uk_area_dataset_name()
+    )
+    simulation = _uk_simulation(
+        "uk",
+        dataset.identity,
+        provenance=BundleProvenance(
+            policyengine_version=resolved.bundle.policyengine_version,
+            country_package_name=uk.country_package_name,
+            country_package_version=uk.country_package_version,
+            dataset=DatasetProvenance(
+                identity=dataset.identity,
+                uri=dataset.uri,
+                artifact_revision=dataset.artifact_revision,
+                data_package_name=uk.data_package_name,
+                data_package_version=uk.data_package_version,
+            ),
+            bundle_manifest_sha256=resolved.bundle_manifest_sha256,
+        ),
+    )
+
+    worker._require_installed_bundle(simulation)
+    assert local_area_datasets.local_area_dataset_name(simulation) == dataset.identity
+    selection = _resolve_dataset_selection(
+        simulation_runtime_params(simulation),
+        region_resolution=local_area_datasets.dataset_region(
+            RegionResolution(code="uk"), dataset.identity
+        ),
+    )
+    # The worker refuses a selection that differs from the provenance.
+    worker._require_loaded_dataset_matches_provenance(simulation, selection)
+    assert selection.name == dataset.identity

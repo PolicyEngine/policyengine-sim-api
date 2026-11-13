@@ -334,15 +334,18 @@ def _is_current_local_area_copy(store: V2ManifestStore, document: object) -> boo
     Code released before ``LocalAreaReports`` publishes only the older keys,
     for example after a rollback, which leaves an out-of-date copy behind. A
     current copy, without the field, is exactly the manifest under
-    ``active-schema-2``, which is itself current. An unreadable document
-    counts as current, so readers and publishers report it.
+    ``active-schema-2``, which is itself current. Without an
+    ``active-schema-2`` copy it is not current: deleting that key is how an
+    operator sends every reader back to the older keys before a rollback.
+    An unreadable document counts as current, so readers and publishers
+    report it.
     """
     try:
         manifest = parse_v2_manifest(document)
     except (TypeError, ValueError):
         return True
     without_field = schema_2_manifest_payload(manifest)
-    if store.get(SCHEMA_2_MANIFEST_KEY) not in (None, without_field):
+    if store.get(SCHEMA_2_MANIFEST_KEY) != without_field:
         return False
     return _is_current_schema_2_document(store, without_field)
 

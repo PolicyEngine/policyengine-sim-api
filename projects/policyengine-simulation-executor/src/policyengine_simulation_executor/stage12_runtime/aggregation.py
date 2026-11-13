@@ -15,6 +15,8 @@ from policyengine_simulation_contract.stage12_execution import (
     stage12_output_plan_sha256,
 )
 
+from .local_area_datasets import is_local_area_report
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -175,7 +177,9 @@ def build_aggregate_report(
     the stored frames, so no model is recomputed. A UK national or nation-level
     report whose bundle routes area regions to another dataset has no area
     codes in its frames (see ``output_planning``), so its constituency and
-    local-authority breakdowns are left out.
+    local-authority breakdowns are left out, unless the report is on that
+    dataset (``is_local_area_report``): it then gets both levels and their
+    withheld codes, from the same disclosure pass.
     """
     from policyengine_simulation_executor.simulation_output_builder import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_output_builder.SimulationOutputBuilder
         SimulationOutputBuilder,
@@ -228,7 +232,8 @@ def build_aggregate_report(
         "region": report.baseline.geography.region,
         **report.baseline.options,
     }
-    output = SimulationOutputBuilder(
+    local_area_report = is_local_area_report(report)
+    builder = SimulationOutputBuilder(
         country=country,
         simulation_params=params,
         country_module=country_module,
@@ -238,10 +243,14 @@ def build_aggregate_report(
         resolved_data_version=report.baseline.bundle.dataset.artifact_revision,
         resolved_region_code=report.baseline.geography.region,
         uk_local_authority_metadata=uk_local_authority_metadata,
-        omit_uk_area_breakdowns=uk_area_breakdowns_omitted(
-            country, report.baseline.geography.region
-        ),
-    ).serialize()
+        omit_uk_area_breakdowns=not local_area_report
+        and uk_area_breakdowns_omitted(country, report.baseline.geography.region),
+    )
+    output = builder.serialize()
+    withheld = builder.uk_withheld_area_codes() if local_area_report else None
+    if withheld is not None:
+        output["constituency_withheld_codes"] = withheld["constituency"]
+        output["local_authority_withheld_codes"] = withheld["local_authority"]
     output.update(
         build_spm_result(
             report=report,

@@ -13,7 +13,6 @@ from policyengine.outputs import (
     labor_supply_response_is_active,
 )
 from policyengine_simulation_contract.stage12_execution import (
-    LOCAL_AREA_AGGREGATES,
     EntityOutputPlan,
     PlannedSimulationExecutionInput,
     ReportAggregate,
@@ -29,6 +28,8 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
     uk_area_codes_required,
 )
 
+from .local_area_datasets import calculates_on_local_area_dataset
+
 if TYPE_CHECKING:
     import pandas as pd
     from policyengine_simulation_contract.stage12_bundle import CountryId
@@ -38,15 +39,6 @@ if TYPE_CHECKING:
 UK_GEOGRAPHIC_DATASET_VARIABLES: dict[str, tuple[str, ...]] = {
     "household": UK_AREA_DATASET_COLUMNS,
 }
-# Household columns a UK local-area report run's simulations calculate: the
-# identifier both sides are matched on, the income whose change disclosure
-# control measures, and the weights it estimates with. The UK model writes
-# all three by default.
-LOCAL_AREA_CALCULATED_HOUSEHOLD_VARIABLES = (
-    "household_id",
-    "household_net_income",
-    "household_weight",
-)
 
 
 class OutputVariableModel(Protocol):
@@ -120,9 +112,8 @@ def _include_cliff_impacts(simulation: SimulationExecutionInput) -> bool:
 
 
 def _required_dataset_variables(
+    simulation: SimulationExecutionInput,
     *,
-    country: CountryId,
-    region: str,
     aggregates: tuple[ReportAggregate, ...],
 ) -> dict[str, tuple[str, ...]]:
     """Return input-dataset columns copied into the materialized output.
@@ -131,11 +122,21 @@ def _required_dataset_variables(
     simulations, except in a national or nation-level report whose bundle
     routes UK area regions to another dataset. Its national dataset may then
     carry no area codes, so none are planned, and the aggregate leaves the
-    area breakdowns out (``build_aggregate_report``).
+    area breakdowns out (``build_aggregate_report``). A UK-wide or nation
+    simulation on the dataset the release routes area regions to
+    (``calculates_on_local_area_dataset``) has them, and a local-area report
+    reads them, so they are planned there too, also when the simulation is
+    planned alone: its run's file then holds what a local-area report reads.
     """
-    if country != "uk" or ReportAggregate.GEOGRAPHIC not in aggregates:
+    if (
+        simulation.geography.country != "uk"
+        or ReportAggregate.GEOGRAPHIC not in aggregates
+    ):
         return {}
-    if not uk_area_codes_required(region):
+    if not (
+        uk_area_codes_required(simulation.geography.region)
+        or calculates_on_local_area_dataset(simulation)
+    ):
         return {}
     return UK_GEOGRAPHIC_DATASET_VARIABLES
 
@@ -179,56 +180,6 @@ def resolve_report_output_plan(
         report.reform,
         aggregates=report.requested_aggregates,
         stage_scope=stage_scope,
-    )
-
-
-def resolve_local_area_output_plan(
-    report: ReportExecutionInput,
-    *,
-    stage_scope: StageScope = _unmonitored_stage_scope,
-) -> Stage12OutputPlan:
-    """Resolve the output schema of a UK local-area report run's two simulations.
-
-    The run calculates only the constituency and local-authority impacts, so
-    each simulation writes the household columns disclosure control reads:
-    ``LOCAL_AREA_CALCULATED_HOUSEHOLD_VARIABLES``, and the area columns
-    (``UK_AREA_DATASET_COLUMNS``) copied from the local-area dataset whatever
-    the region. No cliff, labour-supply or budget variables are added, so the
-    columns are the same for every policy pair, and a local-area simulation
-    run's output serves any report with that simulation.
-    ``labor_supply_response_active`` still records whether the policies
-    activate labour-supply responses, which the reform's net income includes
-    either way. Raises ``ValueError`` for a report outside the UK, or one
-    with cliff impacts.
-    """
-    country = report.baseline.geography.country
-    if country != "uk":
-        msg = f"a local-area report run is a UK report, not a {country!r} one"
-        raise ValueError(msg)
-    stage_attributes = {"country": country}
-    with stage_scope(Stage.STAGE12_COUNTRY_MODEL_LOAD, stage_attributes):
-        model = _country_model(country)
-    with stage_scope(Stage.STAGE12_OUTPUT_CONFIGURATION, stage_attributes):
-        requirements = ReportOutputRequirements(
-            aggregates=LOCAL_AREA_AGGREGATES,
-            include_cliff_impacts=_include_cliff_impacts(report.baseline),
-            labor_supply_response_active=labor_supply_response_is_active(
-                _planning_simulation(report.baseline, model=model),
-                _planning_simulation(report.reform, model=model),
-                country_code=country,
-            ),
-        )
-    household = EntityOutputPlan(
-        entity="household",
-        materialized_variables=tuple(
-            sorted(
-                {*LOCAL_AREA_CALCULATED_HOUSEHOLD_VARIABLES, *UK_AREA_DATASET_COLUMNS}
-            )
-        ),
-        dataset_variables=UK_AREA_DATASET_COLUMNS,
-    )
-    return Stage12OutputPlan(
-        country=country, requirements=requirements, entities=(household,)
     )
 
 
@@ -283,9 +234,7 @@ def _resolve_output_plan(
         baseline_variables = model.resolve_entity_variables(baseline)
         reform_variables = model.resolve_entity_variables(reform)
         dataset_variables = _required_dataset_variables(
-            country=country,
-            region=baseline_input.geography.region,
-            aggregates=requirements.aggregates,
+            baseline_input, aggregates=requirements.aggregates
         )
         entities = []
         for entity in sorted(

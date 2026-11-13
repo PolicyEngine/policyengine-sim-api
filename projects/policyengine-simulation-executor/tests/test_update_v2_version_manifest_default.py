@@ -244,6 +244,19 @@ def test_verify_refuses_a_manifest_changed_since_the_move(monkeypatch, tmp_path,
         _run(monkeypatch, "--verify-plan", str(tmp_path / "plan.json"))
 
 
+def test_verify_refuses_a_manifest_whose_schema_2_key_was_deleted(
+    monkeypatch, tmp_path, store
+):
+    # Current readers then stop using the local-area report key and read an
+    # older copy, without household functions, so the move isn't live.
+    _with_both_workers(store)
+    _move(monkeypatch, tmp_path, _installed_version())
+    del store.values[SCHEMA_2_MANIFEST_KEY]
+
+    with pytest.raises(ValueError, match="is not what this default move wrote"):
+        _run(monkeypatch, "--verify-plan", str(tmp_path / "plan.json"))
+
+
 def test_restore_puts_the_default_back_only_while_the_move_is_live(
     monkeypatch, tmp_path, store, capsys
 ):
@@ -390,18 +403,8 @@ def test_force_default_is_refused_outside_a_worker_publication(
 # one of them missing. A write never deletes a key.
 OLDER_KEYS = pytest.mark.parametrize(
     "expired_key",
-    [
-        SCHEMA_2_MANIFEST_KEY,
-        REGION_DATASETS_MANIFEST_KEY,
-        ACTIVE_MANIFEST_KEY,
-        PRE_CACHE_MANIFEST_KEY,
-    ],
-    ids=[
-        "active-schema-2",
-        "active-with-region-datasets",
-        "active-with-cache",
-        "active",
-    ],
+    [REGION_DATASETS_MANIFEST_KEY, ACTIVE_MANIFEST_KEY, PRE_CACHE_MANIFEST_KEY],
+    ids=["active-with-region-datasets", "active-with-cache", "active"],
 )
 
 
@@ -442,10 +445,18 @@ def test_verify_accepts_an_expired_older_key(
     assert f"v2 default version: {_installed_version()}" in capsys.readouterr().out
 
 
-def test_move_refuses_a_manifest_without_its_newest_key(monkeypatch, tmp_path, store):
-    # Current readers read the local-area report key first, so it is required.
+@pytest.mark.parametrize(
+    "required_key",
+    [LOCAL_AREA_REPORTS_MANIFEST_KEY, SCHEMA_2_MANIFEST_KEY],
+    ids=["active-schema-2-with-local-area-reports", "active-schema-2"],
+)
+def test_move_refuses_a_manifest_without_its_newest_key(
+    monkeypatch, tmp_path, store, required_key
+):
+    # Current readers read the local-area report key first, and use it only
+    # while the schema version 2 key holds its copy, so both are required.
     _with_both_workers(store)
-    del store.values[LOCAL_AREA_REPORTS_MANIFEST_KEY]
+    del store.values[required_key]
     writes = store.writes
 
     with pytest.raises(ValueError, match="copies of the v2 manifest differ"):
