@@ -15,6 +15,8 @@ from policyengine_simulation_contract.stage12_bundle import (
 )
 from policyengine_simulation_contract.stage12_manifest import (
     ACTIVE_MANIFEST_KEY,
+    LOCAL_AREA_REPORTS_MANIFEST_KEY,
+    LOCAL_AREA_REPORTS_VERSION,
     PRE_CACHE_MANIFEST_KEY,
     REGION_DATASETS_MANIFEST_KEY,
     SCHEMA_2_MANIFEST_KEY,
@@ -26,16 +28,22 @@ from policyengine_simulation_contract.stage12_manifest import (
     V2VersionManifest,
     V2WorkerValidation,
     V2WorkerVersion,
+    add_v2_worker,
     assert_separate_manifest_names,
     manifest_digest,
+    move_v2_default,
     parse_v2_manifest,
     pre_cache_manifest_payload,
     pre_region_datasets_manifest_payload,
     publish_v2_manifest,
+    read_v2_manifest,
     schema_1_manifest_payload,
+    schema_2_manifest_payload,
     v2_application_name,
+    v2_manifest_copies,
     validate_manifest_has_no_credentials,
 )
+from pydantic import ValidationError
 
 
 class FakeStore:
@@ -227,7 +235,8 @@ def test_publish_writes_one_complete_v2_document_per_key() -> None:
     )
 
     assert store.writes == [
-        (SCHEMA_2_MANIFEST_KEY, manifest.model_dump(mode="json")),
+        (LOCAL_AREA_REPORTS_MANIFEST_KEY, manifest.model_dump(mode="json")),
+        (SCHEMA_2_MANIFEST_KEY, schema_2_manifest_payload(manifest)),
         (REGION_DATASETS_MANIFEST_KEY, schema_1_manifest_payload(manifest)),
         (ACTIVE_MANIFEST_KEY, pre_region_datasets_manifest_payload(manifest)),
         (PRE_CACHE_MANIFEST_KEY, pre_cache_manifest_payload(manifest)),
@@ -835,3 +844,113 @@ def test_a_household_only_manifest_is_read_until_an_older_publish_follows() -> N
     store.values[ACTIVE_MANIFEST_KEY] = pre_region_datasets_manifest_payload(older)
 
     assert V2ManifestLoader(store).load().default_version == "5.3.0"
+
+
+# The fields of a worker entry before local-area report runs. Readers released
+# before them forbid any other field, so adding one would stop them loading.
+_WORKER_FIELDS_BEFORE_LOCAL_AREA_REPORTS = {
+    "application_name",
+    "bundle",
+    "bundle_manifest_sha256",
+    "cache",
+    "countries",
+    "report_coordinator_callable",
+    "validation",
+}
+
+
+def _local_area_worker(version: str = "5.2.0") -> V2WorkerVersion:
+    """Return a worker whose coordinator runs local-area report runs."""
+    worker = _regional_worker(version, with_household_functions=True)
+    return V2WorkerVersion.model_validate(
+        {
+            **worker.model_dump(mode="json"),
+            "local_area_reports": LOCAL_AREA_REPORTS_VERSION,
+        }
+    )
+
+
+def test_a_publish_writes_the_local_area_capability_under_its_own_key() -> None:
+    store = FakeStore()
+
+    manifest = publish_v2_manifest(store=store, worker=_local_area_worker())
+
+    stored = store.values[LOCAL_AREA_REPORTS_MANIFEST_KEY]
+    assert stored == manifest.model_dump(mode="json")
+    assert stored["versions"]["5.2.0"]["local_area_reports"] == 1
+    loaded = V2ManifestLoader(store).load()
+    assert loaded.versions["5.2.0"].local_area_reports == LOCAL_AREA_REPORTS_VERSION
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        SCHEMA_2_MANIFEST_KEY,
+        REGION_DATASETS_MANIFEST_KEY,
+        ACTIVE_MANIFEST_KEY,
+        PRE_CACHE_MANIFEST_KEY,
+    ],
+)
+def test_readers_released_before_local_area_reports_never_see_the_field(
+    key: str,
+) -> None:
+    store = FakeStore()
+    publish_v2_manifest(store=store, worker=_local_area_worker())
+
+    worker = store.values[key]["versions"]["5.2.0"]
+    assert set(worker) <= _WORKER_FIELDS_BEFORE_LOCAL_AREA_REPORTS
+
+
+def test_the_schema_2_key_holds_the_manifest_as_its_readers_accept_it() -> None:
+    store = FakeStore()
+    manifest = publish_v2_manifest(store=store, worker=_local_area_worker())
+
+    schema_2 = store.values[SCHEMA_2_MANIFEST_KEY]
+    assert set(schema_2["versions"]["5.2.0"]) == (
+        _WORKER_FIELDS_BEFORE_LOCAL_AREA_REPORTS
+    )
+    assert parse_v2_manifest(schema_2) == manifest.model_copy(
+        update={
+            "versions": {
+                "5.2.0": manifest.versions["5.2.0"].model_copy(
+                    update={"local_area_reports": None}
+                )
+            }
+        }
+    )
+
+
+def test_a_worker_without_the_capability_is_written_as_before() -> None:
+    worker = _regional_worker(with_household_functions=True)
+    manifest = add_v2_worker(current=None, worker=worker)
+
+    assert worker.local_area_reports is None
+    assert "local_area_reports" not in worker.model_dump(mode="json")
+    copies = v2_manifest_copies(manifest)
+    assert copies[LOCAL_AREA_REPORTS_MANIFEST_KEY] == copies[SCHEMA_2_MANIFEST_KEY]
+
+
+def test_a_local_area_copy_left_behind_by_an_older_publish_is_not_read() -> None:
+    """After a rollback, code released before the field writes only older keys."""
+    store = FakeStore()
+    publish_v2_manifest(store=store, worker=_local_area_worker())
+    older = add_v2_worker(
+        current=read_v2_manifest(store),
+        worker=_regional_worker("5.3.0", with_household_functions=True),
+    )
+    older = move_v2_default(current=older, version="5.3.0")
+    for key, copy in v2_manifest_copies(older).items():
+        if key != LOCAL_AREA_REPORTS_MANIFEST_KEY:
+            store.values[key] = copy
+
+    loaded = V2ManifestLoader(store).load()
+
+    assert loaded.default_version == "5.3.0"
+    assert loaded.versions["5.2.0"].local_area_reports is None
+
+
+def test_the_capability_names_a_version_of_one_or_more() -> None:
+    worker = _regional_worker().model_dump(mode="json")
+
+    with pytest.raises(ValidationError, match="local_area_reports"):
+        V2WorkerVersion.model_validate({**worker, "local_area_reports": 0})

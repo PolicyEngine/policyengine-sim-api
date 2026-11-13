@@ -6,7 +6,10 @@ import re
 from datetime import UTC, datetime
 
 import pytest
-from policyengine_simulation_contract.stage12_manifest import V2WorkerValidation
+from policyengine_simulation_contract.stage12_manifest import (
+    LOCAL_AREA_REPORTS_VERSION,
+    V2WorkerValidation,
+)
 from src.modal.utils import update_v2_version_manifest as publisher
 
 
@@ -54,6 +57,12 @@ def test_publisher_records_every_bundle_country_as_economy_capable() -> None:
         (country.country, True, f"run_single_simulation_{country.country}", None)
         for country in publisher.load_stage12_bundle().bundle.countries
     ]
+
+
+def test_publisher_records_that_its_coordinator_runs_local_area_report_runs() -> None:
+    worker = publisher.build_worker(_validation().model_dump(mode="json"))
+
+    assert worker.local_area_reports == LOCAL_AREA_REPORTS_VERSION
 
 
 def test_publisher_records_each_validated_household_function() -> None:
