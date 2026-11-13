@@ -158,8 +158,7 @@ impacts with `breakdown: "local_areas"`, left out unless given (null and any
 other value are refused with 422). Only a UK report whose region is `uk` or
 one of the four `country/*` nations may ask, with or without
 `include_cliffs`; any other country or region is refused with 422 at
-`breakdown`. The report's stored options record `"breakdown": "local_areas"`
-only when asked for.
+`breakdown`. It is a request option, never stored with the report.
 
 The default worker's UK entry in the v2 version manifest decides the rest
 (`local_area_reports`): the input version its coordinator accepts for a

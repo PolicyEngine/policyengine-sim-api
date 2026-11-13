@@ -161,6 +161,7 @@ class EconomyReportRequest(_Request):
     dataset whatever ``dataset_name`` names. Only a UK report whose region is
     ``uk`` or one of the four ``country/*`` nations may ask, with or without
     ``include_cliffs``; omit it, rather than sending null, to ask for none.
+    It is a request option, never stored with the report.
     """
 
     country: CountryId
@@ -237,13 +238,12 @@ class EconomyReportRequest(_Request):
         """Return the report's options as it stores them (``reports.inputs``).
 
         ``spm`` holds only the settings the request gave, and is left out
-        when it gave none; ``breakdown`` is there only when asked for.
+        when it gave none. ``breakdown`` is never stored: it asks for the
+        report on the local-area dataset too, and never changes this one.
         """
         options: dict[str, Any] = {"include_cliffs": self.include_cliffs}
         if self.spm is not None:
             options["spm"] = self.spm.model_dump(mode="json")
-        if self.breakdown is not None:
-            options["breakdown"] = self.breakdown
         return options
 
 
