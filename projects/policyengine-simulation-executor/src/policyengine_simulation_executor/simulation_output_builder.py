@@ -291,6 +291,20 @@ class SimulationOutputBuilder:
             )
         return self._uk_geography_disclosure
 
+    def uk_withheld_area_codes(self) -> dict[str, list[str]] | None:
+        """Return each UK level's withheld area codes, sorted; None outside the UK.
+
+        They are the areas the disclosure pass behind the area results
+        estimated but did not publish, from that same pass.
+        """
+        disclosure = self._uk_geography_disclosure_output()
+        if disclosure is None:
+            return None
+        return {
+            level: disclosure.withheld_codes(level)
+            for level in ("constituency", "local_authority")
+        }
+
     def _simulation_year(self) -> int:
         """Return the simulated year, which labels the disclosure release."""
         for value in (
