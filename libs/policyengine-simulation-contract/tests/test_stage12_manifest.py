@@ -1019,3 +1019,25 @@ def test_only_an_economy_capable_uk_entry_declares_local_area_reports() -> None:
 def test_the_declared_dataset_is_a_dataset_of_the_uk_bundle() -> None:
     with pytest.raises(ValidationError, match="populace_uk_2023_missing"):
         _local_area_worker(dataset="populace_uk_2023_missing")
+
+
+def test_the_region_dataset_rollback_step_sends_every_reader_to_the_cache_copy() -> (
+    None
+):
+    """The Stage 12 doc's step before deploying code released before region datasets.
+
+    Deleting ``active-schema-2`` and ``active-with-region-datasets`` stops
+    readers released with the local-area key from reading it, as it stops
+    older readers reading those two keys.
+    """
+    store = FakeStore()
+    publish_v2_manifest(store=store, worker=_local_area_worker())
+    del store.values[SCHEMA_2_MANIFEST_KEY]
+    del store.values[REGION_DATASETS_MANIFEST_KEY]
+
+    loaded = V2ManifestLoader(store).load()
+
+    worker = loaded.versions["5.2.0"]
+    us = next(country for country in worker.bundle.countries if country.country == "us")
+    assert us.region_datasets is None
+    assert _uk(worker).local_area_reports is None
