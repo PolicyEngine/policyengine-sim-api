@@ -26,7 +26,6 @@ from policyengine_simulation_persistence import (
     NewHouseholdReport,
     NewHouseholdReportRerun,
     ReportRunStatus,
-    ReportRunTrigger,
     RerunRecordDeletedError,
     RunVersions,
     SideDefinition,
@@ -274,7 +273,8 @@ def test_a_household_reports_rerun_is_a_manual_run_of_its_own_simulations(
         side.simulation_run_id for side in rerun.sides
     )
     assert report_run["report_id"] == report.id
-    assert report_run["trigger"] == ReportRunTrigger.MANUAL
+    # Answer 6: the trigger is each user's record's, not the shared run's.
+    assert report_run["trigger"] is None
     assert report_run["status"] == ReportRunStatus.PENDING
     assert report_run["modal_call_id"] is None
     assert (

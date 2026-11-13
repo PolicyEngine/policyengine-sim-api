@@ -419,7 +419,8 @@ def test_a_report_rerun_joins_or_creates_runs_of_the_reports_own_simulations(
         "country_package_version": LATER_VERSIONS.country_package_version,
         "policyengine_version": LATER_VERSIONS.policyengine_version,
         "status": ReportRunStatus.PENDING,
-        "trigger": ReportRunTrigger.MANUAL,
+        # Answer 6: the trigger is each user's record's, not the shared run's.
+        "trigger": None,
         "modal_call_id": None,
         "budget_window_run_id": None,
         "year": None,
@@ -811,9 +812,7 @@ def test_a_rerun_and_its_runs_are_created_through_the_store(
         joined = store.create_report_rerun(_rerun_of(stored, later))
         assert (joined.id, joined.inserted) == (rerun.run_id, False)
 
-        assert _row(connection, "report_runs", rerun.run_id)["trigger"] == (
-            ReportRunTrigger.MANUAL
-        )
+        assert _row(connection, "report_runs", rerun.run_id)["trigger"] is None
         assert _row(connection, "simulation_runs", simulation_rerun.run_id)[
             "status"
         ] == (SimulationStatus.PENDING)
@@ -1041,7 +1040,7 @@ def test_a_forced_report_rerun_is_an_extra_run_beside_any_run_on_its_versions(
 
     assert (report_run["forced"], report_run["trigger"], report_run["status"]) == (
         True,
-        ReportRunTrigger.MANUAL,
+        None,
         ReportRunStatus.PENDING,
     )
     assert len(simulation_runs) == 2

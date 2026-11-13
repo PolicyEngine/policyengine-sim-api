@@ -184,6 +184,9 @@ def test_a_keyed_report_is_created_with_its_simulations_and_first_run(
             "inputs",
             "type",
             "budget_window_size",
+            "label",
+            "description",
+            "user_id",
         )
     } == {
         "key_version": KEY_VERSION,
@@ -195,16 +198,21 @@ def test_a_keyed_report_is_created_with_its_simulations_and_first_run(
         "inputs": {"spm": NATIONAL_SPM},
         "type": "economy",
         "budget_window_size": None,
+        # Answer 6: a shared report holds no request's label or user.
+        "label": None,
+        "description": None,
+        "user_id": None,
     }
     assert (baseline["key_version"], baseline["definition_key"]) == (
         KEY_VERSION,
         definition.simulation("baseline").definition_key,
     )
     assert reform["definition_key"] == definition.simulation("reform").definition_key
+    # Answer 6: the trigger is each user's record's, not the shared run's.
     assert (run["status"], run["forced"], run["trigger"]) == (
         ReportRunStatus.PENDING,
         False,
-        "initial",
+        None,
     )
     assert (
         reform_run["status"],
