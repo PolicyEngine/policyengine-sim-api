@@ -275,7 +275,12 @@ def _find_later_run_of(
 def _used_on_later_catalog(
     connection: Connection, stored: StoredReport, later: EconomyCatalog
 ) -> StoredRun:
-    """Insert a succeeded later run of the baseline that a succeeded re-run used."""
+    """Insert a succeeded later run of the baseline that another report used.
+
+    The other report, created on the later catalog, reused the baseline's
+    run; its succeeded run is on the later versions. The stored report itself
+    has no run on them, so a re-run of it has none to join.
+    """
     later_shape = RunShape(versions=LATER_VERSIONS)
     later_baseline = insert_run_of(
         connection, stored.baseline.simulation_id, later.population(), later_shape
@@ -286,7 +291,15 @@ def _used_on_later_catalog(
         later.population(),
         replace(later_shape, status=SimulationStatus.FAILED),
     )
-    insert_report_run_of(connection, stored.report_id, (later_baseline, later_reform))
+    other_report_id = insert_report_of(
+        connection, later, (later_baseline, later_reform)
+    )
+    insert_report_run_of(
+        connection,
+        other_report_id,
+        (later_baseline, later_reform),
+        ReportRunOutcome(versions=LATER_VERSIONS),
+    )
     return later_baseline
 
 
@@ -520,15 +533,20 @@ def test_a_report_whose_runs_have_ended_is_rerun_again(public_api_database_url) 
         first = _rerun_of(stored, later)
         act_as_the_service(connection)
         insert_report_rerun(connection, first)
-        # The first re-run's run fails before a second re-run.
+        # The first re-run's run, and the simulation runs it created, fail
+        # before a second re-run.
         connection.execute(text("RESET ROLE"))
-        connection.execute(
-            text(
-                "UPDATE public.report_runs SET status = 'failed', "
-                "completed_at = now() WHERE id = :id"
-            ),
-            {"id": first.run_id},
-        )
+        for table_name, run_ids in (
+            ("report_runs", [first.run_id]),
+            ("simulation_runs", list(first.new_simulation_run_ids)),
+        ):
+            connection.execute(
+                text(
+                    f"UPDATE public.{table_name} SET status = 'failed', "  # noqa: S608  # fixed table names
+                    "completed_at = now() WHERE id IN :ids"
+                ).bindparams(bindparam("ids", expanding=True)),
+                {"ids": run_ids},
+            )
         second = _rerun_of(stored, later)
         act_as_the_service(connection)
 

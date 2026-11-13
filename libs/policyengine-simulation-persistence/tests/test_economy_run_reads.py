@@ -39,7 +39,12 @@ EARLIER = datetime(2026, 11, 1, tzinfo=UTC)
 
 
 def _report_with_runs(connection, economy: EconomyCatalog) -> tuple[UUID, list[UUID]]:
-    """Insert a report and three runs of it; return the report and its runs."""
+    """Insert a report and three runs of it; return the report and its runs.
+
+    The first failed; the two after it are forced re-runs' runs, still
+    pending, as only forced runs share one report's versions with another
+    run that hasn't failed.
+    """
     population = economy.population()
     baseline = insert_simulation_run(connection, population)
     reform = insert_simulation_run(
@@ -70,6 +75,7 @@ def _report_with_runs(connection, economy: EconomyCatalog) -> tuple[UUID, list[U
                 policyengine_version=POLICYENGINE_VERSION,
                 status=ReportRunStatus.PENDING,
                 trigger="manual",
+                forced=True,
             )
         )
         run_ids.append(run_id)

@@ -221,11 +221,12 @@ def insert_run_of(
 
 @dataclass(frozen=True)
 class ReportRunOutcome:
-    """How a stored report run ended, and the options its report has."""
+    """How a stored report run ended, its versions, and its report's options."""
 
     status: ReportRunStatus = ReportRunStatus.SUCCEEDED
     inputs: dict[str, Any] | None = None
     error_message: str | None = None
+    versions: RunVersions = VERSIONS
 
 
 def insert_report_run_naming(
@@ -300,8 +301,8 @@ def insert_report_run_of(
             report_id=report_id,
             baseline_simulation_run_id=baseline.simulation_run_id,
             reform_simulation_run_id=reform.simulation_run_id,
-            country_package_version=COUNTRY_PACKAGE_VERSION,
-            policyengine_version=POLICYENGINE_VERSION,
+            country_package_version=outcome.versions.country_package_version,
+            policyengine_version=outcome.versions.policyengine_version,
             status=outcome.status,
             trigger=ReportRunTrigger.INITIAL,
             completed_at=COMPLETED_AT if finished else None,
