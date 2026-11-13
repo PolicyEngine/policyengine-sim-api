@@ -26,17 +26,21 @@
 # rerun in a new container can't finish within 5 seconds of the stop.
 # A calculation that finishes before its container is stopped proves
 # nothing, so a new one is submitted, up to PREEMPTION_CHECK_ATTEMPTS
-# times, each after a wait for Modal to stop the containers the last
-# attempt left idle, the one the check found and the one Modal's rerun ran
-# in: on such a warm container the calculation would finish too fast to
+# times, each a fixed wait after the last attempt ended: on a container
+# the last attempt left warm, the calculation would finish too fast to
 # stop. Modal stops a container left idle for 60 seconds by default, and
-# the household functions and the coordinator don't change that. A record
-# that fails, or doesn't finish within the deadline, fails the check at
-# once. A stop that fails, as Modal's does for a container that has ended,
-# is not tried again: the check follows the record to its end, so a record
-# left running by a container that ended for another reason, such as
-# running out of memory, fails at its deadline rather than being submitted
-# again. Every Modal command may take 60 seconds.
+# the household functions and the coordinator don't change that. A
+# container that finished the last calculation unstopped went idle when
+# the record finished, so the wait covers it. One that Modal ran a stopped
+# call in again goes idle only when that rerun returns, which may be after
+# the attempt ended, so the wait covers it only when the rerun returns
+# within about 30 seconds of the attempt's end. A record that fails, or
+# doesn't finish within the deadline, fails the check at once. A stop that
+# fails, as Modal's does for a container that has ended, is not tried
+# again: the check follows the record to its end, so a record left running
+# by a container that ended for another reason, such as running out of
+# memory, fails at its deadline rather than being submitted again. Every
+# Modal command may take 60 seconds.
 #
 # Required env vars: the test client's SIMULATION_TEST_AUTH_ISSUER,
 # SIMULATION_TEST_AUTH_AUDIENCE, SIMULATION_TEST_AUTH_CLIENT_ID and
@@ -51,10 +55,10 @@
 # call's other container; and PREEMPTION_CHECK_SCALEDOWN_SECONDS (90), how
 # long to wait before a new attempt.
 # The access token is sent from a file, and the client secret on standard
-# input through jq's environment, so neither appears on any command line. A submission, which isn't
-# asked again, may take 60 seconds, Cloud Run's own limit; every other
-# request 30. A read that gets no answer, a 429 or any 5xx is asked again
-# until the deadline.
+# input through jq's environment, so neither appears on any command line.
+# A submission, which isn't asked again, may take 60 seconds, Cloud Run's
+# own limit; every other request 30. A read that gets no answer, a 429 or
+# any 5xx is asked again until the deadline.
 
 set -euo pipefail
 
@@ -155,8 +159,9 @@ call_inputs() {
 
 # Return 0 when Modal lists container <container-id> as running in
 # MODAL_ENVIRONMENT, 1 when it doesn't, and 2 when Modal couldn't list the
-# environment's containers as a JSON list, which says nothing about the
-# container.
+# environment's containers as a JSON list of entries that each have a
+# "Container ID", which says nothing about the container: a change in
+# Modal's output must not read as the container having gone.
 container_listed() {
   local listing listed
   if ! listing="$(modal_command modal container list --env "${MODAL_ENVIRONMENT}" --json)"; then
@@ -166,8 +171,10 @@ container_listed() {
   fi
   listed="$(
     jq -r --arg container_id "$1" \
-      'if type == "array" then any(.[]; .["Container ID"] == $container_id)
-       else error("not a list") end' <<<"${listing}" 2>/dev/null
+      'if type == "array"
+          and all(.[]; type == "object" and has("Container ID"))
+       then any(.[]; .["Container ID"] == $container_id)
+       else error("not a list of containers") end' <<<"${listing}" 2>/dev/null
   )" || listed=""
   case "${listed}" in
     true) return 0 ;;
@@ -283,7 +290,10 @@ read_record() {
 
 # Find the container running the record's call. Sets container_id once the
 # call graph names a running input's container that Modal lists in
-# MODAL_ENVIRONMENT; until then, unlisted_note may say why not.
+# MODAL_ENVIRONMENT. Until then, listing_note says what the last listing
+# found out about the call graph's container: that Modal doesn't list it,
+# or that Modal couldn't list the containers. Finding the container clears
+# it, so a missed attempt's reason names only the last listing's outcome.
 find_container() {
   local inputs candidate
   if ! inputs="$(call_inputs "${record_call_id}")"; then
@@ -303,13 +313,12 @@ find_container() {
   case "${listed_status}" in
     0)
       container_id="${candidate}"
-      unlisted_note=""
       listing_note=""
       printf 'Call %s of %s runs in container %s\n' "${record_call_id}" "${record_label}" "${container_id}"
       ;;
     1)
-      unlisted_note="container ${candidate} is not listed in Modal environment ${MODAL_ENVIRONMENT}"
-      printf '%s; asking again\n' "${unlisted_note}" >&2
+      listing_note="container ${candidate} is not listed in Modal environment ${MODAL_ENVIRONMENT}"
+      printf '%s; asking again\n' "${listing_note}" >&2
       ;;
     # Modal couldn't list: the next read asks again.
     *) listing_note="Modal could not list the containers in environment ${MODAL_ENVIRONMENT}" ;;
@@ -377,7 +386,6 @@ attempt_once() {
   stopped_container_id=""
   stopped_call_id=""
   stopped_at_epoch=0
-  unlisted_note=""
   listing_note=""
   stop_failure=""
   last_read="nothing yet"
@@ -398,7 +406,7 @@ attempt_once() {
           miss_reason="${record_label} finished after ${stop_failure}"
         elif [[ -z "${stopped_container_id}" ]]; then
           attempt_outcome="missed"
-          miss_reason="${record_label} finished before its container was stopped${unlisted_note:+ (${unlisted_note})}${listing_note:+ (${listing_note})}"
+          miss_reason="${record_label} finished before its container was stopped${listing_note:+ (${listing_note})}"
         elif completed_after_the_stop; then
           confirm_rerun
         fi

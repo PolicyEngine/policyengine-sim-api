@@ -175,17 +175,21 @@ starting its workers again.
 
 A calculation that finishes before its container is stopped, for example on
 a warm container, proves nothing, so the check submits a new one, up to
-three attempts. Before each new attempt it waits 90 seconds, so Modal stops
-the containers the last attempt left idle, the one the check found and the
-one Modal's rerun ran in (Modal stops a container left idle for 60 seconds
-by default, and these functions don't change that), and the next calculation
-starts in a new container. A record that fails, or doesn't finish within its
-deadline (10 minutes for the household, 15 for the report, per attempt),
-fails the check at once. Modal refuses to stop a container that has ended;
-when a stop fails, the check doesn't stop it again or submit another
-calculation, but follows the record to its end, so a record left running by
-a container that ended for another reason, such as running out of memory,
-fails the check at its deadline. Every Modal command may take 60 seconds.
+three attempts. Each new attempt starts 90 seconds after the last one ended.
+Modal stops a container left idle for 60 seconds by default, and these
+functions don't change that. A container that finished the last calculation
+unstopped went idle when the record finished, so the wait covers it, and the
+next calculation starts in a new container. A container that Modal ran a
+stopped call in again goes idle only when that rerun returns, which may be
+after the attempt ended, so the wait covers it only when the rerun returns
+within about 30 seconds of the attempt's end. A record that fails, or
+doesn't finish within its deadline (10 minutes for the household, 15 for the
+report, per attempt), fails the check at once. Modal refuses to stop a
+container that has ended; when a stop fails, the check doesn't stop it again
+or submit another calculation, but follows the record to its end, so a
+record left running by a container that ended for another reason, such as
+running out of memory, fails the check at its deadline. Every Modal command
+may take 60 seconds.
 
 It uses the repository's Modal token (the repository secrets
 `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`), which must be allowed to read
