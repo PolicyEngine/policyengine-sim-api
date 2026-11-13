@@ -158,7 +158,8 @@ the run tables and their inputs, and `UPDATE` of `updated_at`,
 - `list_unstarted_runs` returns the oldest rows, up to a limit, created in a
   window that are still `pending` with no Modal call and whose `updated_at`
   still equals `created_at`: household jobs, report runs outside a budget
-  window whose baseline is an economy simulation, and runs of economy
+  window whose baseline is an economy simulation, household report runs
+  (`household_report_run`, a kind of their own), and runs of economy
   simulations that no report run names (standalone runs).
 - `list_idle_budget_windows` returns the budget windows that stopped
   (`IdleBudgetWindow`, a type apart from the rows): pending or running, with
@@ -176,6 +177,11 @@ the run tables and their inputs, and `UPDATE` of `updated_at`,
   the rows no longer describe one calculation: a side's region or dataset
   is gone, or the two sides differ. The values are read with
   `read_simulation_reform`, the reader a submission uses.
+- `read_unstarted_household_report_run` reads back a household report run:
+  its report's household and year, the run's versions, each side's
+  simulation run and policy, and the catalog version the sides were created
+  on. The entrypoint reads the household and the policies' values again
+  with `HouseholdReportStore.read_inputs`.
 - `read_report_run_simulation_run_ids` returns the simulation runs a report
   run names, so one that can't be rebuilt is failed with them, and
   `read_run_call` returns a row's status and recorded call, which says whose

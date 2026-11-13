@@ -8,11 +8,14 @@ function, starts such a run's call once more:
 
 1. ``list_unstarted_runs`` lists the rows still pending with no call that were
    created within a window and that nothing has changed since their insert
-   (``updated_at`` still equals ``created_at``): household jobs, report runs,
-   and standalone simulation runs, which no report run names. A report run's
-   own simulation runs are its coordinator's to start. Budget-window years
-   are left out, and household simulations too: the check can't rebuild
-   their calls yet.
+   (``updated_at`` still equals ``created_at``): household jobs, economy
+   report runs, household report runs (a kind of their own, since one
+   household function call calculates both sides), and standalone economy
+   simulation runs, which no report run names. A report run's own
+   simulation runs are its call's to start. Budget-window years are left
+   out, and so are household simulations' runs no report names (there are
+   none yet). ``read_unstarted_household_report_run`` reads a household
+   report run back.
    ``list_idle_budget_windows`` lists, apart, the budget windows that
    stopped (``IdleBudgetWindow``): no year is under way and years are still
    waiting, untouched, since a time in the window.
@@ -84,7 +87,11 @@ class RestartKind(StrEnum):
     """What kind of row the restart check starts again."""
 
     HOUSEHOLD_JOB = "household_job"
+    # An economy report run.
     REPORT_RUN = "report_run"
+    # A household report run: one household function call calculates both
+    # of its sides.
+    HOUSEHOLD_REPORT_RUN = "household_report_run"
     SIMULATION_RUN = "simulation_run"
     # A budget window none of whose years is under way (``IdleBudgetWindow``):
     # a restart starts its earliest waiting years, as the service starts a
@@ -96,6 +103,7 @@ class RestartKind(StrEnum):
 RESTART_TABLES: Final[dict[RestartKind, Table]] = {
     RestartKind.HOUSEHOLD_JOB: household_jobs,
     RestartKind.REPORT_RUN: report_runs,
+    RestartKind.HOUSEHOLD_REPORT_RUN: report_runs,
     RestartKind.SIMULATION_RUN: simulation_runs,
 }
 
@@ -190,6 +198,39 @@ class StoredReportRun:
 
 
 @dataclass(frozen=True)
+class StoredHouseholdReportSide:
+    """One side of a household report run: its simulation run and its policy.
+
+    ``policy_id`` is the side's stored policy, None for current law.
+    """
+
+    simulation_run_id: UUID
+    policy_id: UUID | None
+
+
+@dataclass(frozen=True)
+class StoredHouseholdReportRun:
+    """A household report run as its household function call was built from it.
+
+    ``year`` is the report's, ``catalog_version_id`` the catalog version its
+    simulation runs were created on, and ``versions`` those the report run
+    records, which choose the worker. ``reform`` is None for a report of the
+    baseline alone. The household and the policies' values are read again,
+    with the submission's own reader.
+    """
+
+    report_run_id: UUID
+    country: str
+    versions: RunVersions
+    household_id: UUID
+    year: int
+    catalog_version_id: UUID
+    baseline: StoredHouseholdReportSide
+    reform: StoredHouseholdReportSide | None
+    created_at: datetime
+
+
+@dataclass(frozen=True)
 class StoredSimulationRun:
     """A standalone simulation run as its simulation function's call was built."""
 
@@ -213,10 +254,17 @@ def _economy_simulation_run(
     simulation_run_id: ColumnElement[Any],
 ) -> ColumnElement[bool]:
     """Return the condition that the simulation run is an economy simulation's."""
+    return _simulation_run_of_type(simulation_run_id, SimulationType.ECONOMY)
+
+
+def _simulation_run_of_type(
+    simulation_run_id: ColumnElement[Any], simulation_type: SimulationType
+) -> ColumnElement[bool]:
+    """Return the condition that the simulation run is a simulation of the type."""
     return exists().where(
         simulations.c.id == simulation_runs.c.simulation_id,
         simulation_runs.c.id == simulation_run_id,
-        simulations.c.simulation_type == SimulationType.ECONOMY,
+        simulations.c.simulation_type == simulation_type,
     )
 
 
@@ -228,6 +276,13 @@ def _restart_candidates(kind: RestartKind) -> Select[Any]:
         return statement.where(
             report_runs.c.budget_window_run_id.is_(None),
             _economy_simulation_run(report_runs.c.baseline_simulation_run_id),
+        )
+    if kind is RestartKind.HOUSEHOLD_REPORT_RUN:
+        return statement.where(
+            report_runs.c.budget_window_run_id.is_(None),
+            _simulation_run_of_type(
+                report_runs.c.baseline_simulation_run_id, SimulationType.HOUSEHOLD
+            ),
         )
     if kind is RestartKind.SIMULATION_RUN:
         naming_report_run = report_runs.alias("naming_report_run")
@@ -552,6 +607,81 @@ def read_unstarted_report_run(
         scope=scope,
         baseline=_side(connection, run.country, scope, baseline_rows),
         reform=_side(connection, run.country, scope, reform_rows),
+        created_at=run.created_at,
+    )
+
+
+def read_unstarted_household_report_run(
+    connection: Connection, report_run_id: UUID
+) -> StoredHouseholdReportRun | None:
+    """Return what a household report run's household function call is built from.
+
+    Return None when there is no such run. Raise StoredRunUnreadableError
+    when its report names no household or year, a side's run is missing, or
+    the sides were created on different catalog versions.
+    """
+    run = connection.execute(
+        select(
+            report_runs.c.created_at,
+            report_runs.c.baseline_simulation_run_id,
+            report_runs.c.reform_simulation_run_id,
+            report_runs.c.country_package_version,
+            report_runs.c.policyengine_version,
+            reports.c.country,
+            reports.c.household_id,
+            reports.c.year,
+        )
+        .join(reports, reports.c.id == report_runs.c.report_id)
+        .where(report_runs.c.id == report_run_id)
+    ).one_or_none()
+    if run is None:
+        return None
+    if run.household_id is None or run.year is None:
+        msg = f"report run {report_run_id}'s report names no household or year"
+        raise StoredRunUnreadableError(msg)
+    side_ids = [run.baseline_simulation_run_id]
+    if run.reform_simulation_run_id is not None:
+        side_ids.append(run.reform_simulation_run_id)
+    sides = {
+        row.id: row
+        for row in connection.execute(
+            select(
+                simulation_runs.c.id,
+                simulation_runs.c.tax_benefit_model_version_id,
+                simulations.c.policy_id,
+            )
+            .join(simulations, simulations.c.id == simulation_runs.c.simulation_id)
+            .where(simulation_runs.c.id.in_(side_ids))
+        )
+    }
+    if set(sides) != set(side_ids):
+        msg = f"report run {report_run_id} names a missing simulation run"
+        raise StoredRunUnreadableError(msg)
+    catalog_version_ids = {row.tax_benefit_model_version_id for row in sides.values()}
+    if len(catalog_version_ids) != 1:
+        msg = (
+            f"report run {report_run_id}'s sides were created on different "
+            "catalog versions"
+        )
+        raise StoredRunUnreadableError(msg)
+    stored_sides = [
+        StoredHouseholdReportSide(
+            simulation_run_id=side_id, policy_id=sides[side_id].policy_id
+        )
+        for side_id in side_ids
+    ]
+    return StoredHouseholdReportRun(
+        report_run_id=report_run_id,
+        country=run.country,
+        versions=RunVersions(
+            country_package_version=run.country_package_version,
+            policyengine_version=run.policyengine_version,
+        ),
+        household_id=run.household_id,
+        year=run.year,
+        catalog_version_id=catalog_version_ids.pop(),
+        baseline=stored_sides[0],
+        reform=stored_sides[1] if len(stored_sides) > 1 else None,
         created_at=run.created_at,
     )
 

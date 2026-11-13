@@ -19,6 +19,7 @@ from policyengine_simulation_persistence.run_restart_records import (
     read_earliest_waiting_year,
     read_report_run_simulation_run_ids,
     read_run_call,
+    read_unstarted_household_report_run,
     read_unstarted_report_run,
     read_unstarted_simulation_run,
 )
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence.run_restart_records import (
         IdleBudgetWindow,
         RunCall,
+        StoredHouseholdReportRun,
         StoredReportRun,
         StoredSimulationRun,
         UnstartedRun,
@@ -84,6 +86,13 @@ class RunRestartStore:
         """Return what the report run's call is built from, or None."""
         with self._transaction() as connection:
             return read_unstarted_report_run(connection, report_run_id)
+
+    def read_household_report_run(
+        self, report_run_id: UUID
+    ) -> StoredHouseholdReportRun | None:
+        """Return what the household report run's call is built from, or None."""
+        with self._transaction() as connection:
+            return read_unstarted_household_report_run(connection, report_run_id)
 
     def read_simulation_run(
         self, simulation_run_id: UUID

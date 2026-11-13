@@ -57,6 +57,7 @@ from policyengine_simulation_entry.run_restart_calls import (
     CallNotRebuiltError,
     DeferredRestartError,
     HouseholdJobRestarts,
+    HouseholdReportRestarts,
     RestartCallBuilder,
     RestartCallers,
     RestartSettings,
@@ -123,6 +124,12 @@ CALL_START_TIMEOUT_SECONDS: Final = 10.0
 # bounded statements, so the check ends within the scheduled function's
 # timeout and no row it marks is left without its call.
 CHECK_TIME_LIMIT: Final = timedelta(minutes=3)
+# The kinds recorded on a report run. A household report run's call and
+# failure are written as an economy report run's are, with the same
+# conditional writes on ``report_runs``.
+_REPORT_RUN_KINDS: Final = frozenset(
+    {RestartKind.REPORT_RUN, RestartKind.HOUSEHOLD_REPORT_RUN}
+)
 
 
 @dataclass(frozen=True)
@@ -139,7 +146,10 @@ class RestartSummary:
 
 
 class EconomyRunWrites(Protocol):
-    """The submission's own call writes on economy runs (``EconomyRunStore``)."""
+    """The submission's own call writes on report and simulation runs.
+
+    ``EconomyRunStore``'s; a household report run's are the same writes.
+    """
 
     def record_report_call(
         self, report_run_id: UUID, modal_call_id: str
@@ -226,6 +236,7 @@ class RestartStores:
     restarts: UnstartedRunSource
     economy: EconomyRunWrites
     households: HouseholdJobRestarts
+    household_reports: HouseholdReportRestarts
     windows: BudgetWindowAdvancer
 
 
@@ -255,6 +266,7 @@ class RunRestartService:
         self._calls = RestartCallBuilder(
             restarts=stores.restarts,
             households=stores.households,
+            household_reports=stores.household_reports,
             workers=workers,
             callers=callers,
             settings=settings,
@@ -421,7 +433,7 @@ class RunRestartService:
         Return None when the failure couldn't be written.
         """
         try:
-            if run.kind is RestartKind.REPORT_RUN:
+            if run.kind in _REPORT_RUN_KINDS:
                 failed = self._stores.economy.fail_unstarted_report(
                     run.run_id, simulation_run_ids, message
                 )
@@ -437,7 +449,7 @@ class RunRestartService:
 
     def _record(self, run: UnstartedRun, call_id: str) -> None:
         """Record the call's ID while the row is pending with no call."""
-        if run.kind is RestartKind.REPORT_RUN:
+        if run.kind in _REPORT_RUN_KINDS:
             self._stores.economy.record_report_call(run.run_id, call_id)
         elif run.kind is RestartKind.SIMULATION_RUN:
             self._stores.economy.record_simulation_call(run.run_id, call_id)

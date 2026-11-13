@@ -123,12 +123,13 @@ runs it every two minutes as the Modal worker role.
   minutes ago (`run_restart_windows`). A window is restarted as
   `budget_window_submissions` starts a new one: from its earliest waiting
   year's rebuilt call, with `YearStarts`, marking that year just before the
-  first start. Household simulations' runs are
-  left out. After three minutes a check marks no more rows and leaves the
-  rest for the next.
+  first start. A household report run is its own kind, restarted with its
+  one household function call. After three minutes a check marks no more
+  rows and leaves the rest for the next.
 - It rebuilds each call with this service's own builders
   (`report_run_calculation`, `simulation_run_calculation`,
-  `prepare_household_job`) from the stored rows, on the manifest's worker
+  `prepare_household_job`, `household_report_calculation`) from the stored
+  rows, on the manifest's worker
   for the .py version the row records, even when that worker is no longer
   the default. The context's request ID is the check's own
   (`run-restart-<uuid>`), and its creation time is the row's.

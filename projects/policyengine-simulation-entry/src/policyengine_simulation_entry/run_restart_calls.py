@@ -4,10 +4,13 @@ The restart check (``run_restarts``) starts such a row's call once more. The
 call must be the one the row's submission started: ``RestartCallBuilder``
 reads back what the submission built it from and builds it again with the
 submission's own builders (``report_run_calculation``,
-``simulation_run_calculation`` and ``prepare_household_job``), on the worker
-of the .py version the row records. A household job whose rebuilt job would
-record anything else (another year, catalog version or policy) can't be
-rebuilt, so the restart never calculates something its row doesn't record.
+``simulation_run_calculation``, ``prepare_household_job`` and
+``household_report_calculation``), on the worker of the .py version the row
+records. A household job whose rebuilt job would record anything else
+(another year, catalog version or policy), or a household report run whose
+.py version's catalog version is no longer the one its runs were created
+on, can't be rebuilt, so the restart never calculates something its row
+doesn't record.
 """
 
 from __future__ import annotations
@@ -22,8 +25,12 @@ from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_simulation_persistence import (
     MissingPolicyParametersError,
     OverlappingReformError,
+    ReportSideError,
     RestartKind,
+    StoredHouseholdReportRun,
+    StoredReportRun,
     StoredRunUnreadableError,
+    StoredSimulationRun,
     UnknownCatalogVersionError,
     UnknownDynamicError,
     UnknownHouseholdError,
@@ -41,6 +48,9 @@ from policyengine_simulation_entry.economy_calculation_inputs import (
     simulation_options,
     simulation_run_calculation,
 )
+from policyengine_simulation_entry.economy_submission_errors import (
+    EconomySubmissionUnprocessableError,
+)
 from policyengine_simulation_entry.economy_workers import (
     EconomyWorkerUnavailableError,
 )
@@ -52,13 +62,20 @@ from policyengine_simulation_entry.household_calculations import (
     HouseholdCalculationUnprocessableError,
     prepare_household_job,
 )
+from policyengine_simulation_entry.household_report_submissions import (
+    HouseholdReportBuildError,
+    HouseholdReportSideInputs,
+    household_report_calculation,
+)
 from policyengine_simulation_entry.household_workers import (
+    HouseholdFunctionCaller,
     HouseholdFunctionUnavailableError,
+    HouseholdReportRunCaller,
     VersionManifestUnavailableError,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping
     from datetime import datetime
     from uuid import UUID
 
@@ -67,12 +84,12 @@ if TYPE_CHECKING:
         HouseholdCalculationInputs,
         HouseholdJobRecord,
         HouseholdJobStatus,
+        HouseholdReportInputs,
         IdleBudgetWindow,
         NewHouseholdJob,
+        ReportSide,
         RunCall,
         RunVersions,
-        StoredReportRun,
-        StoredSimulationRun,
         UnstartedRun,
         WaitingYear,
     )
@@ -84,10 +101,7 @@ if TYPE_CHECKING:
         EconomyRunCaller,
         EconomyWorker,
     )
-    from policyengine_simulation_entry.household_workers import (
-        HouseholdFunctionCaller,
-        HouseholdWorker,
-    )
+    from policyengine_simulation_entry.household_workers import HouseholdWorker
 
 # The deployment each Modal environment holding the v2 workers belongs to, as
 # the Simulation Entrypoint's deploy pairs them (APP_ENVIRONMENT). A call's
@@ -157,6 +171,12 @@ class UnstartedRunSource(Protocol):
         """Return the row's status and recorded call, or None when it is gone."""
         ...
 
+    def read_household_report_run(
+        self, report_run_id: UUID
+    ) -> StoredHouseholdReportRun | None:
+        """Return what the household report run's call is built from, or None."""
+        ...
+
     def list_idle_windows(
         self, *, idle_after: datetime, idle_before: datetime, limit: int
     ) -> tuple[IdleBudgetWindow, ...]:
@@ -201,6 +221,30 @@ class HouseholdJobRestarts(Protocol):
         ...
 
 
+class HouseholdReportRestarts(Protocol):
+    """The household report read a restart uses (``HouseholdReportStore``)."""
+
+    def read_inputs(
+        self,
+        *,
+        country: str,
+        household_id: UUID,
+        policy_ids: Mapping[ReportSide, UUID | None],
+        policyengine_version: str,
+    ) -> HouseholdReportInputs:
+        """Read the catalog version, the household and each side's policy together."""
+        ...
+
+
+class RestartHouseholdCaller(
+    HouseholdFunctionCaller, HouseholdReportRunCaller, Protocol
+):
+    """Starts a household job's call and a household report run's.
+
+    ``ModalHouseholdFunctionCaller`` does both.
+    """
+
+
 class VersionedEconomyWorkers(Protocol):
     """Find a .py version's economy functions (``ManifestEconomyWorkers``)."""
 
@@ -234,10 +278,17 @@ class RestartCallers:
     """What starts a restarted call on Modal."""
 
     economy: EconomyRunCaller
-    households: HouseholdFunctionCaller
+    households: RestartHouseholdCaller
 
 
 type CallStart = Callable[[dict[str, Any] | None], Awaitable[str]]
+# What a row's call is rebuilt from, as the restart reads it back.
+type _StoredRow = (
+    StoredReportRun
+    | StoredHouseholdReportRun
+    | StoredSimulationRun
+    | HouseholdJobRecord
+)
 
 
 class DeferredRestartError(Exception):
@@ -275,6 +326,8 @@ _REBUILD_REASONS: Final[dict[type[Exception], str | None]] = {
     EconomyWorkerUnavailableError: None,
     HouseholdFunctionUnavailableError: None,
     _ChangedRunError: None,
+    # A report side's refusal is described by its own cause.
+    ReportSideError: None,
     StoredRunUnreadableError: "its stored rows no longer describe one calculation",
     UnknownCatalogVersionError: "its catalog version is gone",
     UnknownHouseholdError: "its household is gone",
@@ -286,11 +339,15 @@ _REBUILD_REASONS: Final[dict[type[Exception], str | None]] = {
     HouseholdCalculationUnprocessableError: "its household can no longer be read",
     HouseholdCalculationInternalError: "its household request no longer validates",
     ValidationError: "its stored request no longer validates",
+    EconomySubmissionUnprocessableError: "its household can no longer be calculated",
+    HouseholdReportBuildError: "its household report request no longer validates",
 }
 _REBUILD_ERRORS: Final = tuple(_REBUILD_REASONS)
 
 
 def _rebuild_reason(error: Exception) -> str:
+    if isinstance(error, ReportSideError):
+        return _rebuild_reason(error.error)
     reason = next(
         (
             reason
@@ -355,14 +412,16 @@ class RestartCallBuilder:
         *,
         restarts: UnstartedRunSource,
         households: HouseholdJobRestarts,
+        household_reports: HouseholdReportRestarts,
         workers: RestartWorkers,
         callers: RestartCallers,
         settings: RestartSettings,
         new_request_id: Callable[[], str] = lambda: f"run-restart-{uuid.uuid4()}",
     ) -> None:
-        """Read rows from the two stores; start calls with ``callers``."""
+        """Read rows from the stores; start calls with ``callers``."""
         self._restarts = restarts
         self._households = households
+        self._household_reports = household_reports
         self._workers = workers
         self._callers = callers
         self._settings = settings
@@ -376,34 +435,41 @@ class RestartCallBuilder:
         """
         simulation_run_ids: tuple[UUID, ...] = ()
         try:
-            if run.kind is RestartKind.REPORT_RUN:
-                stored_report = self._restarts.read_report_run(run.run_id)
-                if stored_report is None:
-                    return None
-                simulation_run_ids = (
-                    stored_report.baseline.simulation_run_id,
-                    stored_report.reform.simulation_run_id,
-                )
-                return RebuiltCall(self._report_call(stored_report), simulation_run_ids)
-            if run.kind is RestartKind.SIMULATION_RUN:
-                stored_simulation = self._restarts.read_simulation_run(run.run_id)
-                if stored_simulation is None:
-                    return None
-                return RebuiltCall(self._simulation_call(stored_simulation))
-            job = self._households.read(run.run_id)
-            if job is None:
+            stored = self._read(run)
+            if stored is None:
                 return None
-            return RebuiltCall(self._household_call(job))
+            simulation_run_ids = _report_sides(stored)
+            return RebuiltCall(self._call(stored), simulation_run_ids)
         except (SQLAlchemyError, VersionManifestUnavailableError) as error:
             raise DeferredRestartError(type(error).__name__) from error
         except _REBUILD_ERRORS as error:
-            if run.kind is RestartKind.REPORT_RUN and not simulation_run_ids:
+            if run.kind in _REPORT_RUN_KINDS and not simulation_run_ids:
                 simulation_run_ids = self._report_simulation_run_ids(run.run_id)
             raise CallNotRebuiltError(
                 _rebuild_reason(error),
                 error_type=type(error).__name__,
                 simulation_run_ids=simulation_run_ids,
             ) from error
+
+    def _read(self, run: UnstartedRun) -> _StoredRow | None:
+        """Read back what the row's call was built from, or None when it is gone."""
+        if run.kind is RestartKind.REPORT_RUN:
+            return self._restarts.read_report_run(run.run_id)
+        if run.kind is RestartKind.HOUSEHOLD_REPORT_RUN:
+            return self._restarts.read_household_report_run(run.run_id)
+        if run.kind is RestartKind.SIMULATION_RUN:
+            return self._restarts.read_simulation_run(run.run_id)
+        return self._households.read(run.run_id)
+
+    def _call(self, stored: _StoredRow) -> CallStart:
+        """Rebuild the call the stored row's submission started."""
+        if isinstance(stored, StoredReportRun):
+            return self._report_call(stored)
+        if isinstance(stored, StoredHouseholdReportRun):
+            return self._household_report_call(stored)
+        if isinstance(stored, StoredSimulationRun):
+            return self._simulation_call(stored)
+        return self._household_call(stored)
 
     def _report_simulation_run_ids(self, report_run_id: UUID) -> tuple[UUID, ...]:
         """Return the simulation runs a report run its rows can't rebuild names.
@@ -565,3 +631,83 @@ class RestartCallBuilder:
             )
 
         return start
+
+    def _household_report_call(self, stored: StoredHouseholdReportRun) -> CallStart:
+        """Rebuild the run's household function call from its rows and its inputs.
+
+        The household and each side's policy are read as the submission read
+        them, on the run's .py version, and must be on the catalog version
+        the run's simulation runs were created on.
+        """
+        worker = self._workers.households.worker_for_version(
+            stored.country, stored.versions.policyengine_version
+        )
+        if (
+            worker.bundle.country_package_version
+            != stored.versions.country_package_version
+        ):
+            msg = (
+                f"the v2 worker for .py {stored.versions.policyengine_version} "
+                "calculates on other versions than the run records"
+            )
+            raise _ChangedRunError(msg)
+        policy_ids: dict[ReportSide, UUID | None] = {
+            "baseline": stored.baseline.policy_id
+        }
+        if stored.reform is not None:
+            policy_ids["reform"] = stored.reform.policy_id
+        inputs = self._household_reports.read_inputs(
+            country=stored.country,
+            household_id=stored.household_id,
+            policy_ids=policy_ids,
+            policyengine_version=stored.versions.policyengine_version,
+        )
+        if inputs.catalog_version_id != stored.catalog_version_id:
+            msg = "its catalog version changed since it was created"
+            raise _ChangedRunError(msg)
+        calculation = household_report_calculation(
+            household=inputs.household,
+            year=stored.year,
+            baseline=HouseholdReportSideInputs(
+                simulation_run_id=stored.baseline.simulation_run_id,
+                policy_values=inputs.reforms["baseline"],
+            ),
+            reform=(
+                None
+                if stored.reform is None
+                else HouseholdReportSideInputs(
+                    simulation_run_id=stored.reform.simulation_run_id,
+                    policy_values=inputs.reforms["reform"],
+                )
+            ),
+            worker=worker,
+        )
+        payload = calculation.model_dump(mode="json")
+        caller = self._callers.households
+
+        def start(observability_context: dict[str, Any] | None) -> Awaitable[str]:
+            return caller.start_report_run(
+                worker,
+                payload,
+                report_run_id=stored.report_run_id,
+                observability_context=observability_context,
+            )
+
+        return start
+
+
+# The kinds recorded on a report run, which is failed with its simulation runs.
+_REPORT_RUN_KINDS: Final = frozenset(
+    {RestartKind.REPORT_RUN, RestartKind.HOUSEHOLD_REPORT_RUN}
+)
+
+
+def _report_sides(stored: _StoredRow) -> tuple[UUID, ...]:
+    """Return a report run's simulation runs, the baseline's first; else none."""
+    if isinstance(stored, StoredReportRun):
+        return (stored.baseline.simulation_run_id, stored.reform.simulation_run_id)
+    if isinstance(stored, StoredHouseholdReportRun):
+        if stored.reform is None:
+            return (stored.baseline.simulation_run_id,)
+        return (stored.baseline.simulation_run_id, stored.reform.simulation_run_id)
+    return ()

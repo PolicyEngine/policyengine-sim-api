@@ -863,8 +863,16 @@ statements are bounded by the check's statement timeout. A window whose
 first call can't be rebuilt is failed at once through the same advance: that
 year records `run_not_started` and why, and the window which year failed,
 unless the year changed before the advance took the window's lock.
-Household simulations' runs
-are left alone: the check can't rebuild their calls yet. Each check is a
+
+A household report run is restarted as its own kind: the check reads the
+report run's household, year, versions and each side's policy, reads the
+household and the policies' values again with the entrypoint's reader
+(`HouseholdReportStore.read_inputs`), and rebuilds its one household
+function call with `household_report_calculation`, started with
+`start_report_run`. A run whose .py version's catalog version is no longer
+the one its simulation runs were created on, or whose household or policy
+is gone or can no longer be calculated, is failed with `run_not_started`
+and why, with its simulation runs. Each check is a
 `v2_run_restart_check` operation and each row it takes up a
 `v2_run_restart` operation, with the row's kind, ID, age and outcome, and
 each outcome is also logged as a `v2_run_restart_outcome` event. A deferred

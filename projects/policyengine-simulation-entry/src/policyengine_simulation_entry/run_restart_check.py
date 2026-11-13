@@ -44,6 +44,7 @@ from policyengine_simulation_observability.stages import (
 from policyengine_simulation_persistence import (
     EconomyRunStore,
     HouseholdJobStore,
+    HouseholdReportStore,
     RunRestartStore,
     create_simulation_engine,
 )
@@ -217,6 +218,9 @@ def scheduled_restart_service(
                 engine, statement_timeout_milliseconds=timeout
             ),
             households=HouseholdJobStore.from_engine(
+                engine, statement_timeout_milliseconds=timeout
+            ),
+            household_reports=HouseholdReportStore.from_engine(
                 engine, statement_timeout_milliseconds=timeout
             ),
             windows=BudgetWindowStore(

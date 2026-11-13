@@ -426,7 +426,7 @@ def test_a_household_report_run_is_listed_as_its_own_kind_and_its_sides_are_not(
 def test_a_household_report_runs_stored_rows_are_read_back(connection) -> None:
     economy = insert_economy_catalog(connection, parameter_names=(CTC_AMOUNT,))
     policy_id = insert_policy(
-        connection, economy.catalog, [StoredValue(CTC_AMOUNT, "2026-01-01", 3_000)]
+        connection, economy.catalog, [StoredValue(CTC_AMOUNT, 3_000, START)]
     )
     report = _new_household_report(
         economy, _stored_household(connection), reform_policy_id=policy_id
