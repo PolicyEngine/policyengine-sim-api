@@ -318,7 +318,12 @@ report run with the run's own recorded failure if a run it must calculate
 already failed (`simulation_run_failed` if it recorded none), and starts a
 worker for each other one with a context naming only that
 simulation run (`simulation_run_id`). It aggregates both outputs and completes
-the report run with its result rows. It returns
+the report run with its result rows. A report run may name one simulation run
+as both its baseline and its reform, as a report comparing a simulation with
+itself does; both inputs then carry that run's ID and the same policy. The
+coordinator starts one worker for it, or reads its stored output once, uses
+that output as both sides, and stores the run's poverty and inequality rows
+once. It returns
 `{"report_run_id", "status"}`, or the same marked `deduplicated` without running
 when another call holds the report run or it has finished.
 
