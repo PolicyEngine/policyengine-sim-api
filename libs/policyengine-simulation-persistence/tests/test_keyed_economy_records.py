@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -28,6 +29,7 @@ from economy_rows import (
 from policyengine_simulation_persistence import (
     KEY_VERSION,
     EconomyReportDefinition,
+    EconomyRunStore,
     EconomySimulationDefinition,
     KeyedEconomyReport,
     KeyedEconomySimulation,
@@ -44,7 +46,7 @@ from public_api_rows import insert_policy
 from sqlalchemy import event, func, insert, select, text, update
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from sqlalchemy import Connection, Engine
 
@@ -578,3 +580,34 @@ def test_a_request_losing_the_report_run_to_another_joins_it_and_keeps_nothing(
     assert (joined.run.id, joined.run.inserted) == (competing[0], False)
     assert joined.baseline.run_inserted is False
     assert kept == 0
+
+
+def _store_on(connection: Connection) -> EconomyRunStore:
+    """Return a store whose transactions are savepoints of ``connection``."""
+
+    @contextmanager
+    def savepoint() -> Iterator[Connection]:
+        with connection.begin_nested():
+            yield connection
+
+    return EconomyRunStore(savepoint)
+
+
+def test_the_store_finds_or_creates_reports_and_simulations_in_a_transaction(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        act_as_the_service(connection)
+        store = _store_on(connection)
+
+        created = store.find_or_create_report(_keyed_report(economy))
+        joined = store.find_or_create_report(_keyed_report(economy))
+        simulation = store.find_or_create_simulation(_keyed_simulation(economy))
+
+    assert created.run.inserted is True
+    assert (joined.run.id, joined.run.inserted) == (created.run.id, False)
+    assert (simulation.simulation_id, simulation.run.id) == (
+        created.baseline.simulation_id,
+        created.baseline.simulation_run_id,
+    )
