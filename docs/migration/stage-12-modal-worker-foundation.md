@@ -401,7 +401,9 @@ run is failed by its coordinator only for its own failure, while that worker
 holds it. The stuck-run sweep judges the run tables only, leaves a simulation
 run to the coordinators of the unfinished report runs naming it, and never
 fails a run whose call Modal still reports pending, which includes a
-pre-empted one, before the run's maximum age of 24 hours.
+pre-empted one, before the run's maximum age of 24 hours. That age limit
+fails a simulation run whatever report runs name it, since new ones may keep
+joining a run whose call Modal never ends.
 
 **Applications deployed before this change** reject both calls before writing
 anything: their `coordinate_report` requires an evaluation record, and their

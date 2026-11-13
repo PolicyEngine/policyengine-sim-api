@@ -252,9 +252,9 @@ def test_a_run_another_sweep_failed_first_is_not_counted_again() -> None:
     run = _run("fc-ended")
 
     class AlreadyFailedStore(FakeSweepStore):
-        def fail_stuck_run(self, run, *, error_message, failed_at):
+        def fail_stuck_run(self, run, *, error_message, failed_at, **options):
             super().fail_stuck_run(
-                run, error_message=error_message, failed_at=failed_at
+                run, error_message=error_message, failed_at=failed_at, **options
             )
             return RunWrite(changed=False, status=RunStatus.FAILED)
 

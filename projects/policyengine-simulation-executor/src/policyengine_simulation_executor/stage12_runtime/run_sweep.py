@@ -20,8 +20,10 @@ pending meanwhile, so a pre-empted coordinator's or worker's run is never
 failed. Every coordinator of a pending or running report run that names a
 simulation run, as its baseline or reform, waits for the call holding it and
 fails it once that call ended without an outcome; a pre-empted coordinator's
-workers keep running meanwhile. So the sweep judges a simulation run only
-once no pending or running report run names it.
+workers keep running meanwhile. So the sweep judges a simulation run by its
+call only once no pending or running report run names it. Its age limit
+applies whatever report runs name a run: new ones may keep joining, and
+waiting for, a run whose call Modal never ends.
 
 Household jobs follow the same rule: the simulation service records the
 call it starts on a pending job, and a household function claims the job
@@ -106,19 +108,32 @@ class StuckRunStore(Protocol):
     """The sweep's reads and writes; ``ReportRunStore`` implements them."""
 
     def list_active_runs(
-        self, kind: RunKind, *, active_since_before: datetime
+        self,
+        kind: RunKind,
+        *,
+        active_since_before: datetime,
+        regardless_of_report_runs: bool = False,
     ) -> tuple[ActiveRun, ...]:
-        """Return the pending and running runs, or household jobs, older than a time."""
+        """Return the pending and running runs, or household jobs, older than a time.
+
+        A simulation run an unfinished report run names is left out, unless
+        ``regardless_of_report_runs``.
+        """
         ...
 
     def fail_stuck_run(
-        self, run: ActiveRun, *, error_message: str, failed_at: datetime
+        self,
+        run: ActiveRun,
+        *,
+        error_message: str,
+        failed_at: datetime,
+        regardless_of_report_runs: bool = False,
     ) -> RunWrite:
         """Mark ``run`` failed while it is as it was listed.
 
         It must still have its listed status and call, or no call if it was
         listed with none; a simulation run must still have no pending or
-        running report run naming it.
+        running report run naming it, unless ``regardless_of_report_runs``.
         """
         ...
 
@@ -245,13 +260,22 @@ class _SweepPass:
     now: datetime
     tally: _Tally
 
-    def fail(self, run: ActiveRun, error_message: str) -> bool:
+    def fail(
+        self,
+        run: ActiveRun,
+        error_message: str,
+        *,
+        regardless_of_report_runs: bool = False,
+    ) -> bool:
         """Fail ``run`` as listed, then its window if it is a window's year.
 
         Returns whether the run changed.
         """
         changed = self.store.fail_stuck_run(
-            run, error_message=error_message, failed_at=self.now
+            run,
+            error_message=error_message,
+            failed_at=self.now,
+            regardless_of_report_runs=regardless_of_report_runs,
         ).changed
         if changed and run.budget_window_run_id is not None and self.windows:
             windows = self.windows
@@ -326,8 +350,13 @@ def sweep_stuck_runs(  # noqa: PLR0913  # the stores, then keyword-only seams an
     sweep = _SweepPass(store=store, windows=windows, now=now, tally=_Tally())
     tally = sweep.tally
     for kind in SWEPT_KINDS:
-        for run in store.list_active_runs(kind, active_since_before=now - maximum_age):
-            if sweep.fail(run, EXCEEDED_AGE_MESSAGE):
+        # Shared simulation runs: report runs may keep joining, and waiting
+        # for, a run whose call Modal never ends, so the age limit ignores
+        # the report runs that name a run.
+        for run in store.list_active_runs(
+            kind, active_since_before=now - maximum_age, regardless_of_report_runs=True
+        ):
+            if sweep.fail(run, EXCEEDED_AGE_MESSAGE, regardless_of_report_runs=True):
                 tally.failed_for_age += 1
             else:
                 tally.left += 1

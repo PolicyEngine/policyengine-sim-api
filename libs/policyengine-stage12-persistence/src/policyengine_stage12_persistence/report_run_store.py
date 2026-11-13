@@ -562,6 +562,7 @@ class ReportRunStore:
         kind: RunKind,
         *,
         active_since_before: datetime,
+        regardless_of_report_runs: bool = False,
     ) -> tuple[ActiveRun, ...]:
         """Return the pending and running runs of ``kind`` active since before a time.
 
@@ -572,7 +573,10 @@ class ReportRunStore:
         no pending or running report run names it as its baseline or reform:
         each such report run's coordinator starts the run or waits for the
         call holding it, and fails it once that call ended without an
-        outcome, so it is theirs to judge until they have finished. A year of a
+        outcome, so it is theirs to judge until they have finished; with
+        ``regardless_of_report_runs``, for the sweep's age limit, it is listed
+        whatever report runs name it, since new ones may keep joining a run
+        whose call Modal never ends. A year of a
         pending or running budget-window run that is still pending with no
         call recorded is waiting for an earlier year to end, and is listed
         only once its window has finished: the window is judged as a whole.
@@ -588,7 +592,7 @@ class ReportRunStore:
             active_since < active_since_before,
         ]
         columns = [table.c.id, table.c.status, table.c.modal_call_id]
-        if kind is RunKind.SIMULATION_RUN:
+        if kind is RunKind.SIMULATION_RUN and not regardless_of_report_runs:
             conditions.append(no_active_report_run_names(table))
         if kind is RunKind.REPORT_RUN:
             conditions.append(~_waiting_window_year())
@@ -616,6 +620,7 @@ class ReportRunStore:
         *,
         error_message: str,
         failed_at: datetime,
+        regardless_of_report_runs: bool = False,
     ) -> RunWrite:
         """Mark a stuck ``run`` failed, while it is as it was listed.
 
@@ -627,7 +632,9 @@ class ReportRunStore:
         since it was listed, is left as it is, so concurrent sweeps change it
         once. A report run naming it counts once its insert has committed,
         before this update starts: the database doesn't make an insert in
-        progress wait for this update, or this update for it.
+        progress wait for this update, or this update for it. With
+        ``regardless_of_report_runs``, for the sweep's age limit, a
+        simulation run is failed whatever report runs name it.
         """
         table = RUN_TABLES[run.kind]
         same_call = (
@@ -644,6 +651,7 @@ class ReportRunStore:
                 *(
                     (no_active_report_run_names(table),)
                     if run.kind is RunKind.SIMULATION_RUN
+                    and not regardless_of_report_runs
                     else ()
                 ),
             )
