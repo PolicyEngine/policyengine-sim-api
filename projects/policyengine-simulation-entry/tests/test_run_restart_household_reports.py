@@ -17,6 +17,7 @@ from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
+import pytest
 from economy_service_fakes import CREATED_AT
 from household_report_fakes import (
     POLICY_ID,
@@ -31,11 +32,13 @@ from policyengine_simulation_entry.household_report_submissions import (
 from policyengine_simulation_entry.household_workers import ManifestHouseholdWorkers
 from policyengine_simulation_entry.run_restarts import RestartOutcome, RestartSummary
 from policyengine_simulation_persistence import (
+    MissingPolicyParametersError,
     ReportSideError,
     RestartKind,
     RunVersions,
     StoredHouseholdReportRun,
     StoredHouseholdReportSide,
+    StoredRunUnreadableError,
     UnknownHouseholdError,
     UnknownPolicyError,
     UnstartedRun,
@@ -231,20 +234,114 @@ def test_a_household_report_run_whose_household_is_gone_is_failed() -> None:
     assert rig.telemetry.outcomes[0][3] == "UnknownHouseholdError"
 
 
-def test_a_household_report_run_whose_reforms_policy_is_gone_is_failed() -> None:
-    """A side's refusal is read as its own cause."""
+@pytest.mark.parametrize(
+    ("refusal", "reason"),
+    [
+        (UnknownPolicyError("no policy"), "its policy is gone"),
+        (
+            MissingPolicyParametersError("no such parameter"),
+            "its policy names parameters its catalog lacks",
+        ),
+    ],
+    ids=["policy-gone", "parameters-missing"],
+)
+def test_a_household_report_run_whose_reforms_policy_is_refused_is_failed(
+    refusal, reason
+) -> None:
+    """A side's refusal is read, and counted, as its own cause."""
     stored, _payload, _report_run_id = _submitted_household_report()
     rig = _household_report_rig(
         stored,
         household_reports=FakeHouseholdReportStore(
-            read_failure=ReportSideError("reform", UnknownPolicyError("no policy"))
+            read_failure=ReportSideError("reform", refusal)
         ),
     )
 
     summary = rig.restart()
 
-    assert _failed_message(rig, stored).endswith(": its policy is gone.")
+    assert _failed_message(rig, stored).endswith(f": {reason}.")
     assert summary == RestartSummary(listed=1, failed=1)
+    assert rig.telemetry.outcomes[0][3] == type(refusal).__name__
+
+
+def test_a_household_report_run_whose_sides_name_one_run_is_failed() -> None:
+    """The contract refuses a payload the service built wrong."""
+    stored, _payload, _report_run_id = _submitted_household_report()
+    assert stored.reform is not None
+    stored = replace(
+        stored,
+        reform=replace(
+            stored.reform, simulation_run_id=stored.baseline.simulation_run_id
+        ),
+    )
+    rig = _household_report_rig(stored)
+
+    summary = rig.restart()
+
+    assert rig.household_caller.report_runs == []
+    ((_run_id, _sides_failed, message),) = rig.economy.failed_runs
+    assert message.endswith(": its household report request no longer validates.")
+    assert summary == RestartSummary(listed=1, failed=1)
+    assert rig.telemetry.outcomes[0][3] == "HouseholdReportBuildError"
+
+
+def test_a_household_report_run_whose_worker_left_the_manifest_is_failed() -> None:
+    stored, _payload, _report_run_id = _submitted_household_report()
+    stored = replace(
+        stored,
+        versions=RunVersions(
+            country_package_version=stored.versions.country_package_version,
+            policyengine_version="0.0.1",
+        ),
+    )
+    rig = _household_report_rig(stored)
+
+    summary = rig.restart()
+
+    assert _failed_message(rig, stored).endswith(
+        ": the v2 version manifest has no worker for .py 0.0.1."
+    )
+    assert summary == RestartSummary(listed=1, failed=1)
+
+
+def test_a_household_report_run_whose_rows_no_longer_describe_it_is_failed() -> None:
+    """It is failed with the simulation runs it names, read on their own."""
+    stored, _payload, _report_run_id = _submitted_household_report(reform=None)
+    rig = _household_report_rig(stored)
+    rig.restarts.read_failures[stored.report_run_id] = StoredRunUnreadableError(
+        "report run names a missing simulation run"
+    )
+    rig.restarts.report_simulation_run_ids[stored.report_run_id] = (
+        stored.baseline.simulation_run_id,
+    )
+
+    summary = rig.restart()
+
+    assert _failed_message(rig, stored).endswith(
+        ": its stored rows no longer describe one calculation."
+    )
+    assert summary == RestartSummary(listed=1, failed=1)
+
+
+def test_an_unexpected_rebuild_error_defers_a_household_report_run(caplog) -> None:
+    stored, _payload, _report_run_id = _submitted_household_report()
+    rig = _household_report_rig(
+        stored,
+        household_reports=FakeHouseholdReportStore(
+            read_failure=RuntimeError("unforeseen")
+        ),
+    )
+
+    summary = rig.restart()
+
+    assert rig.restarts.marked == []
+    assert rig.economy.failed_runs == []
+    assert summary == RestartSummary(listed=1, deferred=1)
+    assert [
+        record.policyengine_attributes
+        for record in caplog.records
+        if record.getMessage() == "v2_run_restart_unexpected_error"
+    ] == [{"run_kind": "household_report_run", "run_id": str(stored.report_run_id)}]
 
 
 def test_a_household_report_run_whose_household_cannot_be_calculated_is_failed() -> (

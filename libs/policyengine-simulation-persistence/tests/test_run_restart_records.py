@@ -27,6 +27,7 @@ from economy_rows import (
 from policyengine_simulation_persistence import (
     BudgetWindowYear,
     HouseholdReportSimulation,
+    HouseholdReportStore,
     IdleBudgetWindow,
     NewBudgetWindowReport,
     NewEconomyReport,
@@ -802,6 +803,35 @@ def savepoint_store(connection) -> RunRestartStore:
             yield connection
 
     return RunRestartStore(transaction)
+
+
+def test_the_modal_worker_role_reads_a_household_reports_inputs_again(
+    connection,
+) -> None:
+    """The restart reads the household and policies with the submission's reader."""
+    economy = insert_economy_catalog(connection, parameter_names=(CTC_AMOUNT,))
+    policy_id = insert_policy(
+        connection, economy.catalog, [StoredValue(CTC_AMOUNT, 3_000, START)]
+    )
+    household_id = _stored_household(connection)
+    act_as_the_modal_worker(connection)
+
+    @contextmanager
+    def transaction() -> Iterator[Connection]:
+        with connection.begin_nested():
+            yield connection
+
+    inputs = HouseholdReportStore(transaction).read_inputs(
+        country="us",
+        household_id=household_id,
+        policy_ids={"baseline": None, "reform": policy_id},
+        policyengine_version=VERSIONS.policyengine_version,
+    )
+
+    assert inputs.catalog_version_id == economy.catalog.version_id
+    assert inputs.household.id == household_id
+    assert inputs.reforms["baseline"] == {}
+    assert set(inputs.reforms["reform"]) == {CTC_AMOUNT}
 
 
 def test_the_store_lists_marks_and_reads_in_transactions_of_its_own(
