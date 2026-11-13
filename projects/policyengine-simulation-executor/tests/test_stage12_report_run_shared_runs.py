@@ -16,6 +16,7 @@ import pytest
 from policyengine_simulation_executor import spm as runtime_spm
 from policyengine_simulation_executor.stage12_runtime.run_sweep import (
     ENDED_CALL_MESSAGE,
+    CallState,
 )
 from policyengine_stage12_persistence import RunStatus
 from stage12_fake_report_runs import (
@@ -32,6 +33,7 @@ from stage12_fake_stores import FakeArtifacts
 from stage12_runtime_support import coordinate_report
 from stage12_shared_run_support import (
     OTHER_WORKER_FAILURE,
+    FlakyProbes,
     HolderCall,
     HolderEnding,
     HolderInvoker,
@@ -279,3 +281,64 @@ def test_a_worker_start_refused_fails_the_report_run_and_leaves_its_run_pending(
             RunStatus.PENDING,
             [],
         )
+
+
+class FlakyOwnWorkers(HolderInvoker):
+    """Start real workers whose first probe fails as a lost connection does."""
+
+    def spawn(self, request):
+        return FlakyProbes(super().spawn(request))
+
+
+def test_a_failed_probe_of_a_running_holder_keeps_the_coordinator_waiting() -> None:
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
+    holder = _baseline_holder(report_runs, files, HolderEnding.SUCCEEDS)
+    invoker = HolderInvoker(report_runs, artifacts, holders=[holder])
+    invoker.holders[OTHER_WORKER_CALL_ID] = FlakyProbes(holder)
+    asked = []
+
+    def still_running(modal_call_id):
+        asked.append(modal_call_id)
+        return CallState.RUNNING
+
+    result = _coordinate(
+        report_runs, invoker, artifacts, files, call_state=still_running
+    )
+
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
+    # The failed probe made the coordinator ask Modal, which reported the call
+    # running, so the run was left to its holder, which completed it.
+    assert asked == [OTHER_WORKER_CALL_ID]
+    assert report_runs.simulation_runs[BASELINE_RUN_ID].writes == [
+        "complete_simulation_run"
+    ]
+
+
+def test_a_failed_probe_of_a_running_own_worker_keeps_the_coordinator_waiting() -> None:
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
+    invoker = FlakyOwnWorkers(report_runs, artifacts)
+
+    result = _coordinate(
+        report_runs,
+        invoker,
+        artifacts,
+        files,
+        call_state=lambda _modal_call_id: CallState.RUNNING,
+    )
+
+    assert result == {"report_run_id": str(REPORT_RUN_ID), "status": "succeeded"}
+    for run_id in (BASELINE_RUN_ID, REFORM_RUN_ID):
+        simulation_run = report_runs.simulation_runs[run_id]
+        assert simulation_run.status is RunStatus.SUCCEEDED
+        assert simulation_run.writes == [
+            "claim_simulation_run",
+            "complete_simulation_run",
+        ]

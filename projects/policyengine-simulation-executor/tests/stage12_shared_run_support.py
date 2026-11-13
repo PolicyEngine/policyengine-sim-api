@@ -132,6 +132,28 @@ class HolderCall:
         )
 
 
+class FlakyProbes:
+    """A call whose first ``failures`` probes fail as a lost connection to Modal does.
+
+    The call itself keeps running: every later probe asks ``call``.
+    """
+
+    def __init__(self, call, *, failures: int = 1) -> None:
+        self.call = call
+        self.object_id = call.object_id
+        self.failures = failures
+
+    def get(self, *, timeout=None):
+        if self.failures:
+            self.failures -= 1
+            msg = "the connection to Modal was reset"
+            raise ConnectionError(msg)
+        return self.call.get(timeout=timeout)
+
+    def cancel(self) -> None:
+        self.call.cancel()
+
+
 class HolderInvoker(RunWorkerInvoker):
     """Restore each holder call by its ID; start other children as real workers."""
 
