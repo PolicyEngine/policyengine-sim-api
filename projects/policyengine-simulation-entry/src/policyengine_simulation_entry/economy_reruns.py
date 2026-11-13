@@ -195,7 +195,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
     """Create and re-run economy and budget-window reports and simulations.
 
     A household report's re-run goes to ``household_reports``; without it,
-    one answers 503.
+    one the service could re-run answers 503, after the 409s.
     """
 
     def __init__(  # noqa: PLR0913  # the household service, then the report service's seams

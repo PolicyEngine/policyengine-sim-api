@@ -93,7 +93,8 @@ class StoredHouseholdReport:
 
     ``baseline`` and ``reform`` are the report's own household simulations,
     with their stored policies; ``reform`` is None for a report of the
-    baseline alone.
+    baseline alone. Neither names a dynamic, which a household calculation
+    does not apply: the re-run service refuses a report whose side does.
     """
 
     report_id: UUID
