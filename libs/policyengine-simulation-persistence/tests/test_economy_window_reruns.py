@@ -37,13 +37,17 @@ from policyengine_simulation_persistence import (
     BudgetWindowYear,
     EconomyPopulation,
     EconomyRecordReferenceError,
+    EconomyReportDefinition,
     EconomyRequest,
     EconomyRunStore,
+    FoundBudgetWindow,
+    KeyedBudgetWindow,
+    KeyedWindowYear,
     NewBudgetWindowReport,
     NewReportRerun,
     NewWindowRerun,
+    ProposedSide,
     ReportRunStatus,
-    ReportRunTrigger,
     ReportSimulation,
     RerunRecordDeletedError,
     RerunSide,
@@ -53,6 +57,7 @@ from policyengine_simulation_persistence import (
     SimulationStatus,
     WindowRerunYear,
     WindowYearDefinition,
+    find_or_create_budget_window,
     insert_budget_window_report,
     insert_report_rerun,
     insert_window_rerun,
@@ -276,33 +281,18 @@ def test_a_definitions_years_come_from_the_newest_window_run(
     ]
 
 
-def test_a_window_rerun_creates_a_window_run_and_each_years_runs(
+def test_a_forced_window_rerun_creates_a_window_run_and_each_years_new_runs(
     public_api_database_url,
 ) -> None:
+    """Answers 3 and 6: no run is reused or joined, and no trigger is written."""
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         later = insert_later_catalog(connection, economy)
         stored = _stored_window(connection, economy)
-        reused = insert_run_of(
-            connection,
-            stored.years[1].baseline.simulation_id,
-            later.population(year=2027),
-            RunShape(versions=LATER_VERSIONS),
-        )
         rerun = _window_rerun_of(stored, later, recalculate=True)
-        years = list(rerun.years)
-        years[1] = replace(
-            years[1],
-            baseline=RerunSide(
-                simulation_id=reused.simulation_id,
-                simulation_run_id=reused.simulation_run_id,
-                reused=True,
-            ),
-        )
-        rerun = replace(rerun, years=tuple(years))
         act_as_the_service(connection)
 
-        insert_window_rerun(connection, rerun)
+        found = insert_window_rerun(connection, rerun)
         window_run = _row(connection, "budget_window_runs", rerun.window_run_id)
         year_runs = [
             _row(connection, "report_runs", year.report_run_id) for year in rerun.years
@@ -317,6 +307,7 @@ def test_a_window_rerun_creates_a_window_run_and_each_years_runs(
         for key in (
             "report_id",
             "tax_benefit_model_version_id",
+            "policyengine_version",
             "trigger",
             "recalculate",
             "status",
@@ -324,10 +315,16 @@ def test_a_window_rerun_creates_a_window_run_and_each_years_runs(
     } == {
         "report_id": stored.report_id,
         "tax_benefit_model_version_id": later.catalog.version_id,
-        "trigger": ReportRunTrigger.MANUAL,
+        "policyengine_version": LATER_POLICYENGINE_VERSION,
+        "trigger": None,
         "recalculate": True,
         "status": ReportRunStatus.PENDING,
     }
+    assert (found.window_run.id, found.window_run.inserted) == (
+        rerun.window_run_id,
+        True,
+    )
+    assert all(year.baseline.run_inserted for year in found.years)
     assert [
         (
             run["year"],
@@ -341,13 +338,15 @@ def test_a_window_rerun_creates_a_window_run_and_each_years_runs(
         (
             year,
             rerun.window_run_id,
-            ReportRunTrigger.MANUAL,
+            None,
             ReportRunStatus.PENDING,
             LATER_POLICYENGINE_VERSION,
         )
         for year in WINDOW_YEARS
     ]
-    assert year_runs[1]["baseline_simulation_run_id"] == reused.simulation_run_id
+    assert year_runs[1]["baseline_simulation_run_id"] == (
+        rerun.years[1].baseline.simulation_run_id
+    )
     assert (
         reform_run_2028["simulation_id"],
         reform_run_2028["year"],
@@ -362,8 +361,131 @@ def test_a_window_rerun_creates_a_window_run_and_each_years_runs(
     assert earlier_window["status"] == ReportRunStatus.SUCCEEDED
 
 
+def _keyed_window(
+    connection: Connection, economy: EconomyCatalog
+) -> FoundBudgetWindow:
+    """Create a keyed window of current law against current law, as the service."""
+    definition = EconomyReportDefinition(
+        country="us",
+        baseline=CURRENT_LAW,
+        reform=CURRENT_LAW,
+        dataset_name="populace_us_2024",
+        region_code="us",
+        year=WINDOW_YEARS[0],
+        budget_window_size=len(WINDOW_YEARS),
+        spm=None,
+    )
+    return find_or_create_budget_window(
+        connection,
+        KeyedBudgetWindow(
+            definition=definition,
+            report_id=uuid4(),
+            window_run_id=uuid4(),
+            tax_benefit_model_id=economy.catalog.model_id,
+            population=economy.population(year=WINDOW_YEARS[0]),
+            versions=VERSIONS,
+            inputs={},
+            years=tuple(
+                KeyedWindowYear(
+                    year=year,
+                    report_run_id=uuid4(),
+                    baseline=ProposedSide(
+                        simulation_id=uuid4(), simulation_run_id=uuid4()
+                    ),
+                    reform=ProposedSide(
+                        simulation_id=uuid4(), simulation_run_id=uuid4()
+                    ),
+                )
+                for year in WINDOW_YEARS
+            ),
+        ),
+    )
+
+
+def _rerun_of_keyed(
+    found: FoundBudgetWindow, economy: EconomyCatalog
+) -> NewWindowRerun:
+    """Return an unforced re-run of a keyed window on its own versions."""
+    return NewWindowRerun(
+        report_id=found.report_id,
+        window_run_id=uuid4(),
+        population=economy.population(year=WINDOW_YEARS[0]),
+        versions=VERSIONS,
+        recalculate=False,
+        years=tuple(
+            WindowRerunYear(
+                year=year.year,
+                report_run_id=uuid4(),
+                baseline=RerunSide(
+                    simulation_id=year.baseline.simulation_id,
+                    simulation_run_id=uuid4(),
+                    reused=False,
+                ),
+                reform=RerunSide(
+                    simulation_id=year.reform.simulation_id,
+                    simulation_run_id=uuid4(),
+                    reused=False,
+                ),
+            )
+            for year in found.years
+        ),
+    )
+
+
+def test_an_unforced_window_rerun_joins_a_keyed_windows_run_on_its_versions(
+    public_api_database_url,
+) -> None:
+    """Answers 3 and 8: the window run under way is joined, with its year runs."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        act_as_the_service(connection)
+        found = _keyed_window(connection, economy)
+
+        joined = insert_window_rerun(connection, _rerun_of_keyed(found, economy))
+
+    assert (joined.window_run.id, joined.window_run.inserted) == (
+        found.window_run.id,
+        False,
+    )
+    assert [year.report_run_id for year in joined.years] == [
+        year.report_run_id for year in found.years
+    ]
+
+
+def test_an_unforced_window_rerun_after_a_failed_run_names_its_years_runs(
+    public_api_database_url,
+) -> None:
+    """Each year's sides join their simulations' runs under a new window run."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        act_as_the_service(connection)
+        found = _keyed_window(connection, economy)
+        connection.execute(text("RESET ROLE"))
+        connection.execute(
+            text(
+                "UPDATE public.budget_window_runs SET status = 'failed', "
+                "completed_at = now() WHERE id = :id"
+            ),
+            {"id": found.window_run.id},
+        )
+        act_as_the_service(connection)
+        rerun = _rerun_of_keyed(found, economy)
+
+        created = insert_window_rerun(connection, rerun)
+        window_run = _row(connection, "budget_window_runs", rerun.window_run_id)
+
+    assert (created.window_run.id, created.window_run.inserted) == (
+        rerun.window_run_id,
+        True,
+    )
+    assert (window_run["recalculate"], window_run["trigger"]) == (False, None)
+    for first, again in zip(found.years, created.years, strict=True):
+        assert again.baseline.simulation_run_id == first.baseline.simulation_run_id
+        assert again.baseline.run_inserted is False
+
+
 @pytest.mark.parametrize("status", [ReportRunStatus.PENDING, ReportRunStatus.RUNNING])
-def test_a_window_rerun_is_refused_while_a_window_run_is_under_way(
+def test_a_single_year_rerun_of_a_window_is_refused_while_a_window_run_is_under_way(
     public_api_database_url, status: ReportRunStatus
 ) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:
@@ -372,9 +494,7 @@ def test_a_window_rerun_is_refused_while_a_window_run_is_under_way(
         stored = _stored_window(connection, economy, window_status=status)
         act_as_the_service(connection)
 
-        with pytest.raises(RunInProgressError) as window_refused:
-            insert_window_rerun(connection, _window_rerun_of(stored, later))
-        # A single-year re-run of the report checks the window runs too.
+        # The service re-runs a window with insert_window_rerun.
         with pytest.raises(RunInProgressError) as report_refused:
             insert_report_rerun(
                 connection,
@@ -396,7 +516,6 @@ def test_a_window_rerun_is_refused_while_a_window_run_is_under_way(
                 ),
             )
 
-    assert window_refused.value.run_id == stored.window_run_id
     assert report_refused.value.run_id == stored.window_run_id
 
 
@@ -477,14 +596,42 @@ def test_a_window_rerun_is_created_through_the_store(public_api_database_url) ->
         act_as_the_service(connection)
         store = _store_on(connection)
 
-        store.create_window_rerun(rerun)
-        with pytest.raises(RunInProgressError) as refused:
-            store.create_window_rerun(_window_rerun_of(stored, later))
+        created = store.create_window_rerun(rerun)
+        joined = store.create_window_rerun(_window_rerun_of(stored, later))
 
         assert _row(connection, "budget_window_runs", rerun.window_run_id)[
-            "trigger"
-        ] == (ReportRunTrigger.MANUAL)
-    assert refused.value.run_id == rerun.window_run_id
+            "policyengine_version"
+        ] == (LATER_POLICYENGINE_VERSION)
+    assert (created.window_run.inserted, joined.window_run.inserted) == (True, False)
+    assert joined.window_run.id == rerun.window_run_id
+
+
+def test_a_window_rerun_names_no_reused_side() -> None:
+    """Each year's sides join or create their runs, as a report re-run's do."""
+    reused = RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4(), reused=True)
+    created = RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4(), reused=False)
+
+    with pytest.raises(ValueError, match="reusing none"):
+        NewWindowRerun(
+            report_id=uuid4(),
+            window_run_id=uuid4(),
+            population=EconomyPopulation(
+                tax_benefit_model_version_id=uuid4(),
+                region_id=uuid4(),
+                dataset_id=uuid4(),
+                year=WINDOW_YEARS[0],
+            ),
+            versions=VERSIONS,
+            recalculate=False,
+            years=(
+                WindowRerunYear(
+                    year=WINDOW_YEARS[0],
+                    report_run_id=uuid4(),
+                    baseline=reused,
+                    reform=created,
+                ),
+            ),
+        )
 
 
 def test_a_window_rerun_refuses_years_that_are_not_its_window() -> None:
@@ -581,31 +728,6 @@ def test_a_window_rerun_of_a_deleted_report_or_year_simulation_is_refused(
         "simulation_runs",
         "simulation_id",
     )
-
-
-def test_a_window_rerun_is_refused_while_a_year_still_runs_after_its_window_ended(
-    public_api_database_url,
-) -> None:
-    with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
-        later = insert_later_catalog(connection, economy)
-        stored = _stored_window(
-            connection, economy, window_status=ReportRunStatus.FAILED
-        )
-        still_running = stored.years[2].report_run_id
-        connection.execute(
-            text(
-                "UPDATE public.report_runs SET status = 'running', "
-                "started_at = now(), completed_at = NULL WHERE id = :id"
-            ),
-            {"id": still_running},
-        )
-        act_as_the_service(connection)
-
-        with pytest.raises(RunInProgressError) as refused:
-            insert_window_rerun(connection, _window_rerun_of(stored, later))
-
-    assert refused.value.run_id == still_running
 
 
 @pytest.mark.parametrize(
