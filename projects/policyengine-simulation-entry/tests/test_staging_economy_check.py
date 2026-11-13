@@ -174,6 +174,10 @@ def test_the_check_creates_a_small_report_and_waits_for_its_run_to_succeed(
         "baseline": {"policy_id": None, "dynamic_id": None},
         "reform": {"policy_id": None, "dynamic_id": None},
         "include_cliffs": False,
+        # On the local-area dataset, so the run also calculates Wales's
+        # constituencies and local authorities: the coordinator fails a run of
+        # such a report unless both area levels have rows or withheld codes.
+        "data_source": "local_area_dataset",
     }
     assert (state / "read-url").read_text(encoding="utf-8").strip() == (
         f"{BASE_URL}/reports/{REPORT_ID}"
