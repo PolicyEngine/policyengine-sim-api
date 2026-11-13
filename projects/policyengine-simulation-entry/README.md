@@ -238,7 +238,11 @@ that simulation's newest run on the same versions, catalog version, dataset,
 region and year that a new report's side could reuse; `force` calculates
 both again, as an extra run: the new report run and both simulation runs
 are marked `forced`, so nothing joins them, and a forced re-run is never
-refused while a run is under way. The new report run's trigger is `manual`. The service reads the
+refused while a run is under way. The new report run's trigger is `manual`.
+Without `force`, a re-run while the report has a run on the default
+worker's versions that hasn't failed, pending, running or succeeded, joins
+that run instead and answers it as it is, with both sides reused and no
+Modal call; a run still under way on older versions is no run to join. The service reads the
 report's region code and dataset name, finds the rows with that code and
 name in the catalog version of the default worker's .py version, and reads
 each simulation's stored policy and dynamic on it.
@@ -269,9 +273,9 @@ fields as the create, naming the run.
 
 A re-run is refused before anything is written: 404 (`unknown_report`,
 `unknown_simulation`) for a record that doesn't exist; 409
-`run_in_progress`, naming the run in `run_id`, while a report has a run
-pending or running (its budget-window run, or else its report run), unless
-the re-run is forced; 409 `rerun_not_supported` for a household simulation (re-run only
+`run_in_progress`, naming the run in `run_id`, while a budget window's run
+of the report, or one of its year runs, is pending or running, unless the
+re-run is forced; 409 `rerun_not_supported` for a household simulation (re-run only
 through its report), a household report whose simulation names a dynamic (a
 household calculation applies none), a budget window whose newest window run
 lacks a year, or a record that names no region, dataset, year, simulation,

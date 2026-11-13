@@ -19,10 +19,12 @@
   and its status.
 
 Every earlier run is kept. A re-run answers 404 for a record that does not
-exist, and 409 when a report has a run pending or running, unless the
-re-run is forced (``run_in_progress``, naming it in ``run_id``), or the
-record is one this service does not re-run (``rerun_not_supported``); then
-nothing is written. The other
+exist, and 409 while a budget window's run of the report is pending or
+running, unless the re-run is forced (``run_in_progress``, naming it in
+``run_id``), or for a record this service does not re-run
+(``rerun_not_supported``); then nothing is written. Without ``force``, a
+report's re-run joins the report's run on the current versions that hasn't
+failed, pending, running or succeeded, and answers it with no new call. The other
 answers are the creates': 400 or 422 when the stored record cannot be
 calculated on the current catalog version, 503 with ``Retry-After`` before
 any write or when Modal refused the new run's call (then the run was failed,

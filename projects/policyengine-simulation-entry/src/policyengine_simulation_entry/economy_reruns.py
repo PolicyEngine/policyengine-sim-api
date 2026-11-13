@@ -15,14 +15,14 @@ default worker, as a new run, and keeps every earlier run. The service:
    report, unless the re-run is forced, each side's reusable run is a run of
    that side's own simulation that succeeded on the current versions, as a
    new report's would be (``find_reusable_run_of``);
-3. creates, in one transaction, the new run (a report's with trigger
-   ``manual``) and each report side's new simulation run of its own
-   simulation, all pending with no Modal call ID, unless the report has a
-   run pending or running (409 ``run_in_progress``). A forced re-run is
-   never refused: its runs are marked forced, an extra run that nothing
-   joins (C1 · 24's answer 3). A simulation's re-run instead joins the
-   simulation's run on the current versions that hasn't failed, pending,
-   running or succeeded, and creates one only when there is none;
+3. joins, in one transaction, the record's run on the current versions
+   that hasn't failed and wasn't forced, pending, running or succeeded
+   (C1 · 24's answers 2 and 3), or else creates the new run (a report's
+   with trigger ``manual``) and each report side's new simulation run of
+   its own simulation, all pending with no Modal call ID. A forced re-run
+   always creates its runs, marked forced, an extra run that nothing joins.
+   A budget window's re-run is refused while a window run of the report is
+   pending or running (409 ``run_in_progress``);
 4. starts and records the call of a run it created as a new record's: the
    report run's coordinator, or the simulation function, by run ID (C1 · 8's
    coordination), failing the new runs when Modal refuses the call. A
@@ -99,6 +99,7 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence import (
         BudgetWindowInputs,
         EconomyReportInputs,
+        FoundReportRun,
         FoundSimulationRun,
         ReportDefinition,
         ReusableRun,
@@ -178,8 +179,8 @@ class EconomyRerunRuns(BudgetWindowRuns, Protocol):
         """Create the window's new run, each year's report run and new runs."""
         ...
 
-    def create_report_rerun(self, rerun: NewReportRerun) -> None:
-        """Create the report's new run and its sides' new simulation runs."""
+    def create_report_rerun(self, rerun: NewReportRerun) -> FoundReportRun:
+        """Join the report's run on the re-run's versions, or create it."""
         ...
 
     def create_simulation_rerun(self, rerun: NewSimulationRerun) -> FoundSimulationRun:
@@ -325,11 +326,13 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             baseline_policy=inputs.baseline.reform,
             reform_policy=inputs.reform.reform,
         )
-        await self._create_rerun(
+        found = await self._create_rerun(
             _REPORT,
             lambda: self._store.create_report_rerun(rerun),
             source=STORED_REPORT,
         )
+        if not found.inserted:
+            return _joined_report_run(stored, found)
         status = await self._start_report_run(
             worker,
             calculation,
@@ -558,6 +561,30 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         """
         with rerun_refusals(record):
             return await self._create(record, create, rerun=True, source=source)
+
+
+def _joined_report_run(
+    stored: StoredReportRows, joined: FoundReportRun
+) -> EconomyReportCreated:
+    """Answer the report's run a re-run joined, as it is; this call created nothing.
+
+    The run names runs of the report's own simulations; a side reusing no
+    run never joins, so both sides are reused.
+    """
+    if joined.reform_simulation_run_id is None:
+        msg = f"report run {joined.id} of an economy report names no reform run"
+        raise ValueError(msg)
+    return EconomyReportCreated(
+        report_id=stored.report_id,
+        report_run_id=joined.id,
+        status=joined.status,
+        baseline_simulation_id=stored.baseline.simulation_id,
+        baseline_simulation_run_id=joined.baseline_simulation_run_id,
+        baseline_reused=True,
+        reform_simulation_id=stored.reform.simulation_id,
+        reform_simulation_run_id=joined.reform_simulation_run_id,
+        reform_reused=True,
+    )
 
 
 @dataclass(frozen=True)
