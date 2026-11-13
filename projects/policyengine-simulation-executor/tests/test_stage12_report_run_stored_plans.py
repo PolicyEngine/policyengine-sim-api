@@ -46,6 +46,8 @@ US_RESPONSES = (
     "weekly_hours_worked_behavioural_response_income_elasticity",
     "weekly_hours_worked_behavioural_response_substitution_elasticity",
 )
+# One of the inputs a US stored plan copies for the labour-supply output.
+COPIED_INPUT = "self_employment_income"
 
 
 @pytest.fixture(autouse=True)
@@ -177,3 +179,39 @@ def test_a_side_storing_no_labour_supply_responses_is_read_with_zeros() -> None:
     for column in US_RESPONSES:
         assert baseline_person[column].tolist() == [0.0]
         assert reform_person[column].tolist() == [5.0]
+
+
+def test_an_older_file_lacking_a_column_the_report_reads_is_refused() -> None:
+    # A file stored under an earlier report's plan, before each run stored its
+    # own: it lacks the copied input the new report reads from that side.
+    report_runs, files, artifacts = (
+        FakeReportRuns(),
+        StoredOutputFiles(),
+        FakeArtifacts(),
+    )
+    read_plan = _with_person_columns(shared_output_plan(), add=(COPIED_INPUT,))
+    reform_frames = simulation_frames(120.0)
+    reform_frames["person"] = reform_frames["person"].assign(**{COPIED_INPUT: 1.0})
+    _succeeded_with_frames(
+        report_runs, files, BASELINE_RUN_ID, simulation_frames(100.0)
+    )
+    _succeeded_with_frames(report_runs, files, REFORM_RUN_ID, reform_frames)
+    invoker = RunWorkerInvoker(report_runs, artifacts)
+
+    with pytest.raises(RuntimeError, match="coordination failed"):
+        _coordinate(
+            report_runs,
+            invoker,
+            artifacts,
+            files,
+            output_plan_resolver=lambda _report: read_plan,
+            stored_plan_resolver=lambda _simulation: read_plan,
+        )
+
+    report_run = report_runs.report_runs[REPORT_RUN_ID]
+    assert report_run.status is RunStatus.FAILED
+    assert report_run.error_message.startswith(
+        "reused_simulation_output_incompatible: "
+    )
+    assert invoker.events == []
+    assert report_runs.simulation_runs[BASELINE_RUN_ID].writes == []
