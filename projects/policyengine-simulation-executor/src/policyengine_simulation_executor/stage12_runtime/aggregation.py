@@ -249,6 +249,7 @@ def build_aggregate_report(
     output = builder.serialize()
     withheld = builder.uk_withheld_area_codes() if local_area_report else None
     if withheld is not None:
+        _require_estimated_areas(output, withheld)
         output["constituency_withheld_codes"] = withheld["constituency"]
         output["local_authority_withheld_codes"] = withheld["local_authority"]
     output.update(
@@ -266,6 +267,22 @@ def build_aggregate_report(
         "bundle": report.baseline.bundle.model_dump(mode="json"),
         "result": output,
     }
+
+
+def _require_estimated_areas(
+    output: Mapping[str, Any], withheld: Mapping[str, list[str]]
+) -> None:
+    """Raise unless each UK area level has an area, published or withheld.
+
+    Disclosure control may withhold every area of a level, but a UK-wide or
+    nation report on the local-area dataset always estimates some, so a level
+    with neither means its area results weren't calculated. A succeeded run
+    of such a report then always has rows for each level.
+    """
+    for level in ("constituency", "local_authority"):
+        if not (output.get(f"{level}_impact") or withheld[level]):
+            msg = f"the local-area report estimated no {level} area"
+            raise ValueError(msg)
 
 
 def build_spm_result(
