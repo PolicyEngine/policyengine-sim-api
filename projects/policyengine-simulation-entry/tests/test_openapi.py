@@ -458,8 +458,17 @@ def test_rerun_routes_declare_every_answer():
         for status_code in ("400", "404", "409", "500", "503"):
             assert _response_schema(responses[status_code]) == error
         assert _response_schema(responses["422"]) == unprocessable
-        assert "run_id" in responses["409"]["description"]
         assert "run_id" in responses["503"]["description"]
+        # Both answer the run they ended on, created or joined.
+        assert "joined" in responses["201"]["description"]
+    # Only a report's re-run is refused while a run is under way; a
+    # simulation's joins its run (C1 · 24's answer 3).
+    report_conflict = _responses(spec, "post", "/reports/{report_id}/runs")["409"]
+    simulation_conflict = _responses(spec, "post", "/simulations/{simulation_id}/runs")[
+        "409"
+    ]
+    assert "run_id" in report_conflict["description"]
+    assert "run_in_progress" not in simulation_conflict["description"]
     codes = set(
         spec["components"]["schemas"]["EconomyError"]["properties"]["code"]["enum"]
     )
