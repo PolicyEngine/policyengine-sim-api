@@ -9,7 +9,7 @@ reads and writes of ``economy_run_records`` and ``policy_reform`` that way.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -17,13 +17,26 @@ from sqlalchemy.exc import SQLAlchemyError
 from policyengine_simulation_persistence.budget_window_records import (
     insert_budget_window_report,
 )
+from policyengine_simulation_persistence.economy_catalog_rows import (
+    EconomyCatalogRows,
+    EconomyRequest,
+    LocalAreaDatasetMismatchError,
+    UnknownDatasetError,
+    UnknownRegionError,
+    read_catalog_rows,
+)
+from policyengine_simulation_persistence.economy_rerun_records import (
+    insert_report_rerun,
+    insert_simulation_rerun,
+    insert_window_rerun,
+    read_report_definition,
+    read_simulation_definition,
+)
 from policyengine_simulation_persistence.economy_run_reads import (
     read_economy_report,
     read_economy_simulation,
 )
 from policyengine_simulation_persistence.economy_run_records import (
-    CatalogDataset,
-    CatalogRegion,
     EconomyPopulation,
     ReusableRun,
     RunVersions,
@@ -31,23 +44,13 @@ from policyengine_simulation_persistence.economy_run_records import (
     fail_unstarted_report_run,
     fail_unstarted_simulation_run,
     find_reusable_run,
+    find_reusable_run_of,
     insert_economy_report,
     insert_economy_simulation,
-    read_dataset,
-    read_dataset_by_id,
-    read_local_area_dataset,
-    read_model_id,
-    read_region,
     record_report_run_call,
     record_simulation_run_call,
 )
 from policyengine_simulation_persistence.engine import bounded_transaction
-from policyengine_simulation_persistence.household_job_records import (
-    read_catalog_version_id,
-)
-from policyengine_simulation_persistence.household_job_store import (
-    UnknownCatalogVersionError,
-)
 from policyengine_simulation_persistence.policy_reform import (
     MissingPolicyParametersError,
     OverlappingReformError,
@@ -58,8 +61,30 @@ from policyengine_simulation_persistence.policy_reform import (
     read_policy_reform,
 )
 
+# The public names, with the catalog-row ones moved to economy_catalog_rows,
+# which stay importable from here.
+__all__ = [
+    "BudgetWindowInputs",
+    "EconomyCatalogRows",
+    "EconomyRecordOutcomeUnknownError",
+    "EconomyReportInputs",
+    "EconomyRequest",
+    "EconomyRunStore",
+    "EconomySimulationInputs",
+    "LocalAreaDatasetMismatchError",
+    "ReportSide",
+    "ReportSideError",
+    "ReusableRunSearch",
+    "RunReuse",
+    "SideRefusal",
+    "SimulationInputs",
+    "TransactionFactory",
+    "UnknownDatasetError",
+    "UnknownRegionError",
+]
+
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
     from contextlib import AbstractContextManager
     from uuid import UUID
 
@@ -67,6 +92,15 @@ if TYPE_CHECKING:
 
     from policyengine_simulation_persistence.budget_window_records import (
         NewBudgetWindowReport,
+    )
+    from policyengine_simulation_persistence.economy_rerun_records import (
+        NewReportRerun,
+        NewSimulationRerun,
+        NewWindowRerun,
+        ReportDefinition,
+        SideDefinition,
+        SimulationDefinition,
+        WindowYearDefinition,
     )
     from policyengine_simulation_persistence.economy_run_reads import (
         EconomyReportState,
@@ -85,6 +119,11 @@ if TYPE_CHECKING:
 type TransactionFactory = Callable[[], AbstractContextManager[Connection]]
 # Which of a report's simulations a value belongs to.
 type ReportSide = Literal["baseline", "reform"]
+# Finds a report side's reusable run, given the side, its policy and dynamic,
+# and the run the other side reuses, which it must not.
+type ReusableRunSearch = Callable[
+    [ReportSide, SimulationChoice, UUID | None], ReusableRun | None
+]
 # The errors a simulation's own policy or dynamic can raise.
 type SideRefusal = (
     UnknownPolicyError
@@ -94,31 +133,6 @@ type SideRefusal = (
 )
 # Caught by the type itself, so the two never name different errors.
 _SIDE_ERRORS: tuple[type[SideRefusal], ...] = get_args(SideRefusal.__value__)
-
-
-class UnknownRegionError(LookupError):
-    """The catalog version has no region with the requested code."""
-
-
-class UnknownDatasetError(LookupError):
-    """The catalog version has no dataset with the requested name."""
-
-
-class LocalAreaDatasetMismatchError(LookupError):
-    """The catalog doesn't give both area types the dataset the worker routes them to.
-
-    ``declared_dataset`` is the dataset the default worker declares it
-    calculates a report's local areas on. The catalog version's
-    constituency and local-authority regions use another, or one each.
-    """
-
-    def __init__(self, declared_dataset: str) -> None:
-        """Keep the declared dataset."""
-        super().__init__(
-            "the catalog version's constituency and local-authority regions do "
-            f"not all use {declared_dataset}"
-        )
-        self.declared_dataset = declared_dataset
 
 
 class ReportSideError(Exception):
@@ -145,22 +159,6 @@ class EconomyRecordOutcomeUnknownError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class EconomyRequest:
-    """What an economy simulation or report request names, apart from policies.
-
-    ``policyengine_version`` is the .py version the calculation runs on,
-    which chooses the country's catalog version. ``dataset_name`` None means
-    the region's default dataset.
-    """
-
-    country: str
-    policyengine_version: str
-    region_code: str
-    dataset_name: str | None
-    year: int
-
-
-@dataclass(frozen=True)
 class RunReuse:
     """How a report looks for simulation runs to reuse (``find_reusable_run``).
 
@@ -172,25 +170,6 @@ class RunReuse:
     versions: RunVersions
     inputs: dict[str, Any]
     output_uri_prefix: str
-
-
-@dataclass(frozen=True)
-class EconomyCatalogRows:
-    """The catalog rows a request is calculated on."""
-
-    catalog_version_id: UUID
-    model_id: UUID
-    region: CatalogRegion
-    dataset: CatalogDataset
-
-    def population(self, year: int) -> EconomyPopulation:
-        """Return what every simulation of the request calculates on."""
-        return EconomyPopulation(
-            tax_benefit_model_version_id=self.catalog_version_id,
-            region_id=self.region.id,
-            dataset_id=self.dataset.id,
-            year=year,
-        )
 
 
 @dataclass(frozen=True)
@@ -269,7 +248,7 @@ class EconomyRunStore:
         OverlappingReformError.
         """
         with self._transaction() as connection:
-            catalog = _catalog_rows(connection, request)
+            catalog = read_catalog_rows(connection, request)
             simulation = _simulation_inputs(
                 connection, request.country, catalog.catalog_version_id, choice
             )
@@ -298,42 +277,141 @@ class EconomyRunStore:
         both area types that dataset.
         """
         with self._transaction() as connection:
-            catalog = _catalog_rows(
+            catalog = read_catalog_rows(
                 connection, request, local_area_dataset_name=local_area_dataset_name
             )
-            population = catalog.population(request.year)
-            sides = []
-            excluded_run_id = None
-            sides_requested: tuple[tuple[ReportSide, SimulationChoice], ...] = (
-                ("baseline", baseline),
-                ("reform", reform),
+            search = (
+                None
+                if reuse is None
+                else _search_by_definition(
+                    connection, catalog.population(request.year), reuse
+                )
             )
-            for side, choice in sides_requested:
-                try:
-                    inputs = _simulation_inputs(
-                        connection, request.country, catalog.catalog_version_id, choice
+            return _report_inputs(
+                connection,
+                request,
+                catalog,
+                baseline=baseline,
+                reform=reform,
+                search=search,
+            )
+
+    def read_report_definition(self, report_id: UUID) -> ReportDefinition | None:
+        """Return what the stored report calculates, or None when there is none."""
+        with self._transaction() as connection:
+            return read_report_definition(connection, report_id)
+
+    def read_simulation_definition(
+        self, simulation_id: UUID
+    ) -> SimulationDefinition | None:
+        """Return what the stored simulation calculates, or None when there is none."""
+        with self._transaction() as connection:
+            return read_simulation_definition(connection, simulation_id)
+
+    def read_report_rerun_inputs(
+        self,
+        request: EconomyRequest,
+        *,
+        baseline: SideDefinition,
+        reform: SideDefinition,
+        reuse: RunReuse | None,
+    ) -> EconomyReportInputs:
+        """Read a report re-run's catalog rows, both sides' values and reusable runs.
+
+        ``request`` names the stored report's region code and dataset name,
+        found in the catalog version of the current .py version. With
+        ``reuse``, each side gets the run ``find_reusable_run_of`` finds among
+        its own simulation's runs, and the reform never gets the baseline's.
+        Raise the errors ``read_report_inputs`` raises.
+        """
+        with self._transaction() as connection:
+            catalog = read_catalog_rows(connection, request)
+            search = (
+                None
+                if reuse is None
+                else _search_own_runs(
+                    connection,
+                    catalog.population(request.year),
+                    reuse,
+                    {
+                        "baseline": baseline.simulation_id,
+                        "reform": reform.simulation_id,
+                    },
+                )
+            )
+            return _report_inputs(
+                connection,
+                request,
+                catalog,
+                baseline=baseline.choice,
+                reform=reform.choice,
+                search=search,
+            )
+
+    def read_window_rerun_inputs(
+        self,
+        request: EconomyRequest,
+        *,
+        baseline: SimulationChoice,
+        reform: SimulationChoice,
+        years: Sequence[WindowYearDefinition],
+        reuse: RunReuse | None,
+    ) -> BudgetWindowInputs:
+        """Read a window re-run's catalog rows, both sides' values and each year's runs.
+
+        ``request.year`` is the window's first year. With ``reuse``, each
+        year's sides get the runs ``find_reusable_run_of`` finds among that
+        year's own simulations' runs, and the reform never gets the
+        baseline's. Raise the errors ``read_report_inputs`` raises.
+        """
+        with self._transaction() as connection:
+            catalog = read_catalog_rows(connection, request)
+            return _window_inputs(
+                connection,
+                request,
+                catalog,
+                baseline=baseline,
+                reform=reform,
+                searches=(
+                    (
+                        window_year.year,
+                        None
+                        if reuse is None
+                        else _search_own_runs(
+                            connection,
+                            catalog.population(window_year.year),
+                            reuse,
+                            {
+                                "baseline": window_year.baseline_simulation_id,
+                                "reform": window_year.reform_simulation_id,
+                            },
+                        ),
                     )
-                except _SIDE_ERRORS as error:
-                    raise ReportSideError(side, error) from error
-                if reuse is not None:
-                    reusable_run = find_reusable_run(
-                        connection,
-                        choice=choice,
-                        population=population,
-                        versions=reuse.versions,
-                        inputs=reuse.inputs,
-                        output_uri_prefix=reuse.output_uri_prefix,
-                        excluded_run_id=excluded_run_id,
-                    )
-                    if reusable_run is not None:
-                        excluded_run_id = reusable_run.simulation_run_id
-                        inputs = SimulationInputs(
-                            choice=inputs.choice,
-                            reform=inputs.reform,
-                            reusable_run=reusable_run,
-                        )
-                sides.append(inputs)
-        return EconomyReportInputs(catalog=catalog, baseline=sides[0], reform=sides[1])
+                    for window_year in years
+                ),
+            )
+
+    def create_window_rerun(self, rerun: NewWindowRerun) -> None:
+        """Create the window's new run and its years' runs; see ``insert_window_rerun``.
+
+        Raise EconomyRecordOutcomeUnknownError as ``create_report`` does.
+        """
+        self._create(lambda connection: insert_window_rerun(connection, rerun))
+
+    def create_report_rerun(self, rerun: NewReportRerun) -> None:
+        """Create the report's new run and its sides' new simulation runs.
+
+        Raise ``insert_report_rerun``'s errors, and
+        EconomyRecordOutcomeUnknownError as ``create_report`` does.
+        """
+        self._create(lambda connection: insert_report_rerun(connection, rerun))
+
+    def create_simulation_rerun(self, rerun: NewSimulationRerun) -> None:
+        """Create the simulation's new run; see ``insert_simulation_rerun``.
+
+        Raise EconomyRecordOutcomeUnknownError as ``create_report`` does.
+        """
+        self._create(lambda connection: insert_simulation_rerun(connection, rerun))
 
     def read_budget_window_inputs(
         self,
@@ -352,44 +430,25 @@ class EconomyRunStore:
         ``read_report_inputs`` raises.
         """
         with self._transaction() as connection:
-            catalog = _catalog_rows(connection, request)
-            baseline_inputs = _side_inputs(
-                connection, request, catalog, "baseline", baseline
-            )
-            reform_inputs = _side_inputs(connection, request, catalog, "reform", reform)
-            reusable_runs: dict[int, tuple[ReusableRun | None, ReusableRun | None]] = {}
-            for year in years:
-                baseline_run = reform_run = None
-                if reuse is not None:
-                    population = catalog.population(year)
-                    baseline_run = find_reusable_run(
-                        connection,
-                        choice=baseline,
-                        population=population,
-                        versions=reuse.versions,
-                        inputs=reuse.inputs,
-                        output_uri_prefix=reuse.output_uri_prefix,
-                    )
-                    reform_run = find_reusable_run(
-                        connection,
-                        choice=reform,
-                        population=population,
-                        versions=reuse.versions,
-                        inputs=reuse.inputs,
-                        output_uri_prefix=reuse.output_uri_prefix,
-                        excluded_run_id=(
-                            None
-                            if baseline_run is None
-                            else baseline_run.simulation_run_id
+            catalog = read_catalog_rows(connection, request)
+            return _window_inputs(
+                connection,
+                request,
+                catalog,
+                baseline=baseline,
+                reform=reform,
+                searches=(
+                    (
+                        year,
+                        None
+                        if reuse is None
+                        else _search_by_definition(
+                            connection, catalog.population(year), reuse
                         ),
                     )
-                reusable_runs[year] = (baseline_run, reform_run)
-        return BudgetWindowInputs(
-            catalog=catalog,
-            baseline=baseline_inputs,
-            reform=reform_inputs,
-            reusable_runs=reusable_runs,
-        )
+                    for year in years
+                ),
+            )
 
     def create_budget_window_report(self, report: NewBudgetWindowReport) -> None:
         """Create the window's report, its budget-window run and each year's runs.
@@ -493,70 +552,6 @@ class EconomyRunStore:
             return read_economy_simulation(connection, simulation_id)
 
 
-def _catalog_rows(
-    connection: Connection,
-    request: EconomyRequest,
-    *,
-    local_area_dataset_name: str | None = None,
-) -> EconomyCatalogRows:
-    """Read the catalog version, model, region and dataset a request names.
-
-    With ``local_area_dataset_name``, the dataset is the catalog version's
-    local-area dataset, which must have that name. Raise
-    UnknownCatalogVersionError, UnknownRegionError, UnknownDatasetError or
-    LocalAreaDatasetMismatchError.
-    """
-    country = request.country
-    catalog_version_id = read_catalog_version_id(
-        connection,
-        country=country,
-        policyengine_version=request.policyengine_version,
-    )
-    model_id = read_model_id(connection, country=country)
-    if catalog_version_id is None or model_id is None:
-        msg = f"{country} has no catalog version for .py {request.policyengine_version}"
-        raise UnknownCatalogVersionError(msg)
-    region = read_region(
-        connection,
-        catalog_version_id=catalog_version_id,
-        region_code=request.region_code,
-    )
-    if region is None:
-        msg = (
-            f"{country}'s catalog version for .py {request.policyengine_version} "
-            f"has no region {request.region_code}"
-        )
-        raise UnknownRegionError(msg)
-    if local_area_dataset_name is not None:
-        dataset = read_local_area_dataset(
-            connection, catalog_version_id=catalog_version_id
-        )
-        if dataset is None or dataset.name != local_area_dataset_name:
-            raise LocalAreaDatasetMismatchError(local_area_dataset_name)
-    elif request.dataset_name is None:
-        dataset = read_dataset_by_id(
-            connection,
-            catalog_version_id=catalog_version_id,
-            dataset_id=region.default_dataset_id,
-        )
-    else:
-        dataset = read_dataset(
-            connection, catalog_version_id=catalog_version_id, name=request.dataset_name
-        )
-    if dataset is None:
-        msg = (
-            f"{country}'s catalog version for .py {request.policyengine_version} "
-            f"has no dataset {request.dataset_name}"
-        )
-        raise UnknownDatasetError(msg)
-    return EconomyCatalogRows(
-        catalog_version_id=catalog_version_id,
-        model_id=model_id,
-        region=region,
-        dataset=dataset,
-    )
-
-
 def _simulation_inputs(
     connection: Connection,
     country: str,
@@ -602,3 +597,112 @@ def _side_inputs(
         )
     except _SIDE_ERRORS as error:
         raise ReportSideError(side, error) from error
+
+
+def _report_inputs(  # noqa: PLR0913  # the request's rows, both sides and the search
+    connection: Connection,
+    request: EconomyRequest,
+    catalog: EconomyCatalogRows,
+    *,
+    baseline: SimulationChoice,
+    reform: SimulationChoice,
+    search: ReusableRunSearch | None,
+) -> EconomyReportInputs:
+    """Read both sides' values and, with ``search``, each side's reusable run.
+
+    The reform never gets the run the baseline reuses.
+    """
+    sides: list[SimulationInputs] = []
+    excluded_run_id: UUID | None = None
+    requested: tuple[tuple[ReportSide, SimulationChoice], ...] = (
+        ("baseline", baseline),
+        ("reform", reform),
+    )
+    for side, choice in requested:
+        inputs = _side_inputs(connection, request, catalog, side, choice)
+        reusable_run = None if search is None else search(side, choice, excluded_run_id)
+        if reusable_run is not None:
+            excluded_run_id = reusable_run.simulation_run_id
+            inputs = replace(inputs, reusable_run=reusable_run)
+        sides.append(inputs)
+    return EconomyReportInputs(catalog=catalog, baseline=sides[0], reform=sides[1])
+
+
+def _window_inputs(  # noqa: PLR0913  # the request's rows, both sides and each year's search
+    connection: Connection,
+    request: EconomyRequest,
+    catalog: EconomyCatalogRows,
+    *,
+    baseline: SimulationChoice,
+    reform: SimulationChoice,
+    searches: Iterable[tuple[int, ReusableRunSearch | None]],
+) -> BudgetWindowInputs:
+    """Read both sides' values, and each year's reusable runs with its search.
+
+    A year without a search reuses nothing; in each year the reform never
+    gets the run the baseline reuses.
+    """
+    baseline_inputs = _side_inputs(connection, request, catalog, "baseline", baseline)
+    reform_inputs = _side_inputs(connection, request, catalog, "reform", reform)
+    reusable_runs: dict[int, tuple[ReusableRun | None, ReusableRun | None]] = {}
+    for year, search in searches:
+        baseline_run = reform_run = None
+        if search is not None:
+            baseline_run = search("baseline", baseline, None)
+            reform_run = search(
+                "reform",
+                reform,
+                None if baseline_run is None else baseline_run.simulation_run_id,
+            )
+        reusable_runs[year] = (baseline_run, reform_run)
+    return BudgetWindowInputs(
+        catalog=catalog,
+        baseline=baseline_inputs,
+        reform=reform_inputs,
+        reusable_runs=reusable_runs,
+    )
+
+
+def _search_by_definition(
+    connection: Connection, population: EconomyPopulation, reuse: RunReuse
+) -> ReusableRunSearch:
+    """Search any simulation with the side's definition (a new report's sides)."""
+
+    def search(
+        _side: ReportSide, choice: SimulationChoice, excluded_run_id: UUID | None
+    ) -> ReusableRun | None:
+        return find_reusable_run(
+            connection,
+            choice=choice,
+            population=population,
+            versions=reuse.versions,
+            inputs=reuse.inputs,
+            output_uri_prefix=reuse.output_uri_prefix,
+            excluded_run_id=excluded_run_id,
+        )
+
+    return search
+
+
+def _search_own_runs(
+    connection: Connection,
+    population: EconomyPopulation,
+    reuse: RunReuse,
+    simulation_ids: dict[ReportSide, UUID],
+) -> ReusableRunSearch:
+    """Search only each side's own simulation's runs (a stored report's re-run)."""
+
+    def search(
+        side: ReportSide, _choice: SimulationChoice, excluded_run_id: UUID | None
+    ) -> ReusableRun | None:
+        return find_reusable_run_of(
+            connection,
+            simulation_id=simulation_ids[side],
+            population=population,
+            versions=reuse.versions,
+            inputs=reuse.inputs,
+            output_uri_prefix=reuse.output_uri_prefix,
+            excluded_run_id=excluded_run_id,
+        )
+
+    return search

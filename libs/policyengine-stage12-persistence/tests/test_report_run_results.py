@@ -14,6 +14,7 @@ from economy_output import (
     US_STATE_FIPS,
     uk_economy_output,
     uk_output_with_areas,
+    uk_output_with_withheld_codes,
     us_output_with_every_part,
 )
 from policyengine_stage12_persistence import (
@@ -615,20 +616,14 @@ def _withheld_area_codes(seeder, report_run_id) -> list[dict[str, object]]:
         ]
 
 
-def _local_area_output() -> dict[str, object]:
-    return {
-        **uk_output_with_areas(),
-        "constituency_withheld_codes": ["S14000045"],
-        "local_authority_withheld_codes": ["E06000064", "W06000015"],
-    }
-
-
 def test_a_local_area_result_stores_its_withheld_codes_with_the_completion(
     store, seeder, seeded_run: SeededReportRun
 ) -> None:
     run_ids = seeded_run.run_ids
 
-    written = _complete(store, seeded_run, output=_local_area_output(), country="uk")
+    written = _complete(
+        store, seeded_run, output=uk_output_with_withheld_codes(), country="uk"
+    )
 
     assert written == RunWrite(changed=True, status=RunStatus.SUCCEEDED)
     stored = _withheld_area_codes(seeder, run_ids.report_run_id)
@@ -661,24 +656,53 @@ def test_a_local_area_result_stores_its_withheld_codes_with_the_completion(
         ),
     ]
     # The published areas are stored beside them, as for any UK result.
-    assert (
-        len(seeder.rows("constituency_impacts", report_run_id=run_ids.report_run_id))
-        == 2
-    )
+    for table_name in ("constituency_impacts", "local_authority_impacts"):
+        assert seeder.rows(table_name, report_run_id=run_ids.report_run_id)
 
 
 def test_a_repeated_local_area_completion_stores_no_second_set_of_codes(
     store, seeder, seeded_run: SeededReportRun
 ) -> None:
     run_ids = seeded_run.run_ids
-    _complete(store, seeded_run, output=_local_area_output(), country="uk")
+    _complete(store, seeded_run, output=uk_output_with_withheld_codes(), country="uk")
 
     repeated = store.complete_report_run(
         run_ids,
         modal_call_id="fc-coordinator",
         completed_at=LATER,
-        result=report_run_result(_local_area_output(), run_ids=run_ids, country="uk"),
+        result=report_run_result(
+            uk_output_with_withheld_codes(), run_ids=run_ids, country="uk"
+        ),
     )
 
     assert repeated == RunWrite(changed=False, status=RunStatus.SUCCEEDED)
     assert len(_withheld_area_codes(seeder, run_ids.report_run_id)) == 3
+
+
+def test_a_withheld_code_that_cannot_be_stored_rolls_back_the_completion(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    # One code listed twice breaks the table's unique key in its insert.
+    run_ids = seeded_run.run_ids
+    store.claim_report_run(
+        run_ids.report_run_id, modal_call_id="fc-coordinator", claimed_at=NOW
+    )
+    output = {
+        **uk_output_with_withheld_codes(),
+        "constituency_withheld_codes": ["S14000045", "S14000045"],
+    }
+
+    with pytest.raises(IntegrityError, match="uq_withheld_area_codes_run_type_code"):
+        store.complete_report_run(
+            run_ids,
+            modal_call_id="fc-coordinator",
+            completed_at=LATER,
+            result=report_run_result(output, run_ids=run_ids, country="uk"),
+        )
+
+    report_run = seeder.row("report_runs", run_ids.report_run_id)
+    assert report_run["status"] == "running"
+    assert report_run["data_version"] is None
+    for table_name in ("constituency_impacts", "local_authority_impacts"):
+        assert seeder.rows(table_name, report_run_id=run_ids.report_run_id) == []
+    assert _withheld_area_codes(seeder, run_ids.report_run_id) == []

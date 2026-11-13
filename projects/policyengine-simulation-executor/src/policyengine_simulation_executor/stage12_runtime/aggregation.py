@@ -179,7 +179,9 @@ def build_aggregate_report(
     codes in its frames (see ``output_planning``), so its constituency and
     local-authority breakdowns are left out, unless the report is on that
     dataset (``is_local_area_report``): it then gets both levels and their
-    withheld codes, from the same disclosure pass.
+    withheld codes, from the same disclosure pass, and raises ``ValueError``
+    when a level has neither published nor withheld areas, so a succeeded run
+    always has rows for each level.
     """
     from policyengine_simulation_executor.simulation_output_builder import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_output_builder.SimulationOutputBuilder
         SimulationOutputBuilder,
@@ -249,6 +251,7 @@ def build_aggregate_report(
     output = builder.serialize()
     withheld = builder.uk_withheld_area_codes() if local_area_report else None
     if withheld is not None:
+        _require_estimated_areas(output, withheld)
         output["constituency_withheld_codes"] = withheld["constituency"]
         output["local_authority_withheld_codes"] = withheld["local_authority"]
     output.update(
@@ -266,6 +269,22 @@ def build_aggregate_report(
         "bundle": report.baseline.bundle.model_dump(mode="json"),
         "result": output,
     }
+
+
+def _require_estimated_areas(
+    output: Mapping[str, Any], withheld: Mapping[str, list[str]]
+) -> None:
+    """Raise unless each UK area level has an area, published or withheld.
+
+    Disclosure control may withhold every area of a level, but a UK-wide or
+    nation report on the local-area dataset always estimates some, so a level
+    with neither means its area results weren't calculated. A succeeded run
+    of such a report then always has rows for each level.
+    """
+    for level in ("constituency", "local_authority"):
+        if not (output.get(f"{level}_impact") or withheld[level]):
+            msg = f"the local-area report estimated no {level} area"
+            raise ValueError(msg)
 
 
 def build_spm_result(

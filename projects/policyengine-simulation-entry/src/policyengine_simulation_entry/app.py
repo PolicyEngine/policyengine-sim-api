@@ -52,18 +52,17 @@ from policyengine_simulation_entry.auth import (
     CallerAuthorizer,
 )
 from policyengine_simulation_entry.backend import OldGatewayBackend, SimulationBackend
-from policyengine_simulation_entry.budget_window_submissions import (
-    ReportSubmissionService,
-)
 from policyengine_simulation_entry.config import Settings
+from policyengine_simulation_entry.economy_rerun_routes import (
+    EconomyService,
+    add_economy_rerun_routes,
+)
+from policyengine_simulation_entry.economy_reruns import EconomyRerunService
 from policyengine_simulation_entry.economy_routes import (
-    EconomySubmissions,
     HouseholdReportSubmissions,
     add_economy_routes,
 )
-from policyengine_simulation_entry.economy_submissions import (
-    ServiceSettings,
-)
+from policyengine_simulation_entry.economy_submissions import ServiceSettings
 from policyengine_simulation_entry.economy_workers import (
     ManifestEconomyWorkers,
     ModalEconomyRunCaller,
@@ -84,7 +83,8 @@ from policyengine_simulation_entry.entry_runtime import (
 from policyengine_simulation_entry.household_calculations import (
     HouseholdCalculationService,
 )
-from policyengine_simulation_entry.household_report_submissions import (
+from policyengine_simulation_entry.household_report_reruns import (
+    HouseholdReportReruns,
     household_reports_for,
 )
 from policyengine_simulation_entry.household_routes import (
@@ -547,13 +547,13 @@ def household_calculations_for(
 def _register_economy_routes(  # noqa: PLR0913  # the app, its services and permissions
     app: FastAPI,
     entry: EntryRuntime,
-    submissions: EconomySubmissions | None,
+    submissions: EconomyService | None,
     household_reports: HouseholdReportSubmissions | None,
     *,
     submitter: AuthorizationDependency,
     reader: AuthorizationDependency,
 ) -> None:
-    """Add the routes that create reports and economy simulations and read them."""
+    """Add the routes that create, read and re-run reports and economy simulations."""
     add_economy_routes(
         app,
         entry,
@@ -562,22 +562,29 @@ def _register_economy_routes(  # noqa: PLR0913  # the app, its services and perm
         reader=reader,
         household_reports=household_reports,
     )
+    add_economy_rerun_routes(app, entry, submissions, submitter=submitter)
 
 
 def economy_submissions_for(
-    settings: Settings, database: SimulationDatabaseConnection | None
-) -> EconomySubmissions | None:
+    settings: Settings,
+    database: SimulationDatabaseConnection | None,
+    *,
+    household_reports: HouseholdReportReruns | None = None,
+) -> EconomyService | None:
     """Build the economy submission service when the service is configured.
 
     It needs the simulation database and the v2 Modal environment; without
     them the economy routes answer 503. Nothing is read from Modal until the
-    first submission. Without the output bucket, no report reuses a run.
+    first submission. Without the output bucket, no report reuses a run. It
+    re-runs a household report through ``household_reports``; without it, a
+    household report it could re-run answers 503.
     """
     if not settings.economy_runs_configured or not isinstance(
         database, SimulationDatabase
     ):
         return None
-    return ReportSubmissionService(
+    return EconomyRerunService(
+        household_reports=household_reports,
         # The service starts a budget window's first years as its own role.
         windows=BudgetWindowStore(engine=database.engine),
         store=EconomyRunStore.from_engine(
@@ -752,11 +759,15 @@ def create_app(
         submitter=simulation_submitter,
         reader=simulation_reader,
     )
+    # One household report service creates household reports and re-runs them.
+    household_reports = household_reports_for(runtime_settings, runtime_database)
     _register_economy_routes(
         app,
         entry,
-        economy_submissions_for(runtime_settings, runtime_database),
-        household_reports_for(runtime_settings, runtime_database),
+        economy_submissions_for(
+            runtime_settings, runtime_database, household_reports=household_reports
+        ),
+        household_reports,
         submitter=simulation_submitter,
         reader=simulation_reader,
     )

@@ -44,6 +44,12 @@ VERSIONS = RunVersions(
     country_package_version=COUNTRY_PACKAGE_VERSION,
     policyengine_version=POLICYENGINE_VERSION,
 )
+# The versions of a release after ``VERSIONS``, with its own catalog version.
+LATER_POLICYENGINE_VERSION = "6.18.0"
+LATER_VERSIONS = RunVersions(
+    country_package_version="1.770.0",
+    policyengine_version=LATER_POLICYENGINE_VERSION,
+)
 OUTPUT_BUCKET_PREFIX = "gs://policyengine-v2-simulation-outputs-staging/"
 CURRENT_LAW = SimulationChoice(policy_id=None, dynamic_id=None)
 OPTIONS: dict[str, Any] = {"include_cliffs": False}
@@ -75,11 +81,50 @@ def insert_economy_catalog(
     parameter_names: tuple[str, ...] = (),
 ) -> EconomyCatalog:
     """Insert the country's model, a catalog version, a dataset and a region."""
-    catalog = insert_catalog_version(
+    return _insert_catalog_rows(
         connection,
         country=country,
         model_id=insert_model(connection, country),
         policyengine_version=POLICYENGINE_VERSION,
+        parameter_names=parameter_names,
+    )
+
+
+def insert_later_catalog(
+    connection: Connection,
+    economy: EconomyCatalog,
+    *,
+    policyengine_version: str = LATER_POLICYENGINE_VERSION,
+    parameter_names: tuple[str, ...] = (),
+) -> EconomyCatalog:
+    """Insert a later catalog version of ``economy``'s model.
+
+    It has a dataset and a region with the same name and code as
+    ``economy``'s, as a release publishing the next .py version's catalog
+    would.
+    """
+    return _insert_catalog_rows(
+        connection,
+        country=economy.catalog.country,
+        model_id=economy.catalog.model_id,
+        policyengine_version=policyengine_version,
+        parameter_names=parameter_names,
+    )
+
+
+def _insert_catalog_rows(
+    connection: Connection,
+    *,
+    country: str,
+    model_id: UUID,
+    policyengine_version: str,
+    parameter_names: tuple[str, ...],
+) -> EconomyCatalog:
+    catalog = insert_catalog_version(
+        connection,
+        country=country,
+        model_id=model_id,
+        policyengine_version=policyengine_version,
         parameter_names=parameter_names,
     )
     dataset_id = insert_dataset(connection, catalog, f"populace_{country}_2024")
@@ -145,9 +190,6 @@ def insert_simulation_run(
     """Insert an economy simulation and one run of it, as the superuser."""
     shape = shape or RunShape()
     simulation_id = uuid4()
-    run_id = uuid4()
-    finished = shape.status in {SimulationStatus.SUCCEEDED, SimulationStatus.FAILED}
-    succeeded = shape.status is SimulationStatus.SUCCEEDED
     connection.execute(
         insert(simulations).values(
             id=simulation_id,
@@ -160,6 +202,23 @@ def insert_simulation_run(
             year=population.year,
         )
     )
+    return insert_run_of(connection, simulation_id, population, shape)
+
+
+def insert_run_of(
+    connection: Connection,
+    simulation_id: UUID,
+    population: EconomyPopulation,
+    shape: RunShape | None = None,
+) -> StoredRun:
+    """Insert a run of a stored simulation on ``population``, as the superuser.
+
+    ``shape.choice`` is ignored: the run keeps its simulation's policy.
+    """
+    shape = shape or RunShape()
+    run_id = uuid4()
+    finished = shape.status in {SimulationStatus.SUCCEEDED, SimulationStatus.FAILED}
+    succeeded = shape.status is SimulationStatus.SUCCEEDED
     connection.execute(
         insert(simulation_runs).values(
             id=run_id,
@@ -204,9 +263,26 @@ def insert_report_run_naming(
     report run's ID.
     """
     outcome = outcome or ReportRunOutcome()
+    report_id = insert_report_of(connection, economy, compared, inputs=outcome.inputs)
+    return insert_report_run_of(connection, report_id, compared, outcome)
+
+
+def insert_report_of(  # noqa: PLR0913  # the report's sides and what else it may set
+    connection: Connection,
+    economy: EconomyCatalog,
+    compared: tuple[StoredRun, StoredRun],
+    *,
+    inputs: dict[str, Any] | None = None,
+    budget_window_size: int | None = None,
+    household_id: UUID | None = None,
+) -> UUID:
+    """Insert an economy report naming the two runs' simulations, as the superuser.
+
+    ``compared`` holds the baseline's run, then the reform's. The report is
+    on ``economy``'s region and dataset in 2026. Return its ID.
+    """
     baseline, reform = compared
     report_id = uuid4()
-    run_id = uuid4()
     connection.execute(
         insert(reports).values(
             id=report_id,
@@ -216,12 +292,30 @@ def insert_report_run_naming(
             tax_benefit_model_id=economy.catalog.model_id,
             baseline_simulation_id=baseline.simulation_id,
             reform_simulation_id=reform.simulation_id,
+            household_id=household_id,
             dataset_id=economy.dataset_id,
             region_id=economy.region_id,
             year=2026,
-            inputs=OPTIONS if outcome.inputs is None else outcome.inputs,
+            inputs=OPTIONS if inputs is None else inputs,
+            budget_window_size=budget_window_size,
         )
     )
+    return report_id
+
+
+def insert_report_run_of(
+    connection: Connection,
+    report_id: UUID,
+    compared: tuple[StoredRun, StoredRun],
+    outcome: ReportRunOutcome | None = None,
+) -> UUID:
+    """Insert a run of a stored report comparing the two runs, as the superuser.
+
+    Return the report run's ID; ``outcome.inputs`` is ignored.
+    """
+    outcome = outcome or ReportRunOutcome()
+    baseline, reform = compared
+    run_id = uuid4()
     finished = outcome.status in {ReportRunStatus.SUCCEEDED, ReportRunStatus.FAILED}
     connection.execute(
         insert(report_runs).values(

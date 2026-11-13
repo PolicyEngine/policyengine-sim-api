@@ -3,14 +3,17 @@
 The submission service raises these, and the routes answer each with its
 status: EconomySubmissionRefusedError 400, EconomySubmissionUnprocessableError
 422, EconomySubmissionUnavailableError 503 and
-EconomySubmissionOutcomeUnknownError 500. ``read_refusal`` and
-``reference_refusal`` turn the store's errors into them, writing each detail
-from the request rather than from an error's text, since the Public API
-passes a refusal's detail on to its callers.
+EconomySubmissionOutcomeUnknownError 500; a re-run also raises
+EconomyRecordNotFoundError 404 and EconomyRerunConflictError 409. ``read_refusal``,
+``reference_refusal`` and ``rerun_refusals`` turn the store's errors into
+them, and ``call_refused`` builds the 503 for a call Modal did not accept,
+writing each detail from the request rather than from an error's text,
+since the Public API passes a refusal's detail on to its callers.
 """
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -19,6 +22,8 @@ from policyengine_simulation_persistence import (
     MissingPolicyParametersError,
     OverlappingReformError,
     ReportSideError,
+    RerunRecordDeletedError,
+    RunInProgressError,
     UnknownCatalogVersionError,
     UnknownDatasetError,
     UnknownDynamicError,
@@ -27,6 +32,7 @@ from policyengine_simulation_persistence import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from uuid import UUID
 
     from policyengine_simulation_persistence import (
@@ -36,6 +42,7 @@ if TYPE_CHECKING:
     )
 
     from policyengine_simulation_entry.economy_api_models import (
+        EconomyConflictCode,
         EconomyRefusalCode,
         EconomyUnavailableCode,
         EconomyUnprocessableCode,
@@ -43,10 +50,13 @@ if TYPE_CHECKING:
 
 # Each column whose foreign key can refuse a submission's rows: the code the
 # refusal answers with and the row it names. A region or dynamic is the
-# caller's own choice, and a dataset its region's (or a stored report's, on a
-# re-run); any other row is one the Public API checked first, or one the
-# service chose, so its refusal is the service's state.
+# caller's own choice, and a dataset its region's, or on a re-run each is the
+# stored record's; any other row is one the Public API checked first, or one
+# the service chose, so its refusal is the service's state. A simulation is
+# refused only on a re-run, whose new runs name the report's stored
+# simulations.
 REFERENCE_REFUSALS: dict[str, tuple[EconomyRefusalCode, str]] = {
+    "simulation_id": ("missing_reference", "simulation"),
     "region_id": ("unknown_region", "region"),
     "dataset_id": ("unknown_dataset", "dataset"),
     "dynamic_id": ("unknown_dynamic", "dynamic"),
@@ -55,8 +65,26 @@ REFERENCE_REFUSALS: dict[str, tuple[EconomyRefusalCode, str]] = {
     "tax_benefit_model_version_id": ("unknown_catalog_version", "catalog version"),
     "tax_benefit_model_id": ("unknown_catalog_version", "tax-benefit model"),
 }
-# What a submission creates.
+# What a submission creates, or a re-run calculates again.
 RecordName = Literal["report", "simulation"]
+
+
+@dataclass(frozen=True)
+class RefusalSource:
+    """Where refused values come from, as a refusal names and locates them.
+
+    ``named_by`` says what names the values in a refusal's detail, and
+    ``location`` starts each unprocessable reason's ``loc``.
+    """
+
+    named_by: str
+    location: str
+
+
+# A new record's request body, or a stored record a re-run reads.
+REQUEST_BODY = RefusalSource(named_by="the request", location="body")
+STORED_REPORT = RefusalSource(named_by="the report", location="report")
+STORED_SIMULATION = RefusalSource(named_by="the simulation", location="simulation")
 
 
 class EconomySubmissionRefusedError(Exception):
@@ -101,21 +129,52 @@ class EconomySubmissionOutcomeUnknownError(Exception):
 
     The commit failed after the rows were inserted. The route answers 500,
     which the Public API reads as a record that may exist, never a 503,
-    which it reads as nothing created.
+    which it reads as nothing created. ``rerun`` says the rows are a stored
+    record's new run, not a new record.
     """
 
-    def __init__(self, record: RecordName, *, error_type: str) -> None:
+    def __init__(
+        self, record: RecordName, *, error_type: str, rerun: bool = False
+    ) -> None:
         """Keep what the submission creates, and the commit error's type."""
         super().__init__(f"the {record} may have been created")
         self.record: RecordName = record
         self.error_type = error_type
+        self.rerun = rerun
+
+
+class EconomyRecordNotFoundError(LookupError):
+    """A re-run names no stored report or simulation (404)."""
+
+    def __init__(self, record: RecordName) -> None:
+        """Keep which kind of record is missing."""
+        super().__init__(f"no such {record}")
+        self.record: RecordName = record
+
+
+class EconomyRerunConflictError(Exception):
+    """A stored record is not re-run now (409); nothing was written.
+
+    ``run_id`` names the record's run pending or running, with
+    ``run_in_progress``.
+    """
+
+    def __init__(
+        self, *, code: EconomyConflictCode, detail: str, run_id: UUID | None = None
+    ) -> None:
+        """Keep the reason's code, its description and any run under way."""
+        super().__init__(detail)
+        self.code: EconomyConflictCode = code
+        self.detail = detail
+        self.run_id = run_id
 
 
 class EconomySubmissionUnavailableError(Exception):
     """A dependency could not be read or refused the call; ask again later.
 
-    ``record_id`` names the report or simulation that was created and whose
-    run was failed, when one was.
+    ``record_id`` names the report or simulation that was created, or
+    re-run, and whose new run was failed, when one was; ``run_id`` names a
+    re-run's failed run.
     """
 
     def __init__(
@@ -124,16 +183,20 @@ class EconomySubmissionUnavailableError(Exception):
         code: EconomyUnavailableCode,
         detail: str,
         record_id: UUID | None = None,
+        run_id: UUID | None = None,
     ) -> None:
         """Keep the reason's code, its description and any created record."""
         super().__init__(detail)
         self.code: EconomyUnavailableCode = code
         self.detail = detail
         self.record_id = record_id
+        self.run_id = run_id
 
 
 def read_refusal(
-    error: Exception, request: EconomyRequest
+    error: Exception,
+    request: EconomyRequest,
+    source: RefusalSource = REQUEST_BODY,
 ) -> EconomySubmissionRefusedError | EconomySubmissionUnprocessableError | None:
     """Return the refusal a store read's error means, or None for any other error.
 
@@ -142,25 +205,32 @@ def read_refusal(
     default worker calculates local areas on; a policy or dynamic setting
     parameters the catalog version lacks,
     or both setting one, cannot be calculated (422). A report side's refusal
-    (ReportSideError) is located on that side's fields. Every detail is
+    (ReportSideError) is located on that side's fields, under ``source``:
+    the request's body, or the stored record a re-run reads. Every detail is
     written from ``request``, never from the error's text.
     """
     side: ReportSide | None = None
     if isinstance(error, ReportSideError):
         side, error = error.side, error.error
-    return _missing_row_refusal(error, request, side) or _unprocessable(
-        error, request, side
+    return _missing_row_refusal(error, request, side, source) or _unprocessable(
+        error, request, side, source
     )
 
 
 def _missing_row_refusal(
-    error: Exception, request: EconomyRequest, side: ReportSide | None
+    error: Exception,
+    request: EconomyRequest,
+    side: ReportSide | None,
+    source: RefusalSource,
 ) -> EconomySubmissionRefusedError | None:
     """Return the 400 a missing row means, or None for another error."""
     catalog = (
         f"{request.country}'s catalog version for .py {request.policyengine_version}"
     )
-    named_by = "the request" if side is None else f"the request's {side}"
+    named_by = source.named_by if side is None else f"{source.named_by}'s {side}"
+    # A stored record's region and dataset are named by the record, not asked
+    # for; a request's are the caller's own.
+    stored_by = "" if source is REQUEST_BODY else f", which {source.named_by} names"
     refusal: tuple[EconomyRefusalCode, str] | None = None
     if isinstance(error, UnknownCatalogVersionError):
         refusal = (
@@ -169,14 +239,17 @@ def _missing_row_refusal(
             f"{request.policyengine_version}, the default v2 worker's version.",
         )
     elif isinstance(error, UnknownRegionError):
-        refusal = ("unknown_region", f"{catalog} has no region {request.region_code}.")
+        refusal = (
+            "unknown_region",
+            f"{catalog} has no region {request.region_code}{stored_by}.",
+        )
     elif isinstance(error, UnknownDatasetError):
         dataset = (
             f"default dataset for region {request.region_code}"
             if request.dataset_name is None
             else f"dataset {request.dataset_name}"
         )
-        refusal = ("unknown_dataset", f"{catalog} has no {dataset}.")
+        refusal = ("unknown_dataset", f"{catalog} has no {dataset}{stored_by}.")
     elif isinstance(error, UnknownPolicyError):
         refusal = (
             "unknown_policy",
@@ -202,14 +275,19 @@ def _missing_row_refusal(
 
 
 def _unprocessable(
-    error: Exception, request: EconomyRequest, side: ReportSide | None
+    error: Exception,
+    request: EconomyRequest,
+    side: ReportSide | None,
+    source: RefusalSource,
 ) -> EconomySubmissionUnprocessableError | None:
     """Return the 422 refused values mean, or None for another error.
 
     Each reason is located at the field that names the values: the request's
-    own, or the report side's.
+    own or the stored record's, or the report side's.
     """
-    location: tuple[str, ...] = ("body",) if side is None else ("body", side)
+    location: tuple[str, ...] = (
+        (source.location,) if side is None else (source.location, side)
+    )
     if isinstance(error, MissingPolicyParametersError):
         field_name = "policy_id" if error.source == "policy" else "dynamic_id"
         return EconomySubmissionUnprocessableError(
@@ -242,15 +320,66 @@ def _unprocessable(
 
 
 def reference_refusal(
-    error: EconomyRecordReferenceError,
+    error: EconomyRecordReferenceError, source: RefusalSource = REQUEST_BODY
 ) -> EconomySubmissionRefusedError:
     """Return the refusal of rows the database refused for naming a missing row.
 
-    It names the kind of row, never its ID, which the caller sent.
+    It names the kind of row, never its ID, which the caller sent, and what
+    named it: the request, or the stored record a re-run reads.
     """
     code, row = REFERENCE_REFUSALS.get(
         error.column_name or "", ("missing_reference", "row")
     )
     return EconomySubmissionRefusedError(
-        code=code, detail=f"a {row} the request names no longer exists"
+        code=code, detail=f"a {row} {source.named_by} names no longer exists"
     )
+
+
+def call_refused(
+    record: RecordName, record_id: UUID, *, rerun_id: UUID | None = None
+) -> EconomySubmissionUnavailableError:
+    """Return the 503 naming a record whose new run's call Modal did not accept.
+
+    ``rerun_id`` names a stored record's new run, which was failed.
+    """
+    if rerun_id is not None:
+        return EconomySubmissionUnavailableError(
+            code="modal_call_refused",
+            detail=(
+                f"Modal did not accept the call of the {record}'s new run; "
+                "that run was failed."
+            ),
+            record_id=record_id,
+            run_id=rerun_id,
+        )
+    return EconomySubmissionUnavailableError(
+        code="modal_call_refused",
+        detail=(
+            f"Modal did not accept the {record}'s call; the {record} was created "
+            "and its run failed."
+        ),
+        record_id=record_id,
+    )
+
+
+@contextmanager
+def rerun_refusals(record: RecordName) -> Iterator[None]:
+    """Answer a re-run's create that the record's state refused.
+
+    A record deleted after the re-run read it is not found (404); a record
+    with a run pending or running is not re-run now (409 ``run_in_progress``,
+    naming that run). Nothing was created either way.
+    """
+    try:
+        yield
+    except RerunRecordDeletedError:
+        raise EconomyRecordNotFoundError(record) from None
+    except RunInProgressError as error:
+        raise EconomyRerunConflictError(
+            code="run_in_progress",
+            detail=(
+                f"The {record} has a run pending or running; re-run it once "
+                "that run has ended."
+            ),
+            run_id=error.run_id,
+        ) from None

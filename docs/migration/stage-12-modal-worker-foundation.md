@@ -334,6 +334,18 @@ as for a report comparing it with itself, so a report whose plan needs more
 columns, for example a reform that turns on labour supply responses, can't
 reuse it and fails with `reused_simulation_output_incompatible`.
 
+**A re-run.** The service re-runs a stored report or simulation with the same
+two calls, by run ID. It creates the record's new run (a report run with
+trigger `manual`) and, for a report, a new `simulation_runs` row of each side's
+own simulation, or names that simulation's run that already succeeded on the
+same versions, unless the re-run is forced. The new runs record the catalog
+version, dataset and region of the current .py version's catalog; the
+`simulations` and `reports` rows are unchanged. A budget-window report's
+re-run is a new `budget_window_runs` row (trigger `manual`) with a report run
+per year, each on its year's own simulations, started as a new window's
+first years are. The coordinator and workers claim and calculate them as
+they would a new record's: nothing on the Modal side tells a re-run apart.
+
 **Each worker** claims its simulation run under its own Modal call ID: a pending
 or running run that records no call or its own. It records its output file, or
 its failure, only while it holds the run running. It returns the output's
@@ -470,10 +482,13 @@ scoping, and check the area columns as it loads; the plan copies
 `UK_AREA_DATASET_COLUMNS` for them; and the aggregate keeps both area levels,
 with each level's withheld codes (`constituency_withheld_codes`,
 `local_authority_withheld_codes`) from the same disclosure pass, which the
-report run stores as `withheld_area_codes` rows beside its full results. All
-three decide by `calculates_on_local_area_dataset`
-(`stage12_runtime/local_area_datasets.py`), on the same routing rule as
-`uk_area_breakdowns_omitted`.
+report run stores as `withheld_area_codes` rows beside its full results.
+Disclosure control may withhold every area of a level, but a run whose
+disclosure pass estimated no area of a level fails
+(`report_coordination_failed`), so a succeeded run always has area or
+withheld-code rows for each level. All three decide by
+`calculates_on_local_area_dataset` (`stage12_runtime/local_area_datasets.py`),
+on the same routing rule as `uk_area_breakdowns_omitted`.
 
 Aggregation uses the retained output tables without rerunning either model.
 The precomputed baseline and reform simulations retain their original policy
@@ -842,6 +857,12 @@ unfinished, with a summary naming only the error's type, then propagates; a
 pre-emption records nothing. An error in the report run's claim, or in the
 read of its simulation runs, fails the report run if the claim applied
 before the error, and leaves its simulation runs to the stuck-run sweep.
+
+A household report's re-run (`POST /reports/{report_id}/runs`) is a new
+report run, trigger `manual`, naming a new run of each side's own household
+simulation on the current catalog version, in the report's year. The
+service starts one call for it, as for a new household report, and the
+function claims and calculates it as it would a new report's run.
 
 The stuck-run sweep (`src/modal/run_sweep_app.py`) fails household jobs
 nothing will finish by the rule it applies to report runs and simulation

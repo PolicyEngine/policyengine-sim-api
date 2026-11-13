@@ -79,7 +79,7 @@ def client_for(monkeypatch):
         monkeypatch.setattr(
             app_module,
             "economy_submissions_for",
-            lambda settings, database: economy or FakeEconomySubmissions(),
+            lambda settings, database, **_: economy or FakeEconomySubmissions(),
         )
         monkeypatch.setattr(
             app_module,
