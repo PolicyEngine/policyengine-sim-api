@@ -375,7 +375,11 @@ aggregation reads. A reused or waited-for file must hold what the report reads
 from its side (`side_read_plan`); a side that stores no responses the report
 reads is read with them as zeros. A run that succeeded before this rule, under
 a report's plan, is reused when it holds what the new report reads from it,
-and refused (`reused_simulation_output_incompatible`) otherwise.
+and refused (`reused_simulation_output_incompatible`) otherwise. The
+precomputed US baselines are planned the same way, so a report run's
+current-law baseline finds its precomputed files; a comparison-path call
+still plans its baseline with its report's plan, so its baseline no longer
+finds them and calculates all 20 region groups.
 
 **Shared simulation runs.** Identical requests share simulation runs, so a
 report run may name a run another report run's worker is calculating (C1 · 24,
@@ -599,9 +603,9 @@ calculations, cliff analysis, and labor-supply-response calculations also use
 the single-container path. `segmented=true` is accepted, but it does not
 override those numerical eligibility conditions. A US national simulation run
 started on its own (role `standalone`) is segmented by the same rule. It never
-uses the precomputed baseline files, which serve only a report's current-law
-baseline under that report's output plan, so it calculates all 20 region
-groups.
+uses the precomputed baseline files, which serve only a report run's
+current-law baseline, planned as its simulation run stores its output, so it
+calculates all 20 region groups.
 
 The Stage 12 coordinator still persists only two logical simulation records:
 one baseline and one reform. Each eligible logical simulation call performs
