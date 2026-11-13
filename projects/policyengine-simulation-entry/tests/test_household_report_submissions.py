@@ -138,8 +138,6 @@ def test_a_household_report_is_created_and_its_household_function_started():
         year=2026,
     )
     assert (report.report_id, report.run_id) == (REPORT_ID, RUN_ID)
-    assert report.label == "A larger child tax credit for one family"
-    assert report.description == "Raises the credit to $3,000"
     assert (report.tax_benefit_model_id, report.tax_benefit_model_version_id) == (
         MODEL_ID,
         CATALOG_VERSION_ID,

@@ -380,7 +380,10 @@ def insert_report_rerun(
 def _rerun_report_run_row(
     *, run_id: UUID, report_id: UUID, versions: RunVersions
 ) -> dict[str, Any]:
-    """Return a re-run's report run as inserted, without its sides' runs."""
+    """Return a re-run's report run as inserted, without its sides' runs.
+
+    It names no trigger: each user's report-run record holds it (answer 6).
+    """
     return {
         "id": run_id,
         "report_id": report_id,
@@ -389,7 +392,6 @@ def _rerun_report_run_row(
         "country_package_version": versions.country_package_version,
         "policyengine_version": versions.policyengine_version,
         "status": ReportRunStatus.PENDING,
-        "trigger": ReportRunTrigger.MANUAL,
         "modal_call_id": None,
     }
 

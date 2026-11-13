@@ -83,8 +83,6 @@ def _keyed_report(
         run_id=uuid4(),
         baseline=ProposedSide(simulation_id=uuid4(), simulation_run_id=uuid4()),
         reform=ProposedSide(simulation_id=uuid4(), simulation_run_id=uuid4()),
-        label="Shared report",
-        description=None,
         tax_benefit_model_id=economy.catalog.model_id,
         population=economy.population(),
         versions=VERSIONS,

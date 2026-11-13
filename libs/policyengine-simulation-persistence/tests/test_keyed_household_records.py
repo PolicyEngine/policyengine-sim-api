@@ -113,8 +113,6 @@ def _keyed_report(
             if reform is None
             else ProposedSide(simulation_id=uuid4(), simulation_run_id=uuid4())
         ),
-        label="A larger child tax credit",
-        description=None,
         tax_benefit_model_id=stored.catalog.model_id,
         tax_benefit_model_version_id=stored.catalog.version_id,
         versions=VERSIONS,

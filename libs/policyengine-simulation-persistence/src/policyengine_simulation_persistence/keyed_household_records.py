@@ -53,7 +53,6 @@ from policyengine_simulation_persistence.shared_rows import (
 )
 from policyengine_simulation_persistence.tables import (
     ReportRunStatus,
-    ReportRunTrigger,
     SimulationType,
 )
 
@@ -74,8 +73,8 @@ class KeyedHouseholdReport:
 
     ``reform`` is None exactly when the definition has no reform (a report
     of the baseline alone). The runs calculate on the catalog version
-    ``tax_benefit_model_version_id``. ``label`` and ``description`` are
-    stored only by the request that creates the report.
+    ``tax_benefit_model_version_id``. No label, description, user or
+    trigger is stored on the shared rows (answer 6).
     """
 
     definition: HouseholdReportDefinition
@@ -83,8 +82,6 @@ class KeyedHouseholdReport:
     run_id: UUID
     baseline: ProposedSide
     reform: ProposedSide | None
-    label: str
-    description: str | None
     tax_benefit_model_id: UUID
     tax_benefit_model_version_id: UUID
     versions: RunVersions
@@ -207,11 +204,8 @@ def _report_row(
     reform = definition.reform
     return {
         "id": request.report_id,
-        "label": request.label,
-        "description": request.description,
         "country": definition.country,
         "type": HOUSEHOLD_REPORT_TYPE,
-        "user_id": None,
         "tax_benefit_model_id": request.tax_benefit_model_id,
         "policy_id": None if reform is None else reform.policy_id,
         "baseline_simulation_id": simulation_ids["baseline"],
@@ -239,7 +233,6 @@ def _report_run_row(request: KeyedHouseholdReport, report_id: UUID) -> dict[str,
         "country_package_version": request.versions.country_package_version,
         "policyengine_version": request.versions.policyengine_version,
         "status": ReportRunStatus.PENDING,
-        "trigger": ReportRunTrigger.INITIAL,
         "modal_call_id": None,
     }
 

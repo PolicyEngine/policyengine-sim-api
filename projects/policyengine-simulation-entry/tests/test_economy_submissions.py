@@ -134,10 +134,6 @@ def test_a_report_is_created_by_key_and_its_coordinator_started() -> None:
         ProposedSide(simulation_id=UUID(int=3), simulation_run_id=UUID(int=4)),
         ProposedSide(simulation_id=UUID(int=5), simulation_run_id=UUID(int=6)),
     )
-    assert (report.label, report.description) == (
-        "A larger child tax credit",
-        "Raises the credit to $3,000",
-    )
     assert report.tax_benefit_model_id == CATALOG.model_id
     assert report.population == CATALOG.population(2026)
     # Answer 4: the report stores no option but the SPM selection.

@@ -49,7 +49,6 @@ from policyengine_simulation_persistence.shared_rows import (
 )
 from policyengine_simulation_persistence.tables import (
     ReportRunStatus,
-    ReportRunTrigger,
     SimulationType,
 )
 
@@ -89,8 +88,8 @@ class KeyedEconomyReport:
     current catalog version's rows with the definition's dataset name and
     region code. ``inputs`` is what ``reports.inputs`` stores: the SPM
     selection when the request gave one, and no other option (answer 4).
-    ``label`` and ``description`` are stored only by the request that
-    creates the report.
+    No label, description, user or trigger is stored on the shared rows
+    (answer 6): each user's saved report and report-run record hold them.
     """
 
     definition: EconomyReportDefinition
@@ -98,8 +97,6 @@ class KeyedEconomyReport:
     run_id: UUID
     baseline: ProposedSide
     reform: ProposedSide
-    label: str
-    description: str | None
     tax_benefit_model_id: UUID
     population: EconomyPopulation
     versions: RunVersions
@@ -345,11 +342,8 @@ def _report_row(
     population = request.population
     return {
         "id": request.report_id,
-        "label": request.label,
-        "description": request.description,
         "country": definition.country,
         "type": ECONOMY_REPORT_TYPE,
-        "user_id": None,
         "tax_benefit_model_id": request.tax_benefit_model_id,
         "policy_id": definition.reform.policy_id,
         "baseline_simulation_id": simulation_ids["baseline"],
@@ -376,7 +370,6 @@ def _report_run_row(request: KeyedEconomyReport, report_id: UUID) -> dict[str, A
         "country_package_version": request.versions.country_package_version,
         "policyengine_version": request.versions.policyengine_version,
         "status": ReportRunStatus.PENDING,
-        "trigger": ReportRunTrigger.INITIAL,
         "modal_call_id": None,
     }
 
