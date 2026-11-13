@@ -28,7 +28,7 @@ CURRENT_SINGLE_YEAR_MACRO_KEYS = {
 
 # Listed only by a UK-wide or nation report on the local-area dataset, and
 # left out of every other result, so the result keys above are unchanged.
-LOCAL_AREA_REPORT_KEYS = {
+LOCAL_AREA_WITHHELD_CODE_KEYS = {
     "constituency_withheld_codes",
     "local_authority_withheld_codes",
 }
