@@ -66,6 +66,8 @@ from .report_run_recording import (
 from .reused_outputs import (
     CloudStorageOutputFiles,
     checked_output,
+    descriptor_for_role,
+    for_role,
     reused_outputs,
     simulations_to_calculate,
 )
@@ -351,10 +353,13 @@ class ReportRunCoordination(CoordinationCore):
         calculated = simulations_to_calculate(planned_simulations, self.reused)
         self._require_unfailed(calculated)
         for simulation in calculated:
+            if self._calculated_as_the_baseline(simulation):
+                continue
             self._start_worker(simulation)
         # Every worker has been started before the coordinator observes them
         # together through nonblocking result probes.
         wait_for_children(self, self.calls, self.descriptors)
+        self._share_the_baseline_output()
         self._require_recorded(calculated)
         aggregate, _baseline, _reform = self.aggregate(output_plan, self.descriptors)
         result = AggregateReportArtifactPayload.model_validate(aggregate).result
@@ -371,6 +376,30 @@ class ReportRunCoordination(CoordinationCore):
             "report_run_id": str(self.run_ids.report_run_id),
             "status": written.status.value,
         }
+
+    def _calculated_as_the_baseline(
+        self, simulation: PlannedSimulationExecutionInput
+    ) -> bool:
+        """Whether ``simulation`` is a reform whose run is the baseline's run.
+
+        A report run naming one simulation run on both sides starts one
+        worker for it, the baseline's (``_share_the_baseline_output``).
+        """
+        return (
+            simulation.role is SimulationRole.REFORM
+            and self.run_ids.names_one_simulation_run
+        )
+
+    def _share_the_baseline_output(self) -> None:
+        """Give the reform the baseline's output when both name one run."""
+        if not self.run_ids.names_one_simulation_run:
+            return
+        reform = SimulationRole.REFORM
+        if "baseline" in self.reused:
+            self.reused[reform.value] = for_role(self.reused["baseline"], reform)
+        self.descriptors[reform.value] = descriptor_for_role(
+            self.descriptors["baseline"], reform
+        )
 
     def _require_unfailed(
         self, simulations: Sequence[PlannedSimulationExecutionInput]

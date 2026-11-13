@@ -263,16 +263,20 @@ class CoordinationCore:
         read, checked and decoded while the report was prepared.
         """
         validate_aligned_outputs(self.report, output_plan, baseline, reform)
+        # A report run naming one simulation run on both sides has one file.
+        one_file = baseline.artifact == reform.artifact
         with self.span(Stage.STAGE12_ARTIFACT_READ):
             payloads = {
                 descriptor.role.value: self.artifact_storage.read(
                     descriptor.artifact.uri
                 )
-                for descriptor in (baseline, reform)
+                for descriptor in ((baseline,) if one_file else (baseline, reform))
                 if descriptor.role.value not in self.reused
             }
         baseline_output = self._decoded_output(baseline, payloads)
-        reform_output = self._decoded_output(reform, payloads)
+        reform_output = (
+            baseline_output if one_file else self._decoded_output(reform, payloads)
+        )
         uk_local_authority_metadata = validate_uk_local_authority_metadata(
             self.report.baseline.geography.country,
             baseline_output.uk_local_authority_metadata,

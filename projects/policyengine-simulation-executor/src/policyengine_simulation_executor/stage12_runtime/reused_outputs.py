@@ -166,10 +166,17 @@ def reused_outputs(
     """
     reader = files or CloudStorageOutputFiles()
     reused: dict[str, ReusedSimulationOutput] = {}
+    # Each run's checked output by run ID, so a run the report names on both
+    # sides is read once.
+    read_runs: dict[UUID, ReusedSimulationOutput] = {}
     for simulation in simulations:
         role = simulation.role
         stored = stored_runs[role]
         if stored.status is not RunStatus.SUCCEEDED:
+            continue
+        run_id = run_ids.simulation_run_id(role)
+        if run_id in read_runs:
+            reused[role.value] = for_role(read_runs[run_id], simulation.role)
             continue
         other_role = (
             SimulationRole.REFORM
@@ -183,10 +190,31 @@ def reused_outputs(
             other_named=_run_name(other_role, run_ids),
         )
         with span(Stage.STAGE12_ARTIFACT_READ, {"simulation_role": role.value}):
-            reused[role.value] = checked_output(
-                simulation, run_ids.simulation_run_id(role), stored, files=reader
+            read_runs[run_id] = checked_output(
+                simulation, run_id, stored, files=reader
             )
+        reused[role.value] = read_runs[run_id]
     return reused
+
+
+def for_role(
+    output: ReusedSimulationOutput, role: SimulationRole
+) -> ReusedSimulationOutput:
+    """Return ``output`` described for ``role``, for a run named on both sides.
+
+    The decoded frames are shared: the aggregation builds each side's dataset
+    from them without changing them.
+    """
+    return ReusedSimulationOutput(
+        decoded=output.decoded, descriptor=descriptor_for_role(output.descriptor, role)
+    )
+
+
+def descriptor_for_role(
+    descriptor: SimulationArtifactDescriptor, role: SimulationRole
+) -> SimulationArtifactDescriptor:
+    """Return ``descriptor`` for ``role``: the same file, run and plan."""
+    return descriptor.model_copy(update={"role": role})
 
 
 def _run_name(role: SimulationRole, run_ids: ReportRunIds) -> str:
