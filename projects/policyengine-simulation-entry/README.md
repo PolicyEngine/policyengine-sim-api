@@ -122,21 +122,30 @@ the same fields for one policy and dynamic. Neither names a .py version or a
 record ID: the service runs the v2 version manifest's default worker and
 chooses every ID.
 
-The service reads the rows itself and, in one transaction, creates the
-records and their first runs, `pending` with no Modal call ID. A report
-side reuses a simulation run that already succeeded instead of creating
-one, when it is the newest run of the same policy, dynamic, catalog
-version, dataset, region and year on the same country package and .py
-versions, its output file is in the output bucket
-(`V2_SIMULATION_OUTPUT_BUCKET`), a succeeded report run with the same
-options used it, no report run has refused to reuse it, and it wasn't
-a forced re-run's (nothing reuses those); the two sides
-never name the same run. The service then starts the run's Modal call by
-name: the report run's coordinator, given the report and its run IDs and no
-Stage 12 evaluation record, or a standalone run's simulation function,
-given its run's ID. It records the call's ID, and answers 201 with the
-record's ID, its run's ID and status, and, for a report, each side's
-simulation and run and whether it was reused.
+Identical requests, together or a minute apart, end on the same
+simulation, report and run rows. The service reads the rows itself and, in
+one transaction, finds or creates each record by a key of its definition
+(`definition_key`, with `key_version`): a simulation's is its country,
+policy, dynamic, dataset name, region code, year and SPM selection; a
+report's is its two sides' policies and dynamics, the dataset, region, year
+and SPM selection they share, and its budget window size, with no other
+option; a report also stores a `dataset_independent_key`, the same without
+the dataset. It then joins the report's run on the default worker's
+versions that hasn't failed and wasn't forced, pending, running or
+succeeded, or else finds or creates each simulation's run on those
+versions, catalog version and year (any that hasn't failed and wasn't
+forced, whichever report first calculated it) and creates a report run
+naming them, `pending` with no Modal call ID. Current law against current
+law names one simulation and run on both sides. A report stores only the
+request's SPM selection in `inputs`; `include_cliffs` is passed to the
+calculation but never stored or keyed. Only for a run its own transaction
+created does the service start a Modal call by name: the report run's
+coordinator, given the report and its run IDs and no Stage 12 evaluation
+record, or a standalone run's simulation function, given its run's ID. It
+records the call's ID, and answers 201 with the record's ID, the run's ID
+and status (as read, for a run it joined), and, for a report, each side's
+simulation and run and whether it was reused, which is true for a side
+whose run this request didn't create.
 
 A request is refused before anything is written: with 400 and a `code` when
 a row it names is missing (`unknown_region`, `unknown_dataset` and
@@ -147,9 +156,11 @@ missing while a release deploys), and with 422 and a `code` when a policy or
 dynamic sets parameters the catalog version lacks (`missing_parameters`) or
 both set one (`overlapping_parameters`). The routes answer 503 with
 `Retry-After` when the manifest or the database can't be read. When Modal
-refuses the call, or doesn't confirm it within ten seconds, the run (and a
-report run's new simulation runs) is failed at once and the 503
-(`modal_call_refused`) names the record, as `report_id` or `simulation_id`;
+refuses the call, or doesn't confirm it within ten seconds, the run is
+failed at once (a report run alone: its simulation runs may already be
+another report run's, and the next coordinator naming them starts them)
+and the 503 (`modal_call_refused`) names the record, as `report_id` or
+`simulation_id`;
 a run claimed meanwhile is answered with 201. Every 500 is the JSON error
 with code `internal_error`, and may follow a write. No `detail` holds an
 exception's text.

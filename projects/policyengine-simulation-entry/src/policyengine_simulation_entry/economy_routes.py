@@ -1,8 +1,9 @@
 """The economy routes: create a report or a simulation, and start its calculation.
 
-- ``POST /reports`` (permission ``simulation:submit``) creates an economy
-  report, its simulations and its first run, and starts the report run's
-  coordinator, answering 201 with the report's ID, its run's ID and status,
+- ``POST /reports`` (permission ``simulation:submit``) finds or creates an
+  economy report and its simulations by key, and joins its run on the
+  current versions or creates one, starting the coordinator only for a run
+  it created, answering 201 with the report's ID, its run's ID and status,
   and each side's simulation and simulation run. With ``report_type``
   ``budget_window`` it creates a budget-window report with a report run per
   year and starts up to its first five years, answering 201 with the report, the
@@ -12,9 +13,11 @@
   household function call for the report run, answering 201 with the
   report, its run, its status, its year and each side's simulation and
   simulation run.
-- ``POST /simulations`` (``simulation:submit``) creates a standalone
-  economy simulation and its first run, and starts the run's simulation
-  function, answering 201 with the simulation's ID, its run's ID and status.
+- ``POST /simulations`` (``simulation:submit``) finds or creates a
+  standalone economy simulation by key and joins or creates its run on the
+  current versions, starting the run's simulation function only for a run
+  it created, answering 201 with the simulation's ID, its run's ID and
+  status.
 - ``GET /reports/{report_id}`` and ``GET /simulations/{simulation_id}``
   (``simulation:read``) return the record with its newest run's status,
   versions, error message and times. The Public API reads results from the
@@ -531,10 +534,14 @@ def _submission_routes(
         REPORTS_PATH,
         summary="Create an economy, budget-window or household report",
         description=(
-            "Create an economy report comparing a baseline and a reform "
-            "simulation of one region's data for one year, on the v2 version "
-            "manifest's default worker, and start its first run. A side whose "
-            "simulation already succeeded on the same versions reuses that run. "
+            "Find or create an economy report comparing a baseline and a "
+            "reform simulation of one region's data for one year, by a key of "
+            "its definition, on the v2 version manifest's default worker: an "
+            "identical request ends on the same report and run. The report's "
+            "run on those versions that hasn't failed and wasn't forced is "
+            "joined, with no new call; otherwise each side joins its "
+            "simulation's run on those versions or gets a new one, and the new "
+            "report run is started. "
             "A budget-window report (report_type budget_window) compares them "
             "in each year of a window of 1 to 75 years, with a report run per "
             "year, at most five running at once; each year reuses its own "
@@ -578,9 +585,11 @@ def _submission_routes(
         SIMULATIONS_PATH,
         summary="Create an economy simulation",
         description=(
-            "Create a standalone economy simulation of one region's data for "
-            "one year under one stored policy and dynamic, on the v2 version "
-            "manifest's default worker, and start its first run."
+            "Find or create a standalone economy simulation of one region's "
+            "data for one year under one stored policy and dynamic, by a key of "
+            "its definition, on the v2 version manifest's default worker, and "
+            "join its run on those versions that hasn't failed and wasn't "
+            "forced, or else create and start one."
         ),
         operation_id="create_simulation",
         status_code=status.HTTP_201_CREATED,
