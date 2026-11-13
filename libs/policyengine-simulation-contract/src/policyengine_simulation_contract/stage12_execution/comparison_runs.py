@@ -26,9 +26,11 @@ from policyengine_simulation_contract.stage12_execution.base import (
 class ReportRunIds(StrictContractModel):
     """The Public API's report run and simulation runs one report call records on.
 
-    The simulation service creates the three rows before it starts the
-    coordinator. The coordinator records the report run's status and results,
-    and each worker it starts claims and records its own simulation run.
+    The simulation service creates the rows before it starts the coordinator.
+    The coordinator records the report run's status and results, and each
+    worker it starts claims and records its own simulation run. A report
+    comparing a simulation with itself names that simulation's one run on
+    both sides (``names_one_simulation_run``).
     """
 
     report_run_id: UUID
@@ -37,16 +39,19 @@ class ReportRunIds(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_distinct_runs(self) -> ReportRunIds:
-        """Require the report run and both simulation runs to be different rows."""
-        run_ids = {
-            self.report_run_id,
+        """Require the report run to be another row than its simulation runs."""
+        if self.report_run_id in {
             self.baseline_simulation_run_id,
             self.reform_simulation_run_id,
-        }
-        if len(run_ids) != 3:  # noqa: PLR2004  # one report run and two simulation runs
-            msg = "report run IDs must name three different runs"
+        }:
+            msg = "the report run must differ from its simulation runs"
             raise ValueError(msg)
         return self
+
+    @property
+    def names_one_simulation_run(self) -> bool:
+        """Whether the baseline and the reform are the same simulation run."""
+        return self.baseline_simulation_run_id == self.reform_simulation_run_id
 
     def simulation_run_id(self, role: SimulationRole) -> UUID:
         """Return the simulation run of ``role``; a standalone role has none."""
