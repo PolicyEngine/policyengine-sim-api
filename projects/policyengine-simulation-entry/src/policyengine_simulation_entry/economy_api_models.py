@@ -32,10 +32,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from policyengine_simulation_contract.local_area_breakdown import (
-    LOCAL_AREAS_BREAKDOWN,
-    local_area_breakdown_error,
-)
+from policyengine_simulation_contract.local_area_breakdown import UK_NATION_REGIONS
 from policyengine_simulation_contract.spm import SPMSelection
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_persistence import ReportRunStatus, SimulationStatus
@@ -54,9 +51,13 @@ SimulationYear = Annotated[int, Field(ge=1900, le=2200, description="The year")]
 CatalogKey = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^\S+$")]
 ReportLabel = Annotated[str, Field(min_length=1, max_length=255)]
 ReportDescription = Annotated[str, Field(max_length=10_000)]
-# The one breakdown a report may ask for: its constituency and local-authority
-# impacts, calculated on the local-area dataset beside the national result.
-LocalAreasBreakdown = Literal["local_areas"]
+# The one data source a report may ask for: the bundle's local-area dataset,
+# on which a UK-wide or nation report also calculates its constituency and
+# local-authority impacts.
+LOCAL_AREA_DATA_SOURCE = "local_area_dataset"
+LocalAreaDataSource = Literal["local_area_dataset"]
+# The regions whose reports may run on the local-area dataset.
+LOCAL_AREA_DATA_SOURCE_REGIONS = frozenset({"uk", *UK_NATION_REGIONS})
 
 # Why a request is refused (400), naming a row the caller chose that doesn't
 # exist: the Public API answers these as its caller's error.
@@ -93,6 +94,10 @@ EconomyUnprocessableCode = Literal[
     # be read, or the household functions' contract refuses what the report
     # would calculate: located at the household or a side's policy.
     "household_not_calculable",
+    # The default worker's .py release routes constituencies and local
+    # authorities to no dataset of their own, so it has no local-area dataset
+    # for ``data_source``: located at ``data_source``.
+    "no_local_area_dataset",
 ]
 # Why a route cannot answer now (503); retry after ``Retry-After`` seconds.
 EconomyUnavailableCode = Literal[
@@ -156,12 +161,14 @@ class EconomyReportRequest(_Request):
     SPM forecast scenario and geography; omit it, rather than sending null,
     to use the bundle's certified defaults.
 
-    ``breakdown: "local_areas"`` also asks for the report's constituency and
-    local-authority impacts, calculated on the catalog version's local-area
-    dataset whatever ``dataset_name`` names. Only a UK report whose region is
-    ``uk`` or one of the four ``country/*`` nations may ask, with or without
-    ``include_cliffs``; omit it, rather than sending null, to ask for none.
-    It is a request option, never stored with the report.
+    ``data_source: "local_area_dataset"`` runs the report on the bundle's
+    local-area dataset, the one its .py release routes constituencies and
+    local authorities to, in place of the region's own: the report returns
+    its full results, cliffs included when asked, and its constituency and
+    local-authority impacts. Only a UK report whose region is ``uk`` or one
+    of the four ``country/*`` nations may ask; omit it, rather than sending
+    null, to use the region's dataset. It is never stored as an option: the
+    dataset it chooses is stored with the report's simulations.
     """
 
     country: CountryId
@@ -178,7 +185,7 @@ class EconomyReportRequest(_Request):
         default=None, json_schema_extra=omit_null_default
     )
     # Last, so its check can read the country and region.
-    breakdown: LocalAreasBreakdown | SkipJsonSchema[None] = Field(
+    data_source: LocalAreaDataSource | SkipJsonSchema[None] = Field(
         default=None, json_schema_extra=omit_null_default
     )
 
@@ -191,55 +198,56 @@ class EconomyReportRequest(_Request):
             raise ValueError(msg)
         return value
 
-    @field_validator("breakdown", mode="before")
+    @field_validator("data_source", mode="before")
     @classmethod
-    def refuse_another_breakdown(cls, value: object) -> object:
+    def refuse_another_data_source(cls, value: object) -> object:
         """Refuse null and any other value with one reason.
 
-        Omit ``breakdown`` to ask for none. Without this, another value would
-        be refused once by each member of the field's type.
+        Omit ``data_source`` to use the region's dataset. Without this,
+        another value would be refused once by each member of the field's
+        type.
         """
-        if value != LOCAL_AREAS_BREAKDOWN:
+        if value != LOCAL_AREA_DATA_SOURCE:
             msg = (
-                f'breakdown must be "{LOCAL_AREAS_BREAKDOWN}" when given; omit it '
-                "to ask for no breakdown"
+                f'data_source must be "{LOCAL_AREA_DATA_SOURCE}" when given; omit '
+                "it to use the region's dataset"
             )
             raise ValueError(msg)
         return value
 
-    @field_validator("breakdown")
+    @field_validator("data_source")
     @classmethod
-    def refuse_a_breakdown_the_region_cannot_have(
-        cls, breakdown: LocalAreasBreakdown | None, info: ValidationInfo
-    ) -> LocalAreasBreakdown | None:
-        """Refuse local areas for another country, or a region not UK-wide or a nation.
+    def refuse_a_data_source_the_region_cannot_have(
+        cls, data_source: LocalAreaDataSource | None, info: ValidationInfo
+    ) -> LocalAreaDataSource | None:
+        """Refuse the local-area dataset for another country or region.
 
-        A country or region that failed its own validation is reported by
-        that field alone.
+        Only a UK report whose region is UK-wide or a nation may run on it. A
+        country or region that failed its own validation is reported by that
+        field alone.
         """
         country = info.data.get("country")
         region_code = info.data.get("region_code")
-        if breakdown is None or country is None or region_code is None:
-            return breakdown
-        # The breakdown's own calculation has no cliffs and no segments, so
-        # neither option is passed: the national run calculates the cliffs.
-        reason = local_area_breakdown_error(
-            country=country,
-            region=region_code,
-            region_group=None,
-            include_cliffs=None,
-            segmented=None,
-        )
-        if reason is not None:
-            raise ValueError(reason)
-        return breakdown
+        if data_source is None or country is None or region_code is None:
+            return data_source
+        if country != "uk":
+            msg = "the local-area dataset is available only to UK reports"
+            raise ValueError(msg)
+        if region_code not in LOCAL_AREA_DATA_SOURCE_REGIONS:
+            accepted = ", ".join(sorted(LOCAL_AREA_DATA_SOURCE_REGIONS))
+            msg = (
+                "the local-area dataset needs a UK-wide or nation region "
+                f"({accepted}), not {region_code!r}"
+            )
+            raise ValueError(msg)
+        return data_source
 
     def options(self) -> dict[str, Any]:
         """Return the report's options as it stores them (``reports.inputs``).
 
         ``spm`` holds only the settings the request gave, and is left out
-        when it gave none. ``breakdown`` is never stored: it asks for the
-        report on the local-area dataset too, and never changes this one.
+        when it gave none. ``data_source`` is never an option: the dataset
+        it chooses is stored with the report's simulations.
         """
         options: dict[str, Any] = {"include_cliffs": self.include_cliffs}
         if self.spm is not None:
@@ -373,6 +381,9 @@ class EconomyRequestUnprocessable(_Answer):
     cannot be calculated carry one: ``missing_parameters`` for a policy or
     dynamic setting parameters the catalog version lacks, and
     ``overlapping_parameters`` for a policy and dynamic setting the same one.
+    ``no_local_area_dataset`` refuses ``data_source`` on a .py release that
+    routes constituencies and local authorities to no dataset of their own:
+    its national reports calculate both area levels themselves.
     """
 
     detail: list[EconomyRequestReason]

@@ -45,7 +45,7 @@ REGION_TYPES: Final = (
     "city",
     "place",
 )
-# The UK region types a local-area breakdown covers.
+# The UK region types a report on the local-area dataset calculates.
 UK_AREA_REGION_TYPES: Final = ("constituency", "local_authority")
 
 tax_benefit_models = Table(

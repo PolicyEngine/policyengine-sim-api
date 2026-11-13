@@ -4,13 +4,14 @@ A report submission names a region, a dataset, a year and each side's
 stored policy and dynamic. The service:
 
 1. finds the v2 version manifest's default worker's economy functions for
-   the country, and its bundle;
+   the country, and its bundle, and, for a report with ``data_source``, the
+   local-area dataset its UK entry declares (``local_area_reports``);
 2. reads, in one transaction, the country's catalog version for that
-   worker's .py version, the region and dataset, each side's policy and
-   dynamic values, and, when the output bucket is configured, each side's
-   reusable run: a run of the same simulation that succeeded on the same
-   versions, used by a succeeded report run with the same options, and
-   never refused for reuse;
+   worker's .py version, the region and its dataset (or the catalog's
+   local-area dataset), each side's policy and dynamic values, and, when
+   the output bucket is configured, each side's reusable run: a run of the
+   same simulation that succeeded on the same versions, used by a succeeded
+   report run with the same options, and never refused for reuse;
 3. creates, in one transaction, each side's new simulation and pending run
    (none for a reused side), the report with its options, and its first
    report run, pending with no Modal call ID;
@@ -135,7 +136,8 @@ class EconomyRuns(Protocol):
     ) -> EconomyReportInputs:
         """Read a report's catalog rows, both sides' values and reusable runs.
 
-        With ``local_area_dataset_name``, also the catalog's local-area dataset.
+        With ``local_area_dataset_name``, the report is read on the catalog's
+        local-area dataset, which must have that name.
         """
         ...
 

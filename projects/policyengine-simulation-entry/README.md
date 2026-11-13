@@ -153,25 +153,34 @@ exception's text.
 
 ### Local areas
 
-An economy report may also ask for its constituency and local-authority
-impacts with `breakdown: "local_areas"`, left out unless given (null and any
-other value are refused with 422). Only a UK report whose region is `uk` or
-one of the four `country/*` nations may ask, with or without
-`include_cliffs`; any other country or region is refused with 422 at
-`breakdown`. It is a request option, never stored with the report.
+An economy report created with `data_source: "local_area_dataset"` runs on
+the bundle's local-area dataset, the one the .py release routes
+constituencies and local authorities to, in place of its region's dataset.
+It is an ordinary report: it returns its full results, cliffs included when
+asked, and its constituency and local-authority impacts, and is re-run on
+the same dataset. `data_source` is left out unless given (null and any other
+value are refused with 422), and is never stored as an option: the dataset
+is stored with the report's simulations. Only a UK report whose region is
+`uk` or one of the four `country/*` nations may ask; any other country or
+region is refused with 422 at `data_source`.
 
 The default worker's UK entry in the v2 version manifest decides the rest
 (`local_area_reports`): the input version its coordinator accepts for a
 local-area report run, and the dataset the .py release routes constituency
 and local-authority regions to, which the publisher computes by the rule
-Stage 12's national aggregation uses to leave the areas out. Without that
-declaration, or with another input version, the request is refused with 400
-`local_areas_unsupported` before anything is read. With no dataset, the
-release gives the areas none of their own, and the national run calculates
-both area levels itself. With one, the catalog version's constituency and
-local-authority regions must all use it, whatever `dataset_name` names;
-otherwise the request is refused with 400 `local_area_dataset_mismatch`.
-Both codes are the service's state, not the caller's.
+Stage 12's national aggregation uses to leave the areas out. Before anything
+is read:
+
+- without that declaration, or with another input version, the request is
+  refused with 400 `local_areas_unsupported`, the service's state;
+- with no dataset, the release routes the areas to none of their own, and
+  the request is refused with 422 `no_local_area_dataset` at `data_source`:
+  that release's national reports calculate both area levels themselves.
+
+With a dataset, the catalog version's constituency and local-authority
+regions must all use it, or the request is refused with 400
+`local_area_dataset_mismatch`, the service's state; the report is then
+calculated on the catalog's row for that dataset.
 
 ### Budget windows
 

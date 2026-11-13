@@ -277,10 +277,11 @@ def read_local_area_dataset(
     only when the .py release routes them to a dataset of their own, and
     gives them that dataset, so a version with no such regions, with only
     one of the two types, or with a dataset for each type has none: its
-    national runs calculate both area levels themselves. The dataset may be
-    the national file: Stage 12 leaves the areas out of a UK-wide or nation
-    run whenever the release routes both types to one dataset
-    (``uk_area_breakdowns_omitted``), so they are calculated apart even then.
+    national reports calculate both area levels themselves. A report created
+    with ``data_source`` runs on this dataset, which may be the national
+    file: Stage 12 leaves the areas out of a UK-wide or nation run whenever
+    the release routes both types to one dataset
+    (``uk_area_breakdowns_omitted``).
     """
     region_type = cast(regions.c.region_type, String)
     rows = connection.execute(

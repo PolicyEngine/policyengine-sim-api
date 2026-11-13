@@ -216,16 +216,11 @@ class EconomySimulationInputs:
 
 @dataclass(frozen=True)
 class EconomyReportInputs:
-    """What an economy report is read from: the catalog rows and both sides.
-
-    ``local_area_dataset`` is the catalog dataset the report's area part is
-    calculated on, read only when the request asked for one.
-    """
+    """What an economy report is read from: the catalog rows and both sides."""
 
     catalog: EconomyCatalogRows
     baseline: SimulationInputs
     reform: SimulationInputs
-    local_area_dataset: CatalogDataset | None = None
 
 
 @dataclass(frozen=True)
@@ -293,25 +288,19 @@ class EconomyRunStore:
 
         With ``reuse``, each side gets the run ``find_reusable_run`` finds,
         and the reform never gets the baseline's. With
-        ``local_area_dataset_name``, the dataset the default worker calculates
-        local areas on, the catalog dataset of that name is read too. Raise
-        UnknownCatalogVersionError, UnknownRegionError or UnknownDatasetError,
-        ReportSideError naming the side whose policy or dynamic is refused,
-        or LocalAreaDatasetMismatchError when the catalog version doesn't
-        give both area types that dataset (``read_local_area_dataset``).
+        ``local_area_dataset_name``, the dataset the default worker
+        calculates local-area reports on, the report is read on the catalog
+        version's local-area dataset (``read_local_area_dataset``) in place
+        of the region's default. Raise UnknownCatalogVersionError,
+        UnknownRegionError or UnknownDatasetError, ReportSideError naming the
+        side whose policy or dynamic is refused, or
+        LocalAreaDatasetMismatchError when the catalog version doesn't give
+        both area types that dataset.
         """
         with self._transaction() as connection:
-            catalog = _catalog_rows(connection, request)
-            local_area_dataset = None
-            if local_area_dataset_name is not None:
-                local_area_dataset = read_local_area_dataset(
-                    connection, catalog_version_id=catalog.catalog_version_id
-                )
-                if (
-                    local_area_dataset is None
-                    or local_area_dataset.name != local_area_dataset_name
-                ):
-                    raise LocalAreaDatasetMismatchError(local_area_dataset_name)
+            catalog = _catalog_rows(
+                connection, request, local_area_dataset_name=local_area_dataset_name
+            )
             population = catalog.population(request.year)
             sides = []
             excluded_run_id = None
@@ -344,12 +333,7 @@ class EconomyRunStore:
                             reusable_run=reusable_run,
                         )
                 sides.append(inputs)
-        return EconomyReportInputs(
-            catalog=catalog,
-            baseline=sides[0],
-            reform=sides[1],
-            local_area_dataset=local_area_dataset,
-        )
+        return EconomyReportInputs(catalog=catalog, baseline=sides[0], reform=sides[1])
 
     def read_budget_window_inputs(
         self,
@@ -510,12 +494,17 @@ class EconomyRunStore:
 
 
 def _catalog_rows(
-    connection: Connection, request: EconomyRequest
+    connection: Connection,
+    request: EconomyRequest,
+    *,
+    local_area_dataset_name: str | None = None,
 ) -> EconomyCatalogRows:
     """Read the catalog version, model, region and dataset a request names.
 
-    Raise UnknownCatalogVersionError, UnknownRegionError or
-    UnknownDatasetError.
+    With ``local_area_dataset_name``, the dataset is the catalog version's
+    local-area dataset, which must have that name. Raise
+    UnknownCatalogVersionError, UnknownRegionError, UnknownDatasetError or
+    LocalAreaDatasetMismatchError.
     """
     country = request.country
     catalog_version_id = read_catalog_version_id(
@@ -538,19 +527,22 @@ def _catalog_rows(
             f"has no region {request.region_code}"
         )
         raise UnknownRegionError(msg)
-    dataset = (
-        read_dataset_by_id(
+    if local_area_dataset_name is not None:
+        dataset = read_local_area_dataset(
+            connection, catalog_version_id=catalog_version_id
+        )
+        if dataset is None or dataset.name != local_area_dataset_name:
+            raise LocalAreaDatasetMismatchError(local_area_dataset_name)
+    elif request.dataset_name is None:
+        dataset = read_dataset_by_id(
             connection,
             catalog_version_id=catalog_version_id,
             dataset_id=region.default_dataset_id,
         )
-        if request.dataset_name is None
-        else read_dataset(
-            connection,
-            catalog_version_id=catalog_version_id,
-            name=request.dataset_name,
+    else:
+        dataset = read_dataset(
+            connection, catalog_version_id=catalog_version_id, name=request.dataset_name
         )
-    )
     if dataset is None:
         msg = (
             f"{country}'s catalog version for .py {request.policyengine_version} "
