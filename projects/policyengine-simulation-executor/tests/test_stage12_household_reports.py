@@ -462,8 +462,9 @@ def test_a_side_another_call_holds_past_the_wait_fails_the_report_unwritten() ->
     assert calculated == [BASELINE_RUN_ID]
     (failed_report,) = runs.of("fail_report")
     assert failed_report["error_message"] == (
-        "household_simulation_run_unavailable: The reform simulation run is "
-        "still running under another call after 5 seconds."
+        "household_simulation_run_unavailable: The reform simulation run was "
+        "still running under another call when this call's wait window closed, "
+        "5 seconds after the call started."
     )
     assert answer["status"] == "failed"
     # The run is its holder's: nothing is written to it or its call.
@@ -1109,3 +1110,17 @@ def test_the_wait_window_counts_this_calls_own_calculation() -> None:
     # them, so the held reform was waited for 10 seconds, not 60.
     assert clock.now == pytest.approx(60)
     assert answer["status"] == "failed"
+
+
+def test_a_held_side_that_succeeds_as_the_window_closes_succeeds() -> None:
+    # A one-second window probes at 0, 0.25, 0.75 and 1 seconds; the holder,
+    # another household function that goes on, records the run on the last.
+    runs, holder = _held_baseline(
+        "succeeds", keeps_running=True, probes_before_ending=3
+    )
+
+    answer = _run(runs, _succeeded, wait=_wait(holder, timeout_seconds=1))
+
+    assert holder.probes == 4
+    assert runs.of("fail_report") == []
+    assert answer["status"] == "succeeded"
