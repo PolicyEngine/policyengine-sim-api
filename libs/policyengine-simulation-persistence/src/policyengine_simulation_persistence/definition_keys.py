@@ -11,10 +11,12 @@ format never matches an older key, and ``record``, what it keys.
 Only the service computes keys; the Public API compares the stored columns.
 A definition names catalog rows by dataset name and region code, never by
 ID, because each catalog version has its own rows: one report spans
-releases, and each release's calculation is a new run of it. A report also
-stores a ``dataset_independent_key``: its key object without the dataset,
-keeping the options (C1 · 24's revised answer 1a), which a national report
-and its local-area report with the same options share.
+releases, and each release's calculation is a new run of it. A simulation's
+key holds everything that changes its numbers, the SPM selection included;
+a report's holds its two sides and window size and no options (C1 · 24's
+answer 4). A report also stores a ``dataset_independent_key``: its key
+object without the dataset (revised answer 1a), which a national report
+and its local-area report share.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Literal
 from uuid import UUID
 
 if TYPE_CHECKING:
@@ -71,14 +73,57 @@ def _side(choice: SimulationChoice) -> dict[str, object]:
     return {"policy_id": choice.policy_id, "dynamic_id": choice.dynamic_id}
 
 
+def _selection(spm: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Return the SPM selection as given, or None when the request gave none."""
+    return None if spm is None else dict(spm)
+
+
+@dataclass(frozen=True)
+class EconomySimulationDefinition:
+    """What identifies an economy simulation: everything that changes its numbers.
+
+    Its stored policy and dynamic (dynamics by ID, answer 1b), dataset name,
+    region code and year (answer 1a), and the SPM selection as the request
+    gave it, or None when it gave none (answer 4c). The service never
+    filters a simulation, so its filter is null. Never a version.
+    """
+
+    country: str
+    choice: SimulationChoice
+    dataset_name: str
+    region_code: str
+    year: int
+    spm: Mapping[str, Any] | None
+
+    def key_object(self) -> dict[str, object]:
+        """Return the object whose canonical JSON the simulation's key hashes."""
+        return {
+            "record": "simulation",
+            "key_version": KEY_VERSION,
+            "simulation_type": _ECONOMY,
+            "country": self.country,
+            **_side(self.choice),
+            "dataset": self.dataset_name,
+            "region": self.region_code,
+            "year": self.year,
+            "filter": None,
+            "spm": _selection(self.spm),
+        }
+
+    @property
+    def definition_key(self) -> str:
+        """The simulation's ``definition_key``."""
+        return definition_key(self.key_object())
+
+
 @dataclass(frozen=True)
 class EconomyReportDefinition:
-    """What identifies an economy report or a budget window (answer 1a).
+    """What identifies an economy report or a budget window (answers 1a and 4).
 
-    Each side's stored policy and dynamic (dynamics by ID, answer 1b), the
-    dataset name, region code and year both sides share, the window's size
-    (None for a single year) and the options as ``reports.inputs`` stores
-    them. Never a version: versions belong to runs.
+    A report is its two simulations and its window's size (None for a single
+    year), with no options of its own: each side's stored policy and dynamic,
+    and the dataset name, region code, year and SPM selection both sides
+    share, named once. Never a version: versions belong to runs.
     """
 
     country: str
@@ -88,7 +133,7 @@ class EconomyReportDefinition:
     region_code: str
     year: int
     budget_window_size: int | None
-    options: Mapping[str, Any]
+    spm: Mapping[str, Any] | None
 
     def key_object(self) -> dict[str, object]:
         """Return the object whose canonical JSON the report's key hashes."""
@@ -103,7 +148,7 @@ class EconomyReportDefinition:
             "region": self.region_code,
             "year": self.year,
             "budget_window_size": self.budget_window_size,
-            "options": dict(self.options),
+            "spm": _selection(self.spm),
         }
 
     @property
@@ -122,3 +167,19 @@ class EconomyReportDefinition:
     def dataset_independent_key(self) -> str:
         """The report's ``dataset_independent_key``."""
         return definition_key(self.dataset_independent_key_object())
+
+    def simulation(
+        self, side: Literal["baseline", "reform"], *, year: int | None = None
+    ) -> EconomySimulationDefinition:
+        """Return the simulation ``side`` names, in ``year`` (the report's own).
+
+        A budget window's years each name their own year's simulations.
+        """
+        return EconomySimulationDefinition(
+            country=self.country,
+            choice=self.baseline if side == "baseline" else self.reform,
+            dataset_name=self.dataset_name,
+            region_code=self.region_code,
+            year=self.year if year is None else year,
+            spm=self.spm,
+        )

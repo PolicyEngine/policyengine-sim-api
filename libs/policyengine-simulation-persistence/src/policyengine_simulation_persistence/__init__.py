@@ -16,6 +16,7 @@ from policyengine_simulation_persistence.budget_window_records import (
 from policyengine_simulation_persistence.definition_keys import (
     KEY_VERSION,
     EconomyReportDefinition,
+    EconomySimulationDefinition,
     canonical_json,
     definition_key,
 )
@@ -183,6 +184,7 @@ __all__ = [
     "EconomyReportState",
     "EconomyRequest",
     "EconomyRunStore",
+    "EconomySimulationDefinition",
     "EconomySimulationInputs",
     "EconomySimulationState",
     "FoundReportRun",
