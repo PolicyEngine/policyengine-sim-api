@@ -519,7 +519,9 @@ REUSED_SIDES = {
     "baseline-reused": (BASELINE_RUN_ID,),
     "reform-reused": (REFORM_RUN_ID,),
 }
-REPORT_OPTIONS = {"spm": {"scenario": "ce_trend"}, "include_cliffs": True}
+# Report runs refuse include_cliffs until each simulation run's cliff
+# calculation exists, so the options here are the SPM selection's alone.
+REPORT_OPTIONS = {"spm": {"scenario": "ce_trend"}}
 
 
 def spm_receipt_writing_invoker(report_runs, artifacts):

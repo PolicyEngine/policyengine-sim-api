@@ -365,7 +365,11 @@ columns; the labour-supply response columns only when the simulation's own
 policy turns a response on; in the US, the two inputs .py's labour-supply
 output reads from either side (`self_employment_income`,
 `weekly_hours_worked`); and never the cliff columns, so a US national run keeps
-its region-group split. The coordinator gives each worker its simulation's
+its region-group split. Until cliffs come back as a calculation of each
+simulation run (a later stage), a report run asking for them
+(`include_cliffs: true`) fails before any worker starts, with
+`cliff_impacts_unavailable`, and touches none of its simulation runs. The
+coordinator gives each worker its simulation's
 stored plan, and keeps the report's own plan, from its pair, for what the
 aggregation reads. A reused or waited-for file must hold what the report reads
 from its side (`side_read_plan`); a side that stores no responses the report

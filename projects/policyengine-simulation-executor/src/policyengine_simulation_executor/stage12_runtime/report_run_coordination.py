@@ -109,6 +109,9 @@ REPORT_RUN_INPUT_MISMATCH = "report_run_input_mismatch"
 SIMULATION_RUN_FAILED = "simulation_run_failed"
 # A worker returned its output, but its simulation run doesn't record it.
 SIMULATION_RUN_NOT_RECORDED = "simulation_run_not_recorded"
+# The report asks for cliff impacts, which no shared simulation run stores;
+# cliffs come back later as a calculation of each simulation run.
+CLIFF_IMPACTS_UNAVAILABLE = "cliff_impacts_unavailable"
 CANCELLED_DETAIL = Stage12FailureDetail(
     error_code="report_cancelled",
     error_summary="Modal cancelled the report's coordinator call.",
@@ -335,7 +338,18 @@ class ReportRunCoordination(CoordinationCore):
         return self.run_ids.simulation_run_id(SimulationRole(role))
 
     def run(self) -> dict[str, Any]:
-        """Reuse or calculate both simulations, aggregate them, record the result."""
+        """Reuse or calculate both simulations, aggregate them, record the result.
+
+        A report asking for cliff impacts is refused first
+        (``cliff_impacts_unavailable``), before any run is read or started.
+        """
+        if self.report.baseline.options.get("include_cliffs") is True:
+            raise Stage12InputError(
+                CLIFF_IMPACTS_UNAVAILABLE,
+                "Report runs don't calculate cliff impacts yet: shared "
+                "simulation runs don't store the cliff columns. Ask with "
+                "include_cliffs false.",
+            )
         with self.stage_scope(Stage.STAGE12_COORDINATOR_PREPARATION):
             output_plan, planned_simulations = self.plan_simulations()
             self.read_plan = output_plan
