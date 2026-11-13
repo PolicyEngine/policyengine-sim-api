@@ -58,12 +58,13 @@ def calculates_on_local_area_dataset(simulation: SimulationExecutionInput) -> bo
 
 
 def is_local_area_report(report: ReportExecutionInput) -> bool:
-    """Whether a run of ``report`` calculates the UK area results alone.
+    """Whether a run of ``report`` also calculates the UK area results.
 
     It does for a report of the UK or a nation whose simulations are on the
-    local-area dataset: an ordinary report, which the simulation service
-    links to the national report with the same policies, region and year.
-    Both of a report's simulations share its dataset and region.
+    local-area dataset, an ordinary report a request asks for with
+    ``data_source``: it returns its full results and its constituency and
+    local-authority results, with their withheld codes. Both of a report's
+    simulations share its dataset and region.
     """
     return calculates_on_local_area_dataset(report.baseline)
 

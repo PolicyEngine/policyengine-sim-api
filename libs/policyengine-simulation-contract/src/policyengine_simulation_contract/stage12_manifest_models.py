@@ -26,10 +26,10 @@ V1_APPLICATION_PREFIX = "policyengine-simulation-py"
 _MAX_MODAL_APPLICATION_NAME_LENGTH = 64
 _CALLABLE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
 # The local-area report runs a coordinator runs: a run of a UK-wide or nation
-# report on the local-area dataset, given as any report run is, calculates the
-# constituency and local-authority results alone, with the codes disclosure
-# control withholds. A later change to what such a run accepts or writes
-# raises it.
+# report on the local-area dataset, given as any report run is, calculates its
+# full results and its constituency and local-authority results, with the
+# codes disclosure control withholds. A later change to what such a run
+# accepts or writes raises it.
 LOCAL_AREA_REPORTS_VERSION = 1
 
 ManifestText = Annotated[str, Field(min_length=1, max_length=255)]
@@ -48,7 +48,7 @@ class LocalAreaReports(StrictManifestModel):
     ``input_version`` is the ``LOCAL_AREA_REPORTS_VERSION`` of the runs it
     accepts. ``dataset`` is the local-area dataset, which the release routes
     constituency and local-authority regions to: a run of a UK-wide or nation
-    report on it calculates the area results alone. It is None when the
+    report on it also calculates the area results. It is None when the
     release routes them to no dataset of their own, so a UK-wide or nation
     run on the national dataset calculates both area levels itself. The
     worker decides both by the rule its national aggregation uses
