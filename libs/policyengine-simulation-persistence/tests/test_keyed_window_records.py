@@ -10,12 +10,18 @@ a transaction rolled back afterwards.
 
 from __future__ import annotations
 
+import threading
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
+from committed_rows import (
+    LOCK_WAIT_TIMEOUT_SECONDS,
+    run_together,
+    wait_until_another_backend_waits_for,
+)
 from conftest import act_as_the_service, rolled_back_transaction
 from economy_rows import (
     CURRENT_LAW,
@@ -28,6 +34,7 @@ from policyengine_simulation_persistence import (
     EconomyPopulation,
     EconomyReportDefinition,
     EconomyRunStore,
+    FoundBudgetWindow,
     KeyedBudgetWindow,
     KeyedEconomyReport,
     KeyedWindowYear,
@@ -38,7 +45,7 @@ from policyengine_simulation_persistence import (
     find_or_create_economy_report,
 )
 from public_api_rows import insert_policy
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -373,3 +380,62 @@ def test_a_window_request_naming_another_length_than_its_years_is_refused() -> N
                 for year in WINDOW_YEARS
             ),
         )
+
+
+def test_two_identical_window_requests_at_once_end_on_one_window_run_started_once(
+    committed_engine, committed_catalog
+) -> None:
+    """Both find the stored window; the second waits at the window run's index.
+
+    An earlier window run of the report failed, so neither finds a run to
+    join; the first inserts one and holds its transaction open until the
+    second waits for it, then the second joins it with its year runs. Each
+    starts the first years only of a window run it inserted, as the service
+    does; exactly one does.
+    """
+    economy = committed_catalog
+    with committed_engine.begin() as connection:
+        act_as_the_service(connection)
+        earlier = find_or_create_budget_window(
+            connection, _keyed_window(economy, CURRENT_LAW)
+        )
+    with committed_engine.begin() as connection:
+        _fail_window_run(connection, earlier.window_run.id)
+    first_has_inserted = threading.Event()
+    found: dict[str, FoundBudgetWindow] = {}
+    started_windows: list[UUID] = []
+
+    def create_and_start(connection: Connection, name: str) -> None:
+        act_as_the_service(connection)
+        result = find_or_create_budget_window(
+            connection, _keyed_window(economy, CURRENT_LAW)
+        )
+        found[name] = result
+        if result.window_run.inserted:
+            started_windows.append(result.window_run.id)
+
+    def first_request() -> None:
+        with committed_engine.begin() as connection:
+            create_and_start(connection, "first")
+            holder_pid = connection.execute(select(func.pg_backend_pid())).scalar_one()
+            first_has_inserted.set()
+            wait_until_another_backend_waits_for(committed_engine, holder_pid)
+
+    def second_request() -> None:
+        assert first_has_inserted.wait(LOCK_WAIT_TIMEOUT_SECONDS)
+        with committed_engine.begin() as connection:
+            create_and_start(connection, "second")
+
+    run_together((first_request, second_request), released=first_has_inserted)
+
+    first, second = found["first"], found["second"]
+    assert first.report_id == second.report_id == earlier.report_id
+    assert first.window_run.id != earlier.window_run.id
+    assert (second.window_run.id, second.window_run.inserted) == (
+        first.window_run.id,
+        False,
+    )
+    assert [year.report_run_id for year in second.years] == [
+        year.report_run_id for year in first.years
+    ]
+    assert started_windows == [first.window_run.id]

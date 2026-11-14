@@ -12,13 +12,17 @@ two transactions commit their rows under a catalog of their own, which
 from __future__ import annotations
 
 import threading
-import time
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import pytest
+from committed_rows import (
+    LOCK_WAIT_TIMEOUT_SECONDS,
+    run_together,
+    wait_until_another_backend_waits_for,
+)
 from conftest import act_as_the_service, rolled_back_transaction
 from economy_rows import (
     CURRENT_LAW,
@@ -50,13 +54,12 @@ from public_api_rows import insert_policy
 from sqlalchemy import event, func, insert, select, text, update
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Iterator
 
-    from sqlalchemy import Connection, Engine
+    from sqlalchemy import Connection
 
 pytestmark = pytest.mark.public_api_schema
 
-LOCK_WAIT_TIMEOUT_SECONDS = 10.0
 NATIONAL_SPM = {"geography_kind": "national"}
 
 
@@ -436,54 +439,6 @@ def test_a_keyed_simulation_joins_its_run_or_creates_it(
     assert simulation["definition_key"] == request.definition.definition_key
 
 
-def _wait_until_another_backend_waits_for(engine: Engine, holder_pid: int) -> None:
-    """Return once a backend waits for a lock the backend ``holder_pid`` holds."""
-    deadline = time.monotonic() + LOCK_WAIT_TIMEOUT_SECONDS
-    with engine.connect() as connection:
-        while time.monotonic() < deadline:
-            waiting = connection.execute(
-                text(
-                    "SELECT count(*) FROM pg_stat_activity "
-                    "WHERE :holder_pid = ANY(pg_blocking_pids(pid))"
-                ),
-                {"holder_pid": holder_pid},
-            ).scalar_one()
-            connection.rollback()
-            if waiting:
-                return
-            time.sleep(0.05)
-    msg = "the second request never waited for the first one's rows"
-    raise AssertionError(msg)
-
-
-def _run_together(
-    works: tuple[Callable[[], None], ...], *, released: threading.Event
-) -> None:
-    """Run each in its own thread, wait for all, and re-raise the first error.
-
-    A failing one sets ``released``, so no other waits on it for long.
-    """
-    errors: list[BaseException] = []
-
-    def recording_errors(work: Callable[[], None]) -> Callable[[], None]:
-        def run() -> None:
-            try:
-                work()
-            except BaseException as error:  # noqa: BLE001  # re-raised below
-                errors.append(error)
-                released.set()
-
-        return run
-
-    threads = [threading.Thread(target=recording_errors(work)) for work in works]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(LOCK_WAIT_TIMEOUT_SECONDS * 2)
-    if errors:
-        raise errors[0]
-
-
 def test_two_identical_requests_at_once_end_on_the_same_rows_and_start_one_call(
     committed_engine, committed_catalog
 ) -> None:
@@ -509,14 +464,14 @@ def test_two_identical_requests_at_once_end_on_the_same_rows_and_start_one_call(
             create_and_start(connection, "first")
             holder_pid = connection.execute(select(func.pg_backend_pid())).scalar_one()
             first_has_inserted.set()
-            _wait_until_another_backend_waits_for(committed_engine, holder_pid)
+            wait_until_another_backend_waits_for(committed_engine, holder_pid)
 
     def second_request() -> None:
         assert first_has_inserted.wait(LOCK_WAIT_TIMEOUT_SECONDS)
         with committed_engine.begin() as connection:
             create_and_start(connection, "second")
 
-    _run_together((first_request, second_request), released=first_has_inserted)
+    run_together((first_request, second_request), released=first_has_inserted)
 
     first, second = found["first"], found["second"]
     assert (second.report_id, second.run.id) == (first.report_id, first.run.id)
