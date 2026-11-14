@@ -82,7 +82,12 @@ class WaitingCoordination(Protocol):
         ...
 
     def cancel_children(self, roles: set[str], detail: Stage12FailureDetail) -> None:
-        """Record each started, unfinished child of ``roles`` failed, then stop it."""
+        """Handle the started, unfinished children of ``roles`` after a failure.
+
+        A comparison-path coordinator records each failed and stops it; a
+        report run's coordinator leaves each to finish, since other report
+        runs may name its run.
+        """
         ...
 
 
@@ -105,8 +110,9 @@ def wait_for_children(
 ) -> None:
     """Observe every started child together until each has a descriptor.
 
-    A child's failure, or the shared wait window closing, stops the
-    unfinished children and raises Stage12ExecutionError.
+    A child's failure, or the shared wait window closing, hands the
+    unfinished children to the coordinator's ``cancel_children`` and raises
+    Stage12ExecutionError.
     """
     with coordination.span(Stage.STAGE12_CHILD_WAIT):
         _observe_children(coordination, calls, descriptors)

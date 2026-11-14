@@ -45,6 +45,7 @@ from policyengine_simulation_executor.stage12_runtime import (
 from policyengine_simulation_executor.stage12_runtime import (
     coordinate_report as coordinate_report_impl,
 )
+from policyengine_simulation_executor.stage12_runtime.run_sweep import CallState
 from sqlalchemy.exc import OperationalError
 
 NOW = datetime(2026, 9, 15, tzinfo=UTC)
@@ -172,6 +173,9 @@ def aggregate_payload(result=None) -> dict:
 
 def coordinate_report(*payloads, application_name, coordinator_invocation_id, **seams):
     seams.setdefault("output_plan_resolver", lambda _: shared_output_plan())
+    seams.setdefault("stored_plan_resolver", lambda _: shared_output_plan())
+    # A probe of a test's child call raises only once the call has ended.
+    seams.setdefault("call_state", lambda _modal_call_id: CallState.ENDED)
     return coordinate_report_impl(
         *payloads,
         invocation=CoordinatorInvocation(

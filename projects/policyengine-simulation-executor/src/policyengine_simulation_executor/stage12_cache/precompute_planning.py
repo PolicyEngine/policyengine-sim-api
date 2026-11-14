@@ -14,8 +14,6 @@ from policyengine_simulation_contract.stage12_execution import (
     DatasetProvenance,
     GeographySelection,
     PlannedSimulationExecutionInput,
-    ReportAggregate,
-    ReportExecutionInput,
     SimulationExecutionInput,
     SimulationRole,
     stage12_output_plan_sha256,
@@ -29,7 +27,7 @@ from policyengine_simulation_executor.simulation_runtime import (
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 from policyengine_simulation_executor.stage12_runtime.output_planning import (
     plan_simulation_input,
-    resolve_report_output_plan,
+    resolve_simulation_output_plan,
 )
 from policyengine_simulation_executor.stage12_runtime.partition import US_REGION_GROUPS
 from policyengine_simulation_executor.stage12_runtime.worker_inputs import (
@@ -120,16 +118,15 @@ def _planned_pair(
             bundle=provenance,
         )
 
-    report = ReportExecutionInput(
-        evaluation_id=evaluation_id,
-        baseline=simulation(SimulationRole.BASELINE),
-        reform=simulation(SimulationRole.REFORM),
-        requested_aggregates=tuple(ReportAggregate),
+    # Each side is planned as its simulation run stores its output, the plan
+    # a report run's worker looks its current-law baseline up under.
+    baseline, reform = (
+        simulation(SimulationRole.BASELINE),
+        simulation(SimulationRole.REFORM),
     )
-    plan = resolve_report_output_plan(report)
     return (
-        plan_simulation_input(report.baseline, plan),
-        plan_simulation_input(report.reform, plan),
+        plan_simulation_input(baseline, resolve_simulation_output_plan(baseline)),
+        plan_simulation_input(reform, resolve_simulation_output_plan(reform)),
     )
 
 

@@ -315,12 +315,10 @@ def test_a_simulation_run_that_already_failed_fails_the_report_run_unstarted(
     assert run.status is RunStatus.FAILED
     assert run.error_message == report_failure
     assert invoker.call_ids == []
-    # The baseline was never started; it fails with its report run.
+    # The baseline was never started. It is left pending, for another report
+    # run naming it to start, or the stuck-run sweep to fail.
     baseline = report_runs.simulation_runs[BASELINE_RUN_ID]
-    assert baseline.status is RunStatus.FAILED
-    assert baseline.error_message == (
-        "simulation_cancelled: Cancelled after the report failed."
-    )
+    assert (baseline.status, baseline.writes) == (RunStatus.PENDING, [])
     assert reform.error_message == recorded
     # A run that already failed is not written again.
     assert reform.writes == []
@@ -344,15 +342,15 @@ def test_a_failed_worker_fails_the_report_run_with_its_own_cause() -> None:
     run = report_runs.report_runs[REPORT_RUN_ID]
     assert run.status is RunStatus.FAILED
     assert run.error_message == reform.error_message
-    # The coordinator stopped the baseline, which then could not succeed.
+    # The baseline's worker is left to finish, so its output stays reusable.
     baseline = report_runs.simulation_runs[BASELINE_RUN_ID]
-    assert baseline.status is RunStatus.FAILED
-    assert baseline.error_message == (
-        "simulation_cancelled: Cancelled after the reform simulation failed."
-    )
+    assert baseline.status is RunStatus.SUCCEEDED
+    assert baseline.writes == ["claim_simulation_run", "complete_simulation_run"]
 
 
-def test_a_planning_failure_fails_the_report_run_and_its_unstarted_runs() -> None:
+def test_a_planning_failure_fails_the_report_run_and_leaves_its_unstarted_runs() -> (
+    None
+):
     report_runs, artifacts, invoker = _run_through_workers()
 
     def unplannable(_report):
@@ -366,10 +364,9 @@ def test_a_planning_failure_fails_the_report_run_and_its_unstarted_runs() -> Non
     assert run.status is RunStatus.FAILED
     assert run.error_message.startswith("report_coordination_failed: ")
     assert invoker.call_ids == []
+    # Other report runs may name them, so they are left pending.
     assert all(
-        simulation_run.status is RunStatus.FAILED
-        and simulation_run.error_message
-        == "simulation_cancelled: Cancelled after the report failed."
+        (simulation_run.status, simulation_run.writes) == (RunStatus.PENDING, [])
         for simulation_run in report_runs.simulation_runs.values()
     )
 

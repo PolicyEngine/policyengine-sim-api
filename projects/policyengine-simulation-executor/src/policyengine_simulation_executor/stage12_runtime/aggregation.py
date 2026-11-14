@@ -75,14 +75,18 @@ class PrecomputedSimulation(Simulation):
 
 def validate_aligned_outputs(
     report: ReportExecutionInput,
-    output_plan: Stage12OutputPlan,
     baseline: SimulationArtifactDescriptor,
     reform: SimulationArtifactDescriptor,
+    *,
+    baseline_plan: Stage12OutputPlan,
+    reform_plan: Stage12OutputPlan,
 ) -> None:
     """Check that two simulation artifacts can be aggregated as this report's pair.
 
-    Raises ``ValueError`` unless the roles, evaluation, bundle, output schema,
-    output plan and row identities all line up.
+    Raises ``ValueError`` unless the roles, evaluation, bundle, output schema
+    and row identities line up, and each artifact names the plan its own
+    simulation was given: one plan for both on the comparison path, each
+    simulation's stored plan for a report run.
     """
     if baseline.role.value != "baseline" or reform.role.value != "reform":
         msg = "simulation artifacts have incorrect report roles"
@@ -99,11 +103,9 @@ def validate_aligned_outputs(
     if baseline.output_schema_version != reform.output_schema_version:
         msg = "simulation artifacts use incompatible output schemas"
         raise ValueError(msg)
-    expected_plan_sha256 = stage12_output_plan_sha256(output_plan)
-    if (
-        baseline.output_plan_sha256 != expected_plan_sha256
-        or reform.output_plan_sha256 != expected_plan_sha256
-    ):
+    if baseline.output_plan_sha256 != stage12_output_plan_sha256(
+        baseline_plan
+    ) or reform.output_plan_sha256 != stage12_output_plan_sha256(reform_plan):
         msg = "simulation artifacts do not satisfy the report output plan"
         raise ValueError(msg)
     if baseline.row_identity != reform.row_identity:

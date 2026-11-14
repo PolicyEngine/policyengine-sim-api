@@ -8,10 +8,9 @@ dataset, region, output URI and digest from the database, and checks them
 against the simulation input and the report run's other simulation run. It
 reads the file from whichever ``gs://`` bucket the URI names, checks its
 SHA-256 digest, decodes it once, and checks the outputs the report plans and
-the SPM calculation receipt a worker would write now. (A run a pre-empted
-attempt's worker finished just before the restarted coordinator released it
-is read the same way, with ``checked_output``, without the dataset and
-region check, since this report's own worker calculated it.) It describes
+the SPM calculation receipt a worker would write now. (A run another call
+held while the report waited for it is read the same way, with
+``checked_output`` and ``require_shared_population``.) It describes
 the file as a worker describes the one it writes, and the aggregation uses
 the decoded frames in place of a worker's artifact.
 
@@ -55,7 +54,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
 )
 
 from .failures import Stage12InputError
-from .output_planning import validate_output_frames
+from .output_planning import side_read_plan, validate_output_frames
 from .worker_inputs import simulation_runtime_params
 
 if TYPE_CHECKING:
@@ -67,6 +66,7 @@ if TYPE_CHECKING:
     from policyengine_simulation_contract.stage12_execution import (
         PlannedSimulationExecutionInput,
         ReportRunIds,
+        Stage12OutputPlan,
     )
     from policyengine_stage12_persistence import SimulationRunState
 
@@ -147,53 +147,87 @@ class ReusedSimulationOutput:
     descriptor: SimulationArtifactDescriptor
 
 
-def reused_outputs(
+def reused_outputs(  # noqa: PLR0913  # the simulations, then keyword-only runs, readers and plan
     simulations: Sequence[PlannedSimulationExecutionInput],
     *,
     run_ids: ReportRunIds,
     stored_runs: Mapping[SimulationRole, SimulationRunState],
     files: OutputFileReader | None,
     span: StageScope,
+    read_plan: Stage12OutputPlan,
 ) -> dict[str, ReusedSimulationOutput]:
     """Return, by role, the checked output of each simulation whose run succeeded.
 
     ``stored_runs`` holds the report run's two simulation runs as the
     coordinator read them. ``files`` reads their output files, by default
-    from Cloud Storage, and each read is timed with ``span``. A simulation
-    run that is pending, running or failed is left to a worker. Raises
-    ``ReusedSimulationOutputError`` for a succeeded run whose output can't
-    be used.
+    from Cloud Storage, and each read is timed with ``span``. Each file is
+    checked against what the report, planned ``read_plan``, reads from its
+    side (``side_read_plan``). A simulation run that is pending, running or
+    failed is left to a worker. Raises ``ReusedSimulationOutputError`` for a
+    succeeded run whose output can't be used.
     """
     reader = files or CloudStorageOutputFiles()
     reused: dict[str, ReusedSimulationOutput] = {}
+    # Each run's checked output by run ID, so a run the report names on both
+    # sides is read once.
+    read_runs: dict[UUID, ReusedSimulationOutput] = {}
     for simulation in simulations:
         role = simulation.role
         stored = stored_runs[role]
         if stored.status is not RunStatus.SUCCEEDED:
+            continue
+        run_id = run_ids.simulation_run_id(role)
+        if run_id in read_runs:
+            reused[role.value] = for_role(read_runs[run_id], simulation.role)
             continue
         other_role = (
             SimulationRole.REFORM
             if role is SimulationRole.BASELINE
             else SimulationRole.BASELINE
         )
-        _require_shared_population(
+        require_shared_population(
             stored,
             stored_runs[other_role],
             named=f"The reused {_run_name(role, run_ids)}",
             other_named=_run_name(other_role, run_ids),
         )
         with span(Stage.STAGE12_ARTIFACT_READ, {"simulation_role": role.value}):
-            reused[role.value] = checked_output(
-                simulation, run_ids.simulation_run_id(role), stored, files=reader
+            read_runs[run_id] = checked_output(
+                simulation,
+                run_id,
+                stored,
+                files=reader,
+                required_plan=side_read_plan(read_plan, simulation.output_plan),
             )
+        reused[role.value] = read_runs[run_id]
     return reused
+
+
+def for_role(
+    output: ReusedSimulationOutput, role: SimulationRole
+) -> ReusedSimulationOutput:
+    """Return ``output`` described for ``role``, for a run named on both sides.
+
+    The decoded frames are shared: the aggregation builds each side's dataset
+    from them without changing them.
+    """
+    return ReusedSimulationOutput(
+        decoded=output.decoded, descriptor=descriptor_for_role(output.descriptor, role)
+    )
+
+
+def descriptor_for_role(
+    descriptor: SimulationArtifactDescriptor, role: SimulationRole
+) -> SimulationArtifactDescriptor:
+    """Return ``descriptor`` for ``role``: the same file, run and plan."""
+    return descriptor.model_copy(update={"role": role})
 
 
 def _run_name(role: SimulationRole, run_ids: ReportRunIds) -> str:
     return f"{role.value} simulation run {run_ids.simulation_run_id(role)}"
 
 
-def _require_shared_population(
+def require_shared_population(
     stored: SimulationRunState,
     other: SimulationRunState,
     *,
@@ -201,6 +235,9 @@ def _require_shared_population(
     other_named: str,
 ) -> None:
     """Raise unless the run names the dataset and region of its report run's other run.
+
+    It is checked for a run this report's own worker didn't calculate: one
+    that already succeeded, or one another call held while the report waited.
 
     The baseline and reform of one report calculate one population and
     geography. The report's input names them by the bundle's dataset identity
@@ -233,12 +270,16 @@ def checked_output(
     stored: SimulationRunState,
     *,
     files: OutputFileReader,
+    required_plan: Stage12OutputPlan | None = None,
 ) -> ReusedSimulationOutput:
     """Read and check the output file a succeeded run recorded, for ``simulation``.
 
-    Raises ``ReusedSimulationOutputError`` when the run calculated another
-    year or version, or its file is missing, unreadable, differs from its
-    digest, lacks an entity or column the report plans, or has an SPM
+    The file must hold every entity and column of ``required_plan``, what the
+    report reads from this side, or of the simulation's own plan without one;
+    a file another report's worker wrote under an earlier plan may hold more
+    or fewer of the rest. Raises ``ReusedSimulationOutputError`` when the run
+    calculated another year or version, or its file is missing, unreadable,
+    differs from its digest, lacks a required entity or column, or has an SPM
     calculation receipt other than the one a worker would write now.
     """
     named = f"The reused {simulation.role.value} simulation run {run_id}"
@@ -255,7 +296,7 @@ def checked_output(
             f"output ({type(error).__name__}).",
         ) from error
     try:
-        validate_output_frames(decoded.frames, simulation.output_plan)
+        validate_output_frames(decoded.frames, required_plan or simulation.output_plan)
     except ValueError as error:
         raise ReusedSimulationOutputError(
             REUSED_OUTPUT_INCOMPATIBLE,
@@ -274,7 +315,8 @@ def checked_output(
                 content_sha256=digest,
                 size_bytes=len(payload),
             ),
-            # The file holds every entity and column the plan names.
+            # Described with the plan its simulation was given, as a worker's
+            # file is; the file holds what the report reads from this side.
             output_plan_sha256=stage12_output_plan_sha256(simulation.output_plan),
             row_identity=row_identity,
             bundle=simulation.bundle,

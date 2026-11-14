@@ -32,13 +32,13 @@ from .aggregation import (
     validate_aligned_outputs,
     validate_uk_local_authority_metadata,
 )
-from .coordinated_simulations import logger
 from .dependencies import ChildCall, ChildInvoker, ChildSpawnRequest, ComparisonStore
 from .failure_causes import StageProgress, StageTracking, tracked_stage
 from .output_planning import (
     plan_simulation_input,
     resolve_report_output_plan,
     validate_output_frames,
+    with_zero_labor_supply_responses,
 )
 
 if TYPE_CHECKING:
@@ -50,6 +50,7 @@ if TYPE_CHECKING:
         PlannedSimulationExecutionInput,
         ReportExecutionInput,
         SimulationArtifactDescriptor,
+        SimulationExecutionInput,
         Stage12InvocationContext,
         Stage12OutputPlan,
     )
@@ -57,6 +58,7 @@ if TYPE_CHECKING:
 
     from .report_run_access import ReportRunWriter
     from .reused_outputs import OutputFileReader, ReusedSimulationOutput
+    from .run_sweep import CallState
 
 
 def require_artifact_digest(
@@ -85,9 +87,11 @@ class CoordinatorDependencies:
     The defaults are the Stage 12 database store, the private artifact
     bucket, Modal child invocation, the standard aggregate builder and output
     plan resolution, no telemetry runtime, the real clock and sleep, the
-    standard child wait window, and the report run store and the Cloud
-    Storage reader of reused output files, which only a call that names a
-    report run uses.
+    standard child wait window, and the report run store, the Cloud Storage
+    reader of reused output files, the stored output plan of each
+    simulation (``resolve_simulation_output_plan``) and Modal's state of a
+    call whose probe failed (``modal_call_state``), which only a call that
+    names a report run uses.
     """
 
     store: ComparisonStore | None = None
@@ -103,6 +107,10 @@ class CoordinatorDependencies:
     wait_timeout_seconds: float = SIMULATION_WAIT_TIMEOUT_SECONDS
     report_runs: ReportRunWriter | None = None
     output_files: OutputFileReader | None = None
+    stored_plan_resolver: (
+        Callable[[SimulationExecutionInput], Stage12OutputPlan] | None
+    ) = None
+    call_state: Callable[[str], CallState] | None = None
 
 
 @dataclass(kw_only=True)
@@ -121,7 +129,7 @@ class CoordinationCore:
     # The shared child-wait window closes at this monotonic time.
     child_wait_deadline: float
     # Each child by role: its plan, its started call and its descriptor once
-    # finished, so a failure at any point can stop the unfinished children.
+    # finished, so a failure at any point can find the unfinished children.
     simulations: dict[str, PlannedSimulationExecutionInput] = dataclasses.field(
         default_factory=dict
     )
@@ -163,7 +171,11 @@ class CoordinationCore:
     def plan_simulations(
         self,
     ) -> tuple[Stage12OutputPlan, tuple[PlannedSimulationExecutionInput, ...]]:
-        """Plan the report's outputs, then each simulation's child input."""
+        """Plan the report's outputs, then each simulation's child input.
+
+        The child's plan is ``child_output_plan``'s: the report's own plan
+        unless a coordinator plans each simulation by itself.
+        """
         with self.stage_scope(
             Stage.STAGE12_OUTPUT_PLANNING,
             {"country": self.report.baseline.geography.country},
@@ -182,8 +194,20 @@ class CoordinationCore:
                 Stage.STAGE12_CHILD_INPUT_PLANNING,
                 {"simulation_role": simulation.role.value},
             ):
-                simulations.append(plan_simulation_input(simulation, output_plan))
+                simulations.append(
+                    plan_simulation_input(
+                        simulation, self.child_output_plan(simulation, output_plan)
+                    )
+                )
         return output_plan, tuple(simulations)
+
+    def child_output_plan(
+        self,
+        simulation: SimulationExecutionInput,  # noqa: ARG002  # a coordinator that plans each simulation by itself reads it
+        output_plan: Stage12OutputPlan,
+    ) -> Stage12OutputPlan:
+        """Return the plan ``simulation``'s child calculates: the report's own."""
+        return output_plan
 
     def spawn_child(
         self,
@@ -208,23 +232,6 @@ class CoordinationCore:
                     observability_context=child_observability_context,
                 )
             )
-
-    def stop_children(self) -> None:
-        """Cancel every started, unfinished child call, recording nothing.
-
-        Each child's record or run stays as it is, so the call Modal restarts
-        starts it again. A cancellation error is logged, never raised.
-        """
-        for role in sorted(set(self.calls) - set(self.descriptors)):
-            try:
-                self.calls[role].cancel()
-            except Exception as error:  # noqa: BLE001  # every child must be asked to stop; a failed cancellation is logged
-                logger.warning(
-                    "Stage 12 could not cancel the %s simulation of report %s (%s)",
-                    role,
-                    self.report.evaluation_id,
-                    type(error).__name__,
-                )
 
     def aggregate(
         self,
@@ -262,28 +269,48 @@ class CoordinationCore:
         A worker's artifact is read and decoded here; a reused output was
         read, checked and decoded while the report was prepared.
         """
-        validate_aligned_outputs(self.report, output_plan, baseline, reform)
+        validate_aligned_outputs(
+            self.report,
+            baseline,
+            reform,
+            baseline_plan=self.simulations["baseline"].output_plan,
+            reform_plan=self.simulations["reform"].output_plan,
+        )
+        # A report run naming one simulation run on both sides has one file.
+        one_file = baseline.artifact == reform.artifact
         with self.span(Stage.STAGE12_ARTIFACT_READ):
             payloads = {
                 descriptor.role.value: self.artifact_storage.read(
                     descriptor.artifact.uri
                 )
-                for descriptor in (baseline, reform)
+                for descriptor in ((baseline,) if one_file else (baseline, reform))
                 if descriptor.role.value not in self.reused
             }
         baseline_output = self._decoded_output(baseline, payloads)
-        reform_output = self._decoded_output(reform, payloads)
+        reform_output = (
+            baseline_output if one_file else self._decoded_output(reform, payloads)
+        )
         uk_local_authority_metadata = validate_uk_local_authority_metadata(
             self.report.baseline.geography.country,
             baseline_output.uk_local_authority_metadata,
             reform_output.uk_local_authority_metadata,
             region_code=self.report.baseline.geography.region,
         )
-        validate_output_frames(baseline_output.frames, output_plan)
-        validate_output_frames(reform_output.frames, output_plan)
+        # A side whose own plan stores no labour-supply responses the report
+        # reads is read with them as zeros.
+        baseline_frames = with_zero_labor_supply_responses(
+            baseline_output.frames,
+            output_plan,
+            self.simulations["baseline"].output_plan,
+        )
+        reform_frames = with_zero_labor_supply_responses(
+            reform_output.frames, output_plan, self.simulations["reform"].output_plan
+        )
+        validate_output_frames(baseline_frames, output_plan)
+        validate_output_frames(reform_frames, output_plan)
         return (
-            RetainedSimulationOutput(baseline_output.frames, baseline),
-            RetainedSimulationOutput(reform_output.frames, reform),
+            RetainedSimulationOutput(baseline_frames, baseline),
+            RetainedSimulationOutput(reform_frames, reform),
             uk_local_authority_metadata,
         )
 

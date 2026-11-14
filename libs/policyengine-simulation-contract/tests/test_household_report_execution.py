@@ -91,9 +91,22 @@ def test_a_calculation_round_trips_through_json() -> None:
     assert HouseholdReportRunCalculation.model_validate(payload) == calculation
 
 
-def test_each_side_is_its_own_calculation() -> None:
-    with pytest.raises(ValidationError, match="different simulation runs"):
-        _calculation(reform=_request(BASELINE_RUN_ID))
+def test_one_simulation_run_may_be_both_sides_of_one_calculation() -> None:
+    # A household report comparing a policy with itself names that
+    # simulation's one run on both sides.
+    calculation = _calculation(reform=_request(BASELINE_RUN_ID))
+
+    assert [request.calculation_id for _, request in calculation.sides()] == [
+        BASELINE_RUN_ID,
+        BASELINE_RUN_ID,
+    ]
+
+
+def test_one_simulation_run_on_both_sides_must_have_one_policy() -> None:
+    with pytest.raises(ValidationError, match="one simulation run on both sides"):
+        _calculation(
+            reform=_request(BASELINE_RUN_ID, policy={"parameters": CTC_REFORM})
+        )
 
 
 @pytest.mark.parametrize(
