@@ -42,6 +42,7 @@ from policyengine_simulation_persistence import (
     SimulationChoice,
     SimulationStatus,
     find_reusable_run,
+    find_reusable_run_of,
 )
 from public_api_rows import insert_dataset, insert_dynamic, insert_policy, insert_region
 
@@ -177,6 +178,27 @@ def test_an_unfinished_or_failed_run_is_not_reused(
         act_as_the_service(connection)
 
         assert _find(connection, economy) is None
+
+
+def test_a_forced_run_is_never_reused(public_api_database_url) -> None:
+    """Answer 3: a forced re-run's run is never named by another report run."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        forced = insert_reusable_run(connection, economy, RunShape(forced=True))
+        act_as_the_service(connection)
+
+        by_definition = _find(connection, economy)
+        by_own_simulation = find_reusable_run_of(
+            connection,
+            simulation_id=forced.simulation_id,
+            population=economy.population(),
+            versions=VERSIONS,
+            inputs=OPTIONS,
+            output_uri_prefix=OUTPUT_BUCKET_PREFIX,
+        )
+
+    assert by_definition is None
+    assert by_own_simulation is None
 
 
 def test_a_run_whose_file_is_outside_the_output_bucket_is_not_reused(

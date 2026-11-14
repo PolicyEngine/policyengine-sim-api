@@ -1,11 +1,18 @@
-"""Creating budget-window reports and starting their first years.
+"""Finding or creating budget-window reports and starting their first years.
 
-A budget-window report is created as an economy report with one report run
-per year of its window (``NewBudgetWindowReport``), all pending with no
-Modal call, in one transaction. The service then advances the window as its
-own role (``BudgetWindowStore.advance_window``): under the window run's row
-lock, up to the earliest five years' coordinators are started and their
-calls recorded. Each year's coordinator starts the next years when its year ends.
+A budget-window report is an economy report with one report run per year of
+its window. Identical window requests, together or apart, end on the same
+report, simulations, window run and year runs (C1 · 24's answer 8): in one
+transaction the store finds each year's simulations and the report by
+their keys, and the report's window run on the current versions that
+hasn't failed and isn't a recalculation, or else creates the window run and
+each year's report run on its sides' runs, found or inserted
+(``find_or_create_budget_window``), all pending with no Modal call. Only
+for a window run it created does the service then advance the window as
+its own role (``BudgetWindowStore.advance_window``): under the window
+run's row lock, up to the earliest five years' coordinators are started
+and their calls recorded. Each year's coordinator starts the next ones when
+its year ends. A joined window run is answered as it is.
 
 The first year's coordinator input is built as a single-year report's is;
 every later year's is derived from it (``year_calculation``), so all years
@@ -21,7 +28,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID, uuid4
@@ -33,10 +39,10 @@ from policyengine_simulation_contract.stage12_execution import (
     year_calculation,
 )
 from policyengine_simulation_persistence import (
-    BudgetWindowYear,
-    NewBudgetWindowReport,
+    EconomyReportDefinition,
+    KeyedBudgetWindow,
+    KeyedWindowYear,
     ReportRunStatus,
-    RunReuse,
     SimulationChoice,
 )
 from policyengine_stage12_persistence import RunStatus, YearStartDeferred
@@ -49,6 +55,7 @@ from policyengine_simulation_entry.budget_window_api_models import (
 from policyengine_simulation_entry.economy_calculation_inputs import (
     report_run_calculation,
 )
+from policyengine_simulation_entry.economy_requests import stored_options
 from policyengine_simulation_entry.economy_submission_errors import call_refused
 from policyengine_simulation_entry.economy_submissions import (
     CALL_START_TIMEOUT_SECONDS,
@@ -66,8 +73,8 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence import (
         BudgetWindowInputs,
         EconomyRequest,
-        ReusableRun,
-        SimulationInputs,
+        FoundBudgetWindow,
+        RunReuse,
         WindowYearRuns,
     )
     from policyengine_stage12_persistence import (
@@ -106,8 +113,10 @@ class BudgetWindowRuns(EconomyRuns, Protocol):
         """Read the window's catalog rows, both sides' values and each year's runs."""
         ...
 
-    def create_budget_window_report(self, report: NewBudgetWindowReport) -> None:
-        """Create the window's report, its budget-window run and each year's runs."""
+    def find_or_create_budget_window(
+        self, window: KeyedBudgetWindow
+    ) -> FoundBudgetWindow:
+        """Find the window by key, with its window run, or create them."""
         ...
 
 
@@ -164,82 +173,95 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
         request_id: str,
         observability_context: dict[str, Any] | None,
     ) -> BudgetWindowReportCreated:
-        """Create the window's report and its years' runs, and start its first years.
+        """Find or create the window and its window run, and start a run it created.
 
-        Raise the errors ``submit_report`` raises; the 503 after a write
-        names the report, whose window was failed.
+        A window run the request joined is answered as it is, with no new
+        call. Raise the errors ``submit_report`` raises; the 503 after a
+        write names the report, whose window was failed.
         """
         worker = await self._default_worker(request.country)
         options = request.options()
-        reuse_prefix = self._settings.reuse_prefix
-        reuse = (
-            None
-            if reuse_prefix is None
-            else RunReuse(
-                versions=worker.versions,
-                inputs=options,
-                output_uri_prefix=reuse_prefix,
-            )
-        )
+        spm = options.get("spm")
         economy_request = economy_request_for(request, worker)
         inputs = await self._read_inputs(
             lambda: self._store.read_budget_window_inputs(
                 economy_request,
                 baseline=simulation_choice(request.baseline),
                 reform=simulation_choice(request.reform),
-                reuse=reuse,
+                reuse=None,
                 years=request.years,
             ),
             request=economy_request,
         )
-        report = NewBudgetWindowReport(
-            id=self._new_id(),
+        catalog = inputs.catalog
+        window = KeyedBudgetWindow(
+            definition=EconomyReportDefinition(
+                country=request.country,
+                baseline=inputs.baseline.choice,
+                reform=inputs.reform.choice,
+                dataset_name=catalog.dataset.name,
+                region_code=catalog.region.code,
+                year=request.year,
+                budget_window_size=request.budget_window_size,
+                spm=spm,
+            ),
+            report_id=self._new_id(),
             window_run_id=self._new_id(),
-            country=request.country,
-            label=request.label,
-            description=request.description,
-            tax_benefit_model_id=inputs.catalog.model_id,
-            population=inputs.catalog.population(request.year),
+            tax_benefit_model_id=catalog.model_id,
+            population=catalog.population(request.year),
             versions=worker.versions,
-            inputs=options,
-            years=tuple(self._window_year(inputs, year) for year in request.years),
+            inputs=stored_options(options),
+            years=tuple(
+                KeyedWindowYear(
+                    year=year,
+                    report_run_id=self._new_id(),
+                    baseline=self._proposed_side(),
+                    reform=self._proposed_side(),
+                )
+                for year in request.years
+            ),
         )
-        first_year = report.first_year
-        first_calculation = report_run_calculation(
-            worker,
-            calculation_scope(request, worker, inputs.catalog, spm=options.get("spm")),
-            self._origin(request_id),
-            run_ids=year_run_ids(first_year),
-            baseline_policy=inputs.baseline.reform,
-            reform_policy=inputs.reform.reform,
-        )
-        await self._create(
-            "report", lambda: self._store.create_budget_window_report(report)
-        )
-        status = await self._start_first_years(
-            worker,
-            first_calculation,
-            report_id=report.id,
-            window_run_id=report.window_run_id,
-            first_year=first_year.year,
-            observability_context=observability_context,
-        )
-        return BudgetWindowReportCreated(
-            report_id=report.id,
-            report_run_id=first_year.report_run_id,
-            budget_window_run_id=report.window_run_id,
-            status=status,
-            years=[year_created(window_year) for window_year in report.years],
-        )
+        scope = calculation_scope(request, worker, catalog, spm=spm)
+        proposed_first_year = window.years[0]
 
-    def _window_year(self, inputs: BudgetWindowInputs, year: int) -> BudgetWindowYear:
-        """Return a year naming its own year's reusable runs, or new ones."""
-        baseline_run, reform_run = inputs.reusable_runs[year]
-        return BudgetWindowYear(
-            year=year,
-            report_run_id=self._new_id(),
-            baseline=self._side(_with_reusable(inputs.baseline, baseline_run)),
-            reform=self._side(_with_reusable(inputs.reform, reform_run)),
+        def first_year_calculation(run_ids: ReportRunIds) -> RunCalculation:
+            return report_run_calculation(
+                worker,
+                scope,
+                self._origin(request_id),
+                run_ids=run_ids,
+                baseline_policy=inputs.baseline.reform,
+                reform_policy=inputs.reform.reform,
+            )
+
+        # Refused before anything is written, on the run IDs it proposes.
+        first_year_calculation(
+            ReportRunIds(
+                report_run_id=proposed_first_year.report_run_id,
+                baseline_simulation_run_id=proposed_first_year.baseline.simulation_run_id,
+                reform_simulation_run_id=proposed_first_year.reform.simulation_run_id,
+            )
+        )
+        found = await self._create(
+            "report", lambda: self._store.find_or_create_budget_window(window)
+        )
+        first_year = found.years[0]
+        status = found.window_run.status
+        if found.window_run.inserted:
+            status = await self._start_first_years(
+                worker,
+                first_year_calculation(year_run_ids(first_year)),
+                report_id=found.report_id,
+                window_run_id=found.window_run.id,
+                first_year=first_year.year,
+                observability_context=observability_context,
+            )
+        return BudgetWindowReportCreated(
+            report_id=found.report_id,
+            report_run_id=first_year.report_run_id,
+            budget_window_run_id=found.window_run.id,
+            status=status,
+            years=[year_created(window_year) for window_year in found.years],
         )
 
     async def _start_first_years(  # noqa: PLR0913  # the call, then the window it starts
@@ -396,13 +418,6 @@ class _YearStarts:
         return year_report.model_dump(mode="json"), year_context.model_dump(mode="json")
 
 
-def _with_reusable(
-    inputs: SimulationInputs, reusable_run: ReusableRun | None
-) -> SimulationInputs:
-    """Return a side's values naming the year's reusable run, if any."""
-    return replace(inputs, reusable_run=reusable_run)
-
-
 def _deferral(year_to_start: YearToStart) -> dict[str, Any]:
     """Return a deferred year's log fields: its year and its report run."""
     return {
@@ -421,7 +436,10 @@ def year_run_ids(window_year: WindowYearRuns) -> ReportRunIds:
 
 
 def year_created(window_year: WindowYearRuns) -> BudgetWindowYearCreated:
-    """Return a new window's year, or a re-run's, as the answer lists it."""
+    """Return a year of the window run a request ended on, as the answer lists it.
+
+    A side is reused when its run isn't one this request inserted.
+    """
     return BudgetWindowYearCreated(
         year=window_year.year,
         report_run_id=window_year.report_run_id,

@@ -1,29 +1,36 @@
 """Create economy reports and simulations, and start the calls that calculate them.
 
 A report submission names a region, a dataset, a year and each side's
-stored policy and dynamic. The service:
+stored policy and dynamic. Identical submissions, together or apart, end on
+the same simulation, report and run rows (C1 · 24). The service:
 
 1. finds the v2 version manifest's default worker's economy functions for
    the country, and its bundle;
 2. reads, in one transaction, the country's catalog version for that
-   worker's .py version, the region and dataset, each side's policy and
-   dynamic values, and, when the output bucket is configured, each side's
-   reusable run: a run of the same simulation that succeeded on the same
-   versions, used by a succeeded report run with the same options, and
-   never refused for reuse;
-3. creates, in one transaction, each side's new simulation and pending run
-   (none for a reused side), the report with its options, and its first
-   report run, pending with no Modal call ID;
-4. starts the coordinator's call with ``spawn``, passing the report and its
-   run IDs, then records the call's ID while the report run is still
-   pending with none (the coordinator may have claimed it already). When
-   Modal refuses the call, or does not confirm it in time, it fails the
-   report run and its new simulation runs at once instead, under the same
-   condition; a run the coordinator claimed meanwhile, because Modal
-   accepted the call after all, is left as it is and answered ``pending``.
+   worker's .py version, the region and dataset, and each side's policy and
+   dynamic values;
+3. finds or creates, in one transaction, each side's simulation and the
+   report by their keys (the catalog's dataset name and region code, the
+   year, the policies, dynamics and SPM selection), then the report's run
+   on the current versions that hasn't failed and wasn't forced, which it
+   joins, or else each simulation's run on those versions and a new report
+   run naming them (``keyed_economy_records``). The report stores only the
+   SPM selection of the request's options (answer 4);
+4. starts the coordinator's call with ``spawn`` only for a report run its
+   own transaction inserted, passing the report and its run IDs, then
+   records the call's ID while the report run is still pending with none
+   (the coordinator may have claimed it already). When Modal refuses the
+   call, or does not confirm it in time, it fails the report run at once
+   instead, under the same condition, and leaves the simulation runs
+   pending: another report run may name them, and the next coordinator
+   that does starts them. A run the coordinator claimed meanwhile, because
+   Modal accepted the call after all, is left as it is and answered
+   ``pending``. A joined report run gets no call and is answered with its
+   status as read.
 
-A standalone simulation is created and started the same way, with one
-simulation run calculated by the country's simulation function.
+A standalone simulation is found or created by key and started the same
+way, with one simulation run calculated by the country's simulation
+function.
 
 Whatever is missing or cannot be calculated is refused in steps 1 and 2,
 before anything is written. The coordinator and the simulation functions
@@ -44,12 +51,14 @@ from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
+    EconomyReportDefinition,
     EconomyRequest,
-    NewEconomyReport,
-    NewEconomySimulation,
+    EconomySimulationDefinition,
+    KeyedEconomyReport,
+    KeyedEconomySimulation,
+    ProposedSide,
     ReportRunStatus,
-    ReportSimulation,
-    RunReuse,
+    SharedRowNotSettledError,
     SimulationChoice,
     SimulationStatus,
 )
@@ -60,13 +69,16 @@ from policyengine_simulation_entry.economy_api_models import (
     EconomySimulationCreated,
 )
 from policyengine_simulation_entry.economy_calculation_inputs import (
-    CalculationScope,
     CallOrigin,
-    DatasetNotInBundleError,
-    bundle_dataset,
     report_run_calculation,
-    simulation_options,
     simulation_run_calculation,
+)
+from policyengine_simulation_entry.economy_requests import (
+    calculation_scope,
+    economy_request_for,
+    refuse_cliffs,
+    report_created,
+    stored_options,
 )
 from policyengine_simulation_entry.economy_submission_errors import (
     REQUEST_BODY,
@@ -90,19 +102,16 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from policyengine_simulation_persistence import (
-        EconomyCatalogRows,
         EconomyReportInputs,
         EconomyReportState,
         EconomySimulationInputs,
         EconomySimulationState,
-        SimulationInputs,
+        FoundEconomyReport,
+        FoundEconomySimulation,
+        RunReuse,
     )
 
-    from policyengine_simulation_entry.budget_window_api_models import (
-        BudgetWindowReportRequest,
-    )
     from policyengine_simulation_entry.economy_api_models import (
-        EconomyRefusalCode,
         EconomyReportRequest,
         EconomySimulationRequest,
         PolicyChoice,
@@ -143,12 +152,14 @@ class EconomyRuns(Protocol):
         """Read a standalone simulation's catalog rows and values."""
         ...
 
-    def create_report(self, report: NewEconomyReport) -> None:
-        """Create the report, its new simulations and its runs."""
+    def find_or_create_report(self, report: KeyedEconomyReport) -> FoundEconomyReport:
+        """Find the report by key, with its run, or create them."""
         ...
 
-    def create_simulation(self, simulation: NewEconomySimulation) -> None:
-        """Create the simulation and its first run."""
+    def find_or_create_simulation(
+        self, simulation: KeyedEconomySimulation
+    ) -> FoundEconomySimulation:
+        """Find the simulation by key, with its run, or create them."""
         ...
 
     def record_report_call(
@@ -193,17 +204,15 @@ class ServiceSettings:
 
     ``environment`` labels the calls' artifacts, ``modal_environment`` holds
     the v2 workers, and ``output_bucket`` is the bucket that keeps
-    simulation output files for good. Without it, no report reuses a run.
+    simulation output files for good. The service keeps it here and uses
+    it for nothing: a report joins its sides' runs by version set
+    (C1 · 24's answers 4 and 5), not by their files; the setting goes with
+    the reuse search.
     """
 
     environment: str
     modal_environment: str
     output_bucket: str | None = None
-
-    @property
-    def reuse_prefix(self) -> str | None:
-        """Return ``gs://<bucket>/``, under which reusable output files lie."""
-        return None if not self.output_bucket else f"gs://{self.output_bucket}/"
 
 
 def _database_unavailable() -> EconomySubmissionUnavailableError:
@@ -262,76 +271,68 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         EconomySubmissionOutcomeUnknownError (500) when the create's commit
         failed after its rows were inserted.
         """
+        refuse_cliffs(request)
         worker = await self._default_worker(request.country)
         options = request.options()
-        reuse_prefix = self._settings.reuse_prefix
-        reuse = (
-            None
-            if reuse_prefix is None
-            else RunReuse(
-                versions=worker.versions,
-                inputs=options,
-                output_uri_prefix=reuse_prefix,
-            )
-        )
+        spm = options.get("spm")
         economy_request = economy_request_for(request, worker)
         inputs = await self._read_inputs(
             lambda: self._store.read_report_inputs(
                 economy_request,
                 baseline=simulation_choice(request.baseline),
                 reform=simulation_choice(request.reform),
-                reuse=reuse,
+                reuse=None,
             ),
             request=economy_request,
         )
-        scope = calculation_scope(
-            request, worker, inputs.catalog, spm=options.get("spm")
-        )
-        report = NewEconomyReport(
-            id=self._new_id(),
-            run_id=self._new_id(),
-            country=request.country,
-            label=request.label,
-            description=request.description,
-            tax_benefit_model_id=inputs.catalog.model_id,
-            population=inputs.catalog.population(request.year),
-            versions=worker.versions,
-            inputs=options,
-            baseline=self._side(inputs.baseline),
-            reform=self._side(inputs.reform),
-        )
-        calculation = report_run_calculation(
-            worker,
-            scope,
-            self._origin(request_id),
-            run_ids=ReportRunIds(
-                report_run_id=report.run_id,
-                baseline_simulation_run_id=report.baseline.simulation_run_id,
-                reform_simulation_run_id=report.reform.simulation_run_id,
+        scope = calculation_scope(request, worker, inputs.catalog, spm=spm)
+        catalog = inputs.catalog
+        keyed = KeyedEconomyReport(
+            definition=EconomyReportDefinition(
+                country=request.country,
+                baseline=inputs.baseline.choice,
+                reform=inputs.reform.choice,
+                dataset_name=catalog.dataset.name,
+                region_code=catalog.region.code,
+                year=request.year,
+                budget_window_size=None,
+                spm=spm,
             ),
-            baseline_policy=inputs.baseline.reform,
-            reform_policy=inputs.reform.reform,
+            report_id=self._new_id(),
+            run_id=self._new_id(),
+            baseline=self._proposed_side(),
+            reform=self._proposed_side(),
+            tax_benefit_model_id=catalog.model_id,
+            population=catalog.population(request.year),
+            versions=worker.versions,
+            inputs=stored_options(options),
         )
-        await self._create("report", lambda: self._store.create_report(report))
-        status = await self._start_report_run(
-            worker,
-            calculation,
-            report_id=report.id,
-            run_id=report.run_id,
-            new_simulation_run_ids=report.new_simulation_run_ids,
-            observability_context=observability_context,
+        found = await self._create(
+            "report", lambda: self._store.find_or_create_report(keyed)
         )
-        return EconomyReportCreated(
-            report_id=report.id,
-            report_run_id=report.run_id,
-            status=status,
-            baseline_simulation_id=report.baseline.simulation_id,
-            baseline_simulation_run_id=report.baseline.simulation_run_id,
-            baseline_reused=report.baseline.reused,
-            reform_simulation_id=report.reform.simulation_id,
-            reform_simulation_run_id=report.reform.simulation_run_id,
-            reform_reused=report.reform.reused,
-        )
+        status = found.run.status
+        if found.run.inserted:
+            calculation = report_run_calculation(
+                worker,
+                scope,
+                self._origin(request_id),
+                run_ids=ReportRunIds(
+                    report_run_id=found.run.id,
+                    baseline_simulation_run_id=found.baseline.simulation_run_id,
+                    reform_simulation_run_id=found.reform.simulation_run_id,
+                ),
+                baseline_policy=inputs.baseline.reform,
+                reform_policy=inputs.reform.reform,
+            )
+            status = await self._start_report_run(
+                worker,
+                calculation,
+                report_id=found.report_id,
+                run_id=found.run.id,
+                new_simulation_run_ids=(),
+                observability_context=observability_context,
+            )
+        return report_created(found, status)
 
     async def submit_simulation(
         self,
@@ -355,33 +356,43 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
             request=economy_request,
         )
         scope = calculation_scope(request, worker, inputs.catalog, spm=None)
-        simulation = NewEconomySimulation(
-            id=self._new_id(),
+        catalog = inputs.catalog
+        keyed = KeyedEconomySimulation(
+            definition=EconomySimulationDefinition(
+                country=request.country,
+                choice=inputs.simulation.choice,
+                dataset_name=catalog.dataset.name,
+                region_code=catalog.region.code,
+                year=request.year,
+                spm=None,
+            ),
+            simulation_id=self._new_id(),
             run_id=self._new_id(),
-            choice=inputs.simulation.choice,
-            population=inputs.catalog.population(request.year),
+            population=catalog.population(request.year),
             versions=worker.versions,
         )
-        calculation = simulation_run_calculation(
-            worker,
-            scope,
-            self._origin(request_id),
-            simulation_run_id=simulation.run_id,
-            policy=inputs.simulation.reform,
+        found = await self._create(
+            "simulation", lambda: self._store.find_or_create_simulation(keyed)
         )
-        await self._create(
-            "simulation", lambda: self._store.create_simulation(simulation)
-        )
-        status = await self._start_simulation_run(
-            worker,
-            calculation,
-            simulation_id=simulation.id,
-            run_id=simulation.run_id,
-            observability_context=observability_context,
-        )
+        status = found.run.status
+        if found.run.inserted:
+            calculation = simulation_run_calculation(
+                worker,
+                scope,
+                self._origin(request_id),
+                simulation_run_id=found.run.id,
+                policy=inputs.simulation.reform,
+            )
+            status = await self._start_simulation_run(
+                worker,
+                calculation,
+                simulation_id=found.simulation_id,
+                run_id=found.run.id,
+                observability_context=observability_context,
+            )
         return EconomySimulationCreated(
-            simulation_id=simulation.id,
-            simulation_run_id=simulation.run_id,
+            simulation_id=found.simulation_id,
+            simulation_run_id=found.run.id,
             status=status,
         )
 
@@ -413,20 +424,10 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
             )
             raise _database_unavailable() from None
 
-    def _side(self, inputs: SimulationInputs) -> ReportSimulation:
-        """Return a side naming its reusable run, or a new simulation and run."""
-        if inputs.reusable_run is not None:
-            return ReportSimulation(
-                simulation_id=inputs.reusable_run.simulation_id,
-                simulation_run_id=inputs.reusable_run.simulation_run_id,
-                choice=inputs.choice,
-                reused=True,
-            )
-        return ReportSimulation(
-            simulation_id=self._new_id(),
-            simulation_run_id=self._new_id(),
-            choice=inputs.choice,
-            reused=False,
+    def _proposed_side(self) -> ProposedSide:
+        """Return the IDs a side's rows get if this request inserts them."""
+        return ProposedSide(
+            simulation_id=self._new_id(), simulation_run_id=self._new_id()
         )
 
     def _origin(self, request_id: str) -> CallOrigin:
@@ -480,23 +481,24 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
                 raise
             raise refusal from None
 
-    async def _create(
+    async def _create[Created](
         self,
         record: RecordName,
-        create: Callable[[], None],
+        create: Callable[[], Created],
         *,
         rerun: bool = False,
         source: RefusalSource = REQUEST_BODY,
-    ) -> None:
+    ) -> Created:
         """Create the rows; answer a refusal, an unknown outcome or an outage.
 
-        A commit that failed after the rows were inserted may have written
-        them, so it is never answered as unavailable, which would tell the
-        caller nothing was created. ``rerun`` says the rows are a stored
-        record's new run, and ``source`` what names a refused row.
+        Return what ``create`` returns. A commit that failed after the rows
+        were inserted may have written them, so it is never answered as
+        unavailable, which would tell the caller nothing was created.
+        ``rerun`` says the rows are a stored record's new run, and ``source``
+        what names a refused row.
         """
         try:
-            await asyncio.to_thread(create)
+            return await asyncio.to_thread(create)
         except EconomyRecordReferenceError as error:
             raise reference_refusal(error, source) from None
         except EconomyRecordOutcomeUnknownError as error:
@@ -504,7 +506,9 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
             raise EconomySubmissionOutcomeUnknownError(
                 record, error_type=type(error.__cause__).__name__, rerun=rerun
             ) from None
-        except SQLAlchemyError as error:
+        # A run kept failing between a lookup's insert and its read; its
+        # transaction wrote nothing, so the caller may ask again.
+        except (SharedRowNotSettledError, SQLAlchemyError) as error:
             logger.warning(
                 "economy_records_not_created",
                 extra={"error_type": type(error).__name__},
@@ -674,56 +678,16 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         return None if status is None else str(status)
 
 
-def economy_request_for(
-    request: EconomyReportRequest
-    | EconomySimulationRequest
-    | BudgetWindowReportRequest,
-    worker: EconomyWorker,
-) -> EconomyRequest:
-    """Return what the request names apart from policies, for the default worker."""
-    return EconomyRequest(
-        country=request.country,
-        policyengine_version=worker.policyengine_version,
-        region_code=request.region_code,
-        dataset_name=request.dataset_name,
-        year=request.year,
-    )
-
-
-def calculation_scope(
-    request: EconomyReportRequest
-    | EconomySimulationRequest
-    | BudgetWindowReportRequest,
-    worker: EconomyWorker,
-    catalog: EconomyCatalogRows,
-    *,
-    spm: dict[str, Any] | None,
-) -> CalculationScope:
-    """Return what the calculation runs on, with the bundle's dataset.
-
-    Raise EconomySubmissionRefusedError when the bundle lacks the catalog
-    dataset: ``unknown_dataset`` when the request named it, and
-    ``dataset_not_in_bundle`` for the region's default.
-    """
-    try:
-        dataset = bundle_dataset(worker, catalog.dataset.name)
-    except DatasetNotInBundleError:
-        code: EconomyRefusalCode = (
-            "dataset_not_in_bundle"
-            if request.dataset_name is None
-            else "unknown_dataset"
-        )
-        detail = (
-            f"The default v2 worker, .py {worker.version}, has no dataset "
-            f"{catalog.dataset.name}."
-        )
-        raise EconomySubmissionRefusedError(code=code, detail=detail) from None
-    return CalculationScope(
-        country=request.country,
-        region_code=catalog.region.code,
-        dataset=dataset,
-        year=request.year,
-        options=simulation_options(
-            include_cliffs=getattr(request, "include_cliffs", False), spm=spm
-        ),
-    )
+# The request helpers moved to economy_requests; their names stay importable here.
+__all__ = [
+    "CALL_START_TIMEOUT_SECONDS",
+    "EconomyRuns",
+    "EconomySubmissionService",
+    "ServiceSettings",
+    "calculation_scope",
+    "economy_request_for",
+    "refuse_cliffs",
+    "report_created",
+    "simulation_choice",
+    "stored_options",
+]

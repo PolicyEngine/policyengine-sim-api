@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
+from committed_rows import delete_catalog_rows
+from economy_rows import insert_economy_catalog
 from policyengine_simulation_persistence import create_simulation_engine
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, make_url
@@ -31,7 +33,8 @@ from sqlalchemy.engine import URL, make_url
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from sqlalchemy import Connection
+    from economy_rows import EconomyCatalog
+    from sqlalchemy import Connection, Engine
 
 DATABASE_URL_VARIABLE = "SIMULATION_TEST_DATABASE_URL"
 REQUIRE_DATABASE_VARIABLE = "SIMULATION_REQUIRE_DATABASE_TESTS"
@@ -146,3 +149,25 @@ def connection_as_the_service(database_url: str) -> Iterator[Connection]:
     with rolled_back_transaction(database_url) as connection:
         act_as_the_service(connection)
         yield connection
+
+
+@pytest.fixture
+def committed_engine(public_api_database_url) -> Iterator[Engine]:
+    """Return an engine on the Public API's database, disposed afterwards."""
+    engine = create_simulation_engine(public_api_database_url)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def committed_catalog(committed_engine) -> Iterator[EconomyCatalog]:
+    """Commit a catalog of a country no other test uses; delete its rows after."""
+    with committed_engine.begin() as connection:
+        economy = insert_economy_catalog(connection, country=f"zz{uuid4().hex[:8]}")
+    try:
+        yield economy
+    finally:
+        with committed_engine.begin() as connection:
+            delete_catalog_rows(connection, economy)

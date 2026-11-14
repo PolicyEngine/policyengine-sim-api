@@ -153,6 +153,9 @@ class BudgetWindowSeeder:
 
         Each year gets a new report run and two new runs of the report's
         simulations; the earlier window run and its years are left as they are.
+        It recalculates, so it is a forced re-run: its year runs and
+        simulation runs are marked forced, as the simulation service inserts
+        them, and the Public API's one-unfailed-run indexes leave them out.
         """
         table = self.seeder.table
         with self.engine.connect() as connection:
@@ -202,6 +205,7 @@ class BudgetWindowSeeder:
                             tax_benefit_model_version_id=first_run.tax_benefit_model_version_id,
                             dataset_id=first_run.dataset_id,
                             status="pending",
+                            forced=True,
                             **later,
                             **VERSIONS,
                         )
@@ -216,6 +220,7 @@ class BudgetWindowSeeder:
                         year=seeded.year,
                         status="pending",
                         trigger="manual",
+                        forced=True,
                         **later,
                         **VERSIONS,
                     )

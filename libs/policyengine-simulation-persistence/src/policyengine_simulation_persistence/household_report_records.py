@@ -184,23 +184,51 @@ def insert_household_simulation_run(  # noqa: PLR0913  # the run and what it cal
     year: int,
     tax_benefit_model_version_id: UUID,
     versions: RunVersions,
+    forced: bool = False,
 ) -> None:
     """Create a run of a household simulation, pending with no Modal call ID.
 
     It records the year, catalog version and versions it calculates on; a
-    household run names no dataset or region.
+    household run names no dataset or region. A ``forced`` run is an extra
+    run that nothing joins.
     """
     connection.execute(
         insert(simulation_runs).values(
-            id=run_id,
-            simulation_id=simulation_id,
-            year=year,
-            tax_benefit_model_version_id=tax_benefit_model_version_id,
-            country_package_version=versions.country_package_version,
-            policyengine_version=versions.policyengine_version,
-            dataset_id=None,
-            region_id=None,
-            status=SimulationStatus.PENDING,
-            modal_call_id=None,
+            {
+                **household_simulation_run_row(
+                    run_id=run_id,
+                    simulation_id=simulation_id,
+                    year=year,
+                    tax_benefit_model_version_id=tax_benefit_model_version_id,
+                    versions=versions,
+                ),
+                "forced": forced,
+            }
         )
     )
+
+
+def household_simulation_run_row(
+    *,
+    run_id: UUID,
+    simulation_id: UUID,
+    year: int,
+    tax_benefit_model_version_id: UUID,
+    versions: RunVersions,
+) -> dict[str, Any]:
+    """Return a household simulation's new run, pending with no Modal call ID.
+
+    Unforced: ``insert_household_simulation_run`` adds ``forced`` to it.
+    """
+    return {
+        "id": run_id,
+        "simulation_id": simulation_id,
+        "year": year,
+        "tax_benefit_model_version_id": tax_benefit_model_version_id,
+        "country_package_version": versions.country_package_version,
+        "policyengine_version": versions.policyengine_version,
+        "dataset_id": None,
+        "region_id": None,
+        "status": SimulationStatus.PENDING,
+        "modal_call_id": None,
+    }

@@ -12,7 +12,6 @@ from economy_service_fakes import (
     CATALOG,
     CREATED_AT,
     DYNAMIC_ID,
-    OUTPUT_BUCKET,
     POLICY_ID,
     REFORM,
     REPORT_BODY,
@@ -47,14 +46,21 @@ from policyengine_simulation_persistence import (
     CatalogDataset,
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
+    EconomyReportDefinition,
     EconomyReportState,
+    EconomySimulationDefinition,
     EconomySimulationState,
+    FoundEconomyReport,
+    FoundEconomySimulation,
+    FoundReportRun,
+    FoundSide,
+    FoundSimulationRun,
     MissingPolicyParametersError,
     OverlappingReformError,
+    ProposedSide,
     ReportRunState,
     ReportRunStatus,
     ReportSideError,
-    RunReuse,
     RunVersions,
     SimulationChoice,
     SimulationRunState,
@@ -94,7 +100,7 @@ def _submit_simulation(submissions, request=None):
     )
 
 
-def test_a_report_is_created_with_new_runs_and_its_coordinator_started() -> None:
+def test_a_report_is_created_by_key_and_its_coordinator_started() -> None:
     store = FakeStore()
     caller = FakeCaller()
 
@@ -109,70 +115,137 @@ def test_a_report_is_created_with_new_runs_and_its_coordinator_started() -> None
     assert (request.dataset_name, request.year) == (None, 2026)
     assert baseline == SimulationChoice(policy_id=None, dynamic_id=None)
     assert reform == SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID)
-    options = {"include_cliffs": True, "spm": {"geography_kind": "national"}}
-    assert reuse == RunReuse(
-        versions=VERSIONS, inputs=options, output_uri_prefix=f"gs://{OUTPUT_BUCKET}/"
-    )
+    # Runs are found by key, not searched for (C1 · 24).
+    assert reuse is None
     (report,) = store.reports
-    assert (report.id, report.run_id) == (UUID(int=1), UUID(int=2))
-    assert (report.label, report.description, report.country) == (
-        "A larger child tax credit",
-        "Raises the credit to $3,000",
-        "us",
+    spm = {"geography_kind": "national"}
+    assert report.definition == EconomyReportDefinition(
+        country="us",
+        baseline=baseline,
+        reform=reform,
+        dataset_name=CATALOG.dataset.name,
+        region_code=CATALOG.region.code,
+        year=2026,
+        budget_window_size=None,
+        spm=spm,
+    )
+    assert (report.report_id, report.run_id) == (UUID(int=1), UUID(int=2))
+    assert (report.baseline, report.reform) == (
+        ProposedSide(simulation_id=UUID(int=3), simulation_run_id=UUID(int=4)),
+        ProposedSide(simulation_id=UUID(int=5), simulation_run_id=UUID(int=6)),
     )
     assert report.tax_benefit_model_id == CATALOG.model_id
     assert report.population == CATALOG.population(2026)
-    assert (report.versions, report.inputs) == (VERSIONS, options)
-    assert (report.baseline.reused, report.reform.reused) == (False, False)
-    assert report.new_simulation_run_ids == (UUID(int=4), UUID(int=6))
-    assert report.reform.choice == reform
+    # Answer 4: the report stores no option but the SPM selection.
+    assert (report.versions, report.inputs) == (VERSIONS, {"spm": spm})
     ((_, payload, context, observed),) = caller.report_runs
     assert observed == OBSERVED
     assert ReportExecutionInput.model_validate(payload).reform.policy == REFORM
     assert Stage12InvocationContext.model_validate(context).report_run == ReportRunIds(
-        report_run_id=report.run_id,
-        baseline_simulation_run_id=report.baseline.simulation_run_id,
-        reform_simulation_run_id=report.reform.simulation_run_id,
+        report_run_id=UUID(int=2),
+        baseline_simulation_run_id=UUID(int=4),
+        reform_simulation_run_id=UUID(int=6),
     )
-    assert store.recorded_calls == [(report.run_id, "fc-coordinator")]
+    assert store.recorded_calls == [(UUID(int=2), "fc-coordinator")]
     assert created.model_dump() == {
-        "report_id": report.id,
-        "report_run_id": report.run_id,
+        "report_id": UUID(int=1),
+        "report_run_id": UUID(int=2),
         "status": ReportRunStatus.PENDING,
-        "baseline_simulation_id": report.baseline.simulation_id,
-        "baseline_simulation_run_id": report.baseline.simulation_run_id,
+        "baseline_simulation_id": UUID(int=3),
+        "baseline_simulation_run_id": UUID(int=4),
         "baseline_reused": False,
-        "reform_simulation_id": report.reform.simulation_id,
-        "reform_simulation_run_id": report.reform.simulation_run_id,
+        "reform_simulation_id": UUID(int=5),
+        "reform_simulation_run_id": UUID(int=6),
         "reform_reused": False,
     }
 
 
-def test_a_side_with_a_reusable_run_names_it_instead_of_a_new_one() -> None:
-    store = FakeStore(reusable=(REUSED, None))
+def _found_report(*, run_inserted: bool, status: ReportRunStatus) -> FoundEconomyReport:
+    """Return a report another request created, with its run as told."""
+    return FoundEconomyReport(
+        report_id=UUID(int=90),
+        report_inserted=False,
+        run=FoundReportRun(
+            id=UUID(int=91),
+            inserted=run_inserted,
+            status=status,
+            baseline_simulation_run_id=REUSED.simulation_run_id,
+            reform_simulation_run_id=UUID(int=93),
+        ),
+        baseline=FoundSide(
+            simulation_id=REUSED.simulation_id,
+            simulation_run_id=REUSED.simulation_run_id,
+            run_inserted=False,
+        ),
+        reform=FoundSide(
+            simulation_id=UUID(int=92),
+            simulation_run_id=UUID(int=93),
+            run_inserted=run_inserted,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [ReportRunStatus.PENDING, ReportRunStatus.RUNNING, ReportRunStatus.SUCCEEDED],
+)
+def test_a_report_joining_a_run_answers_it_and_starts_no_call(
+    status: ReportRunStatus,
+) -> None:
+    """An identical request ends on the same report and run, with no call."""
+    store = FakeStore(found_report=_found_report(run_inserted=False, status=status))
     caller = FakeCaller()
 
     created = _submit_report(service(store, caller=caller))
 
-    (report,) = store.reports
-    assert report.baseline.reused is True
-    assert (report.baseline.simulation_id, report.baseline.simulation_run_id) == (
-        REUSED.simulation_id,
-        REUSED.simulation_run_id,
+    assert caller.report_runs == []
+    assert (store.recorded_calls, store.failed_runs) == ([], [])
+    assert created.model_dump() == {
+        "report_id": UUID(int=90),
+        "report_run_id": UUID(int=91),
+        "status": status,
+        "baseline_simulation_id": REUSED.simulation_id,
+        "baseline_simulation_run_id": REUSED.simulation_run_id,
+        "baseline_reused": True,
+        "reform_simulation_id": UUID(int=92),
+        "reform_simulation_run_id": UUID(int=93),
+        "reform_reused": True,
+    }
+
+
+def test_a_side_whose_run_already_exists_is_named_and_answered_reused() -> None:
+    """A new report run naming a simulation run another request inserted."""
+    store = FakeStore(
+        found_report=_found_report(run_inserted=True, status=ReportRunStatus.PENDING)
     )
-    assert report.new_simulation_run_ids == (report.reform.simulation_run_id,)
+    caller = FakeCaller()
+
+    created = _submit_report(service(store, caller=caller))
+
     payload = ReportExecutionInput.model_validate(caller.report_runs[0][1])
     assert payload.baseline.simulation_execution_id == REUSED.simulation_run_id
+    assert payload.reform.simulation_execution_id == UUID(int=93)
+    assert store.recorded_calls == [(UUID(int=91), "fc-coordinator")]
     assert (created.baseline_reused, created.reform_reused) == (True, False)
     assert created.baseline_simulation_run_id == REUSED.simulation_run_id
 
 
-def test_without_the_output_bucket_no_run_is_looked_for() -> None:
+def test_the_same_policy_on_both_sides_names_one_simulation_run_twice() -> None:
     store = FakeStore()
+    caller = FakeCaller()
 
-    _submit_report(service(store, output_bucket=None))
+    created = _submit_report(
+        service(store, caller=caller),
+        report_request(reform={"policy_id": None, "dynamic_id": None}),
+    )
 
-    assert store.report_reads[0][1][2] is None
+    payload = ReportExecutionInput.model_validate(caller.report_runs[0][1])
+    assert (
+        payload.baseline.simulation_execution_id
+        == payload.reform.simulation_execution_id
+        == UUID(int=4)
+    )
+    assert created.baseline_simulation_run_id == created.reform_simulation_run_id
 
 
 def test_the_report_stores_only_the_spm_settings_given() -> None:
@@ -184,10 +257,9 @@ def test_the_report_stores_only_the_spm_settings_given() -> None:
         report_request(include_cliffs=False, spm={"scenario": "zero"}),
     )
 
-    assert store.reports[0].inputs == {
-        "include_cliffs": False,
-        "spm": {"scenario": "zero"},
-    }
+    (report,) = store.reports
+    assert report.inputs == {"spm": {"scenario": "zero"}}
+    assert report.definition.spm == {"scenario": "zero"}
     payload = ReportExecutionInput.model_validate(caller.report_runs[0][1])
     assert payload.baseline.options == {"spm": {"scenario": "zero"}}
 
@@ -195,16 +267,40 @@ def test_the_report_stores_only_the_spm_settings_given() -> None:
 def test_a_report_without_spm_settings_stores_none() -> None:
     store = FakeStore()
     caller = FakeCaller()
-    without_spm = {key: value for key, value in REPORT_BODY.items() if key != "spm"}
+    without_spm = {
+        **{key: value for key, value in REPORT_BODY.items() if key != "spm"},
+        "include_cliffs": False,
+    }
 
     _submit_report(
         service(store, caller=caller),
         EconomyReportRequest.model_validate(without_spm),
     )
 
-    assert store.reports[0].inputs == {"include_cliffs": True}
+    (report,) = store.reports
+    assert (report.inputs, report.definition.spm) == ({}, None)
     payload = ReportExecutionInput.model_validate(caller.report_runs[0][1])
-    assert payload.reform.options == {"include_cliffs": True}
+    assert payload.reform.options == {}
+
+
+def test_a_report_asking_for_cliffs_is_refused_before_anything_is_read() -> None:
+    """Interim answer A: a 422 until per-run cliff calculations exist (C1 · 39)."""
+    store = FakeStore()
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionUnprocessableError) as refusal:
+        _submit_report(
+            service(store, caller=caller), report_request(include_cliffs=True)
+        )
+
+    assert refusal.value.code == "cliffs_not_available"
+    ((reason),) = refusal.value.reasons
+    assert (reason.loc, reason.type) == (
+        ("body", "include_cliffs"),
+        "cliffs_not_available",
+    )
+    assert "cliff" in reason.msg
+    assert (store.report_reads, store.reports, caller.report_runs) == ([], [], [])
 
 
 @pytest.mark.parametrize(
@@ -382,11 +478,13 @@ def test_a_call_modal_does_not_confirm_fails_the_report_run_and_names_it(
     (report,) = store.reports
     assert (unavailable.value.code, unavailable.value.record_id) == (
         "modal_call_refused",
-        report.id,
+        report.report_id,
     )
+    # Only the report run: once committed, another request's report run may
+    # have joined the simulation runs created with it.
     ((run_id, simulation_run_ids, message),) = store.failed_runs
     assert run_id == report.run_id
-    assert simulation_run_ids == report.new_simulation_run_ids
+    assert simulation_run_ids == ()
     assert message.startswith("modal_call_refused: Modal did not accept the report")
     assert store.recorded_calls == []
 
@@ -399,7 +497,7 @@ def test_a_report_run_its_coordinator_claimed_meanwhile_is_answered_created() ->
     )
 
     assert store.failed_runs == []
-    assert created.report_id == store.reports[0].id
+    assert created.report_id == store.reports[0].report_id
     assert created.status is ReportRunStatus.PENDING
 
 
@@ -414,7 +512,7 @@ def test_a_run_whose_state_cannot_be_written_is_answered_created_pending(
 
     created = _submit_report(service(store, caller=caller))
 
-    assert created.report_id == store.reports[0].id
+    assert created.report_id == store.reports[0].report_id
     assert created.status is ReportRunStatus.PENDING
 
 
@@ -428,7 +526,15 @@ def test_a_simulation_is_created_and_its_run_started_alone() -> None:
     assert (request.policyengine_version, request.year) == (POLICYENGINE_VERSION, 2026)
     assert choice == SimulationChoice(policy_id=POLICY_ID, dynamic_id=None)
     (simulation,) = store.simulations
-    assert (simulation.id, simulation.run_id) == (UUID(int=1), UUID(int=2))
+    assert simulation.definition == EconomySimulationDefinition(
+        country="us",
+        choice=choice,
+        dataset_name=CATALOG.dataset.name,
+        region_code=CATALOG.region.code,
+        year=2026,
+        spm=None,
+    )
+    assert (simulation.simulation_id, simulation.run_id) == (UUID(int=1), UUID(int=2))
     assert simulation.population == CATALOG.population(2026)
     assert simulation.versions == VERSIONS
     ((_, payload, context, observed),) = caller.simulation_runs
@@ -438,9 +544,34 @@ def test_a_simulation_is_created_and_its_run_started_alone() -> None:
     assert observed == OBSERVED
     assert store.recorded_calls == [(simulation.run_id, "fc-worker")]
     assert created.model_dump() == {
-        "simulation_id": simulation.id,
+        "simulation_id": simulation.simulation_id,
         "simulation_run_id": simulation.run_id,
         "status": SimulationStatus.PENDING,
+    }
+
+
+@pytest.mark.parametrize(
+    "status", [SimulationStatus.PENDING, SimulationStatus.SUCCEEDED]
+)
+def test_a_simulation_joining_its_run_answers_it_and_starts_no_call(
+    status: SimulationStatus,
+) -> None:
+    joined = FoundEconomySimulation(
+        simulation_id=UUID(int=80),
+        simulation_inserted=False,
+        run=FoundSimulationRun(id=UUID(int=81), inserted=False, status=status),
+    )
+    store = FakeStore(found_simulation=joined)
+    caller = FakeCaller()
+
+    created = _submit_simulation(service(store, caller=caller))
+
+    assert caller.simulation_runs == []
+    assert (store.recorded_calls, store.failed_runs) == ([], [])
+    assert created.model_dump() == {
+        "simulation_id": UUID(int=80),
+        "simulation_run_id": UUID(int=81),
+        "status": status,
     }
 
 
@@ -455,7 +586,7 @@ def test_a_simulation_run_modal_refuses_is_failed_and_the_simulation_named() -> 
     (simulation,) = store.simulations
     assert (unavailable.value.code, unavailable.value.record_id) == (
         "modal_call_refused",
-        simulation.id,
+        simulation.simulation_id,
     )
     assert store.failed_runs[0][0] == simulation.run_id
     assert store.failed_runs[0][2].startswith(

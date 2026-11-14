@@ -26,11 +26,19 @@ from policyengine_simulation_persistence import (
     BudgetWindowInputs,
     EconomyReportInputs,
     EconomySimulationInputs,
+    FoundBudgetWindow,
+    FoundReportRun,
+    FoundSide,
+    FoundSimulationRun,
+    FoundWindowRun,
+    FoundWindowYear,
     ReportDefinition,
+    ReportRunStatus,
     SideDefinition,
     SimulationChoice,
     SimulationDefinition,
     SimulationInputs,
+    SimulationStatus,
     WindowYearDefinition,
 )
 from test_budget_window_submissions import FakeAdvancer, FakeWindowStore
@@ -53,11 +61,12 @@ REPORT_ID = UUID("00000000-0000-4000-8000-0000000000a1")
 BASELINE_SIMULATION_ID = UUID("00000000-0000-4000-8000-0000000000a2")
 REFORM_SIMULATION_ID = UUID("00000000-0000-4000-8000-0000000000a3")
 SIMULATION_ID = UUID("00000000-0000-4000-8000-0000000000a4")
-RUN_UNDER_WAY_ID = UUID("00000000-0000-4000-8000-0000000000a5")
 CURRENT_LAW = SimulationChoice(policy_id=None, dynamic_id=None)
 REFORM_CHOICE = SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID)
+# A report stored before C1 · 27 kept the request's options; one asking for
+# cliffs is refused until cliffs are calculated per run (interim answer A).
 STORED_OPTIONS: dict[str, Any] = {
-    "include_cliffs": True,
+    "include_cliffs": False,
     "spm": {"geography_kind": "national"},
 }
 STORED_REPORT = ReportDefinition(
@@ -122,7 +131,10 @@ class FakeRerunStore(FakeWindowStore):
     window is, and recorded in ``windows``, where the fake advancer finds it.
 
     ``inputs_failure`` is raised by a re-run's read of its inputs, and
-    ``rerun_failure`` by its create instead of recording it.
+    ``rerun_failure`` by its create instead of recording it. A simulation
+    re-run joins ``joined_simulation_run`` when one is given, and otherwise
+    creates its own run; a report re-run joins ``joined_report_run`` the
+    same way.
     """
 
     report_definition: ReportDefinition | None = STORED_REPORT
@@ -132,6 +144,17 @@ class FakeRerunStore(FakeWindowStore):
     rerun_reads: list[tuple[EconomyRequest, Any]] = field(default_factory=list)
     report_reruns: list[NewReportRerun] = field(default_factory=list)
     simulation_reruns: list[NewSimulationRerun] = field(default_factory=list)
+    joined_simulation_run: FoundSimulationRun | None = None
+    joined_report_run: FoundReportRun | None = None
+    # A keyed window's run on the re-run's versions, which an unforced
+    # re-run joins.
+    joined_window: FoundBudgetWindow | None = None
+    # The side runs a keyed report's re-run joins, by side, in place of the
+    # runs it proposes.
+    joined_side_runs: dict[str, UUID] = field(default_factory=dict)
+    # A keyed report with one simulation on both sides: the store inserts one
+    # run, with the baseline's proposed ID, and names it on both sides.
+    one_run_on_both_sides: bool = False
 
     def read_report_definition(self, report_id: UUID) -> ReportDefinition | None:
         if self.read_failure is not None:
@@ -166,9 +189,12 @@ class FakeRerunStore(FakeWindowStore):
                 reform={},
                 reusable_run=None if reuse is None else baseline_reusable,
             ),
+            # Current law sets no values, on either side.
             reform=SimulationInputs(
                 choice=reform.choice,
-                reform=REFORM,
+                reform=REFORM
+                if reform.choice.policy_id or reform.choice.dynamic_id
+                else {},
                 reusable_run=None if reuse is None else reform_reusable,
             ),
         )
@@ -205,20 +231,69 @@ class FakeRerunStore(FakeWindowStore):
             },
         )
 
-    def create_window_rerun(self, rerun: NewWindowRerun) -> None:
+    def create_window_rerun(self, rerun: NewWindowRerun) -> FoundBudgetWindow:
         if self.rerun_failure is not None:
             raise self.rerun_failure
         self.windows.append(rerun)
+        # As the store does, a recalculating re-run joins nothing.
+        if self.joined_window is not None and not rerun.recalculate:
+            return self.joined_window
+        return FoundBudgetWindow(
+            report_id=rerun.report_id,
+            report_inserted=False,
+            window_run=FoundWindowRun(
+                id=rerun.window_run_id, inserted=True, status=ReportRunStatus.PENDING
+            ),
+            years=tuple(
+                FoundWindowYear(
+                    year=window_year.year,
+                    report_run_id=window_year.report_run_id,
+                    baseline=FoundSide(
+                        simulation_id=window_year.baseline.simulation_id,
+                        simulation_run_id=window_year.baseline.simulation_run_id,
+                        run_inserted=True,
+                    ),
+                    reform=FoundSide(
+                        simulation_id=window_year.reform.simulation_id,
+                        simulation_run_id=window_year.reform.simulation_run_id,
+                        run_inserted=True,
+                    ),
+                )
+                for window_year in rerun.years
+            ),
+        )
 
-    def create_report_rerun(self, rerun: NewReportRerun) -> None:
+    def create_report_rerun(self, rerun: NewReportRerun) -> FoundReportRun:
         if self.rerun_failure is not None:
             raise self.rerun_failure
         self.report_reruns.append(rerun)
+        # As the store does, a forced re-run joins nothing.
+        if self.joined_report_run is not None and not rerun.forced:
+            return self.joined_report_run
+        return FoundReportRun(
+            id=rerun.run_id,
+            inserted=True,
+            status=ReportRunStatus.PENDING,
+            baseline_simulation_run_id=self.joined_side_runs.get(
+                "baseline", rerun.baseline.simulation_run_id
+            ),
+            reform_simulation_run_id=self.joined_side_runs.get(
+                "reform",
+                rerun.baseline.simulation_run_id
+                if self.one_run_on_both_sides
+                else rerun.reform.simulation_run_id,
+            ),
+        )
 
-    def create_simulation_rerun(self, rerun: NewSimulationRerun) -> None:
+    def create_simulation_rerun(self, rerun: NewSimulationRerun) -> FoundSimulationRun:
         if self.rerun_failure is not None:
             raise self.rerun_failure
         self.simulation_reruns.append(rerun)
+        if self.joined_simulation_run is not None:
+            return self.joined_simulation_run
+        return FoundSimulationRun(
+            id=rerun.run_id, inserted=True, status=SimulationStatus.PENDING
+        )
 
 
 class UnusedAdvancer:

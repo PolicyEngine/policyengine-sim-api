@@ -26,9 +26,7 @@ from policyengine_simulation_persistence import (
     NewHouseholdReport,
     NewHouseholdReportRerun,
     ReportRunStatus,
-    ReportRunTrigger,
     RerunRecordDeletedError,
-    RunInProgressError,
     RunVersions,
     SideDefinition,
     SimulationChoice,
@@ -155,10 +153,29 @@ def _stored_report(
     return report
 
 
+def _succeed_first_runs(connection: Connection, report: NewHouseholdReport) -> None:
+    """Mark the report's first run and its side runs succeeded, as the superuser."""
+    for table_name, run_ids in (
+        ("report_runs", [report.run_id]),
+        ("simulation_runs", list(report.simulation_run_ids)),
+    ):
+        connection.execute(
+            text(
+                f"UPDATE public.{table_name} SET status = 'succeeded', "  # noqa: S608  # fixed table names
+                "completed_at = now() WHERE id = ANY(:run_ids)"
+            ),
+            {"run_ids": run_ids},
+        )
+
+
 def _rerun_of(
     report: NewHouseholdReport, catalog: CatalogVersion
 ) -> NewHouseholdReportRerun:
-    """Return the report's re-run on ``catalog``: a new run of each side's own."""
+    """Return the report's re-run on ``catalog``: a new run of each side's own.
+
+    Forced, as the service re-runs a household report without keys
+    (interim answer B).
+    """
     return NewHouseholdReportRerun(
         report_id=report.id,
         run_id=uuid4(),
@@ -175,6 +192,7 @@ def _rerun_of(
                 simulation_id=report.reform.simulation_id, simulation_run_id=uuid4()
             )
         ),
+        forced=True,
     )
 
 
@@ -255,7 +273,8 @@ def test_a_household_reports_rerun_is_a_manual_run_of_its_own_simulations(
         side.simulation_run_id for side in rerun.sides
     )
     assert report_run["report_id"] == report.id
-    assert report_run["trigger"] == ReportRunTrigger.MANUAL
+    # Answer 6: the trigger is each user's record's, not the shared run's.
+    assert report_run["trigger"] is None
     assert report_run["status"] == ReportRunStatus.PENDING
     assert report_run["modal_call_id"] is None
     assert (
@@ -292,6 +311,35 @@ def test_a_household_reports_rerun_is_a_manual_run_of_its_own_simulations(
     assert first_run["status"] == ReportRunStatus.FAILED
 
 
+def test_a_rerun_on_the_versions_of_a_succeeded_run_is_a_forced_extra_run(
+    public_api_database_url,
+) -> None:
+    """Interim answer B: a household report has no keys yet, so nothing joins.
+
+    Its runs are marked forced, so the one-unfailed-run indexes leave them
+    out beside the succeeded runs on the same versions.
+    """
+    with rolled_back_transaction(public_api_database_url) as connection:
+        catalog, _ = _catalogs(connection)
+        report = _stored_report(connection, catalog, first_run_ended=False)
+        _succeed_first_runs(connection, report)
+        act_as_the_service(connection)
+        rerun = replace(_rerun_of(report, catalog), versions=VERSIONS)
+
+        _store_on(connection).create_report_rerun(rerun)
+        report_run = _row(connection, "report_runs", rerun.run_id)
+        side_runs = [
+            _row(connection, "simulation_runs", run_id)
+            for run_id in rerun.simulation_run_ids
+        ]
+        first_run = _row(connection, "report_runs", report.run_id)
+
+    assert report_run["forced"] is True
+    assert [side_run["forced"] for side_run in side_runs] == [True, True]
+    assert first_run["forced"] is False
+    assert first_run["status"] == ReportRunStatus.SUCCEEDED
+
+
 def test_a_rerun_of_a_report_of_the_baseline_alone_names_no_reform_run(
     public_api_database_url,
 ) -> None:
@@ -316,16 +364,17 @@ def test_a_rerun_of_a_report_of_the_baseline_alone_names_no_reform_run(
     assert baseline_runs == 2
 
 
-def test_a_household_report_with_a_run_under_way_is_not_rerun(
+def test_a_forced_household_rerun_beside_a_run_under_way_is_an_extra_run(
     public_api_database_url,
 ) -> None:
+    """Answer 3: a forced run is never refused, so the 409 goes."""
     with rolled_back_transaction(public_api_database_url) as connection:
         catalog, later_catalog = _catalogs(connection)
         report = _stored_report(connection, catalog, first_run_ended=False)
         act_as_the_service(connection)
+        rerun = _rerun_of(report, later_catalog)
 
-        with pytest.raises(RunInProgressError) as under_way:
-            _store_on(connection).create_report_rerun(_rerun_of(report, later_catalog))
+        created = _store_on(connection).create_report_rerun(rerun)
         report_runs = _count(connection, "report_runs", "report_id", report.id)
         baseline_runs = _count(
             connection,
@@ -333,9 +382,19 @@ def test_a_household_report_with_a_run_under_way_is_not_rerun(
             "simulation_id",
             report.baseline.simulation_id,
         )
+        first_run = _row(connection, "report_runs", report.run_id)
 
-    assert under_way.value.run_id == report.run_id
-    assert (report_runs, baseline_runs) == (1, 1)
+    assert (created.id, created.inserted, created.status) == (
+        rerun.run_id,
+        True,
+        ReportRunStatus.PENDING,
+    )
+    assert (
+        created.baseline_simulation_run_id,
+        created.reform_simulation_run_id,
+    ) == rerun.simulation_run_ids
+    assert (report_runs, baseline_runs) == (2, 2)
+    assert first_run["status"] == ReportRunStatus.PENDING
 
 
 def test_a_rerun_naming_a_deleted_report_or_simulation_is_refused_by_its_key(
@@ -414,6 +473,7 @@ def test_a_rerun_whose_commit_fails_may_have_been_written() -> None:
                     simulation_id=uuid4(), simulation_run_id=uuid4()
                 ),
                 reform=None,
+                forced=True,
             )
         )
 

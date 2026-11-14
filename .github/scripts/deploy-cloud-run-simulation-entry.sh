@@ -129,9 +129,10 @@ esac
   || fail "TAG is invalid"
 [[ "${ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.gserviceaccount\.com$ ]] \
   || fail "ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT is invalid"
-# The bucket that keeps v2 simulation output files for good: a report
-# reuses only a succeeded run whose file is in it. The service compares
-# output URIs with it and never reads it.
+# The bucket that keeps v2 simulation output files for good. The service
+# reads it into its settings and uses it for nothing (a report joins its
+# sides' simulation runs by version set); it never reads the bucket. The
+# setting and this check go with the run-reuse search.
 [[ "${V2_SIMULATION_OUTPUT_BUCKET_VALUE}" =~ ^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$ ]] \
   || fail "V2_SIMULATION_OUTPUT_BUCKET_VALUE is invalid"
 [[ "${ENTRYPOINT_MIN_INSTANCES}" =~ ^[0-9]+$ ]] \

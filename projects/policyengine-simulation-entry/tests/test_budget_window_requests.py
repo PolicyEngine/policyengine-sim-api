@@ -28,9 +28,9 @@ def test_a_window_names_its_years_from_its_first() -> None:
     assert request.years == tuple(range(2026, 2036))
 
 
-def test_a_window_stores_the_options_a_report_without_cliffs_stores() -> None:
-    # Reuse compares a report's options, so a window's years and single-year
-    # reports without cliffs reuse each other's runs.
+def test_a_windows_calculation_options_ask_for_no_cliffs() -> None:
+    # The report stores the SPM selection alone (stored_options); its years
+    # share runs with single-year reports by key.
     assert _request().options() == {
         "include_cliffs": False,
         "spm": {"geography_kind": "national"},

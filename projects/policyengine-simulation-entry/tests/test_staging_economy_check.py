@@ -1,13 +1,16 @@
 """The staging economy check, run on every staging deploy.
 
-``simulation-staging-economy-check.sh`` creates a small economy report,
-current law against current law for Wales in 2026, through the deployed
-candidate's ``POST /reports``, then follows its run through
-``GET /reports/{report_id}`` and requires it to succeed. It runs after the
-v2 manifest's default has moved to the release's worker, so the report runs
-on the release's own coordinator. Once a .py version's first check has
-succeeded, later checks on it reuse those simulation runs, and check the
-coordinator's use of their stored output.
+``simulation-staging-economy-check.sh`` sends a small economy report
+request, current law against current law for Wales in 2026, through the
+deployed candidate's ``POST /reports``, then forces a new run of the report
+with ``POST /reports/{report_id}/runs``, follows that run through
+``GET /reports/{report_id}`` and requires it to succeed. The request reuses
+the simulation runs an earlier check on the same versions calculated (and,
+once reports are found by key, ends on that check's report run; C1 · 24), so
+only a forced run, which nothing joins or reuses, calculates on every deploy
+(answer 3). It runs after the v2 manifest's default has moved to the
+release's worker, so the run calculates on the release's own coordinator and
+workers.
 """
 
 from __future__ import annotations
@@ -28,12 +31,15 @@ READY_SCRIPT = "simulation-staging-economy-ready.sh"
 CHECK_JOB = "staging_economy_check"
 BASE_URL = "https://policyengine-simulation-entry-staging-s-123.a.run.app"
 REPORT_ID = "00000000-0000-4000-8000-0000000000e1"
+# The forced run the check waits for, and the run the create ended on.
 REPORT_RUN_ID = "00000000-0000-4000-8000-0000000000e2"
 OLDER_RUN_ID = "00000000-0000-4000-8000-0000000000e3"
+FOUND_RUN_ID = "00000000-0000-4000-8000-0000000000e4"
 ACCESS_TOKEN = "test-access-token"
 
-# The fake curl answers the token request, the submission and each poll in
-# turn, and keeps each request body it was sent on standard input.
+# The fake curl answers the token request, the submission, the forced re-run
+# and each poll in turn, and keeps each request body it was sent on standard
+# input.
 FAKE_CURL = r"""
 output=""
 url=""
@@ -54,6 +60,14 @@ if [[ "${data}" == "@-" ]]; then
   cat > "${FAKE_STATE}/body-${calls}.json"
 fi
 case "${method} ${url}" in
+  "POST ${FAKE_BASE_URL}/reports/"*"/runs")
+    echo "${url}" > "${FAKE_STATE}/rerun-url"
+    if [[ "${FAKE_RERUN_STATUS}" == "TRANSPORT" ]]; then
+      exit 28
+    fi
+    printf '%s' "${FAKE_RERUN_BODY}" > "${output}"
+    printf '%s' "${FAKE_RERUN_STATUS}"
+    ;;
   "POST https://issuer.example/oauth/token")
     printf '{"access_token": "%s"}' "${FAKE_ACCESS_TOKEN}" > "${output}"
     printf '200'
@@ -82,14 +96,22 @@ esac
 """
 CREATED = {
     "report_id": REPORT_ID,
-    "report_run_id": REPORT_RUN_ID,
-    "status": "pending",
+    "report_run_id": FOUND_RUN_ID,
+    "status": "succeeded",
     "baseline_simulation_id": "00000000-0000-4000-8000-0000000000f1",
     "baseline_simulation_run_id": "00000000-0000-4000-8000-0000000000f2",
     "baseline_reused": True,
     "reform_simulation_id": "00000000-0000-4000-8000-0000000000f3",
     "reform_simulation_run_id": "00000000-0000-4000-8000-0000000000f4",
     "reform_reused": False,
+}
+FORCED = {
+    **CREATED,
+    "report_run_id": REPORT_RUN_ID,
+    "status": "pending",
+    "baseline_simulation_run_id": "00000000-0000-4000-8000-0000000000f5",
+    "baseline_reused": False,
+    "reform_simulation_run_id": "00000000-0000-4000-8000-0000000000f6",
 }
 
 
@@ -140,13 +162,15 @@ def _run(fakes, tmp_path, answers: list[str], **overrides):
         "FAKE_ACCESS_TOKEN": ACCESS_TOKEN,
         "FAKE_SUBMISSION_STATUS": "201",
         "FAKE_SUBMISSION_BODY": json.dumps(CREATED),
+        "FAKE_RERUN_STATUS": "201",
+        "FAKE_RERUN_BODY": json.dumps(FORCED),
         **overrides,
     }
     result = run_script(CHECK_SCRIPT, BASE_URL + "/", env=fakes.env(**environment))
     return result, state
 
 
-def test_the_check_creates_a_small_report_and_waits_for_its_run_to_succeed(
+def test_the_check_forces_a_new_run_of_the_small_report_and_waits_for_it(
     fakes, tmp_path
 ):
     result, state = _run(
@@ -161,7 +185,8 @@ def test_the_check_creates_a_small_report_and_waits_for_its_run_to_succeed(
 
     assert result.returncode == 0, result.stderr
     assert REPORT_ID in result.stdout
-    assert "reused" in result.stdout
+    assert FOUND_RUN_ID in result.stdout
+    assert f"forced run {REPORT_RUN_ID}" in result.stdout
     token_request = json.loads((state / "body-1.json").read_text(encoding="utf-8"))
     assert token_request["grant_type"] == "client_credentials"
     submission = json.loads((state / "body-2.json").read_text(encoding="utf-8"))
@@ -175,6 +200,11 @@ def test_the_check_creates_a_small_report_and_waits_for_its_run_to_succeed(
         "reform": {"policy_id": None, "dynamic_id": None},
         "include_cliffs": False,
     }
+    forced_rerun = json.loads((state / "body-3.json").read_text(encoding="utf-8"))
+    assert forced_rerun == {"force": True}
+    assert (state / "rerun-url").read_text(encoding="utf-8").strip() == (
+        f"{BASE_URL}/reports/{REPORT_ID}/runs"
+    )
     assert (state / "read-url").read_text(encoding="utf-8").strip() == (
         f"{BASE_URL}/reports/{REPORT_ID}"
     )
@@ -203,7 +233,7 @@ def test_a_failed_run_fails_the_check_with_its_error_message(fakes, tmp_path):
     assert fakes.calls("sleep") == []
 
 
-def test_a_newest_run_other_than_the_created_one_fails_the_check(fakes, tmp_path):
+def test_a_newest_run_other_than_the_forced_one_fails_the_check(fakes, tmp_path):
     result, _ = _run(
         fakes, tmp_path, [f"200 {_report('succeeded', run_id=OLDER_RUN_ID)}"]
     )
@@ -233,6 +263,53 @@ def test_a_refused_submission_fails_the_check_with_its_answer(
     assert result.returncode == 1
     assert status in result.stderr
     assert body["code"] in result.stderr
+    assert not (state / "rerun-url").exists()
+    assert not (state / "polls").exists()
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        ("404", {"code": "unknown_report", "detail": "no report"}),
+        ("503", {"code": "modal_call_refused", "detail": "x", "report_id": REPORT_ID}),
+    ],
+)
+def test_a_refused_forced_rerun_fails_the_check_with_its_answer(
+    fakes, tmp_path, status, body
+):
+    result, state = _run(
+        fakes,
+        tmp_path,
+        [],
+        FAKE_RERUN_STATUS=status,
+        FAKE_RERUN_BODY=json.dumps(body),
+    )
+
+    assert result.returncode == 1
+    assert f"/reports/{REPORT_ID}/runs answered {status}" in result.stderr
+    assert body["code"] in result.stderr
+    assert not (state / "polls").exists()
+
+
+def test_a_forced_rerun_that_gets_no_answer_fails_the_check(fakes, tmp_path):
+    """It may have created a run, so it isn't asked again."""
+    result, state = _run(fakes, tmp_path, [], FAKE_RERUN_STATUS="TRANSPORT")
+
+    assert result.returncode == 1
+    assert "may have created a run" in result.stderr
+    assert not (state / "polls").exists()
+
+
+def test_a_forced_rerun_naming_no_run_fails_the_check(fakes, tmp_path):
+    result, state = _run(
+        fakes,
+        tmp_path,
+        [],
+        FAKE_RERUN_BODY=json.dumps({**FORCED, "report_run_id": None}),
+    )
+
+    assert result.returncode == 1
+    assert "the forced re-run named no report run" in result.stderr
     assert not (state / "polls").exists()
 
 
@@ -266,7 +343,7 @@ def test_a_read_that_gets_no_answer_is_asked_again(fakes, tmp_path):
 
 
 def test_every_request_has_a_time_limit(fakes, tmp_path):
-    """The submission, which isn't asked again, may take Cloud Run's full minute."""
+    """The submission and the re-run, never asked again, may take a full minute."""
     result, _ = _run(fakes, tmp_path, [f"200 {_report('succeeded')}"])
 
     assert result.returncode == 0, result.stderr
@@ -276,6 +353,7 @@ def test_every_request_has_a_time_limit(fakes, tmp_path):
     assert limits == {
         "https://issuer.example/oauth/token": "30",
         f"{BASE_URL}/reports": "60",
+        f"{BASE_URL}/reports/{REPORT_ID}/runs": "60",
         f"{BASE_URL}/reports/{REPORT_ID}": "30",
     }
 

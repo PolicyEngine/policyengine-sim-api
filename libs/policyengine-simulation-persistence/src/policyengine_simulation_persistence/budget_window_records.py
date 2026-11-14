@@ -5,13 +5,16 @@ of a window of 1 to 75 consecutive years. It is stored as an economy report
 whose ``budget_window_size`` is the window's length, with one
 ``budget_window_runs`` row for its calculation and, for each year, a report
 run naming that row and the year. Each year has its own baseline and reform
-simulations, of that year, unless it reuses a run that already succeeded,
-so a year's run can be reused by a single-year report, and the reverse. The
-report names its first year's simulations.
+simulations, of that year; a window created before keys could instead name,
+on a year's side, a run that already succeeded (``ReportSimulation.reused``).
+The report names its first year's simulations.
 
-The simulation service creates every row pending with no Modal call, then
-starts the first years; each year's coordinator starts the next ones (see
-``policyengine_stage12_persistence.BudgetWindowStore``).
+``insert_budget_window_report`` creates such a window without keys, as
+windows were created before C1 · 27; the simulation service now finds or
+creates windows by key (``keyed_window_records``), and tests use this to
+store a window created before keys. Every row is pending with no Modal
+call; the service then starts the first years, and each year's coordinator
+starts the next ones (see ``policyengine_stage12_persistence.BudgetWindowStore``).
 """
 
 from __future__ import annotations
@@ -215,30 +218,30 @@ def insert_budget_window_report(
         connection.execute(
             insert(report_runs),
             [
-                year_run_row(
+                _year_run_row(
                     window_year,
                     report_id=report.id,
                     window_run_id=report.window_run_id,
                     versions=report.versions,
-                    trigger=ReportRunTrigger.INITIAL,
                 )
                 for window_year in report.years
             ],
         )
 
 
-def year_run_row(
-    window_year: WindowYearRuns,
+def _year_run_row(
+    window_year: BudgetWindowYear,
     *,
     report_id: UUID,
     window_run_id: UUID,
     versions: RunVersions,
-    trigger: ReportRunTrigger,
 ) -> dict[str, Any]:
-    """Return a year's report run in a window run, pending with no call, as inserted.
+    """Return a year's report run in a window's first window run, pending, unforced.
 
-    ``window_year`` is a new window's year or a re-run's; ``trigger`` says
-    which.
+    As windows were created before keys: trigger ``initial``.
+
+    Keyed windows' year runs, which name no trigger, are
+    ``keyed_window_records.window_year_run_row``'s.
     """
     return {
         "id": window_year.report_run_id,
@@ -250,6 +253,7 @@ def year_run_row(
         "country_package_version": versions.country_package_version,
         "policyengine_version": versions.policyengine_version,
         "status": ReportRunStatus.PENDING,
-        "trigger": trigger,
+        "trigger": ReportRunTrigger.INITIAL,
         "modal_call_id": None,
+        "forced": False,
     }

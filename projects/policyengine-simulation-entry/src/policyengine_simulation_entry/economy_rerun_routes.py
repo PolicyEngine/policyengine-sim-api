@@ -1,25 +1,37 @@
 """The re-run routes: calculate a stored report or simulation again as a new run.
 
 - ``POST /reports/{report_id}/runs`` (permission ``simulation:submit``)
-  creates the stored report's new run on the v2 version manifest's default
-  worker and starts its coordinator, answering 201 with the report's ID, the
-  new run's ID and status, and each side's simulation and simulation run.
-  ``{"force": true}`` calculates both simulations again; otherwise a side
-  reuses a run of its own simulation that succeeded on the same versions.
-  A budget-window report's new run is a budget-window run with a report run
-  per year, up to five of them started at once as a new window's are; it
-  answers as the budget-window create does, naming the window run and every
-  year's runs. A household report's new run gives each side a new run of its
-  own household simulation, never reusing one, started by one household
-  function call; it answers as the household report create does.
-- ``POST /simulations/{simulation_id}/runs`` (``simulation:submit``) creates
-  the stored simulation's new run and starts its simulation function,
-  answering 201 with the simulation's ID, the new run's ID and its status.
+  joins the stored report's run on the v2 version manifest's default
+  worker's versions, or creates its new run and starts its coordinator,
+  answering 201 with the report's ID, the run's ID and status, and each
+  side's simulation and simulation run. A report created by key has each
+  side join its simulation's run on those versions, or get a new one.
+  ``{"force": true}``, and every re-run of a report created before keys,
+  calculates both simulations again, as an extra run marked forced that
+  nothing joins.
+  A budget-window report's run is a budget-window run with a report run
+  per year, a new one's first five started at once as a new window's are;
+  it answers as the budget-window create does, naming the window run and
+  every year's runs. A household report's re-run joins or creates its run as an
+  economy report's does, each side's run of its own household simulation,
+  and a run it created is started by one household function call; it
+  answers as the household report create does.
+- ``POST /simulations/{simulation_id}/runs`` (``simulation:submit``) joins
+  the stored simulation's run on the current versions that hasn't failed
+  and wasn't forced, pending, running or succeeded, or else creates one and
+  starts its
+  simulation function, answering 201 with the simulation's ID, the run's ID
+  and its status.
 
 Every earlier run is kept. A re-run answers 404 for a record that does not
-exist, and 409 when the record has a run pending or running
-(``run_in_progress``, naming it in ``run_id``) or is one this service does
-not re-run (``rerun_not_supported``); then nothing is written. The other
+exist, and 409 for a record this service does not re-run
+(``rerun_not_supported``); then nothing is written. No re-run is refused
+while a run is under way. Without ``force``, a keyed economy or household
+report's re-run joins the report's run on the current versions that
+hasn't failed and wasn't forced, pending, running or succeeded, and
+answers it with no new call. A report stored asking for
+cliff impacts answers 422 ``cliffs_not_available`` until they are
+calculated per run. The other
 answers are the creates': 400 or 422 when the stored record cannot be
 calculated on the current catalog version, 503 with ``Retry-After`` before
 any write or when Modal refused the new run's call (then the run was failed,
@@ -109,11 +121,8 @@ class EconomyService(EconomySubmissions, EconomyReruns, Protocol):
     """Create, read and re-run economy reports and simulations."""
 
 
-# The run a 409 run_in_progress names, by the record re-run.
-_RUN_UNDER_WAY: dict[RecordName, str] = {
-    "report": "the report's budget-window run, or else its report run",
-    "simulation": "the simulation's run",
-}
+# Why a re-run answers 409; no run under way refuses one.
+_CONFLICT = "the service does not re-run it (rerun_not_supported)"
 # The 400 codes that name a stored record's own rows on its re-run: a
 # report's re-run also names its stored simulations (missing_reference) and
 # a household report's its household.
@@ -137,12 +146,27 @@ _HOUSEHOLD_ANSWERS: dict[RecordName, dict[int, str]] = {
     },
     "simulation": {503: "Economy runs are not configured"},
 }
+# A report stored before C1 · 27 asking for cliff impacts is refused until
+# they are calculated per run (C1 · 24's interim answer A).
+_STORED_CLIFFS: dict[RecordName, str] = {
+    "report": (
+        "; or the stored report asks for cliff impacts, which are not "
+        "calculated yet (cliffs_not_available, located under report)"
+    ),
+    "simulation": "",
+}
 
 
 def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
     """Return every answer a re-run of ``record`` declares."""
     return {
-        201: {"description": f"The {record}'s new run was created and started"},
+        201: {
+            "description": (
+                f"The {record}'s run the re-run ended on: one it joined, pending, "
+                "running or succeeded on the default worker's versions, which "
+                "gets no new call, or one it created and started"
+            )
+        },
         400: {
             "description": (
                 f"The stored {record}'s region, dataset, policy or dynamic is "
@@ -161,10 +185,7 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
         },
         409: {
             "description": (
-                f"The {record} is not re-run now, and nothing was written: it "
-                "has a run pending or running (run_in_progress; run_id names "
-                f"{_RUN_UNDER_WAY[record]}), or the service does not re-run it "
-                "(rerun_not_supported)"
+                f"The {record} is not re-run, and nothing was written: {_CONFLICT}"
             ),
             **ERROR_ANSWER,
         },
@@ -173,8 +194,8 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
                 "The ID or the body is malformed, or the stored policies and "
                 "dynamics cannot be calculated on the current catalog version "
                 "(missing_parameters or overlapping_parameters, located under "
-                f"{record}){_HOUSEHOLD_ANSWERS[record].get(422, '')}; nothing was "
-                "written"
+                f"{record}){_HOUSEHOLD_ANSWERS[record].get(422, '')}"
+                f"{_STORED_CLIFFS[record]}; nothing was written"
             ),
             "model": EconomyRequestUnprocessable,
         },
@@ -209,7 +230,7 @@ def _rerun_failure_response(
     if isinstance(error, EconomyRerunConflictError):
         return error_response(
             status.HTTP_409_CONFLICT,
-            EconomyError(code=error.code, detail=error.detail, run_id=error.run_id),
+            EconomyError(code=error.code, detail=error.detail),
         )
     return submission_failure_response(error, record)
 
@@ -268,14 +289,19 @@ def add_economy_rerun_routes(
         description=(
             "Create the stored report's new run on the v2 version manifest's "
             "default worker, and start it; every earlier run is kept. Without "
-            "force, a side reuses a run of its own simulation that succeeded "
-            "on the same versions; with force, both simulations are "
-            "calculated again. A budget-window report's new run is a "
-            "budget-window run with a report run per year, up to five of them "
-            "started at once, each year on its own year's simulations. A "
-            "household report's new run calculates its stored household in "
-            "the report's year with a new run of each side's own household "
-            "simulation, never reused, all in one household function call."
+            "force, a report created by key joins the "
+            "report's run on those versions that hasn't failed and wasn't "
+            "forced, pending, running or succeeded, and answers it with no new "
+            "call; otherwise each side joins its simulation's run on those "
+            "versions or gets a new one. With force, and always for a report "
+            "created before keys, the report's simulations are calculated "
+            "again, as an extra run marked forced that nothing joins. A report "
+            "stored asking for cliff impacts is refused (422 "
+            "cliffs_not_available). A budget-window report's run is a "
+            "budget-window run with a report run per year, a new one's first "
+            "five started at once, each year on its own year's simulations. "
+            "A household report's run calculates its stored household in the "
+            "report's year, in one household function call."
         ),
         operation_id="rerun_report",
         status_code=status.HTTP_201_CREATED,
@@ -305,9 +331,10 @@ def add_economy_rerun_routes(
         SIMULATION_RUNS_PATH,
         summary="Re-run an economy simulation",
         description=(
-            "Create the stored simulation's new run on the v2 version "
-            "manifest's default worker, and start it; every earlier run is "
-            "kept, and the new run is always calculated."
+            "Join the stored simulation's run on the v2 version manifest's "
+            "default worker's versions that hasn't failed and wasn't forced, "
+            "pending, running or succeeded, or else create one and start it; "
+            "every earlier run is kept."
         ),
         operation_id="rerun_simulation",
         status_code=status.HTTP_201_CREATED,

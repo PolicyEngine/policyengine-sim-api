@@ -1,20 +1,26 @@
 """The economy routes: create a report or a simulation, and start its calculation.
 
-- ``POST /reports`` (permission ``simulation:submit``) creates an economy
-  report, its simulations and its first run, and starts the report run's
-  coordinator, answering 201 with the report's ID, its run's ID and status,
+- ``POST /reports`` (permission ``simulation:submit``) finds or creates an
+  economy report and its simulations by key, and joins its run on the
+  current versions or creates one, starting the coordinator only for a run
+  it created, answering 201 with the report's ID, its run's ID and status,
   and each side's simulation and simulation run. With ``report_type``
-  ``budget_window`` it creates a budget-window report with a report run per
-  year and starts up to its first five years, answering 201 with the report, the
-  first year's run, the window run, its status and every year's runs. With
-  ``household`` it creates a household report, a household simulation and
-  run for its baseline and any reform, and its first run, and starts one
-  household function call for the report run, answering 201 with the
-  report, its run, its status, its year and each side's simulation and
-  simulation run.
-- ``POST /simulations`` (``simulation:submit``) creates a standalone
-  economy simulation and its first run, and starts the run's simulation
-  function, answering 201 with the simulation's ID, its run's ID and status.
+  ``budget_window`` it finds or creates a budget-window report by key, each
+  year's simulations by their year's keys, and joins its window run on the
+  current versions or creates one with a report run per year, starting up
+  to the first five years only of a window run it created, answering 201
+  with the report, the first year's run, the window run, its status and
+  every year's runs. With
+  ``household`` it finds or creates a household report and a household
+  simulation for its baseline and any reform by key, and joins its run on
+  the current versions or creates one, starting one household function
+  call only for a run it created, answering 201 with the report, its run,
+  its status, its year and each side's simulation and simulation run.
+- ``POST /simulations`` (``simulation:submit``) finds or creates a
+  standalone economy simulation by key and joins or creates its run on the
+  current versions, starting the run's simulation function only for a run
+  it created, answering 201 with the simulation's ID, its run's ID and
+  status.
 - ``GET /reports/{report_id}`` and ``GET /simulations/{simulation_id}``
   (``simulation:read``) return the record with its newest run's status,
   versions, error message and times. The Public API reads results from the
@@ -24,8 +30,9 @@ A refused request answers 400 (a row it names, or a function it needs, is
 missing; ``code`` says which) or 422 (its fields, or the stored values it
 names, cannot be calculated), and writes nothing. Either route answers 503
 with ``Retry-After`` when it is not configured or a dependency cannot be
-read, before writing anything, or when Modal refused the run's call: then
-the record was created and its run failed, and the answer names it. Every
+read, before writing anything, or when Modal refused the call of the run
+the request created: then the record it found or created is kept, that
+run failed, and the answer names the record. Every
 500 the routes answer is the JSON error with code ``internal_error``, and may
 follow a write; a failure outside a handler's ``try`` gets the request
 middleware's own plain-text 500, which the Public API reads alike.
@@ -135,7 +142,9 @@ _UNPROCESSABLE = {
         "cannot be calculated; nothing was written. Stored values that cannot "
         "be calculated carry a code: missing_parameters, "
         "overlapping_parameters, or household_not_calculable for a household "
-        "report's household"
+        "report's household; a report asking for cliffs (include_cliffs: "
+        "true) carries cliffs_not_available until each simulation run's own "
+        "cliff calculation exists"
     ),
     "model": EconomyRequestUnprocessable,
 }
@@ -171,9 +180,10 @@ def _unavailable_description(record: RecordName) -> dict[str, Any]:
         "description": (
             "Economy runs are not configured, or the v2 version manifest or the "
             "database cannot be read, and nothing was written; or Modal refused "
-            "the run's call, or didn't accept it in time "
-            f"(modal_call_refused): then the {record} named by {record}_id was "
-            "created and its run failed. Retry after Retry-After seconds"
+            "the call of the run this request created, or didn't accept it in "
+            f"time (modal_call_refused): then the {record} named by {record}_id, "
+            "found or created, is kept and that run failed. Retry after "
+            "Retry-After seconds"
         ),
         "headers": RETRY_AFTER_HEADER,
         **ERROR_ANSWER,
@@ -531,18 +541,26 @@ def _submission_routes(
         REPORTS_PATH,
         summary="Create an economy, budget-window or household report",
         description=(
-            "Create an economy report comparing a baseline and a reform "
-            "simulation of one region's data for one year, on the v2 version "
-            "manifest's default worker, and start its first run. A side whose "
-            "simulation already succeeded on the same versions reuses that run. "
+            "Find or create an economy report comparing a baseline and a "
+            "reform simulation of one region's data for one year, by a key of "
+            "its definition, on the v2 version manifest's default worker: an "
+            "identical request ends on the same report and run. The report's "
+            "run on those versions that hasn't failed and wasn't forced is "
+            "joined, with no new call; otherwise each side joins its "
+            "simulation's run on those versions or gets a new one, and the new "
+            "report run is started. "
             "A budget-window report (report_type budget_window) compares them "
             "in each year of a window of 1 to 75 years, with a report run per "
-            "year, at most five running at once; each year reuses its own "
-            "year's runs. "
+            "year, at most five running at once, found or created by key as "
+            "an economy report is: its window run on the current versions is "
+            "joined, and each year's sides join their simulations' runs, which "
+            "a single-year report of that year shares. "
             "A household report (report_type household) calculates one stored "
             "household for its default year under a baseline and, optionally, "
-            "a reform, each a new household simulation run, all in one "
-            "household function call."
+            "a reform, found or created by a key of its definition as an "
+            "economy report is, its run on the current versions joined or "
+            "created; a run it created is started by one household function "
+            "call."
         ),
         operation_id="create_report",
         status_code=status.HTTP_201_CREATED,
@@ -550,7 +568,15 @@ def _submission_routes(
             EconomyReportCreated | BudgetWindowReportCreated | HouseholdReportCreated
         ),
         responses={
-            201: {"description": "The report and its first runs were created"},
+            201: {
+                "description": (
+                    "The report the request ended on and its run: a report "
+                    "(economy, budget window or household) found or created by "
+                    "key, with its run (a window's: its window run) on the "
+                    "default worker's versions, joined (no new call) or created "
+                    "and started"
+                )
+            },
             400: _REFUSED,
             403: FORBIDDEN_ANSWER,
             422: _UNPROCESSABLE,
@@ -578,15 +604,23 @@ def _submission_routes(
         SIMULATIONS_PATH,
         summary="Create an economy simulation",
         description=(
-            "Create a standalone economy simulation of one region's data for "
-            "one year under one stored policy and dynamic, on the v2 version "
-            "manifest's default worker, and start its first run."
+            "Find or create a standalone economy simulation of one region's "
+            "data for one year under one stored policy and dynamic, by a key of "
+            "its definition, on the v2 version manifest's default worker, and "
+            "join its run on those versions that hasn't failed and wasn't "
+            "forced, or else create and start one."
         ),
         operation_id="create_simulation",
         status_code=status.HTTP_201_CREATED,
         response_model=EconomySimulationCreated,
         responses={
-            201: {"description": "The simulation and its first run were created"},
+            201: {
+                "description": (
+                    "The simulation the request ended on, found or created by "
+                    "key, and its run on the default worker's versions, joined "
+                    "(no new call) or created and started"
+                )
+            },
             400: _REFUSED,
             403: FORBIDDEN_ANSWER,
             422: _UNPROCESSABLE,

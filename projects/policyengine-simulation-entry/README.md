@@ -122,20 +122,30 @@ the same fields for one policy and dynamic. Neither names a .py version or a
 record ID: the service runs the v2 version manifest's default worker and
 chooses every ID.
 
-The service reads the rows itself and, in one transaction, creates the
-records and their first runs, `pending` with no Modal call ID. A report
-side reuses a simulation run that already succeeded instead of creating
-one, when it is the newest run of the same policy, dynamic, catalog
-version, dataset, region and year on the same country package and .py
-versions, its output file is in the output bucket
-(`V2_SIMULATION_OUTPUT_BUCKET`), a succeeded report run with the same
-options used it, and no report run has refused to reuse it; the two sides
-never name the same run. The service then starts the run's Modal call by
-name: the report run's coordinator, given the report and its run IDs and no
-Stage 12 evaluation record, or a standalone run's simulation function,
-given its run's ID. It records the call's ID, and answers 201 with the
-record's ID, its run's ID and status, and, for a report, each side's
-simulation and run and whether it was reused.
+Identical requests, together or a minute apart, end on the same
+simulation, report and run rows. The service reads the rows itself and, in
+one transaction, finds or creates each record by a key of its definition
+(`definition_key`, with `key_version`): a simulation's is its country,
+policy, dynamic, dataset name, region code, year and SPM selection; a
+report's is its two sides' policies and dynamics, the dataset, region, year
+and SPM selection they share, and its budget window size, with no other
+option; a report also stores a `dataset_independent_key`, the same without
+the dataset. It then joins the report's run on the default worker's
+versions that hasn't failed and wasn't forced, pending, running or
+succeeded, or else finds or creates each simulation's run on those
+versions, catalog version and year (any that hasn't failed and wasn't
+forced, whichever report first calculated it) and creates a report run
+naming them, `pending` with no Modal call ID. Current law against current
+law names one simulation and run on both sides. A report stores only the
+request's SPM selection in `inputs`; `include_cliffs` is passed to the
+calculation but never stored or keyed. Only for a run its own transaction
+created does the service start a Modal call by name: the report run's
+coordinator, given the report and its run IDs and no Stage 12 evaluation
+record, or a standalone run's simulation function, given its run's ID. It
+records the call's ID, and answers 201 with the record's ID, the run's ID
+and status (as read, for a run it joined), and, for a report, each side's
+simulation and run and whether it was reused, which is true for a side
+whose run this request didn't create.
 
 A request is refused before anything is written: with 400 and a `code` when
 a row it names is missing (`unknown_region`, `unknown_dataset` and
@@ -144,30 +154,40 @@ a row it names is missing (`unknown_region`, `unknown_dataset` and
 `missing_reference` are the service's state, such as a catalog version
 missing while a release deploys), and with 422 and a `code` when a policy or
 dynamic sets parameters the catalog version lacks (`missing_parameters`) or
-both set one (`overlapping_parameters`). The routes answer 503 with
+both set one (`overlapping_parameters`), and a report with
+`include_cliffs: true` with 422 `cliffs_not_available`, located at the
+field, until each simulation run's own cliff calculation exists (C1 · 39).
+The routes answer 503 with
 `Retry-After` when the manifest or the database can't be read. When Modal
-refuses the call, or doesn't confirm it within ten seconds, the run (and a
-report run's new simulation runs) is failed at once and the 503
-(`modal_call_refused`) names the record, as `report_id` or `simulation_id`;
+refuses the call, or doesn't confirm it within ten seconds, the run is
+failed at once (a report run alone: its simulation runs may already be
+another report run's, and the next coordinator naming them starts them)
+and the 503 (`modal_call_refused`) names the record, as `report_id` or
+`simulation_id`;
 a run claimed meanwhile is answered with 201. Every 500 is the JSON error
 with code `internal_error`, and may follow a write. No `detail` holds an
 exception's text.
 
 ### Budget windows
 
-`POST /reports` with `report_type` `budget_window` creates a budget-window
-report: the same baseline and reform in each year of a window that starts
-at `year` and lasts `budget_window_size` years (1 to 75, ending by 2200).
-It names the same fields as an economy report, except `include_cliffs`,
-which it refuses; it stores the options of a report without cliffs, so its
-years and single-year reports reuse each other's runs. In one transaction
-the service creates the report (an economy report whose
-`budget_window_size` is set), one `budget_window_runs` row, and for each
-year a report run naming it and the year, with that year's own simulations
-unless a side reuses a run of the same year. It then starts up to the
-earliest five years, as its own role, under the window run's row lock
+`POST /reports` with `report_type` `budget_window` finds or creates a
+budget-window report: the same baseline and reform in each year of a window
+that starts at `year` and lasts `budget_window_size` years (1 to 75, ending
+by 2200). It names the same fields as an economy report, except
+`include_cliffs`, which it refuses. Identical window requests end on the
+same rows (C1 · 24's answer 8): in one transaction the service finds each
+year's simulations by that year's key, which a single-year report of that
+year shares, and the report by its key (an economy report whose
+`budget_window_size` is set, in its key too); it joins the report's
+`budget_window_runs` row on the default worker's catalog and .py versions
+that hasn't failed and isn't a recalculation, or else creates one
+(recording its .py version) and, for each year, a report run naming it and
+the year, on each side's simulation run of that year, found or inserted.
+Only for a window run it created does it then start up to the earliest
+five years, as its own role, under the window run's row lock
 (`BudgetWindowStore.advance_window`): the first year's coordinator input is
-built as an economy report's, and each later year's is derived from it.
+built as an economy report's, and each later year's is derived from it. A
+joined window run is answered as it is, with no new call.
 Each year's coordinator starts the next years when its year ends. The 201
 names the report, the first year's report run, the window run, its status
 and every year's runs. A year Modal refuses fails the window, its waiting
@@ -204,18 +224,27 @@ report holds every value, and `reports.inputs` is `{}`. A household's saved
 SPM selection is applied to both sides.
 
 The service reads the catalog version for the default worker's .py version,
-the household and each side's policy, then creates, in one transaction, a
-household simulation and a pending simulation run for each side (household
-runs are never reused), the report (type `household`) and its pending
-report run. It starts one call of the country's household function with the
-report run's ID (`household_report_run_id`) and each side's household
-contract request, whose calculation ID is the side's simulation run, and
-records the call's ID. The household function claims the report run and each
+the household and each side's policy, checks each side's household contract
+request, then finds or creates, in one transaction, as an economy report's
+create does (C1 · 24's answer 8): each side's household simulation by a key
+of its country, policy, household and year; the report (type `household`)
+by a key of its sides, household and year; and its run on the current
+versions that hasn't failed and wasn't forced, or else a pending report
+run naming each side's simulation run on those versions, found or
+inserted. A policy compared with itself names one simulation and one run on
+both sides. For a report run it created, it starts one call of the
+country's household function with the report run's ID
+(`household_report_run_id`) and each side's household contract request,
+whose calculation ID is the side's simulation run, and records the call's
+ID; a run it joined gets no call. A simulation run another report run is
+calculating is waited for by the household function (C1 · 26). The household function claims the report run and each
 simulation run under its own call, writes each run's result or failure
 document to `household_result`, and marks the report run succeeded only if
 every side's run did; otherwise it fails with the first such side's reason.
 The answer is 201 with the report's and its run's IDs, the run's status,
-the `year` and each side's simulation and simulation run.
+the `year` and each side's simulation and simulation run, for the run the
+request ended on. When Modal refuses the call, only the report run is
+failed: its simulation runs may be another report run's.
 
 Refusals and outages answer as an economy report's do, with three more
 codes: 400 `unknown_household` and `no_household_function` (the default
@@ -232,40 +261,66 @@ A policy setting parameters the catalog version lacks is 422
 `POST /reports/{report_id}/runs` calculates a stored economy report again,
 as a new run on the default worker's versions, and keeps every earlier run.
 Its body is required: `{}` or `{"force": false}` re-runs the report, and
-`{"force": true}` forces a recalculation. The report keeps its simulations:
-each side gets a new run of its own simulation, or, without `force`, reuses
-that simulation's newest run on the same versions, catalog version, dataset,
-region and year that a new report's side could reuse; `force` calculates
-both again. The new report run's trigger is `manual`. The service reads the
+`{"force": true}` forces a recalculation. The report keeps its simulations.
+Without `force`, a re-run of a report created by key while the report has
+a run on the default worker's versions that hasn't failed and wasn't
+forced, pending, running or succeeded, joins that run instead and answers
+it as it is, with both sides reused and no Modal call; a run still under
+way on older versions is no run to join. Otherwise each side joins its
+simulation's run on those versions, catalog version and year that hasn't
+failed and wasn't forced, in any state, or gets a new one, under a new
+report run. `force` calculates both sides again, as an extra run: the new
+report run and both simulation runs are marked `forced`, so nothing joins
+them and the Public API's one-unfailed-run indexes leave them out, and a
+forced re-run is never refused while a run is under way. A report created
+before keys (C1 · 27), whose simulations have none, is always re-run that
+way, forced or not: its runs may have been calculated with plans that
+depended on that report (C1 · 24's interim answer B). The new report run
+names no trigger (answer 6): the Public API's per-user report-run record
+holds it. Such a
+report stored asking for cliff impacts
+(`include_cliffs: true` in its options) is refused with 422
+`cliffs_not_available`, located at `report.inputs.include_cliffs`, until
+cliffs are calculated for each simulation run (C1 · 39; interim answer A).
+The service reads the
 report's region code and dataset name, finds the rows with that code and
 name in the catalog version of the default worker's .py version, and reads
 each simulation's stored policy and dynamic on it.
-A budget-window report's re-run is a new budget-window run, trigger
-`manual`, with `recalculate` set by `force`, and a report run per year. Each
-year's sides are the simulations that year's report run of the report's
-newest window run names (a year that reused another report's run names that
-report's simulation), and each reuses a run of them as a single-year side
-does. Up to five years start at once, as a new window's do (a later year
+A budget-window report's re-run joins or creates a budget-window run with
+a report run per year, as a single-year report's does: a window created by
+key, without `force`, joins its window run on the default worker's versions
+that hasn't failed and isn't a recalculation, with no new call, or else
+gets a new window run whose years' sides join their simulations' runs or
+get new ones. `force`, and every re-run of a window created before keys,
+recalculates it: `recalculate` is set, and its year runs and new
+simulation runs are marked `forced`. Each year's sides are runs of the
+simulations that year's report run of the report's newest window run names
+(a year that named another report's run names that report's simulation).
+Only a window run the re-run created has its first years started. Up to five years start at once, as a new window's do (a later year
 Modal doesn't confirm in time waits for an earlier year's coordinator); it
 answers 201 with the budget-window create's fields, naming the window run
 and every year.
 A household report's re-run calculates its stored household again in the
 report's own year (not the household's current `default_year`), under each
-side's stored policy read on the current catalog version. Each side gets a
-new run of its own household simulation, recording that catalog version:
-household runs are never reused, so `force` changes nothing. The new report
-run (trigger `manual`) is started by one household function call, as a new
+side's stored policy read on the current catalog version, and joins or
+creates its run as an economy report's re-run does: a keyed report's
+unforced re-run joins its run on the current versions, or each side joins
+its own household simulation's run on them or gets a new one; `force`, and
+every re-run of a household report created before keys, makes an extra run
+on a new run of each side, all marked `forced`. A report run it created
+(naming no trigger: answer 6) is started by one household function call, as a new
 household report's is, and the re-run answers 201 with the household report
 create's fields.
-`POST /simulations/{simulation_id}/runs`, with no body, creates and starts
-a stored economy simulation's new run, which is always calculated. Each
-answers 201 with the same fields as the create, naming the new run.
+`POST /simulations/{simulation_id}/runs`, with no body, joins a stored
+economy simulation's run on the default worker's versions, catalog version
+and year that hasn't failed and wasn't forced, pending, running or
+succeeded, and answers it as it is, with no Modal call; only when there is
+none does it create and start a new run. Each answers 201 with the same
+fields as the create, naming the run.
 
 A re-run is refused before anything is written: 404 (`unknown_report`,
 `unknown_simulation`) for a record that doesn't exist; 409
-`run_in_progress`, naming the run in `run_id`, while the record has a run
-pending or running (for a report, its budget-window run, or else its report
-run); 409 `rerun_not_supported` for a household simulation (re-run only
+`rerun_not_supported` for a household simulation (re-run only
 through its report), a household report whose simulation names a dynamic (a
 household calculation applies none), a budget window whose newest window run
 lacks a year, or a record that names no region, dataset, year, simulation,
@@ -277,18 +332,22 @@ household report's own codes: 400 `unknown_household` and
 `no_household_function`, and 422 `household_not_calculable`, located at the
 report's `household_id` or a side's `policy_id`. Without household reports
 configured, a household report the service could re-run answers 503
-`not_configured`. The check for a run under way and the inserts run under a
-transaction-level advisory lock on the record's ID, so two re-runs of one
-record never both create a run. A report's re-run checks only the report's
-own runs: a side whose simulation has a run under way for another report, or
-for the simulation's own re-run, still gets a new run, calculated
-separately. A simulation's re-run checks every run of the simulation,
-including those reports created. A report or simulation deleted after the
+`not_configured`. No re-run is refused while a run is under way, and the
+409 `run_in_progress` is gone. An unforced re-run of a report created by
+key looks for the run to join and inserts under a transaction-level
+advisory lock on the report's ID: a second one waits, then joins the
+first's run. A simulation's re-run takes no lock: the Public API's index on
+runs lets only one run that hasn't failed and wasn't forced exist on a
+version set, so concurrent re-runs end on it. A forced re-run takes none
+either, as nothing joins it. A re-run's answer names
+the run it ended on; `GET /reports/{report_id}` and
+`GET /simulations/{simulation_id}` read the newest run, which may be a later
+one, such as a forced re-run's. A report or simulation deleted after the
 re-run read it answers 404. A report deleted with its simulations answers
-400 `missing_reference`, naming a simulation, when a side gets a new run, as
-a household report's sides always do, and 404 when both sides reuse a run; a
-deleted budget-window report always answers 404, as its window run is
-created first. When Modal refuses the new run's call, the run is failed,
-with a household report's new simulation runs, and the 503
-`modal_call_refused` names the record and the run (`run_id`).
+400 `missing_reference`, naming a simulation, when a side gets a new run,
+and 404 when both sides join a run; a deleted budget-window report always
+answers 404, as its window run is created first. When Modal refuses the new
+run's call, the run is failed, with a forced run's new simulation runs,
+which only it names, and the 503 `modal_call_refused` names the record and
+the run (`run_id`).
 

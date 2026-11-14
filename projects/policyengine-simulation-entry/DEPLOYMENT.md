@@ -119,28 +119,37 @@ fails the check.
 ## Economy reports and simulations
 
 `POST /reports` and `POST /simulations`, and their reads, use the same
-database, Modal token and v2 manifest settings as the household routes, and
-the deploy's `V2_SIMULATION_OUTPUT_BUCKET`, the `beta` or `prod` variable of
-that name: the bucket that keeps v2 simulation output files for good. A
-report reuses only a succeeded simulation run whose file is in it; the
-service compares output URIs with it and never reads the bucket, so it needs
-no storage permission. A missing or invalid bucket name stops the deploy.
+database, Modal token and v2 manifest settings as the household routes. The
+deploy also sets `V2_SIMULATION_OUTPUT_BUCKET`, the `beta` or `prod` variable
+of that name: the bucket that keeps v2 simulation output files for good. A
+missing or invalid bucket name stops the deploy. The service reads it into
+its settings but uses it for nothing: a report joins its sides' simulation
+runs by version set (C1 · 24's answers 4 and 5), not by their files. The
+setting and its deploy check are removed with the run-reuse search, in a
+later change. The service never reads the bucket itself, so it needs no
+storage permission.
 The coordinator and workers get the same bucket from the Modal secret the
 Stage 12 secret sync writes.
 
 ### The staging economy check
 
 Every staging deployment runs `staging_economy_check` when the household
-check runs: `.github/scripts/simulation-staging-economy-check.sh` creates a
-small report, current law against current law for `country/wales` in 2026,
-through the candidate's tagged URL with the authenticated tests' client
-credentials, follows it through `GET /reports/{report_id}`, and requires its
-run to succeed within 30 minutes. `deployment_ready` requires the check to
-pass in staging, so a failure stops the production deployment. Each run adds
-a report and its runs to the staging database. Once a .py version's first
-check has succeeded, later checks on that version reuse its simulation runs,
-so they check the coordinator's use of stored outputs rather than the
-workers', which the v2 deployment's own validation calls.
+check runs: `.github/scripts/simulation-staging-economy-check.sh` sends a
+small report request, current law against current law for `country/wales`
+in 2026, through the candidate's tagged URL with the authenticated tests'
+client credentials (`POST /reports`), then forces a new run of the report
+(`POST /reports/{report_id}/runs` with `{"force": true}`), follows that run
+through `GET /reports/{report_id}`, and requires it to succeed within 30
+minutes. The report is found by key, so on versions an earlier check ran on,
+the request ends on that check's report run and calculates nothing; the
+forced run, which nothing joins, is what calculates on every deploy: both
+simulations on the release's workers and the comparison on its
+coordinator. Both requests need `simulation:submit`. `deployment_ready`
+requires the check to pass in staging, so a failure stops the production
+deployment. Each run adds a forced report run and its two simulation runs
+to the staging database; a .py version's first check also adds the
+report's ordinary run, on one simulation run for both sides (current law
+compared with itself), which calculates as well.
 
 ## Candidate qualification
 

@@ -318,26 +318,34 @@ def test_two_sweeps_at_once_fail_each_run_exactly_once(
 _SAME_RUN = object()
 
 
-def _second_report_run(
+def _second_report_run(  # noqa: PLR0913  # the run, then what it names and whose it is
     seeder,
     seeded_run: SeededReportRun,
     status,
     *,
     baseline_simulation_run_id=_SAME_RUN,
     reform_simulation_run_id=_SAME_RUN,
+    of_another_report=False,
 ):
-    """Insert another report run of the same report.
+    """Insert another report run of the same report, or of a copy of it.
 
     It names the first report run's simulation runs unless given others; a
-    null reform run is a report with only a baseline.
+    null reform run is a report with only a baseline. With
+    ``of_another_report`` it is a run of a new report copying the first's
+    definition: one report has at most one unfailed run on a version set,
+    so two report runs naming the same runs at once are two reports' runs.
+    The seeder removes the copy with the seeded report, by their model.
     """
     first = seeder.row("report_runs", seeded_run.run_ids.report_run_id)
+    report_id = first["report_id"]
+    if of_another_report:
+        report_id = _copy_of_report(seeder, report_id)
     second_id = uuid4()
     with seeder.engine.begin() as connection:
         connection.execute(
             insert(seeder.table("report_runs")).values(
                 id=second_id,
-                report_id=first["report_id"],
+                report_id=report_id,
                 baseline_simulation_run_id=(
                     first["baseline_simulation_run_id"]
                     if baseline_simulation_run_id is _SAME_RUN
@@ -362,6 +370,30 @@ def _second_report_run(
     return second_id
 
 
+# A report's definition keys, unique to it, which a copy leaves out.
+_REPORT_KEY_COLUMNS = ("key_version", "definition_key", "dataset_independent_key")
+
+
+def _copy_of_report(seeder, report_id):
+    """Insert a new report copying ``report_id``'s columns; return its ID.
+
+    The copy has no definition keys, as a report created before keys existed,
+    so it never conflicts with the report it copies.
+    """
+    report = seeder.row("reports", report_id)
+    copy_id = uuid4()
+    copied = {
+        name: None if name in _REPORT_KEY_COLUMNS else value
+        for name, value in report.items()
+        if name not in {"id", "created_at", "updated_at"}
+    }
+    with seeder.engine.begin() as connection:
+        connection.execute(
+            insert(seeder.table("reports")).values({**copied, "id": copy_id})
+        )
+    return copy_id
+
+
 # What another simulation run of the seeded baseline's simulation copies.
 SIMULATION_RUN_DEFINITION = (
     "simulation_id",
@@ -374,7 +406,12 @@ SIMULATION_RUN_DEFINITION = (
 
 
 def _another_simulation_run(seeder, seeded_run: SeededReportRun, **state):
-    """Insert another simulation run of the seeded baseline's simulation."""
+    """Insert another simulation run of the seeded baseline's simulation.
+
+    It is on a .py version of its own: the Public API's index refuses two
+    runs of one simulation that haven't failed on one version set, and the
+    sweep doesn't read versions.
+    """
     baseline = seeder.row(
         "simulation_runs", seeded_run.run_ids.baseline_simulation_run_id
     )
@@ -382,9 +419,14 @@ def _another_simulation_run(seeder, seeded_run: SeededReportRun, **state):
     with seeder.engine.begin() as connection:
         connection.execute(
             insert(seeder.table("simulation_runs")).values(
-                id=run_id,
-                **{name: baseline[name] for name in SIMULATION_RUN_DEFINITION},
-                **state,
+                {
+                    **{name: baseline[name] for name in SIMULATION_RUN_DEFINITION},
+                    "id": run_id,
+                    "policyengine_version": (
+                        f"{baseline['policyengine_version']}+another.{run_id.hex[:8]}"
+                    ),
+                    **state,
+                }
             )
         )
     return run_id
@@ -629,8 +671,9 @@ def test_the_sweep_never_lists_or_fails_a_succeeded_run_two_report_runs_reuse(
         output_uri="gs://detailed-save-outputs/simulations/shared-baseline.parquet",
         output_sha256="d" * 64,
     )
-    # The seeded report run and a second one, each running under its own
-    # coordinator call, name the same succeeded baseline run at the same time.
+    # The seeded report run and another report's run, each running under its
+    # own coordinator call, name the same succeeded baseline run at the same
+    # time.
     _set_run(
         seeder,
         "report_runs",
@@ -647,6 +690,7 @@ def test_the_sweep_never_lists_or_fails_a_succeeded_run_two_report_runs_reuse(
         reform_simulation_run_id=_another_simulation_run(
             seeder, seeded_run, status="pending"
         ),
+        of_another_report=True,
     )
     _set_run(
         seeder,

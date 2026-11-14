@@ -24,6 +24,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pydantic.json_schema import SkipJsonSchema
 
 from policyengine_simulation_entry.economy_api_models import (
+    DESCRIPTION_NOT_STORED,
+    LABEL_NOT_STORED,
     CatalogKey,
     PolicyChoice,
     ReportDescription,
@@ -56,8 +58,10 @@ class BudgetWindowReportRequest(BaseModel):
 
     country: CountryId
     report_type: Literal["budget_window"]
-    label: ReportLabel
-    description: ReportDescription | None = None
+    label: ReportLabel | None = Field(default=None, description=LABEL_NOT_STORED)
+    description: ReportDescription | None = Field(
+        default=None, description=DESCRIPTION_NOT_STORED
+    )
     year: SimulationYear
     budget_window_size: BudgetWindowSize
     region_code: CatalogKey
@@ -91,11 +95,11 @@ class BudgetWindowReportRequest(BaseModel):
         return tuple(range(self.year, self.year + self.budget_window_size))
 
     def options(self) -> dict[str, Any]:
-        """Return the report's options as it stores them (``reports.inputs``).
+        """Return the window's calculation options: no cliffs, and its SPM selection.
 
-        They are a single-year economy report's without cliffs, so the
-        window's years and such reports reuse each other's runs. ``spm``
-        holds only the settings the request gave.
+        ``spm`` holds only the settings the request gave. The report stores
+        the selection alone (``economy_requests.stored_options``), and its
+        years share runs with single-year reports by key.
         """
         options: dict[str, Any] = {"include_cliffs": False}
         if self.spm is not None:
@@ -108,10 +112,11 @@ class _Answer(BaseModel):
 
 
 class BudgetWindowYearCreated(_Answer):
-    """One year of a created window: its report run and each side's run.
+    """One year of the window run a request ended on: its report run and sides.
 
-    ``…_reused`` is true for a side that names a run that already succeeded
-    in that year, rather than a new one.
+    ``…_reused`` is true for a side whose run this request didn't insert:
+    another request's run of that year's simulation, in any state, or, on
+    a joined window run, that run's own.
     """
 
     year: int
@@ -125,12 +130,14 @@ class BudgetWindowYearCreated(_Answer):
 
 
 class BudgetWindowReportCreated(_Answer):
-    """The budget-window report a request created, and its years' runs.
+    """The budget-window report and window run a request ended on, and its years.
 
-    ``report_run_id`` is the first year's report run, and ``status`` the
-    window's calculation's: ``pending`` once its first years' calls were
-    started, or when the start couldn't be recorded. ``years`` lists every
-    year, earliest first.
+    The window and window run are the ones a create found or created by
+    key, or a re-run joined or created. ``report_run_id`` is the first
+    year's report run, and ``status`` the window run's: for one the request
+    created, ``pending`` once its first years' calls were started, or when
+    the start couldn't be recorded; for a joined one, its status as read.
+    ``years`` lists every year, earliest first.
     """
 
     report_id: UUID

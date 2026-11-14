@@ -18,9 +18,11 @@ from uuid import UUID
 
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_persistence import ReportRunStatus
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from policyengine_simulation_entry.economy_api_models import (
+    DESCRIPTION_NOT_STORED,
+    LABEL_NOT_STORED,
     ReportDescription,
     ReportLabel,
 )
@@ -50,8 +52,10 @@ class HouseholdReportRequest(_Request):
 
     country: CountryId
     report_type: Literal["household"]
-    label: ReportLabel
-    description: ReportDescription | None = None
+    label: ReportLabel | None = Field(default=None, description=LABEL_NOT_STORED)
+    description: ReportDescription | None = Field(
+        default=None, description=DESCRIPTION_NOT_STORED
+    )
     household_id: UUID
     baseline: HouseholdPolicyChoice
     reform: HouseholdPolicyChoice | None = None
@@ -65,16 +69,19 @@ class HouseholdReportRequest(_Request):
 
 
 class HouseholdReportCreated(BaseModel):
-    """The household report a request created or re-ran, its new run and its status.
+    """The household report a request ended on, its run and that run's status.
 
-    The status is the run's when its call's ID was recorded: ``pending``, or
-    whatever the household function had made it by then if it claimed the
-    run first. A run whose call Modal didn't confirm, or whose call's ID
-    couldn't be recorded, is answered ``pending``. ``year`` is the year the
-    report calculates: a new report's is its household's default year, and a
-    re-run keeps the report's. Each side names its simulation, new for a new
-    report and the report's own on a re-run, and its new simulation run; the
-    reform's are null for a report of the baseline alone.
+    The report and run are the ones a create found or created by key, or a
+    re-run joined or created. For a run the request created, the status is
+    the run's when its call's ID was recorded: ``pending``, or whatever the
+    household function had made it by then if it claimed the run first. A
+    run whose call Modal didn't confirm, or whose call's ID couldn't be
+    recorded, is answered ``pending``; a joined run, its status as read.
+    ``year`` is the year the report calculates: a new report's is its
+    household's default year, and a re-run keeps the report's. Each side
+    names its simulation and the simulation run the report run names, which
+    may be another report run's; the reform's are null for a report of the
+    baseline alone.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

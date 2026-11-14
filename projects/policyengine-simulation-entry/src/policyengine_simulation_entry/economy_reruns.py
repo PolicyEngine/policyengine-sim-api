@@ -4,43 +4,52 @@ A re-run calculates a stored record again on the v2 version manifest's
 default worker, as a new run, and keeps every earlier run. The service:
 
 1. reads what the record calculates: its country, year, region code,
-   dataset name and each simulation's policy and dynamic. A record this
-   service does not re-run, or one missing a row it calculates on, is
-   refused (409 ``rerun_not_supported``), as is one that does not exist
-   (404);
+   dataset name, stored options and each simulation's policy and dynamic.
+   A record this service does not re-run, or one missing a row it
+   calculates on, is refused (409 ``rerun_not_supported``), as is one that
+   does not exist (404), and a report stored before C1 · 27 asking for
+   cliff impacts (422 ``cliffs_not_available``) until they are calculated
+   per run (C1 · 24's interim answer A);
 2. finds the default worker's economy functions for the country, and reads,
    in one transaction, the country's catalog version for that worker's .py
    version, its region and dataset with the record's code and name, and each
-   simulation's policy and dynamic values on that catalog version. For a
-   report, unless the re-run is forced, each side's reusable run is a run of
-   that side's own simulation that succeeded on the current versions, as a
-   new report's would be (``find_reusable_run_of``);
-3. creates, in one transaction, the new run (a report's with trigger
-   ``manual``) and each report side's new simulation run of its own
-   simulation, all pending with no Modal call ID, unless the record has a
-   run pending or running (409 ``run_in_progress``);
-4. starts and records the new run's call as a new record's: the report run's
-   coordinator, or the simulation function, by run ID (C1 · 8's
-   coordination), failing the new runs when Modal refuses the call.
+   simulation's policy and dynamic values on that catalog version;
+3. for a simulation or a keyed economy report, joins, in one transaction,
+   the record's run on the current versions that hasn't failed and wasn't
+   forced, pending, running or succeeded (C1 · 24's answers 2 and 3), or
+   else creates the new run (naming no trigger, answer 6); a keyed
+   report's sides join their simulations' runs on those versions the same
+   way, or create them. A report whose simulations have no key, created
+   before C1 · 27, may have runs whose plans depended on the report that
+   calculated them, so its re-run, like a forced re-run, always creates its
+   runs, marked forced: extra runs that nothing joins (interim answer B). A
+   keyed budget window's re-run joins its window run on those versions, or
+   creates one whose years' sides join their simulations' runs (answer 8).
+   Every new run is pending with no Modal call ID, and a forced re-run is
+   never refused while a run is under way;
+4. starts and records the call of a run it created as a new record's: the
+   report run's coordinator, or the simulation function, by run ID (C1 · 8's
+   coordination), failing the new runs when Modal refuses the call. A
+   joined run gets no call: whoever created it started it.
 
-A budget-window report's re-run is a new budget-window run with a report
-run per year, each year on the simulations that year's report run of the
-report's newest window run names; its first years start as a new window's
-do. A household report's re-run is the household report service's
-(``household_report_reruns``): a new run of each side's own household
-simulation, started by one household function call. A household simulation
-is re-run only through its report. Whatever is missing or cannot be
-calculated is refused in steps 1 and 2, before anything is written.
+A budget-window report's re-run joins or creates a budget-window run with
+a report run per year, each year on the simulations that year's report
+run of the report's newest window run names; a window run it created has
+its first years started as a new window's do. A household report's re-run
+is the household report service's (``household_report_reruns``), which
+joins or creates its run as an economy report's re-run does, a run it
+created started by one household function call. A household simulation is
+re-run only through its report. Whatever is missing or cannot be calculated is refused
+in steps 1 and 2, before anything is written.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Final, Protocol, get_args
+from typing import TYPE_CHECKING, Any, Final, Protocol
 from uuid import uuid4
 
-from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_simulation_persistence import (
     EconomyRequest,
@@ -48,7 +57,6 @@ from policyengine_simulation_persistence import (
     NewSimulationRerun,
     NewWindowRerun,
     RerunSide,
-    RunReuse,
     WindowRerunYear,
 )
 
@@ -66,27 +74,27 @@ from policyengine_simulation_entry.economy_api_models import (
     EconomySimulationCreated,
 )
 from policyengine_simulation_entry.economy_calculation_inputs import (
-    CalculationScope,
-    DatasetNotInBundleError,
-    bundle_dataset,
     report_run_calculation,
-    simulation_options,
     simulation_run_calculation,
 )
+from policyengine_simulation_entry.economy_requests import refuse_stored_cliffs
 from policyengine_simulation_entry.economy_submission_errors import (
     STORED_REPORT,
     STORED_SIMULATION,
     EconomyRecordNotFoundError,
-    EconomyRerunConflictError,
-    EconomySubmissionRefusedError,
     EconomySubmissionUnavailableError,
     rerun_refusals,
 )
 from policyengine_simulation_entry.economy_submissions import (
     CALL_START_TIMEOUT_SECONDS,
 )
-from policyengine_simulation_entry.household_report_reruns import (
-    StoredHouseholdReport,
+from policyengine_simulation_entry.rerunnable_records import (
+    StoredReportRows,
+    complete_window_years,
+    rerun_scope,
+    rerunnable_household_report,
+    rerunnable_report,
+    rerunnable_simulation,
 )
 
 if TYPE_CHECKING:
@@ -95,11 +103,12 @@ if TYPE_CHECKING:
 
     from policyengine_simulation_persistence import (
         BudgetWindowInputs,
-        EconomyCatalogRows,
         EconomyReportInputs,
-        RecordKind,
+        FoundBudgetWindow,
+        FoundReportRun,
+        FoundSimulationRun,
         ReportDefinition,
-        ReusableRun,
+        RunReuse,
         SideDefinition,
         SimulationChoice,
         SimulationDefinition,
@@ -129,12 +138,6 @@ if TYPE_CHECKING:
         HouseholdReportReruns,
     )
 
-# The kinds of stored economy report this service re-runs itself.
-_RERUN_REPORT_KINDS: Final[frozenset[RecordKind]] = frozenset(
-    {"economy", "budget_window"}
-)
-# The countries this service calculates, as the contract names them.
-_COUNTRIES: Final[tuple[CountryId, ...]] = get_args(CountryId)
 _REPORT: Final[RecordName] = "report"
 _SIMULATION: Final[RecordName] = "simulation"
 
@@ -178,16 +181,16 @@ class EconomyRerunRuns(BudgetWindowRuns, Protocol):
         """Read a window re-run's catalog rows, both sides' values and years' runs."""
         ...
 
-    def create_window_rerun(self, rerun: NewWindowRerun) -> None:
-        """Create the window's new run, each year's report run and new runs."""
+    def create_window_rerun(self, rerun: NewWindowRerun) -> FoundBudgetWindow:
+        """Join the window's run on the re-run's versions, or create it."""
         ...
 
-    def create_report_rerun(self, rerun: NewReportRerun) -> None:
-        """Create the report's new run and its sides' new simulation runs."""
+    def create_report_rerun(self, rerun: NewReportRerun) -> FoundReportRun:
+        """Join the report's run on the re-run's versions, or create it."""
         ...
 
-    def create_simulation_rerun(self, rerun: NewSimulationRerun) -> None:
-        """Create the simulation's new run."""
+    def create_simulation_rerun(self, rerun: NewSimulationRerun) -> FoundSimulationRun:
+        """Join the simulation's run on the re-run's versions, or create it."""
         ...
 
 
@@ -232,12 +235,13 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         request_id: str,
         observability_context: dict[str, Any] | None,
     ) -> EconomyReportCreated | BudgetWindowReportCreated | HouseholdReportCreated:
-        """Create the stored report's new run on the current versions, and start it.
+        """Join or create the stored report's run on the current versions.
 
-        A budget window's new run is a budget-window run with a report run
-        per year, whose first years are started (``_rerun_window``); a
-        household report's is the household report service's, which
-        ``force`` changes nothing for. Raise EconomyRecordNotFoundError (404)
+        A budget window's run is a budget-window run with a report run per
+        year, a new one's first years started (``_rerun_window``); a
+        household report's is the household report service's, which joins
+        or forces as an economy report's does. Raise
+        EconomyRecordNotFoundError (404)
         or EconomyRerunConflictError (409) as the module describes, and
         otherwise the errors ``submit_report`` raises, a 503 for Modal's
         refusal naming the new run as well as the report.
@@ -249,11 +253,14 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             raise EconomyRecordNotFoundError(_REPORT)
         if definition.kind == "household":
             return await self._rerun_household_report(
-                definition, observability_context=observability_context
+                definition,
+                force=request.force,
+                observability_context=observability_context,
             )
-        stored = _rerunnable_report(definition)
+        stored = rerunnable_report(definition)
+        refuse_stored_cliffs(definition.inputs)
         window_years = (
-            _complete_window_years(definition)
+            complete_window_years(definition)
             if definition.kind == "budget_window"
             else ()
         )
@@ -265,15 +272,10 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             dataset_name=stored.dataset_name,
             year=stored.year,
         )
-        reuse = (
-            None
-            if request.force or self._settings.reuse_prefix is None
-            else RunReuse(
-                versions=worker.versions,
-                inputs=definition.inputs,
-                output_uri_prefix=self._settings.reuse_prefix,
-            )
-        )
+        # A report with no keys gets extra runs, marked forced, which
+        # nothing joins (interim answer B); a keyed report's sides join
+        # their simulations' runs on these versions instead.
+        forced = request.force or not definition.keyed
         if window_years:
             return await self._rerun_window(
                 _WindowRerunRequest(
@@ -281,8 +283,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                     options=definition.inputs,
                     years=window_years,
                     economy_request=economy_request,
-                    reuse=reuse,
-                    recalculate=request.force,
+                    recalculate=forced,
                 ),
                 worker,
                 request_id=request_id,
@@ -293,7 +294,8 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                 economy_request,
                 baseline=stored.baseline,
                 reform=stored.reform,
-                reuse=reuse,
+                # A re-run reuses no run: its sides join or are forced.
+                reuse=None,
             ),
             request=economy_request,
             source=STORED_REPORT,
@@ -303,56 +305,48 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             run_id=self._new_id(),
             population=inputs.catalog.population(stored.year),
             versions=worker.versions,
-            baseline=self._rerun_side(
-                stored.baseline.simulation_id, inputs.baseline.reusable_run
-            ),
-            reform=self._rerun_side(
-                stored.reform.simulation_id, inputs.reform.reusable_run
-            ),
+            baseline=self._new_side(stored.baseline.simulation_id),
+            reform=self._new_side(stored.reform.simulation_id),
+            forced=forced,
         )
-        calculation = report_run_calculation(
+        scope = rerun_scope(
+            stored.country,
+            economy_request,
             worker,
-            _rerun_scope(
-                stored.country,
-                economy_request,
-                worker,
-                inputs.catalog,
-                options=definition.inputs,
-            ),
-            self._origin(request_id),
-            run_ids=ReportRunIds(
-                report_run_id=rerun.run_id,
-                baseline_simulation_run_id=rerun.baseline.simulation_run_id,
-                reform_simulation_run_id=rerun.reform.simulation_run_id,
-            ),
-            baseline_policy=inputs.baseline.reform,
-            reform_policy=inputs.reform.reform,
+            inputs.catalog,
+            options=definition.inputs,
         )
-        await self._create_rerun(
+        found = await self._create_rerun(
             _REPORT,
             lambda: self._store.create_report_rerun(rerun),
             source=STORED_REPORT,
+        )
+        if not found.inserted:
+            return _joined_report_run(stored, found)
+        answer = _created_report_run(stored, rerun, found)
+        calculation = report_run_calculation(
+            worker,
+            scope,
+            self._origin(request_id),
+            run_ids=ReportRunIds(
+                report_run_id=answer.report_run_id,
+                baseline_simulation_run_id=answer.baseline_simulation_run_id,
+                reform_simulation_run_id=answer.reform_simulation_run_id,
+            ),
+            baseline_policy=inputs.baseline.reform,
+            reform_policy=inputs.reform.reform,
         )
         status = await self._start_report_run(
             worker,
             calculation,
             report_id=report_id,
             run_id=rerun.run_id,
-            new_simulation_run_ids=rerun.new_simulation_run_ids,
+            # An unforced re-run's simulation runs may be another report run's.
+            new_simulation_run_ids=rerun.new_simulation_run_ids if forced else (),
             observability_context=observability_context,
             rerun=True,
         )
-        return EconomyReportCreated(
-            report_id=report_id,
-            report_run_id=rerun.run_id,
-            status=status,
-            baseline_simulation_id=rerun.baseline.simulation_id,
-            baseline_simulation_run_id=rerun.baseline.simulation_run_id,
-            baseline_reused=rerun.baseline.reused,
-            reform_simulation_id=rerun.reform.simulation_id,
-            reform_simulation_run_id=rerun.reform.simulation_run_id,
-            reform_reused=rerun.reform.reused,
-        )
+        return answer.model_copy(update={"status": status})
 
     async def rerun_simulation(
         self,
@@ -361,18 +355,18 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         request_id: str,
         observability_context: dict[str, Any] | None,
     ) -> EconomySimulationCreated:
-        """Create the stored simulation's new run on the current versions, and start it.
+        """Join or create the stored simulation's run on the current versions.
 
-        The run is always calculated: a simulation run is the calculation,
-        with nothing of it to reuse. Raise the errors ``rerun_report`` raises,
-        naming the simulation.
+        A run the store created is started; one it joined, pending, running
+        or succeeded, is answered as it is, with no call. Raise the errors
+        ``rerun_report`` raises, naming the simulation.
         """
         definition = await self._read_state(
             lambda: self._store.read_simulation_definition(simulation_id)
         )
         if definition is None:
             raise EconomyRecordNotFoundError(_SIMULATION)
-        stored = _rerunnable_simulation(definition)
+        stored = rerunnable_simulation(definition)
         worker = await self._default_worker(stored.country)
         economy_request = EconomyRequest(
             country=stored.country,
@@ -396,18 +390,24 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         )
         calculation = simulation_run_calculation(
             worker,
-            _rerun_scope(
+            rerun_scope(
                 stored.country, economy_request, worker, inputs.catalog, options={}
             ),
             self._origin(request_id),
             simulation_run_id=rerun.run_id,
             policy=inputs.simulation.reform,
         )
-        await self._create_rerun(
+        found = await self._create_rerun(
             _SIMULATION,
             lambda: self._store.create_simulation_rerun(rerun),
             source=STORED_SIMULATION,
         )
+        if not found.inserted:
+            return EconomySimulationCreated(
+                simulation_id=simulation_id,
+                simulation_run_id=found.id,
+                status=found.status,
+            )
         status = await self._start_simulation_run(
             worker,
             calculation,
@@ -426,16 +426,17 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         self,
         definition: ReportDefinition,
         *,
+        force: bool,
         observability_context: dict[str, Any] | None,
     ) -> HouseholdReportCreated:
         """Hand a stored household report the service can re-run to its service."""
-        stored = _rerunnable_household_report(definition)
+        stored = rerunnable_household_report(definition)
         if self._household_reports is None:
             raise EconomySubmissionUnavailableError(
                 code="not_configured", detail="Household reports are not configured."
             )
         return await self._household_reports.rerun_report(
-            stored, observability_context=observability_context
+            stored, force=force, observability_context=observability_context
         )
 
     async def _rerun_window(
@@ -446,12 +447,15 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         request_id: str,
         observability_context: dict[str, Any] | None,
     ) -> BudgetWindowReportCreated:
-        """Create the window's new run and each year's runs; start its first years.
+        """Join or create the window's run on the current versions.
 
-        Each year's sides are that year's own simulations, as its report run
-        in the report's newest window run names them, and each year reuses a
-        run of its own simulations unless the re-run is forced. The years
-        start as a new window's do (``_start_first_years``).
+        Each year's sides are runs of that year's own simulations, as its
+        report run in the report's newest window run names them. A keyed
+        window's unforced re-run joins its window run, or each year's sides
+        join their simulations' runs; a forced one, or one of a window
+        created before keys (interim answer B), recalculates every year as
+        forced runs. Only a window run it created has its first years
+        started, as a new window's are (``_start_first_years``).
         """
         stored = window.stored
         inputs = await self._read_inputs(
@@ -460,7 +464,7 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                 baseline=stored.baseline.choice,
                 reform=stored.reform.choice,
                 years=window.years,
-                reuse=window.reuse,
+                reuse=None,
             ),
             request=window.economy_request,
             source=STORED_REPORT,
@@ -472,213 +476,146 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             population=inputs.catalog.population(stored.year),
             versions=worker.versions,
             recalculate=window.recalculate,
-            years=tuple(self._window_rerun_year(year, inputs) for year in window.years),
+            years=tuple(self._window_rerun_year(year) for year in window.years),
         )
-        first_year = rerun.years[0]
-        first_calculation = report_run_calculation(
+        scope = rerun_scope(
+            stored.country,
+            window.economy_request,
             worker,
-            _rerun_scope(
-                stored.country,
-                window.economy_request,
-                worker,
-                inputs.catalog,
-                options=window.options,
-            ),
+            inputs.catalog,
+            options=window.options,
+        )
+        # Refused before anything is written, on the run IDs it proposes.
+        report_run_calculation(
+            worker,
+            scope,
             self._origin(request_id),
-            run_ids=year_run_ids(first_year),
+            run_ids=year_run_ids(rerun.years[0]),
             baseline_policy=inputs.baseline.reform,
             reform_policy=inputs.reform.reform,
         )
-        await self._create_rerun(
+        found = await self._create_rerun(
             _REPORT,
             lambda: self._store.create_window_rerun(rerun),
             source=STORED_REPORT,
         )
-        status = await self._start_first_years(
-            worker,
-            first_calculation,
-            report_id=stored.report_id,
-            window_run_id=window_run_id,
-            first_year=first_year.year,
-            observability_context=observability_context,
-            rerun=True,
-        )
+        found_first_year = found.years[0]
+        status = found.window_run.status
+        if found.window_run.inserted:
+            status = await self._start_first_years(
+                worker,
+                report_run_calculation(
+                    worker,
+                    scope,
+                    self._origin(request_id),
+                    run_ids=year_run_ids(found_first_year),
+                    baseline_policy=inputs.baseline.reform,
+                    reform_policy=inputs.reform.reform,
+                ),
+                report_id=stored.report_id,
+                window_run_id=found.window_run.id,
+                first_year=found_first_year.year,
+                observability_context=observability_context,
+                rerun=True,
+            )
         return BudgetWindowReportCreated(
             report_id=stored.report_id,
-            report_run_id=first_year.report_run_id,
-            budget_window_run_id=window_run_id,
+            report_run_id=found_first_year.report_run_id,
+            budget_window_run_id=found.window_run.id,
             status=status,
-            years=[year_created(window_year) for window_year in rerun.years],
+            years=[year_created(window_year) for window_year in found.years],
         )
 
-    def _window_rerun_year(
-        self, year: WindowYearDefinition, inputs: BudgetWindowInputs
-    ) -> WindowRerunYear:
-        """Return a year naming its own simulations' reusable runs, or new runs."""
-        baseline_run, reform_run = inputs.reusable_runs[year.year]
+    def _window_rerun_year(self, year: WindowYearDefinition) -> WindowRerunYear:
+        """Return a year naming new runs of its own simulations."""
         return WindowRerunYear(
             year=year.year,
             report_run_id=self._new_id(),
-            baseline=self._rerun_side(year.baseline_simulation_id, baseline_run),
-            reform=self._rerun_side(year.reform_simulation_id, reform_run),
+            baseline=self._new_side(year.baseline_simulation_id),
+            reform=self._new_side(year.reform_simulation_id),
         )
 
-    def _rerun_side(
-        self, simulation_id: UUID, reusable_run: ReusableRun | None
-    ) -> RerunSide:
-        """Return a side naming its own simulation's reusable run, or a new run."""
-        if reusable_run is not None:
-            return RerunSide(
-                simulation_id=simulation_id,
-                simulation_run_id=reusable_run.simulation_run_id,
-                reused=True,
-            )
+    def _new_side(self, simulation_id: UUID) -> RerunSide:
+        """Return a side proposing a new run of its own simulation.
+
+        The run is created, unless a keyed report's side joins its
+        simulation's run on the re-run's versions.
+        """
         return RerunSide(
             simulation_id=simulation_id,
             simulation_run_id=self._new_id(),
             reused=False,
         )
 
-    async def _create_rerun(
+    async def _create_rerun[Created](
         self,
         record: RecordName,
-        create: Callable[[], None],
+        create: Callable[[], Created],
         *,
         source: RefusalSource,
-    ) -> None:
-        """Create the re-run's rows; refuse it while the record has a run under way.
+    ) -> Created:
+        """Create or join the re-run's rows, answering the store's refusals.
 
-        A record deleted after its reads is answered as not found. Any other
-        row the database refuses is named as ``source``'s; for a report,
-        that includes a side's simulation deleted with it.
+        Return what ``create`` returns: the run it joined or created. A
+        record deleted after its reads is
+        answered as not found. Any other row the database refuses is named
+        as ``source``'s; for a report, that includes a side's simulation
+        deleted with it.
         """
         with rerun_refusals(record):
-            await self._create(record, create, rerun=True, source=source)
+            return await self._create(record, create, rerun=True, source=source)
 
 
-@dataclass(frozen=True)
-class _StoredReportRows:
-    """The country and rows a stored report calculates on, each present."""
+def _joined_report_run(
+    stored: StoredReportRows, joined: FoundReportRun
+) -> EconomyReportCreated:
+    """Answer the report's run a re-run joined, as it is; this call created nothing.
 
-    report_id: UUID
-    country: CountryId
-    year: int
-    region_code: str
-    dataset_name: str
-    baseline: SideDefinition
-    reform: SideDefinition
-
-
-@dataclass(frozen=True)
-class _StoredSimulationRows:
-    """The country and rows a stored simulation calculates on, each present."""
-
-    country: CountryId
-    year: int
-    region_code: str
-    dataset_name: str
-
-
-def _calculated_country(country: str | None) -> CountryId | None:
-    """Return the country if this service calculates it, or None."""
-    return next((known for known in _COUNTRIES if known == country), None)
-
-
-def _refusal(
-    record: RecordName, kind: RecordKind, missing: tuple[tuple[str, object], ...]
-) -> EconomyRerunConflictError:
-    """Return why a stored record is not re-run: its kind, or the first row it lacks.
-
-    ``missing`` pairs each row's description with the value the record holds.
+    Only a keyed report's unforced re-run joins a run; it names runs of the
+    report's own simulations, which this call didn't create, so both sides
+    are reused.
     """
-    if kind == "unsupported":
-        detail = f"The service does not re-run this type of {record}."
-    elif record == _SIMULATION and kind == "household":
-        detail = (
-            "The service re-runs a household simulation only through its report "
-            "(POST /reports/{report_id}/runs)."
-        )
-    else:
-        lacking = next(name for name, value in missing if value is None)
-        detail = f"The {record} names no {lacking}, so it cannot be re-run."
-    return EconomyRerunConflictError(code="rerun_not_supported", detail=detail)
-
-
-def _rerunnable_report(definition: ReportDefinition) -> _StoredReportRows:
-    """Return the stored report's rows, or refuse one this service can't re-run."""
-    baseline, reform = definition.baseline, definition.reform
-    region_code, dataset_name = definition.region_code, definition.dataset_name
-    country, year = _calculated_country(definition.country), definition.year
-    if (
-        definition.kind not in _RERUN_REPORT_KINDS
-        or country is None
-        or baseline is None
-        or reform is None
-        or region_code is None
-        or dataset_name is None
-        or year is None
-    ):
-        raise _refusal(
-            _REPORT,
-            definition.kind,
-            (
-                ("country this service calculates", country),
-                ("baseline simulation", baseline),
-                ("reform simulation", reform),
-                ("region", region_code),
-                ("dataset", dataset_name),
-                ("year", year),
-            ),
-        )
-    return _StoredReportRows(
-        report_id=definition.id,
-        country=country,
-        year=year,
-        region_code=region_code,
-        dataset_name=dataset_name,
-        baseline=baseline,
-        reform=reform,
+    if joined.reform_simulation_run_id is None:
+        msg = f"report run {joined.id} of an economy report names no reform run"
+        raise ValueError(msg)
+    return EconomyReportCreated(
+        report_id=stored.report_id,
+        report_run_id=joined.id,
+        status=joined.status,
+        baseline_simulation_id=stored.baseline.simulation_id,
+        baseline_simulation_run_id=joined.baseline_simulation_run_id,
+        baseline_reused=True,
+        reform_simulation_id=stored.reform.simulation_id,
+        reform_simulation_run_id=joined.reform_simulation_run_id,
+        reform_reused=True,
     )
 
 
-def _rerunnable_household_report(
-    definition: ReportDefinition,
-) -> StoredHouseholdReport:
-    """Return the stored household report's rows, or refuse one it can't re-run.
+def _created_report_run(
+    stored: StoredReportRows, rerun: NewReportRerun, created: FoundReportRun
+) -> EconomyReportCreated:
+    """Answer the report run a re-run created, with the side runs it names.
 
-    A side naming a dynamic is refused: a household calculation applies none.
+    A side is reused when its run isn't one this re-run inserted: for a
+    keyed report, its simulation's run the store joined. The runs this
+    re-run may have inserted have the IDs its sides proposed; one
+    simulation on both sides gets one run, with the baseline's. The status
+    is the new run's, until its call is started.
     """
-    country, year = _calculated_country(definition.country), definition.year
-    household_id, baseline = definition.household_id, definition.baseline
-    if country is None or household_id is None or baseline is None or year is None:
-        raise _refusal(
-            _REPORT,
-            definition.kind,
-            (
-                ("country this service calculates", country),
-                ("household", household_id),
-                ("baseline simulation", baseline),
-                ("year", year),
-            ),
-        )
-    if any(
-        side is not None and side.choice.dynamic_id is not None
-        for side in (baseline, definition.reform)
-    ):
-        raise EconomyRerunConflictError(
-            code="rerun_not_supported",
-            detail=(
-                "The report's household simulation names a dynamic, which a "
-                "household calculation does not apply, so it cannot be re-run."
-            ),
-        )
-    return StoredHouseholdReport(
-        report_id=definition.id,
-        country=country,
-        household_id=household_id,
-        year=year,
-        baseline=baseline,
-        reform=definition.reform,
+    if created.reform_simulation_run_id is None:
+        msg = f"report run {created.id} of an economy report names no reform run"
+        raise ValueError(msg)
+    proposed = {rerun.baseline.simulation_run_id, rerun.reform.simulation_run_id}
+    return EconomyReportCreated(
+        report_id=stored.report_id,
+        report_run_id=created.id,
+        status=created.status,
+        baseline_simulation_id=stored.baseline.simulation_id,
+        baseline_simulation_run_id=created.baseline_simulation_run_id,
+        baseline_reused=created.baseline_simulation_run_id not in proposed,
+        reform_simulation_id=stored.reform.simulation_id,
+        reform_simulation_run_id=created.reform_simulation_run_id,
+        reform_reused=created.reform_simulation_run_id not in proposed,
     )
 
 
@@ -686,107 +623,8 @@ def _rerunnable_household_report(
 class _WindowRerunRequest:
     """What a budget window's re-run calculates, as the service has read it."""
 
-    stored: _StoredReportRows
+    stored: StoredReportRows
     options: dict[str, Any]
     years: tuple[WindowYearDefinition, ...]
     economy_request: EconomyRequest
-    reuse: RunReuse | None
     recalculate: bool
-
-
-def _complete_window_years(
-    definition: ReportDefinition,
-) -> tuple[WindowYearDefinition, ...]:
-    """Return the stored window's years, or refuse a window that lacks one.
-
-    Its newest calculation must have a report run naming both sides in each
-    year of its window, from the report's first year; the definition leaves
-    out a year naming no reform.
-    """
-    expected = (
-        ()
-        if definition.year is None or definition.budget_window_size is None
-        else tuple(
-            range(definition.year, definition.year + definition.budget_window_size)
-        )
-    )
-    years = definition.window_years
-    if not expected or tuple(year.year for year in years) != expected:
-        raise EconomyRerunConflictError(
-            code="rerun_not_supported",
-            detail=(
-                "The report names no complete budget-window calculation, a "
-                "report run naming both sides in each year of its window, so "
-                "it cannot be re-run."
-            ),
-        )
-    return years
-
-
-def _rerunnable_simulation(definition: SimulationDefinition) -> _StoredSimulationRows:
-    """Return the stored simulation's country and rows, or refuse it.
-
-    Its country is None when its catalog version's model is of no country
-    this service calculates.
-    """
-    country, year = _calculated_country(definition.country), definition.year
-    region_code, dataset_name = definition.region_code, definition.dataset_name
-    if (
-        definition.kind != "economy"
-        or country is None
-        or region_code is None
-        or dataset_name is None
-        or year is None
-    ):
-        raise _refusal(
-            _SIMULATION,
-            definition.kind,
-            (
-                ("country this service calculates", country),
-                ("region", region_code),
-                ("dataset", dataset_name),
-                ("year", year),
-            ),
-        )
-    return _StoredSimulationRows(
-        country=country,
-        year=year,
-        region_code=region_code,
-        dataset_name=dataset_name,
-    )
-
-
-def _rerun_scope(
-    country: CountryId,
-    request: EconomyRequest,
-    worker: EconomyWorker,
-    catalog: EconomyCatalogRows,
-    *,
-    options: dict[str, Any],
-) -> CalculationScope:
-    """Return what a re-run calculates on, with the bundle's dataset.
-
-    ``options`` are the stored report's (``reports.inputs``). Raise
-    EconomySubmissionRefusedError (``dataset_not_in_bundle``) when the
-    default worker's bundle lacks the stored dataset.
-    """
-    try:
-        dataset = bundle_dataset(worker, catalog.dataset.name)
-    except DatasetNotInBundleError:
-        raise EconomySubmissionRefusedError(
-            code="dataset_not_in_bundle",
-            detail=(
-                f"The default v2 worker, .py {worker.version}, has no dataset "
-                f"{catalog.dataset.name}, which the stored record names."
-            ),
-        ) from None
-    return CalculationScope(
-        country=country,
-        region_code=catalog.region.code,
-        dataset=dataset,
-        year=request.year,
-        options=simulation_options(
-            include_cliffs=bool(options.get("include_cliffs", False)),
-            spm=options.get("spm"),
-        ),
-    )

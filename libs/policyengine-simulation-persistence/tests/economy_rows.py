@@ -147,7 +147,7 @@ class RunShape:
     """What a stored economy simulation and its run hold.
 
     A succeeded run records an output file in the output bucket unless
-    ``output_uri`` names another.
+    ``output_uri`` names another. ``forced`` marks a forced re-run's run.
     """
 
     choice: SimulationChoice = CURRENT_LAW
@@ -155,6 +155,7 @@ class RunShape:
     versions: RunVersions = VERSIONS
     output_uri: str | None = None
     completed_at: datetime = COMPLETED_AT
+    forced: bool = False
 
 
 def insert_simulation_run(
@@ -212,6 +213,7 @@ def insert_run_of(
                 else None
             ),
             output_sha256="d" * 64 if succeeded else None,
+            forced=shape.forced,
         )
     )
     return StoredRun(simulation_id=simulation_id, simulation_run_id=run_id)
@@ -219,11 +221,13 @@ def insert_run_of(
 
 @dataclass(frozen=True)
 class ReportRunOutcome:
-    """How a stored report run ended, and the options its report has."""
+    """How a stored report run ended, its versions and trigger, and its options."""
 
     status: ReportRunStatus = ReportRunStatus.SUCCEEDED
     inputs: dict[str, Any] | None = None
     error_message: str | None = None
+    versions: RunVersions = VERSIONS
+    trigger: ReportRunTrigger = ReportRunTrigger.INITIAL
 
 
 def insert_report_run_naming(
@@ -298,10 +302,10 @@ def insert_report_run_of(
             report_id=report_id,
             baseline_simulation_run_id=baseline.simulation_run_id,
             reform_simulation_run_id=reform.simulation_run_id,
-            country_package_version=COUNTRY_PACKAGE_VERSION,
-            policyengine_version=POLICYENGINE_VERSION,
+            country_package_version=outcome.versions.country_package_version,
+            policyengine_version=outcome.versions.policyengine_version,
             status=outcome.status,
-            trigger=ReportRunTrigger.INITIAL,
+            trigger=outcome.trigger,
             completed_at=COMPLETED_AT if finished else None,
             error_message=outcome.error_message,
         )
