@@ -582,10 +582,9 @@ def test_a_payload_whose_reform_differs_from_the_report_runs_is_refused(
     with pytest.raises(ValueError, match="names other simulation runs"):
         _run(runs, calculate, with_reform=with_reform)
 
-    assert [write["run"] for write in runs.of("fail_unfinished")] == [
-        run_id for run_id in named_runs if run_id is not None
-    ]
-    assert len(runs.of("fail_report")) == 1
+    # No simulation run was claimed, so only the report run fails: the runs,
+    # which other report runs may share, are left to the stuck-run sweep.
+    assert runs.kinds == ["claim_report", "read_runs", "fail_report"]
 
 
 def test_a_preemption_records_nothing_and_propagates() -> None:
@@ -600,7 +599,7 @@ def test_a_preemption_records_nothing_and_propagates() -> None:
     assert runs.kinds == ["claim_report", "read_runs", "claim"]
 
 
-def test_a_report_run_naming_other_simulation_runs_fails_with_its_own_runs() -> None:
+def test_a_payload_naming_other_simulation_runs_fails_the_report_run_alone() -> None:
     own_runs = (
         UUID("00000000-0000-4000-8000-0000000000d1"),
         UUID("00000000-0000-4000-8000-0000000000d2"),
@@ -614,16 +613,9 @@ def test_a_report_run_naming_other_simulation_runs_fails_with_its_own_runs() -> 
         _run(runs, calculate)
 
     summary = "household_function_error: The household function raised ValueError."
-    assert runs.kinds == [
-        "claim_report",
-        "read_runs",
-        "fail_unfinished",
-        "fail_unfinished",
-        "fail_report",
-    ]
-    # The report run's own runs are failed, never the payload's.
-    assert [write["run"] for write in runs.of("fail_unfinished")] == list(own_runs)
-    assert {write["error_message"] for write in runs.of("fail_unfinished")} == {summary}
+    # Neither the report run's own runs nor the payload's were claimed, so
+    # none is failed.
+    assert runs.kinds == ["claim_report", "read_runs", "fail_report"]
     assert runs.of("fail_report")[0]["error_message"] == summary
 
 
@@ -714,18 +706,9 @@ def test_a_payload_the_contract_refuses_fails_the_report_run_it_claimed() -> Non
         )
 
     summary = "household_function_error: The household function raised ValidationError."
-    # The report run's own simulation runs fail with it, read from the database.
-    assert runs.kinds == [
-        "claim_report",
-        "read_runs",
-        "fail_unfinished",
-        "fail_unfinished",
-        "fail_report",
-    ]
-    assert [write["run"] for write in runs.of("fail_unfinished")] == [
-        BASELINE_RUN_ID,
-        REFORM_RUN_ID,
-    ]
+    # It is refused before any simulation run is claimed, so only the report
+    # run fails; its runs are left to the stuck-run sweep.
+    assert runs.kinds == ["claim_report", "read_runs", "fail_report"]
     assert runs.of("fail_report")[0]["error_message"] == summary
 
 
@@ -1124,3 +1107,18 @@ def test_a_held_side_that_succeeds_as_the_window_closes_succeeds() -> None:
     assert holder.probes == 4
     assert runs.of("fail_report") == []
     assert answer["status"] == "succeeded"
+
+
+def test_a_held_side_that_fails_as_the_window_closes_fails_with_its_failure() -> None:
+    # As above, but the holder records the run's failure on the last probe.
+    runs, holder = _held_baseline("fails", keeps_running=True, probes_before_ending=3)
+
+    answer = _run(runs, _succeeded, wait=_wait(holder, timeout_seconds=1))
+
+    assert holder.probes == 4
+    (failed_report,) = runs.of("fail_report")
+    assert failed_report["error_message"] == (
+        "household_calculation_failed: The baseline simulation run failed: "
+        f"{FAILURE_MESSAGE}"
+    )
+    assert answer["status"] == "failed"

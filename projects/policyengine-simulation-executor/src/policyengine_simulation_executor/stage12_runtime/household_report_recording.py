@@ -478,10 +478,10 @@ def run_household_report(  # noqa: PLR0913  # the run, its payload and the call'
     Modal's (``household_side_wait``). An error or Modal's cancellation fails
     the report run, and each of its simulation runs this call holds, with a
     generic summary, then propagates; a pre-emption doesn't, because Modal
-    runs the call again under the same call ID. The simulation runs are known once the
-    call has read them, so an error in the report run's claim, or in that
-    read, fails the report run if the claim applied before the error, and
-    leaves its simulation runs to the stuck-run sweep.
+    runs the call again under the same call ID. An error before this call
+    claims any simulation run (in the report run's claim, the read of its
+    simulation runs, or the payload's checks) fails only the report run, if
+    its claim applied, and leaves the simulation runs to the stuck-run sweep.
     Raises RuntimeError, before any write, when ``modal_call_id`` is None.
     """
     if modal_call_id is None:

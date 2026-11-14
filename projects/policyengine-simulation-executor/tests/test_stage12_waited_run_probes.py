@@ -21,6 +21,7 @@ from policyengine_simulation_executor.stage12_runtime.shared_simulation_runs imp
     WaitedRun,
     WaitedRunFailedError,
     WaitedRunSucceeded,
+    WaitedRunUnstarted,
 )
 from policyengine_stage12_persistence import RunStatus, RunWrite, SimulationRunState
 
@@ -105,9 +106,7 @@ def _wait(store: OneRunStore, call_states: ModalCallStates) -> WaitedRun:
     )
 
 
-def test_a_failed_probe_of_a_run_that_succeeded_reads_it_without_asking_modal() -> (
-    None
-):
+def test_a_failed_probe_of_a_run_that_succeeded_reads_it_without_asking_modal() -> None:
     store = OneRunStore(_run_state(RunStatus.SUCCEEDED))
     call_states = ModalCallStates(CallState.RUNNING)
 
@@ -159,3 +158,45 @@ def test_a_failed_probe_of_a_run_moved_to_another_call_follows_it_unasked() -> N
     assert call_states.asked == []
     assert store.failed_for_calls == []
     assert waited.object_id == later_call_id
+
+
+def _reading_run_first(store: OneRunStore, restored: list[str]) -> WaitedRun:
+    """Return a wait that reads the run before probing a holder that may go on."""
+
+    def restore(modal_call_id: str) -> LostConnectionCall:
+        restored.append(modal_call_id)
+        return LostConnectionCall()
+
+    return WaitedRun(
+        simulation_run_id=WAITED_RUN_ID,
+        writer=store,
+        restore=restore,
+        call_state=ModalCallStates(CallState.RUNNING),
+        object_id=HOLDING_CALL_ID,
+        read_run_first=True,
+    )
+
+
+def test_reading_first_follows_a_run_moved_to_another_call_without_a_probe() -> None:
+    later_call_id = "fc-later-household-function"
+    store = OneRunStore(
+        replace(_run_state(RunStatus.RUNNING), modal_call_id=later_call_id)
+    )
+    restored: list[str] = []
+    waited = _reading_run_first(store, restored)
+
+    with pytest.raises(TimeoutError):
+        waited.get(timeout=0)
+
+    assert restored == []
+    assert waited.object_id == later_call_id
+
+
+def test_reading_first_finds_a_run_left_unstarted_without_a_probe() -> None:
+    store = OneRunStore(replace(_run_state(RunStatus.PENDING), modal_call_id=None))
+    restored: list[str] = []
+
+    outcome = _reading_run_first(store, restored).get(timeout=0)
+
+    assert outcome == WaitedRunUnstarted()
+    assert restored == []
