@@ -204,9 +204,10 @@ class ServiceSettings:
 
     ``environment`` labels the calls' artifacts, ``modal_environment`` holds
     the v2 workers, and ``output_bucket`` is the bucket that keeps
-    simulation output files for good. The service reads it no longer: a
-    report joins its sides' runs by version set (C1 · 24's answers 4 and
-    5), not by their files; the setting goes with the reuse search.
+    simulation output files for good. The service keeps it here and uses
+    it for nothing: a report joins its sides' runs by version set
+    (C1 · 24's answers 4 and 5), not by their files; the setting goes with
+    the reuse search.
     """
 
     environment: str

@@ -1,9 +1,10 @@
 """Deployment wiring for the economy report and simulation routes.
 
 Every deploy gives the service the bucket that keeps v2 simulation output
-files for good (the environment variable ``V2_SIMULATION_OUTPUT_BUCKET``),
-so a report reuses only a succeeded run whose file is in it. The service
-compares output URIs with it and never reads the bucket.
+files for good (the environment variable ``V2_SIMULATION_OUTPUT_BUCKET``)
+and refuses a missing or invalid one. The service reads it into its
+settings and uses it for nothing, since a report joins its sides'
+simulation runs by version set; it never reads the bucket.
 """
 
 from __future__ import annotations

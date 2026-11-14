@@ -54,9 +54,10 @@ LOCK_WAIT_TIMEOUT_SECONDS = 10.0
 def wait_until_another_backend_waits_for(engine: Engine, holder_pid: int) -> str:
     """Return, once a backend waits for a lock ``holder_pid`` holds, its statement.
 
-    The statement is read again, in a transaction of its own, once a waiting
-    backend is found: the view's copy of every backend's status is taken
-    when the first read starts, a moment before ``pg_blocking_pids`` runs.
+    The statement is read in a transaction of its own once a waiting
+    backend's pid is found: the view's copy of every backend's status is
+    taken when the first read starts, a moment before ``pg_blocking_pids``
+    runs.
     """
     deadline = time.monotonic() + LOCK_WAIT_TIMEOUT_SECONDS
     with engine.connect() as connection:

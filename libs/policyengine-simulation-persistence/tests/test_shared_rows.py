@@ -49,7 +49,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.public_api_schema
 
 
-
 def _key(name: str) -> str:
     return definition_key({"test": name})
 
