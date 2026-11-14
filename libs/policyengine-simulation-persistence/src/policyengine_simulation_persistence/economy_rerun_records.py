@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, insert, literal, select
 
@@ -91,7 +91,6 @@ from policyengine_simulation_persistence.shared_rows import (
 )
 from policyengine_simulation_persistence.tables import (
     ReportRunStatus,
-    SimulationStatus,
     budget_window_runs,
     report_runs,
     simulation_runs,
@@ -101,7 +100,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
     from uuid import UUID
 
-    from sqlalchemy import Column, ColumnElement, Connection, Table
+    from sqlalchemy import Column, Connection
 
     from policyengine_simulation_persistence.economy_run_records import (
         EconomyPopulation,
@@ -109,10 +108,6 @@ if TYPE_CHECKING:
     )
     from policyengine_simulation_persistence.keyed_economy_records import Side
     from policyengine_simulation_persistence.shared_rows import FoundSimulationRun
-
-# Every run table's statuses (simulation, report and budget-window runs) use
-# these values for a run under way.
-_UNDER_WAY: Final = (SimulationStatus.PENDING.value, SimulationStatus.RUNNING.value)
 
 
 @dataclass(frozen=True)
@@ -279,18 +274,6 @@ class RerunRecordDeletedError(LookupError):
     """
 
 
-class RunInProgressError(Exception):
-    """The record has a run that is pending or running, so no re-run is created.
-
-    ``run_id`` names that run: the newest such one.
-    """
-
-    def __init__(self, run_id: UUID) -> None:
-        """Keep the run under way."""
-        super().__init__(f"run {run_id} is pending or running")
-        self.run_id = run_id
-
-
 def lock_reruns_of(connection: Connection, record_id: UUID) -> None:
     """Wait for, then hold until the transaction ends, the record's re-run lock.
 
@@ -311,30 +294,16 @@ def lock_reruns_of(connection: Connection, record_id: UUID) -> None:
     )
 
 
-def _run_under_way(
-    connection: Connection, table: Table, condition: ColumnElement[bool]
-) -> UUID | None:
-    """Return the newest pending or running run meeting ``condition``, or None."""
-    return connection.execute(
-        select(table.c.id)
-        .where(condition, table.c.status.in_(_UNDER_WAY))
-        .order_by(table.c.created_at.desc(), table.c.id.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-
-
 def insert_report_rerun(
     connection: Connection, rerun: NewReportRerun
 ) -> FoundReportRun:
     """Join the report's run on the re-run's versions, or create it, pending.
 
-    Unless the re-run is forced, take the report's re-run lock, raise
-    RunInProgressError, creating nothing, while a budget-window run of the
-    report is pending or running (the service re-runs a budget window with
-    ``insert_window_rerun``; one passed here directly is refused that way),
-    and join the report's run on the re-run's versions that hasn't failed
-    and wasn't forced, when there is one. Otherwise each side joins its
-    simulation's run on those versions, or inserts one
+    A single-year report's re-run (the service re-runs a budget window with
+    ``insert_window_rerun``). Unless the re-run is forced, take the
+    report's re-run lock and join the report's run on the re-run's versions
+    that hasn't failed and wasn't forced, when there is one. Otherwise each
+    side joins its simulation's run on those versions, or inserts one
     (``find_or_insert_side_runs``), and the report run naming them is
     inserted, unless another request inserted one after the lookup: that
     run is joined, and this call's simulation runs are taken back. A forced
@@ -351,7 +320,6 @@ def insert_report_rerun(
     versions = rerun.versions
     if not rerun.forced:
         lock_reruns_of(connection, rerun.report_id)
-        _refuse_while_window_runs(connection, rerun.report_id)
         joined = find_joinable_report_run(
             connection,
             report_id=rerun.report_id,
@@ -605,15 +573,6 @@ def insert_household_report_rerun(
         return found
 
 
-def _refuse_while_window_runs(connection: Connection, report_id: UUID) -> None:
-    """Raise RunInProgressError while the report has a budget-window run under way."""
-    under_way = _run_under_way(
-        connection, budget_window_runs, budget_window_runs.c.report_id == report_id
-    )
-    if under_way is not None:
-        raise RunInProgressError(under_way)
-
-
 def insert_simulation_rerun(
     connection: Connection, rerun: NewSimulationRerun
 ) -> FoundSimulationRun:
@@ -665,7 +624,6 @@ __all__ = [
     "ReportDefinition",
     "RerunRecordDeletedError",
     "RerunSide",
-    "RunInProgressError",
     "SideDefinition",
     "SimulationDefinition",
     "WindowRerunYear",

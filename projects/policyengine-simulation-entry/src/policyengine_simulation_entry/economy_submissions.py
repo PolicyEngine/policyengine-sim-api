@@ -204,17 +204,14 @@ class ServiceSettings:
 
     ``environment`` labels the calls' artifacts, ``modal_environment`` holds
     the v2 workers, and ``output_bucket`` is the bucket that keeps
-    simulation output files for good. Without it, no report reuses a run.
+    simulation output files for good. The service reads it no longer: a
+    report joins its sides' runs by version set (C1 · 24's answers 4 and
+    5), not by their files; the setting goes with the reuse search.
     """
 
     environment: str
     modal_environment: str
     output_bucket: str | None = None
-
-    @property
-    def reuse_prefix(self) -> str | None:
-        """Return ``gs://<bucket>/``, under which reusable output files lie."""
-        return None if not self.output_bucket else f"gs://{self.output_bucket}/"
 
 
 def _database_unavailable() -> EconomySubmissionUnavailableError:

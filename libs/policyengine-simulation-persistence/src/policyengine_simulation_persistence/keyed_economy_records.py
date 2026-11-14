@@ -28,7 +28,7 @@ for the rows it inserts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 from policyengine_simulation_persistence.definition_keys import KEY_VERSION
@@ -126,16 +126,6 @@ class FoundEconomyReport:
     run: FoundReportRun
     baseline: FoundSide
     reform: FoundSide
-
-    @property
-    def inserted_simulation_run_ids(self) -> tuple[UUID, ...]:
-        """Return the simulation runs this request inserted, each once."""
-        inserted = [
-            side.simulation_run_id
-            for side in (self.baseline, self.reform)
-            if side.run_inserted
-        ]
-        return tuple(dict.fromkeys(inserted))
 
 
 @dataclass(frozen=True)
@@ -275,8 +265,9 @@ def find_or_insert_report_run_on_sides(
     It runs in a savepoint: a report run another request inserted after the
     caller looked for one is joined instead, and the savepoint takes back
     this call's simulation runs. Return the report run, and each side's run
-    with whether this call inserted it, which holds only when this call
-    inserted the report run (otherwise nothing it inserted is kept).
+    with whether this call inserted it; after a lost race nothing this call
+    inserted is kept, so no side run is returned (the joined report run
+    names its own).
     """
     savepoint = connection.begin_nested()
     try:
@@ -295,9 +286,7 @@ def find_or_insert_report_run_on_sides(
         raise
     if not run.inserted:
         savepoint.rollback()
-        return run, {
-            side: replace(found, inserted=False) for side, found in runs.items()
-        }
+        return run, {}
     savepoint.commit()
     return run, runs
 

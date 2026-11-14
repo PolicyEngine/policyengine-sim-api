@@ -166,7 +166,7 @@ def test_a_keyed_report_is_created_with_its_simulations_and_first_run(
     assert found.reform.simulation_id == request.reform.simulation_id
     assert found.baseline.run_inserted
     assert found.reform.run_inserted
-    assert found.inserted_simulation_run_ids == (
+    assert (found.baseline.simulation_run_id, found.reform.simulation_run_id) == (
         request.baseline.simulation_run_id,
         request.reform.simulation_run_id,
     )
@@ -253,7 +253,6 @@ def test_an_identical_request_ends_on_the_same_rows_and_inserts_nothing(
     assert (again.report_inserted, again.run.inserted) == (False, False)
     assert not again.baseline.run_inserted
     assert not again.reform.run_inserted
-    assert again.inserted_simulation_run_ids == ()
     assert counts_after == counts
 
 
@@ -271,7 +270,8 @@ def test_the_same_policy_on_both_sides_names_one_simulation_run_twice(
         simulation_count = _count(connection, "simulations")
 
     assert found.baseline == found.reform
-    assert found.inserted_simulation_run_ids == (request.baseline.simulation_run_id,)
+    assert found.baseline.simulation_run_id == request.baseline.simulation_run_id
+    assert found.baseline.run_inserted
     assert run["baseline_simulation_run_id"] == run["reform_simulation_run_id"]
     assert simulation_count == 1
 
@@ -307,7 +307,6 @@ def test_a_report_whose_run_failed_gets_a_new_run_joining_its_simulation_runs(
     assert second.baseline.run_inserted is False
     assert second.reform.run_inserted is True
     assert second.reform.simulation_run_id != first.reform.simulation_run_id
-    assert second.inserted_simulation_run_ids == (second.reform.simulation_run_id,)
 
 
 def test_a_forced_run_is_never_joined_by_a_create(public_api_database_url) -> None:

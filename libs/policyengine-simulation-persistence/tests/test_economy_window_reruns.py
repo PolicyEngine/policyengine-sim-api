@@ -44,7 +44,6 @@ from policyengine_simulation_persistence import (
     KeyedBudgetWindow,
     KeyedWindowYear,
     NewBudgetWindowReport,
-    NewReportRerun,
     NewWindowRerun,
     ProposedSide,
     ReportRunStatus,
@@ -52,14 +51,12 @@ from policyengine_simulation_persistence import (
     RerunRecordDeletedError,
     RerunSide,
     ReusableRun,
-    RunInProgressError,
     RunReuse,
     SimulationStatus,
     WindowRerunYear,
     WindowYearDefinition,
     find_or_create_budget_window,
     insert_budget_window_report,
-    insert_report_rerun,
     insert_window_rerun,
     read_report_definition,
 )
@@ -482,41 +479,6 @@ def test_an_unforced_window_rerun_after_a_failed_run_names_its_years_runs(
     for first, again in zip(found.years, created.years, strict=True):
         assert again.baseline.simulation_run_id == first.baseline.simulation_run_id
         assert again.baseline.run_inserted is False
-
-
-@pytest.mark.parametrize("status", [ReportRunStatus.PENDING, ReportRunStatus.RUNNING])
-def test_a_single_year_rerun_of_a_window_is_refused_while_a_window_run_is_under_way(
-    public_api_database_url, status: ReportRunStatus
-) -> None:
-    with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
-        later = insert_later_catalog(connection, economy)
-        stored = _stored_window(connection, economy, window_status=status)
-        act_as_the_service(connection)
-
-        # The service re-runs a window with insert_window_rerun.
-        with pytest.raises(RunInProgressError) as report_refused:
-            insert_report_rerun(
-                connection,
-                NewReportRerun(
-                    report_id=stored.report_id,
-                    run_id=uuid4(),
-                    population=later.population(),
-                    versions=LATER_VERSIONS,
-                    baseline=RerunSide(
-                        simulation_id=stored.years[0].baseline.simulation_id,
-                        simulation_run_id=uuid4(),
-                        reused=False,
-                    ),
-                    reform=RerunSide(
-                        simulation_id=stored.years[0].reform.simulation_id,
-                        simulation_run_id=uuid4(),
-                        reused=False,
-                    ),
-                ),
-            )
-
-    assert report_refused.value.run_id == stored.window_run_id
 
 
 def test_a_window_reruns_inputs_name_each_years_own_reusable_runs(
