@@ -10,8 +10,9 @@ service runs now, as a new run, and keeps every earlier run. The service:
 - creates, in one transaction, the new run and each report side's run of
   its own simulation, all ``pending`` with no Modal call ID; an unforced
   economy or household report re-run's side joins its simulation's run on
-  the current versions instead, when there is one. A report's new run has
-  trigger ``manual``. A budget window's new run is a ``budget_window_runs``
+  the current versions instead, when there is one. No new run names a
+  trigger (answer 6): each user's report-run record holds it. A budget
+  window's new run is a ``budget_window_runs``
   row with a report run per year, each year on the simulations its report
   run in the report's newest window run names. A household report's new
   run names runs of its own household simulations.
@@ -280,8 +281,8 @@ def lock_reruns_of(connection: Connection, record_id: UUID) -> None:
     It is a transaction-level advisory lock keyed on the record's ID, which
     any role may take: a second re-run of the same report waits here until
     the first one's transaction ends, then sees its run, which an economy
-    or household report's re-run joins and a budget window's is refused
-    for. A simulation's re-run takes none, as the Public API's index on runs
+    or household report's re-run, or a budget window's, joins. A
+    simulation's re-run takes none, as the Public API's index on runs
     lets one joinable run exist, and neither does a forced re-run, which
     nothing joins.
     """
@@ -512,7 +513,7 @@ def insert_household_report_rerun(
 ) -> FoundReportRun:
     """Join the household report's run on the re-run's versions, or create it.
 
-    The report run has trigger ``manual`` and names no budget-window run;
+    The report run names no budget-window run and no trigger (answer 6);
     each side's run is of the report's own household simulation, with no
     Modal call: the service then starts one household function call for a
     report run it created. Unforced (a keyed report's re-run), take the

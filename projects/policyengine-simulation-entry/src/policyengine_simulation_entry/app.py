@@ -575,7 +575,7 @@ def economy_submissions_for(
 
     It needs the simulation database and the v2 Modal environment; without
     them the economy routes answer 503. Nothing is read from Modal until the
-    first submission. Without the output bucket, no report reuses a run. It
+    first submission. It
     re-runs a household report through ``household_reports``; without it, a
     household report it could re-run answers 503.
     """

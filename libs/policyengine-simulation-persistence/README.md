@@ -94,9 +94,11 @@ its first report run, trigger `initial`; every run is `pending` with no
 Modal call ID. A side may instead name a run that already succeeded
 (`ReportSimulation.reused`), for which nothing is created.
 `insert_economy_simulation` creates a standalone simulation and its first
-run. Both create unkeyed rows; the Simulation Entrypoint now creates by key
-("Shared simulations, reports and runs" below), and budget windows still
-create this way. A row naming one that does not exist is refused by its foreign key with
+run. Both create unkeyed rows, as `insert_budget_window_report` and
+`insert_household_report` do; the Simulation Entrypoint calls none of them
+now, creating every record by key ("Shared simulations, reports and runs"
+below), and tests use them to store records created before keys. A row
+naming one that does not exist is refused by its foreign key with
 SQLSTATE `23503`; `EconomyRecordReferenceError` names the table and column.
 
 `find_reusable_run` returns the run a new report's side may reuse: the
@@ -130,7 +132,7 @@ so the rows may exist.
 ## Shared simulations, reports and runs
 
 Identical requests, together or a minute apart, end on the same simulation,
-report and run rows (C1 · 24). Three modules do it:
+report and run rows (C1 · 24). These modules do it:
 
 - `definition_keys.py` builds each record's key: the lowercase SHA-256 of
   a definition's canonical JSON (keys sorted, no spaces, UTF-8, UUIDs as
@@ -141,7 +143,11 @@ report and run rows (C1 · 24). Three modules do it:
   a report by both sides' policies and dynamics, the dataset, region, year
   and SPM selection they share, and its budget window size, with no other
   option, and gives its `dataset_independent_key` (the same without the
-  dataset) and each side's simulation definition. Names and codes, not
+  dataset) and each side's simulation definition. `HouseholdSimulationDefinition`
+  keys a household simulation by its country, policy, dynamic, stored
+  household and year, and `HouseholdReportDefinition` a household report by
+  its sides (the reform null for the baseline alone), household and year.
+  Names and codes, not
   catalog IDs, so a record keeps its key across releases.
 - `shared_rows.py` finds a row by its definition or version set, or inserts
   it: one `INSERT … ON CONFLICT DO NOTHING` against the Public API's unique
@@ -224,8 +230,8 @@ version, dataset and region it calculates on.
   simulation row, which keeps the catalog rows it was created on.
 - `insert_report_rerun` joins the report's run on the re-run's versions
   that hasn't failed and wasn't forced (pending, running or succeeded),
-  creating nothing, or else creates the report's new run, trigger `manual`,
-  each side joining its simulation's run on those versions that hasn't
+  creating nothing, or else creates the report's new run, naming no
+  trigger (answer 6), each side joining its simulation's run on those versions that hasn't
   failed and wasn't forced, in any state, or inserting one
   (`find_or_insert_side_runs`, as a keyed create does). A report run another
   request inserts after the lookup is joined, and a savepoint takes back
@@ -261,7 +267,7 @@ A household report's definition also names its household (`household_id`).
 report's re-run is, it takes the same lock and joins the report's run on
 the re-run's versions, or else each side joins its own household
 simulation's run on those versions (no dataset or region, the report's
-year) or inserts one, under a new report run (trigger `manual`). A forced
+year) or inserts one, under a new report run (no trigger). A forced
 one, as every re-run of a household report without keys is (interim answer
 B), takes no lock, is never refused, and marks its report run and a new run
 of each side `forced`. `HouseholdReportStore.create_report_rerun` runs it

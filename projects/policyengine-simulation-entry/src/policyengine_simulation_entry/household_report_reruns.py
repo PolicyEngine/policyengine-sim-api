@@ -13,7 +13,7 @@ to ``HouseholdReportRerunService``, which:
    policy values, and checks each side's household contract request;
 3. for a keyed report's unforced re-run, joins, in one transaction, the
    report's run on the current versions that hasn't failed and wasn't
-   forced, or else creates the report's new run (trigger ``manual``)
+   forced, or else creates the report's new run (naming no trigger)
    naming each side's household simulation run on those versions, found or
    inserted, as an economy report's re-run does (C1 · 24's answer 8). A
    forced re-run, and every re-run of a report created before keys, whose

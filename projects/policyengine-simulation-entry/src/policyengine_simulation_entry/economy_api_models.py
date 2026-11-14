@@ -162,8 +162,9 @@ class EconomyReportRequest(_Request):
     """An economy report: a baseline and a reform simulation of one region's data.
 
     Both simulations use the report's year, region and dataset, as
-    ``EconomySimulationRequest`` describes them. ``include_cliffs`` also
-    calculates the baseline's and reform's cliff impact. ``spm`` selects the
+    ``EconomySimulationRequest`` describes them. ``include_cliffs: true`` is
+    refused (422 ``cliffs_not_available``) until cliffs are calculated per
+    simulation run (C1 · 39). ``spm`` selects the
     SPM forecast scenario and geography; omit it, rather than sending null,
     to use the bundle's certified defaults.
     """
@@ -194,10 +195,11 @@ class EconomyReportRequest(_Request):
         return value
 
     def options(self) -> dict[str, Any]:
-        """Return the report's options as it stores them (``reports.inputs``).
+        """Return the request's options, as its calculation reads them.
 
         ``spm`` holds only the settings the request gave, and is left out
-        when it gave none.
+        when it gave none. The report stores the selection alone
+        (``economy_requests.stored_options``).
         """
         options: dict[str, Any] = {"include_cliffs": self.include_cliffs}
         if self.spm is not None:

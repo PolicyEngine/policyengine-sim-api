@@ -5,13 +5,14 @@ of a window of 1 to 75 consecutive years. It is stored as an economy report
 whose ``budget_window_size`` is the window's length, with one
 ``budget_window_runs`` row for its calculation and, for each year, a report
 run naming that row and the year. Each year has its own baseline and reform
-simulations, of that year, unless it reuses a run that already succeeded,
-so a year's run can be reused by a single-year report, and the reverse. The
-report names its first year's simulations.
+simulations, of that year. The report names its first year's simulations.
 
-The simulation service creates every row pending with no Modal call, then
-starts the first years; each year's coordinator starts the next ones (see
-``policyengine_stage12_persistence.BudgetWindowStore``).
+``insert_budget_window_report`` creates such a window without keys, as
+windows were created before C1 · 27; the simulation service now finds or
+creates windows by key (``keyed_window_records``), and tests use this to
+store a window created before keys. Every row is pending with no Modal
+call; the service then starts the first years, and each year's coordinator
+starts the next ones (see ``policyengine_stage12_persistence.BudgetWindowStore``).
 """
 
 from __future__ import annotations

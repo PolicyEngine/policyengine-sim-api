@@ -17,7 +17,7 @@ default worker, as a new run, and keeps every earlier run. The service:
 3. for a simulation or a keyed economy report, joins, in one transaction,
    the record's run on the current versions that hasn't failed and wasn't
    forced, pending, running or succeeded (C1 · 24's answers 2 and 3), or
-   else creates the new run (a report's with trigger ``manual``); a keyed
+   else creates the new run (naming no trigger, answer 6); a keyed
    report's sides join their simulations' runs on those versions the same
    way, or create them. A report whose simulations have no key, created
    before C1 · 27, may have runs whose plans depended on the report that
@@ -237,10 +237,11 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
     ) -> EconomyReportCreated | BudgetWindowReportCreated | HouseholdReportCreated:
         """Join or create the stored report's run on the current versions.
 
-        A budget window's new run is a budget-window run with a report run
-        per year, whose first years are started (``_rerun_window``); a
-        household report's is the household report service's, which
-        ``force`` changes nothing for. Raise EconomyRecordNotFoundError (404)
+        A budget window's run is a budget-window run with a report run per
+        year, a new one's first years started (``_rerun_window``); a
+        household report's is the household report service's, which joins
+        or forces as an economy report's does. Raise
+        EconomyRecordNotFoundError (404)
         or EconomyRerunConflictError (409) as the module describes, and
         otherwise the errors ``submit_report`` raises, a 503 for Modal's
         refusal naming the new run as well as the report.

@@ -306,7 +306,7 @@ unforced re-run joins its run on the current versions, or each side joins
 its own household simulation's run on them or gets a new one; `force`, and
 every re-run of a household report created before keys, makes an extra run
 on a new run of each side, all marked `forced`. A report run it created
-(trigger `manual`) is started by one household function call, as a new
+(naming no trigger: answer 6) is started by one household function call, as a new
 household report's is, and the re-run answers 201 with the household report
 create's fields.
 `POST /simulations/{simulation_id}/runs`, with no body, joins a stored

@@ -570,11 +570,11 @@ def _submission_routes(
         responses={
             201: {
                 "description": (
-                    "The report the request ended on and its run: an economy "
-                    "report found or created by key, with its run on the default "
-                    "worker's versions, joined (no new call) or created and "
-                    "started; a budget-window or household report and its first "
-                    "runs, created"
+                    "The report the request ended on and its run: a report "
+                    "(economy, budget window or household) found or created by "
+                    "key, with its run (a window's: its window run) on the "
+                    "default worker's versions, joined (no new call) or created "
+                    "and started"
                 )
             },
             400: _REFUSED,
