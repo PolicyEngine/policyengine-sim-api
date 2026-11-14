@@ -335,13 +335,15 @@ columns, for example a reform that turns on labour supply responses, can't
 reuse it and fails with `reused_simulation_output_incompatible`.
 
 **A re-run.** The service re-runs a stored report or simulation with the same
-two calls, by run ID. For a record created by key, unless the re-run is
-forced, it joins the record's run on the current versions that hasn't failed
-and wasn't forced, which gets no call, or else creates the record's new run
-naming each side's simulation run on those versions, found or inserted
-(C1 · 24's answers 3 and 8); a forced re-run, and every re-run of a report created
-before keys, creates an extra run on a new run of each side, all marked
-forced. No new run names a trigger (answer 6). The new runs record the
+two calls, by run ID. A simulation's re-run, which takes no `force`, joins
+the simulation's run on the current versions, catalog version and year that
+hasn't failed and wasn't forced, which gets no call, or else creates one. A
+report's re-run, for a report created by key and unless forced, joins the
+report's run on the current versions the same way, or else creates the
+report's new run naming each side's simulation run on those versions, found
+or inserted (C1 · 24's answers 3 and 8); a forced re-run, and every re-run
+of a report created before keys, creates an extra run on a new run of each
+side, all marked forced. No new run names a trigger (answer 6). The new runs record the
 catalog version, dataset and region of the current .py version's catalog;
 the `simulations` and `reports` rows are unchanged. A budget-window report's
 re-run joins or creates a `budget_window_runs` row with a report run per

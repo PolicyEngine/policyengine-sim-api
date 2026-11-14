@@ -52,20 +52,30 @@ LOCK_WAIT_TIMEOUT_SECONDS = 10.0
 
 
 def wait_until_another_backend_waits_for(engine: Engine, holder_pid: int) -> str:
-    """Return, once a backend waits for a lock ``holder_pid`` holds, its statement."""
+    """Return, once a backend waits for a lock ``holder_pid`` holds, its statement.
+
+    The statement is read again, in a transaction of its own, once a waiting
+    backend is found: the view's copy of every backend's status is taken
+    when the first read starts, a moment before ``pg_blocking_pids`` runs.
+    """
     deadline = time.monotonic() + LOCK_WAIT_TIMEOUT_SECONDS
     with engine.connect() as connection:
         while time.monotonic() < deadline:
-            waiting = connection.execute(
+            waiting_pid = connection.execute(
                 text(
-                    "SELECT query FROM pg_stat_activity "
+                    "SELECT pid FROM pg_stat_activity "
                     "WHERE :holder_pid = ANY(pg_blocking_pids(pid)) LIMIT 1"
                 ),
                 {"holder_pid": holder_pid},
             ).scalar_one_or_none()
             connection.rollback()
-            if waiting is not None:
-                return waiting
+            if waiting_pid is not None:
+                statement = connection.execute(
+                    text("SELECT query FROM pg_stat_activity WHERE pid = :pid"),
+                    {"pid": waiting_pid},
+                ).scalar_one()
+                connection.rollback()
+                return statement
             time.sleep(0.05)
     msg = "the second request never waited for the first one's rows"
     raise AssertionError(msg)

@@ -276,7 +276,8 @@ forced re-run is never refused while a run is under way. A report created
 before keys (C1 · 27), whose simulations have none, is always re-run that
 way, forced or not: its runs may have been calculated with plans that
 depended on that report (C1 · 24's interim answer B). The new report run
-names no trigger (answer 6): API v1's record of the request holds it. Such a
+names no trigger (answer 6): the Public API's per-user report-run record
+holds it. Such a
 report stored asking for cliff impacts
 (`include_cliffs: true` in its options) is refused with 422
 `cliffs_not_available`, located at `report.inputs.include_cliffs`, until

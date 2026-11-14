@@ -48,7 +48,6 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.public_api_schema
 
-# How long a test waits for the other transaction to reach its insert.
 
 
 def _key(name: str) -> str:

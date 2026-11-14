@@ -236,7 +236,9 @@ def _year_run_row(
     window_run_id: UUID,
     versions: RunVersions,
 ) -> dict[str, Any]:
-    """Return a window's first year run as created before keys, pending, unforced.
+    """Return a year's report run in a window's first window run, pending, unforced.
+
+    As windows were created before keys: trigger ``initial``.
 
     Keyed windows' year runs, which name no trigger, are
     ``keyed_window_records.window_year_run_row``'s.
