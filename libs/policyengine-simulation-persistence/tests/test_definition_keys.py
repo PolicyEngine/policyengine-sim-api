@@ -304,9 +304,7 @@ def test_each_part_of_a_household_report_definition_changes_its_key() -> None:
     assert len({variant.definition_key for variant in variants}) == len(variants)
 
 
-def test_a_household_reports_dataset_independent_key_has_its_own_record_name() -> (
-    None
-):
+def test_a_household_reports_dataset_independent_key_has_its_own_record_name() -> None:
     """A household report has no dataset, so only the record name differs."""
     report = _household_report()
     expected = {**report.key_object(), "record": "report_dataset_independent"}

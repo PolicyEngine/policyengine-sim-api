@@ -298,8 +298,9 @@ def test_a_household_policy_compared_with_itself_names_one_simulation_run_twice(
     assert found.baseline.simulation_id == found.reform.simulation_id
     assert found.baseline.simulation_run_id == found.reform.simulation_run_id
     assert found.baseline.simulation_run_id == request.baseline.simulation_run_id
-    assert report_run["baseline_simulation_run_id"] == (
-        report_run["reform_simulation_run_id"]
+    assert (
+        report_run["baseline_simulation_run_id"]
+        == (report_run["reform_simulation_run_id"])
     )
 
 

@@ -358,9 +358,7 @@ def test_a_forced_window_rerun_creates_a_window_run_and_each_years_new_runs(
     assert earlier_window["status"] == ReportRunStatus.SUCCEEDED
 
 
-def _keyed_window(
-    connection: Connection, economy: EconomyCatalog
-) -> FoundBudgetWindow:
+def _keyed_window(connection: Connection, economy: EconomyCatalog) -> FoundBudgetWindow:
     """Create a keyed window of current law against current law, as the service."""
     definition = EconomyReportDefinition(
         country="us",

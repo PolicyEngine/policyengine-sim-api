@@ -5,7 +5,9 @@ of a window of 1 to 75 consecutive years. It is stored as an economy report
 whose ``budget_window_size`` is the window's length, with one
 ``budget_window_runs`` row for its calculation and, for each year, a report
 run naming that row and the year. Each year has its own baseline and reform
-simulations, of that year. The report names its first year's simulations.
+simulations, of that year; a window created before keys could instead name,
+on a year's side, a run that already succeeded (``ReportSimulation.reused``).
+The report names its first year's simulations.
 
 ``insert_budget_window_report`` creates such a window without keys, as
 windows were created before C1 · 27; the simulation service now finds or
@@ -216,31 +218,28 @@ def insert_budget_window_report(
         connection.execute(
             insert(report_runs),
             [
-                year_run_row(
+                _year_run_row(
                     window_year,
                     report_id=report.id,
                     window_run_id=report.window_run_id,
                     versions=report.versions,
-                    trigger=ReportRunTrigger.INITIAL,
                 )
                 for window_year in report.years
             ],
         )
 
 
-def year_run_row(  # noqa: PLR0913  # the year, then each column it doesn't name
-    window_year: WindowYearRuns,
+def _year_run_row(
+    window_year: BudgetWindowYear,
     *,
     report_id: UUID,
     window_run_id: UUID,
     versions: RunVersions,
-    trigger: ReportRunTrigger,
-    forced: bool = False,
 ) -> dict[str, Any]:
-    """Return a year's report run in a window run, pending with no call, as inserted.
+    """Return a window's first year run as created before keys, pending, unforced.
 
-    ``window_year`` is a new window's year or a re-run's; ``trigger`` says
-    which, and ``forced`` marks a forced re-run's.
+    Keyed windows' year runs, which name no trigger, are
+    ``keyed_window_records.window_year_run_row``'s.
     """
     return {
         "id": window_year.report_run_id,
@@ -252,7 +251,7 @@ def year_run_row(  # noqa: PLR0913  # the year, then each column it doesn't name
         "country_package_version": versions.country_package_version,
         "policyengine_version": versions.policyengine_version,
         "status": ReportRunStatus.PENDING,
-        "trigger": trigger,
+        "trigger": ReportRunTrigger.INITIAL,
         "modal_call_id": None,
-        "forced": forced,
+        "forced": False,
     }

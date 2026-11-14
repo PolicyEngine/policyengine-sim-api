@@ -237,9 +237,8 @@ version, dataset and region it calculates on.
   request inserts after the lookup is joined, and a savepoint takes back
   this call's simulation runs. An unforced one first takes `lock_reruns_of`,
   a transaction-level advisory lock on the report's ID, so concurrent
-  re-runs of one report wait for each other and end on one run; it refuses
-  with `RunInProgressError` only while a budget-window run of the report is
-  under way. A forced one (`NewReportRerun.forced`) takes no lock, always
+  re-runs of one report wait for each other and end on one run. No re-run
+  is refused while a run is under way. A forced one (`NewReportRerun.forced`) takes no lock, always
   creates a new run of each side, marked `forced`, and joins none. No side
   of a report's re-run names a reused run. `insert_simulation_rerun` joins or creates the
   simulation's run on the re-run's versions, catalog version and year

@@ -121,10 +121,12 @@ fails the check.
 `POST /reports` and `POST /simulations`, and their reads, use the same
 database, Modal token and v2 manifest settings as the household routes, and
 the deploy's `V2_SIMULATION_OUTPUT_BUCKET`, the `beta` or `prod` variable of
-that name: the bucket that keeps v2 simulation output files for good. A
-report reuses only a succeeded simulation run whose file is in it; the
-service compares output URIs with it and never reads the bucket, so it needs
-no storage permission. A missing or invalid bucket name stops the deploy.
+that name: the bucket that keeps v2 simulation output files for good. The
+service no longer reads it: a report joins its sides' simulation runs by
+version set (C1 · 24's answers 4 and 5), not by their files, and the setting
+goes with the reuse search's removal. It never reads the bucket itself, so it
+needs no storage permission. A missing or invalid bucket name stops the
+deploy.
 The coordinator and workers get the same bucket from the Modal secret the
 Stage 12 secret sync writes.
 

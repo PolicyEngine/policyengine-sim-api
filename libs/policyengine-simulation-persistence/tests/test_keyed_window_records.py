@@ -59,10 +59,14 @@ WINDOW_YEARS = (2026, 2027, 2028)
 
 
 def _definition(
-    reform: SimulationChoice, *, year: int = FIRST_YEAR, size: int | None = 3
+    reform: SimulationChoice,
+    *,
+    country: str = "us",
+    year: int = FIRST_YEAR,
+    size: int | None = 3,
 ) -> EconomyReportDefinition:
     return EconomyReportDefinition(
-        country="us",
+        country=country,
         baseline=CURRENT_LAW,
         reform=reform,
         dataset_name="populace_us_2024",
@@ -78,7 +82,7 @@ def _keyed_window(
 ) -> KeyedBudgetWindow:
     """Return a request's three-year window on ``economy``, with fresh IDs."""
     return KeyedBudgetWindow(
-        definition=_definition(reform),
+        definition=_definition(reform, country=economy.catalog.country),
         report_id=uuid4(),
         window_run_id=uuid4(),
         tax_benefit_model_id=economy.catalog.model_id,
@@ -262,7 +266,9 @@ def test_a_window_year_names_a_single_year_reports_simulation_run(
         single_year = find_or_create_economy_report(
             connection,
             KeyedEconomyReport(
-                definition=_definition(reform, year=2027, size=None),
+                definition=_definition(
+                    reform, country=economy.catalog.country, year=2027, size=None
+                ),
                 report_id=uuid4(),
                 run_id=uuid4(),
                 baseline=ProposedSide(simulation_id=uuid4(), simulation_run_id=uuid4()),
@@ -404,6 +410,7 @@ def test_two_identical_window_requests_at_once_end_on_one_window_run_started_onc
     first_has_inserted = threading.Event()
     found: dict[str, FoundBudgetWindow] = {}
     started_windows: list[UUID] = []
+    waited_on: list[str] = []
 
     def create_and_start(connection: Connection, name: str) -> None:
         act_as_the_service(connection)
@@ -419,7 +426,9 @@ def test_two_identical_window_requests_at_once_end_on_one_window_run_started_onc
             create_and_start(connection, "first")
             holder_pid = connection.execute(select(func.pg_backend_pid())).scalar_one()
             first_has_inserted.set()
-            wait_until_another_backend_waits_for(committed_engine, holder_pid)
+            waited_on.append(
+                wait_until_another_backend_waits_for(committed_engine, holder_pid)
+            )
 
     def second_request() -> None:
         assert first_has_inserted.wait(LOCK_WAIT_TIMEOUT_SECONDS)
@@ -428,6 +437,9 @@ def test_two_identical_window_requests_at_once_end_on_one_window_run_started_onc
 
     run_together((first_request, second_request), released=first_has_inserted)
 
+    # The second waited at the window run's index, not on another row.
+    (statement,) = waited_on
+    assert statement.lstrip().startswith("INSERT INTO public.budget_window_runs")
     first, second = found["first"], found["second"]
     assert first.report_id == second.report_id == earlier.report_id
     assert first.window_run.id != earlier.window_run.id

@@ -51,21 +51,21 @@ def delete_catalog_rows(connection: Connection, economy: EconomyCatalog) -> None
 LOCK_WAIT_TIMEOUT_SECONDS = 10.0
 
 
-def wait_until_another_backend_waits_for(engine: Engine, holder_pid: int) -> None:
-    """Return once a backend waits for a lock the backend ``holder_pid`` holds."""
+def wait_until_another_backend_waits_for(engine: Engine, holder_pid: int) -> str:
+    """Return, once a backend waits for a lock ``holder_pid`` holds, its statement."""
     deadline = time.monotonic() + LOCK_WAIT_TIMEOUT_SECONDS
     with engine.connect() as connection:
         while time.monotonic() < deadline:
             waiting = connection.execute(
                 text(
-                    "SELECT count(*) FROM pg_stat_activity "
-                    "WHERE :holder_pid = ANY(pg_blocking_pids(pid))"
+                    "SELECT query FROM pg_stat_activity "
+                    "WHERE :holder_pid = ANY(pg_blocking_pids(pid)) LIMIT 1"
                 ),
                 {"holder_pid": holder_pid},
-            ).scalar_one()
+            ).scalar_one_or_none()
             connection.rollback()
-            if waiting:
-                return
+            if waiting is not None:
+                return waiting
             time.sleep(0.05)
     msg = "the second request never waited for the first one's rows"
     raise AssertionError(msg)

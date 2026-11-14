@@ -335,15 +335,18 @@ columns, for example a reform that turns on labour supply responses, can't
 reuse it and fails with `reused_simulation_output_incompatible`.
 
 **A re-run.** The service re-runs a stored report or simulation with the same
-two calls, by run ID. It creates the record's new run (a report run with
-trigger `manual`) and, for a report, a new `simulation_runs` row of each side's
-own simulation, or names that simulation's run that already succeeded on the
-same versions, unless the re-run is forced. The new runs record the catalog
-version, dataset and region of the current .py version's catalog; the
-`simulations` and `reports` rows are unchanged. A budget-window report's
-re-run is a new `budget_window_runs` row (trigger `manual`) with a report run
-per year, each on its year's own simulations, started as a new window's
-first years are. The coordinator and workers claim and calculate them as
+two calls, by run ID. For a record created by key, unless the re-run is
+forced, it joins the record's run on the current versions that hasn't failed
+and wasn't forced, which gets no call, or else creates the record's new run
+naming each side's simulation run on those versions, found or inserted
+(C1 · 24's answers 3 and 8); a forced re-run, and every re-run of a report created
+before keys, creates an extra run on a new run of each side, all marked
+forced. No new run names a trigger (answer 6). The new runs record the
+catalog version, dataset and region of the current .py version's catalog;
+the `simulations` and `reports` rows are unchanged. A budget-window report's
+re-run joins or creates a `budget_window_runs` row with a report run per
+year, each on its year's own simulations, a new one started as a new
+window's first years are. The coordinator and workers claim and calculate them as
 they would a new record's: nothing on the Modal side tells a re-run apart.
 
 **Each worker** claims its simulation run under its own Modal call ID: a pending
@@ -801,11 +804,12 @@ pre-emption records nothing. An error in the report run's claim, or in the
 read of its simulation runs, fails the report run if the claim applied
 before the error, and leaves its simulation runs to the stuck-run sweep.
 
-A household report's re-run (`POST /reports/{report_id}/runs`) is a new
-report run, trigger `manual`, naming a new run of each side's own household
-simulation on the current catalog version, in the report's year. The
-service starts one call for it, as for a new household report, and the
-function claims and calculates it as it would a new report's run.
+A household report's re-run (`POST /reports/{report_id}/runs`) joins or
+creates its report run as an economy report's does, each side's run of its
+own household simulation on the current catalog version, in the report's
+year. The service starts one call for a run it created, as for a new
+household report, and the function claims and calculates it as it would a
+new report's run.
 
 The stuck-run sweep (`src/modal/run_sweep_app.py`) fails household jobs
 nothing will finish by the rule it applies to report runs and simulation
