@@ -6,6 +6,7 @@ before dataset loading or child submission and never run a population job.
 
 import os
 import re
+from functools import partial
 from unittest.mock import Mock
 
 import pytest
@@ -23,7 +24,12 @@ def forecast():
     return _forecast(runtime_spm_capability().defaults.forecast_content_sha256)
 
 
-def _worker_entrypoint(params, monkeypatch):
+def _worker_entrypoint(params, monkeypatch, observability_runtime):
+    """Return the worker entrypoint for ``params`` and a mock of its next step.
+
+    The entrypoint runs under ``observability_runtime``. The mock replaces the
+    first step after SPM prevalidation, so a rejected request never reaches it.
+    """
     from policyengine_simulation_executor import region_resolution, simulation_runtime
     from src.modal import budget_window_batch
 
@@ -35,22 +41,22 @@ def _worker_entrypoint(params, monkeypatch):
         entrypoint = simulation_runtime._run_simulation_impl_core
         boundary = Mock(side_effect=AssertionError("Must reject before dataset lookup"))
         monkeypatch.setattr(region_resolution, "resolve_dataset_reference", boundary)
-    return entrypoint, boundary
+    return partial(entrypoint, runtime=observability_runtime), boundary
 
 
 @pytest.mark.parametrize(
     ("period", "unavailable_year"),
     [
         ({"time_period": "2021"}, 2021),
-        ({"time_period": "2036"}, 2036),
+        ({"time_period": "2037"}, 2037),
         ({"year": "2040"}, 2040),
         ({"start_year": "2021", "window_size": 1}, 2021),
-        ({"start_year": "2036", "window_size": 1}, 2036),
-        ({"start_year": "2035", "window_size": 2}, 2036),
+        ({"start_year": "2037", "window_size": 1}, 2037),
+        ({"start_year": "2036", "window_size": 2}, 2037),
     ],
 )
 def test_worker_year_boundary_matches_real_provider(
-    forecast, period, unavailable_year, monkeypatch
+    forecast, period, unavailable_year, monkeypatch, observability_runtime
 ):
     from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
     from spm_calculator.policyengine_adapter import PolicyEngineSPMProvider
@@ -65,7 +71,9 @@ def test_worker_year_boundary_matches_real_provider(
     assert expected.code == "SPM_YEAR_UNAVAILABLE"
     assert provider.provenance()["years"] == {}
     params = {"country": "us", "spm": {"geography_kind": "national"}, **period}
-    entrypoint, boundary = _worker_entrypoint(params, monkeypatch)
+    entrypoint, boundary = _worker_entrypoint(
+        params, monkeypatch, observability_runtime
+    )
     with pytest.raises(SPMInputError) as error:
         entrypoint(params)
     assert error.value.to_dict() == expected.model_dump()
@@ -80,7 +88,7 @@ def test_worker_year_boundary_matches_real_provider(
     ],
 )
 def test_worker_scenario_boundary_matches_real_calculator_contract(
-    forecast, period, monkeypatch
+    forecast, period, monkeypatch, observability_runtime
 ):
     from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
     from spm_calculator.axiom_adapter import export_build_spec
@@ -98,26 +106,34 @@ def test_worker_scenario_boundary_matches_real_calculator_contract(
         "spm": {"geography_kind": "national", "scenario": scenario},
         **period,
     }
-    entrypoint, boundary = _worker_entrypoint(params, monkeypatch)
+    entrypoint, boundary = _worker_entrypoint(
+        params, monkeypatch, observability_runtime
+    )
     with pytest.raises(SPMInputError) as error:
         entrypoint(params)
     assert error.value.to_dict() == expected.model_dump()
     boundary.assert_not_called()
 
 
-def test_valid_worker_prevalidation_does_not_evaluate_amounts(forecast, monkeypatch):
+@pytest.mark.parametrize(
+    "period",
+    [
+        {"start_year": "2034", "window_size": 2},
+        # The forecast's last year, alone and as the last year of a window.
+        {"time_period": "2036"},
+        {"start_year": "2027", "window_size": 10},
+    ],
+)
+def test_valid_worker_prevalidation_does_not_evaluate_amounts(
+    forecast, period, monkeypatch
+):
     from policyengine_simulation_executor.spm import normalize_runtime_spm
     from spm_calculator.policyengine_adapter import PolicyEngineSPMProvider
 
     calculate = Mock(side_effect=AssertionError("Prevalidation is not measurement"))
     monkeypatch.setattr(PolicyEngineSPMProvider, "calculate_unit", calculate)
     resolved = normalize_runtime_spm(
-        {
-            "country": "us",
-            "start_year": "2034",
-            "window_size": 2,
-            "spm": {"geography_kind": "national"},
-        }
+        {"country": "us", "spm": {"geography_kind": "national"}, **period}
     )
     assert resolved["geography_kind"] == "national"
     provider = PolicyEngineSPMProvider(

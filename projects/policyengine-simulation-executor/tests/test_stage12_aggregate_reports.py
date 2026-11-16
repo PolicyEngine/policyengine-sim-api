@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pandas as pd
@@ -32,6 +33,24 @@ from stage12_runtime_support import (
     simulation_execution_input,
     spm_calculation_provenance,
 )
+
+# The installed release's data version, which differs from the default
+# dataset's revision: since policyengine.py 6.20.0 the US revision is a Hugging
+# Face commit, while the release keeps its version name.
+RELEASE_DATA_VERSION = "populace-us-2024-release"
+
+
+def _install_release_bundle(monkeypatch) -> None:
+    """Stand in for the installed US release, whose default is the fixture's dataset."""
+    from policyengine_simulation_executor import release_bundle
+
+    installed = SimpleNamespace(
+        default_dataset=bundle_provenance().dataset.identity,
+        data_version=RELEASE_DATA_VERSION,
+    )
+    monkeypatch.setattr(
+        release_bundle, "get_country_release_bundle", lambda _country: installed
+    )
 
 
 def test_aggregate_combines_detached_spm_receipts() -> None:
@@ -342,6 +361,7 @@ def test_aggregate_report_wraps_builder_output_with_report_provenance(
 ) -> None:
     from policyengine_simulation_executor import simulation_output_builder
 
+    _install_release_bundle(monkeypatch)
     report = report_execution_input()
     report = report.model_copy(
         update={"reform": report.reform.model_copy(update={"policy": {}})}
@@ -414,12 +434,84 @@ def test_aggregate_report_wraps_builder_output_with_report_provenance(
     for role, income in (("baseline", 100.0), ("reform", 120.0)):
         household = observed[role].output_dataset.data.household
         assert household["household_net_income"].tolist() == [income]
-    assert observed["resolved_data_version"] == (
-        report.baseline.bundle.dataset.artifact_revision
-    )
+    # The output reports what the main path reports for the default dataset:
+    # the release's data version, not the dataset's revision.
+    assert observed["resolved_data_version"] == RELEASE_DATA_VERSION
     assert observed["resolved_region_code"] == report.baseline.geography.region
     assert observed["uk_local_authority_metadata"] is None
     assert observed["omit_uk_area_breakdowns"] is False
+
+
+@pytest.mark.parametrize(
+    ("identity", "artifact_revision", "expected"),
+    [
+        ("populace_us_2024", "0ff35303", RELEASE_DATA_VERSION),
+        ("populace_us_2024_acs_local", "28f355b8", "28f355b8"),
+    ],
+    ids=["default-dataset", "regional-dataset"],
+)
+def test_the_reported_data_version_is_the_release_version_only_for_the_default_dataset(
+    identity, artifact_revision, expected, monkeypatch
+) -> None:
+    from policyengine_simulation_executor.stage12_runtime.aggregation import (
+        reported_data_version,
+    )
+
+    _install_release_bundle(monkeypatch)
+    dataset = bundle_provenance().dataset.model_copy(
+        update={"identity": identity, "artifact_revision": artifact_revision}
+    )
+
+    assert reported_data_version("us", dataset) == expected
+
+
+@pytest.mark.parametrize("region_type", ["national", "state"])
+def test_stage12_reports_the_us_data_version_the_main_path_reports(
+    region_type,
+) -> None:
+    # Both paths read the installed bundle, with nothing stubbed. Since
+    # policyengine.py 6.20.0 the US default dataset's revision is a Hugging
+    # Face commit, no longer the release's data version.
+    from policyengine_simulation_contract.stage12_execution import DatasetProvenance
+    from policyengine_simulation_executor.simulation_output_provenance import (
+        output_data_version,
+    )
+    from policyengine_simulation_executor.simulation_runtime import (
+        DatasetSelection,
+        _selected_dataset_revision,
+    )
+    from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+    from policyengine_simulation_executor.stage12_runtime.aggregation import (
+        reported_data_version,
+    )
+
+    us = next(
+        country
+        for country in load_stage12_bundle().bundle.countries
+        if country.country == "us"
+    )
+    identity = us.dataset_for_region_type(region_type)
+    dataset = next(item for item in us.datasets if item.identity == identity)
+    selection = DatasetSelection(
+        identity, dataset.uri, is_default=identity == us.default_dataset
+    )
+    main_path = output_data_version(
+        "us", runtime=None, resolved=_selected_dataset_revision("us", selection)
+    )
+
+    assert (
+        reported_data_version(
+            "us",
+            DatasetProvenance(
+                identity=identity,
+                uri=dataset.uri,
+                artifact_revision=dataset.artifact_revision,
+                data_package_name=us.data_package_name,
+                data_package_version=us.data_package_version,
+            ),
+        )
+        == main_path
+    )
 
 
 def test_single_worker_rejects_combined_baseline_and_reform_input() -> None:
