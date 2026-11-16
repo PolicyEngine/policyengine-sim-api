@@ -22,6 +22,7 @@ from economy_output import (
 )
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_simulation_persistence import (
+    engine,
     result_metadata,
     service_metadata,
 )
@@ -32,6 +33,7 @@ from policyengine_stage12_persistence import (
     household_report_run_store,
     report_run_result,
     report_run_store,
+    store,
 )
 from policyengine_stage12_persistence.report_run_store import RUN_TABLES, RunKind
 from policyengine_stage12_persistence.tables import metadata as comparison_metadata
@@ -110,3 +112,11 @@ def test_every_result_row_goes_in_a_shared_result_table_model() -> None:
     for result in results:
         for result_rows in result.rows:
             assert _is_one_of(result_rows.table, result_models), result_rows.table.name
+
+
+def test_the_stores_connect_with_the_service_librarys_one_engine_helper() -> None:
+    """One URL check and one unpooled engine serve every Modal call's store."""
+    assert store.create_stage12_engine is engine.create_unpooled_engine
+    assert store.normalized_database_url is engine.normalized_database_url
+    assert report_run_store.create_stage12_engine is engine.create_unpooled_engine
+    assert budget_window_store.create_stage12_engine is engine.create_unpooled_engine
