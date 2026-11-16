@@ -146,19 +146,24 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
         module.us_worker_image,
         module.uk_worker_image,
         module.coordinator_image,
+        module.household_image,
     ):
         local_source = next(
             call for call in image.calls if call[0] == "add_local_python_source"
         )
-        bundle_install = next(call for call in image.calls if call[0] == "run_commands")
-        assert bundle_install[2]["secrets"] == [module.hf_secret]
+        # The Stage 12 library's stores use the service library's table models.
         assert local_source[1] == (
             "src.modal",
             "policyengine_simulation_executor",
             "policyengine_simulation_observability",
             "policyengine_simulation_contract",
+            "policyengine_simulation_persistence",
             "policyengine_stage12_persistence",
         )
+        if image is module.household_image:
+            continue
+        bundle_install = next(call for call in image.calls if call[0] == "run_commands")
+        assert bundle_install[2]["secrets"] == [module.hf_secret]
         static_runtime_files = next(
             call for call in image.calls if call[0] == "add_local_dir"
         )
