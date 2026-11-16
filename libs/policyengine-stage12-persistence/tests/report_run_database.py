@@ -1,7 +1,8 @@
 """A disposable Postgres holding the Public API's v2 tables, for report run tests.
 
 The tests run only when both URLs name a disposable database that the Public
-API's v2 migrations created and whose declared privileges were applied:
+API's v2 migrations created and whose declared privileges were applied, as the
+Public API schema job's does:
 
 - ``REPORT_RUN_TEST_DATABASE_URL`` logs in as the Modal worker role, which the
   store under test uses;
@@ -23,6 +24,9 @@ from sqlalchemy import Connection, Engine, MetaData, Table, delete, insert, sele
 
 WORKER_URL_ENV = "REPORT_RUN_TEST_DATABASE_URL"
 SEED_URL_ENV = "REPORT_RUN_TEST_SEED_DATABASE_URL"
+# Set to "1" by the Public API schema job, where a missing database fails the
+# tests instead of skipping them.
+REQUIRE_DATABASE_ENV = "REPORT_RUN_REQUIRE_DATABASE_TESTS"
 # The foreign keys between the Public API's tables and the simulation API's
 # stay, so every catalog row a seeded run names exists.
 SEEDED_TABLES = (
@@ -53,10 +57,16 @@ VERSIONS = {"country_package_version": "1.0.0", "policyengine_version": "6.12.0"
 
 
 def worker_database_url() -> str:
-    """Return the Modal worker role's test URL, or skip when none is set."""
+    """Return the Modal worker role's test URL, or skip when none is set.
+
+    A job that sets ``REPORT_RUN_REQUIRE_DATABASE_TESTS=1`` fails instead.
+    """
     url = os.environ.get(WORKER_URL_ENV)
     if not url or not os.environ.get(SEED_URL_ENV):
-        pytest.skip(f"{WORKER_URL_ENV} and {SEED_URL_ENV} name no test database")
+        message = f"{WORKER_URL_ENV} and {SEED_URL_ENV} name no test database"
+        if os.environ.get(REQUIRE_DATABASE_ENV) == "1":
+            pytest.fail(message)
+        pytest.skip(message)
     return url
 
 
