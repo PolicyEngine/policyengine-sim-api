@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import policyengine_stage12_persistence
+import pytest
 from economy_output import (
     US_AT_LARGE_STATES,
     US_STATE_FIPS,
@@ -22,6 +23,9 @@ from economy_output import (
 )
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_simulation_persistence import (
+    HouseholdJobStatus,
+    ReportRunStatus,
+    SimulationStatus,
     engine,
     result_metadata,
     service_metadata,
@@ -35,7 +39,11 @@ from policyengine_stage12_persistence import (
     report_run_store,
     store,
 )
-from policyengine_stage12_persistence.report_run_store import RUN_TABLES, RunKind
+from policyengine_stage12_persistence.report_run_store import (
+    RUN_TABLES,
+    RunKind,
+    RunStatus,
+)
 from policyengine_stage12_persistence.tables import metadata as comparison_metadata
 from sqlalchemy import Table
 
@@ -120,3 +128,19 @@ def test_the_stores_connect_with_the_service_librarys_one_engine_helper() -> Non
     assert not hasattr(store, "normalized_database_url")
     assert report_run_store.create_stage12_engine is engine.create_unpooled_engine
     assert budget_window_store.create_stage12_engine is engine.create_unpooled_engine
+
+
+@pytest.mark.parametrize(
+    "table_status", [SimulationStatus, ReportRunStatus, HouseholdJobStatus]
+)
+def test_run_status_has_each_run_tables_status_values(table_status) -> None:
+    """``RunStatus`` is a status of any run kind, so it has each table's values.
+
+    A read through the shared models returns the table's own enum member,
+    which the stores convert with ``RunStatus(...)`` before comparing it.
+    """
+    assert [status.value for status in RunStatus] == [
+        status.value for status in table_status
+    ]
+    for status in table_status:
+        assert RunStatus(status) is RunStatus(status.value)
