@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import and_, case, exists, func, insert, or_, select, update
+from sqlalchemy import and_, case, exists, func, insert, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from policyengine_stage12_persistence.report_run_tables import (
@@ -330,8 +330,7 @@ class ReportRunStore:
         call: the simulation service records the call it starts on a run of
         its own while the run is still pending, and Modal restarts a
         pre-empted call under the same call ID. A run recording another call
-        is that call's; a report run's coordinator releases a run its earlier
-        worker holds (``release_simulation_run``) before starting another.
+        is that call's, which every report run naming the run waits for.
         """
         statement = (
             update(simulation_runs)
@@ -366,7 +365,7 @@ class ReportRunStore:
         """Record the run's output file and mark it succeeded while this call holds it.
 
         The run must be running under ``modal_call_id``, so a worker whose
-        run was failed or released meanwhile records nothing.
+        run was failed meanwhile records nothing.
         """
         statement = (
             update(simulation_runs)
@@ -397,10 +396,10 @@ class ReportRunStore:
     ) -> RunWrite:
         """Mark a simulation run failed with ``error_message``.
 
-        A worker passes its ``modal_call_id``, and fails the run only while
-        that call holds it running. Without one, as a report run's
-        coordinator fails the runs it left unfinished, any pending or
-        running run fails.
+        A worker, or the coordinator that started it, passes the worker's
+        ``modal_call_id``, and fails the run only while that call holds it
+        running. Without one, any pending or running run fails; no Modal call
+        fails a run that way, since other report runs may share it.
         """
         held = (
             simulation_runs.c.status.in_(ACTIVE_STATUSES)
@@ -421,20 +420,22 @@ class ReportRunStore:
             simulation_runs, simulation_run_id, statement, "fail_simulation_run"
         )
 
-    def release_simulation_run(
+    def fail_simulation_run_held_by(
         self,
         simulation_run_id: UUID,
         *,
         modal_call_id: str,
-        released_at: datetime,
+        error_message: str,
+        failed_at: datetime,
     ) -> RunWrite:
-        """Return a run ``modal_call_id`` holds to pending, recording no call.
+        """Mark a run failed while it is unfinished and still records ``modal_call_id``.
 
-        A report run's coordinator that Modal restarted stops the worker its
-        earlier attempt started, then releases that worker's run so the
-        worker it starts next can claim it. Only a pending or running run
-        that still records ``modal_call_id`` is released; it keeps its first
-        start, from which the stuck-run sweep counts it.
+        A report run's coordinator waiting for a run another call holds fails
+        it this way once that call ended without recording an outcome: the
+        run may be running under it, or pending under a call the simulation
+        service recorded that never claimed it. A run that finished, or that
+        records another call or none, is left as it is, so coordinators
+        waiting for one run fail it once.
         """
         statement = (
             update(simulation_runs)
@@ -444,13 +445,17 @@ class ReportRunStore:
                 simulation_runs.c.modal_call_id == modal_call_id,
             )
             .values(
-                status=RunStatus.PENDING.value,
-                modal_call_id=None,
-                updated_at=released_at,
+                status=RunStatus.FAILED.value,
+                error_message=error_message,
+                completed_at=failed_at,
+                updated_at=failed_at,
             )
         )
         return self._write(
-            simulation_runs, simulation_run_id, statement, "release_simulation_run"
+            simulation_runs,
+            simulation_run_id,
+            statement,
+            "fail_simulation_run_held_by",
         )
 
     def claim_household_job(
@@ -557,6 +562,7 @@ class ReportRunStore:
         kind: RunKind,
         *,
         active_since_before: datetime,
+        regardless_of_report_runs: bool = False,
     ) -> tuple[ActiveRun, ...]:
         """Return the pending and running runs of ``kind`` active since before a time.
 
@@ -565,9 +571,12 @@ class ReportRunStore:
         status and creation index allows. Runs are oldest first, with or
         without a recorded Modal call. A simulation run is listed only while
         no pending or running report run names it as its baseline or reform:
-        that report run's coordinator starts its children's calls, records
-        their outcomes, and stops and starts them again when Modal restarts
-        it, so they are its to judge until it has finished. A year of a
+        each such report run's coordinator starts the run or waits for the
+        call holding it, and fails it once that call ended without an
+        outcome, so it is theirs to judge until they have finished; with
+        ``regardless_of_report_runs``, for the sweep's age limit, a run that
+        records a call is listed whatever report runs name it, since new ones
+        may keep joining a run whose call Modal never ends. A year of a
         pending or running budget-window run that is still pending with no
         call recorded is waiting for an earlier year to end, and is listed
         only once its window has finished: the window is judged as a whole.
@@ -581,10 +590,9 @@ class ReportRunStore:
         conditions = [
             table.c.status.in_(ACTIVE_STATUSES),
             active_since < active_since_before,
+            _sweep_judges(kind, regardless_of_report_runs=regardless_of_report_runs),
         ]
         columns = [table.c.id, table.c.status, table.c.modal_call_id]
-        if kind is RunKind.SIMULATION_RUN:
-            conditions.append(no_active_report_run_names(table))
         if kind is RunKind.REPORT_RUN:
             conditions.append(~_waiting_window_year())
             columns.append(table.c.budget_window_run_id)
@@ -611,6 +619,7 @@ class ReportRunStore:
         *,
         error_message: str,
         failed_at: datetime,
+        regardless_of_report_runs: bool = False,
     ) -> RunWrite:
         """Mark a stuck ``run`` failed, while it is as it was listed.
 
@@ -622,7 +631,10 @@ class ReportRunStore:
         since it was listed, is left as it is, so concurrent sweeps change it
         once. A report run naming it counts once its insert has committed,
         before this update starts: the database doesn't make an insert in
-        progress wait for this update, or this update for it.
+        progress wait for this update, or this update for it. With
+        ``regardless_of_report_runs``, for the sweep's age limit, a
+        simulation run that records a call is failed whatever report runs
+        name it.
         """
         table = RUN_TABLES[run.kind]
         same_call = (
@@ -636,10 +648,8 @@ class ReportRunStore:
                 table.c.id == run.run_id,
                 table.c.status == run.status.value,
                 same_call,
-                *(
-                    (no_active_report_run_names(table),)
-                    if run.kind is RunKind.SIMULATION_RUN
-                    else ()
+                _sweep_judges(
+                    run.kind, regardless_of_report_runs=regardless_of_report_runs
                 ),
             )
             .values(
@@ -752,6 +762,23 @@ def _waiting_window_year() -> ColumnElement[bool]:
             budget_window_runs.c.status.in_(ACTIVE_STATUSES),
         ),
     )
+
+
+def _sweep_judges(
+    kind: RunKind, *, regardless_of_report_runs: bool
+) -> ColumnElement[bool]:
+    """Return the condition that the sweep may judge a run of ``kind``.
+
+    A simulation run must have no pending or running report run naming it;
+    for the age limit, one that records a call needs none. One no call has
+    claimed has no call to outlast: it waits for the report runs naming it.
+    """
+    table = RUN_TABLES[kind]
+    if kind is not RunKind.SIMULATION_RUN:
+        return true()
+    if not regardless_of_report_runs:
+        return no_active_report_run_names(table)
+    return or_(table.c.modal_call_id.is_not(None), no_active_report_run_names(table))
 
 
 def no_active_report_run_names(table: Table) -> ColumnElement[bool]:

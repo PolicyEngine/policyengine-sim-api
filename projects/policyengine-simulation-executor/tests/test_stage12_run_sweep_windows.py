@@ -36,13 +36,17 @@ class FakeRunStore:
         self.unchanged = set(unchanged)
         self.failed = []
 
-    def list_active_runs(self, kind, *, active_since_before):
+    def list_active_runs(
+        self, kind, *, active_since_before, regardless_of_report_runs=False
+    ):
         if active_since_before != NOW - DEFAULT_MINIMUM_AGE:
             return ()
         failed = {run for run, _ in self.failed}
         return tuple(run for run in self.runs if run.kind is kind and run not in failed)
 
-    def fail_stuck_run(self, run, *, error_message, failed_at):
+    def fail_stuck_run(
+        self, run, *, error_message, failed_at, regardless_of_report_runs=False
+    ):
         if run.run_id in self.unchanged:
             return RunWrite(changed=False, status=RunStatus.SUCCEEDED)
         self.failed.append((run, error_message))
