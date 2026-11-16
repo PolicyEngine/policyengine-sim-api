@@ -43,6 +43,7 @@ REQUIRE_PUBLIC_API_VARIABLE = "SIMULATION_REQUIRE_PUBLIC_API_SCHEMA"
 # The role the Public API's privilege manifest manages for the simulation
 # service; the deployed SIMULATION_SERVICE_DATABASE_URL logs in as it.
 SERVICE_ROLE = "policyengine_v2_simulation_service"
+MODAL_WORKER_ROLE = "policyengine_v2_modal_worker"
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,16 @@ def act_as_the_service(connection: Connection) -> None:
     superuser connects and takes the role for the transaction alone.
     """
     connection.execute(text(f"SET LOCAL ROLE {SERVICE_ROLE}"))
+
+
+def act_as_the_modal_worker(connection: Connection) -> None:
+    """Take the Modal worker role for the rest of the connection's transaction.
+
+    The superuser's own role comes back first, so a test that acted as the
+    service may act as the worker next.
+    """
+    connection.execute(text("RESET ROLE"))
+    connection.execute(text(f"SET LOCAL ROLE {MODAL_WORKER_ROLE}"))
 
 
 @contextmanager

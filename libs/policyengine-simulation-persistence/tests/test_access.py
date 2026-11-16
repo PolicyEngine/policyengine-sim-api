@@ -7,11 +7,14 @@ from pathlib import Path
 import pytest
 from conftest import SERVICE_TEST_ROLE
 from policyengine_simulation_persistence import (
+    MODAL_WORKER_TABLE_PRIVILEGES,
+    MODAL_WORKER_UPDATABLE_COLUMNS,
     SERVICE_TABLE_PRIVILEGES,
     SERVICE_UPDATABLE_COLUMNS,
     create_simulation_engine,
     missing_table_privileges,
     read_missing_table_privileges,
+    result_metadata,
     service_metadata,
 )
 from policyengine_simulation_persistence import access as access_module
@@ -83,6 +86,65 @@ def test_every_column_the_service_updates_is_modelled() -> None:
     tables = {table.name: table for table in service_metadata.tables.values()}
 
     for table_name, column_names in SERVICE_UPDATABLE_COLUMNS.items():
+        assert column_names <= set(tables[table_name].columns.keys()), table_name
+
+
+# The run tables whose status, call and results the Modal worker role records.
+MODAL_WORKER_RUN_TABLES = (
+    "report_runs",
+    "simulation_runs",
+    "household_jobs",
+    "budget_window_runs",
+)
+# A run's state, which the Modal call holding it records.
+RUN_STATE_COLUMNS = frozenset(
+    {
+        "status",
+        "modal_call_id",
+        "error_message",
+        "started_at",
+        "completed_at",
+        "updated_at",
+    }
+)
+
+
+def test_the_modal_worker_role_reads_its_runs_and_inserts_their_results() -> None:
+    result_tables = {table.name for table in result_metadata.tables.values()}
+
+    assert dict(MODAL_WORKER_TABLE_PRIVILEGES) == {
+        **dict.fromkeys(MODAL_WORKER_RUN_TABLES, frozenset({"SELECT"})),
+        **dict.fromkeys(result_tables, frozenset({"INSERT"})),
+    }
+
+
+def test_the_modal_worker_role_updates_its_runs_state_and_results() -> None:
+    """A call records its run's state and the results the run row holds.
+
+    A budget-window run has no call of its own: the years' coordinators record
+    its status, failure and times.
+    """
+    assert dict(MODAL_WORKER_UPDATABLE_COLUMNS) == {
+        "report_runs": RUN_STATE_COLUMNS
+        | {
+            "baseline_cliff_gap",
+            "baseline_cliff_share",
+            "reform_cliff_gap",
+            "reform_cliff_share",
+            "spm_provenance",
+            "data_version",
+        },
+        "simulation_runs": RUN_STATE_COLUMNS
+        | {"output_uri", "output_sha256", "household_result"},
+        "household_jobs": RUN_STATE_COLUMNS | {"result"},
+        "budget_window_runs": RUN_STATE_COLUMNS - {"modal_call_id"},
+    }
+
+
+def test_every_column_the_modal_worker_role_updates_is_modelled() -> None:
+    tables = {table.name: table for table in service_metadata.tables.values()}
+
+    for table_name, column_names in MODAL_WORKER_UPDATABLE_COLUMNS.items():
         assert column_names <= set(tables[table_name].columns.keys()), table_name
 
 
@@ -256,6 +318,39 @@ def test_a_missing_column_lacks_its_privilege(disposable_database):
     assert _missing_privileges_as_the_service(disposable_database) == [
         "UPDATE (modal_call_id) on report_runs",
     ]
+
+
+@pytest.mark.postgres
+def test_the_check_names_what_a_role_lacks_of_another_roles_lists(
+    disposable_database,
+):
+    """Given the Modal worker role's lists, the check asks for them instead."""
+    _grant(
+        disposable_database,
+        [
+            "CREATE TABLE public.report_runs "
+            f"(id uuid PRIMARY KEY, {', '.join(sorted(RUN_STATE_COLUMNS))} text)",
+            "CREATE TABLE public.poverty (id uuid PRIMARY KEY)",
+            f"GRANT SELECT ON public.report_runs TO {SERVICE_TEST_ROLE}",
+            "GRANT UPDATE (status, modal_call_id) ON public.report_runs "
+            f"TO {SERVICE_TEST_ROLE}",
+        ],
+    )
+    engine = create_simulation_engine(disposable_database.service_url)
+    try:
+        with engine.connect() as connection:
+            missing = missing_table_privileges(
+                connection,
+                table_privileges={
+                    "report_runs": frozenset({"SELECT"}),
+                    "poverty": frozenset({"INSERT"}),
+                },
+                updatable_columns={"report_runs": frozenset({"status", "started_at"})},
+            )
+    finally:
+        engine.dispose()
+
+    assert missing == ["INSERT on poverty", "UPDATE (started_at) on report_runs"]
 
 
 def _put_a_decoy_schema_first(database):
