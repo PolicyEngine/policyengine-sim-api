@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.16.0] - 2026-11-16
+
+### Added
+
+- Stage 12 now calculates UK-wide and nation reports on the release's local-area dataset (the dataset UK constituency and local-authority regions use): the UK worker loads that dataset, and such a report's run returns its full results together with its constituency and local-authority results and the codes of the areas disclosure control withheld, which it stores as `withheld_area_codes` rows; such a run fails if a level has no estimated area, published or withheld. The economy output gains optional `constituency_withheld_codes` and `local_authority_withheld_codes`, left out of every other result. The v2 version manifest's UK entry declares the local-area dataset (`local_area_reports`), under a new key that readers released before it never read.
+
+
 ## [0.15.0] - 2026-11-13
 
 ### Added
