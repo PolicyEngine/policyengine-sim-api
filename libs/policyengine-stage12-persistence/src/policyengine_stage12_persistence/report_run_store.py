@@ -16,15 +16,15 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import and_, case, exists, func, insert, or_, select, true, update
-from sqlalchemy.dialects.postgresql import insert as postgresql_insert
-
-from policyengine_stage12_persistence.report_run_tables import (
+from policyengine_simulation_persistence.tables import (
     budget_window_runs,
     household_jobs,
     report_runs,
     simulation_runs,
 )
+from sqlalchemy import and_, case, exists, func, insert, or_, select, true, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+
 from policyengine_stage12_persistence.store import (
     ConnectionOpener,
     create_stage12_engine,

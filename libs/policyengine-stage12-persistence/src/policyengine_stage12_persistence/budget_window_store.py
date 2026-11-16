@@ -28,17 +28,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
+from policyengine_simulation_persistence.tables import (
+    budget_window_runs,
+    report_runs,
+    simulation_runs,
+)
 from sqlalchemy import and_, exists, func, or_, select, update
 
 from policyengine_stage12_persistence.report_run_store import (
     ACTIVE_STATUSES,
     RunStatus,
     no_active_report_run_names,
-)
-from policyengine_stage12_persistence.report_run_tables import (
-    budget_window_runs,
-    report_runs,
-    simulation_runs,
 )
 from policyengine_stage12_persistence.store import (
     ConnectionOpener,

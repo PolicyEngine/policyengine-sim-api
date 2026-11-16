@@ -15,10 +15,8 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from uuid import uuid4
 
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
-from sqlalchemy import Boolean, Column, Float, Integer, String, Table
+from sqlalchemy import Boolean, Column, Float, Integer, MetaData, String, Table
 from sqlalchemy.dialects.postgresql import ENUM, UUID
-
-from policyengine_stage12_persistence.report_run_tables import metadata
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -37,6 +35,7 @@ if TYPE_CHECKING:
     )
     from policyengine_simulation_contract.stage12_execution import ReportRunIds
 
+metadata = MetaData(schema="public")
 decile_type_type = ENUM("income", "wealth", name="v2_decile_type", create_type=False)
 uk_area_type_type = ENUM(
     "constituency", "local_authority", name="v2_uk_area_type", create_type=False

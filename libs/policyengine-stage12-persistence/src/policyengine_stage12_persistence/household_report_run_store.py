@@ -20,16 +20,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from policyengine_simulation_persistence.tables import (
+    report_runs,
+    simulation_runs,
+)
 from sqlalchemy import select, update
 
 from policyengine_stage12_persistence.report_run_store import (
     ReportRunStore,
     RunStatus,
     running_under_call,
-)
-from policyengine_stage12_persistence.report_run_tables import (
-    report_runs,
-    simulation_runs,
 )
 
 if TYPE_CHECKING:
