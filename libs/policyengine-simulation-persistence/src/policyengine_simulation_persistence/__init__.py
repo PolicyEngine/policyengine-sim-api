@@ -87,6 +87,7 @@ from policyengine_simulation_persistence.economy_run_store import (
 from policyengine_simulation_persistence.engine import (
     bounded_transaction,
     create_simulation_engine,
+    create_unpooled_engine,
     normalized_database_url,
 )
 from policyengine_simulation_persistence.household_job_records import (
@@ -231,6 +232,7 @@ __all__ = [
     "budget_window_runs",
     "combine_reforms",
     "create_simulation_engine",
+    "create_unpooled_engine",
     "fail_unstarted_household_job",
     "fail_unstarted_report_run",
     "fail_unstarted_simulation_run",

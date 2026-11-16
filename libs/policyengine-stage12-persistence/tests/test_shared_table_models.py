@@ -117,6 +117,6 @@ def test_every_result_row_goes_in_a_shared_result_table_model() -> None:
 def test_the_stores_connect_with_the_service_librarys_one_engine_helper() -> None:
     """One URL check and one unpooled engine serve every Modal call's store."""
     assert store.create_stage12_engine is engine.create_unpooled_engine
-    assert store.normalized_database_url is engine.normalized_database_url
+    assert not hasattr(store, "normalized_database_url")
     assert report_run_store.create_stage12_engine is engine.create_unpooled_engine
     assert budget_window_store.create_stage12_engine is engine.create_unpooled_engine
