@@ -208,7 +208,9 @@ def test_v2_image_retains_required_runtime_dependencies() -> None:
         f"policyengine[models]=={get_bundled_package_version('policyengine')}" in group
     )
     assert not any(isinstance(item, dict) for item in group)
-    assert "sqlalchemy>=2,<3" in group
+    # The shared table-model library's ranges, which the Stage 12 stores use
+    # (test_database_dependency_ranges compares them with that library's).
+    assert "sqlalchemy>=2,<2.1" in group
     assert "psycopg[binary]>=3.2,<4" in group
 
 
