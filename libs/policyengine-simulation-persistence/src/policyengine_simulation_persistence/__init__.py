@@ -128,6 +128,11 @@ from policyengine_simulation_persistence.policy_reform import (
     read_dynamic_reform,
     read_policy_reform,
 )
+from policyengine_simulation_persistence.result_tables import (
+    DecileType,
+    UKAreaType,
+    result_metadata,
+)
 from policyengine_simulation_persistence.tables import (
     LATEST_YEAR,
     MAX_BUDGET_WINDOW_YEARS,
@@ -156,6 +161,7 @@ __all__ = [
     "BudgetWindowYear",
     "CatalogDataset",
     "CatalogRegion",
+    "DecileType",
     "EconomyCatalogRows",
     "EconomyPopulation",
     "EconomyRecordOutcomeUnknownError",
@@ -210,6 +216,7 @@ __all__ = [
     "SimulationStatus",
     "SimulationType",
     "StoredHousehold",
+    "UKAreaType",
     "UnknownCatalogVersionError",
     "UnknownDatasetError",
     "UnknownDynamicError",
@@ -263,6 +270,7 @@ __all__ = [
     "referenced_metadata",
     "report_runs",
     "reports",
+    "result_metadata",
     "service_metadata",
     "simulation_runs",
     "simulations",
