@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 import sys
 import tomllib
 from contextlib import contextmanager
@@ -208,10 +209,14 @@ def test_v2_image_retains_required_runtime_dependencies() -> None:
         f"policyengine[models]=={get_bundled_package_version('policyengine')}" in group
     )
     assert not any(isinstance(item, dict) for item in group)
-    # The shared table-model library's ranges, which the Stage 12 stores use
-    # (test_database_dependency_ranges compares them with that library's).
-    assert "sqlalchemy>=2,<2.1" in group
-    assert "psycopg[binary]>=3.2,<4" in group
+    # The Stage 12 stores need the database packages; their ranges are the
+    # shared table-model library's, which test_database_dependency_ranges
+    # compares, so they aren't repeated here.
+    installed_packages = {
+        re.split(r"[\[<>=!~;\s]", requirement, maxsplit=1)[0].lower()
+        for requirement in group
+    }
+    assert {"sqlalchemy", "psycopg"} <= installed_packages
 
 
 def test_v2_static_runtime_file_smoke_uses_exact_uk_worker_image(monkeypatch) -> None:
