@@ -6,7 +6,7 @@ import pytest
 from policyengine_simulation_contract.spm import SPMInputError
 from policyengine_simulation_executor import household_spm
 
-FORECAST_SHA = "3d86d5c4c0423480e6b69b75d222ffa4a7a2639e4094df5ba2504af01be17173"
+FORECAST_SHA = "335e6755dc8e0bd883e09b76c2bd53a5315683773e44d50085c7d6b8832b6291"
 DEFAULTS = {
     "as_of": None,
     "county_vintage": "2020",

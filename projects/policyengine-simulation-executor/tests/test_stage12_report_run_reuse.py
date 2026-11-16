@@ -60,13 +60,13 @@ COORDINATOR_CALL_ID = "fc-coordinator"
 OUTPUT_BUCKET = "detailed-save-outputs"
 # A catalog row the report's simulations don't use.
 OTHER_CATALOG_ID = UUID("00000000-0000-0000-0000-0000000000f1")
-# The certified SPM defaults of the installed .py bundle (6.17.1), which a US
+# The certified SPM defaults of the installed .py bundle (6.20.0), which a US
 # request takes for each SPM option it leaves out.
 CERTIFIED_SPM_DEFAULTS = {
     "as_of": None,
     "county_vintage": "2020",
     "forecast_content_sha256": (
-        "3d86d5c4c0423480e6b69b75d222ffa4a7a2639e4094df5ba2504af01be17173"
+        "335e6755dc8e0bd883e09b76c2bd53a5315683773e44d50085c7d6b8832b6291"
     ),
     "geography_id": None,
     "geography_kind": "county",

@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
 from policyengine_observability import (
@@ -55,12 +55,16 @@ from policyengine_simulation_executor.stage12_runtime import (
     stage12_region_groups_for_model,
 )
 from policyengine_simulation_executor.stage12_runtime.aggregation import (
+    reported_data_version,
     validate_uk_local_authority_metadata,
 )
 from policyengine_simulation_executor.stage12_runtime.output_planning import (
     plan_simulation_input,
     resolve_report_output_plan,
 )
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.stage12_bundle import CountryId
 
 
 class Stage12ParityReceipt(BaseModel):
@@ -335,15 +339,22 @@ def _run_existing_executor(
 def _validate_existing_provenance(
     existing_result: Mapping[str, Any],
     bundle: BundleProvenance,
+    country: CountryId,
 ) -> None:
-    """Require the existing result's model and data versions to be the bundle's."""
+    """Require the existing result's model and data versions to be the bundle's.
+
+    The data version must be ``reported_data_version`` of the bundle's
+    dataset.
+    """
     if existing_result.get("model_version") != bundle.country_package_version:
         error_code = "country_package_provenance_mismatch"
         raise ParityMismatchError(
             error_code,
             "report.model_version",
         )
-    if existing_result.get("data_version") != bundle.dataset.artifact_revision:
+    if existing_result.get("data_version") != reported_data_version(
+        country, bundle.dataset
+    ):
         error_code = "dataset_provenance_mismatch"
         raise ParityMismatchError(
             error_code,
@@ -430,7 +441,9 @@ def qualify_report_parity(
     existing_baseline = _existing_frames(microdata, side="baseline")
     existing_reform = _existing_frames(microdata, side="reform")
     bundle = report.baseline.bundle
-    _validate_existing_provenance(existing_result, bundle)
+    _validate_existing_provenance(
+        existing_result, bundle, report.baseline.geography.country
+    )
 
     baseline_calculation, reform_calculation = _run_v2_simulations(
         runners.single_simulation,
