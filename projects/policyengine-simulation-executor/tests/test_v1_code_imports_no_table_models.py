@@ -163,6 +163,21 @@ def test_an_import_through_a_package_counts_its_package_too(tmp_path) -> None:
     ]
 
 
+def test_an_import_in_the_entry_modules_own_package_counts(tmp_path) -> None:
+    """Importing ``src.modal.app`` runs ``src.modal``'s ``__init__`` first."""
+    project = tmp_path / "src"
+    _write_module(
+        project, "modal/__init__.py", "import policyengine_simulation_persistence\n"
+    )
+    _write_module(project, "modal/app.py")
+
+    reached = imports_reached(project / "modal" / "app.py", (project,))
+
+    assert table_model_imports(reached) == [
+        "src.modal: policyengine_simulation_persistence"
+    ]
+
+
 def test_an_import_through_a_first_party_library_counts(tmp_path) -> None:
     project = tmp_path / "project" / "src"
     library = tmp_path / "library" / "src"
@@ -190,8 +205,10 @@ def _repository_source_roots() -> tuple[Path, ...]:
 def test_the_v1_modal_app_and_its_modules_import_no_table_model_library() -> None:
     imports_by_module = imports_reached(V1_MODAL_APP, _repository_source_roots())
 
-    # The walk follows the app's own imports, not only the file itself.
+    # The walk follows the app's own imports, not only the file itself, and
+    # into sim's libraries.
     assert "src.modal._image_setup" in imports_by_module
+    assert "policyengine_simulation_contract" in imports_by_module
     assert table_model_imports(imports_by_module) == []
 
 
