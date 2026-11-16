@@ -328,8 +328,11 @@ def test_the_check_names_what_a_role_lacks_of_another_roles_lists(
     _grant(
         disposable_database,
         [
-            "CREATE TABLE public.report_runs "
-            f"(id uuid PRIMARY KEY, {', '.join(sorted(RUN_STATE_COLUMNS))} text)",
+            "CREATE TABLE public.report_runs (id uuid PRIMARY KEY, "
+            + ", ".join(
+                f"{column_name} text" for column_name in sorted(RUN_STATE_COLUMNS)
+            )
+            + ")",
             "CREATE TABLE public.poverty (id uuid PRIMARY KEY)",
             f"GRANT SELECT ON public.report_runs TO {SERVICE_TEST_ROLE}",
             "GRANT UPDATE (status, modal_call_id) ON public.report_runs "

@@ -1,6 +1,8 @@
 """Connections to the Public API's database for the simulation service."""
 
 from policyengine_simulation_persistence.access import (
+    MODAL_WORKER_TABLE_PRIVILEGES,
+    MODAL_WORKER_UPDATABLE_COLUMNS,
     SERVICE_TABLE_PRIVILEGES,
     SERVICE_UPDATABLE_COLUMNS,
     missing_table_privileges,
@@ -156,6 +158,8 @@ __all__ = [
     "HOUSEHOLD_REPORT_TYPE",
     "LATEST_YEAR",
     "MAX_BUDGET_WINDOW_YEARS",
+    "MODAL_WORKER_TABLE_PRIVILEGES",
+    "MODAL_WORKER_UPDATABLE_COLUMNS",
     "SERVICE_TABLE_PRIVILEGES",
     "SERVICE_UPDATABLE_COLUMNS",
     "BudgetWindowInputs",
