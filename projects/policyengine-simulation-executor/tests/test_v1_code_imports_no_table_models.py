@@ -100,12 +100,21 @@ def imports_reached(entry: Path, source_roots: tuple[Path, ...]) -> dict[str, se
     """Return, by module, what ``entry`` and every module it reaches import.
 
     Importing a module runs each of its parent packages' ``__init__`` first,
-    so those are reached too. It follows only modules under ``source_roots``,
-    never into the table-model libraries, whose imports are what the tests
-    look for.
+    so those are reached too, the entry's own included. It follows only
+    modules under ``source_roots``, never into the table-model libraries,
+    whose imports are what the tests look for.
     """
     first_party = _first_party_packages(source_roots)
-    pending = [entry]
+    entry_packages = _with_parent_packages(_module_name(entry, source_roots))[:-1]
+    pending = [
+        entry,
+        *(
+            module_path
+            for package_name in entry_packages
+            if (module_path := _module_path(package_name, source_roots, first_party))
+            is not None
+        ),
+    ]
     imports_by_module: dict[str, set[str]] = {}
     while pending:
         path = pending.pop()
