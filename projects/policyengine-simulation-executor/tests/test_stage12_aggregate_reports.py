@@ -450,11 +450,9 @@ def test_aggregate_report_wraps_builder_output_with_report_provenance(
     ],
     ids=["default-dataset", "regional-dataset"],
 )
-def test_the_reported_data_version_is_the_one_the_main_path_reports(
+def test_the_reported_data_version_is_the_release_version_only_for_the_default_dataset(
     identity, artifact_revision, expected, monkeypatch
 ) -> None:
-    # The main path reports the release's data version for a run on the
-    # default dataset and the dataset's own revision for any other dataset.
     from policyengine_simulation_executor.stage12_runtime.aggregation import (
         reported_data_version,
     )
@@ -465,6 +463,55 @@ def test_the_reported_data_version_is_the_one_the_main_path_reports(
     )
 
     assert reported_data_version("us", dataset) == expected
+
+
+@pytest.mark.parametrize("region_type", ["national", "state"])
+def test_stage12_reports_the_us_data_version_the_main_path_reports(
+    region_type,
+) -> None:
+    # Both paths read the installed bundle, with nothing stubbed. Since
+    # policyengine.py 6.20.0 the US default dataset's revision is a Hugging
+    # Face commit, no longer the release's data version.
+    from policyengine_simulation_contract.stage12_execution import DatasetProvenance
+    from policyengine_simulation_executor.simulation_output_provenance import (
+        output_data_version,
+    )
+    from policyengine_simulation_executor.simulation_runtime import (
+        DatasetSelection,
+        _selected_dataset_revision,
+    )
+    from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+    from policyengine_simulation_executor.stage12_runtime.aggregation import (
+        reported_data_version,
+    )
+
+    us = next(
+        country
+        for country in load_stage12_bundle().bundle.countries
+        if country.country == "us"
+    )
+    identity = us.dataset_for_region_type(region_type)
+    dataset = next(item for item in us.datasets if item.identity == identity)
+    selection = DatasetSelection(
+        identity, dataset.uri, is_default=identity == us.default_dataset
+    )
+    main_path = output_data_version(
+        "us", runtime=None, resolved=_selected_dataset_revision("us", selection)
+    )
+
+    assert (
+        reported_data_version(
+            "us",
+            DatasetProvenance(
+                identity=identity,
+                uri=dataset.uri,
+                artifact_revision=dataset.artifact_revision,
+                data_package_name=us.data_package_name,
+                data_package_version=us.data_package_version,
+            ),
+        )
+        == main_path
+    )
 
 
 def test_single_worker_rejects_combined_baseline_and_reform_input() -> None:

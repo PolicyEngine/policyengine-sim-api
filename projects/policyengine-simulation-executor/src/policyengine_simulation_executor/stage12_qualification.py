@@ -343,8 +343,8 @@ def _validate_existing_provenance(
 ) -> None:
     """Require the existing result's model and data versions to be the bundle's.
 
-    The data version is the one the existing path reports for the bundle's
-    dataset (see ``reported_data_version``).
+    The data version must be ``reported_data_version`` of the bundle's
+    dataset.
     """
     if existing_result.get("model_version") != bundle.country_package_version:
         error_code = "country_package_provenance_mismatch"
