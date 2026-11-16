@@ -237,3 +237,15 @@ def uk_output_with_areas() -> dict[str, Any]:
         }
     ]
     return output
+
+
+def uk_output_with_withheld_codes() -> dict[str, Any]:
+    """Return the UK output with areas, and the codes of three withheld areas.
+
+    A UK-wide or nation report on the local-area dataset lists them.
+    """
+    return {
+        **uk_output_with_areas(),
+        "constituency_withheld_codes": ["S14000045"],
+        "local_authority_withheld_codes": ["E06000064", "W06000015"],
+    }

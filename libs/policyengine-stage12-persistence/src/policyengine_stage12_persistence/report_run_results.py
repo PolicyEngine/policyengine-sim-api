@@ -38,6 +38,9 @@ if TYPE_CHECKING:
     from policyengine_simulation_contract.stage12_execution import ReportRunIds
 
 decile_type_type = ENUM("income", "wealth", name="v2_decile_type", create_type=False)
+uk_area_type_type = ENUM(
+    "constituency", "local_authority", name="v2_uk_area_type", create_type=False
+)
 
 
 def _report_run_keys() -> tuple[Column[Any], ...]:
@@ -149,6 +152,15 @@ local_authority_impacts = Table(
     *_disclosure_values(),
     Column("local_authority_code", String(64), nullable=False),
     Column("local_authority_name", String(255), nullable=False),
+)
+# The codes of the areas a local-area run estimated but disclosure control did
+# not publish, one row per area: none means none were withheld.
+withheld_area_codes = Table(
+    "withheld_area_codes",
+    metadata,
+    *_report_run_keys(),
+    Column("area_type", uk_area_type_type, nullable=False),
+    Column("code", String(64), nullable=False),
 )
 budget_summary = Table(
     "budget_summary",
@@ -379,6 +391,11 @@ def report_run_result(
                 ),
                 shared_by_reports=False,
             ),
+            ResultRows(
+                withheld_area_codes,
+                _withheld_rows(economy, report_keys),
+                shared_by_reports=False,
+            ),
         ),
     )
 
@@ -551,6 +568,21 @@ def _area_rows(
             **{field: getattr(record, field) for field in DISCLOSURE_FIELDS},
         }
         for record in records
+    )
+
+
+def _withheld_rows(
+    economy: SingleYearMacroOutput, keys: Mapping[str, Any]
+) -> tuple[dict[str, Any], ...]:
+    """Return a row per area disclosure control withheld, for the levels it lists."""
+    levels = (
+        ("constituency", economy.constituency_withheld_codes),
+        ("local_authority", economy.local_authority_withheld_codes),
+    )
+    return tuple(
+        {"id": uuid4(), **keys, "area_type": area_type, "code": code}
+        for area_type, codes in levels
+        for code in codes or ()
     )
 
 

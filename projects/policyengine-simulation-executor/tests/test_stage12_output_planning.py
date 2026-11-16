@@ -397,3 +397,92 @@ def test_a_simulation_planned_alone_gets_its_self_comparisons_plan(
 
     assert plan == resolve_report_output_plan(_self_comparison(standalone))
     assert plan.requirements.include_cliff_impacts is bool(options)
+
+
+# The dataset a routing release assigns to UK constituency and local-authority
+# regions, which a UK-wide or nation simulation may also be calculated on.
+UK_LOCAL_AREA_DATASET = "microcosm_uk_2024_25_dense"
+
+
+def _route_uk_area_regions_to_the_local_area_dataset(monkeypatch) -> None:
+    """Make the installed release route UK area regions to ``UK_LOCAL_AREA_DATASET``."""
+    from policyengine_simulation_executor.stage12_runtime import local_area_datasets
+
+    _route_uk_area_regions(monkeypatch, routed=True)
+    monkeypatch.setattr(local_area_datasets, "uk_area_regions_routed", lambda: True)
+    monkeypatch.setattr(
+        local_area_datasets,
+        "routed_uk_area_dataset_name",
+        lambda: UK_LOCAL_AREA_DATASET,
+    )
+
+
+def _on_dataset(
+    simulation: SimulationExecutionInput, dataset_name: str
+) -> SimulationExecutionInput:
+    """Return ``simulation`` with its provenance naming the dataset ``dataset_name``."""
+    dataset = simulation.bundle.dataset.model_copy(
+        update={
+            "identity": dataset_name,
+            "uri": f"hf://policyengine/data/{dataset_name}.h5@revision",
+        }
+    )
+    return simulation.model_copy(
+        update={"bundle": simulation.bundle.model_copy(update={"dataset": dataset})}
+    )
+
+
+@pytest.mark.parametrize(
+    ("region", "dataset_name", "copies_area_columns"),
+    [
+        ("uk", UK_LOCAL_AREA_DATASET, True),
+        ("country/wales", UK_LOCAL_AREA_DATASET, True),
+        ("uk", "populace_uk_2023", False),
+        ("country/wales", "populace_uk_2023", False),
+    ],
+    ids=["uk-local-area", "wales-local-area", "uk-national", "wales-national"],
+)
+def test_a_uk_simulation_planned_alone_copies_area_columns_on_the_local_area_dataset(
+    monkeypatch, region: str, dataset_name: str, *, copies_area_columns: bool
+) -> None:
+    from policyengine_simulation_executor import uk_local_authority_metadata
+
+    _route_uk_area_regions_to_the_local_area_dataset(monkeypatch)
+    standalone = _on_dataset(
+        _simulation("uk", SimulationRole.STANDALONE, region=region), dataset_name
+    )
+
+    plan = resolve_simulation_output_plan(standalone)
+
+    # A local-area report reading this run's file needs the area columns.
+    household = next(item for item in plan.entities if item.entity == "household")
+    assert household.dataset_variables == (
+        uk_local_authority_metadata.UK_AREA_DATASET_COLUMNS
+        if copies_area_columns
+        else ()
+    )
+
+
+def test_a_uk_wide_report_on_the_local_area_dataset_plans_its_full_results(
+    monkeypatch,
+) -> None:
+    # It returns its full results, cliffs included when asked, and its areas.
+    from policyengine_simulation_executor import uk_local_authority_metadata
+
+    _route_uk_area_regions_to_the_local_area_dataset(monkeypatch)
+    national = _report("uk", region="uk", include_cliffs=True)
+    report = national.model_copy(
+        update={
+            "baseline": _on_dataset(national.baseline, UK_LOCAL_AREA_DATASET),
+            "reform": _on_dataset(national.reform, UK_LOCAL_AREA_DATASET),
+        }
+    )
+
+    plan = resolve_report_output_plan(report)
+
+    assert plan.requirements.aggregates == tuple(ReportAggregate)
+    assert plan.requirements.include_cliff_impacts is True
+    assert {"cliff_gap", "is_on_cliff"}.issubset(_additional_variables(plan, "person"))
+    assert _dataset_variables(plan, "household") == set(
+        uk_local_authority_metadata.UK_AREA_DATASET_COLUMNS
+    )

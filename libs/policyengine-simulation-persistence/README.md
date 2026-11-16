@@ -270,7 +270,10 @@ altered a modelled table, or, while that change is still a pull request, its
 head commit. Until that pull request merges, the job's last step fails and
 says so. A merge commit keeps the pull request's head on `master`; if the
 Public API squashes or rebases the pull request instead, its head never
-reaches `master`, so move the pin to the commit that landed.
+reaches `master`, so move the pin to the commit that landed. The pin may
+also move to a later merged commit that alters no modelled table, such as
+one adding a table another package writes; the job still checks only this
+package's tables, so moving the pin is no check of that other table.
 
 **Keeping it current.** A sim pull request that changes the models moves the
 pin in the same change. The `Public API schema drift` workflow runs the same
