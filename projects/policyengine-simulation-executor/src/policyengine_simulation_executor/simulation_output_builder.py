@@ -61,8 +61,10 @@ class SimulationOutputBuilder:
     ``runtime`` is given. ``omit_uk_area_breakdowns`` leaves the UK
     constituency and local-authority breakdowns out, for a UK-wide or
     nation-level run on a bundle that routes area regions to a local-area
-    dataset (``uk_area_breakdowns_omitted``); those results come from a
-    separate local-area breakdown run (``LocalAreaBreakdownBuilder``).
+    dataset (``uk_area_breakdowns_omitted``); in the runtime those results
+    come from a separate local-area breakdown run
+    (``LocalAreaBreakdownBuilder``), and Stage 12 keeps them for a report on
+    the local-area dataset itself, with ``uk_withheld_area_codes``.
     """
 
     country: str
@@ -290,6 +292,20 @@ class SimulationOutputBuilder:
                 )
             )
         return self._uk_geography_disclosure
+
+    def uk_withheld_area_codes(self) -> dict[str, list[str]] | None:
+        """Return each UK level's withheld area codes, sorted; None outside the UK.
+
+        They are the areas the disclosure pass behind the area results
+        estimated but did not publish, from that same pass.
+        """
+        disclosure = self._uk_geography_disclosure_output()
+        if disclosure is None:
+            return None
+        return {
+            level: disclosure.withheld_codes(level)
+            for level in ("constituency", "local_authority")
+        }
 
     def _simulation_year(self) -> int:
         """Return the simulated year, which labels the disclosure release."""

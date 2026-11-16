@@ -349,7 +349,8 @@ def uk_area_breakdowns_omitted(country: str, region_code: str | None) -> bool:
     the routed dataset (``breakdown: "local_areas"``). Constituency and
     local-authority runs, UK runs on a bundle that does not route area
     regions, and other countries' runs are unaffected. The runtime and Stage
-    12 both decide by this.
+    12 both decide by this, except that Stage 12 keeps both levels for a
+    report on the routed dataset itself (``is_local_area_report``).
     """
     return country == "uk" and not uk_area_codes_required(region_code)
 
