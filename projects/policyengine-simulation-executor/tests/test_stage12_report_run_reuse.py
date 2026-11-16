@@ -60,7 +60,7 @@ COORDINATOR_CALL_ID = "fc-coordinator"
 OUTPUT_BUCKET = "detailed-save-outputs"
 # A catalog row the report's simulations don't use.
 OTHER_CATALOG_ID = UUID("00000000-0000-0000-0000-0000000000f1")
-# The certified SPM defaults of the installed .py bundle (6.17.1), which a US
+# The certified SPM defaults of the installed .py bundle (6.20.0), which a US
 # request takes for each SPM option it leaves out.
 CERTIFIED_SPM_DEFAULTS = {
     "as_of": None,

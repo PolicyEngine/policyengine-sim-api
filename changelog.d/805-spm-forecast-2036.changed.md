@@ -1,0 +1,1 @@
+US simulations for 2036 now run: the worker uses policyengine.py 6.20.0, with policyengine-us 2.2.2 and spm-calculator 1.1.0, whose SPM forecast covers 2022–2036. 2037 is now the first year the worker refuses with `SPM_YEAR_UNAVAILABLE`.
