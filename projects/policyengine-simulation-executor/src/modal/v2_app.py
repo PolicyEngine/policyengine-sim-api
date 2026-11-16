@@ -196,6 +196,7 @@ def _add_v2_sources(image: modal.Image) -> modal.Image:
         "policyengine_simulation_executor",
         "policyengine_simulation_observability",
         "policyengine_simulation_contract",
+        "policyengine_simulation_persistence",
         "policyengine_stage12_persistence",
         copy=True,
     )

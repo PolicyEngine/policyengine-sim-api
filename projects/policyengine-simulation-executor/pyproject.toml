@@ -18,6 +18,9 @@ dependencies = [
     "policyengine-fastapi",
     "policyengine-simulation-observability",
     "policyengine-simulation-contract[modal]",
+    # The models of the Public API's tables the v2 Modal calls write; the
+    # v2 images copy it with the Stage 12 library, whose stores use them.
+    "policyengine-simulation-persistence",
     "policyengine-stage12-persistence",
     # PolicyEngine.py's models extra is the only selector for core, country
     # models, and the SPM calculator. Do not duplicate those versions here.
@@ -79,6 +82,7 @@ dev = [
 policyengine-fastapi = { path = "../../libs/policyengine-fastapi", editable = true }
 policyengine-simulation-observability = { path = "../../libs/policyengine-simulation-observability", editable = true }
 policyengine-simulation-contract = { path = "../../libs/policyengine-simulation-contract", editable = true }
+policyengine-simulation-persistence = { path = "../../libs/policyengine-simulation-persistence", editable = true }
 policyengine-stage12-persistence = { path = "../../libs/policyengine-stage12-persistence", editable = true }
 policyengine-simulation-gateway = { path = "../policyengine-simulation-gateway", editable = true }
 
