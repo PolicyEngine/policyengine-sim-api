@@ -4,7 +4,7 @@ import pytest
 from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 
 
-def test_runtime_dataset_uri_preserves_populace_build_revision_when_package_differs(
+def test_runtime_dataset_uri_preserves_microcosm_build_revision_when_package_differs(
     monkeypatch,
 ):
     dataset_uri = (

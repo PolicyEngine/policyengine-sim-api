@@ -239,7 +239,7 @@ def test_policyengine_data_release_default_resolves_to_gcs_package_version():
 
 
 @pytest.mark.usefixtures("policyengine_uk_data_release")
-def test_policyengine_data_release_preserves_explicit_legacy_populace_dataset():
+def test_policyengine_data_release_preserves_explicit_legacy_microcosm_dataset():
     assert resolve_runtime_bundle_dataset_uri(
         "uk", "populace_uk_2023", prefer_local=False
     ) == (
