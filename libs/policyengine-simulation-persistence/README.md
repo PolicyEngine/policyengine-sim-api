@@ -1,12 +1,20 @@
 # PolicyEngine simulation persistence
 
-Database connections for the simulation service (the Simulation Entrypoint on
-Cloud Run). The service connects to the Public API's Postgres database with
-its own role, and writes rows in tables the Public API's migration chain
-creates. This repository has no schema or migration chain of its own.
+Database connections and table models for the simulation service (the
+Simulation Entrypoint on Cloud Run) and the v2 Modal runtime. The service
+connects to the Public API's Postgres database with its own role, and writes
+rows in tables the Public API's migration chain creates. This repository has
+no schema or migration chain of its own.
 
-The temporary Stage 12 comparison tables are not part of this library:
-`libs/policyengine-stage12-persistence` writes them with its own connection.
+This library holds sim's one set of models of the Public API's tables. The v2
+Modal coordinators, workers, household functions and stuck-run sweep write
+the run tables and the result tables through
+`libs/policyengine-stage12-persistence`, whose stores import these models and
+connect as the Modal worker role (`policyengine_v2_modal_worker`). The v1
+`run_simulation` code (the old gateway and `src/modal/app.py` with its
+modules) imports neither library. The temporary Stage 12 comparison tables
+are not modelled here: the Stage 12 library keeps them until the comparison
+path is removed.
 
 ## Connections
 
@@ -16,6 +24,12 @@ keeps a small pool, checks connections before use, and never prepares
 server-side statements, so the same URL works through Supabase's session and
 transaction poolers. A malformed URL raises `ValueError` without repeating the
 URL, which holds a password.
+
+`create_unpooled_engine` builds the engine the v2 Modal calls and the
+comparison path use, from the same URL check: it keeps no pool, so each
+operation's session ends with it and a call that spends most of its life
+calculating holds no pooler slot, and it waits 10 seconds to connect. The
+Stage 12 library binds it as `create_stage12_engine`.
 
 ## Tables
 
@@ -29,6 +43,9 @@ every column with its type, nullability and server default, and every
 constraint and index under the chain's name. The models only describe the
 tables; runtime code never creates or changes them. Status and other enum
 columns use the `StrEnum` classes beside them and store each member's value.
+A Python `None` in `simulation_runs.household_result`, `household_jobs.result`
+or `report_runs.spm_provenance` is stored as SQL `NULL`, not JSON `null`, so
+a query for `IS NULL` finds a run with no result.
 
 Each service writes only its own tables, and the foreign keys between them
 stay: 20 keys name rows the Public API writes in its users, policies,
@@ -46,6 +63,21 @@ A report run names the two simulation runs it compares
 household report with only a baseline). A report with a `budget_window_size`
 is calculated as a `budget_window_runs` row with one report run per year; each
 year's report run names that row and its year, and belongs to the same report.
+
+## Result tables
+
+`result_tables.py` models the twelve result tables the Modal worker role
+inserts into, in `result_metadata`, as completely as `tables.py` models the
+service's: `budget_summary`, `decile_impacts`, `intra_decile_impacts`,
+`program_statistics`, `congressional_district_impacts`,
+`constituency_impacts`, `local_authority_impacts`, `withheld_area_codes`,
+`labor_supply_responses` and `labor_supply_decile_responses` belong to a
+report run (all but the labour supply tables also name its two simulation
+runs), and `poverty` and `inequality` to one simulation run. Their keys name
+the models of `report_runs` and `simulation_runs` in `service_metadata`, so
+code that builds the tables in a test database builds those first. The
+Stage 12 library's `report_run_results.py` builds their rows from a report
+run's economy output.
 
 ## Input tables
 
@@ -245,24 +277,31 @@ Rule `sim.persistence.models-match-public-api`. The PR workflow's
 grants the privileges its manifest declares
 (`.github/scripts/public-api-schema-reference.sh`), then runs the tests
 marked `public_api_schema`. `test_public_api_schema` builds the models' tables
-from `service_metadata` in a disposable database, after the Public API's
-tables their keys name (`referenced_metadata`, by `id` alone), and compares
-the models' tables with the Public API's through PostgreSQL's catalog
-(`tests/schema_comparison.py`): every column's type, nullability and default,
-every constraint and index by name and definition, and every enum's values
-must match. `test_the_input_models_match_the_public_api_columns` builds
+from `service_metadata`, then `result_metadata`, in a disposable database,
+after the Public API's tables their keys name (`referenced_metadata`, by
+`id` alone), and compares the models' tables with the Public API's through
+PostgreSQL's catalog (`tests/schema_comparison.py`): every column's type,
+nullability and default, every constraint and index by name and definition,
+and every enum's values must match, for the service's tables and the result
+tables alike. `test_the_input_models_match_the_public_api_columns` builds
 the read-only input models' tables in another disposable database and
 requires every column they name to exist in the Public API's table with the
 same type and nullability; their other columns, defaults, constraints and
-indexes are the Public API's alone. `test_service_writes` creates a row in every modelled
-table as the service's role. Another test, outside the rule, requires the modelled
+indexes are the Public API's alone. `test_service_writes` creates a row in every table
+the service writes, as the service's role; `test_modal_worker_writes`, as the
+Modal worker role, checks the role's privileges, records a run's state in
+each run table, inserts a row in every result table and reads back that a
+`None` JSON result is SQL `NULL`. Another test, outside the rule, requires the modelled
 tables' foreign keys to the Public API's users, policies, dynamics,
 households, datasets, regions and model catalog tables to be exactly the 20
 in `tests/public_api_keys.py`, each by its own table, its name and the table
 it names, so a key dropped, added, renamed, moved or pointed at another table
-shows even if the models follow it. Last, the job requires the
-pinned commit to be on the Public API's `master` branch, so the models only
-ever describe a chain the Public API has merged.
+shows even if the models follow it. The job then gives the Modal worker role
+a login on its database (`.github/scripts/public-api-schema-worker-login.sh`)
+and runs the Stage 12 library's tests, whose stores write these tables as
+that role. Last, it requires the pinned commit to be on the Public API's
+`master` branch, so the models only ever describe a chain the Public API has
+merged.
 
 **Choosing the pin.** Pin the Public API commit whose migration chain the
 models describe: the merge commit of the Public API change that last
@@ -271,9 +310,9 @@ head commit. Until that pull request merges, the job's last step fails and
 says so. A merge commit keeps the pull request's head on `master`; if the
 Public API squashes or rebases the pull request instead, its head never
 reaches `master`, so move the pin to the commit that landed. The pin may
-also move to a later merged commit that alters no modelled table, such as
-one adding a table another package writes; the job still checks only this
-package's tables, so moving the pin is no check of that other table.
+also move to a later merged commit that alters no modelled table. Every
+table sim writes is modelled here, the result tables included, so a change
+to any of them moves the pin with this library's models.
 
 **Keeping it current.** A sim pull request that changes the models moves the
 pin in the same change. The `Public API schema drift` workflow runs the same
@@ -296,7 +335,7 @@ PUBLIC_API_SCHEMA_DATABASE_URL=postgresql://postgres:password@127.0.0.1:5432/pol
 uv run pytest tests/ -m public_api_schema
 ```
 
-## The role's privileges
+## The roles' privileges
 
 `SERVICE_TABLE_PRIVILEGES` lists the table privileges the service's role
 needs: `SELECT` and `INSERT` on the tables it creates rows in
@@ -312,6 +351,16 @@ when Modal refuses one of the first years the service starts. The role holds
 `UPDATE` on those columns only, never on a whole table, so the database
 refuses any other change to a run. The Public API's privilege manifest grants
 them all.
+
+`MODAL_WORKER_TABLE_PRIVILEGES` and `MODAL_WORKER_UPDATABLE_COLUMNS` list what
+the Modal worker role needs: `SELECT` on the four run tables, `INSERT` on
+every result table, and `UPDATE` of each run's state (`status`,
+`modal_call_id`, `error_message`, `started_at`, `completed_at` and
+`updated_at`; a budget-window run has no call of its own) and of the results
+its own row holds: a report run's cliff impact, `spm_provenance` and
+`data_version`, a simulation run's output file and `household_result`, and a
+household job's `result`. The Public API's manifest grants them;
+`test_modal_worker_writes` checks that in CI.
 
 `missing_table_privileges` returns each one the connected role lacks, ordered
 by table, as `"INSERT on reports"` or `"UPDATE (modal_call_id) on
@@ -342,8 +391,11 @@ rule's proof among them needs no database, and the others need one the
 Public API's own v2 migration chain built, with the privileges its manifest
 declares granted:
 set `PUBLIC_API_SCHEMA_DATABASE_URL` to that database's superuser URL.
-`test_service_writes` creates a row in every modelled table as the service's
-role and rolls it back; the comparison in `test_public_api_schema` also needs
+`test_service_writes` creates a row in every table the service writes as the
+service's role, and `test_modal_worker_writes` writes the Modal worker role's
+runs and results as that role, each rolling its transaction back; neither
+role needs a login there, since the superuser takes each role for the
+transaction. The comparison in `test_public_api_schema` also needs
 `SIMULATION_TEST_DATABASE_URL`, to build the models' own tables. Without the
 variables they skip.
 

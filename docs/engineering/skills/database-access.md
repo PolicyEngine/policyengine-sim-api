@@ -46,13 +46,14 @@ and this repository has no migration chain of its own
   Their read-only models in that library's `input_tables.py` name only the
   columns the service reads, apart from the models of the tables it writes.
 - the run tables the v2 Modal coordinator, workers, household functions and
-  stuck-run sweep write as the Modal worker role: `report_runs`, `simulation_runs`,
-  `budget_window_runs`, the result tables and `household_jobs`. Their mappings in
-  `policyengine_stage12_persistence.report_run_tables` and
-  `report_run_results`, separate from the simulation service's models,
-  declare only the columns the coordinator's, workers', household functions'
-  and stuck-run sweep's statements read or write; deployment validation
-  doesn't compare them with the live schema.
+  stuck-run sweep write as the Modal worker role: `report_runs`,
+  `simulation_runs`, `budget_window_runs`, the result tables and
+  `household_jobs`. They use the same models, in
+  `libs/policyengine-simulation-persistence` (`tables.py` and
+  `result_tables.py`, which `sim.persistence.models-match-public-api`
+  compares with the Public API's tables), through the stores in
+  `libs/policyengine-stage12-persistence`. The v1 `run_simulation` code
+  imports neither library.
 
 This repository's code reads and writes their rows; nothing here changes
 them. A change to one of those tables starts in policyengine-api, and the

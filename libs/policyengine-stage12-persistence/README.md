@@ -1,8 +1,15 @@
 # PolicyEngine Stage 12 persistence
 
-SQLAlchemy Core mappings and transactional DML for two sets of tables, both
-owned by `policyengine-api`, which keeps the SQLModel definitions, Alembic
-revisions and live schema. This package never changes a schema.
+Transactional DML for two sets of tables, both owned by `policyengine-api`,
+which keeps the SQLModel definitions, Alembic revisions and live schema. This
+package never changes a schema.
+
+The models of the Public API's run and result tables are the simulation
+service library's (`libs/policyengine-simulation-persistence`: `tables.py`
+and `result_tables.py`), which CI compares with the tables the Public API's
+chain builds; this package's stores import them, and its engines come from
+that library's `create_unpooled_engine`. Its only models of its own are the
+comparison path's tables, in `tables.py`.
 
 - **The Stage 12 comparison tables** (`Stage12PersistenceStore`): temporary
   state of the comparison path, removed with it.
@@ -18,9 +25,9 @@ revisions and live schema. This package never changes a schema.
   The coordinator also reads a simulation run's status, year, versions,
   dataset, region, output file, recorded call and failure, so a report run
   can use a run that already succeeded instead of calculating it again, or
-  wait for one another call holds. The mappings declare only the columns
-  those statements read or write, and each `UPDATE` sets only columns the
-  role may update. Every status write is one `UPDATE` conditional on the
+  wait for one another call holds. Every statement names the columns it
+  reads or writes, so the complete models send no other, and each `UPDATE`
+  sets only columns the role may update. Every status write is one `UPDATE` conditional on the
   row's status and, for a call's claim, completion or failure, on its
   recorded Modal call: a call claims a pending or running row that records
   no call or its own, and completes or fails it only while it holds it
@@ -55,8 +62,11 @@ revisions and live schema. This package never changes a schema.
 ## Tests
 
 The report run and budget-window tests need a disposable Postgres migrated
-by the Public API's v2 chain, with its declared privileges applied. They skip
-unless both URLs are set:
+by the Public API's v2 chain, with its declared privileges applied. The
+`Public API schema` job in `pr.yml` runs them on the database it builds at the
+pinned Public API commit, after giving the Modal worker role a login there,
+and sets `REPORT_RUN_REQUIRE_DATABASE_TESTS=1`, so a missing database fails
+them. Elsewhere they skip unless both URLs are set:
 
 - `REPORT_RUN_TEST_DATABASE_URL`: logs in as `policyengine_v2_modal_worker`;
 - `REPORT_RUN_TEST_SEED_DATABASE_URL`: logs in as a role that may insert the
