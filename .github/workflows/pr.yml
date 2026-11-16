@@ -136,8 +136,10 @@ jobs:
     # commit pinned in libs/policyengine-simulation-persistence/public-api-commit,
     # grants the privileges its manifest declares, and runs the persistence
     # tests marked public_api_schema against them: sim's table models must
-    # match those tables, and the simulation service's role must write them
-    # (rule sim.persistence.models-match-public-api). The pinned commit must
+    # match those tables, and the simulation service's role and the Modal
+    # worker role must write the tables each writes (rule
+    # sim.persistence.models-match-public-api). It then runs the Stage 12
+    # library's tests there, as the Modal worker role. The pinned commit must
     # also be on the Public API's default branch. The Public API's repository
     # is public, so the job reads no secret. Full CI runs only on the lowest
     # unmerged pull request in a stack.

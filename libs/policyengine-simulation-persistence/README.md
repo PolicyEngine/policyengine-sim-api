@@ -311,8 +311,10 @@ says so. A merge commit keeps the pull request's head on `master`; if the
 Public API squashes or rebases the pull request instead, its head never
 reaches `master`, so move the pin to the commit that landed. The pin may
 also move to a later merged commit that alters no modelled table. Every
-table sim writes is modelled here, the result tables included, so a change
-to any of them moves the pin with this library's models.
+run and result table sim writes is modelled here, so a change to any of them
+moves the pin with this library's models; only the temporary comparison
+path's `stage12_evaluation_*` tables, which the Stage 12 library models and
+checks before each deploy, are outside this comparison.
 
 **Keeping it current.** A sim pull request that changes the models moves the
 pin in the same change. The `Public API schema drift` workflow runs the same
