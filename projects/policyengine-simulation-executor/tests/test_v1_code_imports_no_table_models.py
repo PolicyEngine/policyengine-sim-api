@@ -90,11 +90,19 @@ def _imported_modules(path: Path, source_roots: tuple[Path, ...]) -> set[str]:
     return imported
 
 
+def _with_parent_packages(module_name: str) -> list[str]:
+    """Return ``module_name`` and each package Python imports before it."""
+    parts = module_name.split(".")
+    return [".".join(parts[:count]) for count in range(1, len(parts) + 1)]
+
+
 def imports_reached(entry: Path, source_roots: tuple[Path, ...]) -> dict[str, set[str]]:
     """Return, by module, what ``entry`` and every module it reaches import.
 
-    It follows only modules under ``source_roots``, never into the table-model
-    libraries, whose imports are what the tests look for.
+    Importing a module runs each of its parent packages' ``__init__`` first,
+    so those are reached too. It follows only modules under ``source_roots``,
+    never into the table-model libraries, whose imports are what the tests
+    look for.
     """
     first_party = _first_party_packages(source_roots)
     pending = [entry]
@@ -109,7 +117,8 @@ def imports_reached(entry: Path, source_roots: tuple[Path, ...]) -> dict[str, se
         pending.extend(
             module_path
             for name in imported
-            if (module_path := _module_path(name, source_roots, first_party))
+            for reached_name in _with_parent_packages(name)
+            if (module_path := _module_path(reached_name, source_roots, first_party))
             is not None
         )
     return imports_by_module
