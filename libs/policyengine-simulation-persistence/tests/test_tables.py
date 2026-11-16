@@ -182,6 +182,21 @@ def test_a_budget_window_has_one_report_run_per_year_of_one_report() -> None:
     )
 
 
+def test_a_python_none_in_a_runs_json_result_is_stored_as_sql_null() -> None:
+    """The Modal worker role's ``None`` results are SQL ``NULL``, not JSON ``null``.
+
+    A household job failed outside its calculation has no result, and a report
+    run whose output has no SPM receipts has no ``spm_provenance``; the stores
+    write ``None`` for both, and a query for ``IS NULL`` must find them.
+    """
+    for result_column in (
+        simulation_runs.c.household_result,
+        household_jobs.c.result,
+        report_runs.c.spm_provenance,
+    ):
+        assert result_column.type.none_as_null is True, result_column
+
+
 def test_the_input_models_are_tables_the_service_reads() -> None:
     """Each input table is one the service's role may SELECT and never writes."""
     readable_only = {
