@@ -2,13 +2,13 @@
 
 The Simulation Entrypoint creates a household report in three steps, each
 its own transaction, with the household function's call started between
-them: it reads the report's inputs, creates the rows, then records the call
-on the report run or fails the run. A stored report's re-run takes the same
-steps, creating the report's new runs instead. ``HouseholdReportStore`` runs
-the reads and writes of ``household_report_records``,
-``household_job_records``, ``policy_reform``, ``economy_rerun_records``'
-household report re-run and ``economy_run_records``' report run writes that
-way.
+them: it reads the report's inputs, finds or creates the rows by key, then
+records the call on a report run it created or fails the run. A stored
+report's re-run takes the same steps, joining or creating the report's new
+runs instead. ``HouseholdReportStore`` runs the reads and writes of
+``keyed_household_records``, ``household_job_records``, ``policy_reform``,
+``economy_rerun_records``' household report re-run and
+``economy_run_records``' report run writes that way.
 """
 
 from __future__ import annotations
@@ -39,9 +39,6 @@ from policyengine_simulation_persistence.household_job_store import (
     UnknownCatalogVersionError,
     UnknownHouseholdError,
 )
-from policyengine_simulation_persistence.household_report_records import (
-    insert_household_report,
-)
 from policyengine_simulation_persistence.keyed_household_records import (
     find_or_create_household_report,
 )
@@ -64,9 +61,6 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence.economy_run_store import ReportSide
     from policyengine_simulation_persistence.household_job_records import (
         StoredHousehold,
-    )
-    from policyengine_simulation_persistence.household_report_records import (
-        NewHouseholdReport,
     )
     from policyengine_simulation_persistence.keyed_household_records import (
         FoundHouseholdReport,
@@ -197,20 +191,11 @@ class HouseholdReportStore:
             lambda connection: find_or_create_household_report(connection, report)
         )
 
-    def create_report(self, report: NewHouseholdReport) -> None:
-        """Create the report, its simulations and its runs.
-
-        Raise ``insert_household_report``'s errors, and
-        EconomyRecordOutcomeUnknownError when the commit fails after the
-        rows were inserted: they may exist.
-        """
-        self._create(lambda connection: insert_household_report(connection, report))
-
     def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> FoundReportRun:
         """Join a stored report's run on the re-run's versions, or create it.
 
         See ``insert_household_report_rerun``; raise its errors, and
-        EconomyRecordOutcomeUnknownError as ``create_report`` does.
+        EconomyRecordOutcomeUnknownError as ``find_or_create_report`` does.
         """
         return self._create(
             lambda connection: insert_household_report_rerun(connection, rerun)

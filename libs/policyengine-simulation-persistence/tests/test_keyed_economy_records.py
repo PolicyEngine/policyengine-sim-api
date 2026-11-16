@@ -602,8 +602,8 @@ def test_a_keyed_reports_rerun_joins_each_sides_run_on_its_versions(
             run_id=uuid4(),
             population=economy.population(),
             versions=VERSIONS,
-            baseline=RerunSide(created.baseline.simulation_id, uuid4(), reused=False),
-            reform=RerunSide(created.reform.simulation_id, uuid4(), reused=False),
+            baseline=RerunSide(created.baseline.simulation_id, uuid4()),
+            reform=RerunSide(created.reform.simulation_id, uuid4()),
         )
 
         found = insert_report_rerun(connection, rerun)
@@ -635,8 +635,8 @@ def test_a_keyed_rerun_with_one_simulation_on_both_sides_inserts_one_run(
             run_id=uuid4(),
             population=economy.population(),
             versions=VERSIONS,
-            baseline=RerunSide(simulation_id, uuid4(), reused=False),
-            reform=RerunSide(simulation_id, uuid4(), reused=False),
+            baseline=RerunSide(simulation_id, uuid4()),
+            reform=RerunSide(simulation_id, uuid4()),
         )
 
         found = insert_report_rerun(connection, rerun)

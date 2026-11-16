@@ -61,8 +61,7 @@ class WindowYearDefinition:
     """One year of a budget window's newest calculation, and its sides' simulations.
 
     They are the simulations of the runs that year's report run names: a
-    year that reused a run names that run's simulation, which may be another
-    report's.
+    year that joined another report's run names that run's simulation.
     """
 
     year: int

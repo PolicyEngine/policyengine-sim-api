@@ -83,32 +83,16 @@ runs too long and the limit never stays on a pooled connection.
 
 ## Economy simulations and reports
 
-`economy_run_records.py` holds the simulation service's reads and writes for
-an economy report, or a standalone economy simulation. It reads the
-country's model (`read_model_id`) and a catalog version's region by code
-(`read_region`) and dataset by name or ID (`read_dataset`,
-`read_dataset_by_id`). `insert_economy_report` creates, in the caller's
-transaction, each side's new simulation and first run, the report naming
-both simulations and the reform's policy with its options in `inputs`, and
-its first report run, trigger `initial`; every run is `pending` with no
-Modal call ID. A side may instead name a run that already succeeded
-(`ReportSimulation.reused`), for which nothing is created.
-`insert_economy_simulation` creates a standalone simulation and its first
-run. Both create unkeyed rows, as `insert_budget_window_report` and
-`insert_household_report` do; the Simulation Entrypoint calls none of them
-now, creating every record by key ("Shared simulations, reports and runs"
-below), and tests use them to store records created before keys. A row
-naming one that does not exist is refused by its foreign key with
-SQLSTATE `23503`; `EconomyRecordReferenceError` names the table and column.
-
-`find_reusable_run` returns the run a new report's side may reuse: the
-newest, by completion, of the same economy simulation (policy, dynamic,
-catalog version, dataset, region and year) that succeeded on the same
-country package and .py versions, whose output file is under the output
-bucket's `gs://<bucket>/`, that a succeeded report run with the same options
-used, and that no report run refused to reuse (an error message starting
-`reused_simulation_`). So a submission after a refused reuse calculates the
-simulation again.
+`economy_run_records.py` holds the simulation service's catalog reads and
+run writes for an economy report, or a standalone economy simulation. It
+reads the country's model (`read_model_id`) and a catalog version's region
+by code (`read_region`) and dataset by name or ID (`read_dataset`,
+`read_dataset_by_id`), and builds a simulation run `pending` with no Modal
+call ID (`simulation_run_row`, `insert_simulation_run`). The Simulation
+Entrypoint creates every simulation, report and run by key ("Shared
+simulations, reports and runs" below). A row naming one that does not exist
+is refused by its foreign key with SQLSTATE `23503`;
+`EconomyRecordReferenceError` names the table and column.
 
 `record_report_run_call` and `record_simulation_run_call` record a Modal
 call's ID, and `fail_unstarted_report_run` and
@@ -119,9 +103,9 @@ with its newest run's state.
 
 `EconomyRunStore` runs them as the Simulation Entrypoint does, each step in
 a transaction of its own: `read_report_inputs` reads the catalog version,
-model, region and dataset, each side's policy and dynamic values, and each
-side's reusable run together, never giving both sides the same run;
-`read_simulation_inputs` does the same for one simulation; the writes and
+model, region and dataset, and each side's policy and dynamic values
+together; `read_simulation_inputs` does the same for one simulation, and
+`read_budget_window_inputs` for a budget window's two sides; the writes and
 reads each take their own. A missing region or dataset raises
 `UnknownRegionError` or `UnknownDatasetError`, and a report side's refused
 policy or dynamic raises `ReportSideError`, naming the side. A create whose
@@ -157,7 +141,7 @@ report and run rows (C1 · 24). These modules do it:
   weren't forced, outside budget windows), then a read of the row that
   won, retried when that run fails in between (`SharedRowNotSettledError`
   after three tries). A forced run is inserted directly and never looked
-  up, joined or offered for reuse.
+  up or joined.
 - `keyed_economy_records.py` runs a report's find-or-create in one
   transaction: each side's simulation by key, in key order; the report by
   key; the report's joinable run on the current versions, joined with the
@@ -190,23 +174,23 @@ report and run rows (C1 · 24). These modules do it:
 
 ## Household reports
 
-`household_report_records.py` holds the simulation service's writes for a
-household report: one stored household, for one year, under a baseline and,
-optionally, a reform. `insert_household_report` creates, in the caller's
-transaction, a household simulation (no dataset or region) and its first
-run for each side, never reusing one; the report, of type `household`,
-naming the household, both simulations and the reform's policy, with its
-options in `inputs`; and its first report run, trigger `initial`, naming no
-reform run for a report of the baseline alone. Every run is `pending` with
-no Modal call ID, and a row naming one that does not exist is refused as
-`EconomyRecordReferenceError`.
+A household report calculates one stored household, for one year, under a
+baseline and, optionally, a reform. Its report has type `household`
+(`HOUSEHOLD_REPORT_TYPE`) and names the household, and each side is a
+household simulation (no dataset or region) naming the side's policy.
+`keyed_household_records.py` finds or creates the report, its simulations
+and its run by key, as an economy report's are (C1 · 24's answer 8);
+`household_report_records.py` builds each side's run, `pending` with no
+Modal call ID (`household_simulation_run_row`,
+`insert_household_simulation_run`). A row naming one that does not exist
+is refused as `EconomyRecordReferenceError`.
 
 `HouseholdReportStore` runs the steps in transactions of their own:
 `read_inputs` reads the catalog version for the .py version, the country's
 model, the stored household and each side's policy values together,
 raising `UnknownCatalogVersionError`, `UnknownHouseholdError` or
 `ReportSideError` for the side whose policy is missing or sets parameters
-the catalog version lacks; `create_report` raises
+the catalog version lacks; `find_or_create_report` raises
 `EconomyRecordOutcomeUnknownError` when the commit fails after the rows were
 inserted; and `record_report_call` and `fail_unstarted_report` use the
 economy report run writes.
@@ -223,11 +207,6 @@ version, dataset and region it calculates on.
   record calculates: its kind (`economy`, `budget_window`, `household` or
   `unsupported`), country, year, its region's code and dataset's name, and
   each simulation's policy and dynamic.
-- `find_reusable_run_of` searches one simulation's runs, by its ID, under
-  `find_reusable_run`'s conditions on a run (versions, the run's own catalog
-  version, dataset, region and year, the output file, a succeeded report run
-  with the same options, no refused reuse, not forced); it doesn't compare the
-  simulation row, which keeps the catalog rows it was created on.
 - `insert_report_rerun` joins the report's run on the re-run's versions
   that hasn't failed and wasn't forced (pending, running or succeeded),
   creating nothing, or else creates the report's new run, naming no
@@ -239,8 +218,8 @@ version, dataset and region it calculates on.
   a transaction-level advisory lock on the report's ID, so concurrent
   re-runs of one report wait for each other and end on one run. No re-run
   is refused while a run is under way. A forced one (`NewReportRerun.forced`) takes no lock, always
-  creates a new run of each side, marked `forced`, and joins none. No side
-  of a report's re-run names a reused run. `insert_simulation_rerun` joins or creates the
+  creates a new run of each side, marked `forced`, and joins none.
+  `insert_simulation_rerun` joins or creates the
   simulation's run on the re-run's versions, catalog version and year
   through `shared_rows`, with no lock. Each returns the run, its status and
   whether it created it. When the database refuses the new run's key to the
@@ -274,10 +253,8 @@ in a transaction of its own and returns the run; the store's `read_inputs`
 reads the re-run's household and policies as it does a new report's.
 
 `EconomyRunStore.read_report_rerun_inputs` reads a re-run's catalog rows by
-the stored region code and dataset name, and each side's values, with, given
-`reuse`, its reusable run of its own simulation, never giving both sides the
-same run; the service passes none, as its re-runs join or force their runs.
-`read_window_rerun_inputs` does the same for each year of a window.
+the stored region code and dataset name, and each side's values.
+`read_window_rerun_inputs` does the same for a window's two sides.
 `create_report_rerun`, `create_window_rerun` and `create_simulation_rerun`
 run the inserts in a transaction of their own.
 

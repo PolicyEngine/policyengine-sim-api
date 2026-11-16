@@ -115,16 +115,13 @@ if TYPE_CHECKING:
 class RerunSide:
     """The simulation run one side of a report's or a window year's re-run names.
 
-    The simulation is always the report's own. With ``reused`` (an unforced
-    budget window's year only), the run is one of its runs that succeeded
-    on the current versions, and nothing is created for the side; otherwise
-    ``simulation_run_id`` is the run created, pending, or the ID an economy
-    report's side proposes, used only if it inserts the run.
+    The simulation is always the report's own. ``simulation_run_id`` is the
+    run a forced re-run creates, pending, or the ID an unforced re-run's
+    side proposes, used only if it inserts the run.
     """
 
     simulation_id: UUID
     simulation_run_id: UUID
-    reused: bool
 
 
 @dataclass(frozen=True)
@@ -135,7 +132,7 @@ class NewReportRerun:
     that hasn't failed and wasn't forced, or inserts one; a side's
     ``simulation_run_id`` is the ID it proposes, used only if it inserts the
     run. ``forced`` makes it a forced re-run's extra run, which inserts a
-    new run of each side, marked forced. No side names a reused run.
+    new run of each side, marked forced.
     """
 
     report_id: UUID
@@ -145,12 +142,6 @@ class NewReportRerun:
     baseline: RerunSide
     reform: RerunSide
     forced: bool = False
-
-    def __post_init__(self) -> None:
-        """Refuse a side naming a reused run: each side joins or creates its run."""
-        if self.baseline.reused or self.reform.reused:
-            msg = "a report re-run's sides join or create their runs, reusing none"
-            raise ValueError(msg)
 
     @property
     def new_simulation_run_ids(self) -> tuple[UUID, ...]:
@@ -182,7 +173,7 @@ class NewWindowRerun:
     extra window run on new runs of every year. Unforced, a keyed window's
     re-run joins its window run on the versions, or each year's sides join
     their simulations' runs; a side's ``simulation_run_id`` is the ID it
-    proposes. No side names a reused run.
+    proposes.
     """
 
     report_id: UUID
@@ -193,13 +184,8 @@ class NewWindowRerun:
     years: tuple[WindowRerunYear, ...]
 
     def __post_init__(self) -> None:
-        """Refuse years that aren't 1 to 75 from the first, or a reused side."""
+        """Refuse years that aren't 1 to 75 in a row from the first."""
         check_window_years(self.population.year, [year.year for year in self.years])
-        if any(
-            side.reused for year in self.years for side in (year.baseline, year.reform)
-        ):
-            msg = "a window re-run's sides join or create their runs, reusing none"
-            raise ValueError(msg)
 
     def population_in(self, year: int) -> EconomyPopulation:
         """Return what the window's simulations of ``year`` calculate on."""

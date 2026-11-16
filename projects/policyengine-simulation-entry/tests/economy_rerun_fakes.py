@@ -13,7 +13,6 @@ from uuid import UUID
 from economy_service_fakes import (
     CREATED_AT,
     DYNAMIC_ID,
-    OUTPUT_BUCKET,
     POLICY_ID,
     REFORM,
     FakeCaller,
@@ -44,8 +43,6 @@ from policyengine_simulation_persistence import (
 from test_budget_window_submissions import FakeAdvancer, FakeWindowStore
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from policyengine_simulation_entry.household_report_reruns import (
         HouseholdReportReruns,
     )
@@ -54,7 +51,6 @@ if TYPE_CHECKING:
         NewReportRerun,
         NewSimulationRerun,
         NewWindowRerun,
-        RunReuse,
     )
 
 REPORT_ID = UUID("00000000-0000-4000-8000-0000000000a1")
@@ -127,8 +123,8 @@ STORED_SIMULATION = SimulationDefinition(
 class FakeRerunStore(FakeWindowStore):
     """Records the re-run reads and writes, and answers as told.
 
-    A budget window's re-run is read with ``reusable_by_year``, as a new
-    window is, and recorded in ``windows``, where the fake advancer finds it.
+    A budget window's re-run is recorded in ``windows``, as a new window is,
+    where the fake advancer finds it.
 
     ``inputs_failure`` is raised by a re-run's read of its inputs, and
     ``rerun_failure`` by its create instead of recording it. A simulation
@@ -176,26 +172,19 @@ class FakeRerunStore(FakeWindowStore):
         *,
         baseline: SideDefinition,
         reform: SideDefinition,
-        reuse: RunReuse | None,
     ) -> EconomyReportInputs:
-        self.rerun_reads.append((request, (baseline, reform, reuse)))
+        self.rerun_reads.append((request, (baseline, reform)))
         if self.inputs_failure is not None:
             raise self.inputs_failure
-        baseline_reusable, reform_reusable = self.reusable
         return EconomyReportInputs(
             catalog=self.catalog,
-            baseline=SimulationInputs(
-                choice=baseline.choice,
-                reform={},
-                reusable_run=None if reuse is None else baseline_reusable,
-            ),
+            baseline=SimulationInputs(choice=baseline.choice, reform={}),
             # Current law sets no values, on either side.
             reform=SimulationInputs(
                 choice=reform.choice,
                 reform=REFORM
                 if reform.choice.policy_id or reform.choice.dynamic_id
                 else {},
-                reusable_run=None if reuse is None else reform_reusable,
             ),
         )
 
@@ -213,22 +202,14 @@ class FakeRerunStore(FakeWindowStore):
         *,
         baseline: SimulationChoice,
         reform: SimulationChoice,
-        years: Sequence[WindowYearDefinition],
-        reuse: RunReuse | None,
     ) -> BudgetWindowInputs:
-        self.rerun_reads.append((request, (baseline, reform, tuple(years), reuse)))
+        self.rerun_reads.append((request, (baseline, reform)))
         if self.inputs_failure is not None:
             raise self.inputs_failure
         return BudgetWindowInputs(
             catalog=self.catalog,
             baseline=SimulationInputs(choice=baseline, reform={}),
             reform=SimulationInputs(choice=reform, reform=REFORM),
-            reusable_runs={
-                year.year: (None, None)
-                if reuse is None
-                else self.reusable_by_year.get(year.year, (None, None))
-                for year in years
-            },
         )
 
     def create_window_rerun(self, rerun: NewWindowRerun) -> FoundBudgetWindow:
@@ -304,12 +285,11 @@ class UnusedAdvancer:
         raise AssertionError(msg)
 
 
-def rerun_service(  # noqa: PLR0913  # the store, then each seam a test may replace
+def rerun_service(  # the store, then each seam a test may replace
     store: FakeRerunStore,
     *,
     workers: FakeWorkers | None = None,
     caller: FakeCaller | None = None,
-    output_bucket: str | None = OUTPUT_BUCKET,
     advancer: FakeAdvancer | None = None,
     household_reports: HouseholdReportReruns | None = None,
 ) -> EconomyRerunService:
@@ -322,7 +302,6 @@ def rerun_service(  # noqa: PLR0913  # the store, then each seam a test may repl
         settings=ServiceSettings(
             environment="staging",
             modal_environment="staging",
-            output_bucket=output_bucket,
         ),
         call_start_timeout_seconds=0.05,
         new_id=numbered_ids(),

@@ -102,11 +102,6 @@ class Settings:
     # manifest, and the manifest's name. Empty outside deployed environments.
     v2_modal_environment: str = ""
     v2_manifest_name: str = V2_VERSION_MANIFEST_NAME
-    # The bucket that keeps v2 simulation output files for good. The service
-    # uses it for nothing: a report joins its sides' simulation runs by
-    # version set, not by their files; it goes with the run-reuse search.
-    # Empty outside deployed environments.
-    v2_simulation_output_bucket: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -162,7 +157,6 @@ class Settings:
             v2_manifest_name=os.getenv(
                 "SIMULATION_V2_MANIFEST_NAME", V2_VERSION_MANIFEST_NAME
             ),
-            v2_simulation_output_bucket=os.getenv("V2_SIMULATION_OUTPUT_BUCKET", ""),
         )
 
     @property

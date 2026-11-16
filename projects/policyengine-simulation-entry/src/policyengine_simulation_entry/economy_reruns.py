@@ -98,7 +98,7 @@ from policyengine_simulation_entry.rerunnable_records import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
     from uuid import UUID
 
     from policyengine_simulation_persistence import (
@@ -108,7 +108,6 @@ if TYPE_CHECKING:
         FoundReportRun,
         FoundSimulationRun,
         ReportDefinition,
-        RunReuse,
         SideDefinition,
         SimulationChoice,
         SimulationDefinition,
@@ -164,9 +163,8 @@ class EconomyRerunRuns(BudgetWindowRuns, Protocol):
         *,
         baseline: SideDefinition,
         reform: SideDefinition,
-        reuse: RunReuse | None,
     ) -> EconomyReportInputs:
-        """Read a re-run's catalog rows, both sides' values and reusable runs."""
+        """Read a re-run's catalog rows and both sides' values."""
         ...
 
     def read_window_rerun_inputs(
@@ -175,10 +173,8 @@ class EconomyRerunRuns(BudgetWindowRuns, Protocol):
         *,
         baseline: SimulationChoice,
         reform: SimulationChoice,
-        years: Sequence[WindowYearDefinition],
-        reuse: RunReuse | None,
     ) -> BudgetWindowInputs:
-        """Read a window re-run's catalog rows, both sides' values and years' runs."""
+        """Read a window re-run's catalog rows and both sides' values."""
         ...
 
     def create_window_rerun(self, rerun: NewWindowRerun) -> FoundBudgetWindow:
@@ -294,8 +290,6 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                 economy_request,
                 baseline=stored.baseline,
                 reform=stored.reform,
-                # A re-run reuses no run: its sides join or are forced.
-                reuse=None,
             ),
             request=economy_request,
             source=STORED_REPORT,
@@ -463,8 +457,6 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                 window.economy_request,
                 baseline=stored.baseline.choice,
                 reform=stored.reform.choice,
-                years=window.years,
-                reuse=None,
             ),
             request=window.economy_request,
             source=STORED_REPORT,
@@ -544,7 +536,6 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         return RerunSide(
             simulation_id=simulation_id,
             simulation_run_id=self._new_id(),
-            reused=False,
         )
 
     async def _create_rerun[Created](

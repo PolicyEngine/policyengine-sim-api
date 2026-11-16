@@ -108,7 +108,6 @@ if TYPE_CHECKING:
         EconomySimulationState,
         FoundEconomyReport,
         FoundEconomySimulation,
-        RunReuse,
     )
 
     from policyengine_simulation_entry.economy_api_models import (
@@ -141,9 +140,8 @@ class EconomyRuns(Protocol):
         *,
         baseline: SimulationChoice,
         reform: SimulationChoice,
-        reuse: RunReuse | None,
     ) -> EconomyReportInputs:
-        """Read a report's catalog rows, both sides' values and reusable runs."""
+        """Read a report's catalog rows and both sides' values."""
         ...
 
     def read_simulation_inputs(
@@ -202,17 +200,12 @@ class EconomyRuns(Protocol):
 class ServiceSettings:
     """The deployment the service runs in.
 
-    ``environment`` labels the calls' artifacts, ``modal_environment`` holds
-    the v2 workers, and ``output_bucket`` is the bucket that keeps
-    simulation output files for good. The service keeps it here and uses
-    it for nothing: a report joins its sides' runs by version set
-    (C1 · 24's answers 4 and 5), not by their files; the setting goes with
-    the reuse search.
+    ``environment`` labels the calls' artifacts, and ``modal_environment``
+    holds the v2 workers.
     """
 
     environment: str
     modal_environment: str
-    output_bucket: str | None = None
 
 
 def _database_unavailable() -> EconomySubmissionUnavailableError:
@@ -281,7 +274,6 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
                 economy_request,
                 baseline=simulation_choice(request.baseline),
                 reform=simulation_choice(request.reform),
-                reuse=None,
             ),
             request=economy_request,
         )

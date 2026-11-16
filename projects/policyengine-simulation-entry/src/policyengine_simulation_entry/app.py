@@ -599,7 +599,6 @@ def economy_submissions_for(
         settings=ServiceSettings(
             environment=settings.environment,
             modal_environment=settings.v2_modal_environment,
-            output_bucket=settings.v2_simulation_output_bucket or None,
         ),
     )
 

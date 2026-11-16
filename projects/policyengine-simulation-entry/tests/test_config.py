@@ -412,18 +412,6 @@ def test_the_v2_manifest_settings_configure_no_stage12_resource():
     assert not settings.stage12_resources_configured
 
 
-def test_the_v2_output_bucket_is_read_from_the_environment(monkeypatch):
-    from policyengine_simulation_entry.config import Settings
-
-    monkeypatch.setenv("V2_SIMULATION_OUTPUT_BUCKET", "policyengine-v2-outputs-staging")
-
-    assert Settings.from_env().v2_simulation_output_bucket == (
-        "policyengine-v2-outputs-staging"
-    )
-    monkeypatch.delenv("V2_SIMULATION_OUTPUT_BUCKET")
-    assert Settings.from_env().v2_simulation_output_bucket == ""
-
-
 def test_economy_runs_need_the_database_and_the_v2_modal_environment():
     assert not make_settings().economy_runs_configured
     assert not make_settings(

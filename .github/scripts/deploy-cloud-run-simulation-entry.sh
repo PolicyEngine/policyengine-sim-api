@@ -102,7 +102,6 @@ required_variables=(
   SIMULATION_SERVICE_DATABASE_URL_SECRET_NAME
   MODAL_TOKEN_ID_SECRET_NAME
   MODAL_TOKEN_SECRET_SECRET_NAME
-  V2_SIMULATION_OUTPUT_BUCKET_VALUE
   OBSERVABILITY_SERVICE_NAMESPACE
   OBSERVABILITY_TRACE_PROJECT_ID
   OTEL_EXPORTER_OTLP_ENDPOINT
@@ -129,12 +128,6 @@ esac
   || fail "TAG is invalid"
 [[ "${ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.gserviceaccount\.com$ ]] \
   || fail "ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT is invalid"
-# The bucket that keeps v2 simulation output files for good. The service
-# reads it into its settings and uses it for nothing (a report joins its
-# sides' simulation runs by version set); it never reads the bucket. The
-# setting and this check go with the run-reuse search.
-[[ "${V2_SIMULATION_OUTPUT_BUCKET_VALUE}" =~ ^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$ ]] \
-  || fail "V2_SIMULATION_OUTPUT_BUCKET_VALUE is invalid"
 [[ "${ENTRYPOINT_MIN_INSTANCES}" =~ ^[0-9]+$ ]] \
   || fail "ENTRYPOINT_MIN_INSTANCES must be a non-negative integer"
 [[ "${ENTRYPOINT_MAX_INSTANCES}" =~ ^[0-9]+$ ]] \
@@ -202,7 +195,6 @@ jq -n '
     POLICYENGINE_OTEL_GOOGLE_AUDIENCE: env.POLICYENGINE_OTEL_GOOGLE_AUDIENCE,
     SIMULATION_V2_MODAL_ENVIRONMENT: env.MODAL_ENVIRONMENT,
     SIMULATION_V2_MANIFEST_NAME: "simulation-api-v2-version-manifest",
-    V2_SIMULATION_OUTPUT_BUCKET: env.V2_SIMULATION_OUTPUT_BUCKET_VALUE,
     STAGE12_ENABLED: (
       if env.DEPLOY_STAGE12_V2 == "true" then env.STAGE12_ENABLED_VALUE else "0" end
     )

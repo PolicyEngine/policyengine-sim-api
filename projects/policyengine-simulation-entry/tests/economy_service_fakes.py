@@ -40,7 +40,6 @@ from policyengine_simulation_persistence import (
     FoundSide,
     FoundSimulationRun,
     ReportRunStatus,
-    ReusableRun,
     SimulationInputs,
     SimulationStatus,
 )
@@ -52,7 +51,6 @@ if TYPE_CHECKING:
         EconomyRequest,
         KeyedEconomyReport,
         KeyedEconomySimulation,
-        RunReuse,
         SimulationChoice,
     )
 
@@ -62,12 +60,13 @@ REGION_ID = UUID("00000000-0000-4000-8000-0000000000c3")
 DATASET_ID = UUID("00000000-0000-4000-8000-0000000000c4")
 POLICY_ID = UUID("00000000-0000-4000-8000-0000000000c5")
 DYNAMIC_ID = UUID("00000000-0000-4000-8000-0000000000c6")
-REUSED = ReusableRun(
+# A side whose simulation run another request inserted, which a report joins.
+REUSED = FoundSide(
     simulation_id=UUID("00000000-0000-4000-8000-0000000000d1"),
     simulation_run_id=UUID("00000000-0000-4000-8000-0000000000d2"),
+    run_inserted=False,
 )
 CREATED_AT = datetime(2026, 11, 12, 15, tzinfo=UTC)
-OUTPUT_BUCKET = "policyengine-v2-simulation-outputs-staging"
 CTC_AMOUNT = "gov.irs.credits.ctc.amount.base[0].amount"
 REFORM = {CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000}}
 CATALOG = EconomyCatalogRows(
@@ -174,7 +173,6 @@ class FakeStore:
     """
 
     catalog: EconomyCatalogRows = CATALOG
-    reusable: tuple[ReusableRun | None, ReusableRun | None] = (None, None)
     read_failure: Exception | None = None
     create_failure: Exception | None = None
     record_failure: Exception | None = None
@@ -197,22 +195,17 @@ class FakeStore:
         *,
         baseline: SimulationChoice,
         reform: SimulationChoice,
-        reuse: RunReuse | None,
     ) -> EconomyReportInputs:
-        self.report_reads.append((request, (baseline, reform, reuse)))
+        self.report_reads.append((request, (baseline, reform)))
         if self.read_failure is not None:
             raise self.read_failure
-        baseline_reusable, reform_reusable = self.reusable
         return EconomyReportInputs(
             catalog=self.catalog,
-            baseline=SimulationInputs(
-                choice=baseline, reform={}, reusable_run=baseline_reusable
-            ),
+            baseline=SimulationInputs(choice=baseline, reform={}),
             # Current law sets no values, on either side.
             reform=SimulationInputs(
                 choice=reform,
                 reform=REFORM if reform.policy_id or reform.dynamic_id else {},
-                reusable_run=reform_reusable,
             ),
         )
 
@@ -369,7 +362,6 @@ def service(
     *,
     workers: FakeWorkers | None = None,
     caller: FakeCaller | None = None,
-    output_bucket: str | None = OUTPUT_BUCKET,
 ) -> EconomySubmissionService:
     return EconomySubmissionService(
         store=store,
@@ -378,7 +370,6 @@ def service(
         settings=ServiceSettings(
             environment="staging",
             modal_environment="staging",
-            output_bucket=output_bucket,
         ),
         call_start_timeout_seconds=0.05,
         new_id=numbered_ids(),

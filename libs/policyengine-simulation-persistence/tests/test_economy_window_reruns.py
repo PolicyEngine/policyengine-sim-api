@@ -3,9 +3,8 @@
 A budget window's re-run is a new budget-window run of the report, with a
 report run per year. Each year's sides are the simulations that year's
 report run of the report's newest window run names, which may belong to
-another report when that year reused a run. A side may reuse a run of its
-own simulation that succeeded on the current versions. These run against a
-database the Public API's own v2 migration chain built
+another report when that year joined another report's run. These run
+against a database the Public API's own v2 migration chain built
 (``PUBLIC_API_SCHEMA_DATABASE_URL``), as the simulation service's role, in
 a transaction rolled back afterwards.
 """
@@ -23,18 +22,16 @@ from economy_rows import (
     CURRENT_LAW,
     LATER_POLICYENGINE_VERSION,
     LATER_VERSIONS,
-    OPTIONS,
-    OUTPUT_BUCKET_PREFIX,
     VERSIONS,
     EconomyCatalog,
     RunShape,
+    StoredRun,
     insert_economy_catalog,
     insert_later_catalog,
-    insert_report_run_of,
-    insert_run_of,
+    insert_report_of,
+    insert_simulation_run,
 )
 from policyengine_simulation_persistence import (
-    BudgetWindowYear,
     EconomyPopulation,
     EconomyRecordReferenceError,
     EconomyReportDefinition,
@@ -43,24 +40,22 @@ from policyengine_simulation_persistence import (
     FoundBudgetWindow,
     KeyedBudgetWindow,
     KeyedWindowYear,
-    NewBudgetWindowReport,
     NewWindowRerun,
     ProposedSide,
     ReportRunStatus,
-    ReportSimulation,
+    ReportRunTrigger,
     RerunRecordDeletedError,
     RerunSide,
-    ReusableRun,
-    RunReuse,
     SimulationStatus,
     WindowRerunYear,
     WindowYearDefinition,
+    budget_window_runs,
     find_or_create_budget_window,
-    insert_budget_window_report,
     insert_window_rerun,
     read_report_definition,
+    report_runs,
 )
-from sqlalchemy import text
+from sqlalchemy import insert, text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -77,9 +72,16 @@ LATER_REQUEST = EconomyRequest(
     dataset_name="populace_us_2024",
     year=2026,
 )
-LATER_REUSE = RunReuse(
-    versions=LATER_VERSIONS, inputs=OPTIONS, output_uri_prefix=OUTPUT_BUCKET_PREFIX
-)
+
+
+@dataclass(frozen=True)
+class StoredWindowYear:
+    """A year of a stored window: its report run and each side's simulation run."""
+
+    year: int
+    report_run_id: UUID
+    baseline: StoredRun
+    reform: StoredRun
 
 
 @dataclass(frozen=True)
@@ -88,16 +90,71 @@ class StoredWindow:
 
     report_id: UUID
     window_run_id: UUID
-    years: tuple[BudgetWindowYear, ...]
+    years: tuple[StoredWindowYear, ...]
 
 
-def _new_side() -> ReportSimulation:
-    return ReportSimulation(
-        simulation_id=uuid4(),
-        simulation_run_id=uuid4(),
-        choice=CURRENT_LAW,
-        reused=False,
+def _insert_window_rows(
+    connection: Connection, economy: EconomyCatalog
+) -> StoredWindow:
+    """Insert a window with no key, as the service created one before keys.
+
+    Each year has its own current-law simulations, with a pending run each;
+    the report names its first year's; its window run and each year's report
+    run are pending, with trigger ``initial``.
+    """
+    pending = RunShape(status=SimulationStatus.PENDING)
+    years = tuple(
+        StoredWindowYear(
+            year=year,
+            report_run_id=uuid4(),
+            baseline=insert_simulation_run(
+                connection, economy.population(year=year), pending
+            ),
+            reform=insert_simulation_run(
+                connection, economy.population(year=year), pending
+            ),
+        )
+        for year in WINDOW_YEARS
     )
+    first_year = years[0]
+    report_id = insert_report_of(
+        connection,
+        economy,
+        (first_year.baseline, first_year.reform),
+        budget_window_size=len(years),
+    )
+    window_run_id = uuid4()
+    connection.execute(
+        insert(budget_window_runs).values(
+            id=window_run_id,
+            report_id=report_id,
+            tax_benefit_model_version_id=economy.catalog.version_id,
+            trigger=ReportRunTrigger.INITIAL,
+            recalculate=False,
+            status=ReportRunStatus.PENDING,
+        )
+    )
+    connection.execute(
+        insert(report_runs),
+        [
+            {
+                "id": window_year.report_run_id,
+                "report_id": report_id,
+                "baseline_simulation_run_id": window_year.baseline.simulation_run_id,
+                "reform_simulation_run_id": window_year.reform.simulation_run_id,
+                "budget_window_run_id": window_run_id,
+                "year": window_year.year,
+                "country_package_version": VERSIONS.country_package_version,
+                "policyengine_version": VERSIONS.policyengine_version,
+                "status": ReportRunStatus.PENDING,
+                "trigger": ReportRunTrigger.INITIAL,
+                "modal_call_id": None,
+                "forced": False,
+            }
+            for window_year in years
+        ],
+    )
+    return StoredWindow(report_id=report_id, window_run_id=window_run_id, years=years)
 
 
 def _stored_window(
@@ -106,29 +163,8 @@ def _stored_window(
     *,
     window_status: ReportRunStatus = ReportRunStatus.SUCCEEDED,
 ) -> StoredWindow:
-    """Insert a budget-window report as the service would, then end its runs."""
-    years = tuple(
-        BudgetWindowYear(
-            year=year,
-            report_run_id=uuid4(),
-            baseline=_new_side(),
-            reform=_new_side(),
-        )
-        for year in WINDOW_YEARS
-    )
-    report = NewBudgetWindowReport(
-        id=uuid4(),
-        window_run_id=uuid4(),
-        country="us",
-        label="Ten-year cost",
-        description=None,
-        tax_benefit_model_id=economy.catalog.model_id,
-        population=economy.population(year=WINDOW_YEARS[0]),
-        versions=VERSIONS,
-        inputs=OPTIONS,
-        years=years,
-    )
-    insert_budget_window_report(connection, report)
+    """Insert a window as the service created one before keys, then end its runs."""
+    report = _insert_window_rows(connection, economy)
     # Earlier than anything else the test's transaction creates, whose rows
     # all get the transaction's time.
     for table, condition in (
@@ -167,9 +203,7 @@ def _stored_window(
                     "window_run_id": report.window_run_id,
                 },
             )
-    return StoredWindow(
-        report_id=report.id, window_run_id=report.window_run_id, years=years
-    )
+    return report
 
 
 def _store_on(connection: Connection) -> EconomyRunStore:
@@ -207,12 +241,10 @@ def _window_rerun_of(
                 baseline=RerunSide(
                     simulation_id=window_year.baseline.simulation_id,
                     simulation_run_id=uuid4(),
-                    reused=False,
                 ),
                 reform=RerunSide(
                     simulation_id=window_year.reform.simulation_id,
                     simulation_run_id=uuid4(),
-                    reused=False,
                 ),
             )
             for window_year in stored.years
@@ -262,7 +294,6 @@ def test_a_definitions_years_come_from_the_newest_window_run(
             baseline=RerunSide(
                 simulation_id=other_2027.baseline.simulation_id,
                 simulation_run_id=uuid4(),
-                reused=False,
             ),
         )
         act_as_the_service(connection)
@@ -414,12 +445,10 @@ def _rerun_of_keyed(
                 baseline=RerunSide(
                     simulation_id=year.baseline.simulation_id,
                     simulation_run_id=uuid4(),
-                    reused=False,
                 ),
                 reform=RerunSide(
                     simulation_id=year.reform.simulation_id,
                     simulation_run_id=uuid4(),
-                    reused=False,
                 ),
             )
             for year in found.years
@@ -479,72 +508,25 @@ def test_an_unforced_window_rerun_after_a_failed_run_names_its_years_runs(
         assert again.baseline.run_inserted is False
 
 
-def test_a_window_reruns_inputs_name_each_years_own_reusable_runs(
+def test_a_window_reruns_inputs_are_read_on_the_current_catalog_version(
     public_api_database_url,
 ) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         later = insert_later_catalog(connection, economy)
-        stored = _stored_window(connection, economy)
-        later_shape = RunShape(versions=LATER_VERSIONS)
-        reused_2027 = insert_run_of(
-            connection,
-            stored.years[1].baseline.simulation_id,
-            later.population(year=2027),
-            later_shape,
-        )
-        failed_reform_2027 = insert_run_of(
-            connection,
-            stored.years[1].reform.simulation_id,
-            later.population(year=2027),
-            replace(later_shape, status=SimulationStatus.FAILED),
-        )
-        insert_report_run_of(
-            connection, stored.report_id, (reused_2027, failed_reform_2027)
-        )
+        _stored_window(connection, economy)
         act_as_the_service(connection)
-        years = _definition_years(stored)
 
         inputs = _store_on(connection).read_window_rerun_inputs(
-            LATER_REQUEST,
-            baseline=CURRENT_LAW,
-            reform=CURRENT_LAW,
-            years=years,
-            reuse=LATER_REUSE,
-        )
-        forced = _store_on(connection).read_window_rerun_inputs(
-            LATER_REQUEST,
-            baseline=CURRENT_LAW,
-            reform=CURRENT_LAW,
-            years=years,
-            reuse=None,
+            LATER_REQUEST, baseline=CURRENT_LAW, reform=CURRENT_LAW
         )
 
-    assert inputs.catalog.catalog_version_id == later.catalog.version_id
-    assert inputs.reusable_runs == {
-        2026: (None, None),
-        2027: (
-            ReusableRun(
-                simulation_id=stored.years[1].baseline.simulation_id,
-                simulation_run_id=reused_2027.simulation_run_id,
-            ),
-            None,
-        ),
-        2028: (None, None),
-    }
-    assert forced.reusable_runs == dict.fromkeys(WINDOW_YEARS, (None, None))
-
-
-def _definition_years(stored: StoredWindow) -> tuple[WindowYearDefinition, ...]:
-    """Return the stored window's years as its definition names them."""
-    return tuple(
-        WindowYearDefinition(
-            year=window_year.year,
-            baseline_simulation_id=window_year.baseline.simulation_id,
-            reform_simulation_id=window_year.reform.simulation_id,
-        )
-        for window_year in stored.years
+    assert (inputs.catalog.catalog_version_id, inputs.catalog.region.id) == (
+        later.catalog.version_id,
+        later.region_id,
     )
+    assert inputs.catalog.dataset.id == later.dataset_id
+    assert (inputs.baseline.choice, inputs.reform.choice) == (CURRENT_LAW, CURRENT_LAW)
 
 
 def test_a_window_rerun_is_created_through_the_store(public_api_database_url) -> None:
@@ -566,45 +548,13 @@ def test_a_window_rerun_is_created_through_the_store(public_api_database_url) ->
     assert joined.window_run.id == rerun.window_run_id
 
 
-def test_a_window_rerun_names_no_reused_side() -> None:
-    """Each year's sides join or create their runs, as a report re-run's do."""
-    reused = RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4(), reused=True)
-    created = RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4(), reused=False)
-
-    with pytest.raises(ValueError, match="reusing none"):
-        NewWindowRerun(
-            report_id=uuid4(),
-            window_run_id=uuid4(),
-            population=EconomyPopulation(
-                tax_benefit_model_version_id=uuid4(),
-                region_id=uuid4(),
-                dataset_id=uuid4(),
-                year=WINDOW_YEARS[0],
-            ),
-            versions=VERSIONS,
-            recalculate=False,
-            years=(
-                WindowRerunYear(
-                    year=WINDOW_YEARS[0],
-                    report_run_id=uuid4(),
-                    baseline=reused,
-                    reform=created,
-                ),
-            ),
-        )
-
-
 def test_a_window_rerun_refuses_years_that_are_not_its_window() -> None:
     """Its years run one at a time from its first year, at most 75 of them."""
     year = WindowRerunYear(
         year=2026,
         report_run_id=uuid4(),
-        baseline=RerunSide(
-            simulation_id=uuid4(), simulation_run_id=uuid4(), reused=False
-        ),
-        reform=RerunSide(
-            simulation_id=uuid4(), simulation_run_id=uuid4(), reused=False
-        ),
+        baseline=RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4()),
+        reform=RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4()),
     )
     rerun = NewWindowRerun(
         report_id=uuid4(),
@@ -662,9 +612,7 @@ def test_a_window_rerun_of_a_deleted_report_or_year_simulation_is_refused(
         rerun = _window_rerun_of(stored, later)
         gone_year = replace(
             rerun.years[2],
-            reform=RerunSide(
-                simulation_id=uuid4(), simulation_run_id=uuid4(), reused=False
-            ),
+            reform=RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4()),
         )
 
         with pytest.raises(RerunRecordDeletedError), connection.begin_nested():

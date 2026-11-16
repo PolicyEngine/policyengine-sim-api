@@ -4,24 +4,20 @@ A request names a region code, a dataset name (or the region's default) and
 a year, for the .py version of the default worker, and each side's stored
 policy and dynamic. ``read_catalog_rows`` reads the catalog version's model,
 region and dataset; ``read_report_sides`` and ``read_window_sides`` read
-each side's values on that catalog version, with the runs a side may reuse
-when a search is given. ``EconomyRunStore`` runs these in its transactions.
+each side's values on that catalog version. ``EconomyRunStore`` runs these
+in its transactions.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal, get_args
 
 from policyengine_simulation_persistence.economy_run_records import (
     CatalogDataset,
     CatalogRegion,
     EconomyPopulation,
-    ReusableRun,
-    RunVersions,
     SimulationChoice,
-    find_reusable_run,
-    find_reusable_run_of,
     read_dataset,
     read_dataset_by_id,
     read_model_id,
@@ -44,7 +40,6 @@ from policyengine_simulation_persistence.policy_reform import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
     from uuid import UUID
 
     from sqlalchemy import Connection
@@ -53,11 +48,6 @@ if TYPE_CHECKING:
 
 # Which of a report's simulations a value belongs to.
 type ReportSide = Literal["baseline", "reform"]
-# Finds a report side's reusable run, given the side, its policy and dynamic,
-# and the run the other side reuses, which it must not.
-type ReusableRunSearch = Callable[
-    [ReportSide, SimulationChoice, UUID | None], ReusableRun | None
-]
 # The errors a simulation's own policy or dynamic can raise.
 type SideRefusal = (
     UnknownPolicyError
@@ -109,20 +99,6 @@ class EconomyRequest:
 
 
 @dataclass(frozen=True)
-class RunReuse:
-    """How a report looks for simulation runs to reuse (``find_reusable_run``).
-
-    ``versions`` are those the new runs would calculate on, ``inputs`` the
-    report's options, and ``output_uri_prefix`` the output bucket's
-    ``gs://<bucket>/``.
-    """
-
-    versions: RunVersions
-    inputs: dict[str, Any]
-    output_uri_prefix: str
-
-
-@dataclass(frozen=True)
 class EconomyCatalogRows:
     """The catalog rows a request is calculated on."""
 
@@ -143,15 +119,10 @@ class EconomyCatalogRows:
 
 @dataclass(frozen=True)
 class SimulationInputs:
-    """One simulation's policy and dynamic, and the values they set together.
-
-    ``reusable_run`` names a succeeded run the simulation may use instead of
-    a new one, when the request looked for one and one exists.
-    """
+    """One simulation's policy and dynamic, and the values they set together."""
 
     choice: SimulationChoice
     reform: PolicyReform
-    reusable_run: ReusableRun | None = None
 
 
 @dataclass(frozen=True)
@@ -173,17 +144,15 @@ class EconomyReportInputs:
 
 @dataclass(frozen=True)
 class BudgetWindowInputs:
-    """What a budget-window report is read from, and each year's reusable runs.
+    """What a budget-window report is read from: the catalog rows and both sides.
 
     ``baseline`` and ``reform`` hold each side's values, the same in every
-    year. ``reusable_runs`` gives, by year, the baseline's and the reform's
-    reusable run, each None when there is none.
+    year.
     """
 
     catalog: EconomyCatalogRows
     baseline: SimulationInputs
     reform: SimulationInputs
-    reusable_runs: dict[int, tuple[ReusableRun | None, ReusableRun | None]]
 
 
 def read_catalog_rows(
@@ -289,112 +258,33 @@ def read_side_values(
         raise ReportSideError(side, error) from error
 
 
-def read_report_sides(  # noqa: PLR0913  # the request's rows, both sides and the search
+def read_report_sides(
     connection: Connection,
     request: EconomyRequest,
     catalog: EconomyCatalogRows,
     *,
     baseline: SimulationChoice,
     reform: SimulationChoice,
-    search: ReusableRunSearch | None,
 ) -> EconomyReportInputs:
-    """Read both sides' values and, with ``search``, each side's reusable run.
-
-    The reform never gets the run the baseline reuses.
-    """
-    sides: list[SimulationInputs] = []
-    excluded_run_id: UUID | None = None
-    requested: tuple[tuple[ReportSide, SimulationChoice], ...] = (
-        ("baseline", baseline),
-        ("reform", reform),
+    """Read both sides' values, the baseline's first."""
+    return EconomyReportInputs(
+        catalog=catalog,
+        baseline=read_side_values(connection, request, catalog, "baseline", baseline),
+        reform=read_side_values(connection, request, catalog, "reform", reform),
     )
-    for side, choice in requested:
-        inputs = read_side_values(connection, request, catalog, side, choice)
-        reusable_run = None if search is None else search(side, choice, excluded_run_id)
-        if reusable_run is not None:
-            excluded_run_id = reusable_run.simulation_run_id
-            inputs = replace(inputs, reusable_run=reusable_run)
-        sides.append(inputs)
-    return EconomyReportInputs(catalog=catalog, baseline=sides[0], reform=sides[1])
 
 
-def read_window_sides(  # noqa: PLR0913  # the request's rows, both sides and each year's search
+def read_window_sides(
     connection: Connection,
     request: EconomyRequest,
     catalog: EconomyCatalogRows,
     *,
     baseline: SimulationChoice,
     reform: SimulationChoice,
-    searches: Iterable[tuple[int, ReusableRunSearch | None]],
 ) -> BudgetWindowInputs:
-    """Read both sides' values, and each year's reusable runs with its search.
-
-    A year without a search reuses nothing; in each year the reform never
-    gets the run the baseline reuses.
-    """
-    baseline_inputs = read_side_values(
-        connection, request, catalog, "baseline", baseline
-    )
-    reform_inputs = read_side_values(connection, request, catalog, "reform", reform)
-    reusable_runs: dict[int, tuple[ReusableRun | None, ReusableRun | None]] = {}
-    for year, search in searches:
-        baseline_run = reform_run = None
-        if search is not None:
-            baseline_run = search("baseline", baseline, None)
-            reform_run = search(
-                "reform",
-                reform,
-                None if baseline_run is None else baseline_run.simulation_run_id,
-            )
-        reusable_runs[year] = (baseline_run, reform_run)
+    """Read both sides' values, the baseline's first, for every year of a window."""
     return BudgetWindowInputs(
         catalog=catalog,
-        baseline=baseline_inputs,
-        reform=reform_inputs,
-        reusable_runs=reusable_runs,
+        baseline=read_side_values(connection, request, catalog, "baseline", baseline),
+        reform=read_side_values(connection, request, catalog, "reform", reform),
     )
-
-
-def search_by_definition(
-    connection: Connection, population: EconomyPopulation, reuse: RunReuse
-) -> ReusableRunSearch:
-    """Search any simulation with the side's definition (a new report's sides)."""
-
-    def search(
-        _side: ReportSide, choice: SimulationChoice, excluded_run_id: UUID | None
-    ) -> ReusableRun | None:
-        return find_reusable_run(
-            connection,
-            choice=choice,
-            population=population,
-            versions=reuse.versions,
-            inputs=reuse.inputs,
-            output_uri_prefix=reuse.output_uri_prefix,
-            excluded_run_id=excluded_run_id,
-        )
-
-    return search
-
-
-def search_own_runs(
-    connection: Connection,
-    population: EconomyPopulation,
-    reuse: RunReuse,
-    simulation_ids: dict[ReportSide, UUID],
-) -> ReusableRunSearch:
-    """Search only each side's own simulation's runs (a stored report's re-run)."""
-
-    def search(
-        side: ReportSide, _choice: SimulationChoice, excluded_run_id: UUID | None
-    ) -> ReusableRun | None:
-        return find_reusable_run_of(
-            connection,
-            simulation_id=simulation_ids[side],
-            population=population,
-            versions=reuse.versions,
-            inputs=reuse.inputs,
-            output_uri_prefix=reuse.output_uri_prefix,
-            excluded_run_id=excluded_run_id,
-        )
-
-    return search

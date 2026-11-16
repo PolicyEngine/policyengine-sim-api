@@ -119,17 +119,12 @@ fails the check.
 ## Economy reports and simulations
 
 `POST /reports` and `POST /simulations`, and their reads, use the same
-database, Modal token and v2 manifest settings as the household routes. The
-deploy also sets `V2_SIMULATION_OUTPUT_BUCKET`, the `beta` or `prod` variable
-of that name: the bucket that keeps v2 simulation output files for good. A
-missing or invalid bucket name stops the deploy. The service reads it into
-its settings but uses it for nothing: a report joins its sides' simulation
-runs by version set (C1 · 24's answers 4 and 5), not by their files. The
-setting and its deploy check are removed with the run-reuse search, in a
-later change. The service never reads the bucket itself, so it needs no
-storage permission.
-The coordinator and workers get the same bucket from the Modal secret the
-Stage 12 secret sync writes.
+database, Modal token and v2 manifest settings as the household routes. A
+report joins its sides' simulation runs by version set (C1 · 24's answers 4
+and 5), not by their output files, so the service needs no simulation
+output bucket setting and no storage permission. The coordinator and workers
+get the bucket they write those files to, `V2_SIMULATION_OUTPUT_BUCKET`, from
+the Modal secret the Stage 12 secret sync writes.
 
 ### The staging economy check
 

@@ -17,13 +17,12 @@ from uuid import uuid4
 
 import pytest
 from conftest import act_as_the_service, rolled_back_transaction
+from household_report_rows import insert_household_report_rows
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
-    HouseholdReportSimulation,
     HouseholdReportStore,
     HouseholdRerunSide,
-    NewHouseholdReport,
     NewHouseholdReportRerun,
     ReportRunStatus,
     RerunRecordDeletedError,
@@ -32,7 +31,6 @@ from policyengine_simulation_persistence import (
     SimulationChoice,
     SimulationStatus,
     fail_unstarted_report_run,
-    insert_household_report,
     read_report_definition,
 )
 from public_api_rows import (
@@ -48,6 +46,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from uuid import UUID
 
+    from household_report_rows import StoredHouseholdReport
     from public_api_rows import CatalogVersion
     from sqlalchemy import Connection
 
@@ -108,41 +107,23 @@ def _stored_report(
     *,
     with_reform: bool = True,
     first_run_ended: bool = True,
-) -> NewHouseholdReport:
+) -> StoredHouseholdReport:
     """Insert a household report and its first runs, as the superuser.
 
     With ``first_run_ended``, its first run failed before its call started,
     so the report has no run under way.
     """
-    household_id = insert_household(
-        connection, country="us", default_year=2026, document=DOCUMENT
-    )
-    report = NewHouseholdReport(
-        id=uuid4(),
-        run_id=uuid4(),
-        country="us",
-        label="A larger child tax credit",
-        description="For one family",
-        tax_benefit_model_id=catalog.model_id,
-        tax_benefit_model_version_id=catalog.version_id,
-        household_id=household_id,
+    report = insert_household_report_rows(
+        connection,
+        catalog,
+        household_id=insert_household(
+            connection, country="us", default_year=2026, document=DOCUMENT
+        ),
         year=REPORT_YEAR,
         versions=VERSIONS,
-        inputs={},
-        baseline=HouseholdReportSimulation(
-            simulation_id=uuid4(), simulation_run_id=uuid4(), policy_id=None
-        ),
-        reform=(
-            HouseholdReportSimulation(
-                simulation_id=uuid4(),
-                simulation_run_id=uuid4(),
-                policy_id=insert_policy(connection, catalog),
-            )
-            if with_reform
-            else None
-        ),
+        reform_policy_id=insert_policy(connection, catalog) if with_reform else None,
+        with_reform=with_reform,
     )
-    insert_household_report(connection, report)
     if first_run_ended:
         fail_unstarted_report_run(
             connection,
@@ -153,7 +134,7 @@ def _stored_report(
     return report
 
 
-def _succeed_first_runs(connection: Connection, report: NewHouseholdReport) -> None:
+def _succeed_first_runs(connection: Connection, report: StoredHouseholdReport) -> None:
     """Mark the report's first run and its side runs succeeded, as the superuser."""
     for table_name, run_ids in (
         ("report_runs", [report.run_id]),
@@ -169,7 +150,7 @@ def _succeed_first_runs(connection: Connection, report: NewHouseholdReport) -> N
 
 
 def _rerun_of(
-    report: NewHouseholdReport, catalog: CatalogVersion
+    report: StoredHouseholdReport, catalog: CatalogVersion
 ) -> NewHouseholdReportRerun:
     """Return the report's re-run on ``catalog``: a new run of each side's own.
 

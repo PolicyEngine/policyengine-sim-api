@@ -288,11 +288,12 @@ creates or claims a `stage12_evaluation_*` record. Only comparison-path calls,
 which pass an evaluation record, write those, until the comparison path is
 removed. The household functions work the same way on `household_jobs`.
 
-**A report run.** The simulation service creates, in one transaction, the
-`simulations` and `reports` rows, a `simulation_runs` row for the baseline and
-one for the reform (pending, with no `modal_call_id`; or a run that already
-succeeded, to reuse it), and the `report_runs` row naming both (pending, with no
-`modal_call_id`). It then starts the manifest's `report_coordinator_callable`
+**A report run.** The simulation service finds or creates by definition key,
+in one transaction, the `simulations` and `reports` rows, a `simulation_runs`
+row for the baseline and one for the reform (pending, with no `modal_call_id`;
+or a run of the same simulation on the same versions that it joins, which may
+have succeeded already), and the `report_runs` row naming both (pending, with
+no `modal_call_id`). It then starts the manifest's `report_coordinator_callable`
 (`coordinate_report`) with two arguments and no evaluation record:
 
 - the report input, a `ReportExecutionInput` whose `evaluation_id` is the report
@@ -313,7 +314,7 @@ run row naming other simulation runs, fails the report run with
 `report_run_input_mismatch`. If a worker it starts finds its run held by a
 worker an earlier attempt started, which Modal never cancelled, the coordinator
 waits for that worker instead. It uses the stored output of each simulation run
-that already succeeded (see the reuse of succeeded runs above), fails the
+that already succeeded (see the joined runs above), fails the
 report run with the run's own recorded failure if a run it must calculate
 already failed (`simulation_run_failed` if it recorded none), and starts a
 worker for each other one with a context naming only that

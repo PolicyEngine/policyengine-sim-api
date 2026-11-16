@@ -57,7 +57,6 @@ from policyengine_simulation_persistence import (
     ReportSideError,
     RerunRecordDeletedError,
     RerunSide,
-    ReusableRun,
     RunVersions,
     SharedRowNotSettledError,
     SimulationStatus,
@@ -71,14 +70,6 @@ VERSIONS = RunVersions(
     country_package_version="2.2.1", policyengine_version=POLICYENGINE_VERSION
 )
 OBSERVED = {"observability_id": "observed"}
-REUSED_2027 = ReusableRun(
-    simulation_id=UUID("00000000-0000-4000-8000-000000002027"),
-    simulation_run_id=UUID("00000000-0000-4000-8000-0000000000b2"),
-)
-REUSED_BASELINE = ReusableRun(
-    simulation_id=BASELINE_SIMULATION_ID,
-    simulation_run_id=UUID("00000000-0000-4000-8000-0000000000b1"),
-)
 
 
 def _rerun_report(service, request: ReportRerunRequest | None = None):
@@ -104,12 +95,12 @@ def test_a_report_with_no_keys_is_rerun_as_forced_runs_on_the_current_versions()
     None
 ):
     """Interim answer B: its simulations' runs may have report-dependent plans."""
-    store = FakeRerunStore(reusable=(REUSED_BASELINE, None))
+    store = FakeRerunStore()
     caller = FakeCaller()
 
     rerun = _rerun_report(rerun_service(store, caller=caller))
 
-    ((request, (baseline, reform, reuse)),) = store.rerun_reads
+    ((request, (baseline, reform)),) = store.rerun_reads
     assert (request.country, request.policyengine_version, request.year) == (
         "us",
         POLICYENGINE_VERSION,
@@ -117,7 +108,6 @@ def test_a_report_with_no_keys_is_rerun_as_forced_runs_on_the_current_versions()
     )
     assert (request.region_code, request.dataset_name) == ("us", "populace_us_2024")
     assert (baseline, reform) == (STORED_REPORT.baseline, STORED_REPORT.reform)
-    assert reuse is None
     # Extra runs, marked forced, which nothing joins and no index refuses.
     assert store.report_reruns == [
         NewReportRerun(
@@ -128,12 +118,10 @@ def test_a_report_with_no_keys_is_rerun_as_forced_runs_on_the_current_versions()
             baseline=RerunSide(
                 simulation_id=BASELINE_SIMULATION_ID,
                 simulation_run_id=UUID(int=2),
-                reused=False,
             ),
             reform=RerunSide(
                 simulation_id=REFORM_SIMULATION_ID,
                 simulation_run_id=UUID(int=3),
-                reused=False,
             ),
             forced=True,
         )
@@ -168,15 +156,13 @@ def test_a_report_with_no_keys_is_rerun_as_forced_runs_on_the_current_versions()
 
 
 def test_a_forced_rerun_recalculates_both_simulations() -> None:
-    store = FakeRerunStore(reusable=(REUSED_BASELINE, None))
+    store = FakeRerunStore()
 
     rerun = _rerun_report(rerun_service(store), ReportRerunRequest(force=True))
 
-    assert store.rerun_reads[0][1][2] is None
     (created,) = store.report_reruns
     # An extra run, marked forced, which nothing joins (answer 3).
     assert created.forced is True
-    assert (created.baseline.reused, created.reform.reused) == (False, False)
     assert created.new_simulation_run_ids == (UUID(int=2), UUID(int=3))
     assert created.baseline.simulation_id == BASELINE_SIMULATION_ID
     assert (rerun.baseline_reused, rerun.reform_reused) == (False, False)
@@ -235,10 +221,8 @@ def test_a_keyed_reports_rerun_has_each_side_join_its_run_on_the_versions() -> N
 
     rerun = _rerun_report(rerun_service(store, caller=caller))
 
-    assert store.rerun_reads[0][1][2] is None
     (created,) = store.report_reruns
     assert created.forced is False
-    assert (created.baseline.reused, created.reform.reused) == (False, False)
     payload = ReportExecutionInput.model_validate(caller.report_runs[0][1])
     assert payload.baseline.simulation_execution_id == joined_baseline_run
     assert payload.reform.simulation_execution_id == created.reform.simulation_run_id
@@ -359,7 +343,7 @@ def test_a_report_missing_a_row_it_calculates_on_is_not_rerun(missing, named) ->
 
 
 def test_a_rerun_modal_refuses_fails_only_its_new_runs_and_names_them() -> None:
-    store = FakeRerunStore(reusable=(REUSED_BASELINE, None))
+    store = FakeRerunStore()
 
     with pytest.raises(EconomySubmissionUnavailableError) as unavailable:
         _rerun_report(
@@ -664,23 +648,19 @@ def test_a_row_deleted_after_a_reruns_reads_is_refused_naming_the_report(
 
 def test_a_budget_window_is_rerun_as_a_new_window_run_and_its_first_years_started():
     """Interim answer B: a window has no keys yet, so every year is recalculated."""
-    store = FakeRerunStore(
-        report_definition=STORED_WINDOW, reusable_by_year={2027: (REUSED_2027, None)}
-    )
+    store = FakeRerunStore(report_definition=STORED_WINDOW)
     caller = FakeCaller()
     advancer = FakeAdvancer(store)
 
     rerun = _rerun_report(rerun_service(store, caller=caller, advancer=advancer))
 
-    ((request, (baseline, reform, years, reuse)),) = store.rerun_reads
+    ((request, (baseline, reform)),) = store.rerun_reads
     assert (request.policyengine_version, request.year) == (POLICYENGINE_VERSION, 2026)
     assert (request.region_code, request.dataset_name) == ("us", "populace_us_2024")
-    assert (baseline, reform, years) == (
+    assert (baseline, reform) == (
         STORED_WINDOW.baseline.choice,
         STORED_WINDOW.reform.choice,
-        STORED_WINDOW.window_years,
     )
-    assert reuse is None
     (window,) = store.windows
     assert (window.report_id, window.window_run_id, window.recalculate) == (
         REPORT_ID,
@@ -693,7 +673,6 @@ def test_a_budget_window_is_rerun_as_a_new_window_run_and_its_first_years_starte
         baseline_id, reform_id = WINDOW_SIMULATION_IDS[window_year.year]
         assert window_year.baseline.simulation_id == baseline_id
         assert window_year.reform.simulation_id == reform_id
-    assert not any(window_year.baseline.reused for window_year in window.years)
     assert advancer.advances == [window.window_run_id]
     assert len(caller.report_runs) == 3
     for (year_to_start, _), (_, payload, context, observed) in zip(
@@ -718,7 +697,7 @@ def test_a_budget_window_is_rerun_as_a_new_window_run_and_its_first_years_starte
                 "report_run_id": window_year.report_run_id,
                 "baseline_simulation_id": window_year.baseline.simulation_id,
                 "baseline_simulation_run_id": window_year.baseline.simulation_run_id,
-                "baseline_reused": window_year.baseline.reused,
+                "baseline_reused": False,
                 "reform_simulation_id": window_year.reform.simulation_id,
                 "reform_simulation_run_id": window_year.reform.simulation_run_id,
                 "reform_reused": False,
@@ -729,19 +708,15 @@ def test_a_budget_window_is_rerun_as_a_new_window_run_and_its_first_years_starte
 
 
 def test_a_forced_window_rerun_recalculates_every_year() -> None:
-    store = FakeRerunStore(
-        report_definition=STORED_WINDOW, reusable_by_year={2027: (REUSED_2027, None)}
-    )
+    store = FakeRerunStore(report_definition=STORED_WINDOW)
 
     rerun = _rerun_report(
         rerun_service(store, advancer=FakeAdvancer(store)),
         ReportRerunRequest(force=True),
     )
 
-    assert store.rerun_reads[0][1][3] is None
     (window,) = store.windows
     assert window.recalculate is True
-    assert not any(window_year.baseline.reused for window_year in window.years)
     assert not any(year.baseline_reused for year in rerun.years)
 
 

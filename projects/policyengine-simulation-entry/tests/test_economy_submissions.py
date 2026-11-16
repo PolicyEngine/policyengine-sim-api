@@ -106,7 +106,7 @@ def test_a_report_is_created_by_key_and_its_coordinator_started() -> None:
 
     created = _submit_report(service(store, caller=caller))
 
-    (request, (baseline, reform, reuse)) = store.report_reads[0]
+    (request, (baseline, reform)) = store.report_reads[0]
     assert (request.country, request.policyengine_version, request.region_code) == (
         "us",
         POLICYENGINE_VERSION,
@@ -115,8 +115,6 @@ def test_a_report_is_created_by_key_and_its_coordinator_started() -> None:
     assert (request.dataset_name, request.year) == (None, 2026)
     assert baseline == SimulationChoice(policy_id=None, dynamic_id=None)
     assert reform == SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID)
-    # Runs are found by key, not searched for (C1 · 24).
-    assert reuse is None
     (report,) = store.reports
     spm = {"geography_kind": "national"}
     assert report.definition == EconomyReportDefinition(

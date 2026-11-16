@@ -68,13 +68,13 @@ from policyengine_simulation_entry.economy_submissions import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
 
     from policyengine_simulation_persistence import (
         BudgetWindowInputs,
         EconomyRequest,
         FoundBudgetWindow,
-        RunReuse,
+        FoundWindowYear,
         WindowYearRuns,
     )
     from policyengine_stage12_persistence import (
@@ -107,10 +107,8 @@ class BudgetWindowRuns(EconomyRuns, Protocol):
         *,
         baseline: SimulationChoice,
         reform: SimulationChoice,
-        reuse: RunReuse | None,
-        years: Sequence[int],
     ) -> BudgetWindowInputs:
-        """Read the window's catalog rows, both sides' values and each year's runs."""
+        """Read the window's catalog rows and both sides' values."""
         ...
 
     def find_or_create_budget_window(
@@ -188,8 +186,6 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
                 economy_request,
                 baseline=simulation_choice(request.baseline),
                 reform=simulation_choice(request.reform),
-                reuse=None,
-                years=request.years,
             ),
             request=economy_request,
         )
@@ -435,7 +431,7 @@ def year_run_ids(window_year: WindowYearRuns) -> ReportRunIds:
     )
 
 
-def year_created(window_year: WindowYearRuns) -> BudgetWindowYearCreated:
+def year_created(window_year: FoundWindowYear) -> BudgetWindowYearCreated:
     """Return a year of the window run a request ended on, as the answer lists it.
 
     A side is reused when its run isn't one this request inserted.
