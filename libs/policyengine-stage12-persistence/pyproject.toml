@@ -12,8 +12,9 @@ dependencies = [
     # The models of the Public API's run and result tables, which the CI
     # comparison checks against the tables the Public API's chain builds.
     "policyengine-simulation-persistence",
+    # The shared library's ranges: the stores use its table models.
     "psycopg[binary]>=3.2,<4",
-    "sqlalchemy>=2,<3",
+    "sqlalchemy>=2,<2.1",
 ]
 
 [project.optional-dependencies]

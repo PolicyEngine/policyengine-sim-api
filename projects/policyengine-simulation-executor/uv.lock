@@ -1983,7 +1983,7 @@ modal-simulation-image = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
     { name = "pyarrow", specifier = ">=20,<24" },
     { name = "requests", specifier = ">=2.32,<3" },
-    { name = "sqlalchemy", specifier = ">=2,<3" },
+    { name = "sqlalchemy", specifier = ">=2,<2.1" },
     { name = "tables", specifier = ">=3.10.2" },
 ]
 
@@ -2091,7 +2091,7 @@ requires-dist = [
     { name = "pyright", marker = "extra == 'build'", specifier = ">=1.1.401" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.1.1" },
-    { name = "sqlalchemy", specifier = ">=2,<3" },
+    { name = "sqlalchemy", specifier = ">=2,<2.1" },
 ]
 provides-extras = ["test", "build"]
 
