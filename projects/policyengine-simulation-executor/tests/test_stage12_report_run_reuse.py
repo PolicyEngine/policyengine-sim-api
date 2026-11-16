@@ -66,7 +66,7 @@ CERTIFIED_SPM_DEFAULTS = {
     "as_of": None,
     "county_vintage": "2020",
     "forecast_content_sha256": (
-        "3d86d5c4c0423480e6b69b75d222ffa4a7a2639e4094df5ba2504af01be17173"
+        "335e6755dc8e0bd883e09b76c2bd53a5315683773e44d50085c7d6b8832b6291"
     ),
     "geography_id": None,
     "geography_kind": "county",
