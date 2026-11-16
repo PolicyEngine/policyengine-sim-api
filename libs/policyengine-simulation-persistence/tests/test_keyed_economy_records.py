@@ -32,6 +32,7 @@ from economy_rows import (
 )
 from policyengine_simulation_persistence import (
     KEY_VERSION,
+    EconomyRecordReferenceError,
     EconomyReportDefinition,
     EconomyRunStore,
     EconomySimulationDefinition,
@@ -653,3 +654,41 @@ def test_a_keyed_rerun_with_one_simulation_on_both_sides_inserts_one_run(
         == rerun.baseline.simulation_run_id
     )
     assert runs == 2
+
+
+@pytest.mark.parametrize(
+    ("missing_row", "column_name"),
+    [
+        ("region", "region_id"),
+        ("dataset", "dataset_id"),
+        ("dynamic", "dynamic_id"),
+        ("policy", "policy_id"),
+    ],
+)
+def test_a_report_naming_a_missing_row_names_the_column_that_refused_it(
+    public_api_database_url, missing_row: str, column_name: str
+) -> None:
+    """The service answers each such column with its own refusal code."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        report = _keyed_report(
+            economy,
+            reform={
+                "dynamic": SimulationChoice(policy_id=None, dynamic_id=uuid4()),
+                "policy": SimulationChoice(policy_id=uuid4(), dynamic_id=None),
+            }.get(missing_row, CURRENT_LAW),
+        )
+        if missing_row in {"region", "dataset"}:
+            report = replace(
+                report,
+                population=replace(report.population, **{column_name: uuid4()}),
+            )
+        act_as_the_service(connection)
+
+        with pytest.raises(EconomyRecordReferenceError) as refused:
+            find_or_create_economy_report(connection, report)
+
+    assert (refused.value.table_name, refused.value.column_name) == (
+        "simulations",
+        column_name,
+    )

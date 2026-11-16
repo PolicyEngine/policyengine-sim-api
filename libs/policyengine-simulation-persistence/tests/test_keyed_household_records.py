@@ -18,6 +18,7 @@ import pytest
 from conftest import act_as_the_service, rolled_back_transaction
 from policyengine_simulation_persistence import (
     KEY_VERSION,
+    EconomyRecordReferenceError,
     FoundHouseholdReport,
     FoundSide,
     HouseholdReportDefinition,
@@ -508,3 +509,20 @@ def test_a_forced_keyed_household_rerun_is_an_extra_run_beside_the_one_under_way
     assert (created.id, created.inserted) == (rerun.run_id, True)
     assert report_run["forced"] is True
     assert [side_run["forced"] for side_run in side_runs] == [True, True]
+
+
+def test_a_household_report_naming_a_missing_household_is_refused_by_its_key(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        stored = _stored_inputs(connection)
+        report = _keyed_report(stored, reform=None)
+        missing_household = replace(
+            report, definition=replace(report.definition, household_id=uuid4())
+        )
+        act_as_the_service(connection)
+
+        with pytest.raises(EconomyRecordReferenceError) as refused:
+            find_or_create_household_report(connection, missing_household)
+
+    assert refused.value.column_name == "household_id"

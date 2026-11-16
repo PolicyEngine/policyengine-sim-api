@@ -293,8 +293,10 @@ in one transaction, the `simulations` and `reports` rows, a `simulation_runs`
 row for the baseline and one for the reform (pending, with no `modal_call_id`;
 or a run of the same simulation on the same versions that it joins, which may
 have succeeded already), and the `report_runs` row naming both (pending, with
-no `modal_call_id`). It then starts the manifest's `report_coordinator_callable`
-(`coordinate_report`) with two arguments and no evaluation record:
+no `modal_call_id`, or a run on the same versions that it joins). For a report
+run it created, it then starts the manifest's `report_coordinator_callable`
+(`coordinate_report`) with two arguments and no evaluation record; a joined
+report run gets no call:
 
 - the report input, a `ReportExecutionInput` whose `evaluation_id` is the report
   run's ID and whose baseline and reform `simulation_execution_id`s are their
@@ -323,8 +325,10 @@ the report run with its result rows. It returns
 `{"report_run_id", "status"}`, or the same marked `deduplicated` without running
 when another call holds the report run or it has finished.
 
-**A simulation run on its own.** The service creates the `simulations` row and
-its `simulation_runs` row (pending, no call), starts the country's
+**A simulation run on its own.** The service finds or creates by definition
+key the `simulations` row and its `simulation_runs` row (pending, no call, or
+a run on the same versions that it joins, which gets no call). For a run it
+created, it starts the country's
 `single_simulation_callable` with a `SimulationExecutionInput` (role
 `standalone`, no output plan, `evaluation_id` and `simulation_execution_id`
 both the run's ID) and a context naming the run in `simulation_run_id`, with
@@ -395,9 +399,11 @@ window of 1 to 75 consecutive years. It is an economy report whose
 the year, with its own simulation runs of that year, so a year can reuse a
 single-year report's runs, and the reverse.
 
-- **Creating and starting.** The simulation service creates every year's runs
-  in one transaction, all pending with no call, then starts the earliest
-  years within one ten-second wait for Modal, counted from the first start;
+- **Creating and starting.** The simulation service finds or creates the
+  window and its window run by key, in one transaction; a window run it
+  creates names every year's report run, each on its year's simulation runs,
+  found or created, and every run it creates is pending with no call. For a
+  window run it created, it then starts the earliest years within one ten-second wait for Modal, counted from the first start;
   a later year not confirmed within it is deferred (`YearStartDeferred`)
   and waits for a started year's coordinator. The contract's
   `year_calculation` derives each year's coordinator

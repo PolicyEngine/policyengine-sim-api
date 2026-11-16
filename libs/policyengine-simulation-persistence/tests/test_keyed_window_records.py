@@ -32,6 +32,7 @@ from economy_rows import (
 from policyengine_simulation_persistence import (
     KEY_VERSION,
     EconomyPopulation,
+    EconomyRecordReferenceError,
     EconomyReportDefinition,
     EconomyRunStore,
     FoundBudgetWindow,
@@ -451,3 +452,28 @@ def test_two_identical_window_requests_at_once_end_on_one_window_run_started_onc
         year.report_run_id for year in first.years
     ]
     assert started_windows == [first.window_run.id]
+
+
+def test_a_window_naming_a_missing_policy_is_refused_and_writes_nothing(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        missing_policy = SimulationChoice(policy_id=uuid4(), dynamic_id=None)
+        act_as_the_service(connection)
+        before = _counts(connection)
+
+        with (
+            pytest.raises(EconomyRecordReferenceError) as refused,
+            connection.begin_nested(),
+        ):
+            find_or_create_budget_window(
+                connection, _keyed_window(economy, missing_policy)
+            )
+        after = _counts(connection)
+
+    assert (refused.value.table_name, refused.value.column_name) == (
+        "simulations",
+        "policy_id",
+    )
+    assert after == before
