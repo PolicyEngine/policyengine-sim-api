@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
 
 class RunStatus(StrEnum):
-    """A report run's, simulation run's or household job's status."""
+    """A report run's, simulation run's, household job's or cliff result's status."""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -57,11 +57,12 @@ ACTIVE_STATUSES = (RunStatus.PENDING.value, RunStatus.RUNNING.value)
 
 
 class RunKind(StrEnum):
-    """Which run table a run, or a household job, is in."""
+    """Which table a run, household job or simulation run's cliff result is in."""
 
     REPORT_RUN = "report_run"
     SIMULATION_RUN = "simulation_run"
     HOUSEHOLD_JOB = "household_job"
+    CLIFF_RESULT = "cliff_result"
 
 
 type RunModel = type[ReportRun | SimulationRun | HouseholdJob | CliffImpact]
@@ -70,6 +71,7 @@ RUN_MODELS: Final[dict[RunKind, RunModel]] = {
     RunKind.REPORT_RUN: ReportRun,
     RunKind.SIMULATION_RUN: SimulationRun,
     RunKind.HOUSEHOLD_JOB: HouseholdJob,
+    RunKind.CLIFF_RESULT: CliffImpact,
 }
 # What a missing row is called.
 _ROW_NOUNS: Final[dict[RunModel, str]] = {
@@ -728,14 +730,16 @@ def running_under_call(model: RunModel, modal_call_id: str) -> ColumnElement[boo
 def _active_since(kind: RunKind) -> SQLColumnExpression[datetime]:
     """Return when a run of ``kind`` became active, for the sweep's ages.
 
-    A household job counts from its creation. A run counts from its first
-    claim or, before it, from its creation, except a budget window's year,
-    which counts from its last change: when its call was recorded.
+    A household job counts from its creation. A run or cliff result counts from
+    its first claim or, before it, from its creation, except a budget window's
+    year, which counts from its last change: when its call was recorded.
     """
     if kind is RunKind.HOUSEHOLD_JOB:
         return HouseholdJob.created_at
     if kind is RunKind.SIMULATION_RUN:
         return func.coalesce(SimulationRun.started_at, SimulationRun.created_at)
+    if kind is RunKind.CLIFF_RESULT:
+        return func.coalesce(CliffImpact.started_at, CliffImpact.created_at)
     unclaimed_since = case(
         (ReportRun.budget_window_run_id.is_not(None), ReportRun.updated_at),
         else_=ReportRun.created_at,
