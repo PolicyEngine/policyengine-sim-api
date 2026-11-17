@@ -53,11 +53,12 @@ What the ORM means here:
   `session.execute`. The single-statement forms keep conditional updates, such
   as claiming a pending job only while it has no Modal call ID, and
   find-or-create inserts atomic.
-- **SQL text** appears only as a model's server default or a partial index's
-  condition.
+- **SQL text** appears only as a model's server default, a partial index's
+  condition or a check constraint's condition.
 - **Names:** an attribute or field that holds a mapped class is named after
-  what it holds, such as `model`, never `table`: every `.table` read is
-  reported, because that is how a column reaches its Core table.
+  what it holds, such as `model`, never `table`: every `.table` read in a
+  module that imports sqlalchemy is reported, because that is how a column
+  reaches its Core table.
 
 - **Schema inspection**, for the deployment check that compares the live
   schema with the models, reads the live schema as `inspect(engine)` in the
@@ -113,7 +114,8 @@ Each finding is one of:
   `create_engine(...)`, or named `engine` or ending in `_engine`). A
   library's `engine.py` opens sessions, not connections.
 - **Raw SQL:** `text(...)`, `TextClause(...)` or `literal_column(...)`
-  anywhere else, or `exec_driver_sql` or `.cursor()`.
+  anywhere but a server default, an index's `postgresql_where` or a
+  `CheckConstraint`'s condition, or `exec_driver_sql` or `.cursor()`.
 - **sqlmodel import.**
 
 Eight of these go by a method or attribute name alone, so they apply only in
@@ -123,14 +125,15 @@ and `.exec_driver_sql()` calls.
 
 The checks read source, not types, and guard against ordinary Core use, not
 against deliberate evasion. They miss imports through `importlib`, tables and
-engines passed around without a type annotation, tables held in a container
+engines passed around without a `Table` or `Engine` annotation, tables held in
+a container
 such as a dict, a class or instance attribute read in another module (other
 than the reads above), a `.table` read in a module that doesn't import
 sqlalchemy, and a Session's `bind` attribute. A name derived from a Core table
 counts as one throughout its module. Once a library's tables are mapped
 classes and its declarations are gone, the ordinary routes to a Core table,
-such as `__table__`, `.table` and a mapper's `tables`, are all reported; the
-routes listed here are the exceptions.
+such as `__table__` and `.table`, are reported; the routes listed here are the
+exceptions.
 
 `test_every_table_is_mapped_by_a_class` also imports both persistence libraries
 and reports every table they hold that no mapped class maps.

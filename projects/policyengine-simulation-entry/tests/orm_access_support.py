@@ -38,7 +38,8 @@ and the ``.connect()``, ``.connection()``, ``.raw_connection()``,
 ``.get_bind()``, ``.begin()``, ``.cursor()`` and ``.exec_driver_sql()`` calls.
 The checks guard against ordinary Core use, not against deliberate evasion.
 They don't follow imports made through ``importlib`` or ``__import__``, tables
-or engines passed around without a type annotation, tables held in a
+or engines passed around without a ``Table`` or ``Engine`` annotation, a
+``.table`` read in a module that doesn't import sqlalchemy, tables held in a
 container such as a dict, a class or instance attribute read in another
 module (unless it is a ``.table`` read, or its name matches one of the reading
 module's own table attributes), or a Session's ``bind`` attribute, and a name
@@ -109,11 +110,12 @@ COLUMN_TABLE_ATTRIBUTE = "table"
 METADATA_SUFFIX = "metadata"
 RAW_SQL_FUNCTIONS = frozenset({"TextClause", "literal_column", "text"})
 RAW_SQL_METHODS = frozenset({"cursor", "exec_driver_sql"})
-# A model's schema details that SQLAlchemy accepts only as SQL text: a server
-# default and a partial index's condition.
+# A model's schema details given as SQL text: a server default and a partial
+# index's condition, by keyword, and a check constraint's condition.
 SCHEMA_DETAIL_KEYWORDS = frozenset(
     {"postgresql_where", "server_default", "server_onupdate", "sqlite_where"}
 )
+CHECK_CONSTRAINT = "CheckConstraint"
 
 CORE_TABLE_DECLARATION = "Core table declaration"
 CORE_TABLE_ACCESS = "Core table access"
@@ -596,15 +598,23 @@ def _call_summary(call: ast.Call) -> str:
     return f"{ast.unparse(call.func)}({', '.join(parts)})"
 
 
-def _schema_detail_calls(tree: ast.Module) -> set[int]:
-    """Return the calls passed as a server default or a partial index's condition."""
-    return {
+def _schema_detail_calls(tree: ast.Module, imported: Mapping[str, str]) -> set[int]:
+    """Return the calls given as a default or as an index's or check's condition."""
+    details = {
         id(keyword.value)
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         for keyword in node.keywords
         if keyword.arg in SCHEMA_DETAIL_KEYWORDS
     }
+    details.update(
+        id(node.args[0])
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and node.args
+        and _sqlalchemy_name(node.func, imported) == CHECK_CONSTRAINT
+    )
+    return details
 
 
 @dataclass(frozen=True)
@@ -760,7 +770,7 @@ def orm_access_findings(sources: Mapping[str, str]) -> list[Finding]:
                 _bound_to_calls(module, ENGINE_FACTORIES)
             )
             | _names_and_attributes(_annotated_as(module, ENGINE_TYPES)),
-            schema_details=_schema_detail_calls(module.tree),
+            schema_details=_schema_detail_calls(module.tree, module.imported),
             called={
                 id(node.func)
                 for node in ast.walk(module.tree)

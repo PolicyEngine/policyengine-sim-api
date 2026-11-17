@@ -88,10 +88,11 @@ def test_names_shared_with_core_tables_elsewhere_are_not_core_tables():
 
 def test_sql_text_is_accepted_as_a_server_default_or_index_condition():
     store = """
-    from sqlalchemy import Index, text
+    from sqlalchemy import CheckConstraint, Index, text
     from sqlalchemy.orm import mapped_column
 
     created_at = mapped_column(server_default=text("now()"))
+    positive = CheckConstraint(text("key_version > 0"), name="ck_key_version")
     index = Index("ix_pending", "status", postgresql_where=text("status = 'pending'"))
     """
 
@@ -513,9 +514,13 @@ def test_nested_tuple_assignments_pair_each_name_with_its_value():
 
 
 def test_modules_importing_each_other_settle_on_their_exports():
+    # first is read before second, so it learns that regions is a table only
+    # on a later pass, once second's exports are known.
     first = """
     from example.second import regions
     from example.tables import household_jobs
+
+    condition = regions.c.id == region_id
     """
     second = """
     from example.first import household_jobs
@@ -528,7 +533,9 @@ def test_modules_importing_each_other_settle_on_their_exports():
         "libs/example/src/example/second.py": second,
     }
 
-    assert _checks(sources, "libs/example/src/example/first.py") == []
+    assert _checks(sources, "libs/example/src/example/first.py") == [
+        (CORE_TABLE_ACCESS, "regions")
+    ]
     assert _checks(sources, "libs/example/src/example/second.py") == [
         (CORE_TABLE_ACCESS, "household_jobs"),
         (CORE_TABLE_ACCESS, "regions"),

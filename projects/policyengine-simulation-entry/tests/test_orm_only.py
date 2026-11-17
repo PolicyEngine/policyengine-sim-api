@@ -80,8 +80,8 @@ def _assert_only_tolerated(
     assert new_findings == [], (
         "Code reaches the database without the ORM; use a mapped class and a "
         "Session (docs/engineering/skills/database-access.md#orm) instead of "
-        f"adding to {BASELINE.name}. An attribute that holds a mapped class is "
-        "named after it, such as model, not table: every .table read is reported"
+        f"adding to {BASELINE.name}. For a .table finding on converted code, name "
+        "the attribute after what it holds, such as model"
     )
     assert fixed_entries == [], (
         f"These {BASELINE.name} entries no longer match a finding; remove them"
