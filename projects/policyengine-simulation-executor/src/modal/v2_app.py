@@ -396,8 +396,8 @@ def run_single_simulation_us(
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
 
-    modal_call_id = modal.current_function_call_id()
-    simulation_run_id = stage12_runtime.simulation_run_named_by(context)
+    # Read inside ``try``, so the runtime is shut down whatever happens.
+    simulation_run_id = None
 
     def segmented_calculator(
         simulation: PlannedSimulationExecutionInput,
@@ -412,6 +412,8 @@ def run_single_simulation_us(
         )
 
     try:
+        modal_call_id = modal.current_function_call_id()
+        simulation_run_id = stage12_runtime.simulation_run_named_by(context)
         propagated = normalize_observability_context(observability_context)
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
@@ -466,8 +468,8 @@ def run_single_simulation_uk(
         platform="modal",
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
-    modal_call_id = modal.current_function_call_id()
     try:
+        modal_call_id = modal.current_function_call_id()
         propagated = normalize_observability_context(observability_context)
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),

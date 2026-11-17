@@ -1185,3 +1185,27 @@ def test_the_us_simulation_worker_passes_its_simulation_run_to_its_segments(
 
     (segmented_run,) = segmented_runs
     assert segmented_run["simulation_run_id"] == UUID(SIMULATION_RUN_ID)
+
+
+@pytest.mark.parametrize(
+    "function_name", ["run_single_simulation_us", "run_single_simulation_uk"]
+)
+def test_simulation_workers_close_runtime_when_their_modal_call_id_is_unreadable(
+    monkeypatch, function_name
+) -> None:
+    module = _load(monkeypatch)
+    runtime = RecordingRuntime()
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+
+    def unreadable_call_id():
+        msg = "Modal call ID is unreadable"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(module.modal, "current_function_call_id", unreadable_call_id)
+
+    with pytest.raises(RuntimeError, match="unreadable"):
+        getattr(module, function_name)(
+            {"role": "baseline"}, {}, observability_context=None
+        )
+
+    assert runtime.shutdown_calls == 1

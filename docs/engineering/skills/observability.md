@@ -16,9 +16,9 @@ Use each identifier for its defined scope:
 | `evaluation_id` | One Stage 12 report | Stage 12 report construction | Yes, as functional report state |
 | `simulation_execution_id` | One Stage 12 baseline or reform simulation | Stage 12 coordinator | Yes, as functional simulation state |
 | `submission_claim_id` | One API v1 attempt to acquire ownership of a simulation submission | API v1 | Only where the simulation request is stored |
-| `database_table` | The Public API table holding the row one v2 Modal function call works on: `household_jobs`, `report_runs` (a report run or a household report run) or `simulation_runs` | The simulation service, which creates the row | Yes, as the row |
-| `database_row_id` | That row's UUID | The simulation service, which creates the row | Yes, as the row |
-| `modal_call_id` | One Modal function call of a v2 Modal function | Modal | Yes, where the row records the call that claimed it |
+| `database_table` | The Public API table holding the row one v2 Modal function call works on: `household_jobs`, `report_runs` (a report run or a household report run) or `simulation_runs` | The v2 Modal function, as a fixed name for its kind of call | No: telemetry only |
+| `database_row_id` | That row's UUID | The simulation service, which creates the row | Yes, as the row's ID |
+| `modal_call_id` | One Modal function call of a v2 Modal function | Modal | Only where the row records the call that claimed it; a segment worker's call is recorded nowhere, and its `database_row_id` names the simulation run its simulation worker's call claimed |
 
 Each v2 Modal function's operation (`src/modal/v2_app.py`) names its
 `modal_call_id` and, when its call works on a detailed-save row, that row's
