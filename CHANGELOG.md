@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.19.1] - 2026-11-17
+
+### Changed
+
+- The simulation service and the v2 Modal runtime use one library of the Public API's table models, `policyengine-simulation-persistence`. The Stage 12 library's stores, which the v2 coordinators, workers, household functions and stuck-run sweep use, now import its models of `report_runs`, `simulation_runs`, `budget_window_runs` and `household_jobs`, and its new complete models of the twelve result tables, instead of partial models of their own, and connect with its engine and URL check. They write the same columns as before. The v2 Modal images copy the library. CI's comparison with the Public API's tables now covers the result tables, a new test checks the Modal worker role's grants and writes against the Public API's, and the Stage 12 library's database tests, which skipped in CI, run in the `Public API schema` job as that role. A malformed Modal worker database URL now raises the service's "Simulation database URL" error.
+
+
 ## [0.19.0] - 2026-11-17
 
 ### Added
