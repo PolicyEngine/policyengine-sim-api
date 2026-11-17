@@ -367,6 +367,37 @@ stored output's descriptor without calculating, and for a run another call
 holds, or one that failed, it returns `{"deduplicated": true,
 "simulation_run_id", "status"}`.
 
+**A simulation run's cliff result** (C1 · 24, answer 4b). Each simulation run
+can have one cliff result, its cliff gap and cliff share, which every report
+naming the run reads: a row of the Public API's `cliff_impacts`, one per
+calculation. The simulation service inserts it pending, starts the country's
+simulation worker (`run_single_simulation_us` or `run_single_simulation_uk`)
+with the run's own simulation input and a context naming the row
+(`Stage12InvocationContext.cliff_result_id`), and records the call. The worker
+claims the row as a run is claimed, and refuses, failing it with
+`cliff_result_input_mismatch`, an input that is not the simulation of the
+row's run on that run's year and versions; the calculation then checks those
+versions are the installed bundle's, so a result never comes from other
+versions than its run's. It plans the simulation with the country model's
+default columns and .py's three cliff columns (`resolve_cliff_output_plan`),
+calculates it again from its dataset and policy, since `cliff_gap` reads
+marginal tax rates, which recalculate each household's net income with extra
+earnings, and writes .py's cliff gap (the weighted sum of `cliff_gap`) and
+cliff share (the weighted count of people `is_on_cliff` over the weighted
+count of `is_adult`) only while it holds the row; a calculation with no adults
+fails with `cliff_share_undefined`. A US national calculation is split into
+the 20 region groups whenever its run's own calculation would be
+(`should_segment_cliff_calculation`): each person's cliff columns depend only
+on their own household's calculation, each group keeps its households'
+weights, and the share is taken once, from the merged rows. A second start,
+or a row another call holds or that finished, calculates nothing and returns
+`{"deduplicated": true, "cliff_result_id", "status"}`; the call that completed
+it returns its values again when Modal restarts it. A failure fails the row
+with its redacted cause; the stuck-run sweep fails one whose call ended
+without an outcome, and a failed row never counts, so the next request starts
+another calculation. The worker writes nothing to the simulation run, its
+output file or any report run.
+
 **What a simulation run stores** (C1 · 24, answer 4). A run's output file
 depends on its simulation alone, never on a report naming it
 (`resolve_simulation_output_plan`): every column that doesn't depend on the
@@ -375,10 +406,11 @@ columns; the labour-supply response columns only when the simulation's own
 policy turns a response on; in the US, the two inputs .py's labour-supply
 output reads from either side (`self_employment_income`,
 `weekly_hours_worked`); and never the cliff columns, so a US national run keeps
-its region-group split. Until cliffs come back as a calculation of each
-simulation run (a later stage), a report run asking for them
-(`include_cliffs: true`) fails before any worker starts, with
-`cliff_impacts_unavailable`, and touches none of its simulation runs. The
+its region-group split. Cliffs are a calculation of each simulation run of
+their own (below). A report run asking for them (`include_cliffs: true`) still
+fails before any worker starts, with `cliff_impacts_unavailable`, and touches
+none of its simulation runs, and its completion never writes `report_runs`'
+four cliff columns. The
 coordinator gives each worker its simulation's
 stored plan, and keeps the report's own plan, from its pair, for what the
 aggregation reads. A reused or waited-for file must hold what the report reads
@@ -947,7 +979,9 @@ report run and its simulation runs are), counting a job's age from its
 creation: a pending job with no call
 recorded ten minutes after its creation, a pending or running job once
 Modal reports its recorded call ended, and any job still unfinished 24 hours
-after its creation, whatever Modal reports.
+after its creation, whatever Modal reports. It judges simulation runs' cliff
+results last, by the same rule, counting from a result's first claim or,
+while it is pending, its creation.
 
 - Image: the CA store, the frozen `modal-simulation-image` dependency group
   and the source packages, without the bundle's datasets or the Stage 12

@@ -375,7 +375,10 @@ dtype-preserving entity tables. This produces 40 region-group calculation
 invocations per report while retaining two simulation records and two private
 simulation artifacts. `segmented=false`, US subnational requests, UK requests,
 cliff analysis, and labor-supply-response calculations use the
-single-container Stage 12 path.
+single-container Stage 12 path. A simulation run's own cliff calculation (a
+worker call whose context names its cliff result) is split into the same 20
+region groups whenever the run's own calculation is: its cliff gap and share
+are weighted sums of the merged person rows.
 
 A comparison run keeps both simulation output files in the Stage 12 artifact
 bucket (`STAGE12_ARTIFACT_BUCKET`), which deletes every object 30 days after it

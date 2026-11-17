@@ -1,7 +1,9 @@
 # pyright: reportAttributeAccessIssue=false
 """Separately named v2 Modal application: report coordinator and country workers.
 
-Besides the Stage 12 report coordinator and simulation workers, it defines a
+A simulation worker's call calculates a simulation run, or, when its context
+names a cliff result, that run's cliff gap and share. Besides the Stage 12
+report coordinator and simulation workers, it defines a
 household function for each country, ``calculate_household_us`` and
 ``calculate_household_uk``, in an image without datasets. A call calculates
 one household under one policy, and records it on the household job it
@@ -388,7 +390,9 @@ def run_single_simulation_us(
 
     A ``context`` naming a simulation run claims that run under this call's
     Modal call ID; a simulation started on its own, without an output plan,
-    is planned here.
+    is planned here. A ``context`` naming a cliff result instead calculates
+    the cliff gap and share of that result's simulation run, ``payload``,
+    and records them on the result (``stage12_runtime.cliff_results``).
     """
     runtime = init_process_observability(
         service_name="policyengine-stage12-us-worker",
@@ -461,7 +465,9 @@ def run_single_simulation_uk(
 
     A ``context`` naming a simulation run claims that run under this call's
     Modal call ID; a simulation started on its own, without an output plan,
-    is planned here.
+    is planned here. A ``context`` naming a cliff result instead calculates
+    the cliff gap and share of that result's simulation run, ``payload``,
+    and records them on the result (``stage12_runtime.cliff_results``).
     """
     runtime = init_process_observability(
         service_name="policyengine-stage12-uk-worker",

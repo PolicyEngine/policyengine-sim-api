@@ -38,6 +38,10 @@ and ends the process with a failure if the check runs for 15 minutes.
   and records the one simulation run its call names, the v2 household
   functions record the household job their call names, and the scheduled
   stuck-run sweep fails the runs and household jobs nothing will finish.
+  `CliffResultStore` adds a simulation run's cliff calculation
+  (`cliff_impacts`): a v2 worker whose call names one claims it and records
+  the run's cliff gap and share, or its failure, and the sweep fails one
+  nothing will finish.
   The coordinator also reads a simulation run's status, year, versions,
   dataset, region, output file, recorded call and failure, so a report run
   can use a run that already succeeded instead of calculating it again, or
