@@ -435,7 +435,10 @@ simulation_runs = Table(
     Column("error_message", String, nullable=True),
     _timestamp("started_at"),
     _timestamp("completed_at"),
-    Column("household_result", JSON, nullable=True),
+    # The Modal worker writes None as SQL NULL here and in the two columns
+    # below (household_jobs.result, report_runs.spm_provenance), so a query
+    # for IS NULL finds an empty result.
+    Column("household_result", JSON(none_as_null=True), nullable=True),
     Column("output_uri", String(OUTPUT_URI_LENGTH), nullable=True),
     Column("output_sha256", String(SHA256_LENGTH), nullable=True),
     _forced_column(),
@@ -608,7 +611,7 @@ report_runs = Table(
     Column("baseline_cliff_share", Float, nullable=True),
     Column("reform_cliff_gap", Float, nullable=True),
     Column("reform_cliff_share", Float, nullable=True),
-    Column("spm_provenance", JSONB, nullable=True),
+    Column("spm_provenance", JSONB(none_as_null=True), nullable=True),
     Column("data_version", String(VERSION_LENGTH), nullable=True),
     _forced_column(),
     PrimaryKeyConstraint("id", name="pk_report_runs"),
@@ -708,7 +711,7 @@ household_jobs = Table(
         nullable=False,
     ),
     Column("error_message", String, nullable=True),
-    Column("result", JSON, nullable=True),
+    Column("result", JSON(none_as_null=True), nullable=True),
     _timestamp("started_at"),
     _timestamp("completed_at"),
     _timestamp("updated_at", server_now=True),

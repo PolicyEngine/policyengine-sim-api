@@ -28,7 +28,6 @@ from policyengine_stage12_persistence.store import (
     ConnectionOpener,
     Stage12PersistenceStore,
     create_stage12_engine,
-    normalized_database_url,
 )
 from policyengine_stage12_persistence.validation import (
     Stage12RuntimeAccessError,
@@ -55,7 +54,6 @@ __all__ = [
     "YearStarter",
     "YearToStart",
     "create_stage12_engine",
-    "normalized_database_url",
     "report_run_result",
     "validate_runtime_database",
 ]

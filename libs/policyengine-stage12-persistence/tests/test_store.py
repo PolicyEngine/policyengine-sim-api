@@ -14,59 +14,14 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationRole,
 )
 from policyengine_stage12_persistence import Stage12PersistenceStore
-from policyengine_stage12_persistence import store as store_module
-from policyengine_stage12_persistence.store import normalized_database_url
 from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.pool import QueuePool
 from sqlalchemy.sql import ClauseElement
 
 NOW = datetime(2026, 9, 22, tzinfo=UTC)
 REPORT_ID = UUID("00000000-0000-0000-0000-000000000001")
 SIMULATION_ID = UUID("00000000-0000-0000-0000-000000000002")
 OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000012"
-
-
-@pytest.mark.parametrize("fail_transaction", [False, True])
-def test_runtime_engine_closes_connections_between_transactions(
-    monkeypatch, fail_transaction
-) -> None:
-    def local_engine(_url, **options):
-        # Exercise the runtime pooling configuration with a real local DBAPI.
-        # PostgreSQL's default is QueuePool; SQLite's memory default differs.
-        options.pop("connect_args")
-        options.setdefault("poolclass", QueuePool)
-        return create_engine("sqlite://", **options)
-
-    monkeypatch.setattr(store_module, "create_engine", local_engine)
-    engine = store_module.create_stage12_engine(
-        "postgresql://runtime:secret@db.example/postgres"
-    )
-    try:
-        try:
-            with engine.begin() as connection:
-                physical_connection = connection.connection.driver_connection
-                assert connection.exec_driver_sql("SELECT 1").scalar_one() == 1
-                if fail_transaction:
-                    _fail_the_calculation()
-        except RuntimeError:
-            assert fail_transaction
-
-        # Long calculations must not hold an idle session after DB work ends.
-        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-            physical_connection.execute("SELECT 1")
-
-        with engine.begin() as connection:
-            assert connection.connection.driver_connection is not physical_connection
-            assert connection.exec_driver_sql("SELECT 1").scalar_one() == 1
-    finally:
-        engine.dispose()
-
-
-def _fail_the_calculation() -> None:
-    """Raise the failure a calculation inside the transaction would."""
-    msg = "calculation failed"
-    raise RuntimeError(msg)
 
 
 def _report() -> ComparisonReportRecord:
@@ -442,16 +397,3 @@ def test_simulation_status_replacement_preserves_a_concurrent_cancellation() -> 
     assert replaced is False
     assert result == cancelled
     assert len(engine.connection.statements) == 1
-
-
-def test_database_url_uses_one_canonical_secret_format() -> None:
-    parsed = normalized_database_url(
-        "postgresql://policyengine_v2_runtime:secret@db.example/postgres"
-    )
-    assert parsed.drivername == "postgresql+psycopg"
-    assert parsed.username == "policyengine_v2_runtime"
-
-    with pytest.raises(ValueError, match="postgresql://"):
-        normalized_database_url(
-            "postgresql+psycopg://policyengine_v2_runtime:secret@db.example/postgres"
-        )

@@ -309,6 +309,24 @@ class TestModalImageSmoke:
             workflow.index("Run image smokes")
         )
 
+    def test_workflow_runs_when_a_library_the_v2_images_copy_changes(self):
+        """A change to a library the v2 images copy builds and imports them again.
+
+        The Stage 12 library's stores use the simulation service library's
+        table models, so the images copy both.
+        """
+        workflow = (
+            REPO_ROOT / ".github" / "workflows" / "pr-image-smoke.yml"
+        ).read_text(encoding="utf-8")
+
+        for library in (
+            "policyengine-simulation-contract",
+            "policyengine-simulation-observability",
+            "policyengine-simulation-persistence",
+            "policyengine-stage12-persistence",
+        ):
+            assert f"- 'libs/{library}/**'" in workflow, library
+
     def test_deployment_sources_exclude_legacy_hf_secret_names(self):
         paths = (
             REPO_ROOT / ".github/scripts/modal-image-smoke.sh",

@@ -9,8 +9,12 @@ license = {file = "../../LICENSE"}
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "policyengine-simulation-contract",
+    # The models of the Public API's run and result tables, which the CI
+    # comparison checks against the tables the Public API's chain builds.
+    "policyengine-simulation-persistence",
+    # The shared library's ranges: the stores use its table models.
     "psycopg[binary]>=3.2,<4",
-    "sqlalchemy>=2,<3",
+    "sqlalchemy>=2,<2.1",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +38,7 @@ packages = ["src/policyengine_stage12_persistence"]
 
 [tool.uv.sources]
 policyengine-simulation-contract = { path = "../policyengine-simulation-contract", editable = true }
+policyengine-simulation-persistence = { path = "../policyengine-simulation-persistence", editable = true }
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
