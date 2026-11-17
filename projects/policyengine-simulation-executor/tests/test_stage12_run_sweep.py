@@ -156,11 +156,13 @@ def test_the_sweep_lists_runs_older_than_its_minimum_age() -> None:
 def test_report_runs_are_swept_before_simulation_runs_are_listed() -> None:
     # A simulation run is listed only once no report run naming it is
     # running, so failing a dead coordinator's report run first lets the same
-    # sweep reach its children. Household jobs, which no run names, follow.
+    # sweep reach its children. Household jobs and simulation runs' cliff
+    # calculations, which no run names, follow.
     report_run = _run("fc-coordinator", RunKind.REPORT_RUN)
     simulation_run = _run("fc-worker")
     household_job = _run("fc-household", RunKind.HOUSEHOLD_JOB)
-    store = FakeSweepStore([household_job, simulation_run, report_run])
+    cliff_result = _run("fc-cliffs", RunKind.CLIFF_RESULT)
+    store = FakeSweepStore([cliff_result, household_job, simulation_run, report_run])
 
     sweep_stuck_runs(store, call_state=lambda _: CallState.ENDED, now=NOW)
 
@@ -168,13 +170,47 @@ def test_report_runs_are_swept_before_simulation_runs_are_listed() -> None:
         "list-expired:report_run",
         "list-expired:simulation_run",
         "list-expired:household_job",
+        "list-expired:cliff_result",
         "list:report_run",
         "fail:report_run",
         "list:simulation_run",
         "fail:simulation_run",
         "list:household_job",
         "fail:household_job",
+        "list:cliff_result",
+        "fail:cliff_result",
     ]
+
+
+def test_cliff_results_are_judged_as_runs_are() -> None:
+    """A dead cliff calculation fails, so a later request starts another one."""
+    # The simulation service stopped before starting the call.
+    never_started = _run(None, RunKind.CLIFF_RESULT, RunStatus.PENDING)
+    # The worker ran out of memory after claiming it.
+    ended_running = _run("fc-ended", RunKind.CLIFF_RESULT)
+    still_running = _run("fc-running", RunKind.CLIFF_RESULT)
+    expired = _run("fc-old", RunKind.CLIFF_RESULT)
+    store = FakeSweepStore(
+        [never_started, ended_running, still_running], expired=[expired]
+    )
+    states = {"fc-ended": CallState.ENDED, "fc-running": CallState.RUNNING}
+
+    summary = sweep_stuck_runs(store, call_state=states.__getitem__, now=NOW)
+
+    failed = {run: message for run, message, _ in store.failed}
+    assert set(failed) == {expired, never_started, ended_running}
+    assert failed[expired].startswith("run_exceeded_maximum_age: ")
+    assert failed[never_started].startswith("run_not_started: ")
+    assert failed[ended_running].startswith("modal_call_ended: ")
+    assert summary == SweepSummary(
+        checked=3,
+        failed=1,
+        running=1,
+        unknown=0,
+        left=0,
+        failed_for_age=1,
+        failed_without_call=1,
+    )
 
 
 def test_household_jobs_are_judged_as_runs_are() -> None:

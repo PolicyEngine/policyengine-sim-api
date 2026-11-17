@@ -14,8 +14,10 @@ from uuid import uuid4
 import pytest
 from policyengine_simulation_persistence import CliffImpact
 from policyengine_stage12_persistence import (
+    ActiveRun,
     CliffResultState,
     CliffResultStore,
+    RunKind,
     RunStatus,
     RunWrite,
 )
@@ -28,6 +30,9 @@ OTHER_CALL_ID = "fc-other-cliff-worker"
 LATER = NOW + timedelta(minutes=2)
 CLIFF_GAP = 1_234.5
 CLIFF_SHARE = 0.0375
+# The sweep's cutoff: a cliff result active since before it is listed.
+CUTOFF = NOW + timedelta(hours=1)
+ENDED_MESSAGE = "modal_call_ended: the call ended without an outcome"
 
 
 @pytest.fixture
@@ -232,3 +237,80 @@ def test_the_modal_worker_role_cannot_insert_or_retarget_a_cliff_result(
             .values(simulation_run_id=seeded_run.run_ids.reform_simulation_run_id),
             execution_options={"synchronize_session": False},
         )
+
+
+def _listed_cliff_results(store, cliff_result_id, cutoff=CUTOFF) -> set[ActiveRun]:
+    """Return the sweep's listing of cliff results, narrowed to ``cliff_result_id``."""
+    return {
+        listed
+        for listed in store.list_active_runs(
+            RunKind.CLIFF_RESULT, active_since_before=cutoff
+        )
+        if listed.run_id == cliff_result_id
+    }
+
+
+def test_the_sweep_lists_a_cliff_result_from_its_claim_or_its_creation(
+    store, seeder, seeded_run
+) -> None:
+    cliff_result_id = _insert_cliff_result(seeder, seeded_run, created_at=NOW)
+
+    assert _listed_cliff_results(store, cliff_result_id) == {
+        ActiveRun(
+            kind=RunKind.CLIFF_RESULT,
+            run_id=cliff_result_id,
+            status=RunStatus.PENDING,
+            modal_call_id=None,
+        )
+    }
+    assert _listed_cliff_results(store, cliff_result_id, NOW) == set()
+
+    # Once claimed, it counts from its claim, after the cutoff here.
+    store.claim_cliff_result(
+        cliff_result_id,
+        modal_call_id=WORKER_CALL_ID,
+        claimed_at=CUTOFF + timedelta(hours=1),
+    )
+    assert _listed_cliff_results(store, cliff_result_id) == set()
+    assert _listed_cliff_results(
+        store, cliff_result_id, CUTOFF + timedelta(hours=2)
+    ) == {
+        ActiveRun(
+            kind=RunKind.CLIFF_RESULT,
+            run_id=cliff_result_id,
+            status=RunStatus.RUNNING,
+            modal_call_id=WORKER_CALL_ID,
+        )
+    }
+
+
+def test_the_sweep_fails_a_cliff_result_only_while_it_is_as_listed(
+    store, seeder, seeded_run
+) -> None:
+    cliff_result_id = _insert_cliff_result(seeder, seeded_run, created_at=NOW)
+    (listed_without_call,) = _listed_cliff_results(store, cliff_result_id)
+    # After the listing, the simulation service recorded the call it started.
+    with seeder.engine.begin() as connection:
+        connection.execute(
+            update(CliffImpact.__table__)
+            .where(CliffImpact.id == cliff_result_id)
+            .values(modal_call_id=WORKER_CALL_ID)
+        )
+    late_call = store.fail_stuck_run(
+        listed_without_call, error_message=ENDED_MESSAGE, failed_at=CUTOFF
+    )
+    (listed_with_call,) = _listed_cliff_results(store, cliff_result_id)
+
+    first = store.fail_stuck_run(
+        listed_with_call, error_message=ENDED_MESSAGE, failed_at=CUTOFF
+    )
+    again = store.fail_stuck_run(
+        listed_with_call, error_message=ENDED_MESSAGE, failed_at=CUTOFF
+    )
+
+    assert late_call == RunWrite(changed=False, status=RunStatus.PENDING)
+    assert first == RunWrite(changed=True, status=RunStatus.FAILED)
+    assert again == RunWrite(changed=False, status=RunStatus.FAILED)
+    row = _cliff_row(seeder, cliff_result_id)
+    assert (row["status"], row["error_message"]) == ("failed", ENDED_MESSAGE)
+    assert (row["completed_at"], row["updated_at"]) == (CUTOFF, CUTOFF)
