@@ -15,19 +15,26 @@ mapped classes passes. They resolve names through each module's own imports:
 and a ``text``, ``Table`` or ``update`` from another package doesn't. A Core
 table is, within one module:
 
-- a name the module binds to ``Table(...)`` or ``table(...)``;
-- a name it imports, under any name, from a scanned module that binds or
-  imports a Core table under it at module level, and an attribute such as
-  ``tables.household_jobs`` of such a module;
-- a parameter or variable annotated as SQLAlchemy's ``Table``;
-- a name it assigns from an expression rooted at a Core table, such as
-  ``previous = household_jobs.alias()``.
+- a name the module binds to ``Table(...)``, ``table(...)`` or
+  ``TableClause(...)``;
+- a name it imports, under any name or through ``*``, from a scanned module
+  that binds or imports a Core table under it at module level, and an
+  attribute such as ``tables.household_jobs`` or
+  ``example.tables.household_jobs`` of such a module;
+- a parameter, variable or attribute annotated as SQLAlchemy's ``Table``;
+- a name or attribute it assigns from an expression rooted at a Core table,
+  such as ``previous = household_jobs.alias()`` or ``self.jobs =
+  tables.household_jobs``.
 
 Every reference to a Core table is a finding, so its statements, methods,
-column collections and joins all count. The checks don't follow imports made
-through ``importlib`` or ``__import__``, tables or engines passed around
-without a type annotation, tables held in a container such as a dict, or a
-Session's ``bind`` attribute.
+column collections and joins all count. Each file's module name is its path
+below ``src``; two files with one module name are refused, since imports
+resolve by name. The checks guard against ordinary Core use, not against
+deliberate evasion. They don't follow imports made through ``importlib`` or
+``__import__``, tables or engines passed around without a type annotation,
+tables held in a container such as a dict, or a Session's ``bind``
+attribute, and a name derived from a Core table counts as one throughout its
+module.
 """
 
 from __future__ import annotations
@@ -35,6 +42,7 @@ from __future__ import annotations
 import ast
 import importlib
 import pkgutil
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -51,8 +59,10 @@ PACKAGE_MODULE = "__init__"
 # Core's table declarations, the lightweight table() and column() included.
 # MetaData may be built only in a declarative base module, as the metadata of
 # the library's DeclarativeBase.
-TABLE_CONSTRUCTORS = frozenset({"Column", "MetaData", "Table", "column", "table"})
-TABLE_FACTORIES = frozenset({"Table", "table"})
+TABLE_CONSTRUCTORS = frozenset(
+    {"Column", "ColumnClause", "MetaData", "Table", "TableClause", "column", "table"}
+)
+TABLE_FACTORIES = frozenset({"Table", "TableClause", "table"})
 TABLE_TYPE = "Table"
 METADATA_CONSTRUCTOR = "MetaData"
 DECLARATIVE_BASE_MODULE_NAME = "orm_base.py"
@@ -71,7 +81,9 @@ ENGINE_NAMES = frozenset(
 CONNECTION_NAMES = frozenset({"AsyncConnection", "Connection"})
 ENGINE_FACTORIES = frozenset({"create_async_engine", "create_engine"})
 ENGINE_TYPES = frozenset({"AsyncEngine", "Engine"})
-ENGINE_NAME_PART = "engine"
+# A name such as engine or simulation_engine, but not policyengine.
+ENGINE_NAME_PATTERN = re.compile(r"(?:^|_)engine$", re.IGNORECASE)
+STAR_IMPORT = "*"
 # Calls that open a Connection: on anything, and begin() on an engine.
 CONNECTION_METHODS = frozenset({"connect", "connection", "get_bind", "raw_connection"})
 ENGINE_TRANSACTION_METHOD = "begin"
@@ -81,10 +93,12 @@ TABLE_ATTRIBUTES = frozenset(
     {"__table__", "local_table", "persist_selectable", "sorted_tables"}
 )
 MAPPER_TABLE_ATTRIBUTES = frozenset({"selectable", "tables"})
-MAPPER_ATTRIBUTE = "__mapper__"
-INSPECT_FUNCTION = "inspect"
+MAPPER_FUNCTIONS = frozenset({"class_mapper", "inspect", "object_mapper"})
+MAPPER_NAMES = frozenset({"__mapper__", "mapper"})
+# A mapped attribute's table, as in HouseholdJob.id.table.
+COLUMN_TABLE_ATTRIBUTE = "table"
 METADATA_SUFFIX = "metadata"
-RAW_SQL_FUNCTIONS = frozenset({"literal_column", "text"})
+RAW_SQL_FUNCTIONS = frozenset({"TextClause", "literal_column", "text"})
 RAW_SQL_METHODS = frozenset({"cursor", "exec_driver_sql"})
 # A model's schema details that SQLAlchemy accepts only as SQL text: a server
 # default and a partial index's condition.
@@ -200,25 +214,32 @@ def _annotation_names(
 
 
 def _bound_names(target: ast.expr) -> list[str]:
+    """Return the plain names an assignment target binds."""
     if isinstance(target, ast.Name):
         return [target.id]
-    if isinstance(target, ast.Attribute):
-        return [target.attr]
     if isinstance(target, (ast.Tuple, ast.List)):
         return [name for element in target.elts for name in _bound_names(element)]
     return []
 
 
-def _assignments(tree: ast.AST) -> Iterator[tuple[list[str], ast.expr]]:
-    """Yield the names each assignment binds, with the value it binds them to."""
+def _bound_attributes(target: ast.expr) -> list[str]:
+    """Return the attribute names an assignment target binds, as in ``self.x``."""
+    if isinstance(target, ast.Attribute):
+        return [target.attr]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return [name for element in target.elts for name in _bound_attributes(element)]
+    return []
+
+
+def _assignments(tree: ast.AST) -> Iterator[tuple[list[ast.expr], ast.expr]]:
+    """Yield each assignment's targets with the value it binds them to."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
-            names = [name for target in node.targets for name in _bound_names(target)]
-            yield names, node.value
+            yield node.targets, node.value
         elif (isinstance(node, ast.AnnAssign) and node.value is not None) or isinstance(
             node, ast.NamedExpr
         ):
-            yield _bound_names(node.target), node.value
+            yield [node.target], node.value
 
 
 def _root_name(node: ast.expr) -> str:
@@ -256,9 +277,12 @@ class _Module:
     file: str
     tree: ast.Module
     imported: dict[str, str]
-    core_tables: set[str] = field(default_factory=set)
-    exports: set[str] = field(default_factory=set)
     module_aliases: dict[str, str] = field(default_factory=dict)
+    packages: set[str] = field(default_factory=set)
+    core_tables: set[str] = field(default_factory=set)
+    core_attributes: set[str] = field(default_factory=set)
+    star_names: set[str] = field(default_factory=set)
+    exports: set[str] = field(default_factory=set)
 
     @property
     def name(self) -> str:
@@ -288,22 +312,77 @@ class _Module:
         return PurePosixPath(self.file).name == DECLARATIVE_BASE_MODULE_NAME
 
 
+def _module_aliases(module: _Module, packages: set[str]) -> dict[str, str]:
+    """Map each name the module binds to a scanned module or package to it.
+
+    ``import a.b`` binds ``a``, and ``a.b.household_jobs`` then resolves
+    through the dotted path.
+    """
+    aliases: dict[str, str] = {}
+    for node in ast.walk(module.tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split(".")[0]
+                dotted = alias.name if alias.asname else bound
+                if dotted in packages:
+                    aliases[bound] = dotted
+        elif isinstance(node, ast.ImportFrom):
+            parent = module.resolve(node)
+            for alias in node.names:
+                dotted = f"{parent}.{alias.name}" if parent else alias.name
+                if dotted in packages:
+                    aliases[alias.asname or alias.name] = dotted
+    return aliases
+
+
+def _module_of(node: ast.expr, module: _Module, packages: set[str]) -> str | None:
+    """Return the scanned module or package an expression names, if any."""
+    if isinstance(node, ast.Name):
+        return module.module_aliases.get(node.id)
+    if isinstance(node, ast.Attribute):
+        parent = _module_of(node.value, module, packages)
+        dotted = f"{parent}.{node.attr}" if parent else None
+        return dotted if dotted in packages else None
+    return None
+
+
+def _exported_table_attribute(
+    node: ast.Attribute, module: _Module, modules: Mapping[str, _Module]
+) -> bool:
+    """Whether ``node`` is a Core table reached as an attribute of a module."""
+    named_module = _module_of(node.value, module, module.packages)
+    source = modules.get(named_module or "")
+    return source is not None and node.attr in source.exports
+
+
+def _packages(modules: Mapping[str, _Module]) -> set[str]:
+    return {
+        ".".join(name.split(".")[:length])
+        for name in modules
+        for length in range(1, name.count(".") + 2)
+    }
+
+
 def _imported_tables(module: _Module, modules: Mapping[str, _Module]) -> set[str]:
     names: set[str] = set()
+    module.star_names = set()
     for node in ast.walk(module.tree):
-        if isinstance(node, ast.ImportFrom):
-            source = modules.get(module.resolve(node) or "")
-            if source is not None:
-                names.update(
-                    alias.asname or alias.name
-                    for alias in node.names
-                    if alias.name in source.exports
-                )
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        source = modules.get(module.resolve(node) or "")
+        if source is None:
+            continue
+        for alias in node.names:
+            if alias.name == STAR_IMPORT:
+                names |= source.exports
+                module.star_names |= source.exports
+            elif alias.name in source.exports:
+                names.add(alias.asname or alias.name)
     return names
 
 
 def _annotated_as(module: _Module, types: frozenset[str]) -> set[str]:
-    """Return the parameters and variables annotated with one of ``types``."""
+    """Return the parameters, variables and attributes annotated with ``types``."""
     names: set[str] = set()
     for node in ast.walk(module.tree):
         if isinstance(node, ast.arg):
@@ -312,78 +391,105 @@ def _annotated_as(module: _Module, types: frozenset[str]) -> set[str]:
         elif isinstance(node, ast.AnnAssign) and types & _annotation_names(
             node.annotation, module.imported
         ):
-            names.update(_bound_names(node.target))
+            names.update(_bound_names(node.target), _bound_attributes(node.target))
     return names
 
 
 def _bound_to_calls(module: _Module, functions: frozenset[str]) -> set[str]:
-    """Return the names the module binds to a call of one of ``functions``."""
+    """Return the names and attributes bound to a call of one of ``functions``."""
     return {
         name
         for targets, value in _assignments(module.tree)
         if isinstance(value, ast.Call)
         and _sqlalchemy_name(value.func, module.imported) in functions
-        for name in targets
+        for target in targets
+        for name in (*_bound_names(target), *_bound_attributes(target))
     }
 
 
-def _core_tables(module: _Module, modules: Mapping[str, _Module]) -> set[str]:
-    """Return the names that hold a Core table within the module."""
-    names = (
-        _imported_tables(module, modules)
-        | _annotated_as(module, frozenset({TABLE_TYPE}))
-        | _bound_to_calls(module, TABLE_FACTORIES)
-    )
+def _is_core_expression(
+    value: ast.expr,
+    module: _Module,
+    modules: Mapping[str, _Module],
+    tables: tuple[set[str], set[str]],
+) -> bool:
+    """Whether an expression is rooted at a Core table, through any attributes."""
+    names, attributes = tables
+    node = value
+    while True:
+        if isinstance(node, ast.Attribute):
+            if node.attr in attributes or _exported_table_attribute(
+                node, module, modules
+            ):
+                return True
+            node = node.value
+        elif isinstance(node, ast.Call):
+            node = node.func
+        elif isinstance(node, (ast.Subscript, ast.Starred)):
+            node = node.value
+        else:
+            return isinstance(node, ast.Name) and node.id in names
+
+
+def _core_tables(module: _Module, modules: Mapping[str, _Module]) -> None:
+    """Record the names and attributes that hold a Core table within the module."""
+    annotated = _annotated_as(module, frozenset({TABLE_TYPE}))
+    built = _bound_to_calls(module, TABLE_FACTORIES)
+    names = _imported_tables(module, modules) | annotated | built
+    attributes = {
+        name
+        for node in ast.walk(module.tree)
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+        for name in _bound_attributes(target)
+        if name in annotated | built
+    }
     assignments = list(_assignments(module.tree))
     grew = True
     while grew:
-        derived = {
-            name
-            for targets, value in assignments
-            if _root_name(value) in names
-            for name in targets
-        }
-        grew = not derived <= names
-        names |= derived
-    return names
-
-
-def _module_aliases(module: _Module, modules: Mapping[str, _Module]) -> dict[str, str]:
-    """Map each name the module binds to another scanned module to that module."""
-    aliases: dict[str, str] = {}
-    for node in ast.walk(module.tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.asname and alias.name in modules:
-                    aliases[alias.asname] = alias.name
-        elif isinstance(node, ast.ImportFrom):
-            parent = module.resolve(node)
-            for alias in node.names:
-                dotted = f"{parent}.{alias.name}" if parent else alias.name
-                if dotted in modules:
-                    aliases[alias.asname or alias.name] = dotted
-    return aliases
+        grew = False
+        for targets, value in assignments:
+            if not _is_core_expression(value, module, modules, (names, attributes)):
+                continue
+            for target in targets:
+                new_names = set(_bound_names(target)) - names
+                new_attributes = set(_bound_attributes(target)) - attributes
+                if new_names or new_attributes:
+                    names |= new_names
+                    attributes |= new_attributes
+                    grew = True
+    module.core_tables = names
+    module.core_attributes = attributes
 
 
 def _index_modules(sources: Mapping[str, str]) -> dict[str, _Module]:
     modules: dict[str, _Module] = {}
-    for file, source in sources.items():
+    for file, source in sorted(sources.items()):
         tree = ast.parse(source, filename=file)
         module = _Module(file=file, tree=tree, imported=_sqlalchemy_imports(tree))
+        if module.name in modules:
+            message = (
+                f"{modules[module.name].file} and {file} are both module "
+                f"{module.name}; the check resolves imports by module name"
+            )
+            raise ValueError(message)
         modules[module.name] = module
+    packages = set(modules) | _packages(modules)
+    for module in modules.values():
+        module.packages = packages
+        module.module_aliases = _module_aliases(module, packages)
     # A module exports the Core tables it binds or imports at module level;
     # imports chain through packages, so repeat until no export is added.
     grew = True
     while grew:
         grew = False
         for module in modules.values():
-            module.core_tables = _core_tables(module, modules)
-            exports = module.core_tables & _module_level_names(module.tree)
+            _core_tables(module, modules)
+            exported = _module_level_names(module.tree) | module.star_names
+            exports = module.core_tables & exported
             if exports != module.exports:
                 module.exports = exports
                 grew = True
-    for module in modules.values():
-        module.module_aliases = _module_aliases(module, modules)
     return modules
 
 
@@ -408,8 +514,9 @@ def _schema_detail_calls(tree: ast.Module) -> set[int]:
 @dataclass(frozen=True)
 class _ModuleContext:
     module: _Module
-    exports: Mapping[str, set[str]]
+    modules: Mapping[str, _Module]
     metadata_names: set[str]
+    mapper_names: set[str]
     engine_names: set[str]
     schema_details: set[int]
 
@@ -441,33 +548,35 @@ def _import_findings(
 def _reaches_mapped_table(node: ast.Attribute, context: _ModuleContext) -> bool:
     if node.attr in TABLE_ATTRIBUTES:
         return True
+    receiver = node.value
+    if node.attr == COLUMN_TABLE_ATTRIBUTE:
+        return (
+            isinstance(receiver, ast.Attribute) and _root_name(receiver)[:1].isupper()
+        )
     if node.attr not in MAPPER_TABLE_ATTRIBUTES:
         return False
-    receiver = node.value
     if isinstance(receiver, ast.Call):
         function = _sqlalchemy_name(receiver.func, context.module.imported)
-        return function == INSPECT_FUNCTION
+        return function in MAPPER_FUNCTIONS
     receiver_name = _last_name(receiver)
     return (
-        receiver_name == MAPPER_ATTRIBUTE
+        receiver_name in MAPPER_NAMES
+        or receiver_name in context.mapper_names
         or receiver_name in context.metadata_names
         or receiver_name.lower().endswith(METADATA_SUFFIX)
     )
 
 
-def _names_exported_table(node: ast.Attribute, context: _ModuleContext) -> bool:
-    if not isinstance(node.value, ast.Name):
-        return False
-    aliased_module = context.module.module_aliases.get(node.value.id)
-    return aliased_module is not None and node.attr in context.exports.get(
-        aliased_module, set()
-    )
+def _names_core_table(node: ast.Attribute, context: _ModuleContext) -> bool:
+    if isinstance(node.ctx, ast.Load) and node.attr in context.module.core_attributes:
+        return True
+    return _exported_table_attribute(node, context.module, context.modules)
 
 
 def _attribute_findings(
     node: ast.Attribute, context: _ModuleContext
 ) -> Iterator[tuple[str, str]]:
-    if _names_exported_table(node, context) or _reaches_mapped_table(node, context):
+    if _names_core_table(node, context) or _reaches_mapped_table(node, context):
         yield CORE_TABLE_ACCESS, ast.unparse(node)
     elif _forbidden_connection_name(
         _sqlalchemy_name(node, context.module.imported), context
@@ -489,7 +598,9 @@ def _opens_connection(node: ast.Call, context: _ModuleContext) -> bool:
     if node.func.attr != ENGINE_TRANSACTION_METHOD:
         return False
     receiver = _last_name(node.func.value)
-    return receiver in context.engine_names or ENGINE_NAME_PART in receiver.lower()
+    return receiver in context.engine_names or bool(
+        ENGINE_NAME_PATTERN.search(receiver)
+    )
 
 
 def _call_findings(
@@ -529,13 +640,13 @@ def orm_access_findings(sources: Mapping[str, str]) -> list[Finding]:
     other's Core tables by those names.
     """
     modules = _index_modules(sources)
-    exports = {name: module.exports for name, module in modules.items()}
     findings: list[Finding] = []
     for module in modules.values():
         context = _ModuleContext(
             module=module,
-            exports=exports,
+            modules=modules,
             metadata_names=_bound_to_calls(module, frozenset({METADATA_CONSTRUCTOR})),
+            mapper_names=_bound_to_calls(module, MAPPER_FUNCTIONS),
             engine_names=_bound_to_calls(module, ENGINE_FACTORIES)
             | _annotated_as(module, ENGINE_TYPES),
             schema_details=_schema_detail_calls(module.tree),

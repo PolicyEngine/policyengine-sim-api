@@ -61,35 +61,42 @@ in `orm_access_support.py` over the same files as the guard below. They look
 for Core rather than for the ORM, so a statement on mapped classes passes,
 including one on expressions, labels, subqueries and aliases. Names resolve
 within each module, through its own imports. A Core table is, in one module, a
-name it binds to `Table(...)` or `table(...)`, a name it imports from a
-scanned module that binds or imports one at module level, an attribute such as
-`tables.household_jobs` of such a module, a parameter or variable annotated as
-SQLAlchemy's `Table`, or a name it assigns from an expression rooted at a Core
-table, such as `previous = household_jobs.alias()`. Each finding is one of:
+name it binds to `Table(...)`, `table(...)` or `TableClause(...)`; a name it
+imports, under any name or through `*`, from a scanned module that binds or
+imports one at module level; an attribute such as `tables.household_jobs` or
+`example.tables.household_jobs` of such a module; a parameter, variable or
+attribute annotated as SQLAlchemy's `Table`; or a name or attribute it assigns
+from an expression rooted at a Core table, such as
+`previous = household_jobs.alias()` or `self.jobs = tables.household_jobs`.
+Each file's module name is its path below `src`, and two files with one module
+name are refused. Each finding is one of:
 
 - **Core table declaration:** a `Table(...)`, `Column(...)`, `table(...)`,
-  `column(...)` or `MetaData(...)` call, apart from `MetaData` in an
-  `orm_base.py`.
+  `column(...)`, `TableClause(...)`, `ColumnClause(...)` or `MetaData(...)`
+  call, apart from `MetaData` in an `orm_base.py`.
 - **Core table access:** any reference to a Core table, which covers its
-  statements, methods, column collections and joins; and `__table__`,
-  `local_table`, `persist_selectable` or `sorted_tables` anywhere, or
-  `tables` or `selectable` of a mapper, of `inspect(...)` or of a MetaData (a
-  name bound to `MetaData(...)` or ending in `metadata`).
+  statements, methods, column collections and joins; `__table__`,
+  `local_table`, `persist_selectable` or `sorted_tables` anywhere; `tables` or
+  `selectable` of a mapper (`__mapper__`, `.mapper`, or `inspect(...)`,
+  `class_mapper(...)` or `object_mapper(...)`, called or held in a name) or of
+  a MetaData (a name bound to `MetaData(...)` or ending in `metadata`); and a
+  mapped attribute's `table`, as in `HouseholdJob.id.table`.
 - **Core engine or connection:** `Connection` or `AsyncConnection` from
   SQLAlchemy in any module; `Engine`, `create_engine` and the like outside a
   library's `engine.py`, imported or referenced as `sa.Engine`; any
   `.connect()`, `.connection()`, `.raw_connection()` or `.get_bind()` call;
   and `.begin()` on an engine (a name annotated as `Engine`, bound to
-  `create_engine(...)`, or containing `engine`). A library's `engine.py`
-  opens sessions, not connections.
-- **Raw SQL:** `text(...)` or `literal_column(...)` anywhere else, or
-  `exec_driver_sql` or `.cursor()`.
+  `create_engine(...)`, or named `engine` or ending in `_engine`). A
+  library's `engine.py` opens sessions, not connections.
+- **Raw SQL:** `text(...)`, `TextClause(...)` or `literal_column(...)`
+  anywhere else, or `exec_driver_sql` or `.cursor()`.
 - **sqlmodel import.**
 
-The checks read source, not types. They miss imports through `importlib`,
-tables and engines passed around without a type annotation, tables held in a
-container such as a dict, and a Session's `bind` attribute. A name derived
-from a Core table counts as one throughout its module.
+The checks read source, not types, and guard against ordinary Core use, not
+against deliberate evasion. They miss imports through `importlib`, tables and
+engines passed around without a type annotation, tables held in a container
+such as a dict, and a Session's `bind` attribute. A name derived from a Core
+table counts as one throughout its module.
 
 `test_every_table_is_mapped_by_a_class` also imports both persistence libraries
 and reports every table they hold that no mapped class maps.

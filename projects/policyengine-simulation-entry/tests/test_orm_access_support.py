@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import sys
+import types
+from pathlib import Path
 from textwrap import dedent
 
 import pytest
@@ -11,7 +14,9 @@ from orm_access_support import (
     CORE_TABLE_DECLARATION,
     RAW_SQL,
     SQLMODEL_IMPORT,
+    UNMAPPED_TABLE,
     orm_access_findings,
+    unmapped_table_findings,
 )
 
 STORE = "libs/example/src/example/store.py"
@@ -19,6 +24,7 @@ TABLES = "libs/example/src/example/tables.py"
 ENGINE = "libs/example/src/example/engine.py"
 ORM_BASE = "libs/example/src/example/orm_base.py"
 GATEWAY = "projects/gateway/src/gateway/regions.py"
+PACKAGE = "libs/example/src/example/__init__.py"
 
 # Core tables under generic names, as the persistence library declares them.
 CORE_TABLES_MODULE = """
@@ -183,13 +189,19 @@ def test_a_parameter_annotated_as_a_sqlalchemy_table_is_a_core_table():
         "inspect(HouseholdJob).persist_selectable",
         "inspect(HouseholdJob).selectable",
         "HouseholdJob.__table__",
+        "class_mapper(HouseholdJob).tables",
+        "inspect(HouseholdJob).mapper.tables",
+        "mapper.tables",
+        "HouseholdJob.id.table",
     ],
 )
 def test_reaching_a_mapped_class_or_metadata_table_is_core_table_access(expression):
     store = f"""
     from sqlalchemy import MetaData, inspect
+    from sqlalchemy.orm import class_mapper
 
     schema = MetaData()
+    mapper = inspect(HouseholdJob)
     table = {expression}
     """
 
@@ -273,3 +285,156 @@ def test_raw_sql_is_reported(source, summary):
 )
 def test_sqlmodel_imports_are_reported(statement):
     assert _checks({STORE: statement}, STORE) == [(SQLMODEL_IMPORT, "sqlmodel")]
+
+
+def test_a_package_re_export_and_a_dotted_import_reach_core_tables():
+    package = """
+    from example import tables
+
+    household_jobs = tables.household_jobs
+    """
+    store = """
+    import example
+    import example.tables
+
+    jobs = example.household_jobs
+    statement = jobs.update()
+    condition = example.tables.regions.c.id == job_id
+    """
+
+    sources = {PACKAGE: package, STORE: store}
+    assert _checks(sources, PACKAGE) == [(CORE_TABLE_ACCESS, "tables.household_jobs")]
+    assert _checks(sources, STORE) == [
+        (CORE_TABLE_ACCESS, "example.household_jobs"),
+        (CORE_TABLE_ACCESS, "jobs"),
+        (CORE_TABLE_ACCESS, "example.tables.regions"),
+    ]
+
+
+def test_star_imports_and_attribute_targets_carry_core_tables():
+    store = """
+    from example.tables import *
+
+    class Store:
+        def __init__(self):
+            self.jobs = household_jobs
+
+        def statement(self):
+            return self.jobs.insert(), regions.c.id
+    """
+
+    assert _checks({STORE: store}, STORE) == [
+        (CORE_TABLE_ACCESS, "household_jobs"),
+        (CORE_TABLE_ACCESS, "self.jobs"),
+        (CORE_TABLE_ACCESS, "regions"),
+    ]
+
+
+def test_a_variable_annotated_as_a_sqlalchemy_table_is_a_core_table():
+    store = """
+    from sqlalchemy import Table
+
+    selected: Table = choose_table()
+    condition = selected.c.id == job_id
+    """
+
+    assert _checks({STORE: store}, STORE) == [(CORE_TABLE_ACCESS, "selected")]
+
+
+def test_two_files_with_one_module_name_are_refused():
+    sources = {
+        "projects/first/src/modal/app.py": "",
+        "projects/second/src/modal/app.py": "",
+    }
+
+    with pytest.raises(ValueError, match=r"are both module modal\.app"):
+        orm_access_findings(sources)
+
+
+def test_begin_counts_as_opening_a_connection_only_on_an_engine():
+    engine_module = """
+    from sqlalchemy import create_engine
+
+    primary = create_engine(url)
+    first = primary.begin()
+    second = policyengine_settings.begin()
+    """
+
+    assert _checks({ENGINE: engine_module}, ENGINE) == [
+        (CORE_CONNECTION, "primary.begin()")
+    ]
+
+
+def test_async_engines_and_connections_are_reported():
+    store = "from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine"
+
+    assert _checks({STORE: store}, STORE) == [
+        (CORE_CONNECTION, "sqlalchemy.ext.asyncio.AsyncConnection"),
+        (CORE_CONNECTION, "sqlalchemy.ext.asyncio.AsyncEngine"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("source", "check"),
+    [
+        ("sa.TableClause('household_jobs')", CORE_TABLE_DECLARATION),
+        ("sa.ColumnClause('id')", CORE_TABLE_DECLARATION),
+        ("sa.TextClause('SELECT 1')", RAW_SQL),
+    ],
+)
+def test_core_clause_classes_are_reported(source, check):
+    store = f"""
+    import sqlalchemy as sa
+
+    clause = {source}
+    """
+
+    assert [found for found, _ in _checks({STORE: store}, STORE)] == [check]
+
+
+def _load_module(name: str, source: str, monkeypatch) -> types.ModuleType:
+    module = types.ModuleType(name)
+    # SQLAlchemy resolves a mapped class's annotations in its module.
+    monkeypatch.setitem(sys.modules, name, module)
+    exec(compile(dedent(source), name, "exec"), module.__dict__)
+    return module
+
+
+def test_the_runtime_check_accepts_tables_mapped_by_either_declarative_base(
+    monkeypatch,
+):
+    mapped = _load_module(
+        "orm_only_mapped_models",
+        """
+        from sqlalchemy import MetaData, Table
+        from sqlalchemy.orm import (
+            DeclarativeBase,
+            DeclarativeBaseNoMeta,
+            Mapped,
+            mapped_column,
+        )
+
+        class Base(DeclarativeBase):
+            pass
+
+        class NoMetaBase(DeclarativeBaseNoMeta):
+            metadata = MetaData()
+
+        class HouseholdJob(Base):
+            __tablename__ = "household_jobs"
+            id: Mapped[int] = mapped_column(primary_key=True)
+
+        class Report(NoMetaBase):
+            __tablename__ = "reports"
+            id: Mapped[int] = mapped_column(primary_key=True)
+
+        stray = Table("stray", Base.metadata)
+        """,
+        monkeypatch,
+    )
+
+    findings = unmapped_table_findings([mapped], Path(), location="example")
+
+    assert [(finding.check, finding.source) for finding in findings] == [
+        (UNMAPPED_TABLE, "stray")
+    ]
