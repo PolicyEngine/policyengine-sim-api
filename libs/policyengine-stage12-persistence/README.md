@@ -30,8 +30,8 @@ and ends the process with a failure if the check runs for 15 minutes.
 - **The Stage 12 comparison tables** (`Stage12PersistenceStore`): temporary
   state of the comparison path, removed with it.
 - **The Public API's run tables** (`ReportRunStore`): `report_runs`, which
-  names its baseline and reform simulation runs and holds the cliff impact,
-  SPM receipts and data version, `simulation_runs`, the result tables, the
+  names its baseline and reform simulation runs and holds the SPM receipts
+  and data version, `simulation_runs`, the result tables, the
   two labour supply tables included, and `household_jobs`. As the Modal
   worker role (`policyengine_v2_modal_worker`), the v2 Modal coordinator
   claims and records the report run its call names, each v2 worker claims
