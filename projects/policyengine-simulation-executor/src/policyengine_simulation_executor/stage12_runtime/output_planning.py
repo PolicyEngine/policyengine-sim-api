@@ -12,6 +12,11 @@ from policyengine.outputs import (
     configure_labor_supply_response_variables,
     labor_supply_response_is_active,
 )
+from policyengine.outputs.extra_variables import add_extra_variables
+from policyengine.outputs.labor_supply_response import (
+    UK_ACTIVE_LSR_VARIABLES,
+    US_ACTIVE_LSR_VARIABLES,
+)
 from policyengine_simulation_contract.stage12_execution import (
     EntityOutputPlan,
     PlannedSimulationExecutionInput,
@@ -39,6 +44,34 @@ if TYPE_CHECKING:
 UK_GEOGRAPHIC_DATASET_VARIABLES: dict[str, tuple[str, ...]] = {
     "household": UK_AREA_DATASET_COLUMNS,
 }
+
+# The inputs .py's labour-supply output reads from both simulations of a
+# report that turns responses on: copied input values, not responses, so a
+# US run stores them whatever its own policy. Every other column .py adds
+# for labour supply is a response, zero in a simulation whose own policy
+# turns none on (``labor_supply_response_columns``).
+LABOR_SUPPLY_COPIED_INPUTS: dict[str, dict[str, tuple[str, ...]]] = {
+    "us": {"person": ("self_employment_income", "weekly_hours_worked")},
+}
+_PY_LABOR_SUPPLY_COLUMNS: dict[str, dict[str, list[str]]] = {
+    "us": US_ACTIVE_LSR_VARIABLES,
+    "uk": UK_ACTIVE_LSR_VARIABLES,
+}
+
+
+def labor_supply_response_columns(country: str) -> dict[str, tuple[str, ...]]:
+    """Return, by entity, the labour-supply response columns of ``country``'s output.
+
+    They are zero in a simulation whose own policy turns no response on, so a
+    run of one stores none, and a report reads them as zeros from it.
+    """
+    copied = LABOR_SUPPLY_COPIED_INPUTS.get(country, {})
+    return {
+        entity: tuple(
+            column for column in columns if column not in copied.get(entity, ())
+        )
+        for entity, columns in _PY_LABOR_SUPPLY_COLUMNS[country].items()
+    }
 
 
 class OutputVariableModel(Protocol):
@@ -188,29 +221,125 @@ def resolve_simulation_output_plan(
     *,
     stage_scope: StageScope = _unmonitored_stage_scope,
 ) -> Stage12OutputPlan:
-    """Resolve the output schema of a simulation calculated on its own.
+    """Resolve the output schema every run of ``simulation`` stores.
 
-    It is the schema of a report comparing the simulation with itself, with
-    every aggregate, so the output holds what such a report reads. A report
-    whose other simulation needs more, such as a reform that turns on labour
-    supply responses, plans more columns than this output holds.
+    Identical requests share simulation runs, so the schema depends on the
+    simulation alone, never on a report naming it: the columns of a report
+    comparing the simulation with itself, with every aggregate, so the area
+    columns on the local-area dataset and the US budget columns too; the
+    labour-supply responses only when its own policy turns them on; the US
+    inputs .py's labour-supply output reads from either side
+    (``LABOR_SUPPLY_COPIED_INPUTS``); and never the cliff columns, so a US
+    national run keeps its region-group split. A report reads from it what
+    ``side_read_plan`` says.
     """
     return _resolve_output_plan(
         simulation,
         simulation,
         aggregates=tuple(ReportAggregate),
         stage_scope=stage_scope,
+        include_cliff_impacts=False,
+        copy_labor_supply_inputs=True,
     )
 
 
-def _resolve_output_plan(
+def side_read_plan(
+    read_plan: Stage12OutputPlan, stored_plan: Stage12OutputPlan
+) -> Stage12OutputPlan:
+    """Return what a report planned ``read_plan`` reads from a side storing a plan.
+
+    That is the report's plan, without the labour-supply responses when the
+    report turns responses on and the side's own policy turns none on: those
+    are zero, and the report reads them as zeros
+    (``with_zero_labor_supply_responses``).
+    """
+    if not _reads_unstored_responses(read_plan, stored_plan):
+        return read_plan
+    responses = labor_supply_response_columns(read_plan.country)
+    entities = []
+    for entity in read_plan.entities:
+        unstored = set(responses.get(entity.entity, ()))
+        materialized = tuple(
+            variable
+            for variable in entity.materialized_variables
+            if variable not in unstored
+        )
+        if not materialized:
+            continue
+        entities.append(
+            EntityOutputPlan(
+                entity=entity.entity,
+                materialized_variables=materialized,
+                additional_variables=tuple(
+                    variable
+                    for variable in entity.additional_variables
+                    if variable not in unstored
+                ),
+                dataset_variables=entity.dataset_variables,
+            )
+        )
+    return Stage12OutputPlan(
+        country=read_plan.country,
+        requirements=read_plan.requirements,
+        entities=tuple(entities),
+    )
+
+
+def with_zero_labor_supply_responses(
+    frames: Mapping[str, pd.DataFrame],
+    read_plan: Stage12OutputPlan,
+    stored_plan: Stage12OutputPlan,
+) -> Mapping[str, pd.DataFrame]:
+    """Return a side's frames with the responses the report reads and it doesn't store.
+
+    Each such response column the report's plan names is added as zeros;
+    ``frames`` itself is returned when there is none to add.
+    """
+    if not _reads_unstored_responses(read_plan, stored_plan):
+        return frames
+    planned = {
+        entity.entity: set(entity.materialized_variables)
+        for entity in read_plan.entities
+    }
+    filled = dict(frames)
+    for entity, columns in labor_supply_response_columns(read_plan.country).items():
+        if entity not in frames:
+            continue
+        missing = [
+            column
+            for column in columns
+            if column in planned.get(entity, set())
+            and column not in frames[entity].columns
+        ]
+        if missing:
+            filled[entity] = frames[entity].assign(**dict.fromkeys(missing, 0.0))
+    return filled
+
+
+def _reads_unstored_responses(
+    read_plan: Stage12OutputPlan, stored_plan: Stage12OutputPlan
+) -> bool:
+    """Whether the report reads labour-supply responses the side doesn't store."""
+    return (
+        read_plan.requirements.labor_supply_response_active
+        and not stored_plan.requirements.labor_supply_response_active
+    )
+
+
+def _resolve_output_plan(  # noqa: PLR0913  # the two simulations, then keyword-only choices
     baseline_input: SimulationExecutionInput,
     reform_input: SimulationExecutionInput,
     *,
     aggregates: tuple[ReportAggregate, ...],
     stage_scope: StageScope,
+    include_cliff_impacts: bool | None = None,
+    copy_labor_supply_inputs: bool = False,
 ) -> Stage12OutputPlan:
-    """Resolve one country-owned output schema for a baseline and a reform."""
+    """Resolve one country-owned output schema for a baseline and a reform.
+
+    ``include_cliff_impacts`` None follows the baseline's ``include_cliffs``
+    option. ``copy_labor_supply_inputs`` adds ``LABOR_SUPPLY_COPIED_INPUTS``.
+    """
     country = baseline_input.geography.country
     stage_attributes = {"country": country}
     with stage_scope(Stage.STAGE12_COUNTRY_MODEL_LOAD, stage_attributes):
@@ -218,13 +347,21 @@ def _resolve_output_plan(
     with stage_scope(Stage.STAGE12_OUTPUT_CONFIGURATION, stage_attributes):
         baseline = _planning_simulation(baseline_input, model=model)
         reform = _planning_simulation(reform_input, model=model)
-        include_cliff_impacts = _include_cliff_impacts(baseline_input)
+        if include_cliff_impacts is None:
+            include_cliff_impacts = _include_cliff_impacts(baseline_input)
         labor_supply_active = _configure_country_outputs(
             country=country,
             baseline=baseline,
             reform=reform,
             include_cliff_impacts=include_cliff_impacts,
         )
+        if copy_labor_supply_inputs:
+            copied = LABOR_SUPPLY_COPIED_INPUTS.get(country, {})
+            for simulation in (baseline, reform):
+                add_extra_variables(
+                    simulation,
+                    {entity: list(columns) for entity, columns in copied.items()},
+                )
         requirements = ReportOutputRequirements(
             aggregates=aggregates,
             include_cliff_impacts=include_cliff_impacts,

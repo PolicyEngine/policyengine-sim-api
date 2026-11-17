@@ -386,58 +386,6 @@ def test_a_worker_fails_its_simulation_run_only_while_its_call_holds_it(
     assert state.modal_call_id == "fc-worker"
 
 
-def test_a_simulation_run_an_earlier_call_holds_is_released_for_the_next_one(
-    store, seeder, seeded_run: SeededReportRun
-) -> None:
-    # A restarted coordinator stops the worker its pre-empted attempt
-    # started, releases that worker's run, and starts a new worker on it.
-    run_id = seeded_run.run_ids.baseline_simulation_run_id
-    store.claim_simulation_run(run_id, modal_call_id="fc-earlier", claimed_at=NOW)
-
-    by_other_call = store.release_simulation_run(
-        run_id, modal_call_id="fc-other", released_at=LATER
-    )
-    released = store.release_simulation_run(
-        run_id, modal_call_id="fc-earlier", released_at=LATER
-    )
-    stale_completion = store.complete_simulation_run(
-        run_id,
-        modal_call_id="fc-earlier",
-        output_uri="gs://private/simulations/stale.parquet",
-        output_sha256="d" * 64,
-        completed_at=LATER,
-    )
-    next_claim = store.claim_simulation_run(
-        run_id, modal_call_id="fc-next", claimed_at=LATER
-    )
-
-    assert by_other_call == RunWrite(changed=False, status=RunStatus.RUNNING)
-    assert released == RunWrite(changed=True, status=RunStatus.PENDING)
-    assert stale_completion == RunWrite(changed=False, status=RunStatus.PENDING)
-    assert next_claim == RunWrite(changed=True, status=RunStatus.RUNNING)
-    row = seeder.row("simulation_runs", run_id)
-    assert row["modal_call_id"] == "fc-next"
-    # The run counts from its first claim, for the stuck-run sweep.
-    assert row["started_at"] == NOW
-    assert row["output_uri"] is None
-
-
-def test_a_finished_simulation_run_is_never_released(
-    store, seeded_run: SeededReportRun
-) -> None:
-    run_id = seeded_run.run_ids.baseline_simulation_run_id
-    store.claim_simulation_run(run_id, modal_call_id="fc-worker", claimed_at=NOW)
-    store.fail_simulation_run(
-        run_id, modal_call_id="fc-worker", error_message="failed", failed_at=NOW
-    )
-
-    released = store.release_simulation_run(
-        run_id, modal_call_id="fc-worker", released_at=LATER
-    )
-
-    assert released == RunWrite(changed=False, status=RunStatus.FAILED)
-
-
 def test_a_pending_or_running_simulation_run_can_fail_but_not_resume(
     store, seeder, seeded_run: SeededReportRun
 ) -> None:
@@ -499,6 +447,6 @@ def test_a_missing_run_raises_lookup_error(store, seeded_run) -> None:
     with pytest.raises(LookupError, match="simulation run"):
         store.fail_simulation_run(uuid4(), error_message="failed", failed_at=NOW)
     with pytest.raises(LookupError, match="simulation run"):
-        store.release_simulation_run(
-            uuid4(), modal_call_id="fc-worker", released_at=NOW
+        store.fail_simulation_run_held_by(
+            uuid4(), modal_call_id="fc-worker", error_message="ended", failed_at=NOW
         )

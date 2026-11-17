@@ -205,7 +205,10 @@ class FakeArtifacts:
                 content_sha256=sha256(payload).hexdigest(),
                 size_bytes=len(payload),
             ),
-            output_plan_sha256=stage12_output_plan_sha256(shared_output_plan()),
+            # As the real store, the plan the worker was given.
+            output_plan_sha256=stage12_output_plan_sha256(
+                getattr(simulation, "output_plan", None) or shared_output_plan()
+            ),
             row_identity=row_identity,
             bundle=simulation.bundle,
         )
