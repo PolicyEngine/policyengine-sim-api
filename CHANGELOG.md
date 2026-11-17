@@ -10,6 +10,17 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.19.0] - 2026-11-17
+
+### Added
+
+- `POST /reports` takes `data_source: "local_area_dataset"` on UK-wide and nation economy reports: the report runs on the bundle's local-area dataset (the one constituency and local-authority regions use) and returns its full results with its constituency and local-authority results. Another value, another country or region, and a release that routes those areas to no dataset of their own (`no_local_area_dataset`) are refused with 422. The staging economy check's Wales report runs on that dataset.
+
+### Removed
+
+- `POST /reports` (economy reports and budget windows) and `POST /simulations` no longer take `dataset_name`, and refuse it with 422: a report or simulation runs on the dataset the catalog gives its region, or on the local-area dataset with `data_source`. The Public API stopped sending it in PolicyEngine/policyengine-api#4307, which must be deployed first.
+
+
 ## [0.18.0] - 2026-11-17
 
 ### Changed
