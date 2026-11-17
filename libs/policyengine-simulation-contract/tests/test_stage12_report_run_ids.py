@@ -161,10 +161,25 @@ def test_a_cliff_workers_context_names_the_cliff_result_its_call_claims() -> Non
     assert context.records_runs
     restored = Stage12InvocationContext.model_validate(context.model_dump(mode="json"))
     assert restored.cliff_result_id == CLIFF_RESULT_ID
-    # A context naming no cliff result keeps its JSON, for the deployed workers.
-    assert "cliff_result_id" not in Stage12InvocationContext(
-        **_context_fields(simulation_run_id=str(BASELINE_RUN_ID))
-    ).model_dump(mode="json", exclude_none=True)
+
+
+@pytest.mark.parametrize(
+    "named_run",
+    [
+        {},
+        {"report_run": _run_ids().model_dump(mode="json")},
+        {"simulation_run_id": str(BASELINE_RUN_ID)},
+    ],
+    ids=["comparison", "report-run", "simulation-run"],
+)
+def test_a_context_naming_no_cliff_result_keeps_its_json(named_run) -> None:
+    """Workers deployed before the field refuse it, even as null (extra fields)."""
+    context = Stage12InvocationContext(**_context_fields(**named_run))
+
+    serialized = context.model_dump(mode="json")
+
+    assert "cliff_result_id" not in serialized
+    assert Stage12InvocationContext.model_validate(serialized) == context
 
 
 @pytest.mark.parametrize(
