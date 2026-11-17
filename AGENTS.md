@@ -126,7 +126,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Service and package boundaries
 
-- Checked: `sim.boundaries.sqlalchemy-and-alembic-only`
+- Checked: `sim.boundaries.sqlalchemy-and-alembic-only`, `sim.persistence.orm-only`
 - `sim.boundaries.gateway-executor-decoupled`: The gateway and executor never import each other; they communicate only through the models and state helpers in policyengine-simulation-contract. (doc-only, not checked: follow it yourself)
 - `sim.boundaries.unit-tests-need-no-services`: Unit tests never require real network credentials, Modal, Hugging Face, GCP or deployed services; those seams are mocked. (doc-only, not checked: follow it yourself)
 

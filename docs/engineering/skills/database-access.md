@@ -25,7 +25,64 @@ It builds on the Stage 12 rules:
   of its own; policyengine-api migrates the Stage 12 tables.
 - `sim.stage12.persistence-typed-dml-only` and
   `sim.stage12.deployment-uses-api-schema`: the Stage 12 persistence
-  library uses typed SQLAlchemy Core DML only, with no raw SQL text.
+  library uses typed SQLAlchemy statements only, with no raw SQL text.
+
+## ORM
+
+`sim.persistence.orm-only` requires the SQLAlchemy ORM, not Core: code that
+reads or writes database rows declares tables only as mapped classes and runs
+every statement through an ORM `Session` against them. The rule is ratcheted.
+`rules/baselines/orm-only.txt` lists the findings in the Core code the
+libraries had when it was added, and issue #1097 tracks converting them.
+
+What the ORM means here:
+
+- **Models** are SQLAlchemy 2.0 typed declarative classes (`Mapped[...]`,
+  `mapped_column`) deriving from one `DeclarativeBase` per library. A
+  library's `MetaData`, with its schema, is built only in its `orm_base.py`.
+  Constraints and indexes go in `__table_args__` under the Public API's names.
+  Use SQLAlchemy's own ORM, not SQLModel.
+- **Sessions:** only a library's `engine.py` creates or holds an `Engine`, and
+  it hands out a `sessionmaker`. Everything else receives a `sessionmaker` or a
+  `Session`, and runs a transaction as `with session_factory.begin() as
+  session:`.
+- **Statements** name mapped classes or their attributes: `session.get`,
+  `session.add`, `session.scalars(select(Model))`, and ORM-enabled
+  `update(Model)`, `insert(Model)` or
+  `postgresql.insert(Model).on_conflict_do_nothing()` run with
+  `session.execute`. The single-statement forms keep conditional updates, such
+  as claiming a pending job only while it has no Modal call ID, and
+  find-or-create inserts atomic.
+- **SQL text** appears only as a model's server default or a partial index's
+  condition.
+
+`projects/policyengine-simulation-entry/tests/test_orm_only.py` runs the checks
+in `orm_access_support.py` over the same files as the guard below. Each
+finding is one of:
+
+- **Core table declaration:** a `Table(...)`, `Column(...)` or `MetaData(...)`
+  call, apart from `MetaData` in an `orm_base.py`.
+- **Core column collection:** a `.c` or `__table__` attribute, or `.columns`
+  of a table.
+- **Core engine or connection:** an import of `Engine`, `Connection` or
+  `create_engine` outside a library's `engine.py`, or any `.connect()`,
+  `.connection()` or `.raw_connection()` call.
+- **Statement not on a mapped class:** `select`, `insert`, `update` or
+  `delete` whose first argument isn't a mapped class, one of its attributes, an
+  `aliased(...)` of one, or a SQLAlchemy expression such as `func.count()`.
+- **Raw SQL:** `text(...)` or `literal_column(...)` anywhere else, or
+  `exec_driver_sql` or `.cursor()`.
+- **sqlmodel import.**
+
+`test_every_table_is_mapped_by_a_class` also imports both persistence libraries
+and reports every table they hold that no mapped class maps.
+
+The test fails on a finding the baseline doesn't list, and on a baseline entry
+that no longer matches a finding, so the list only shrinks. Each entry is
+`file: check: source`, without a line number, repeated once for each identical
+finding in its file. A change that converts code removes its entries in the
+same pull request; one that adds a finding fixes it rather than adding an
+entry.
 
 ## Who owns the schema
 

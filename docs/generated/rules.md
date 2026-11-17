@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 64 | 0 | 0 | 14 | 78 |
+| mechanical | 64 | 1 | 0 | 14 | 79 |
 | metric | 1 | 0 | 0 | 0 | 1 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 65 of 79 rules.
+**Blocking:** 66 of 80 rules.
 
 ## Gaps
 
@@ -65,7 +65,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 ### Ratcheted (existing violations still tolerated)
 
-- None.
+- `sim.persistence.orm-only`: 818 remaining in `rules/baselines/orm-only.txt`
 
 ### Exceptions and review dates
 
@@ -82,6 +82,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 | `sim.boundaries.gateway-executor-decoupled` | The gateway and executor never import each other; they communicate only through the models and state helpers in policyengine-simulation-contract. | mechanical | doc-only | no | nothing | — | — |
 | `sim.boundaries.sqlalchemy-and-alembic-only` | Code connects to databases only through SQLAlchemy engines and connections, never by importing a database driver directly, and runtime code never changes the schema, which changes only through Alembic migrations. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_database_access_boundaries.py` | `pr.yml:test` | yes |
 | `sim.boundaries.unit-tests-need-no-services` | Unit tests never require real network credentials, Modal, Hugging Face, GCP or deployed services; those seams are mocked. | mechanical | doc-only | no | nothing | — | — |
+| `sim.persistence.orm-only` | Code that reads or writes database rows declares tables only as SQLAlchemy ORM mapped classes and runs every statement through an ORM Session against those classes, never through Core Table objects or Connections. | mechanical | ratcheted | yes | pytest `projects/policyengine-simulation-entry/tests/test_database_access_boundaries.py`, `projects/policyengine-simulation-entry/tests/test_orm_only.py` | `pr.yml:test` | yes |
 
 ```mermaid
 flowchart LR
@@ -91,10 +92,14 @@ flowchart LR
   e_pytest_projects_policyengine_simulation_entry_tests_test_database_access_boundaries_py["pytest projects/policyengine-simulation-entry/tests/test_database_access_boundaries.py"]
   j_CI_pr_yml_test["CI pr.yml:test"]
   r_sim_boundaries_unit_tests_need_no_services("sim.boundaries.unit-tests-need-no-services (doc-only)")
+  r_sim_persistence_orm_only("sim.persistence.orm-only (ratcheted)")
+  e_pytest_projects_policyengine_simulation_entry_tests_test_database_access_boundaries_py__projects_policyengine_simulation_entry_tests_test_orm_only_py["pytest projects/policyengine-simulation-entry/tests/test_database_access_boundaries.py, projects/policyengine-simulation-entry/tests/test_orm_only.py"]
   r_sim_boundaries_gateway_executor_decoupled -.-> gap_unenforced
   r_sim_boundaries_sqlalchemy_and_alembic_only --> e_pytest_projects_policyengine_simulation_entry_tests_test_database_access_boundaries_py
   e_pytest_projects_policyengine_simulation_entry_tests_test_database_access_boundaries_py --> j_CI_pr_yml_test
   r_sim_boundaries_unit_tests_need_no_services -.-> gap_unenforced
+  r_sim_persistence_orm_only --> e_pytest_projects_policyengine_simulation_entry_tests_test_database_access_boundaries_py__projects_policyengine_simulation_entry_tests_test_orm_only_py
+  e_pytest_projects_policyengine_simulation_entry_tests_test_database_access_boundaries_py__projects_policyengine_simulation_entry_tests_test_orm_only_py --> j_CI_pr_yml_test
 ```
 
 ## Stage 12 persistence
@@ -106,7 +111,7 @@ flowchart LR
 | `sim.stage12.no-migration-chain` | This repository has no schema migration chain (no Alembic); Stage 12 tables are migrated by policyengine-api. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_stage12_schema_authority.py` | `pr.yml:test` | **unproven** |
 | `sim.stage12.no-production-user-associations` | Stage 12 runtime modules never create production user associations (user_simulations or user_reports). | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_stage12_schema_authority.py` | `pr.yml:test` | **unproven** |
 | `sim.stage12.no-schema-ddl` | Simulation runtimes and the Stage 12 persistence library contain no schema DDL (CREATE, ALTER, DROP or TRUNCATE of tables, types, schemas or databases, or create_all); policyengine-api owns the schema. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_stage12_schema_authority.py` | `pr.yml:test` | yes |
-| `sim.stage12.persistence-typed-dml-only` | The Stage 12 persistence library and runtime use typed SQLAlchemy Core DML only: no raw SQL text, driver-level SQL or schema operations. | mechanical | enforced | yes | pytest `libs/policyengine-stage12-persistence/tests/test_source_boundaries.py` | `pr.yml:test` | **unproven** |
+| `sim.stage12.persistence-typed-dml-only` | The Stage 12 persistence library and runtime use typed SQLAlchemy statements only: no raw SQL text, driver-level SQL or schema operations. | mechanical | enforced | yes | pytest `libs/policyengine-stage12-persistence/tests/test_source_boundaries.py` | `pr.yml:test` | **unproven** |
 | `sim.stage12.production-lock-has-db-runtime` | The production lock file includes the direct Stage 12 database runtime dependencies. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_traffic.py` | `pr.yml:test` | **unproven** |
 
 ```mermaid

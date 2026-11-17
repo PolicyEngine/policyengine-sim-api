@@ -1,0 +1,824 @@
+# Tolerated existing violations of sim.persistence.orm-only. This list may only shrink.
+# One entry per finding, as "file: check: source", without line numbers; an
+# entry repeats once for each identical finding in its file. Tasks C1 · 46 to
+# C1 · 50 convert the code and remove its entries; tests/test_orm_only.py in
+# projects/policyengine-simulation-entry fails on a finding missing from here
+# and on an entry that no longer matches one.
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: _pg_attribute.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: _pg_attribute.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: _pg_attribute.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: _pg_attribute.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: _pg_attribute.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: _pg_class.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: _pg_class.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: _pg_class.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: _pg_class.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: _pg_namespace.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: _pg_namespace.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: public_tables.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: public_tables.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: public_tables.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: public_tables.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: public_tables.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: required.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: required.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: required.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: required.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: required.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: required.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: required.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core column collection: required.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core engine or connection: engine.connect()
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core engine or connection: sqlalchemy.Engine
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: statement not on a mapped class: select(_pg_class.c.oid, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: statement not on a mapped class: select(required.c.table_name, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: statement not on a mapped class: select(required.c.table_name, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_inputs.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core column collection: budget_window_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: statement not on a mapped class: insert(budget_window_runs)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: statement not on a mapped class: insert(report_runs)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: simulations.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core column collection: simulations.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: statement not on a mapped class: select(report_runs.c.id, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: statement not on a mapped class: select(reports.c.id, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: statement not on a mapped class: select(simulation_runs.c.id, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_reads.py: statement not on a mapped class: select(simulations.c.id)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: datasets.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: datasets.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: datasets.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: datasets.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: datasets.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: datasets.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: datasets.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: datasets.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: datasets.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: regions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: regions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: regions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: regions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: regions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: regions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: regions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: regions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: regions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: table.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: table.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: table.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: table.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: table.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: table.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: table.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: tax_benefit_models.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core column collection: tax_benefit_models.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: statement not on a mapped class: insert(simulation_runs)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: statement not on a mapped class: select(datasets.c.id, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: statement not on a mapped class: select(region_type.label('region_type'), ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: statement not on a mapped class: select(regions.c.id, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: statement not on a mapped class: select(table.c.status)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: statement not on a mapped class: select(tax_benefit_models.c.id)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: statement not on a mapped class: update(table)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_records.py: statement not on a mapped class: update(table)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_store.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_run_store.py: Core engine or connection: sqlalchemy.Engine
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: household_jobs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: households.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: households.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: households.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: households.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: tax_benefit_model_versions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: tax_benefit_model_versions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: tax_benefit_model_versions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: tax_benefit_models.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core column collection: tax_benefit_models.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: statement not on a mapped class: insert(household_jobs)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: statement not on a mapped class: select(household_jobs.c.id, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: statement not on a mapped class: select(household_jobs.c.status)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: statement not on a mapped class: select(households.c.default_year, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: statement not on a mapped class: select(tax_benefit_model_versions.c.id)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: statement not on a mapped class: update(household_jobs)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_records.py: statement not on a mapped class: update(household_jobs)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_store.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_job_store.py: Core engine or connection: sqlalchemy.Engine
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_report_records.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_report_records.py: statement not on a mapped class: insert(simulation_runs)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_report_store.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/household_report_store.py: Core engine or connection: sqlalchemy.Engine
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('code', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('country_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('country_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('default_dataset_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('default_year', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('dynamic_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('end_date', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('household_data', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('model_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('name', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('name', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('name', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('parameter_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('policy_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('region_type', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('start_date', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('tax_benefit_model_version_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('tax_benefit_model_version_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('tax_benefit_model_version_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('value_json', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Column('version', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: MetaData(...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Table('datasets', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Table('dynamics', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Table('households', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Table('parameter_values', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Table('parameters', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Table('policies', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Table('regions', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Table('tax_benefit_model_versions', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py: Core table declaration: Table('tax_benefit_models', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/keyed_economy_records.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/keyed_household_records.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/keyed_window_records.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/keyed_window_records.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/keyed_window_records.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/keyed_window_records.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/keyed_window_records.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/keyed_window_records.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/keyed_window_records.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/keyed_window_records.py: statement not on a mapped class: insert(report_runs)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/keyed_window_records.py: statement not on a mapped class: select(report_runs.c.id, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: dynamics.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: dynamics.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: parameter_values.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: parameter_values.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: parameter_values.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: parameter_values.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: parameter_values.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: parameter_values.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: parameter_values.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: parameters.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: parameters.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: parameters.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: parameters.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: parameters.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: parameters.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: policies.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: policies.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core column collection: policies.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: statement not on a mapped class: select(dynamics.c.id)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: statement not on a mapped class: select(parameters.c.name)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: statement not on a mapped class: select(parameters.c.name, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/policy_reform.py: statement not on a mapped class: select(policies.c.id)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: baseline.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: baseline.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: baseline.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: baseline.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: baseline_run.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: baseline_run.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: budget_window_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: budget_window_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: budget_window_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: budget_window_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: dataset.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: dataset.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: datasets.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: datasets.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reform.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reform.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reform.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reform.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reform_run.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reform_run.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: region.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: region.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: regions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: regions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: reports.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: simulations.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: simulations.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: simulations.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: simulations.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: simulations.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: simulations.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: simulations.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: simulations.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: simulations.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: simulations.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: tax_benefit_model_versions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: tax_benefit_model_versions.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: tax_benefit_models.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core column collection: tax_benefit_models.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: statement not on a mapped class: select(budget_window_runs.c.id)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: statement not on a mapped class: select(report_runs.c.year, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: statement not on a mapped class: select(reports.c.id, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/rerun_definitions.py: statement not on a mapped class: select(simulations.c.id, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('area_type', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('baseline_simulation_run_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('code', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('constituency_code', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('constituency_name', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('decile', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('decile', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('decile', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('decile_type', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('decile_variable', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('disclosure_tier', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('district_geoid', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('district_number', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('entity', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('entity', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('entity', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('entity', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('entity', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('filter_group', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('filter_variable', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('income_variable', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('income_variable', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('is_tax', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('local_authority_code', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('local_authority_name', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('poverty_type', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('program_name', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('quantiles', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('reform_simulation_run_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('report_run_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('simulation_run_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('state_fips', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column('variable_name', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Column(name, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: MetaData(...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Table('budget_summary', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Table('congressional_district_impacts', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Table('constituency_impacts', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Table('decile_impacts', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Table('inequality', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Table('intra_decile_impacts', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Table('labor_supply_decile_responses', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Table('labor_supply_responses', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Table('local_authority_impacts', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Table('poverty', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Table('program_statistics', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py: Core table declaration: Table('withheld_area_codes', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: budget_window_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: budget_window_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: budget_window_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: budget_window_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: budget_window_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: budget_window_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: budget_window_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: budget_window_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: report_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: simulation_runs.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: table.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core column collection: table.c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: Core engine or connection: sqlalchemy.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: statement not on a mapped class: postgresql_insert(table)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: statement not on a mapped class: select(*columns)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: statement not on a mapped class: select(budget_window_runs.c.id, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/shared_rows.py: statement not on a mapped class: select(report_runs.c.id, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core column collection: _PUBLIC_API_TABLES[table_name].c
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('baseline_cliff_gap', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('baseline_cliff_share', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('baseline_simulation_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('baseline_simulation_run_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('budget_window_run_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('budget_window_size', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('country', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('country', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('country_package_version', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('country_package_version', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('country_package_version', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('data_version', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('dataset_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('dataset_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('dataset_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('description', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('dynamic_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('dynamic_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('error_message', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('error_message', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('error_message', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('error_message', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('filter_field', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('filter_strategy', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('filter_value', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('forced', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('household_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('household_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('household_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('household_result', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('idempotency_key', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('inputs', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('key_version', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('label', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('markdown', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('modal_call_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('modal_call_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('modal_call_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('output_sha256', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('output_uri', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('policy_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('policy_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('policy_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('policyengine_version', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('policyengine_version', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('policyengine_version', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('policyengine_version', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('recalculate', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('reform_cliff_gap', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('reform_cliff_share', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('reform_simulation_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('reform_simulation_run_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('region_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('region_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('region_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('report_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('report_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('request_data', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('result', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('simulation_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('simulation_type', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('spm_provenance', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('status', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('status', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('status', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('status', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('tax_benefit_model_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('tax_benefit_model_version_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('tax_benefit_model_version_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('tax_benefit_model_version_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('tax_benefit_model_version_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('trigger', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('trigger', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('type', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('user_id', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('year', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('year', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('year', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('year', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column('year', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column(name, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column(name, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Column(name, ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: MetaData(...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: MetaData(...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Table('budget_window_runs', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Table('household_jobs', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Table('report_runs', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Table('reports', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Table('simulation_runs', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Table('simulations', ...)
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py: Core table declaration: Table(table_name, ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core engine or connection: sqlalchemy.Engine
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: Core engine or connection: sqlalchemy.engine.Connection
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: statement not on a mapped class: select(budget_window_runs.c.id)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: statement not on a mapped class: select(budget_window_runs.c.status, ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: statement not on a mapped class: select(report_runs.c.budget_window_run_id)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: statement not on a mapped class: select(report_runs.c.budget_window_run_id)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: statement not on a mapped class: select(report_runs.c.id, ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: statement not on a mapped class: update(budget_window_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: statement not on a mapped class: update(budget_window_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: statement not on a mapped class: update(budget_window_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: statement not on a mapped class: update(report_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: statement not on a mapped class: update(report_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/budget_window_store.py: statement not on a mapped class: update(simulation_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/household_report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/household_report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/household_report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/household_report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/household_report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/household_report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/household_report_run_store.py: statement not on a mapped class: select(report_runs.c.baseline_simulation_run_id, ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/household_report_run_store.py: statement not on a mapped class: update(report_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/household_report_run_store.py: statement not on a mapped class: update(simulation_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/household_report_run_store.py: statement not on a mapped class: update(simulation_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: budget_window_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: household_jobs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: household_jobs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: household_jobs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: household_jobs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: household_jobs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: household_jobs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: household_jobs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: report_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: simulation_runs.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core engine or connection: sqlalchemy.Engine
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core engine or connection: sqlalchemy.engine.Connection
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: insert(result_rows.table)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: postgresql_insert(result_rows.table)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: select(*columns)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: select(report_runs.c.baseline_simulation_run_id, ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: select(simulation_runs.c.status, ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: select(table.c.status)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: update(household_jobs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: update(household_jobs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: update(household_jobs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: update(report_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: update(report_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: update(report_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: update(simulation_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: update(simulation_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: update(simulation_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: update(simulation_runs)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: statement not on a mapped class: update(table)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core engine or connection: sqlalchemy.Engine
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: Core engine or connection: sqlalchemy.engine.Connection
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: insert(comparison_reports)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: insert(comparison_simulations)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: select(comparison_reports)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: select(comparison_reports)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: select(comparison_reports)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: select(comparison_reports)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: select(comparison_reports)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: select(comparison_simulations)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: select(comparison_simulations)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: select(comparison_simulations)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: select(comparison_simulations)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: select(comparison_simulations)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: select(comparison_simulations)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: update(comparison_reports)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: update(comparison_reports)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: update(comparison_simulations)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: update(comparison_simulations)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/store.py: statement not on a mapped class: update(comparison_simulations)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('aggregate_output_sha256', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('aggregate_output_uri', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('aggregate_schema_version', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('aggregation_status', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('calculation_flow', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('comparison_completed_at', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('comparison_error_code', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('comparison_error_summary', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('comparison_output_sha256', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('comparison_output_uri', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('comparison_schema_version', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('comparison_status', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('completed_at', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('completed_at', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('contract_version', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('contract_version', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('coordinator_invocation_id', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('country', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('country_package_name', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('country_package_version', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('created_at', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('created_at', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('data_artifact_revision', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('data_package_name', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('data_package_version', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('dataset_identity', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('dataset_uri', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('environment', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('error_code', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('error_code', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('error_summary', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('error_summary', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('evaluation_id', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('evaluation_id', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('incumbent_execution_id', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('input_sha256', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('modal_application', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('modal_application', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('modal_invocation_id', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('observability_id', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('originating_request_id', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('output_schema_version', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('output_sha256', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('output_uri', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('policyengine_version', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('production_identity', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('report_coordinator_callable', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('retention_expires_at', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('retention_expires_at', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('role', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('row_count', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('row_identity_columns', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('row_identity_sha256', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('simulation_callable', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('simulation_execution_id', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('started_at', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('started_at', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('status', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('status', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('updated_at', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('updated_at', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('version_manifest_sha256', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('version_manifest_sha256', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('worker_version', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Column('worker_version', ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: MetaData(...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Table(REPORT_TABLE_NAME, ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/tables.py: Core table declaration: Table(SIMULATION_TABLE_NAME, ...)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_reports.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: comparison_simulations.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core column collection: table.c
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core engine or connection: engine.connect()
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core engine or connection: sqlalchemy.engine.Connection
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: Core engine or connection: sqlalchemy.engine.Engine
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: statement not on a mapped class: delete(comparison_reports)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: statement not on a mapped class: delete(comparison_simulations)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: statement not on a mapped class: insert(comparison_reports)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: statement not on a mapped class: insert(comparison_simulations)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: statement not on a mapped class: select(comparison_reports.c.evaluation_id)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: statement not on a mapped class: select(comparison_simulations.c.simulation_execution_id)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: statement not on a mapped class: update(comparison_reports)
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/validation.py: statement not on a mapped class: update(comparison_simulations)
+projects/policyengine-simulation-entry/src/policyengine_simulation_entry/simulation_database.py: Core engine or connection: sqlalchemy.Engine
+projects/policyengine-simulation-executor/src/policyengine_simulation_executor/stage12_runtime/database_retry.py: Core engine or connection: sqlalchemy.engine.Connection
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.budget_summary
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.budget_window_runs
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.congressional_district_impacts
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.constituency_impacts
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.datasets
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.datasets
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.decile_impacts
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.dynamics
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.dynamics
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.household_jobs
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.households
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.households
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.inequality
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.intra_decile_impacts
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.labor_supply_decile_responses
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.labor_supply_responses
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.local_authority_impacts
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.parameter_values
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.parameters
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.policies
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.policies
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.poverty
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.program_statistics
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.regions
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.regions
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.report_runs
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.reports
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.simulation_runs
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.simulations
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.tax_benefit_model_versions
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.tax_benefit_model_versions
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.tax_benefit_models
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.tax_benefit_models
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.users
+libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence: table without a mapped class: public.withheld_area_codes
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence: table without a mapped class: public.stage12_evaluation_reports
+libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence: table without a mapped class: public.stage12_evaluation_simulations

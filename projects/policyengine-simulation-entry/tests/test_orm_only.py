@@ -16,6 +16,7 @@ test_every_source_directory_is_scanned checks that each one contributes files.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from collections import Counter
 from typing import TYPE_CHECKING
 
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from types import ModuleType
 
+    import pytest
     from orm_access_support import Finding
 
 BASELINE = REPOSITORY_ROOT / "rules" / "baselines" / "orm-only.txt"
@@ -86,12 +88,15 @@ def _assert_only_tolerated(
     )
 
 
-def _load_fixture(fixture_name: str) -> ModuleType:
+def _load_fixture(fixture_name: str, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     path = FIXTURES_ROOT / fixture_name
-    spec = importlib.util.spec_from_file_location(path.stem, path)
+    spec = importlib.util.spec_from_file_location(f"orm_only_{path.stem}", path)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # SQLAlchemy resolves a mapped class's annotations in its module, which it
+    # finds in sys.modules.
+    monkeypatch.setitem(sys.modules, spec.name, module)
     spec.loader.exec_module(module)
     return module
 
@@ -114,7 +119,7 @@ def test_every_table_is_mapped_by_a_class() -> None:
     _assert_only_tolerated(findings, _tolerated(unmapped=True))
 
 
-def test_rule_proof_orm_only() -> None:
+def test_rule_proof_orm_only(monkeypatch: pytest.MonkeyPatch) -> None:
     """Proof for rule sim.persistence.orm-only."""
     assert _fixture_findings("bad_household_job_records.py") == [
         (15, CORE_CONNECTION, "sqlalchemy.create_engine"),
@@ -138,8 +143,8 @@ def test_rule_proof_orm_only() -> None:
         ),
     ]
     assert _fixture_findings("good_household_job_records.py") == []
-    bad_module = _load_fixture("bad_household_job_records.py")
-    good_module = _load_fixture("good_household_job_records.py")
+    bad_module = _load_fixture("bad_household_job_records.py", monkeypatch)
+    good_module = _load_fixture("good_household_job_records.py", monkeypatch)
     assert [
         (finding.check, finding.source)
         for finding in unmapped_table_findings([bad_module], REPOSITORY_ROOT)
