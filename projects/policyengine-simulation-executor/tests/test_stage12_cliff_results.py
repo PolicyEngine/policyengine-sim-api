@@ -9,8 +9,13 @@ simulation run itself, to any report run, or to the comparison store.
 
 from __future__ import annotations
 
+import logging
+from types import SimpleNamespace
+
 import pandas as pd
 import pytest
+from microdf import MicroDataFrame
+from policyengine.outputs.cliff_impact import calculate_cliff_impact
 from policyengine_simulation_contract.stage12_execution import (
     EntityOutputPlan,
     GeographySelection,
@@ -26,6 +31,9 @@ from policyengine_simulation_executor.stage12_runtime import (
 )
 from policyengine_simulation_executor.stage12_runtime import (
     cliff_results as cliff_results_module,
+)
+from policyengine_simulation_executor.stage12_runtime.cliff_results import (
+    cliff_impact_from_frames,
 )
 from policyengine_stage12_persistence import RunStatus
 from stage12_fake_cliff_results import (
@@ -120,7 +128,9 @@ def _run_cliff_worker(
     return run_single_simulation(
         simulation.model_dump(mode="json"),
         (context or cliff_result_context()).model_dump(mode="json"),
-        required_country=simulation.geography.country,
+        required_country=dependencies.pop(
+            "required_country", simulation.geography.country
+        ),
         modal_call_id=dependencies.pop("modal_call_id", WORKER_CALL_ID),
         dependencies=SimulationWorkerDependencies(
             cliff_results=cliff_results, **dependencies
@@ -373,3 +383,77 @@ def test_a_dataset_with_no_adults_fails_the_cliff_result() -> None:
     result = cliff_results.cliff_results[CLIFF_RESULT_ID]
     assert result.status is RunStatus.FAILED
     assert result.error_message.startswith("cliff_share_undefined: ")
+
+
+def test_a_call_without_its_modal_call_id_claims_nothing() -> None:
+    cliff_results = FakeCliffResults()
+
+    with pytest.raises(ValueError, match="needs its Modal call ID"):
+        _run_cliff_worker(cliff_results, modal_call_id=None)
+
+    assert cliff_results.cliff_results[CLIFF_RESULT_ID].writes == []
+
+
+def test_a_payload_for_another_countrys_worker_fails_the_claimed_cliff_result() -> None:
+    cliff_results = FakeCliffResults()
+    calculator = RecordingCalculator()
+
+    with pytest.raises(RuntimeError, match="cliff calculation failed"):
+        _run_cliff_worker(cliff_results, calculator=calculator, required_country="uk")
+
+    assert calculator.simulations == []
+    result = cliff_results.cliff_results[CLIFF_RESULT_ID]
+    assert result.writes == ["claim_cliff_result", "fail_cliff_result"]
+    assert result.error_message.startswith("cliff_calculation_failed: ")
+
+
+class PersonVariables:
+    """Stands in for a country model version: every cliff variable is a person's."""
+
+    def get_variable(self, _name):
+        return SimpleNamespace(entity="person")
+
+
+def test_the_cliff_gap_and_share_are_pys_own_from_the_same_rows() -> None:
+    frames = cliff_frames()
+    calculated = SimpleNamespace(
+        id="cliff-test",
+        tax_benefit_model_version=PersonVariables(),
+        output_dataset=SimpleNamespace(
+            data=SimpleNamespace(
+                person=MicroDataFrame(frames["person"], weights="person_weight")
+            )
+        ),
+    )
+
+    impact = cliff_impact_from_frames(frames, cliff_plan())
+
+    expected = calculate_cliff_impact(calculated, calculated).baseline
+    assert (impact.cliff_gap, impact.cliff_share) == (
+        pytest.approx(expected.cliff_gap),
+        pytest.approx(expected.cliff_share),
+    )
+
+
+def test_a_failed_read_during_a_split_calculation_is_logged_and_ignored(
+    caplog,
+) -> None:
+    cliff_results = FakeCliffResults()
+    readable = cliff_results.get_cliff_result
+
+    def unreadable(_cliff_result_id):
+        msg = "the session pooler has no free connections"
+        raise ConnectionError(msg)
+
+    def segmented_calculator(_simulation, cancellation_requested):
+        cliff_results.get_cliff_result = unreadable
+        taken = cancellation_requested()
+        cliff_results.get_cliff_result = readable
+        assert taken is False
+        return SimulationCalculation(frames=cliff_frames())
+
+    with caplog.at_level(logging.WARNING):
+        _run_cliff_worker(cliff_results, segmented_calculator=segmented_calculator)
+
+    assert cliff_results.cliff_results[CLIFF_RESULT_ID].status is (RunStatus.SUCCEEDED)
+    assert f"Could not read cliff result {CLIFF_RESULT_ID}" in caplog.text

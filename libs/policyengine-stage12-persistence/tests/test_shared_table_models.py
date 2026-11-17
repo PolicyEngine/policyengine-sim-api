@@ -30,10 +30,14 @@ from policyengine_simulation_persistence import (
     result_metadata,
     service_metadata,
 )
+from policyengine_simulation_persistence import (
+    cliff_impact_tables as shared_cliff_tables,
+)
 from policyengine_simulation_persistence import tables as shared_tables
 from policyengine_stage12_persistence import (
     DistrictCodes,
     budget_window_store,
+    cliff_result_store,
     household_report_run_store,
     report_run_result,
     report_run_store,
@@ -61,6 +65,8 @@ def test_the_run_stores_write_the_shared_run_table_models() -> None:
     assert RUN_MODELS[RunKind.REPORT_RUN] is shared_tables.ReportRun
     assert RUN_MODELS[RunKind.SIMULATION_RUN] is shared_tables.SimulationRun
     assert RUN_MODELS[RunKind.HOUSEHOLD_JOB] is shared_tables.HouseholdJob
+    assert RUN_MODELS[RunKind.CLIFF_RESULT] is shared_cliff_tables.CliffImpact
+    assert cliff_result_store.CliffImpact is shared_cliff_tables.CliffImpact
     assert report_run_store.BudgetWindowRun is shared_tables.BudgetWindowRun
 
 
