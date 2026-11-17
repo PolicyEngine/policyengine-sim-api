@@ -131,13 +131,17 @@ the Modal secret the Stage 12 secret sync writes.
 Every staging deployment runs `staging_economy_check` when the household
 check runs: `.github/scripts/simulation-staging-economy-check.sh` sends a
 small report request, current law against current law for `country/wales`
-in 2026, through the candidate's tagged URL with the authenticated tests'
-client credentials (`POST /reports`), then forces a new run of the report
-(`POST /reports/{report_id}/runs` with `{"force": true}`), follows that run
-through `GET /reports/{report_id}`, and requires it to succeed within 30
-minutes. The report is found by key, so on versions an earlier check ran on,
-the request ends on that check's report run and calculates nothing; the
-forced run, which nothing joins, is what calculates on every deploy: both
+in 2026, on the bundle's local-area dataset
+(`data_source: "local_area_dataset"`), through the candidate's tagged URL
+with the authenticated tests' client credentials (`POST /reports`), then
+forces a new run of the report (`POST /reports/{report_id}/runs` with
+`{"force": true}`), follows that run through `GET /reports/{report_id}`, and
+requires it to succeed within 30 minutes. The run also calculates Wales's
+constituencies and local authorities, and the coordinator fails it unless
+both area levels have rows or withheld codes, so its success covers them.
+The report is found by key, so on versions an earlier check ran on, the
+request ends on that check's report run and calculates nothing; the forced
+run, which nothing joins, is what calculates on every deploy: both
 simulations on the release's workers and the comparison on its
 coordinator. Both requests need `simulation:submit`. `deployment_ready`
 requires the check to pass in staging, so a failure stops the production

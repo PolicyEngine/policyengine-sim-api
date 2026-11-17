@@ -87,12 +87,15 @@ runs too long and the limit never stays on a pooled connection.
 run writes for an economy report, or a standalone economy simulation. It
 reads the country's model (`read_model_id`) and a catalog version's region
 by code (`read_region`) and dataset by name or ID (`read_dataset`,
-`read_dataset_by_id`), and builds a simulation run `pending` with no Modal
-call ID (`simulation_run_row`, `insert_simulation_run`). The Simulation
-Entrypoint creates every simulation, report and run by key ("Shared
-simulations, reports and runs" below). A row naming one that does not exist
-is refused by its foreign key with SQLSTATE `23503`;
-`EconomyRecordReferenceError` names the table and column.
+`read_dataset_by_id`), and its local-area dataset
+(`read_local_area_dataset`): the one default dataset every constituency and
+local-authority region of the version uses, or none. It builds a simulation
+run `pending` with no Modal call ID (`simulation_run_row`,
+`insert_simulation_run`). The Simulation Entrypoint creates every
+simulation, report and run by key ("Shared simulations, reports and runs"
+below). A row naming one that does not exist is refused by its foreign key
+with SQLSTATE `23503`; `EconomyRecordReferenceError` names the table and
+column.
 
 `record_report_run_call` and `record_simulation_run_call` record a Modal
 call's ID, and `fail_unstarted_report_run` and
@@ -106,9 +109,16 @@ a transaction of its own: `read_report_inputs` reads the catalog version,
 model, region and dataset, and each side's policy and dynamic values
 together; `read_simulation_inputs` does the same for one simulation, and
 `read_budget_window_inputs` for a budget window's two sides; the writes and
-reads each take their own. A missing region or dataset raises
-`UnknownRegionError` or `UnknownDatasetError`, and a report side's refused
-policy or dynamic raises `ReportSideError`, naming the side. A create whose
+reads each take their own. The catalog rows come from `economy_inputs.py`
+(`read_catalog_rows`): the dataset is the region's default, a re-run's
+stored dataset by name (`EconomyRequest`'s `dataset_name`), or, for a
+report created with `data_source` (`read_report_inputs`'s
+`local_area_dataset_name`), the catalog version's local-area dataset; a
+request naming two of them is refused with `ValueError` before any read. A
+missing region or dataset raises `UnknownRegionError` or
+`UnknownDatasetError`, a local-area dataset the catalog doesn't give both
+area types raises `LocalAreaDatasetMismatchError`, and a report side's
+refused policy or dynamic raises `ReportSideError`, naming the side. A create whose
 commit fails after its rows were inserted raises
 `EconomyRecordOutcomeUnknownError`: PostgreSQL may have applied the commit,
 so the rows may exist.
