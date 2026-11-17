@@ -652,9 +652,12 @@ Segmentation applies by default when both simulation inputs describe a US
 national society-wide calculation and the shared output plan does not require
 cliff analysis or labor-supply responses. `segmented=false` selects the
 single-container calculation explicitly. UK calculations, subnational US
-calculations, cliff analysis, and labor-supply-response calculations also use
-the single-container path. `segmented=true` is accepted, but it does not
-override those numerical eligibility conditions. A US national simulation run
+calculations, a report's cliff analysis, and labor-supply-response
+calculations also use the single-container path. A simulation run's own cliff
+calculation is the exception: it is split whenever its run's own calculation
+is (`should_segment_cliff_calculation`), and its cliff gap and share are taken
+from the merged rows. `segmented=true` is accepted, but it does not override
+those numerical eligibility conditions. A US national simulation run
 started on its own (role `standalone`) is segmented by the same rule. It never
 uses the precomputed baseline files, which serve only a report run's
 current-law baseline, planned as its simulation run stores its output, so it

@@ -1,4 +1,4 @@
-"""The Modal worker role's database credentials, which runs and household jobs use.
+"""The Modal worker role's database credentials, for runs, cliffs and household jobs.
 
 An operator creates the Modal secret in each Modal environment. The v2 Modal
 application attaches it to the coordinator, which records the report run

@@ -10,6 +10,7 @@ simulation run itself, to any report run, or to the comparison store.
 from __future__ import annotations
 
 import logging
+from hashlib import sha256
 from types import SimpleNamespace
 
 import pandas as pd
@@ -24,9 +25,15 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationRole,
     Stage12OutputPlan,
 )
+from policyengine_simulation_executor.stage12_artifacts import (
+    serialize_simulation_frames,
+)
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
     SimulationWorkerDependencies,
+    Stage12SegmentResult,
+    build_segment_inputs,
+    merge_segment_results,
     run_single_simulation,
 )
 from policyengine_simulation_executor.stage12_runtime import (
@@ -34,6 +41,9 @@ from policyengine_simulation_executor.stage12_runtime import (
 )
 from policyengine_simulation_executor.stage12_runtime.cliff_results import (
     cliff_impact_from_frames,
+)
+from policyengine_simulation_executor.stage12_runtime.output_planning import (
+    plan_simulation_input,
 )
 from policyengine_stage12_persistence import RunStatus
 from stage12_fake_cliff_results import (
@@ -457,3 +467,46 @@ def test_a_failed_read_during_a_split_calculation_is_logged_and_ignored(
 
     assert cliff_results.cliff_results[CLIFF_RESULT_ID].status is (RunStatus.SUCCEEDED)
     assert f"Could not read cliff result {CLIFF_RESULT_ID}" in caplog.text
+
+
+def test_merged_region_group_rows_give_the_cliffs_of_the_whole_country() -> None:
+    """The split is exact: the share is taken from the merged rows, not averaged."""
+    people = 400
+    country = pd.DataFrame(
+        {
+            "person_id": list(range(people)),
+            "person_weight": [0.5 + (person * 37) % 900 for person in range(people)],
+            "cliff_gap": [
+                float((person * 53) % 3_000) if person % 5 == 0 else 0.0
+                for person in range(people)
+            ],
+            "is_on_cliff": [person % 7 == 0 for person in range(people)],
+            "is_adult": [person % 10 < 7 for person in range(people)],
+        }
+    )
+    plan = cliff_plan()
+    simulation = plan_simulation_input(cliff_simulation(), plan)
+    groups = [[f"state/group-{index}"] for index in range(20)]
+    segments = build_segment_inputs(simulation, groups=groups)
+    group_size = people // len(groups)
+    payloads = []
+    for segment in segments:
+        start = segment.segment_index * group_size
+        rows = country.iloc[start : start + group_size].reset_index(drop=True)
+        parquet, _ = serialize_simulation_frames({"person": rows})
+        payloads.append(
+            Stage12SegmentResult(
+                segment_index=segment.segment_index,
+                role=simulation.role,
+                region_codes=segment.region_codes,
+                parquet_payload=parquet,
+                payload_sha256=sha256(parquet).hexdigest(),
+            ).model_dump(mode="python")
+        )
+
+    merged = merge_segment_results(simulation, payloads, groups=groups)
+
+    split = cliff_impact_from_frames(merged.frames, plan)
+    whole = cliff_impact_from_frames({"person": country}, plan)
+    assert split.cliff_gap == pytest.approx(whole.cliff_gap, rel=1e-12)
+    assert split.cliff_share == pytest.approx(whole.cliff_share, rel=1e-12)
