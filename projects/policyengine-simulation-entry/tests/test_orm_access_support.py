@@ -191,7 +191,8 @@ def test_a_parameter_annotated_as_a_sqlalchemy_table_is_a_core_table():
         "HouseholdJob.__table__",
         "class_mapper(HouseholdJob).tables",
         "inspect(HouseholdJob).mapper.tables",
-        "mapper.tables",
+        "job_mapper.tables",
+        "held_mapper.tables",
         "HouseholdJob.id.table",
     ],
 )
@@ -201,7 +202,8 @@ def test_reaching_a_mapped_class_or_metadata_table_is_core_table_access(expressi
     from sqlalchemy.orm import class_mapper
 
     schema = MetaData()
-    mapper = inspect(HouseholdJob)
+    job_mapper = inspect(HouseholdJob)
+    held_mapper = HouseholdJob.__mapper__
     table = {expression}
     """
 
@@ -257,8 +259,10 @@ def test_an_engine_module_opens_sessions_not_connections():
         "engine.raw_connection()",
     ],
 )
-def test_opening_a_connection_is_reported_in_every_module(call):
-    assert _checks({ENGINE: f"value = {call}"}, ENGINE) == [(CORE_CONNECTION, call)]
+def test_opening_a_connection_is_reported_in_every_module_using_sqlalchemy(call):
+    source = f"import sqlalchemy\n\nvalue = {call}"
+
+    assert _checks({ENGINE: source}, ENGINE) == [(CORE_CONNECTION, call)]
 
 
 @pytest.mark.parametrize(
@@ -438,3 +442,97 @@ def test_the_runtime_check_accepts_tables_mapped_by_either_declarative_base(
     assert [(finding.check, finding.source) for finding in findings] == [
         (UNMAPPED_TABLE, "stray")
     ]
+
+
+def test_a_dataclass_field_typed_as_a_table_is_one_in_modules_importing_it():
+    results = """
+    from dataclasses import dataclass
+
+    from sqlalchemy import Table
+
+    @dataclass
+    class ResultRows:
+        table: Table
+        rows: list
+    """
+    store = """
+    from sqlalchemy import insert
+
+    from example.results import ResultRows
+
+    def write(result_rows: ResultRows):
+        return insert(result_rows.table)
+    """
+    unrelated = """
+    def describe(layout):
+        return layout.table
+    """
+    sources = {
+        "libs/example/src/example/results.py": results,
+        STORE: store,
+        GATEWAY: unrelated,
+    }
+
+    assert _checks(sources, STORE) == [(CORE_TABLE_ACCESS, "result_rows.table")]
+    assert _checks(sources, GATEWAY) == []
+
+
+def test_a_class_attribute_assigned_a_core_table_is_one_where_read():
+    store = """
+    from example.tables import household_jobs
+
+    class Index:
+        table = household_jobs
+
+    def identifiers(index: Index):
+        return index.table.c.id
+    """
+
+    assert _checks({STORE: store}, STORE) == [
+        (CORE_TABLE_ACCESS, "household_jobs"),
+        (CORE_TABLE_ACCESS, "index.table"),
+    ]
+
+
+def test_a_tuple_assignment_pairs_each_name_with_its_value():
+    store = """
+    from example.tables import household_jobs
+
+    current, previous = household_jobs.alias(), household_jobs.alias()
+    label, count = "jobs", 2
+    condition = previous.c.id == current.c.id
+    """
+
+    assert _checks({STORE: store}, STORE) == [
+        (CORE_TABLE_ACCESS, "household_jobs"),
+        (CORE_TABLE_ACCESS, "household_jobs"),
+        (CORE_TABLE_ACCESS, "previous"),
+        (CORE_TABLE_ACCESS, "current"),
+    ]
+
+
+def test_an_attribute_annotated_as_a_table_leaves_the_plain_name_alone():
+    store = """
+    from sqlalchemy import Table
+
+    class Store:
+        def __init__(self, source):
+            self.jobs: Table = source
+
+    def count(jobs: list[str]) -> int:
+        return len(jobs)
+    """
+
+    assert [source for _, source in _checks({STORE: store}, STORE)] == []
+
+
+def test_name_rules_apply_only_in_modules_that_use_sqlalchemy():
+    gateway = """
+    def publish(settings, socket, cache_engine, driver):
+        settings.bigquery.table
+        socket.connect()
+        cache_engine.begin()
+        driver.cursor()
+    """
+
+    assert _checks({GATEWAY: gateway}, GATEWAY) == []

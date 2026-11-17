@@ -67,9 +67,12 @@ imports one at module level; an attribute such as `tables.household_jobs` or
 `example.tables.household_jobs` of such a module; a parameter, variable or
 attribute annotated as SQLAlchemy's `Table`; or a name or attribute it assigns
 from an expression rooted at a Core table, such as
-`previous = household_jobs.alias()` or `self.jobs = tables.household_jobs`.
-Each file's module name is its path below `src`, and two files with one module
-name are refused. Each finding is one of:
+`previous = household_jobs.alias()` or `self.jobs = tables.household_jobs`
+(a tuple assignment pairs each name with its value); or a class attribute
+declared as a table, such as a dataclass field `table: Table`, wherever it is
+read, in its module and in modules that import from it. Each file's module
+name is its path below `src`, and two files with one module name are refused.
+Each finding is one of:
 
 - **Core table declaration:** a `Table(...)`, `Column(...)`, `table(...)`,
   `column(...)`, `TableClause(...)`, `ColumnClause(...)` or `MetaData(...)`
@@ -78,7 +81,8 @@ name are refused. Each finding is one of:
   statements, methods, column collections and joins; `__table__`,
   `local_table`, `persist_selectable` or `sorted_tables` anywhere; `tables` or
   `selectable` of a mapper (`__mapper__`, `.mapper`, or `inspect(...)`,
-  `class_mapper(...)` or `object_mapper(...)`, called or held in a name) or of
+  `class_mapper(...)` or `object_mapper(...)`, called or held in a name, or a
+  name assigned `__mapper__` or `.mapper`) or of
   a MetaData (a name bound to `MetaData(...)` or ending in `metadata`); and a
   mapped attribute's `table`, as in `HouseholdJob.id.table`.
 - **Core engine or connection:** `Connection` or `AsyncConnection` from
@@ -93,7 +97,9 @@ name are refused. Each finding is one of:
 - **sqlmodel import.**
 
 The checks read source, not types, and guard against ordinary Core use, not
-against deliberate evasion. They miss imports through `importlib`, tables and
+against deliberate evasion. The rules that go by a method or attribute name
+alone (`.table`, `.connect()`, `.cursor()`, `.begin()` on an engine) apply
+only in modules that import sqlalchemy. They miss imports through `importlib`, tables and
 engines passed around without a type annotation, tables held in a container
 such as a dict, and a Session's `bind` attribute. A name derived from a Core
 table counts as one throughout its module.
