@@ -215,11 +215,8 @@ def _assert_deployment_environment_settings(reusable_workflow: str) -> None:
     assert (
         # Every job but stage12_v2_ready declares the release environment.
         # The job that moves latest after the checks reads the prod
-        # environment's custom-hostname variable, the staging household
-        # check reads the beta variable SIMULATION_STAGING_HOUSEHOLD_ID and
-        # the environment's auth secrets, and the staging economy check
-        # reads those auth secrets too.
-        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 19
+        # environment's custom-hostname variable.
+        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 17
     )
     assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow

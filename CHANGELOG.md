@@ -10,6 +10,21 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.17.0] - 2026-11-17
+
+### Removed
+
+- Staging deployments no longer calculate a staging household or create a staging economy report through the v2 routes after moving the v2 default. Those checks need the Public API's catalog to have the release's policyengine.py version, which it publishes only once the Public API itself moves to that version, after this service has deployed it.
+
+
+## [0.16.1] - 2026-11-16
+
+### Changed
+
+- US simulations for 2036 now run: the worker uses policyengine.py 6.20.0, with policyengine-us 2.2.2 and spm-calculator 1.1.0, whose SPM forecast covers 2022–2036. 2037 is now the first year the worker refuses with `SPM_YEAR_UNAVAILABLE`. Stage 12 results for US national runs keep reporting the release's data version, as the main path does, now that the bundle addresses the national dataset by a Hugging Face commit.
+- Updated policyengine.py from 6.17.1 to 6.20.0 in the simulation runtime.
+
+
 ## [0.16.0] - 2026-11-16
 
 ### Added

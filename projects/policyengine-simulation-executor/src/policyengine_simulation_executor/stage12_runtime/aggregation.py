@@ -24,8 +24,32 @@ if TYPE_CHECKING:
     from policyengine.tax_benefit_models.uk.datasets import PolicyEngineUKDataset
     from policyengine.tax_benefit_models.us.datasets import PolicyEngineUSDataset
     from policyengine_simulation_contract.stage12_bundle import CountryId
+    from policyengine_simulation_contract.stage12_execution import DatasetProvenance
     from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
     from pydantic import JsonValue
+
+
+def reported_data_version(country: CountryId, dataset: DatasetProvenance) -> str:
+    """Return the ``data_version`` the main path reports for a run on ``dataset``.
+
+    For a run on the country's default dataset the main path reports the
+    installed release's data version, and so does this. For any other dataset
+    this returns the dataset's revision, which is what the main path reports
+    for a US state or district run on the regional dataset and for a UK
+    local-area breakdown. A UK constituency or local-authority report on the
+    local-area dataset is the exception: the main path reports the release's
+    data version for it. Until policyengine.py 6.20.0 the default dataset's
+    revision was the release's data version; since then the US one is a
+    Hugging Face commit, while the release keeps its version name.
+    """
+    from policyengine_simulation_executor.release_bundle import (  # noqa: PLC0415  # resolved per call so tests can patch release_bundle.get_country_release_bundle
+        get_country_release_bundle,
+    )
+
+    release = get_country_release_bundle(country)
+    if dataset.identity == release.default_dataset:
+        return release.data_version
+    return dataset.artifact_revision
 
 
 def validate_uk_local_authority_metadata(
@@ -242,7 +266,9 @@ def build_aggregate_report(
         dataset=datasets["baseline"],
         baseline=stand_in(datasets["baseline"], report.baseline.policy),
         reform=stand_in(datasets["reform"], report.reform.policy),
-        resolved_data_version=report.baseline.bundle.dataset.artifact_revision,
+        resolved_data_version=reported_data_version(
+            country, report.baseline.bundle.dataset
+        ),
         resolved_region_code=report.baseline.geography.region,
         uk_local_authority_metadata=uk_local_authority_metadata,
         omit_uk_area_breakdowns=not local_area_report
