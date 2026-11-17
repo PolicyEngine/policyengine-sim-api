@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -25,7 +26,30 @@ from policyengine_simulation_executor.stage12_runtime import (
 from policyengine_simulation_executor.stage12_runtime.partition import (
     US_REGION_GROUPS,
 )
-from stage12_runtime_support import planned_simulation, report_execution_input
+from stage12_runtime_support import (
+    bundle_provenance,
+    planned_simulation,
+    report_execution_input,
+)
+
+# The data version the existing path reports for a run on the default dataset:
+# the installed release's, which since policyengine.py 6.20.0 differs from the
+# US default dataset's revision (a Hugging Face commit).
+RELEASE_DATA_VERSION = "populace-us-2024-release"
+
+
+@pytest.fixture(autouse=True)
+def installed_release(monkeypatch) -> None:
+    """Stand in for the installed US release, whose default is the fixture's dataset."""
+    from policyengine_simulation_executor import release_bundle
+
+    installed = SimpleNamespace(
+        default_dataset=bundle_provenance().dataset.identity,
+        data_version=RELEASE_DATA_VERSION,
+    )
+    monkeypatch.setattr(
+        release_bundle, "get_country_release_bundle", lambda _country: installed
+    )
 
 
 def _frames(value: float) -> dict[str, pd.DataFrame]:
@@ -117,7 +141,7 @@ def test_qualification_runs_matching_inputs_through_both_complete_paths() -> Non
         assert request == {**_existing_request(), "_emit_microdata": True}
         return {
             "model_version": report.baseline.bundle.country_package_version,
-            "data_version": report.baseline.bundle.dataset.artifact_revision,
+            "data_version": RELEASE_DATA_VERSION,
             "budget": {"budgetary_impact": 20.0},
             "poverty": {"all": {"baseline": 0.1, "reform": 0.09}},
             "_microdata": extract_output_microdata(
@@ -140,7 +164,7 @@ def test_qualification_runs_matching_inputs_through_both_complete_paths() -> Non
         return {
             "result": {
                 "model_version": report.baseline.bundle.country_package_version,
-                "data_version": report.baseline.bundle.dataset.artifact_revision,
+                "data_version": RELEASE_DATA_VERSION,
                 "budget": {"budgetary_impact": 20.0},
                 "poverty": {"all": {"baseline": 0.1, "reform": 0.09}},
             }
@@ -180,7 +204,7 @@ def test_qualification_fails_with_bounded_diagnostic_without_output_values() -> 
     def existing_runner(_request):
         return {
             "model_version": report.baseline.bundle.country_package_version,
-            "data_version": report.baseline.bundle.dataset.artifact_revision,
+            "data_version": RELEASE_DATA_VERSION,
             "budget": {"budgetary_impact": 20.0},
             "_microdata": extract_output_microdata(
                 _Simulation(baseline),
@@ -235,7 +259,7 @@ def test_qualification_rejects_existing_executor_provenance_mismatch() -> None:
     def existing_runner(_request):
         return {
             "model_version": "different",
-            "data_version": report.baseline.bundle.dataset.artifact_revision,
+            "data_version": RELEASE_DATA_VERSION,
             "_microdata": extract_output_microdata(
                 _Simulation(baseline),
                 _Simulation(reform),
@@ -257,7 +281,7 @@ def _matching_existing_runner(report, baseline, reform, **overrides):
     def existing_runner(_request):
         return {
             "model_version": report.baseline.bundle.country_package_version,
-            "data_version": report.baseline.bundle.dataset.artifact_revision,
+            "data_version": RELEASE_DATA_VERSION,
             "budget": {"budgetary_impact": 20.0},
             "_microdata": extract_output_microdata(
                 _Simulation(baseline),
@@ -295,7 +319,7 @@ def test_qualification_receipt_records_every_digest_and_tolerance_field() -> Non
             aggregate=lambda **_: {
                 "result": {
                     "model_version": report.baseline.bundle.country_package_version,
-                    "data_version": report.baseline.bundle.dataset.artifact_revision,
+                    "data_version": RELEASE_DATA_VERSION,
                     "budget": {"budgetary_impact": 20.0},
                 }
             },

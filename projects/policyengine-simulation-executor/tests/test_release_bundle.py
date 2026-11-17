@@ -188,14 +188,14 @@ def test_resolve_bundle_dataset_uri_preserves_explicit_dataset_uri_and_revision(
 
 
 def test_resolve_bundle_dataset_uri_maps_explicit_logical_revision_to_hf_uri():
-    dataset = "populace_us_2024@custom-v1"
+    # The repository and the path in it come from the bundle (a build folder
+    # since policyengine.py 6.20.0); only the revision is the requested one.
+    bundle = get_country_release_bundle("us")
+    dataset = f"{bundle.default_dataset}@custom-v1"
+    expected = f"{bundle.default_dataset_uri.rsplit('@', maxsplit=1)[0]}@custom-v1"
 
-    assert resolve_bundle_dataset_name("us", dataset).startswith(
-        "hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"
-    )
-    assert resolve_bundle_dataset_uri("us", dataset).startswith(
-        "hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"
-    )
+    assert resolve_bundle_dataset_name("us", dataset).startswith(expected)
+    assert resolve_bundle_dataset_uri("us", dataset).startswith(expected)
 
 
 def test_resolve_bundle_dataset_uri_preserves_explicit_gcs_uri():
