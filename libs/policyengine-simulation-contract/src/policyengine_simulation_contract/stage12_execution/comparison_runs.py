@@ -102,7 +102,11 @@ class Stage12InvocationContext(StrictContractModel):
     # Comparison runs leave all three unset and record only the Stage 12 tables.
     report_run: ReportRunIds | None = None
     simulation_run_id: UUID | None = None
-    cliff_result_id: UUID | None = None
+    # Left out of the JSON when unset: a worker deployed before the field
+    # refuses it, even as null, so every other call keeps its JSON.
+    cliff_result_id: UUID | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_retention(self) -> Stage12InvocationContext:
