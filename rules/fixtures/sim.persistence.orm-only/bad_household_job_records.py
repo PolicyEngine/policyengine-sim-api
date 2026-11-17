@@ -1,10 +1,10 @@
 """Proof fixture: household job records written on SQLAlchemy Core.
 
-The rule must reject it. The table, the insert and the call recording are a
-real past mistake: policyengine-simulation-persistence declared household_jobs
-as a Core Table and wrote it through a Connection, as below, shortened. The
+The rule must reject it. The table, the insert and the call recording are the
+Core code policyengine-simulation-persistence had when the rule was added,
+shortened: household_jobs was a Core Table, written through a Connection. The
 engine factory imports create_engine outside a library's engine.py, and the
-count runs SQL text; both are illustrative, not taken from history.
+count runs SQL text; both are illustrative, not taken from the library.
 """
 
 from __future__ import annotations

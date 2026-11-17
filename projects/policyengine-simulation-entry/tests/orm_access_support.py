@@ -5,20 +5,20 @@ every statement through an ORM Session against them.
 ``orm_access_findings`` reads source, so the rule test runs it on the
 repository and the proof test runs it on the fixtures under
 ``rules/fixtures/sim.persistence.orm-only/``. ``unmapped_table_findings``
-imports modules and reports every table no mapped class maps, including
+reports every table that given modules hold and no mapped class maps, and
+``unmapped_tables_in_packages`` imports whole packages for it, which finds
 tables built in ways the source checks can't see.
 
-The source checks resolve names through each module's own imports of
-``sqlalchemy``: ``from sqlalchemy import text`` and ``import sqlalchemy as sa``
-both count, and a ``text`` or ``update`` from another package doesn't. A
-mapped class is a class deriving from ``DeclarativeBase``, directly or through
-other classes in the scanned files; classes are recognised by name across all
-files, since modules import their models from shared modules. Together the
-checks leave no way to obtain a Core table or a Connection: no module may
-build a table, read one through ``__table__``, or hold an engine outside a
-library's ``engine.py``, so every ``execute`` left is a Session's. They don't
-follow imports made through ``importlib`` or ``__import__``, or an engine
-passed around without a type annotation.
+The source checks look for Core rather than for the ORM, so any ORM statement
+passes, including ones on expressions, labels, subqueries and aliases. They
+resolve names through each module's own imports of ``sqlalchemy``: ``from
+sqlalchemy import text`` and ``import sqlalchemy as sa`` both count, and a
+``text`` or ``update`` from another package doesn't. A Core table is a name
+bound to ``Table(...)`` or ``table(...)``, or annotated as ``Table``, in any
+scanned file, or imported under another name; modules import their tables
+from shared modules. The checks don't follow imports made through
+``importlib`` or ``__import__``, tables or engines passed around without a
+type annotation, or a Session's ``bind`` attribute.
 """
 
 from __future__ import annotations
@@ -39,12 +39,13 @@ if TYPE_CHECKING:
 
 SQLALCHEMY_MODULE = "sqlalchemy"
 SQLMODEL_MODULE = "sqlmodel"
-# Core's table declarations. MetaData may be built only in a declarative base
-# module, as the metadata of the library's DeclarativeBase.
-TABLE_CONSTRUCTORS = frozenset({"Column", "MetaData", "Table"})
+# Core's table declarations, the lightweight table() and column() included.
+# MetaData may be built only in a declarative base module, as the metadata of
+# the library's DeclarativeBase.
+TABLE_CONSTRUCTORS = frozenset({"Column", "MetaData", "Table", "column", "table"})
+TABLE_FACTORIES = frozenset({"Table", "table"})
 METADATA_CONSTRUCTOR = "MetaData"
 DECLARATIVE_BASE_MODULE_NAME = "orm_base.py"
-DECLARATIVE_BASES = frozenset({"DeclarativeBase", "DeclarativeBaseNoMeta"})
 # The one module per library that may create and hold an engine, and hand out
 # a sessionmaker.
 SESSION_FACTORY_PATTERN = "libs/*/src/*/engine.py"
@@ -59,12 +60,19 @@ CONNECTION_NAMES = frozenset(
         "engine_from_config",
     }
 )
-CONNECTION_METHODS = frozenset({"connect", "connection", "raw_connection"})
+CONNECTION_METHODS = frozenset({"connect", "connection", "get_bind", "raw_connection"})
 STATEMENT_FUNCTIONS = frozenset({"delete", "insert", "select", "update"})
-ALIAS_FUNCTION = "aliased"
-COLUMN_COLLECTION_ATTRIBUTE = "c"
-COLUMNS_ATTRIBUTE = "columns"
-TABLE_ATTRIBUTE = "__table__"
+# Statement methods that take a table to read from or join.
+QUERY_METHODS = frozenset({"join", "join_from", "outerjoin", "select_from"})
+# Attributes that reach a Core table from a mapped class, its mapper or a
+# MetaData.
+TABLE_ATTRIBUTES = frozenset(
+    {"__table__", "local_table", "persist_selectable", "sorted_tables"}
+)
+METADATA_TABLES_ATTRIBUTE = "tables"
+METADATA_SUFFIX = "metadata"
+# A Core table's column collections.
+COLUMN_ATTRIBUTES = frozenset({"c", "columns"})
 RAW_SQL_FUNCTIONS = frozenset({"literal_column", "text"})
 RAW_SQL_METHODS = frozenset({"cursor", "exec_driver_sql"})
 # A model's schema details that SQLAlchemy accepts only as SQL text: a server
@@ -74,9 +82,9 @@ SCHEMA_DETAIL_KEYWORDS = frozenset(
 )
 
 CORE_TABLE_DECLARATION = "Core table declaration"
-CORE_COLUMN_ACCESS = "Core column collection"
+CORE_TABLE_ACCESS = "Core table access"
 CORE_CONNECTION = "Core engine or connection"
-STATEMENT_NOT_ON_ENTITY = "statement not on a mapped class"
+STATEMENT_ON_CORE_TABLE = "statement on a Core table"
 RAW_SQL = "raw SQL"
 SQLMODEL_IMPORT = "sqlmodel import"
 UNMAPPED_TABLE = "table without a mapped class"
@@ -152,70 +160,53 @@ def _sqlalchemy_name(node: ast.expr, imported: Mapping[str, str]) -> str:
     return qualified.rsplit(".", 1)[-1] if qualified else ""
 
 
-def _base_name(node: ast.expr) -> str:
-    if isinstance(node, ast.Subscript):
-        return _base_name(node.value)
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return node.attr
-    return ""
+def _bound_names(target: ast.expr) -> list[str]:
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, ast.Attribute):
+        return [target.attr]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return [name for element in target.elts for name in _bound_names(element)]
+    return []
 
 
-def mapped_class_names(trees: Iterable[ast.Module]) -> frozenset[str]:
-    """Return the declarative bases and mapped classes the modules define."""
-    classes = [
-        node
-        for tree in trees
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ClassDef)
-    ]
-    mapped: set[str] = set()
-    grew = True
-    while grew:
-        grew = False
-        for class_node in classes:
-            if class_node.name in mapped:
-                continue
-            if any(
-                _base_name(base) in DECLARATIVE_BASES or _base_name(base) in mapped
-                for base in class_node.bases
+def _core_table_names(trees: Iterable[ast.Module]) -> frozenset[str]:
+    """Return the names bound to a Core table in any of the modules.
+
+    A name bound to ``Table(...)`` or ``table(...)``, or annotated as
+    ``Table``, is a table, and so is a name a module imports one under.
+    """
+    trees = list(trees)
+    names = set().union(*(table_names(tree) for tree in trees))
+    for tree in trees:
+        imported = _sqlalchemy_imports(tree)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, (ast.Assign, ast.AnnAssign))
+                and isinstance(node.value, ast.Call)
+                and _sqlalchemy_name(node.value.func, imported) in TABLE_FACTORIES
             ):
-                mapped.add(class_node.name)
-                grew = True
-    return frozenset(mapped)
+                targets = (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+                names.update(
+                    name for target in targets for name in _bound_names(target)
+                )
+    for tree in trees:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                names.update(
+                    alias.asname
+                    for alias in node.names
+                    if alias.asname and alias.name in names
+                )
+    return frozenset(names)
 
 
-def _root(node: ast.expr) -> ast.expr:
-    while isinstance(node, (ast.Attribute, ast.Call, ast.Subscript)):
+def _root_name(node: ast.expr) -> str:
+    while isinstance(node, (ast.Attribute, ast.Call, ast.Subscript, ast.Starred)):
         node = node.func if isinstance(node, ast.Call) else node.value
-    return node
-
-
-def _alias_names(tree: ast.Module, imported: Mapping[str, str]) -> frozenset[str]:
-    """Return the names the module binds to ``aliased(...)`` of a mapped class."""
-    return frozenset(
-        target.id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Assign)
-        and isinstance(node.value, ast.Call)
-        and _sqlalchemy_name(node.value.func, imported) == ALIAS_FUNCTION
-        for target in node.targets
-        if isinstance(target, ast.Name)
-    )
-
-
-def _names_entity(
-    target: ast.expr, imported: Mapping[str, str], entities: frozenset[str]
-) -> bool:
-    root = _root(target)
-    if isinstance(root, ast.Name) and root.id in entities:
-        return True
-    # A SQLAlchemy expression, such as func.count() or exists(...).
-    return (
-        isinstance(target, ast.Call)
-        and _qualified_name(target.func, imported) is not None
-    )
+    return node.id if isinstance(node, ast.Name) else ""
 
 
 def _call_summary(call: ast.Call) -> str:
@@ -240,8 +231,7 @@ def _schema_detail_calls(tree: ast.Module) -> set[int]:
 class _ModuleContext:
     file: str
     imported: Mapping[str, str]
-    entities: frozenset[str]
-    known_tables: frozenset[str]
+    core_tables: frozenset[str]
     schema_details: set[int]
 
     @property
@@ -274,22 +264,27 @@ def _import_findings(
                 yield CORE_CONNECTION, f"{node.module}.{alias.name}"
 
 
-def _reads_core_columns(node: ast.Attribute, context: _ModuleContext) -> bool:
-    if node.attr in {COLUMN_COLLECTION_ATTRIBUTE, TABLE_ATTRIBUTE}:
+def _reaches_core_table(node: ast.Attribute, context: _ModuleContext) -> bool:
+    if node.attr in TABLE_ATTRIBUTES:
         return True
-    return node.attr == COLUMNS_ATTRIBUTE and (
-        _base_name(node.value) in context.known_tables
-        or (
-            isinstance(node.value, ast.Attribute) and node.value.attr == TABLE_ATTRIBUTE
+    if node.attr == METADATA_TABLES_ATTRIBUTE:
+        receiver = node.value
+        receiver_name = (
+            receiver.attr
+            if isinstance(receiver, ast.Attribute)
+            else _root_name(receiver)
         )
+        return receiver_name.lower().endswith(METADATA_SUFFIX)
+    return (
+        node.attr in COLUMN_ATTRIBUTES and _root_name(node.value) in context.core_tables
     )
 
 
 def _attribute_findings(
     node: ast.Attribute, context: _ModuleContext
 ) -> Iterator[tuple[str, str]]:
-    if _reads_core_columns(node, context):
-        yield CORE_COLUMN_ACCESS, ast.unparse(node)
+    if _reaches_core_table(node, context):
+        yield CORE_TABLE_ACCESS, ast.unparse(node)
     elif not context.is_session_factory and (
         _sqlalchemy_name(node, context.imported) in CONNECTION_NAMES
     ):
@@ -302,6 +297,12 @@ def _runs_raw_sql(node: ast.Call, function: str, context: _ModuleContext) -> boo
     return isinstance(node.func, ast.Attribute) and node.func.attr in RAW_SQL_METHODS
 
 
+def _builds_statement(node: ast.Call, function: str) -> bool:
+    if function in STATEMENT_FUNCTIONS:
+        return True
+    return isinstance(node.func, ast.Attribute) and node.func.attr in QUERY_METHODS
+
+
 def _call_findings(
     node: ast.Call, context: _ModuleContext
 ) -> Iterator[tuple[str, str]]:
@@ -310,11 +311,10 @@ def _call_findings(
         function == METADATA_CONSTRUCTOR and context.is_declarative_base
     ):
         yield CORE_TABLE_DECLARATION, _call_summary(node)
-    elif function in STATEMENT_FUNCTIONS and (
-        not node.args
-        or not _names_entity(node.args[0], context.imported, context.entities)
+    elif _builds_statement(node, function) and any(
+        _root_name(argument) in context.core_tables for argument in node.args
     ):
-        yield STATEMENT_NOT_ON_ENTITY, _call_summary(node)
+        yield STATEMENT_ON_CORE_TABLE, _call_summary(node)
     elif _runs_raw_sql(node, function, context):
         yield RAW_SQL, _call_summary(node)
     elif isinstance(node.func, ast.Attribute) and node.func.attr in CONNECTION_METHODS:
@@ -338,20 +338,17 @@ def _module_findings(tree: ast.Module, context: _ModuleContext) -> Iterator[Find
 def orm_access_findings(sources: Mapping[str, str]) -> list[Finding]:
     """Return every place the sources reach the database without the ORM.
 
-    ``sources`` maps a repository-relative file name to its source. Mapped
-    classes and Core tables bound in one file are recognised in all of them.
+    ``sources`` maps a repository-relative file name to its source. Core
+    tables bound in one file are recognised in all of them.
     """
     trees = {file: ast.parse(source, filename=file) for file, source in sources.items()}
-    entities = mapped_class_names(trees.values())
-    known_tables = frozenset().union(*(table_names(tree) for tree in trees.values()))
+    core_tables = _core_table_names(trees.values())
     findings: list[Finding] = []
     for file, tree in trees.items():
-        imported = _sqlalchemy_imports(tree)
         context = _ModuleContext(
             file=file,
-            imported=imported,
-            entities=entities | _alias_names(tree, imported),
-            known_tables=known_tables,
+            imported=_sqlalchemy_imports(tree),
+            core_tables=core_tables,
             schema_details=_schema_detail_calls(tree),
         )
         findings.extend(_module_findings(tree, context))
@@ -384,7 +381,7 @@ def _unmapped_findings(
 ) -> list[Finding]:
     """Report each held table no mapped class of any of the modules maps."""
     from sqlalchemy import MetaData, Table
-    from sqlalchemy.orm import DeclarativeBase
+    from sqlalchemy.orm import DeclarativeBase, DeclarativeBaseNoMeta
 
     held: dict[int, tuple[Table, str]] = {}
     mapped: set[int] = set()
@@ -396,13 +393,13 @@ def _unmapped_findings(
                 tables = list(value.tables.values())
             elif (
                 isinstance(value, type)
-                and issubclass(value, DeclarativeBase)
+                and issubclass(value, (DeclarativeBase, DeclarativeBaseNoMeta))
                 and not value.__module__.startswith(SQLALCHEMY_MODULE)
             ):
                 mapped.update(
                     id(mapper.local_table) for mapper in value.registry.mappers
                 )
-                tables = list(value.metadata.tables.values())
+                tables = list(value.registry.metadata.tables.values())
             else:
                 tables = []
             for table in tables:
@@ -427,7 +424,7 @@ def _package_modules(package_name: str) -> list[ModuleType]:
 def unmapped_tables_in_packages(
     package_names: Iterable[str], repository_root: Path
 ) -> list[Finding]:
-    """Return each table the packages' modules hold that no mapped class maps.
+    """Import the packages and return each table they hold that no class maps.
 
     A table is reported once, at the source directory of the first package
     that holds it, in the order given.

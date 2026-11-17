@@ -21,11 +21,11 @@ from collections import Counter
 from typing import TYPE_CHECKING
 
 from orm_access_support import (
-    CORE_COLUMN_ACCESS,
     CORE_CONNECTION,
+    CORE_TABLE_ACCESS,
     CORE_TABLE_DECLARATION,
     RAW_SQL,
-    STATEMENT_NOT_ON_ENTITY,
+    STATEMENT_ON_CORE_TABLE,
     UNMAPPED_TABLE,
     orm_access_findings,
     read_baseline,
@@ -130,11 +130,11 @@ def test_rule_proof_orm_only(monkeypatch: pytest.MonkeyPatch) -> None:
         (26, CORE_TABLE_DECLARATION, "Column('id', ...)"),
         (27, CORE_TABLE_DECLARATION, "Column('status', ...)"),
         (28, CORE_TABLE_DECLARATION, "Column('modal_call_id', ...)"),
-        (40, STATEMENT_NOT_ON_ENTITY, "insert(household_jobs)"),
-        (49, STATEMENT_NOT_ON_ENTITY, "update(household_jobs)"),
-        (51, CORE_COLUMN_ACCESS, "household_jobs.c"),
-        (52, CORE_COLUMN_ACCESS, "household_jobs.c"),
-        (55, CORE_COLUMN_ACCESS, "household_jobs.c"),
+        (40, STATEMENT_ON_CORE_TABLE, "insert(household_jobs)"),
+        (49, STATEMENT_ON_CORE_TABLE, "update(household_jobs)"),
+        (51, CORE_TABLE_ACCESS, "household_jobs.c"),
+        (52, CORE_TABLE_ACCESS, "household_jobs.c"),
+        (55, CORE_TABLE_ACCESS, "household_jobs.c"),
         (61, CORE_CONNECTION, "engine.connect()"),
         (
             63,

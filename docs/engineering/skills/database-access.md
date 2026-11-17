@@ -57,22 +57,31 @@ What the ORM means here:
   condition.
 
 `projects/policyengine-simulation-entry/tests/test_orm_only.py` runs the checks
-in `orm_access_support.py` over the same files as the guard below. Each
-finding is one of:
+in `orm_access_support.py` over the same files as the guard below. They look
+for Core rather than for the ORM, so any statement on mapped classes passes,
+including ones on expressions, labels, subqueries and aliases. A Core table is
+a name bound to `Table(...)` or `table(...)`, or annotated as `Table`, in any
+scanned file, or imported under another name. Each finding is one of:
 
-- **Core table declaration:** a `Table(...)`, `Column(...)` or `MetaData(...)`
-  call, apart from `MetaData` in an `orm_base.py`.
-- **Core column collection:** a `.c` or `__table__` attribute, or `.columns`
-  of a table.
+- **Core table declaration:** a `Table(...)`, `Column(...)`, `table(...)`,
+  `column(...)` or `MetaData(...)` call, apart from `MetaData` in an
+  `orm_base.py`.
+- **Core table access:** `__table__`, `local_table`, `persist_selectable`,
+  `sorted_tables` or a MetaData's `tables`, or `.c` or `.columns` of a Core
+  table.
 - **Core engine or connection:** an import of `Engine`, `Connection` or
   `create_engine` outside a library's `engine.py`, or any `.connect()`,
-  `.connection()` or `.raw_connection()` call.
-- **Statement not on a mapped class:** `select`, `insert`, `update` or
-  `delete` whose first argument isn't a mapped class, one of its attributes, an
-  `aliased(...)` of one, or a SQLAlchemy expression such as `func.count()`.
+  `.connection()`, `.raw_connection()` or `.get_bind()` call.
+- **Statement on a Core table:** `select`, `insert`, `update` or `delete`, or
+  a statement's `select_from`, `join`, `outerjoin` or `join_from`, with a Core
+  table as an argument.
 - **Raw SQL:** `text(...)` or `literal_column(...)` anywhere else, or
   `exec_driver_sql` or `.cursor()`.
 - **sqlmodel import.**
+
+The checks read source, not types. They miss imports through `importlib`,
+tables and engines passed around without a type annotation, and a Session's
+`bind` attribute.
 
 `test_every_table_is_mapped_by_a_class` also imports both persistence libraries
 and reports every table they hold that no mapped class maps.
