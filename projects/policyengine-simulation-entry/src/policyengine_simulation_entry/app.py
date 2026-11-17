@@ -127,6 +127,8 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+# Every module of the package logs under this logger.
+PACKAGE_LOGGER_NAME = "policyengine_simulation_entry"
 SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS = 3.0
 # The database ends each statement of a household route that runs longer.
 HOUSEHOLD_STATEMENT_TIMEOUT_MILLISECONDS = 5000
@@ -718,6 +720,9 @@ def create_app(
         platform="google_cloud_run",
         environment=runtime_settings.environment,
     )
+    # The root logger stays at WARNING, which would discard this package's
+    # INFO records before the observability runtime's handler sees them.
+    logging.getLogger(PACKAGE_LOGGER_NAME).setLevel(logging.INFO)
 
     runtime_backend = backend or OldGatewayBackend(runtime_settings, runtime=runtime)
     authenticate = auth_dependency or CallerAuthenticator(runtime_settings, runtime)

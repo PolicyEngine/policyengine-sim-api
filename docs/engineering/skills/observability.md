@@ -30,23 +30,24 @@ contains `household`, `reform`, `payload` or `person`, among others, so no key
 for these IDs names one. Do not use `job_id` for a v2 call: it names one
 annual Modal invocation of the v1 executor.
 
-## Standard-library log fields
-
-The observability runtime's standard-library log handler emits only a log
-record's `policyengine_attributes`: any other key passed in `extra=` stays on
-the Python `LogRecord` and never reaches Cloud Logging. Pass every log call's
-fields through `log_extra(...)` from
-`policyengine_simulation_observability.log_records`, which puts them in both
-places, and name a row with `database_row_attributes(table, row_id)`. Each
-field must be a string, a number or a boolean; the runtime drops a list. In
-the Simulation Entrypoint, `tests/test_log_fields.py` checks that every log call
-with `extra=` uses `log_extra` and that no literal field name contains a word
-the package drops.
-
 `observability_id` is a canonical UUID string and has diagnostic meaning only.
 Do not use it for idempotency, authorization, database identity, routing, or
 business logic. Do not create one for health checks, version queries, invalid
 requests, missing jobs, or ordinary status requests.
+
+## Standard-library log fields
+
+The observability runtime's standard-library log handler emits only a log
+record's `policyengine_attributes`: any other key passed in `extra=` stays on
+the Python `LogRecord` and never reaches Cloud Logging. In the Simulation
+Entrypoint, pass every log call's fields through `log_extra(...)` from
+`policyengine_simulation_observability.log_records`, which puts them in both
+places, and name a row with `database_row_attributes(table, row_id)` (rule
+`sim.observability.log-fields-through-log-extra`). Each field must be a
+string, a number or a boolean; the runtime drops a list. The Entrypoint sets
+its package logger to INFO: the root logger stays at WARNING, which would
+discard INFO records before the handler sees them. Some Stage 12 runtime and
+contract-library logs still pass plain `extra=` fields, which are not emitted.
 
 ## HTTP transport
 

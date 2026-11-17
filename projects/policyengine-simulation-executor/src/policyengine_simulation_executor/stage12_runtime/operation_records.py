@@ -29,11 +29,12 @@ from policyengine_simulation_observability.log_records import (
     database_row_attributes,
 )
 
-DatabaseTable = Literal["household_jobs", "report_runs", "simulation_runs"]
+# The tables a v2 Modal function's call works on.
+OperationTable = Literal["household_jobs", "report_runs", "simulation_runs"]
 
 
 def operation_record_attributes(
-    table: DatabaseTable,
+    table: OperationTable,
     row_id: UUID | None,
     modal_call_id: str | None,
 ) -> dict[str, str]:

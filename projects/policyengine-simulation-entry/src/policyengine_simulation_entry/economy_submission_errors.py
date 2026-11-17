@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from uuid import UUID
 
+    from policyengine_simulation_observability.log_records import DatabaseTable
     from policyengine_simulation_persistence import (
         EconomyRecordReferenceError,
         EconomyRequest,
@@ -65,7 +66,7 @@ REFERENCE_REFUSALS: dict[str, tuple[EconomyRefusalCode, str]] = {
 # What a submission creates, or a re-run calculates again.
 RecordName = Literal["report", "simulation"]
 # The Public API table holding each record, as telemetry names it.
-RECORD_TABLES: Final[dict[RecordName, str]] = {
+RECORD_TABLES: Final[dict[RecordName, DatabaseTable]] = {
     "report": "reports",
     "simulation": "simulations",
 }

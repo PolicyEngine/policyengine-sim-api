@@ -974,6 +974,33 @@ autofix = false
 kind = "none"
 
 [[rule]]
+id = "sim.observability.log-fields-through-log-extra"
+category = "observability"
+statement = "Every Simulation Entrypoint log call that passes fields passes them through log_extra, so they reach the emitted record, and names none with a word the observability package drops (household, reform, payload, person and others)."
+rationale = "docs/engineering/skills/observability.md#standard-library-log-fields"
+scope = ["projects/policyengine-simulation-entry/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_log_fields.py::test_every_log_call_passes_its_fields_through_log_extra",
+  "tests/test_log_fields.py::test_no_log_field_is_named_with_a_word_the_package_drops",
+  "tests/test_log_fields.py::test_the_package_has_log_calls_with_fields",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.observability.log-fields-through-log-extra/bad_entry_logs.py"
+good_fixture = "rules/fixtures/sim.observability.log-fields-through-log-extra/good_entry_logs.py"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_log_fields.py::test_rule_proof_log_fields_through_log_extra"
+
+[[rule]]
 id = "sim.observability.header-transport-only"
 category = "observability"
 statement = "observability_id travels only in the X-PolicyEngine-Observability-Id header, never in a simulation JSON body, and polling never invents one."
