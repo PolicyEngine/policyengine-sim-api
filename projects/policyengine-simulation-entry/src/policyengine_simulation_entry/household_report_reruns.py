@@ -1,25 +1,32 @@
 """Re-run a stored household report on the current .py version.
 
 A household report's re-run calculates its stored household again, in the
-report's own year, under each side's stored policy, as a new run, and keeps
-every earlier run. The re-run service (``economy_reruns``) reads the stored
-report and hands a household report to ``HouseholdReportRerunService``,
-which:
+report's own year, under each side's stored policy, on the current
+versions, and keeps every earlier run. The re-run service
+(``economy_reruns``) reads the stored report and hands a household report
+to ``HouseholdReportRerunService``, which:
 
 1. finds the v2 version manifest's default worker's household function for
    the country;
 2. reads, in one transaction, the country's catalog version for that
    worker's .py version, its model, the stored household and each side's
-   policy values, and builds each side's household contract request with
-   the side's new simulation run ID as its calculation ID;
-3. creates, in one transaction, the report's new run (trigger ``manual``)
-   and a new run of each side's own household simulation, all pending with
-   no Modal call ID, unless the report has a run pending or running;
-4. starts one household function call for the new report run and records
-   its ID, as for a new report, failing the new runs when Modal refuses the
-   call.
+   policy values, and checks each side's household contract request;
+3. for a keyed report's unforced re-run, joins, in one transaction, the
+   report's run on the current versions that hasn't failed and wasn't
+   forced, or else creates the report's new run (naming no trigger)
+   naming each side's household simulation run on those versions, found or
+   inserted, as an economy report's re-run does (C1 · 24's answer 8). A
+   forced re-run, and every re-run of a report created before keys, whose
+   runs may have been calculated for it alone (interim answer B), creates
+   an extra report run and a new run of each side, all marked forced,
+   which nothing joins and nothing refuses. Every new run is pending with
+   no Modal call ID;
+4. for a report run it created, starts one household function call and
+   records its ID, as for a new report, with each side's simulation run as
+   its calculation ID, failing the new report run when Modal refuses the
+   call (and a forced re-run's simulation runs, which only it names). A
+   joined run gets no call.
 
-A household run is never reused, so a forced re-run creates the same runs.
 The re-run service hands over only a report naming each row this needs and
 no dynamic, which a household calculation does not apply. Whatever is
 missing or cannot be calculated is refused in steps 1 and 2, before
@@ -44,11 +51,12 @@ from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionUnprocessableError,
     rerun_refusals,
 )
+from policyengine_simulation_entry.household_report_calculations import (
+    side_runs_calculation,
+)
 from policyengine_simulation_entry.household_report_submissions import (
     HouseholdReports,
-    HouseholdReportSideInputs,
     HouseholdReportSubmissionService,
-    household_report_calculation,
     household_report_created,
 )
 from policyengine_simulation_entry.household_workers import (
@@ -58,6 +66,7 @@ from policyengine_simulation_entry.household_workers import (
 from policyengine_simulation_entry.simulation_database import SimulationDatabase
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from uuid import UUID
 
     from policyengine_simulation_contract.household_report_execution import (
@@ -65,10 +74,10 @@ if TYPE_CHECKING:
     )
     from policyengine_simulation_contract.stage12_bundle import CountryId
     from policyengine_simulation_persistence import (
-        PolicyReform,
+        FoundReportRun,
+        HouseholdReportInputs,
         ReportSide,
         SideDefinition,
-        StoredHousehold,
     )
 
     from policyengine_simulation_entry.config import Settings
@@ -95,6 +104,7 @@ class StoredHouseholdReport:
     with their stored policies; ``reform`` is None for a report of the
     baseline alone. Neither names a dynamic, which a household calculation
     does not apply: the re-run service refuses a report whose side does.
+    ``keyed`` says the report was found or created by key (C1 · 27).
     """
 
     report_id: UUID
@@ -103,6 +113,7 @@ class StoredHouseholdReport:
     year: int
     baseline: SideDefinition
     reform: SideDefinition | None
+    keyed: bool = False
 
     @property
     def sides(self) -> dict[ReportSide, SideDefinition]:
@@ -119,8 +130,8 @@ class HouseholdReportRerunRows(HouseholdReports, Protocol):
     ``HouseholdReportStore`` is one.
     """
 
-    def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> None:
-        """Create the report's new run and each side's new simulation run."""
+    def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> FoundReportRun:
+        """Join the report's run on the re-run's versions, or create it."""
         ...
 
 
@@ -131,9 +142,10 @@ class HouseholdReportReruns(Protocol):
         self,
         stored: StoredHouseholdReport,
         *,
+        force: bool,
         observability_context: dict[str, Any] | None,
     ) -> HouseholdReportCreated:
-        """Create the stored report's new run, and start its household function call."""
+        """Join or create the stored report's run, and start a run it created."""
         ...
 
 
@@ -146,15 +158,17 @@ class HouseholdReportRerunService(
         self,
         stored: StoredHouseholdReport,
         *,
+        force: bool,
         observability_context: dict[str, Any] | None,
     ) -> HouseholdReportCreated:
-        """Create the stored report's new run on the current versions, and start it.
+        """Join or create the stored report's run on the current versions.
 
+        ``force``, or a report without keys, makes it an extra forced run.
+        A run it created is started; one it joined is answered as it is.
         Raise EconomyRecordNotFoundError (404) for a report deleted after it
-        was read, EconomyRerunConflictError (409 ``run_in_progress``) while
-        it has a run pending or running, and otherwise the errors
-        ``submit_report`` raises, located at the stored report; a 503 for
-        Modal's refusal names the new run as well as the report.
+        was read, and otherwise the errors ``submit_report`` raises, located
+        at the stored report; a 503 for Modal's refusal names the new run as
+        well as the report.
         """
         worker = await self._default_worker(stored.country)
         inputs = await self._read_inputs(
@@ -175,6 +189,7 @@ class HouseholdReportRerunService(
             )
             for side, definition in stored.sides.items()
         }
+        forced = force or not stored.keyed
         rerun = NewHouseholdReportRerun(
             report_id=stored.report_id,
             run_id=run_id,
@@ -186,40 +201,78 @@ class HouseholdReportRerunService(
             ),
             baseline=new_sides["baseline"],
             reform=new_sides.get("reform"),
+            forced=forced,
         )
-        calculation = _stored_report_calculation(
-            inputs.household, rerun, reforms=inputs.reforms, worker=worker
+        # Refused before anything is written, on the run IDs it proposes.
+        _stored_report_calculation(
+            inputs,
+            year=rerun.year,
+            run_ids={
+                side: proposed.simulation_run_id
+                for side, proposed in rerun.named_sides.items()
+            },
+            worker=worker,
         )
         with rerun_refusals("report"):
-            await self._create(
+            found = await self._create(
                 lambda: self._store.create_report_rerun(rerun),
                 rerun=True,
                 source=STORED_REPORT,
             )
-        status = await self._start_report_run(
-            worker,
-            calculation,
-            report_id=rerun.report_id,
-            run_id=rerun.run_id,
-            simulation_run_ids=rerun.simulation_run_ids,
-            observability_context=observability_context,
-            rerun=True,
-        )
+        run_ids = _side_run_ids(found, rerun.named_sides)
+        status = found.status
+        if found.inserted:
+            status = await self._start_report_run(
+                worker,
+                _stored_report_calculation(
+                    inputs, year=rerun.year, run_ids=run_ids, worker=worker
+                ),
+                report_id=rerun.report_id,
+                run_id=found.id,
+                # Only a forced run's simulation runs are this re-run's alone.
+                simulation_run_ids=rerun.simulation_run_ids if forced else (),
+                observability_context=observability_context,
+                rerun=True,
+            )
+        sides = {
+            side: HouseholdRerunSide(
+                simulation_id=definition.simulation_id, simulation_run_id=run_ids[side]
+            )
+            for side, definition in stored.sides.items()
+        }
         return household_report_created(
             report_id=rerun.report_id,
-            run_id=rerun.run_id,
+            run_id=found.id,
             status=status,
             year=rerun.year,
-            baseline=rerun.baseline,
-            reform=rerun.reform,
+            baseline=sides["baseline"],
+            reform=sides.get("reform"),
         )
+
+
+def _side_run_ids(
+    run: FoundReportRun, sides: Mapping[ReportSide, object]
+) -> dict[ReportSide, UUID]:
+    """Return the simulation run the report run names for each of ``sides``."""
+    named: dict[ReportSide, UUID | None] = {
+        "baseline": run.baseline_simulation_run_id,
+        "reform": run.reform_simulation_run_id,
+    }
+    run_ids: dict[ReportSide, UUID] = {}
+    for side in sides:
+        run_id = named[side]
+        if run_id is None:
+            msg = f"report run {run.id} of a household report names no {side} run"
+            raise ValueError(msg)
+        run_ids[side] = run_id
+    return run_ids
 
 
 def _stored_report_calculation(
-    household: StoredHousehold,
-    rerun: NewHouseholdReportRerun,
+    inputs: HouseholdReportInputs,
     *,
-    reforms: dict[ReportSide, PolicyReform],
+    year: int,
+    run_ids: Mapping[ReportSide, UUID],
     worker: HouseholdWorker,
 ) -> HouseholdReportRunCalculation:
     """Build the re-run's household function payload, in the stored report's year.
@@ -227,24 +280,8 @@ def _stored_report_calculation(
     A household or policy the contract refuses is located at the stored
     report's fields rather than a request's.
     """
-
-    def side_inputs(
-        side: HouseholdRerunSide, name: ReportSide
-    ) -> HouseholdReportSideInputs:
-        return HouseholdReportSideInputs(
-            simulation_run_id=side.simulation_run_id, policy_values=reforms[name]
-        )
-
     try:
-        return household_report_calculation(
-            household=household,
-            year=rerun.year,
-            baseline=side_inputs(rerun.baseline, "baseline"),
-            reform=None
-            if rerun.reform is None
-            else side_inputs(rerun.reform, "reform"),
-            worker=worker,
-        )
+        return side_runs_calculation(inputs, year=year, run_ids=run_ids, worker=worker)
     except EconomySubmissionUnprocessableError as error:
         raise EconomySubmissionUnprocessableError(
             code=error.code,

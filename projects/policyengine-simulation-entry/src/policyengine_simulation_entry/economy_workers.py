@@ -33,6 +33,7 @@ from policyengine_simulation_entry.household_workers import (
 if TYPE_CHECKING:
     from policyengine_simulation_contract.stage12_bundle import Stage12CountryBundle
     from policyengine_simulation_contract.stage12_manifest import (
+        LocalAreaReports,
         V2ManifestStore,
         V2VersionManifest,
     )
@@ -48,6 +49,9 @@ class EconomyWorker:
 
     ``version`` is the worker's .py version, the manifest's default, and
     ``version_manifest_sha256`` the digest of the manifest it was read from.
+    ``local_area_reports`` is the country's declaration of the local-area
+    report runs the coordinator runs, and the dataset it runs them on; None
+    when it runs none.
     """
 
     version: str
@@ -58,6 +62,7 @@ class EconomyWorker:
     bundle_manifest_sha256: str
     policyengine_version: str
     country: Stage12CountryBundle
+    local_area_reports: LocalAreaReports | None = None
 
     @property
     def versions(self) -> RunVersions:
@@ -99,6 +104,7 @@ def default_economy_worker(manifest: V2VersionManifest, country: str) -> Economy
         bundle_manifest_sha256=worker.bundle_manifest_sha256,
         policyengine_version=worker.bundle.policyengine_version,
         country=country_bundle,
+        local_area_reports=country_worker.local_area_reports,
     )
 
 
