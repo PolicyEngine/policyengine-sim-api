@@ -40,7 +40,6 @@ if TYPE_CHECKING:
         BudgetWindowReportRequest,
     )
     from policyengine_simulation_entry.economy_api_models import (
-        EconomyRefusalCode,
         EconomyReportRequest,
         EconomySimulationRequest,
     )
@@ -125,12 +124,16 @@ def economy_request_for(
     | BudgetWindowReportRequest,
     worker: EconomyWorker,
 ) -> EconomyRequest:
-    """Return what the request names apart from policies, for the default worker."""
+    """Return what the request names apart from policies, for the default worker.
+
+    It names no dataset: the store reads the region's, or the local-area
+    dataset a report on it asks for.
+    """
     return EconomyRequest(
         country=request.country,
         policyengine_version=worker.policyengine_version,
         region_code=request.region_code,
-        dataset_name=request.dataset_name,
+        dataset_name=None,
         year=request.year,
     )
 
@@ -146,23 +149,20 @@ def calculation_scope(
 ) -> CalculationScope:
     """Return what the calculation runs on, with the bundle's dataset.
 
-    Raise EconomySubmissionRefusedError when the bundle lacks the catalog
-    dataset: ``unknown_dataset`` when the request named it, and
-    ``dataset_not_in_bundle`` for the region's default.
+    Raise EconomySubmissionRefusedError (``dataset_not_in_bundle``, the
+    service's state) when the bundle lacks the catalog dataset: no request
+    names one.
     """
     try:
         dataset = bundle_dataset(worker, catalog.dataset.name)
     except DatasetNotInBundleError:
-        code: EconomyRefusalCode = (
-            "dataset_not_in_bundle"
-            if request.dataset_name is None
-            else "unknown_dataset"
-        )
         detail = (
             f"The default v2 worker, .py {worker.version}, has no dataset "
             f"{catalog.dataset.name}."
         )
-        raise EconomySubmissionRefusedError(code=code, detail=detail) from None
+        raise EconomySubmissionRefusedError(
+            code="dataset_not_in_bundle", detail=detail
+        ) from None
     return CalculationScope(
         country=request.country,
         region_code=catalog.region.code,

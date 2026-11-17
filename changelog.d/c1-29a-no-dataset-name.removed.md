@@ -1,0 +1,1 @@
+`POST /reports` (economy reports and budget windows) and `POST /simulations` no longer take `dataset_name`, and refuse it with 422: a report or simulation runs on the dataset the catalog gives its region, or on the local-area dataset with `data_source`. The Public API stopped sending it in PolicyEngine/policyengine-api#4307, which must be deployed first.

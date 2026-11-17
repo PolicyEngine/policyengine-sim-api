@@ -2,10 +2,13 @@
 # Send a small economy report request through a deployed Simulation
 # Entrypoint, force a new run of the report, and require that run to succeed:
 # current law against current law for Wales in 2026, which needs no stored
-# policy. The request reuses the simulation runs an earlier check on the same
-# versions calculated (and, once reports are found by key, ends on that
-# check's report run), so only a forced run, which nothing joins or reuses,
-# calculates both simulations on every deploy.
+# policy, on the bundle's local-area dataset (data_source), so the run also
+# calculates Wales's constituencies and local authorities. The coordinator
+# fails a run of such a report unless both area levels have rows or withheld
+# codes, so its success covers them. The request reuses the simulation runs
+# an earlier check on the same versions calculated (and, once reports are
+# found by key, ends on that check's report run), so only a forced run, which
+# nothing joins or reuses, calculates both simulations on every deploy.
 # Usage: simulation-staging-economy-check.sh <base-url>
 # Required env vars: the test client's SIMULATION_TEST_AUTH_ISSUER,
 # SIMULATION_TEST_AUTH_AUDIENCE, SIMULATION_TEST_AUTH_CLIENT_ID and
@@ -80,7 +83,8 @@ submission_status="$(
       region_code: "country/wales",
       baseline: {policy_id: null, dynamic_id: null},
       reform: {policy_id: null, dynamic_id: null},
-      include_cliffs: false
+      include_cliffs: false,
+      data_source: "local_area_dataset"
     }' \
     | send submission "${submission_timeout_seconds}" --request POST --header "@${authorization_header}" \
       --header 'Content-Type: application/json' --data @- \

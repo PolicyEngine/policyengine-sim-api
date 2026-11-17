@@ -1,14 +1,16 @@
 """Create economy reports and simulations, and start the calls that calculate them.
 
-A report submission names a region, a dataset, a year and each side's
-stored policy and dynamic. Identical submissions, together or apart, end on
-the same simulation, report and run rows (C1 · 24). The service:
+A report submission names a region, a year and each side's stored policy
+and dynamic, and runs on the region's dataset, or, with ``data_source``, on
+the bundle's local-area dataset. Identical submissions, together or apart,
+end on the same simulation, report and run rows (C1 · 24). The service:
 
 1. finds the v2 version manifest's default worker's economy functions for
-   the country, and its bundle;
+   the country, and its bundle, and, for a report with ``data_source``, the
+   local-area dataset its UK entry declares (``local_area_reports``);
 2. reads, in one transaction, the country's catalog version for that
-   worker's .py version, the region and dataset, and each side's policy and
-   dynamic values;
+   worker's .py version, the region and its dataset (or the catalog's
+   local-area dataset), and each side's policy and dynamic values;
 3. finds or creates, in one transaction, each side's simulation and the
    report by their keys (the catalog's dataset name and region code, the
    year, the policies, dynamics and SPM selection), then the report's run
@@ -97,6 +99,7 @@ from policyengine_simulation_entry.economy_workers import (
 from policyengine_simulation_entry.household_workers import (
     VersionManifestUnavailableError,
 )
+from policyengine_simulation_entry.local_area_reports import local_area_dataset_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -140,8 +143,13 @@ class EconomyRuns(Protocol):
         *,
         baseline: SimulationChoice,
         reform: SimulationChoice,
+        local_area_dataset_name: str | None = None,
     ) -> EconomyReportInputs:
-        """Read a report's catalog rows and both sides' values."""
+        """Read a report's catalog rows and both sides' values.
+
+        With ``local_area_dataset_name``, the report is read on the catalog's
+        local-area dataset, which must have that name.
+        """
         ...
 
     def read_simulation_inputs(
@@ -266,6 +274,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         """
         refuse_cliffs(request)
         worker = await self._default_worker(request.country)
+        area_dataset_name = local_area_dataset_name(request, worker)
         options = request.options()
         spm = options.get("spm")
         economy_request = economy_request_for(request, worker)
@@ -274,6 +283,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
                 economy_request,
                 baseline=simulation_choice(request.baseline),
                 reform=simulation_choice(request.reform),
+                local_area_dataset_name=area_dataset_name,
             ),
             request=economy_request,
         )
