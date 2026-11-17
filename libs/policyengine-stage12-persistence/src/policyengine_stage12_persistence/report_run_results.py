@@ -759,6 +759,13 @@ def _inequality_rows(
 
 
 def _sides(run_ids: ReportRunIds) -> tuple[tuple[str, Any], ...]:
+    """Return each side whose simulation run's own rows the result stores.
+
+    A report run naming one simulation run on both sides compares that run's
+    output with itself, so the run's rows are stored once, from the baseline.
+    """
+    if run_ids.names_one_simulation_run:
+        return (("baseline", run_ids.baseline_simulation_run_id),)
     return (
         ("baseline", run_ids.baseline_simulation_run_id),
         ("reform", run_ids.reform_simulation_run_id),

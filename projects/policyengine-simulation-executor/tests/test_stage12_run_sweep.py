@@ -42,8 +42,14 @@ class FakeSweepStore:
         self.expired_cutoffs = []
         self.failed = []
         self.events = []
+        # Each listing's and failure's ``regardless_of_report_runs``, in order.
+        self.listed_regardless = []
+        self.failed_regardless = []
 
-    def list_active_runs(self, kind, *, active_since_before):
+    def list_active_runs(
+        self, kind, *, active_since_before, regardless_of_report_runs=False
+    ):
+        self.listed_regardless.append(regardless_of_report_runs)
         # As the real store, a run this fake failed is no longer listed.
         failed = {failed_run for failed_run, _, _ in self.failed}
         if active_since_before == self.maximum_age_cutoff:
@@ -56,7 +62,10 @@ class FakeSweepStore:
             listed = self.runs
         return tuple(run for run in listed if run.kind is kind and run not in failed)
 
-    def fail_stuck_run(self, run, *, error_message, failed_at):
+    def fail_stuck_run(
+        self, run, *, error_message, failed_at, regardless_of_report_runs=False
+    ):
+        self.failed_regardless.append(regardless_of_report_runs)
         self.failed.append((run, error_message, failed_at))
         self.events.append(f"fail:{run.kind.value}")
         return RunWrite(changed=True, status=RunStatus.FAILED)
@@ -243,9 +252,9 @@ def test_a_run_another_sweep_failed_first_is_not_counted_again() -> None:
     run = _run("fc-ended")
 
     class AlreadyFailedStore(FakeSweepStore):
-        def fail_stuck_run(self, run, *, error_message, failed_at):
+        def fail_stuck_run(self, run, *, error_message, failed_at, **options):
             super().fail_stuck_run(
-                run, error_message=error_message, failed_at=failed_at
+                run, error_message=error_message, failed_at=failed_at, **options
             )
             return RunWrite(changed=False, status=RunStatus.FAILED)
 
@@ -382,6 +391,23 @@ def test_a_run_past_the_maximum_age_is_failed_whatever_modal_reports() -> None:
     assert summary.failed_for_age == 3
     # Failed for its age first, it is no longer listed for a lookup.
     assert summary.running == 0
+
+
+def test_the_age_limit_fails_a_simulation_run_whatever_report_runs_name_it() -> None:
+    # Shared simulation runs: report runs keep joining a run whose call Modal
+    # never ends, and each waits for it, so the age limit can't wait for no
+    # unfinished report run to name it. Only the age limit ignores them.
+    expired = _run("fc-never-ending")
+    judged = _run("fc-ended")
+    store = FakeSweepStore([judged], expired=[expired])
+
+    sweep_stuck_runs(store, call_state=lambda _: CallState.ENDED, now=NOW)
+
+    assert [run for run, _, _ in store.failed] == [expired, judged]
+    # The age limit's three listings and its failure ignore report runs; the
+    # minimum age's three listings and failure don't.
+    assert store.listed_regardless == [True] * 3 + [False] * 3
+    assert store.failed_regardless == [True, False]
 
 
 def test_an_unrecognised_input_status_leaves_the_call_unknown() -> None:

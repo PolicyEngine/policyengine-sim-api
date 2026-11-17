@@ -386,7 +386,7 @@ def _self_comparison(simulation: SimulationExecutionInput) -> ReportExecutionInp
     ],
     ids=["current-law", "reform", "cliffs"],
 )
-def test_a_simulation_planned_alone_gets_its_self_comparisons_plan(
+def test_a_simulation_planned_alone_stores_its_self_comparisons_columns(
     policy, options
 ) -> None:
     standalone = _simulation(
@@ -395,8 +395,17 @@ def test_a_simulation_planned_alone_gets_its_self_comparisons_plan(
 
     plan = resolve_simulation_output_plan(standalone)
 
-    assert plan == resolve_report_output_plan(_self_comparison(standalone))
-    assert plan.requirements.include_cliff_impacts is bool(options)
+    # Its stored plan: the self-comparison's columns without the cliff
+    # columns, which no shared run stores, and with the two inputs the US
+    # labour-supply output reads from either side.
+    self_comparison = resolve_report_output_plan(_self_comparison(standalone))
+    expected = _variables(self_comparison, "person") - {
+        "cliff_gap",
+        "is_on_cliff",
+    } | {"self_employment_income", "weekly_hours_worked"}
+    assert _variables(plan, "person") == expected
+    assert _variables(plan, "household") == _variables(self_comparison, "household")
+    assert plan.requirements.include_cliff_impacts is False
 
 
 # The dataset a routing release assigns to UK constituency and local-authority

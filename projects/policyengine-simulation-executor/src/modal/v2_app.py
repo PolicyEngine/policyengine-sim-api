@@ -46,6 +46,7 @@ from policyengine_simulation_executor.stage12_runtime.report_run_access import (
 )
 from policyengine_simulation_executor.stage12_timeouts import (
     COORDINATOR_TIMEOUT_SECONDS,
+    HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS,
     UK_SIMULATION_TIMEOUT_SECONDS,
     US_SIMULATION_TIMEOUT_SECONDS,
 )
@@ -561,12 +562,14 @@ def coordinate_report(
 # simulation service builds without axes. Each container
 # reserves 4 GiB and may use up to 16 GiB before Modal stops it, so a large
 # household calculated with every variable at many axis points still fits.
-# The timeout is three times the Public API's 300-second request timeout; a
-# household report run's two calculations, as the simulation service builds
-# them without axes, take a small part of it.
+# The timeout (stage12_timeouts.HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS) is three
+# times the Public API's 300-second request timeout; a household report run's
+# two calculations, as the simulation service builds them without axes, take a
+# small part of it. A report run's call may also wait, until two minutes before
+# it, for a side another call holds (HOUSEHOLD_SIDE_WAIT_SECONDS), holding one
+# of these containers meanwhile.
 HOUSEHOLD_FUNCTION_CPU = 2.0
 HOUSEHOLD_FUNCTION_MEMORY_MIB = (4096, 16384)
-HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS = 900
 HOUSEHOLD_FUNCTION_MAX_CONTAINERS = 20
 
 
@@ -587,8 +590,9 @@ def _run_household_calculation(
     without calculating when another call holds it or it has finished
     (``stage12_runtime.run_household_job``). With ``household_report_run_id``,
     ``payload`` is a ``HouseholdReportRunCalculation``: the call claims the
-    report run and each side's simulation run, calculates and records each
-    side, and returns the runs' statuses
+    report run and each side's simulation run it can, calculates and records
+    those sides, waits for a side another call holds, and returns the runs'
+    statuses
     (``stage12_runtime.run_household_report``). A call names at most one of
     the two; without either, the call touches no database.
     """

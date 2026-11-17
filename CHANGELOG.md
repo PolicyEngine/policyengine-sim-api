@@ -10,6 +10,28 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.17.1] - 2026-11-17
+
+### Changed
+
+- Stage 12 report runs, economy and household, can share simulation runs. A report run's coordinator now starts a worker for any simulation run that is pending with no Modal call, whichever report run created it, and waits for a run another call holds instead of cancelling or releasing that call; once that call ends, it reads the run's stored file, fails with the run's own recorded failure, or fails the run if the call ended without recording an outcome. The household function first calculates the sides it can claim, then waits the same way, reading the run before each probe, for up to 780 seconds from its start. A failing, cancelled or pre-empted coordinator or household function no longer fails simulation runs it doesn't hold, which other report runs may share. A report run may name one simulation run on both sides, and that run is calculated once. Each simulation run now stores an output that depends on its simulation alone: the labour-supply response columns only when its own policy turns a response on (a report reads them as zeros otherwise), in the US the two inputs the labour-supply output reads, and never the cliff columns. So a report run asking for cliffs fails with `cliff_impacts_unavailable` until cliffs return as a calculation of each simulation run. The precomputed US baselines are planned the same way, so the first deployment computes them again under new cache identities, and a comparison-path call's US national baseline (a shadow comparison with a production job, or the operator-only `POST /internal/stage12/reports`) no longer reads them. The stuck-run sweep's 24-hour age limit now fails a simulation run that records a Modal call whatever report runs name it; a run no call has claimed still waits for the report runs naming it.
+
+
+## [0.17.0] - 2026-11-17
+
+### Removed
+
+- Staging deployments no longer calculate a staging household or create a staging economy report through the v2 routes after moving the v2 default. Those checks need the Public API's catalog to have the release's policyengine.py version, which it publishes only once the Public API itself moves to that version, after this service has deployed it.
+
+
+## [0.16.1] - 2026-11-16
+
+### Changed
+
+- US simulations for 2036 now run: the worker uses policyengine.py 6.20.0, with policyengine-us 2.2.2 and spm-calculator 1.1.0, whose SPM forecast covers 2022–2036. 2037 is now the first year the worker refuses with `SPM_YEAR_UNAVAILABLE`. Stage 12 results for US national runs keep reporting the release's data version, as the main path does, now that the bundle addresses the national dataset by a Hugging Face commit.
+- Updated policyengine.py from 6.17.1 to 6.20.0 in the simulation runtime.
+
+
 ## [0.16.0] - 2026-11-16
 
 ### Added

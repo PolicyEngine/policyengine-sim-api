@@ -310,15 +310,20 @@ run that a pending or running report run names: those are the coordinator's.
 The coordinator claims the report run under its own Modal call ID, then checks
 the input against it: a report input or prefix naming other runs, or a report
 run row naming other simulation runs, fails the report run with
-`report_run_input_mismatch`. If a worker it starts finds its run held by a
-worker an earlier attempt started, which Modal never cancelled, the coordinator
-waits for that worker instead. It uses the stored output of each simulation run
+`report_run_input_mismatch`. If a worker it starts finds its run held by
+another call, the coordinator waits for that run instead (see "Shared
+simulation runs" below). It uses the stored output of each simulation run
 that already succeeded (see the reuse of succeeded runs above), fails the
 report run with the run's own recorded failure if a run it must calculate
 already failed (`simulation_run_failed` if it recorded none), and starts a
 worker for each other one with a context naming only that
 simulation run (`simulation_run_id`). It aggregates both outputs and completes
-the report run with its result rows. It returns
+the report run with its result rows. A report run may name one simulation run
+as both its baseline and its reform, as a report comparing a simulation with
+itself does; both inputs then carry that run's ID and the same policy. The
+coordinator starts one worker for it, or reads its stored output once, uses
+that output as both sides, and stores the run's poverty and inequality rows
+once. It returns
 `{"report_run_id", "status"}`, or the same marked `deduplicated` without running
 when another call holds the report run or it has finished.
 
@@ -329,10 +334,8 @@ its `simulation_runs` row (pending, no call), starts the country's
 both the run's ID) and a context naming the run in `simulation_run_id`, with
 an `artifact_prefix` that contains the run's ID (for example
 `stage-12-runs/<environment>/<YYYY>/<MM>/<simulation_run_id>`), and records the
-call as for a report run. A prefix without it fails the run. The worker plans the simulation's outputs
-as for a report comparing it with itself, so a report whose plan needs more
-columns, for example a reform that turns on labour supply responses, can't
-reuse it and fails with `reused_simulation_output_incompatible`.
+call as for a report run. A prefix without it fails the run. The worker plans the simulation's
+outputs with its stored plan, as a report run's coordinator does (below).
 
 **A re-run.** The service re-runs a stored report or simulation with the same
 two calls, by run ID. It creates the record's new run (a report run with
@@ -354,18 +357,61 @@ stored output's descriptor without calculating, and for a run another call
 holds, or one that failed, it returns `{"deduplicated": true,
 "simulation_run_id", "status"}`.
 
+**What a simulation run stores** (C1 · 24, answer 4). A run's output file
+depends on its simulation alone, never on a report naming it
+(`resolve_simulation_output_plan`): every column that doesn't depend on the
+other side, the area columns on the local-area dataset and the US budget
+columns; the labour-supply response columns only when the simulation's own
+policy turns a response on; in the US, the two inputs .py's labour-supply
+output reads from either side (`self_employment_income`,
+`weekly_hours_worked`); and never the cliff columns, so a US national run keeps
+its region-group split. Until cliffs come back as a calculation of each
+simulation run (a later stage), a report run asking for them
+(`include_cliffs: true`) fails before any worker starts, with
+`cliff_impacts_unavailable`, and touches none of its simulation runs. The
+coordinator gives each worker its simulation's
+stored plan, and keeps the report's own plan, from its pair, for what the
+aggregation reads. A reused or waited-for file must hold what the report reads
+from its side (`side_read_plan`); a side that stores no responses the report
+reads is read with them as zeros. A run that succeeded before this rule, under
+a report's plan, is reused when it holds what the new report reads from it,
+and refused (`reused_simulation_output_incompatible`) otherwise. The
+precomputed US baselines are planned the same way, so a report run's
+current-law baseline finds its precomputed files; a comparison-path call (a
+shadow comparison with a production job, or the operator-only
+`POST /internal/stage12/reports`) still plans its baseline with its report's
+plan, so its US national baseline no longer finds them and calculates all 20
+region groups.
+
+**Shared simulation runs.** Identical requests share simulation runs, so a
+report run may name a run another report run's worker is calculating (C1 · 24,
+answer 5). The coordinator starts a worker on each run that is pending with no
+call, whichever report run created it: the worker's claim lets one call hold
+the run, and a second worker returns `deduplicated`. It waits for a run that is
+pending or running under another call, without cancelling or releasing that
+call: it probes the call, and once the call has ended reads the run again. A
+run that succeeded is read from its stored file and checked as a reused run is;
+one that failed fails the report run with its recorded failure; one still
+unfinished under the call that ended is failed while it still records that call
+(`fail_simulation_run_held_by`, `modal_call_ended`), so every coordinator
+waiting for it stops. Each waiting report run holds a coordinator container
+(25 at most) while it waits, within its own wait window.
+
 **Pre-emption and cancellation.** Modal runs a pre-empted call again under the
 same call ID, and each claim lets that call resume. A pre-empted coordinator
-cancels its unfinished workers and records nothing; the restarted coordinator
-asks each earlier worker that holds a simulation run to stop, releases that run
-(pending, no call, keeping its first start) and starts a new worker on it. A
-run that worker finished meanwhile is used as it finished, or fails the report
-with its own cause. A failed or cancelled coordinator fails its report run and the
-simulation runs it left unfinished, never one that succeeded. The stuck-run
-sweep judges the run tables only, leaves a report run's simulation runs to its
-coordinator while the report run is unfinished, and never fails a run whose
-call Modal still reports pending, which includes a pre-empted one, before the
-run's maximum age of 24 hours.
+records nothing and cancels no worker; the restarted coordinator waits for each
+run an earlier worker holds, as for any run another call holds. A failed or
+cancelled coordinator fails its report run only: its workers finish, and their
+outputs stay reusable, since other report runs may name their runs. A worker's
+run is failed by its coordinator only for its own failure, while that worker
+holds it. The stuck-run sweep judges the run tables only, leaves a simulation
+run to the coordinators of the unfinished report runs naming it, and never
+fails a run whose call Modal still reports pending, which includes a
+pre-empted one, before the run's maximum age of 24 hours. That age limit
+fails a simulation run that records a call whatever report runs name it,
+since new ones may keep joining a run whose call Modal never ends; a run no
+call has claimed waits for the report runs naming it, as a budget window's
+later year does for the earlier years.
 
 **Applications deployed before this change** reject both calls before writing
 anything: their `coordinate_report` requires an evaluation record, and their
@@ -561,9 +607,9 @@ calculations, cliff analysis, and labor-supply-response calculations also use
 the single-container path. `segmented=true` is accepted, but it does not
 override those numerical eligibility conditions. A US national simulation run
 started on its own (role `standalone`) is segmented by the same rule. It never
-uses the precomputed baseline files, which serve only a report's current-law
-baseline under that report's output plan, so it calculates all 20 region
-groups.
+uses the precomputed baseline files, which serve only a report run's
+current-law baseline, planned as its simulation run stores its output, so it
+calculates all 20 region groups.
 
 The Stage 12 coordinator still persists only two logical simulation records:
 one baseline and one reform. Each eligible logical simulation call performs
@@ -851,9 +897,26 @@ report run, never both. The function then:
 Both sides are always calculated, so each run has its own outcome. A report
 run another call holds, or one already finished, returns `deduplicated`, the
 report run's ID and its status, without calculating. A restarted call keeps a
-side it already recorded. An error, a refused payload included, or Modal's
-cancellation fails the report run and each of its simulation runs left
-unfinished, with a summary naming only the error's type, then propagates; a
+side it already recorded.
+
+Identical household requests share simulation runs (C1 · 24, answer 8), so,
+as a report run's coordinator does, the function waits for a side whose run
+another call holds, once the sides it can claim are done: it uses the run once
+it succeeds, takes its recorded failure as the side's, claims and calculates
+it here if it is left pending with no call, and fails it, while it still
+records that call, only once Modal reports the call ended without an outcome
+(`modal_call_ended`). The holding call is another household function,
+which goes on to its other side and its own waits once it has recorded the
+run, so the wait reads the run before each probe and takes a finished run at
+once. A side still held
+`HOUSEHOLD_SIDE_WAIT_SECONDS` (780) after the call's start, inside the
+function's 900-second Modal timeout, fails the report run and is left to its
+call; a waiting call holds one of the household functions' containers. A run
+named on both sides, as a report comparing a policy with itself names one, is
+calculated once and is both sides' outcome. An error, a refused payload
+included, or Modal's cancellation fails the report run and each simulation run
+this call holds, with a summary naming only the error's type, then propagates;
+a run it never claimed, which other report runs may share, is left as it is. A
 pre-emption records nothing. An error in the report run's claim, or in the
 read of its simulation runs, fails the report run if the claim applied
 before the error, and leaves its simulation runs to the stuck-run sweep.

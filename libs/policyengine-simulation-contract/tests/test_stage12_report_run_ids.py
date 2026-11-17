@@ -76,14 +76,31 @@ def test_each_role_names_its_own_simulation_run() -> None:
     [
         {"baseline_simulation_run_id": REPORT_RUN_ID},
         {"reform_simulation_run_id": REPORT_RUN_ID},
-        {"reform_simulation_run_id": BASELINE_RUN_ID},
+        {
+            "baseline_simulation_run_id": REPORT_RUN_ID,
+            "reform_simulation_run_id": REPORT_RUN_ID,
+        },
     ],
 )
-def test_run_ids_must_name_three_different_runs(repeated_ids) -> None:
+def test_the_report_run_must_differ_from_its_simulation_runs(repeated_ids) -> None:
     fields = {**_run_ids().model_dump(), **repeated_ids}
 
-    with pytest.raises(ValidationError, match="three different runs"):
+    with pytest.raises(ValidationError, match="differ from its simulation runs"):
         ReportRunIds(**fields)
+
+
+def test_one_simulation_run_may_be_both_the_baseline_and_the_reform() -> None:
+    # A report comparing a simulation with itself names that simulation's run
+    # on both sides, since a simulation has one unfailed run per version set.
+    run_ids = ReportRunIds(
+        report_run_id=REPORT_RUN_ID,
+        baseline_simulation_run_id=BASELINE_RUN_ID,
+        reform_simulation_run_id=BASELINE_RUN_ID,
+    )
+
+    assert run_ids.names_one_simulation_run
+    assert run_ids.simulation_run_id(SimulationRole.REFORM) == BASELINE_RUN_ID
+    assert not _run_ids().names_one_simulation_run
 
 
 def test_a_shadow_comparison_run_cannot_record_report_runs() -> None:
