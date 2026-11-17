@@ -14,10 +14,14 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonSimulationRecord,
     ResultComparisonStatus,
 )
-from sqlalchemy import Engine, create_engine, select, update
+
+# Every Stage 12 store builds its engine with the simulation service library's
+# unpooled engine, which checks the URL with that library's one URL check.
+from policyengine_simulation_persistence.engine import (
+    create_unpooled_engine as create_stage12_engine,
+)
+from sqlalchemy import Engine, select, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.engine import URL, Connection, make_url
-from sqlalchemy.pool import NullPool
 
 from policyengine_stage12_persistence.tables import (
     REPORT_IDENTITY_CONSTRAINT,
@@ -46,6 +50,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy import ColumnElement, RowMapping, Table
+    from sqlalchemy.engine import Connection
 
 REPORT_IDENTITY_COLUMNS = (
     "environment",
@@ -99,37 +104,6 @@ SIMULATION_MUTABLE_COLUMNS = (
     "started_at",
     "completed_at",
 )
-
-
-def normalized_database_url(database_url: str) -> URL:
-    """Select psycopg 3 without changing the stored secret's URL format."""
-    if not database_url or database_url != database_url.strip():
-        msg = "Stage 12 database URL is missing or malformed"
-        raise ValueError(msg)
-    try:
-        parsed = make_url(database_url)
-    except Exception as error:
-        msg = "Stage 12 database URL is malformed"
-        raise ValueError(msg) from error
-    if parsed.drivername != "postgresql":
-        msg = "Stage 12 database URL must use postgresql://"
-        raise ValueError(msg)
-    if not parsed.username or not parsed.host or not parsed.database:
-        msg = "Stage 12 database URL is incomplete"
-        raise ValueError(msg)
-    return parsed.set(drivername="postgresql+psycopg")
-
-
-def create_stage12_engine(database_url: str) -> Engine:
-    """Build the DML-only runtime engine; this never creates database objects."""
-    return create_engine(
-        normalized_database_url(database_url),
-        # Coordinators and workers spend most of their lifetime calculating
-        # or waiting. Release each database session after its short operation
-        # instead of reserving a pooler slot throughout that idle interval.
-        poolclass=NullPool,
-        connect_args={"connect_timeout": 10},
-    )
 
 
 class ConnectionOpener(Protocol):

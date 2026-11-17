@@ -2,8 +2,10 @@
 
 ``public-api-schema-commit.sh`` reads the pinned Public API commit,
 ``public-api-commit-on-default-branch.sh`` requires it to be on the Public
-API's default branch, and ``public-api-schema-reference.sh`` builds the
-Public API's tables at that commit and grants its declared privileges.
+API's default branch, ``public-api-schema-reference.sh`` builds the
+Public API's tables at that commit and grants its declared privileges, and
+``public-api-schema-worker-login.sh`` gives the Modal worker role a login there,
+for the Stage 12 library's tests.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ SCRIPTS = REPOSITORY_ROOT / ".github" / "scripts"
 COMMIT_SCRIPT = SCRIPTS / "public-api-schema-commit.sh"
 DEFAULT_BRANCH_SCRIPT = SCRIPTS / "public-api-commit-on-default-branch.sh"
 REFERENCE_SCRIPT = SCRIPTS / "public-api-schema-reference.sh"
+WORKER_LOGIN_SCRIPT = SCRIPTS / "public-api-schema-worker-login.sh"
 PINNED_COMMIT = "0123456789abcdef0123456789abcdef01234567"
 DATABASE_URL = (
     "postgresql://postgres:simulation_ci@127.0.0.1:5432/policyengine_v2_alembic_test"
@@ -237,3 +240,70 @@ def test_the_reference_needs_a_database_to_migrate(tmp_path):
     assert result.returncode != 0
     assert "PUBLIC_API_SCHEMA_DATABASE_URL" in result.stderr
     assert not [line for line in commands if line.startswith("uv|")]
+
+
+# --- The Modal worker role's login ----------------------------------------
+
+
+def _fake_psql(tmp_path, *, exit_status: int = 0) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(exist_ok=True)
+    # The script sends its statement on standard input; the fake logs it.
+    _fake_command(
+        fake_bin,
+        "psql",
+        f'cat >> "${{FAKE_COMMAND_LOG}}"\nexit {exit_status}',
+    )
+
+
+def test_the_worker_role_is_given_a_login_with_the_tests_password(tmp_path):
+    _fake_psql(tmp_path)
+
+    result, log = _run(
+        WORKER_LOGIN_SCRIPT,
+        [],
+        tmp_path,
+        PUBLIC_API_SCHEMA_DATABASE_URL=DATABASE_URL,
+        MODAL_WORKER_TEST_PASSWORD="modal_worker_ci",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert log == [
+        f"psql|{DATABASE_URL} --no-psqlrc --set=ON_ERROR_STOP=1 "
+        "--set=password=modal_worker_ci",
+        "ALTER ROLE policyengine_v2_modal_worker LOGIN PASSWORD :'password';",
+    ]
+    # The password is passed as a psql variable, never written into the SQL.
+    assert "modal_worker_ci" not in log[1]
+
+
+@pytest.mark.parametrize(
+    "missing", ["PUBLIC_API_SCHEMA_DATABASE_URL", "MODAL_WORKER_TEST_PASSWORD"]
+)
+def test_the_login_needs_the_database_and_the_password(tmp_path, missing):
+    _fake_psql(tmp_path)
+    environment = {
+        "PUBLIC_API_SCHEMA_DATABASE_URL": DATABASE_URL,
+        "MODAL_WORKER_TEST_PASSWORD": "modal_worker_ci",
+    }
+    del environment[missing]
+
+    result, log = _run(WORKER_LOGIN_SCRIPT, [], tmp_path, **environment)
+
+    assert result.returncode != 0
+    assert missing in result.stderr
+    assert log == []
+
+
+def test_a_refused_login_fails_the_step(tmp_path):
+    _fake_psql(tmp_path, exit_status=3)
+
+    result, _ = _run(
+        WORKER_LOGIN_SCRIPT,
+        [],
+        tmp_path,
+        PUBLIC_API_SCHEMA_DATABASE_URL=DATABASE_URL,
+        MODAL_WORKER_TEST_PASSWORD="modal_worker_ci",
+    )
+
+    assert result.returncode == 3

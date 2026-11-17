@@ -27,12 +27,13 @@ CALCULATION_FAILURE = "the reform calculation failed"
 
 
 class EarlierCall:
-    """An earlier attempt's cancelled child, which returns no result.
+    """A restored call no test expects to finish, which returns no result.
 
-    A restarted coordinator cancels it before releasing its run, and waits
-    for no result from it. Each cancellation is recorded in ``events``,
-    beside the run tables' writes. A test of an earlier worker that keeps
-    running restores a real worker call instead.
+    A comparison-path coordinator that Modal restarted restores its earlier
+    children this way. Each cancellation is recorded in ``events``, beside
+    the run tables' writes. A test of a call holding a simulation run
+    restores a ``HolderCall`` (``stage12_shared_run_support``) or a real
+    worker call instead.
     """
 
     def __init__(self, object_id: str, events: list[str]) -> None:

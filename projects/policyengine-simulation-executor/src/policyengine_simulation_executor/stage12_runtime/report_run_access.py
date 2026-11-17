@@ -121,10 +121,15 @@ class ReportRunWriter(Protocol):
         """Mark the run failed while ``modal_call_id`` holds it, or while active."""
         ...
 
-    def release_simulation_run(
-        self, simulation_run_id: UUID, *, modal_call_id: str, released_at: datetime
+    def fail_simulation_run_held_by(
+        self,
+        simulation_run_id: UUID,
+        *,
+        modal_call_id: str,
+        error_message: str,
+        failed_at: datetime,
     ) -> RunWrite:
-        """Return a run ``modal_call_id`` holds to pending, recording no call."""
+        """Mark the run failed while it is unfinished and records ``modal_call_id``."""
         ...
 
 

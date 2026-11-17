@@ -116,6 +116,7 @@ def test_the_sweep_image_installs_the_locked_group_and_the_runtime_sources(
         "policyengine_simulation_executor",
         "policyengine_simulation_observability",
         "policyengine_simulation_contract",
+        "policyengine_simulation_persistence",
         "policyengine_stage12_persistence",
     )
 

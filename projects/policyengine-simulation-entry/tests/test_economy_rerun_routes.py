@@ -265,25 +265,6 @@ def test_an_unknown_record_answers_404(client_for, path, body, record) -> None:
 
 
 @pytest.mark.parametrize(("path", "body"), ROUTES)
-def test_a_run_under_way_answers_409_naming_it(client_for, path, body) -> None:
-    reruns = FakeEconomyReruns(
-        failure=EconomyRerunConflictError(
-            code="run_in_progress", detail="a run is under way", run_id=RUN_ID
-        )
-    )
-
-    with client_for(reruns) as client:
-        result = client.post(path, json=body)
-
-    assert result.status_code == 409
-    assert result.json() == {
-        "code": "run_in_progress",
-        "detail": "a run is under way",
-        "run_id": str(RUN_ID),
-    }
-
-
-@pytest.mark.parametrize(("path", "body"), ROUTES)
 def test_a_record_the_service_cannot_rerun_answers_409(client_for, path, body) -> None:
     reruns = FakeEconomyReruns(
         failure=EconomyRerunConflictError(
@@ -416,3 +397,16 @@ def test_an_unconfigured_service_answers_503(client_for, path, body) -> None:
 
     assert result.status_code == 503
     assert result.json()["code"] == "not_configured"
+
+
+def test_a_report_rerun_takes_no_data_source(client_for) -> None:
+    """A re-run keeps the stored report's dataset, whatever it was created with."""
+    reruns = FakeEconomyReruns()
+
+    with client_for(reruns) as client:
+        result = client.post(REPORT_RUNS, json={"data_source": "local_area_dataset"})
+
+    assert result.status_code == 422
+    (reason,) = result.json()["detail"]
+    assert (reason["loc"][-1], reason["type"]) == ("data_source", "extra_forbidden")
+    assert reruns.report_reruns == []

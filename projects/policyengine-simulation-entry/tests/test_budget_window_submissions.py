@@ -21,7 +21,6 @@ import pytest
 from economy_service_fakes import (
     CATALOG,
     CREATED_AT,
-    OUTPUT_BUCKET,
     REFORM,
     FakeCaller,
     FakeStore,
@@ -47,9 +46,12 @@ from policyengine_simulation_entry.economy_submission_errors import (
 from policyengine_simulation_entry.economy_submissions import ServiceSettings
 from policyengine_simulation_persistence import (
     BudgetWindowInputs,
+    EconomyReportDefinition,
+    FoundBudgetWindow,
+    FoundSide,
+    FoundWindowRun,
+    FoundWindowYear,
     ReportRunStatus,
-    ReusableRun,
-    RunReuse,
     SimulationInputs,
 )
 from policyengine_stage12_persistence import (
@@ -63,39 +65,67 @@ from sqlalchemy.exc import OperationalError
 from test_budget_window_requests import WINDOW_BODY
 
 OBSERVED = {"observability_id": "observed"}
-REUSED_IN_2027 = ReusableRun(
-    simulation_id=UUID("00000000-0000-4000-8000-0000000000d1"),
-    simulation_run_id=UUID("00000000-0000-4000-8000-0000000000d2"),
-)
+# A 2027 simulation run another report inserted, which a window year joins.
+JOINED_RUN_IN_2027 = UUID("00000000-0000-4000-8000-0000000000d2")
 
 
 @dataclass
 class FakeWindowStore(FakeStore):
-    """Also reads and creates budget-window reports."""
+    """Also reads budget-window reports, and finds or creates them by key.
 
-    reusable_by_year: dict[int, tuple[ReusableRun | None, ReusableRun | None]] = field(
-        default_factory=dict
-    )
+    ``joined_window`` is a window run an identical request created, which a
+    create joins; ``joined_year_runs`` names, by year and side, a simulation
+    run another report run created, which a window run this request creates
+    names instead of its own.
+    """
+
+    joined_window: FoundBudgetWindow | None = None
+    joined_year_runs: dict[tuple[int, str], UUID] = field(default_factory=dict)
     window_reads: list[tuple[Any, ...]] = field(default_factory=list)
     windows: list[Any] = field(default_factory=list)
+    found_windows: list[FoundBudgetWindow] = field(default_factory=list)
 
-    def read_budget_window_inputs(self, request, *, baseline, reform, reuse, years):
-        self.window_reads.append((request, baseline, reform, reuse, tuple(years)))
+    def read_budget_window_inputs(self, request, *, baseline, reform):
+        self.window_reads.append((request, baseline, reform))
         if self.read_failure is not None:
             raise self.read_failure
         return BudgetWindowInputs(
             catalog=self.catalog,
             baseline=SimulationInputs(choice=baseline, reform={}),
             reform=SimulationInputs(choice=reform, reform=REFORM),
-            reusable_runs={
-                year: self.reusable_by_year.get(year, (None, None)) for year in years
-            },
         )
 
-    def create_budget_window_report(self, report) -> None:
+    def find_or_create_budget_window(self, window) -> FoundBudgetWindow:
         if self.create_failure is not None:
             raise self.create_failure
-        self.windows.append(report)
+        self.windows.append(window)
+        found = self.joined_window or FoundBudgetWindow(
+            report_id=window.report_id,
+            report_inserted=True,
+            window_run=FoundWindowRun(
+                id=window.window_run_id, inserted=True, status=ReportRunStatus.PENDING
+            ),
+            years=tuple(
+                FoundWindowYear(
+                    year=window_year.year,
+                    report_run_id=window_year.report_run_id,
+                    baseline=self._side(window_year, "baseline"),
+                    reform=self._side(window_year, "reform"),
+                )
+                for window_year in window.years
+            ),
+        )
+        self.found_windows.append(found)
+        return found
+
+    def _side(self, window_year, side: str) -> FoundSide:
+        proposed = getattr(window_year, side)
+        joined_run = self.joined_year_runs.get((window_year.year, side))
+        return FoundSide(
+            simulation_id=proposed.simulation_id,
+            simulation_run_id=joined_run or proposed.simulation_run_id,
+            run_inserted=joined_run is None,
+        )
 
 
 @dataclass
@@ -120,9 +150,13 @@ class FakeAdvancer:
         time.sleep(self.delay_seconds)
         if self.failure is not None:
             raise self.failure
-        (report,) = self.store.windows
+        window = (
+            self.store.found_windows[-1]
+            if getattr(self.store, "found_windows", None)
+            else self.store.windows[-1]
+        )
         started_years = []
-        for window_year in report.years[:BUDGET_WINDOW_MAX_RUNNING_YEARS]:
+        for window_year in window.years[:BUDGET_WINDOW_MAX_RUNNING_YEARS]:
             year_to_start = YearToStart(
                 year=window_year.year,
                 run_ids=ReportRunIds(
@@ -161,7 +195,6 @@ def _service(store, *, caller=None, advancer=None):
         settings=ServiceSettings(
             environment="staging",
             modal_environment="staging",
-            output_bucket=OUTPUT_BUCKET,
         ),
         call_start_timeout_seconds=0.05,
         new_id=numbered_ids(),
@@ -187,21 +220,26 @@ def test_a_window_is_created_with_a_run_per_year_and_its_first_five_started() ->
         _service(store, caller=caller, advancer=advancer), budget_window_size=7
     )
 
-    ((request, baseline, reform, reuse, years),) = store.window_reads
+    ((request, baseline, reform),) = store.window_reads
     assert (baseline.policy_id, str(reform.policy_id)) == (
         None,
         WINDOW_BODY["reform"]["policy_id"],
     )
-    assert (request.year, years) == (2026, tuple(range(2026, 2033)))
-    assert reuse == RunReuse(
-        versions=reuse.versions,
-        inputs={"include_cliffs": False, "spm": {"geography_kind": "national"}},
-        output_uri_prefix=f"gs://{OUTPUT_BUCKET}/",
-    )
+    assert request.year == 2026
     (report,) = store.windows
+    assert report.definition == EconomyReportDefinition(
+        country="us",
+        baseline=baseline,
+        reform=reform,
+        dataset_name=CATALOG.dataset.name,
+        region_code=CATALOG.region.code,
+        year=2026,
+        budget_window_size=7,
+        spm={"geography_kind": "national"},
+    )
     assert [window_year.year for window_year in report.years] == list(range(2026, 2033))
     assert report.population == CATALOG.population(2026)
-    assert report.inputs == reuse.inputs
+    assert report.inputs == {"spm": {"geography_kind": "national"}}
     assert advancer.advances == [report.window_run_id]
     # The first five years were started, each with its own year and runs.
     assert len(caller.report_runs) == 5
@@ -218,7 +256,7 @@ def test_a_window_is_created_with_a_run_per_year_and_its_first_five_started() ->
         assert (call_id, observed) == ("fc-coordinator", OBSERVED)
     first_year = report.years[0]
     assert created.model_dump() == {
-        "report_id": report.id,
+        "report_id": report.report_id,
         "report_run_id": first_year.report_run_id,
         "budget_window_run_id": report.window_run_id,
         "status": ReportRunStatus.PENDING,
@@ -260,16 +298,63 @@ def test_each_later_year_is_derived_from_the_first() -> None:
         assert context == derived_context.model_dump(mode="json")
 
 
-def test_a_year_reuses_its_own_year_s_run() -> None:
-    store = FakeWindowStore(reusable_by_year={2027: (REUSED_IN_2027, None)})
+def test_a_year_names_its_own_years_run_another_report_created() -> None:
+    """Answer 8: a window year and a single-year report share runs."""
+    store = FakeWindowStore(joined_year_runs={(2027, "baseline"): JOINED_RUN_IN_2027})
+    caller = FakeCaller()
+    advancer = FakeAdvancer(store)
 
-    created = _submit(_service(store), budget_window_size=3)
+    created = _submit(
+        _service(store, caller=caller, advancer=advancer), budget_window_size=3
+    )
 
-    years = {window_year.year: window_year for window_year in store.windows[0].years}
-    assert years[2027].baseline.simulation_run_id == REUSED_IN_2027.simulation_run_id
-    assert years[2027].baseline.reused
-    assert not years[2026].baseline.reused
     assert [year.baseline_reused for year in created.years] == [False, True, False]
+    assert created.years[1].baseline_simulation_run_id == (JOINED_RUN_IN_2027)
+    year_2027 = ReportExecutionInput.model_validate(caller.report_runs[1][1])
+    assert year_2027.baseline.simulation_execution_id == (JOINED_RUN_IN_2027)
+
+
+def test_an_identical_window_request_joins_its_window_run_and_starts_no_year() -> None:
+    joined = FoundBudgetWindow(
+        report_id=UUID(int=80),
+        report_inserted=False,
+        window_run=FoundWindowRun(
+            id=UUID(int=81), inserted=False, status=ReportRunStatus.RUNNING
+        ),
+        years=tuple(
+            FoundWindowYear(
+                year=year,
+                report_run_id=UUID(int=82 + offset),
+                baseline=FoundSide(
+                    simulation_id=UUID(int=90 + offset),
+                    simulation_run_id=UUID(int=95 + offset),
+                    run_inserted=False,
+                ),
+                reform=FoundSide(
+                    simulation_id=UUID(int=100 + offset),
+                    simulation_run_id=UUID(int=105 + offset),
+                    run_inserted=False,
+                ),
+            )
+            for offset, year in enumerate((2026, 2027, 2028))
+        ),
+    )
+    store = FakeWindowStore(joined_window=joined)
+    caller = FakeCaller()
+    advancer = FakeAdvancer(store)
+
+    created = _submit(
+        _service(store, caller=caller, advancer=advancer), budget_window_size=3
+    )
+
+    assert (advancer.advances, caller.report_runs) == ([], [])
+    assert (created.report_id, created.budget_window_run_id, created.status) == (
+        UUID(int=80),
+        UUID(int=81),
+        ReportRunStatus.RUNNING,
+    )
+    assert created.report_run_id == UUID(int=82)
+    assert all(year.baseline_reused and year.reform_reused for year in created.years)
 
 
 def test_a_first_year_modal_refuses_answers_503_naming_the_report() -> None:
@@ -280,7 +365,7 @@ def test_a_first_year_modal_refuses_answers_503_naming_the_report() -> None:
         _submit(_service(store, caller=caller), budget_window_size=3)
 
     assert refused.value.code == "modal_call_refused"
-    assert refused.value.record_id == store.windows[0].id
+    assert refused.value.record_id == store.windows[0].report_id
 
 
 def test_a_start_modal_does_not_confirm_in_time_is_refused() -> None:
@@ -289,7 +374,7 @@ def test_a_start_modal_does_not_confirm_in_time_is_refused() -> None:
     with pytest.raises(EconomySubmissionUnavailableError) as refused:
         _submit(_service(store, caller=FakeCaller(hang=True)), budget_window_size=2)
 
-    assert refused.value.record_id == store.windows[0].id
+    assert refused.value.record_id == store.windows[0].report_id
 
 
 def test_a_window_whose_advance_cannot_be_written_is_answered_created() -> None:
@@ -303,7 +388,7 @@ def test_a_window_whose_advance_cannot_be_written_is_answered_created() -> None:
     created = _submit(_service(store, advancer=advancer), budget_window_size=2)
 
     assert created.status is ReportRunStatus.PENDING
-    assert created.report_id == store.windows[0].id
+    assert created.report_id == store.windows[0].report_id
 
 
 @dataclass
@@ -386,7 +471,7 @@ def test_a_later_year_modal_refuses_fails_the_window() -> None:
             _service(store, caller=RefusingAfterFirstCaller()), budget_window_size=3
         )
 
-    assert refused.value.record_id == store.windows[0].id
+    assert refused.value.record_id == store.windows[0].report_id
 
 
 def test_a_later_year_is_deferred_without_a_call_once_the_wait_has_run_out(

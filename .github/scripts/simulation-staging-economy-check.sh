@@ -1,7 +1,14 @@
 #!/bin/bash
-# Create a small economy report through a deployed Simulation Entrypoint, and
-# require its run to succeed: current law against current law for Wales in
-# 2026, which needs no stored policy.
+# Send a small economy report request through a deployed Simulation
+# Entrypoint, force a new run of the report, and require that run to succeed:
+# current law against current law for Wales in 2026, which needs no stored
+# policy, on the bundle's local-area dataset (data_source), so the run also
+# calculates Wales's constituencies and local authorities. The coordinator
+# fails a run of such a report unless both area levels have rows or withheld
+# codes, so its success covers them. The request reuses the simulation runs
+# an earlier check on the same versions calculated (and, once reports are
+# found by key, ends on that check's report run), so only a forced run, which
+# nothing joins or reuses, calculates both simulations on every deploy.
 # Usage: simulation-staging-economy-check.sh <base-url>
 # Required env vars: the test client's SIMULATION_TEST_AUTH_ISSUER,
 # SIMULATION_TEST_AUTH_AUDIENCE, SIMULATION_TEST_AUTH_CLIENT_ID and
@@ -9,9 +16,9 @@
 # Optional: ECONOMY_CHECK_DEADLINE_SECONDS (1800) and
 # ECONOMY_CHECK_POLL_SECONDS (15).
 # The access token is sent from a file and the client secret on standard
-# input, so neither appears on a command line. The submission, which isn't
-# asked again, may take 60 seconds, Cloud Run's own limit; every other
-# request 30. A read that gets no answer, a 429 or any 5xx is asked again
+# input, so neither appears on a command line. The submission and the forced
+# re-run, neither asked again, may each take 60 seconds, Cloud Run's own
+# limit; every other request 30. A read that gets no answer, a 429 or any 5xx is asked again
 # until the deadline.
 
 set -euo pipefail
@@ -76,7 +83,8 @@ submission_status="$(
       region_code: "country/wales",
       baseline: {policy_id: null, dynamic_id: null},
       reform: {policy_id: null, dynamic_id: null},
-      include_cliffs: false
+      include_cliffs: false,
+      data_source: "local_area_dataset"
     }' \
     | send submission "${submission_timeout_seconds}" --request POST --header "@${authorization_header}" \
       --header 'Content-Type: application/json' --data @- \
@@ -86,12 +94,23 @@ submission_status="$(
   || fail "POST /reports answered ${submission_status}: $(cat "${work_directory}/submission.json")"
 submission="${work_directory}/submission.json"
 report_id="$(jq -r '.report_id // empty' "${submission}")"
-report_run_id="$(jq -r '.report_run_id // empty' "${submission}")"
+found_run_id="$(jq -r '.report_run_id // empty' "${submission}")"
 [[ "${report_id}" =~ ${uuid_pattern} ]] || fail "the submission named no report"
-[[ "${report_run_id}" =~ ${uuid_pattern} ]] || fail "the submission named no report run"
-printf 'Created report %s, run %s (baseline reused: %s, reform reused: %s)\n' \
-  "${report_id}" "${report_run_id}" \
-  "$(jq -r '.baseline_reused' "${submission}")" "$(jq -r '.reform_reused' "${submission}")"
+[[ "${found_run_id}" =~ ${uuid_pattern} ]] || fail "the submission named no report run"
+printf 'Report request answered report %s, run %s (%s)\n' \
+  "${report_id}" "${found_run_id}" "$(jq -r '.status' "${submission}")"
+
+rerun_url="${base_url}/reports/${report_id}/runs"
+rerun_status="$(
+  jq -n '{force: true}' \
+    | send rerun "${submission_timeout_seconds}" --request POST --header "@${authorization_header}" \
+      --header 'Content-Type: application/json' --data @- "${rerun_url}"
+)" || fail "POST /reports/${report_id}/runs got no answer; it may have created a run"
+[[ "${rerun_status}" == "201" ]] \
+  || fail "POST /reports/${report_id}/runs answered ${rerun_status}: $(cat "${work_directory}/rerun.json")"
+report_run_id="$(jq -r '.report_run_id // empty' "${work_directory}/rerun.json")"
+[[ "${report_run_id}" =~ ${uuid_pattern} ]] || fail "the forced re-run named no report run"
+printf 'Started forced run %s of report %s\n' "${report_run_id}" "${report_id}"
 
 started_at="${SECONDS}"
 # What the last read found, for the deadline's failure message.
@@ -107,7 +126,7 @@ while true; do
   elif [[ "${read_status}" == "200" ]]; then
     newest_run_id="$(jq -r '.run.run_id // empty' "${report_body}")"
     [[ "${newest_run_id}" == "${report_run_id}" ]] \
-      || fail "report ${report_id}'s newest run is ${newest_run_id:-missing}, not the created run ${report_run_id}"
+      || fail "report ${report_id}'s newest run is ${newest_run_id:-missing}, not the forced run ${report_run_id}"
     run_status="$(jq -r '.run.status' "${report_body}")"
     last_read="the run was ${run_status}"
     case "${run_status}" in

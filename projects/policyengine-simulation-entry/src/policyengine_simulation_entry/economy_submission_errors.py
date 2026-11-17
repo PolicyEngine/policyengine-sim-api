@@ -18,11 +18,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from policyengine_simulation_persistence import (
+    LocalAreaDatasetMismatchError,
     MissingPolicyParametersError,
     OverlappingReformError,
     ReportSideError,
     RerunRecordDeletedError,
-    RunInProgressError,
     UnknownCatalogVersionError,
     UnknownDatasetError,
     UnknownDynamicError,
@@ -48,11 +48,12 @@ if TYPE_CHECKING:
     )
 
 # Each column whose foreign key can refuse a submission's rows: the code the
-# refusal answers with and the row it names. A region, dataset or dynamic is
-# the caller's own choice, or on a re-run the stored record's; any other row
-# is one the Public API checked first, or one the service chose, so its
-# refusal is the service's state. A simulation is refused only on a re-run,
-# whose new runs name the report's stored simulations.
+# refusal answers with and the row it names. A region or dynamic is the
+# caller's own choice, and a dataset its region's, or on a re-run each is the
+# stored record's; any other row is one the Public API checked first, or one
+# the service chose, so its refusal is the service's state. A simulation is
+# refused only on a re-run, whose new runs name the report's stored
+# simulations.
 REFERENCE_REFUSALS: dict[str, tuple[EconomyRefusalCode, str]] = {
     "simulation_id": ("missing_reference", "simulation"),
     "region_id": ("unknown_region", "region"),
@@ -151,20 +152,13 @@ class EconomyRecordNotFoundError(LookupError):
 
 
 class EconomyRerunConflictError(Exception):
-    """A stored record is not re-run now (409); nothing was written.
+    """A stored record is not re-run (409); nothing was written."""
 
-    ``run_id`` names the record's run pending or running, with
-    ``run_in_progress``.
-    """
-
-    def __init__(
-        self, *, code: EconomyConflictCode, detail: str, run_id: UUID | None = None
-    ) -> None:
-        """Keep the reason's code, its description and any run under way."""
+    def __init__(self, *, code: EconomyConflictCode, detail: str) -> None:
+        """Keep the reason's code and its description."""
         super().__init__(detail)
         self.code: EconomyConflictCode = code
         self.detail = detail
-        self.run_id = run_id
 
 
 class EconomySubmissionUnavailableError(Exception):
@@ -199,7 +193,9 @@ def read_refusal(
     """Return the refusal a store read's error means, or None for any other error.
 
     A missing catalog version, region, dataset, policy or dynamic is refused
-    (400); a policy or dynamic setting parameters the catalog version lacks,
+    (400), and so is a catalog whose area regions don't use the dataset the
+    default worker calculates local areas on; a policy or dynamic setting
+    parameters the catalog version lacks,
     or both setting one, cannot be calculated (422). A report side's refusal
     (ReportSideError) is located on that side's fields, under ``source``:
     the request's body, or the stored record a re-run reads. Every detail is
@@ -255,6 +251,14 @@ def _missing_row_refusal(
         refusal = (
             "unknown_dynamic",
             f"No stored dynamic matches the one {named_by} names.",
+        )
+    elif isinstance(error, LocalAreaDatasetMismatchError):
+        # The dataset is the default worker's declaration, not the request's.
+        refusal = (
+            "local_area_dataset_mismatch",
+            f"{catalog}'s constituency and local-authority regions do not all "
+            f"use {error.declared_dataset}, the dataset the default v2 worker "
+            "calculates local areas on.",
         )
     if refusal is None:
         return None
@@ -354,20 +358,11 @@ def call_refused(
 def rerun_refusals(record: RecordName) -> Iterator[None]:
     """Answer a re-run's create that the record's state refused.
 
-    A record deleted after the re-run read it is not found (404); a record
-    with a run pending or running is not re-run now (409 ``run_in_progress``,
-    naming that run). Nothing was created either way.
+    A record deleted after the re-run read it is not found (404); nothing
+    was created. No re-run the service sends is refused while a run is
+    under way: an unforced one joins it, and a forced one is an extra run.
     """
     try:
         yield
     except RerunRecordDeletedError:
         raise EconomyRecordNotFoundError(record) from None
-    except RunInProgressError as error:
-        raise EconomyRerunConflictError(
-            code="run_in_progress",
-            detail=(
-                f"The {record} has a run pending or running; re-run it once "
-                "that run has ended."
-            ),
-            run_id=error.run_id,
-        ) from None

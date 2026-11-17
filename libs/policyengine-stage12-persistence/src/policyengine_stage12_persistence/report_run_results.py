@@ -6,6 +6,10 @@ result table becomes rows: per-report parts keyed by the report run, with its
 two simulation runs where the table names them, and poverty and inequality
 keyed by each simulation run. The cliff impact, SPM receipts and data version
 are columns of the report run itself, which its completion sets.
+
+The result tables' models are the simulation service library's
+(``policyengine_simulation_persistence.result_tables``), which the CI
+comparison checks against the Public API's tables.
 """
 
 from __future__ import annotations
@@ -15,10 +19,20 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from uuid import uuid4
 
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
-from sqlalchemy import Boolean, Column, Float, Integer, String, Table
-from sqlalchemy.dialects.postgresql import ENUM, UUID
-
-from policyengine_stage12_persistence.report_run_tables import metadata
+from policyengine_simulation_persistence.result_tables import (
+    budget_summary,
+    congressional_district_impacts,
+    constituency_impacts,
+    decile_impacts,
+    inequality,
+    intra_decile_impacts,
+    labor_supply_decile_responses,
+    labor_supply_responses,
+    local_authority_impacts,
+    poverty,
+    program_statistics,
+    withheld_area_codes,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -36,186 +50,7 @@ if TYPE_CHECKING:
         RacePovertyOutput,
     )
     from policyengine_simulation_contract.stage12_execution import ReportRunIds
-
-decile_type_type = ENUM("income", "wealth", name="v2_decile_type", create_type=False)
-uk_area_type_type = ENUM(
-    "constituency", "local_authority", name="v2_uk_area_type", create_type=False
-)
-
-
-def _report_run_keys() -> tuple[Column[Any], ...]:
-    return (
-        Column("id", UUID(as_uuid=True), primary_key=True),
-        Column("report_run_id", UUID(as_uuid=True), nullable=False),
-        Column("baseline_simulation_run_id", UUID(as_uuid=True), nullable=False),
-        Column("reform_simulation_run_id", UUID(as_uuid=True), nullable=False),
-    )
-
-
-def _simulation_run_keys() -> tuple[Column[Any], ...]:
-    return (
-        Column("id", UUID(as_uuid=True), primary_key=True),
-        Column("simulation_run_id", UUID(as_uuid=True), nullable=False),
-    )
-
-
-labor_supply_responses = Table(
-    "labor_supply_responses",
-    metadata,
-    Column("id", UUID(as_uuid=True), primary_key=True),
-    Column("report_run_id", UUID(as_uuid=True), nullable=False),
-    *(
-        Column(name, Float, nullable=False)
-        for name in (
-            "income_effect_earnings_change",
-            "substitution_effect_earnings_change",
-            "total_earnings_change",
-            "revenue_change",
-            "relative_income_effect",
-            "relative_substitution_effect",
-            "baseline_weekly_hours",
-            "reform_weekly_hours",
-            "weekly_hours_change",
-            "weekly_hours_income_effect",
-            "weekly_hours_substitution_effect",
-        )
-    ),
-)
-labor_supply_decile_responses = Table(
-    "labor_supply_decile_responses",
-    metadata,
-    Column("id", UUID(as_uuid=True), primary_key=True),
-    Column("report_run_id", UUID(as_uuid=True), nullable=False),
-    Column("decile", Integer, nullable=False),
-    Column("average_income_effect", Float),
-    Column("average_substitution_effect", Float),
-    Column("relative_income_effect", Float),
-    Column("relative_substitution_effect", Float),
-)
-program_statistics = Table(
-    "program_statistics",
-    metadata,
-    *_report_run_keys(),
-    Column("program_name", String(512), nullable=False),
-    Column("entity", String(128)),
-    Column("is_tax", Boolean),
-    Column("baseline_total", Float),
-    Column("reform_total", Float),
-    Column("change", Float),
-)
-
-
-def _area_values() -> tuple[Column[Any], ...]:
-    return (
-        Column("average_household_income_change", Float, nullable=False),
-        Column("relative_household_income_change", Float, nullable=False),
-        Column("population", Float, nullable=False),
-    )
-
-
-def _disclosure_values() -> tuple[Column[Any], ...]:
-    return (
-        Column("disclosure_tier", String(16)),
-        Column("average_household_income_change_lower", Float),
-        Column("average_household_income_change_upper", Float),
-        Column("relative_household_income_change_lower", Float),
-        Column("relative_household_income_change_upper", Float),
-    )
-
-
-congressional_district_impacts = Table(
-    "congressional_district_impacts",
-    metadata,
-    *_report_run_keys(),
-    *_area_values(),
-    Column("district_geoid", Integer, nullable=False),
-    Column("state_fips", Integer, nullable=False),
-    Column("district_number", Integer, nullable=False),
-    Column("winner_percentage", Float, nullable=False),
-    Column("loser_percentage", Float, nullable=False),
-    Column("no_change_percentage", Float, nullable=False),
-)
-constituency_impacts = Table(
-    "constituency_impacts",
-    metadata,
-    *_report_run_keys(),
-    *_area_values(),
-    *_disclosure_values(),
-    Column("constituency_code", String(64), nullable=False),
-    Column("constituency_name", String(255), nullable=False),
-)
-local_authority_impacts = Table(
-    "local_authority_impacts",
-    metadata,
-    *_report_run_keys(),
-    *_area_values(),
-    *_disclosure_values(),
-    Column("local_authority_code", String(64), nullable=False),
-    Column("local_authority_name", String(255), nullable=False),
-)
-# The codes of the areas a local-area run estimated but disclosure control did
-# not publish, one row per area: none means none were withheld.
-withheld_area_codes = Table(
-    "withheld_area_codes",
-    metadata,
-    *_report_run_keys(),
-    Column("area_type", uk_area_type_type, nullable=False),
-    Column("code", String(64), nullable=False),
-)
-budget_summary = Table(
-    "budget_summary",
-    metadata,
-    *_report_run_keys(),
-    Column("variable_name", String(512), nullable=False),
-    Column("entity", String(128), nullable=False),
-    Column("baseline_total", Float),
-    Column("reform_total", Float),
-    Column("change", Float),
-)
-decile_impacts = Table(
-    "decile_impacts",
-    metadata,
-    *_report_run_keys(),
-    Column("income_variable", String(512), nullable=False),
-    Column("decile_variable", String(512)),
-    Column("entity", String(128), nullable=False),
-    Column("decile", Integer, nullable=False),
-    Column("quantiles", Integer, nullable=False),
-    Column("absolute_change", Float),
-    Column("relative_change", Float),
-)
-intra_decile_impacts = Table(
-    "intra_decile_impacts",
-    metadata,
-    *_report_run_keys(),
-    Column("decile_type", decile_type_type, nullable=False),
-    Column("decile", Integer, nullable=False),
-    Column("lose_more_than_5pct", Float),
-    Column("lose_less_than_5pct", Float),
-    Column("no_change", Float),
-    Column("gain_less_than_5pct", Float),
-    Column("gain_more_than_5pct", Float),
-)
-poverty = Table(
-    "poverty",
-    metadata,
-    *_simulation_run_keys(),
-    Column("poverty_type", String(128), nullable=False),
-    Column("entity", String(128), nullable=False),
-    Column("filter_variable", String(512)),
-    Column("filter_group", String(64)),
-    Column("rate", Float),
-)
-inequality = Table(
-    "inequality",
-    metadata,
-    *_simulation_run_keys(),
-    Column("income_variable", String(512), nullable=False),
-    Column("entity", String(128), nullable=False),
-    Column("gini", Float),
-    Column("top_10_share", Float),
-    Column("top_1_share", Float),
-)
+    from sqlalchemy import Table
 
 # The household variable each headline budget figure totals, and the column
 # its figure goes in. ``budgetary_impact`` is tax minus benefits, as the
@@ -759,6 +594,13 @@ def _inequality_rows(
 
 
 def _sides(run_ids: ReportRunIds) -> tuple[tuple[str, Any], ...]:
+    """Return each side whose simulation run's own rows the result stores.
+
+    A report run naming one simulation run on both sides compares that run's
+    output with itself, so the run's rows are stored once, from the baseline.
+    """
+    if run_ids.names_one_simulation_run:
+        return (("baseline", run_ids.baseline_simulation_run_id),)
     return (
         ("baseline", run_ids.baseline_simulation_run_id),
         ("reform", run_ids.reform_simulation_run_id),

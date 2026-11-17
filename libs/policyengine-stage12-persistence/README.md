@@ -1,8 +1,15 @@
 # PolicyEngine Stage 12 persistence
 
-SQLAlchemy Core mappings and transactional DML for two sets of tables, both
-owned by `policyengine-api`, which keeps the SQLModel definitions, Alembic
-revisions and live schema. This package never changes a schema.
+Transactional DML for two sets of tables, both owned by `policyengine-api`,
+which keeps the SQLModel definitions, Alembic revisions and live schema. This
+package never changes a schema.
+
+The models of the Public API's run and result tables are the simulation
+service library's (`libs/policyengine-simulation-persistence`: `tables.py`
+and `result_tables.py`), which CI compares with the tables the Public API's
+chain builds; this package's stores import them, and its engines come from
+that library's `create_unpooled_engine`. Its only models of its own are the
+comparison path's tables, in `tables.py`.
 
 - **The Stage 12 comparison tables** (`Stage12PersistenceStore`): temporary
   state of the comparison path, removed with it.
@@ -17,17 +24,17 @@ revisions and live schema. This package never changes a schema.
   stuck-run sweep fails the runs and household jobs nothing will finish.
   The coordinator also reads a simulation run's status, year, versions,
   dataset, region, output file, recorded call and failure, so a report run
-  can use a run that already succeeded instead of calculating it again, and
-  a restarted coordinator can release a run its earlier worker holds. The
-  mappings declare only the columns those statements read or write, and
-  each `UPDATE` sets only columns the role may update. Every status write is
-  one `UPDATE` conditional on the row's status and, for a call's claim,
-  completion or failure, on its recorded Modal call: a call claims a
-  pending or running row that records no call or its own, and completes or
-  fails it only while it holds it running. A report run's coordinator also
-  fails its unfinished simulation runs, whatever call they record, when the
-  report run fails, and releases one its pre-empted attempt's worker holds
-  back to pending with no call (`release_simulation_run`). A report run's
+  can use a run that already succeeded instead of calculating it again, or
+  wait for one another call holds. Every statement names the columns it
+  reads or writes, so the complete models send no other, and each `UPDATE`
+  sets only columns the role may update. Every status write is one `UPDATE` conditional on the
+  row's status and, for a call's claim, completion or failure, on its
+  recorded Modal call: a call claims a pending or running row that records
+  no call or its own, and completes or fails it only while it holds it
+  running. A coordinator waiting for a run whose holding call ended without
+  an outcome fails it while it still records that call
+  (`fail_simulation_run_held_by`); a report run's failure writes none of its
+  simulation runs, which other report runs may share. A report run's
   completion sets its own result columns and inserts its result rows in the
   same transaction.
 - **Budget windows** (`BudgetWindowStore`): `budget_window_runs`, one row per
@@ -48,14 +55,18 @@ revisions and live schema. This package never changes a schema.
   its simulation runs, the baseline's and any reform's, records each run's
   household result or failure document in `simulation_runs.household_result`,
   and then marks the report run succeeded or failed. It reads first which
-  simulation runs the report run names, to check them against its payload
-  and to fail them if it stops.
+  simulation runs the report run names, to check them against its payload.
+  A run another call holds is waited for; if the call stops, it fails only
+  the runs it holds.
 
 ## Tests
 
 The report run and budget-window tests need a disposable Postgres migrated
-by the Public API's v2 chain, with its declared privileges applied. They skip
-unless both URLs are set:
+by the Public API's v2 chain, with its declared privileges applied. The
+`Public API schema` job in `pr.yml` runs them on the database it builds at the
+pinned Public API commit, after giving the Modal worker role a login there,
+and sets `REPORT_RUN_REQUIRE_DATABASE_TESTS=1`, so a missing database fails
+them. Elsewhere they skip unless both URLs are set:
 
 - `REPORT_RUN_TEST_DATABASE_URL`: logs in as `policyengine_v2_modal_worker`;
 - `REPORT_RUN_TEST_SEED_DATABASE_URL`: logs in as a role that may insert the

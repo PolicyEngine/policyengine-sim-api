@@ -2,13 +2,13 @@
 
 The Simulation Entrypoint creates a household report in three steps, each
 its own transaction, with the household function's call started between
-them: it reads the report's inputs, creates the rows, then records the call
-on the report run or fails the run. A stored report's re-run takes the same
-steps, creating the report's new runs instead. ``HouseholdReportStore`` runs
-the reads and writes of ``household_report_records``,
-``household_job_records``, ``policy_reform``, ``economy_rerun_records``'
-household report re-run and ``economy_run_records``' report run writes that
-way.
+them: it reads the report's inputs, finds or creates the rows by key, then
+records the call on a report run it created or fails the run. A stored
+report's re-run takes the same steps, joining or creating the report's new
+runs instead. ``HouseholdReportStore`` runs the reads and writes of
+``keyed_household_records``, ``household_job_records``, ``policy_reform``,
+``economy_rerun_records``' household report re-run and
+``economy_run_records``' report run writes that way.
 """
 
 from __future__ import annotations
@@ -39,8 +39,8 @@ from policyengine_simulation_persistence.household_job_store import (
     UnknownCatalogVersionError,
     UnknownHouseholdError,
 )
-from policyengine_simulation_persistence.household_report_records import (
-    insert_household_report,
+from policyengine_simulation_persistence.keyed_household_records import (
+    find_or_create_household_report,
 )
 from policyengine_simulation_persistence.policy_reform import (
     MissingPolicyParametersError,
@@ -62,10 +62,12 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence.household_job_records import (
         StoredHousehold,
     )
-    from policyengine_simulation_persistence.household_report_records import (
-        NewHouseholdReport,
+    from policyengine_simulation_persistence.keyed_household_records import (
+        FoundHouseholdReport,
+        KeyedHouseholdReport,
     )
     from policyengine_simulation_persistence.policy_reform import PolicyReform
+    from policyengine_simulation_persistence.shared_rows import FoundReportRun
     from policyengine_simulation_persistence.tables import ReportRunStatus
 
 type TransactionFactory = Callable[[], AbstractContextManager[Connection]]
@@ -176,37 +178,45 @@ class HouseholdReportStore:
             reforms=reforms,
         )
 
-    def create_report(self, report: NewHouseholdReport) -> None:
-        """Create the report, its simulations and its runs.
+    def find_or_create_report(
+        self, report: KeyedHouseholdReport
+    ) -> FoundHouseholdReport:
+        """Find the report by key, with its run, or create them.
 
-        Raise ``insert_household_report``'s errors, and
+        See ``find_or_create_household_report``; raise its errors, and
         EconomyRecordOutcomeUnknownError when the commit fails after the
-        rows were inserted: they may exist.
+        rows were inserted.
         """
-        self._create(lambda connection: insert_household_report(connection, report))
+        return self._create(
+            lambda connection: find_or_create_household_report(connection, report)
+        )
 
-    def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> None:
-        """Create a stored report's new run and each side's new simulation run.
+    def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> FoundReportRun:
+        """Join a stored report's run on the re-run's versions, or create it.
 
-        Raise ``insert_household_report_rerun``'s errors, and
-        EconomyRecordOutcomeUnknownError as ``create_report`` does.
+        See ``insert_household_report_rerun``; raise its errors, and
+        EconomyRecordOutcomeUnknownError as ``find_or_create_report`` does.
         """
-        self._create(
+        return self._create(
             lambda connection: insert_household_report_rerun(connection, rerun)
         )
 
-    def _create(self, insert_rows: Callable[[Connection], None]) -> None:
-        """Insert the rows in a transaction; tell a lost commit from a refusal."""
+    def _create[Created](self, insert_rows: Callable[[Connection], Created]) -> Created:
+        """Insert the rows in a transaction; tell a lost commit from a refusal.
+
+        Return what ``insert_rows`` returns.
+        """
         inserted = False
         try:
             with self._transaction() as connection:
-                insert_rows(connection)
+                created = insert_rows(connection)
                 inserted = True
         except SQLAlchemyError as error:
             if not inserted:
                 raise
             msg = "the create's commit failed after its rows were inserted"
             raise EconomyRecordOutcomeUnknownError(msg) from error
+        return created
 
     def record_report_call(
         self, report_run_id: UUID, modal_call_id: str

@@ -10,6 +10,43 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.19.1] - 2026-11-17
+
+### Changed
+
+- The simulation service and the v2 Modal runtime use one library of the Public API's table models, `policyengine-simulation-persistence`. The Stage 12 library's stores, which the v2 coordinators, workers, household functions and stuck-run sweep use, now import its models of `report_runs`, `simulation_runs`, `budget_window_runs` and `household_jobs`, and its new complete models of the twelve result tables, instead of partial models of their own, and connect with its engine and URL check. They write the same columns as before. The v2 Modal images copy the library. CI's comparison with the Public API's tables now covers the result tables, a new test checks the Modal worker role's grants and writes against the Public API's, and the Stage 12 library's database tests, which skipped in CI, run in the `Public API schema` job as that role. A malformed Modal worker database URL now raises the service's "Simulation database URL" error.
+
+
+## [0.19.0] - 2026-11-17
+
+### Added
+
+- `POST /reports` takes `data_source: "local_area_dataset"` on UK-wide and nation economy reports: the report runs on the bundle's local-area dataset (the one constituency and local-authority regions use) and returns its full results with its constituency and local-authority results. Another value, another country or region, and a release that routes those areas to no dataset of their own (`no_local_area_dataset`) are refused with 422. The staging economy check's Wales report runs on that dataset.
+
+### Removed
+
+- `POST /reports` (economy reports and budget windows) and `POST /simulations` no longer take `dataset_name`, and refuse it with 422: a report or simulation runs on the dataset the catalog gives its region, or on the local-area dataset with `data_source`. The Public API stopped sending it in PolicyEngine/policyengine-api#4307, which must be deployed first.
+
+
+## [0.18.0] - 2026-11-17
+
+### Changed
+
+- Identical simulation, report and budget-window requests now end on the same rows, sent together or apart. `POST /reports` (economy, budget-window and household reports), `POST /simulations` and the re-run routes find or create each simulation and report by a key of its definition and join its run on the default worker's versions when one hasn't failed and wasn't forced, so the service starts a Modal calculation only for a run its own request created; a budget-window year and a single-year report of that year share their simulation runs. A re-run with `force`, and every re-run of a report created before keys, calculates an extra run marked forced that nothing joins. No re-run answers 409 `run_in_progress` any more. The service stores no report label, description or user and no run trigger on these shared rows: `label` and `description` are accepted, optional, and not stored.
+
+### Removed
+
+- `POST /reports` refuses `include_cliffs: true` with 422 `cliffs_not_available`, and so does a re-run of a stored report that asked for cliffs, until cliff impacts are calculated for each simulation run.
+- The Simulation Entrypoint's deployment no longer sets `V2_SIMULATION_OUTPUT_BUCKET` on its Cloud Run service or requires the `beta` and `prod` GitHub variable of that name for the entrypoint's deploy step; the service never used it. The Stage 12 deployment steps still pass it to the Modal coordinator and workers, which write simulation output files to that bucket. The simulation persistence library drops the create functions that use no definition keys, the search for an earlier succeeded simulation run to reuse, and the `reuse` parameters of the economy store's input reads, none of which the service has called since reports, simulations and runs are found or created by key. Requests and answers are unchanged.
+
+
+## [0.17.1] - 2026-11-17
+
+### Changed
+
+- Stage 12 report runs, economy and household, can share simulation runs. A report run's coordinator now starts a worker for any simulation run that is pending with no Modal call, whichever report run created it, and waits for a run another call holds instead of cancelling or releasing that call; once that call ends, it reads the run's stored file, fails with the run's own recorded failure, or fails the run if the call ended without recording an outcome. The household function first calculates the sides it can claim, then waits the same way, reading the run before each probe, for up to 780 seconds from its start. A failing, cancelled or pre-empted coordinator or household function no longer fails simulation runs it doesn't hold, which other report runs may share. A report run may name one simulation run on both sides, and that run is calculated once. Each simulation run now stores an output that depends on its simulation alone: the labour-supply response columns only when its own policy turns a response on (a report reads them as zeros otherwise), in the US the two inputs the labour-supply output reads, and never the cliff columns. So a report run asking for cliffs fails with `cliff_impacts_unavailable` until cliffs return as a calculation of each simulation run. The precomputed US baselines are planned the same way, so the first deployment computes them again under new cache identities, and a comparison-path call's US national baseline (a shadow comparison with a production job, or the operator-only `POST /internal/stage12/reports`) no longer reads them. The stuck-run sweep's 24-hour age limit now fails a simulation run that records a Modal call whatever report runs name it; a run no call has claimed still waits for the report runs naming it.
+
+
 ## [0.17.0] - 2026-11-17
 
 ### Removed

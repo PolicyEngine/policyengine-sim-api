@@ -1,9 +1,11 @@
 """Request and response models of the economy simulation and report routes.
 
-The Public API names a region and dataset of the country's catalog by code
-and name, and each simulation's stored policy and dynamic by ID; the
-Simulation Entrypoint reads them from the Public API's tables itself, and
-calculates on the v2 version manifest's default worker. A request names no
+The Public API names a region of the country's catalog by code, and each
+simulation's stored policy and dynamic by ID; the Simulation Entrypoint
+reads them, and the dataset the catalog gives the region, from the Public
+API's tables itself, and calculates on the v2 version manifest's default
+worker. No request names a dataset: only a UK-wide or nation report may
+choose the bundle's local-area dataset instead (``data_source``). A request names no
 .py version and no record ID: the service runs its default worker's version
 and chooses every ID.
 
@@ -18,10 +20,10 @@ Answers the Public API reads:
   is written;
 - 404 ``unknown_report`` or ``unknown_simulation`` when a re-run names no
   stored record;
-- 409 with ``code`` and ``detail`` when a stored record is not re-run now:
-  ``run_in_progress``, naming the run pending or running (``run_id``), or
-  ``rerun_not_supported`` for a record this service does not re-run.
-  Nothing is written;
+- 409 with ``code`` and ``detail``, ``rerun_not_supported``, for a stored
+  record this service does not re-run. Nothing is written. No re-run is
+  refused while a run is under way: an unforced one joins it, and a forced
+  one is an extra run;
 - 422 when the request's fields, or the stored values it names, cannot be
   calculated. Nothing is written;
 - 503 with ``code`` and ``detail`` when the service cannot answer now. Only
@@ -41,10 +43,18 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
+from policyengine_simulation_contract.local_area_breakdown import UK_NATION_REGIONS
 from policyengine_simulation_contract.spm import SPMSelection
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_persistence import ReportRunStatus, SimulationStatus
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    ValidationInfo,
+    field_validator,
+)
 from pydantic.json_schema import SkipJsonSchema
 
 # The bounds the tables accept.
@@ -52,11 +62,27 @@ SimulationYear = Annotated[int, Field(ge=1900, le=2200, description="The year")]
 CatalogKey = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^\S+$")]
 ReportLabel = Annotated[str, Field(min_length=1, max_length=255)]
 ReportDescription = Annotated[str, Field(max_length=10_000)]
+# The one data source a report may ask for: the bundle's local-area dataset,
+# on which a UK-wide or nation report also calculates its constituency and
+# local-authority impacts.
+LOCAL_AREA_DATA_SOURCE = "local_area_dataset"
+LocalAreaDataSource = Literal["local_area_dataset"]
+# The regions whose reports may run on the local-area dataset.
+LOCAL_AREA_DATA_SOURCE_REGIONS = frozenset({"uk", *UK_NATION_REGIONS})
+# A report's name and description are accepted and not stored: each user's
+# saved report in the Public API holds them (C1 · 24's answer 6).
+LABEL_NOT_STORED = (
+    "The report's name, accepted for the Public API's callers and not stored: "
+    "each user's saved report holds it."
+)
+DESCRIPTION_NOT_STORED = (
+    "The report's description, accepted and not stored, as the label is."
+)
 
 # Why a request is refused (400), naming a row the caller chose that doesn't
-# exist: the Public API answers these as its caller's error. On a re-run they
-# name the stored record's own region, dataset or dynamic, which the current
-# catalog version lacks or which was deleted.
+# exist, or the region's dataset: the Public API answers these as its caller's
+# error. On a re-run they name the stored record's own region, dataset or
+# dynamic, which the current catalog version lacks or which was deleted.
 CallerRowRefusalCode = Literal["unknown_region", "unknown_dataset", "unknown_dynamic"]
 # Why a request is refused (400) for the service's own state, or a row the
 # Public API checks before asking. On a report's re-run, ``unknown_policy`` and
@@ -75,6 +101,12 @@ ServiceStateRefusalCode = Literal[
     "unknown_household",
     # The default worker has no household function for the country.
     "no_household_function",
+    # The default worker's coordinator runs no local-area report runs of the
+    # input this service sends.
+    "local_areas_unsupported",
+    # The catalog version's constituency and local-authority regions don't
+    # all use the dataset the default worker calculates local areas on.
+    "local_area_dataset_mismatch",
 ]
 EconomyRefusalCode = Literal[CallerRowRefusalCode, ServiceStateRefusalCode]
 # Why stored values cannot be calculated (422).
@@ -85,13 +117,16 @@ EconomyUnprocessableCode = Literal[
     # be read, or the household functions' contract refuses what the report
     # would calculate: located at the household or a side's policy.
     "household_not_calculable",
+    # The default worker's .py release routes constituencies and local
+    # authorities to no dataset of their own, so it has no local-area dataset
+    # for ``data_source``: located at ``data_source``.
+    "no_local_area_dataset",
+    # A report asks for cliffs (include_cliffs: true), which wait for each
+    # simulation run's own cliff calculation (C1 · 39); located at the field.
+    "cliffs_not_available",
 ]
 # Why a stored record is not re-run now (409).
 EconomyConflictCode = Literal[
-    # The record has a run pending or running; ``run_id`` names it: for a
-    # report, its budget-window run, or else its report run; for a
-    # simulation, its simulation run.
-    "run_in_progress",
     # The service does not re-run this kind of record, or the record lacks a
     # row it calculates on.
     "rerun_not_supported",
@@ -138,39 +173,52 @@ class EconomySimulationRequest(PolicyChoice):
     """An economy simulation: a policy and dynamic applied to one region's data.
 
     ``region_code`` is a region of the country's catalog version for the
-    default worker's .py version (``us``, ``state/ca``, ``country/wales``),
-    and ``dataset_name`` one of that version's datasets; without it, the
-    region's default dataset is used.
+    default worker's .py version (``us``, ``state/ca``, ``country/wales``);
+    the simulation runs on the dataset that version gives the region.
     """
 
     country: CountryId
     simulation_type: Literal["economy"]
     year: SimulationYear
     region_code: CatalogKey
-    dataset_name: CatalogKey | None = None
 
 
 class EconomyReportRequest(_Request):
     """An economy report: a baseline and a reform simulation of one region's data.
 
-    Both simulations use the report's year, region and dataset, as
-    ``EconomySimulationRequest`` describes them. ``include_cliffs`` also
-    calculates the baseline's and reform's cliff impact. ``spm`` selects the
+    Both simulations use the report's year and region, and the region's
+    dataset, as ``EconomySimulationRequest`` describes them. ``include_cliffs:
+    true`` is refused (422 ``cliffs_not_available``) until cliffs are
+    calculated per simulation run (C1 · 39). ``spm`` selects the
     SPM forecast scenario and geography; omit it, rather than sending null,
     to use the bundle's certified defaults.
+
+    ``data_source: "local_area_dataset"`` runs the report on the bundle's
+    local-area dataset, the one its .py release routes constituencies and
+    local authorities to, in place of the region's own: the report returns
+    its full results, cliffs included when asked, and its constituency and
+    local-authority impacts. Only a UK report whose region is ``uk`` or one
+    of the four ``country/*`` nations may ask; omit it, rather than sending
+    null, to use the region's dataset. It is never stored as an option: the
+    dataset it chooses is stored with the report's simulations.
     """
 
     country: CountryId
     report_type: Literal["economy"]
-    label: ReportLabel
-    description: ReportDescription | None = None
+    label: ReportLabel | None = Field(default=None, description=LABEL_NOT_STORED)
+    description: ReportDescription | None = Field(
+        default=None, description=DESCRIPTION_NOT_STORED
+    )
     year: SimulationYear
     region_code: CatalogKey
-    dataset_name: CatalogKey | None = None
     baseline: PolicyChoice
     reform: PolicyChoice
     include_cliffs: StrictBool = False
     spm: SPMSelection | SkipJsonSchema[None] = Field(
+        default=None, json_schema_extra=omit_null_default
+    )
+    # Last, so its check can read the country and region.
+    data_source: LocalAreaDataSource | SkipJsonSchema[None] = Field(
         default=None, json_schema_extra=omit_null_default
     )
 
@@ -183,11 +231,58 @@ class EconomyReportRequest(_Request):
             raise ValueError(msg)
         return value
 
+    @field_validator("data_source", mode="before")
+    @classmethod
+    def refuse_another_data_source(cls, value: object) -> object:
+        """Refuse null and any other value with one reason.
+
+        Omit ``data_source`` to use the region's dataset. Without this,
+        another value would be refused once by each member of the field's
+        type.
+        """
+        if value != LOCAL_AREA_DATA_SOURCE:
+            msg = (
+                f'data_source must be "{LOCAL_AREA_DATA_SOURCE}" when given; omit '
+                "it to use the region's dataset"
+            )
+            raise ValueError(msg)
+        return value
+
+    @field_validator("data_source")
+    @classmethod
+    def refuse_a_data_source_the_region_cannot_have(
+        cls, data_source: LocalAreaDataSource | None, info: ValidationInfo
+    ) -> LocalAreaDataSource | None:
+        """Refuse the local-area dataset for another country or region.
+
+        Only a UK report whose region is UK-wide or a nation may run on it. A
+        country or region that failed its own validation is reported by that
+        field alone.
+        """
+        country = info.data.get("country")
+        region_code = info.data.get("region_code")
+        if data_source is None or country is None or region_code is None:
+            return data_source
+        if country != "uk":
+            msg = "the local-area dataset is available only to UK reports"
+            raise ValueError(msg)
+        if region_code not in LOCAL_AREA_DATA_SOURCE_REGIONS:
+            accepted = ", ".join(sorted(LOCAL_AREA_DATA_SOURCE_REGIONS))
+            msg = (
+                "the local-area dataset needs a UK-wide or nation region "
+                f"({accepted}), not {region_code!r}"
+            )
+            raise ValueError(msg)
+        return data_source
+
     def options(self) -> dict[str, Any]:
-        """Return the report's options as it stores them (``reports.inputs``).
+        """Return the request's options, as its calculation reads them.
 
         ``spm`` holds only the settings the request gave, and is left out
-        when it gave none.
+        when it gave none. The report stores the selection alone
+        (``economy_requests.stored_options``). ``data_source`` is never an
+        option: the dataset it chooses is stored with the report's
+        simulations.
         """
         options: dict[str, Any] = {"include_cliffs": self.include_cliffs}
         if self.spm is not None:
@@ -198,9 +293,14 @@ class EconomyReportRequest(_Request):
 class ReportRerunRequest(_Request):
     """A stored report's re-run on the default worker's versions.
 
-    Without ``force``, a side reuses a run of its own simulation that
-    succeeded on those versions, as a new report's side does; with it, both
-    simulations are calculated again.
+    Without ``force``, a re-run of a report created by key (economy,
+    budget window or household) joins the report's run on those versions
+    that hasn't failed and wasn't forced, pending, running or succeeded,
+    and otherwise each side joins its simulation's run on them or gets a
+    new one, as a new report's side does. With it, and always for a report
+    created before keys (C1 · 24's interim answer B), the report's
+    simulations are calculated again, as an extra run marked forced that
+    nothing joins.
     """
 
     force: StrictBool = False
@@ -211,12 +311,14 @@ class _Answer(BaseModel):
 
 
 class EconomySimulationCreated(_Answer):
-    """The simulation a request created or re-ran, its new run and its status.
+    """The simulation a request created or re-ran, its run and that run's status.
 
-    The status is the run's when its call's ID was recorded: ``pending``, or
-    whatever the simulation function had made it by then if it claimed the
-    run first. A run whose call Modal didn't confirm, or whose call's ID
-    couldn't be recorded, is answered ``pending``.
+    For a run the request created, the status is the run's when its call's
+    ID was recorded: ``pending``, or whatever the simulation function had
+    made it by then if it claimed the run first. A run whose call Modal
+    didn't confirm, or whose call's ID couldn't be recorded, is answered
+    ``pending``. A re-run that joined a run answers that run's status as
+    read.
     """
 
     simulation_id: UUID
@@ -225,14 +327,17 @@ class EconomySimulationCreated(_Answer):
 
 
 class EconomyReportCreated(_Answer):
-    """The report a request created or re-ran, its new run and its status.
+    """The report a request ended on, its run and that run's status.
 
-    The status is the run's when its call's ID was recorded: ``pending``, or
-    whatever the coordinator had made it by then if it claimed the run
-    first. A run whose call Modal didn't confirm, or whose call's ID couldn't
-    be recorded, is answered ``pending``. Each side names its
-    simulation and simulation run; ``…_reused`` is true for a side that
-    names a run that already succeeded, rather than a new one.
+    The report and run are the ones a create found or created by key, or a
+    re-run joined or created. For a run the request created, the status is
+    the run's when its call's ID was recorded: ``pending``, or whatever the
+    coordinator had made it by then if it claimed the run first. A run whose
+    call Modal didn't confirm, or whose call's ID couldn't be recorded, is
+    answered ``pending``. A joined run answers its status as read. Each side
+    names its simulation and simulation run; ``…_reused`` is true for a side
+    whose run this request didn't create: another request's run, in any
+    state, that the side joined, or, on a joined report run, that run's own.
     """
 
     report_id: UUID
@@ -303,10 +408,7 @@ class EconomyError(_Answer):
     ``/simulations``) is set only with ``modal_call_refused``: it names the
     record the service created or re-ran, whose new run it failed because
     Modal refused the call or didn't accept it in time. ``run_id`` names
-    that new run on a re-run (a budget window's: its budget-window run),
-    and with ``run_in_progress`` the record's run that is pending or
-    running: a report's budget-window run, or else its report run, or a
-    simulation's run.
+    that new run on a re-run (a budget window's: its budget-window run).
     """
 
     code: EconomyErrorCode
@@ -337,6 +439,9 @@ class EconomyRequestUnprocessable(_Answer):
     cannot be calculated carry one: ``missing_parameters`` for a policy or
     dynamic setting parameters the catalog version lacks, and
     ``overlapping_parameters`` for a policy and dynamic setting the same one.
+    ``no_local_area_dataset`` refuses ``data_source`` on a .py release that
+    routes constituencies and local authorities to no dataset of their own:
+    its national reports calculate both area levels themselves.
     """
 
     detail: list[EconomyRequestReason]

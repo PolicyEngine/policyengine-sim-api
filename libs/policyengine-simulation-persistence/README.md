@@ -1,12 +1,20 @@
 # PolicyEngine simulation persistence
 
-Database connections for the simulation service (the Simulation Entrypoint on
-Cloud Run). The service connects to the Public API's Postgres database with
-its own role, and writes rows in tables the Public API's migration chain
-creates. This repository has no schema or migration chain of its own.
+Database connections and table models for the simulation service (the
+Simulation Entrypoint on Cloud Run) and the v2 Modal runtime. The service
+connects to the Public API's Postgres database with its own role, and writes
+rows in tables the Public API's migration chain creates. This repository has
+no schema or migration chain of its own.
 
-The temporary Stage 12 comparison tables are not part of this library:
-`libs/policyengine-stage12-persistence` writes them with its own connection.
+This library holds sim's one set of models of the Public API's tables. The v2
+Modal coordinators, workers, household functions and stuck-run sweep write
+the run tables and the result tables through
+`libs/policyengine-stage12-persistence`, whose stores import these models and
+connect as the Modal worker role (`policyengine_v2_modal_worker`). The v1
+`run_simulation` code (the old gateway and `src/modal/app.py` with its
+modules) imports neither library. The temporary Stage 12 comparison tables
+are not modelled here: the Stage 12 library keeps them until the comparison
+path is removed.
 
 ## Connections
 
@@ -16,6 +24,12 @@ keeps a small pool, checks connections before use, and never prepares
 server-side statements, so the same URL works through Supabase's session and
 transaction poolers. A malformed URL raises `ValueError` without repeating the
 URL, which holds a password.
+
+`create_unpooled_engine` builds the engine the v2 Modal calls and the
+comparison path use, from the same URL check: it keeps no pool, so each
+operation's session ends with it and a call that spends most of its life
+calculating holds no pooler slot, and it waits 10 seconds to connect. The
+Stage 12 library binds it as `create_stage12_engine`.
 
 ## Tables
 
@@ -29,6 +43,9 @@ every column with its type, nullability and server default, and every
 constraint and index under the chain's name. The models only describe the
 tables; runtime code never creates or changes them. Status and other enum
 columns use the `StrEnum` classes beside them and store each member's value.
+A Python `None` in `simulation_runs.household_result`, `household_jobs.result`
+or `report_runs.spm_provenance` is stored as SQL `NULL`, not JSON `null`, so
+a query for `IS NULL` finds a run with no result.
 
 Each service writes only its own tables, and the foreign keys between them
 stay: 20 keys name rows the Public API writes in its users, policies,
@@ -46,6 +63,21 @@ A report run names the two simulation runs it compares
 household report with only a baseline). A report with a `budget_window_size`
 is calculated as a `budget_window_runs` row with one report run per year; each
 year's report run names that row and its year, and belongs to the same report.
+
+## Result tables
+
+`result_tables.py` models the twelve result tables the Modal worker role
+inserts into, in `result_metadata`, as completely as `tables.py` models the
+service's: `budget_summary`, `decile_impacts`, `intra_decile_impacts`,
+`program_statistics`, `congressional_district_impacts`,
+`constituency_impacts`, `local_authority_impacts`, `withheld_area_codes`,
+`labor_supply_responses` and `labor_supply_decile_responses` belong to a
+report run (all but the labour supply tables also name its two simulation
+runs), and `poverty` and `inequality` to one simulation run. Their keys name
+the models of `report_runs` and `simulation_runs` in `service_metadata`, so
+code that builds the tables in a test database builds those first. The
+Stage 12 library's `report_run_results.py` builds their rows from a report
+run's economy output.
 
 ## Input tables
 
@@ -87,28 +119,19 @@ runs too long and the limit never stays on a pooled connection.
 
 ## Economy simulations and reports
 
-`economy_run_records.py` holds the simulation service's reads and writes for
-an economy report, or a standalone economy simulation. It reads the
-country's model (`read_model_id`) and a catalog version's region by code
-(`read_region`) and dataset by name or ID (`read_dataset`,
-`read_dataset_by_id`). `insert_economy_report` creates, in the caller's
-transaction, each side's new simulation and first run, the report naming
-both simulations and the reform's policy with its options in `inputs`, and
-its first report run, trigger `initial`; every run is `pending` with no
-Modal call ID. A side may instead name a run that already succeeded
-(`ReportSimulation.reused`), for which nothing is created.
-`insert_economy_simulation` creates a standalone simulation and its first
-run. A row naming one that does not exist is refused by its foreign key with
-SQLSTATE `23503`; `EconomyRecordReferenceError` names the table and column.
-
-`find_reusable_run` returns the run a new report's side may reuse: the
-newest, by completion, of the same economy simulation (policy, dynamic,
-catalog version, dataset, region and year) that succeeded on the same
-country package and .py versions, whose output file is under the output
-bucket's `gs://<bucket>/`, that a succeeded report run with the same options
-used, and that no report run refused to reuse (an error message starting
-`reused_simulation_`). So a submission after a refused reuse calculates the
-simulation again.
+`economy_run_records.py` holds the simulation service's catalog reads and
+run writes for an economy report, or a standalone economy simulation. It
+reads the country's model (`read_model_id`) and a catalog version's region
+by code (`read_region`) and dataset by name or ID (`read_dataset`,
+`read_dataset_by_id`), and its local-area dataset
+(`read_local_area_dataset`): the one default dataset every constituency and
+local-authority region of the version uses, or none. It builds a simulation
+run `pending` with no Modal call ID (`simulation_run_row`,
+`insert_simulation_run`). The Simulation Entrypoint creates every
+simulation, report and run by key ("Shared simulations, reports and runs"
+below). A row naming one that does not exist is refused by its foreign key
+with SQLSTATE `23503`; `EconomyRecordReferenceError` names the table and
+column.
 
 `record_report_run_call` and `record_simulation_run_call` record a Modal
 call's ID, and `fail_unstarted_report_run` and
@@ -119,35 +142,101 @@ with its newest run's state.
 
 `EconomyRunStore` runs them as the Simulation Entrypoint does, each step in
 a transaction of its own: `read_report_inputs` reads the catalog version,
-model, region and dataset, each side's policy and dynamic values, and each
-side's reusable run together, never giving both sides the same run;
-`read_simulation_inputs` does the same for one simulation; the writes and
-reads each take their own. A missing region or dataset raises
-`UnknownRegionError` or `UnknownDatasetError`, and a report side's refused
-policy or dynamic raises `ReportSideError`, naming the side. A create whose
+model, region and dataset, and each side's policy and dynamic values
+together; `read_simulation_inputs` does the same for one simulation, and
+`read_budget_window_inputs` for a budget window's two sides; the writes and
+reads each take their own. The catalog rows come from `economy_inputs.py`
+(`read_catalog_rows`): the dataset is the region's default, a re-run's
+stored dataset by name (`EconomyRequest`'s `dataset_name`), or, for a
+report created with `data_source` (`read_report_inputs`'s
+`local_area_dataset_name`), the catalog version's local-area dataset; a
+request naming two of them is refused with `ValueError` before any read. A
+missing region or dataset raises `UnknownRegionError` or
+`UnknownDatasetError`, a local-area dataset the catalog doesn't give both
+area types raises `LocalAreaDatasetMismatchError`, and a report side's
+refused policy or dynamic raises `ReportSideError`, naming the side. A create whose
 commit fails after its rows were inserted raises
 `EconomyRecordOutcomeUnknownError`: PostgreSQL may have applied the commit,
 so the rows may exist.
 
+## Shared simulations, reports and runs
+
+Identical requests, together or a minute apart, end on the same simulation,
+report and run rows (C1 · 24). These modules do it:
+
+- `definition_keys.py` builds each record's key: the lowercase SHA-256 of
+  a definition's canonical JSON (keys sorted, no spaces, UTF-8, UUIDs as
+  lowercase strings, missing values null), with `KEY_VERSION` 1 inside the
+  object and in its own column. `EconomySimulationDefinition` keys a
+  simulation by its country, policy, dynamic, dataset name, region code,
+  year, a null filter and the SPM selection; `EconomyReportDefinition` keys
+  a report by both sides' policies and dynamics, the dataset, region, year
+  and SPM selection they share, and its budget window size, with no other
+  option, and gives its `dataset_independent_key` (the same without the
+  dataset) and each side's simulation definition. `HouseholdSimulationDefinition`
+  keys a household simulation by its country, policy, dynamic, stored
+  household and year, and `HouseholdReportDefinition` a household report by
+  its sides (the reform null for the baseline alone), household and year.
+  Names and codes, not
+  catalog IDs, so a record keeps its key across releases.
+- `shared_rows.py` finds a row by its definition or version set, or inserts
+  it: one `INSERT … ON CONFLICT DO NOTHING` against the Public API's unique
+  index (a simulation's or report's `(key_version, definition_key)`; a
+  simulation run's simulation, year, catalog version and versions, or a
+  report run's report and versions, among runs that haven't failed and
+  weren't forced, outside budget windows), then a read of the row that
+  won, retried when that run fails in between (`SharedRowNotSettledError`
+  after three tries). A forced run is inserted directly and never looked
+  up or joined.
+- `keyed_economy_records.py` runs a report's find-or-create in one
+  transaction: each side's simulation by key, in key order; the report by
+  key; the report's joinable run on the current versions, joined with the
+  simulation runs it names; or else, inside a savepoint, each distinct
+  simulation's joinable run (whatever report first calculated it), found
+  or inserted, and the report run naming them, a competing report run
+  joined with the savepoint rolled back (`find_or_insert_report_run_on_sides`,
+  which the keyed re-runs share).
+  `find_or_create_household_report` (`keyed_household_records.py`) does
+  the same for a household report, its simulations keyed by household, and
+  `find_or_create_economy_simulation` for one
+  simulation. The answers say what the request inserted, so only it starts
+  a Modal call. `EconomyRunStore.find_or_create_report` and
+  `find_or_create_simulation` run them in a transaction of their own.
+- `keyed_window_records.py` does it for a budget window
+  (`find_or_create_budget_window`): each year's simulations by that year's
+  key, in key order across every year, so a window year and a single-year
+  report of that year share them; the report by its key (window size and
+  first year in it); its window run on the current catalog and .py versions
+  that hasn't failed and isn't a recalculation, joined with its year runs;
+  or else the window run first (`find_or_insert_window_run`, against the
+  Public API's window run index, so a concurrent identical request waits
+  for it and joins it), recording its .py version, then every year's side
+  runs, found or inserted in simulation ID order, and each year's report
+  run (`insert_window_years`, which the window re-runs share).
+  `EconomyRunStore.find_or_create_budget_window` runs it in a transaction
+  of its own. No keyed create writes a label, description, user or trigger
+  (C1 · 24's answer 6): each user's saved report and report-run record hold
+  them, in the Public API.
+
 ## Household reports
 
-`household_report_records.py` holds the simulation service's writes for a
-household report: one stored household, for one year, under a baseline and,
-optionally, a reform. `insert_household_report` creates, in the caller's
-transaction, a household simulation (no dataset or region) and its first
-run for each side, never reusing one; the report, of type `household`,
-naming the household, both simulations and the reform's policy, with its
-options in `inputs`; and its first report run, trigger `initial`, naming no
-reform run for a report of the baseline alone. Every run is `pending` with
-no Modal call ID, and a row naming one that does not exist is refused as
-`EconomyRecordReferenceError`.
+A household report calculates one stored household, for one year, under a
+baseline and, optionally, a reform. Its report has type `household`
+(`HOUSEHOLD_REPORT_TYPE`) and names the household, and each side is a
+household simulation (no dataset or region) naming the side's policy.
+`keyed_household_records.py` finds or creates the report, its simulations
+and its run by key, as an economy report's are (C1 · 24's answer 8);
+`household_report_records.py` builds each side's run, `pending` with no
+Modal call ID (`household_simulation_run_row`,
+`insert_household_simulation_run`). A row naming one that does not exist
+is refused as `EconomyRecordReferenceError`.
 
 `HouseholdReportStore` runs the steps in transactions of their own:
 `read_inputs` reads the catalog version for the .py version, the country's
 model, the stored household and each side's policy values together,
 raising `UnknownCatalogVersionError`, `UnknownHouseholdError` or
 `ReportSideError` for the side whose policy is missing or sets parameters
-the catalog version lacks; `create_report` raises
+the catalog version lacks; `find_or_create_report` raises
 `EconomyRecordOutcomeUnknownError` when the commit fails after the rows were
 inserted; and `record_report_call` and `fail_unstarted_report` use the
 economy report run writes.
@@ -164,44 +253,54 @@ version, dataset and region it calculates on.
   record calculates: its kind (`economy`, `budget_window`, `household` or
   `unsupported`), country, year, its region's code and dataset's name, and
   each simulation's policy and dynamic.
-- `find_reusable_run_of` searches one simulation's runs, by its ID, under
-  `find_reusable_run`'s conditions on a run (versions, the run's own catalog
-  version, dataset, region and year, the output file, a succeeded report run
-  with the same options, no refused reuse); it doesn't compare the
-  simulation row, which keeps the catalog rows it was created on.
-- `insert_report_rerun` creates a report's new run, trigger `manual`, and a
-  new run of each side's simulation that reuses none;
-  `insert_simulation_rerun` creates a simulation's new run. Each refuses with
-  `RunInProgressError`, naming the run, while the record has a run `pending`
-  or `running` (for a report, a report run; for a simulation, any of its
-  runs), and first takes `lock_reruns_of`, a transaction-level
-  advisory lock on the record's ID, so concurrent re-runs of one record
-  wait for each other. When the database refuses the new run's key to the
+- `insert_report_rerun` joins the report's run on the re-run's versions
+  that hasn't failed and wasn't forced (pending, running or succeeded),
+  creating nothing, or else creates the report's new run, naming no
+  trigger (answer 6), each side joining its simulation's run on those versions that hasn't
+  failed and wasn't forced, in any state, or inserting one
+  (`find_or_insert_side_runs`, as a keyed create does). A report run another
+  request inserts after the lookup is joined, and a savepoint takes back
+  this call's simulation runs. An unforced one first takes `lock_reruns_of`,
+  a transaction-level advisory lock on the report's ID, so concurrent
+  re-runs of one report wait for each other and end on one run. No re-run
+  is refused while a run is under way. A forced one (`NewReportRerun.forced`) takes no lock, always
+  creates a new run of each side, marked `forced`, and joins none.
+  `insert_simulation_rerun` joins or creates the
+  simulation's run on the re-run's versions, catalog version and year
+  through `shared_rows`, with no lock. Each returns the run, its status and
+  whether it created it. When the database refuses the new run's key to the
   record itself, the record was deleted after it was read:
   `RerunRecordDeletedError`.
 
 A budget window's definition also names its newest budget-window run's
 years (`WindowYearDefinition`): each year's sides are the simulations of the
-runs that year's report run names. `insert_window_rerun` creates the
-window's new budget-window run (trigger `manual`, `recalculate` set), a
-report run per year and each year's new runs of its own simulations. Every
-report re-run is refused while a budget-window run or a report run of the
-report is `pending` or `running`.
+runs that year's report run names. `insert_window_rerun` joins or creates
+the window's run as the window's create does: unforced (a keyed window's
+re-run), it takes the re-run lock and joins the report's window run on the
+re-run's versions that hasn't failed and isn't a recalculation, with its
+year runs, or else inserts the window run and each year's report run on
+its sides' runs, found or inserted. One that recalculates is a forced
+re-run, never refused, an extra window run whose year runs and simulation
+runs are marked `forced`. Either records the window run's .py version and
+no trigger, and `EconomyRunStore.create_window_rerun` returns the window
+run and years it ended on.
 
 A household report's definition also names its household (`household_id`).
-`insert_household_report_rerun` creates its new report run (trigger
-`manual`) and a new run of each side's own household simulation (no dataset
-or region), recording the current catalog version and the report's year:
-household runs are never reused. It takes the same lock and makes the same
-check for a run under way, and shares `insert_household_simulation_run` with
-`insert_household_report`. `HouseholdReportStore.create_report_rerun` runs it
-in a transaction of its own; the store's `read_inputs` reads the re-run's
-household and policies as it does a new report's.
+`insert_household_report_rerun` joins or creates its run as
+`insert_report_rerun` does (C1 · 24's answer 8): unforced, as a keyed
+report's re-run is, it takes the same lock and joins the report's run on
+the re-run's versions, or else each side joins its own household
+simulation's run on those versions (no dataset or region, the report's
+year) or inserts one, under a new report run (no trigger). A forced
+one, as every re-run of a household report without keys is (interim answer
+B), takes no lock, is never refused, and marks its report run and a new run
+of each side `forced`. `HouseholdReportStore.create_report_rerun` runs it
+in a transaction of its own and returns the run; the store's `read_inputs`
+reads the re-run's household and policies as it does a new report's.
 
 `EconomyRunStore.read_report_rerun_inputs` reads a re-run's catalog rows by
-the stored region code and dataset name, and each side's values and
-reusable run of its own simulation, never giving both sides the same run.
-`read_window_rerun_inputs` does the same for each year of a window.
+the stored region code and dataset name, and each side's values.
+`read_window_rerun_inputs` does the same for a window's two sides.
 `create_report_rerun`, `create_window_rerun` and `create_simulation_rerun`
 run the inserts in a transaction of their own.
 
@@ -249,24 +348,31 @@ Rule `sim.persistence.models-match-public-api`. The PR workflow's
 grants the privileges its manifest declares
 (`.github/scripts/public-api-schema-reference.sh`), then runs the tests
 marked `public_api_schema`. `test_public_api_schema` builds the models' tables
-from `service_metadata` in a disposable database, after the Public API's
-tables their keys name (`referenced_metadata`, by `id` alone), and compares
-the models' tables with the Public API's through PostgreSQL's catalog
-(`tests/schema_comparison.py`): every column's type, nullability and default,
-every constraint and index by name and definition, and every enum's values
-must match. `test_the_input_models_match_the_public_api_columns` builds
+from `service_metadata`, then `result_metadata`, in a disposable database,
+after the Public API's tables their keys name (`referenced_metadata`, by
+`id` alone), and compares the models' tables with the Public API's through
+PostgreSQL's catalog (`tests/schema_comparison.py`): every column's type,
+nullability and default, every constraint and index by name and definition,
+and every enum's values must match, for the service's tables and the result
+tables alike. `test_the_input_models_match_the_public_api_columns` builds
 the read-only input models' tables in another disposable database and
 requires every column they name to exist in the Public API's table with the
 same type and nullability; their other columns, defaults, constraints and
-indexes are the Public API's alone. `test_service_writes` creates a row in every modelled
-table as the service's role. Another test, outside the rule, requires the modelled
+indexes are the Public API's alone. `test_service_writes` creates a row in every table
+the service writes, as the service's role; `test_modal_worker_writes`, as the
+Modal worker role, checks the role's privileges, records a run's state in
+each run table, inserts a row in every result table and reads back that a
+`None` JSON result is SQL `NULL`. Another test, outside the rule, requires the modelled
 tables' foreign keys to the Public API's users, policies, dynamics,
 households, datasets, regions and model catalog tables to be exactly the 20
 in `tests/public_api_keys.py`, each by its own table, its name and the table
 it names, so a key dropped, added, renamed, moved or pointed at another table
-shows even if the models follow it. Last, the job requires the
-pinned commit to be on the Public API's `master` branch, so the models only
-ever describe a chain the Public API has merged.
+shows even if the models follow it. The job then gives the Modal worker role
+a login on its database (`.github/scripts/public-api-schema-worker-login.sh`)
+and runs the Stage 12 library's tests, whose stores write these tables as
+that role. Last, it requires the pinned commit to be on the Public API's
+`master` branch, so the models only ever describe a chain the Public API has
+merged.
 
 **Choosing the pin.** Pin the Public API commit whose migration chain the
 models describe: the merge commit of the Public API change that last
@@ -275,9 +381,11 @@ head commit. Until that pull request merges, the job's last step fails and
 says so. A merge commit keeps the pull request's head on `master`; if the
 Public API squashes or rebases the pull request instead, its head never
 reaches `master`, so move the pin to the commit that landed. The pin may
-also move to a later merged commit that alters no modelled table, such as
-one adding a table another package writes; the job still checks only this
-package's tables, so moving the pin is no check of that other table.
+also move to a later merged commit that alters no modelled table. Every
+run and result table sim writes is modelled here, so a change to any of them
+moves the pin with this library's models; only the temporary comparison
+path's `stage12_evaluation_*` tables, which the Stage 12 library models and
+checks before each deploy, are outside this comparison.
 
 **Keeping it current.** A sim pull request that changes the models moves the
 pin in the same change. The `Public API schema drift` workflow runs the same
@@ -300,7 +408,7 @@ PUBLIC_API_SCHEMA_DATABASE_URL=postgresql://postgres:password@127.0.0.1:5432/pol
 uv run pytest tests/ -m public_api_schema
 ```
 
-## The role's privileges
+## The roles' privileges
 
 `SERVICE_TABLE_PRIVILEGES` lists the table privileges the service's role
 needs: `SELECT` and `INSERT` on the tables it creates rows in
@@ -316,6 +424,16 @@ when Modal refuses one of the first years the service starts. The role holds
 `UPDATE` on those columns only, never on a whole table, so the database
 refuses any other change to a run. The Public API's privilege manifest grants
 them all.
+
+`MODAL_WORKER_TABLE_PRIVILEGES` and `MODAL_WORKER_UPDATABLE_COLUMNS` list what
+the Modal worker role needs: `SELECT` on the four run tables, `INSERT` on
+every result table, and `UPDATE` of each run's state (`status`,
+`modal_call_id`, `error_message`, `started_at`, `completed_at` and
+`updated_at`; a budget-window run has no call of its own) and of the results
+its own row holds: a report run's cliff impact, `spm_provenance` and
+`data_version`, a simulation run's output file and `household_result`, and a
+household job's `result`. The Public API's manifest grants them;
+`test_modal_worker_writes` checks that in CI.
 
 `missing_table_privileges` returns each one the connected role lacks, ordered
 by table, as `"INSERT on reports"` or `"UPDATE (modal_call_id) on
@@ -346,8 +464,11 @@ rule's proof among them needs no database, and the others need one the
 Public API's own v2 migration chain built, with the privileges its manifest
 declares granted:
 set `PUBLIC_API_SCHEMA_DATABASE_URL` to that database's superuser URL.
-`test_service_writes` creates a row in every modelled table as the service's
-role and rolls it back; the comparison in `test_public_api_schema` also needs
+`test_service_writes` creates a row in every table the service writes as the
+service's role, and `test_modal_worker_writes` writes the Modal worker role's
+runs and results as that role, each rolling its transaction back; neither
+role needs a login there, since the superuser takes each role for the
+transaction. The comparison in `test_public_api_schema` also needs
 `SIMULATION_TEST_DATABASE_URL`, to build the models' own tables. Without the
 variables they skip.
 

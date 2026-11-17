@@ -136,8 +136,10 @@ jobs:
     # commit pinned in libs/policyengine-simulation-persistence/public-api-commit,
     # grants the privileges its manifest declares, and runs the persistence
     # tests marked public_api_schema against them: sim's table models must
-    # match those tables, and the simulation service's role must write them
-    # (rule sim.persistence.models-match-public-api). The pinned commit must
+    # match those tables, and the simulation service's role and the Modal
+    # worker role must write the tables each writes (rule
+    # sim.persistence.models-match-public-api). It then runs the Stage 12
+    # library's tests there, as the Modal worker role. The pinned commit must
     # also be on the Public API's default branch. The Public API's repository
     # is public, so the job reads no secret. Full CI runs only on the lowest
     # unmerged pull request in a stack.
@@ -212,6 +214,27 @@ jobs:
     - name: Compare sim's table models with the Public API's tables
       working-directory: libs/policyengine-simulation-persistence
       run: uv run --frozen pytest tests/ -v -m public_api_schema
+
+    # The Stage 12 library's stores write the same tables as the Modal worker
+    # role, which the manifest creates without a login: the password exists
+    # only in this job's database.
+    - name: Give the Modal worker role a login on the job's database
+      env:
+        MODAL_WORKER_TEST_PASSWORD: modal_worker_ci
+      run: .github/scripts/public-api-schema-worker-login.sh
+
+    - name: Install the Stage 12 library's dependencies
+      working-directory: libs/policyengine-stage12-persistence
+      run: uv sync --extra test --frozen
+
+    - name: Run the Stage 12 library's tests as the Modal worker role
+      working-directory: libs/policyengine-stage12-persistence
+      env:
+        REPORT_RUN_TEST_DATABASE_URL: postgresql://policyengine_v2_modal_worker:modal_worker_ci@127.0.0.1:5432/policyengine_v2_alembic_test
+        REPORT_RUN_TEST_SEED_DATABASE_URL: postgresql+psycopg://postgres:simulation_ci@127.0.0.1:5432/policyengine_v2_alembic_test
+        # A missing database fails the tests instead of skipping them.
+        REPORT_RUN_REQUIRE_DATABASE_TESTS: "1"
+      run: uv run --frozen pytest tests/ -v
 
     - name: Require the pinned commit on the Public API's default branch
       run: .github/scripts/public-api-commit-on-default-branch.sh public-api master
