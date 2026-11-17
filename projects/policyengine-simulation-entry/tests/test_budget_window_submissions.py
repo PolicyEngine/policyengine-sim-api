@@ -496,7 +496,10 @@ def test_a_later_year_is_deferred_without_a_call_once_the_wait_has_run_out(
         if record.getMessage() == "budget_window_year_deferred"
     ]
     second_year = store.windows[0].years[1]
-    assert (deferral.year, deferral.record_id) == (
-        2027,
-        str(second_year.report_run_id),
-    )
+    # These fields reach the emitted log record; a report run is a
+    # ``report_runs`` row.
+    assert deferral.policyengine_attributes == {
+        "year": 2027,
+        "database_table": "report_runs",
+        "database_row_id": str(second_year.report_run_id),
+    }
