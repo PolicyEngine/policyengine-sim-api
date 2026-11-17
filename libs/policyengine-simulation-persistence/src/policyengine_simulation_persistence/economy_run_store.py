@@ -60,9 +60,7 @@ from policyengine_simulation_persistence.policy_reform import (
     OverlappingReformError,
     UnknownDynamicError,
     UnknownPolicyError,
-    combine_reforms,
-    read_dynamic_reform,
-    read_policy_reform,
+    read_simulation_reform,
 )
 
 if TYPE_CHECKING:
@@ -631,27 +629,14 @@ def _simulation_inputs(
     choice: SimulationChoice,
 ) -> SimulationInputs:
     """Read one simulation's policy and dynamic values, combined."""
-    policy_reform = (
-        {}
-        if choice.policy_id is None
-        else read_policy_reform(
+    return SimulationInputs(
+        choice=choice,
+        reform=read_simulation_reform(
             connection,
             country=country,
-            policy_id=choice.policy_id,
             catalog_version_id=catalog_version_id,
-        )
-    )
-    dynamic_reform = (
-        {}
-        if choice.dynamic_id is None
-        else read_dynamic_reform(
-            connection,
-            dynamic_id=choice.dynamic_id,
-            catalog_version_id=catalog_version_id,
-        )
-    )
-    return SimulationInputs(
-        choice=choice, reform=combine_reforms(policy_reform, dynamic_reform)
+            choice=choice,
+        ),
     )
 
 

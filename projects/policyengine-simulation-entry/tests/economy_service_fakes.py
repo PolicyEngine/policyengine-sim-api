@@ -43,6 +43,7 @@ from policyengine_simulation_persistence import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from policyengine_simulation_entry.economy_workers import EconomyWorkerSource
     from policyengine_simulation_persistence import (
         EconomyRequest,
         NewEconomyReport,
@@ -296,7 +297,7 @@ def numbered_ids():
 def service(
     store: FakeStore,
     *,
-    workers: FakeWorkers | None = None,
+    workers: EconomyWorkerSource | None = None,
     caller: FakeCaller | None = None,
     output_bucket: str | None = OUTPUT_BUCKET,
 ) -> EconomySubmissionService:

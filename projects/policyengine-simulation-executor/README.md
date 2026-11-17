@@ -154,8 +154,9 @@ with its own mechanism, separate from the v1 routing jobs above:
    while the stored manifest is still what it wrote (`--restore-plan`).
    In a deployment from `main`, the same job then deploys the unversioned
    stuck-run sweep (`src/modal/run_sweep_app.py`), which fails the report
-   runs, simulation runs and household jobs nothing will finish, and whose
-   schedule starts as soon as it deploys; a failed sweep deploy, including a failed build of its
+   runs, simulation runs and household jobs nothing will finish, with the
+   restart check, which starts again those whose Modal call never started,
+   and whose schedules start as soon as it deploys; a failed sweep deploy, including a failed build of its
    image, fails the job and so puts the previous default back. A deployment
    from another branch leaves the sweep as it is.
    `deployment_ready` requires this job to succeed whenever Stage 12 was

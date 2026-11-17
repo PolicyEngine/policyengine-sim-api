@@ -75,6 +75,43 @@ def default_economy_worker(manifest: V2VersionManifest, country: str) -> Economy
     country's economy runs.
     """
     version = manifest.default_version
+    return _economy_worker(
+        manifest,
+        country,
+        version,
+        described_as=f"the default v2 worker, .py {version},",
+    )
+
+
+def economy_worker_for_version(
+    manifest: V2VersionManifest, country: str, policyengine_version: str
+) -> EconomyWorker:
+    """Return the economy functions of the manifest's worker for a .py version.
+
+    A run is calculated by the worker of the .py version it records, which
+    may no longer be the default. Raise EconomyWorkerUnavailableError when the
+    manifest no longer holds that worker, or it cannot calculate the
+    country's economy runs.
+    """
+    if policyengine_version not in manifest.versions:
+        msg = f"the v2 version manifest has no worker for .py {policyengine_version}"
+        raise EconomyWorkerUnavailableError(msg)
+    return _economy_worker(
+        manifest,
+        country,
+        policyengine_version,
+        described_as=f"the v2 worker for .py {policyengine_version}",
+    )
+
+
+def _economy_worker(
+    manifest: V2VersionManifest, country: str, version: str, *, described_as: str
+) -> EconomyWorker:
+    """Return the economy functions of the manifest's worker ``version``.
+
+    ``described_as`` names the worker in the error raised when it cannot
+    calculate the country's economy runs.
+    """
     worker = manifest.versions[version]
     country_worker = worker.economy_worker(country)
     country_bundle = next(
@@ -85,10 +122,7 @@ def default_economy_worker(manifest: V2VersionManifest, country: str) -> Economy
         or country_worker.single_simulation_callable is None
         or country_bundle is None
     ):
-        msg = (
-            f"the default v2 worker, .py {version}, cannot calculate economy "
-            f"runs for {country}"
-        )
+        msg = f"{described_as} cannot calculate economy runs for {country}"
         raise EconomyWorkerUnavailableError(msg)
     return EconomyWorker(
         version=version,
@@ -139,13 +173,27 @@ class ManifestEconomyWorkers:
         Raise EconomyWorkerUnavailableError when it has none, and
         VersionManifestUnavailableError when the manifest cannot be read.
         """
+        return default_economy_worker(self._manifest(), country)
+
+    def worker_for_version(
+        self, country: str, policyengine_version: str
+    ) -> EconomyWorker:
+        """Return the economy functions of the worker for a .py version.
+
+        Raise EconomyWorkerUnavailableError when the manifest has none, and
+        VersionManifestUnavailableError when it cannot be read.
+        """
+        return economy_worker_for_version(
+            self._manifest(), country, policyengine_version
+        )
+
+    def _manifest(self) -> V2VersionManifest:
         try:
-            manifest = self._loader.load()
+            return self._loader.load()
         # Modal raises its own errors, and any of them means the same here.
         except Exception as error:
             msg = "the v2 version manifest could not be read"
             raise VersionManifestUnavailableError(msg) from error
-        return default_economy_worker(manifest, country)
 
 
 class EconomyRunCaller(Protocol):

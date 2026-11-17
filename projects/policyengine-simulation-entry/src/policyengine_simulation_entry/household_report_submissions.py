@@ -24,8 +24,9 @@ stored policy and, optionally, the reform's. The service:
 Whatever is missing or cannot be calculated is refused in steps 1 and 2,
 before anything is written. The household function then claims the report
 run and each simulation run, writes each run's household document, and
-finishes the report run; the stuck-run sweep fails a pending run no call
-was recorded for. The errors are the economy routes'
+finishes the report run. The restart check (``run_restarts``) starts
+a report run whose call was never recorded once more, and the stuck-run
+sweep fails it when that start is lost too. The errors are the economy routes'
 (``economy_submission_errors``), so ``POST /reports`` answers both kinds
 alike. A stored report's re-run (``household_report_reruns``) takes the same
 steps through this service's reads, writes and call.

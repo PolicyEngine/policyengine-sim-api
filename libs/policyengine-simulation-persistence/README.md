@@ -201,6 +201,49 @@ reusable run of its own simulation, never giving both sides the same run.
 `create_report_rerun`, `create_window_rerun` and `create_simulation_rerun`
 run the inserts in a transaction of their own.
 
+## Restarting runs whose call never started
+
+`run_restart_records.py` holds the restart check's reads and writes. The
+check runs as the Modal worker role, whose grants cover them: `SELECT` on
+the run tables and their inputs, and `UPDATE` of `updated_at`,
+`modal_call_id`, `status`, `error_message` and `completed_at`.
+
+- `list_unstarted_runs` returns the oldest rows, up to a limit, created in a
+  window that are still `pending` with no Modal call and whose `updated_at`
+  still equals `created_at`: household jobs, report runs outside a budget
+  window whose baseline is an economy simulation, household report runs
+  (`household_report_run`, a kind of their own), and runs of economy
+  simulations that no report run names (standalone runs).
+- `list_idle_budget_windows` returns the budget windows that stopped
+  (`IdleBudgetWindow`, a type apart from the rows): pending or running, with
+  no year under way and years still waiting untouched, last changed in a
+  window. `read_earliest_waiting_year` names the year a restart starts the
+  window from, and `mark_waiting_year` marks it just before its first
+  start.
+- `mark_restart` sets a listed row's `updated_at` to the statement's clock
+  while it is still unstarted, so it is listed and marked only once.
+- `read_unstarted_report_run` and `read_unstarted_simulation_run` read back
+  what the Simulation Entrypoint built a call from: each side's simulation
+  run, policy and dynamic, with the values read against the run's own
+  catalog version, the region, dataset and year the run records, the
+  report's options and the run's versions. `StoredRunUnreadableError` says
+  the rows no longer describe one calculation: a side's region or dataset
+  is gone, or the two sides differ. The values are read with
+  `read_simulation_reform`, the reader a submission uses.
+- `read_unstarted_household_report_run` reads back a household report run:
+  its report's household and year, the run's versions, each side's
+  simulation run and policy, and the catalog version the sides were created
+  on. The entrypoint reads the household and the policies' values again
+  with `HouseholdReportStore.read_inputs`.
+- `read_report_run_simulation_run_ids` returns the simulation runs a report
+  run names, so one that can't be rebuilt is failed with them, and
+  `read_run_call` returns a row's status and recorded call, which says whose
+  call holds it after a restart.
+
+`RunRestartStore` runs each in a transaction of its own. The check records
+a call, or fails a row, with `EconomyRunStore`'s and `HouseholdJobStore`'s
+own conditional writes.
+
 ## Reading a policy
 
 `read_policy_reform` (`policy_reform.py`) reads a stored policy as the reform

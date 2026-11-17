@@ -39,10 +39,14 @@ revisions and live schema. This package never changes a schema.
   every year succeeded, or starts the earliest waiting years until
   `BUDGET_WINDOW_MAX_RUNNING_YEARS` (five) are under way, recording each
   call while the year is still pending with no call. A year's coordinator
-  call marks its window running. The stuck-run sweep leaves a waiting year
-  to its window, fails the window of a year it fails, and settles a window
-  no year advances any more. The Modal worker role and the simulation
-  service's role may both advance a window.
+  call marks its window running. The simulation service's restart check
+  advances a window that stopped with years still waiting, as the service
+  starts a new one; its starter may fail a year with a message of its own
+  (`YearStartRefused`), and its store bounds each statement
+  (`statement_timeout_milliseconds`). The stuck-run sweep leaves a waiting
+  year to its window, fails the window of a year it fails, and settles a
+  window no year advances any more. The Modal worker role and the
+  simulation service's role may both advance a window.
 - **Household report runs** (`HouseholdReportRunStore`, a `ReportRunStore`):
   one household function call claims a household report run and each of
   its simulation runs, the baseline's and any reform's, records each run's

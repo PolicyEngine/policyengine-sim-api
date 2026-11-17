@@ -27,6 +27,7 @@ class RunConfiguration(StrEnum):
     STAGE12_SIMULATION = "stage12_simulation"
     STAGE12_SEGMENT = "stage12_segment"
     V2_HOUSEHOLD = "v2_household"
+    V2_RUN_RESTART = "v2_run_restart"
 
 
 class Stage(StrEnum):
@@ -116,6 +117,8 @@ class Stage(StrEnum):
     V2_HOUSEHOLD_COUNTRY_MODEL_LOAD = "v2_household_country_model_load"
     V2_HOUSEHOLD_INPUT_NORMALIZATION = "v2_household_input_normalization"
     V2_HOUSEHOLD_CALCULATION = "v2_household_calculation"
+    V2_RUN_RESTART_CHECK = "v2_run_restart_check"
+    V2_RUN_RESTART = "v2_run_restart"
 
 
 @dataclass(frozen=True)
@@ -287,6 +290,12 @@ RUN_STAGE_REGISTRY: Mapping[RunConfiguration, StagePlan] = MappingProxyType(
                 Stage.V2_HOUSEHOLD_CALCULATION,
             ),
         ),
+        # One scheduled restart check, then each run or household job it
+        # lists because its Modal call never started.
+        RunConfiguration.V2_RUN_RESTART: StagePlan(
+            RunConfiguration.V2_RUN_RESTART,
+            (Stage.V2_RUN_RESTART_CHECK, Stage.V2_RUN_RESTART),
+        ),
     }
 )
 
@@ -302,3 +311,4 @@ STAGE12_CANONICAL_REPORT_STAGES = RUN_STAGE_REGISTRY[
 STAGE12_SIMULATION_STAGES = RUN_STAGE_REGISTRY[RunConfiguration.STAGE12_SIMULATION]
 STAGE12_SEGMENT_STAGES = RUN_STAGE_REGISTRY[RunConfiguration.STAGE12_SEGMENT]
 V2_HOUSEHOLD_STAGES = RUN_STAGE_REGISTRY[RunConfiguration.V2_HOUSEHOLD]
+V2_RUN_RESTART_STAGES = RUN_STAGE_REGISTRY[RunConfiguration.V2_RUN_RESTART]

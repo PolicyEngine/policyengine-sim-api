@@ -1189,22 +1189,34 @@ jobs:
         run: ../../.github/scripts/stage12-v2-default-verify.sh
 
       # The scheduled sweep that fails report runs, simulation runs and
-      # household jobs nothing will finish. Its app is unversioned and its
-      # schedule starts when it deploys, so it deploys here, after every
-      # check, with the release's Stage 12 default; if it fails, the next
-      # step puts the default back.
+      # household jobs nothing will finish, and the restart check that starts
+      # again those whose Modal call never started. Their app is unversioned
+      # and its schedules start when it deploys, so it deploys here, after
+      # every check, with the release's Stage 12 default; if it fails, the
+      # next step puts the default back.
       # Only from main: a dispatch from another branch, which may be behind
-      # main, leaves the environment's sweep as it is. With no status
+      # main, leaves the environment's app as it is. With no status
       # function, the condition also requires every earlier step to pass.
-      # Its database URL comes from the Modal secret
+      # Their database URL comes from the Modal secret
       # policyengine-modal-worker-database, which the v2 workers' deploy in
-      # deploy_stage12_v2 already requires.
-      - name: Deploy the stuck-run sweep
+      # deploy_stage12_v2 already requires. The image bakes in the Modal
+      # environment the restart check starts calls in, and the v2 workers'
+      # telemetry settings, from the repository variables they use.
+      - name: Deploy the stuck-run sweep and the restart check
         if: ${{ github.ref == 'refs/heads/main' }}
         working-directory: projects/policyengine-simulation-executor
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SIMULATION_V2_MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
+          OBSERVABILITY_SERVICE_NAMESPACE: ${{ vars.OBSERVABILITY_SERVICE_NAMESPACE }}
+          OBSERVABILITY_TRACE_PROJECT_ID: ${{ vars.OBSERVABILITY_TRACE_PROJECT_ID }}
+          OBSERVABILITY_LOGGING_PROJECT_ID: ${{ vars.OBSERVABILITY_LOGGING_PROJECT_ID }}
+          OBSERVABILITY_LOG_NAME: ${{ vars.OBSERVABILITY_LOG_NAME }}
+          OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ vars.OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OBSERVABILITY_OTLP_ENDPOINT }}
+          POLICYENGINE_OTEL_GOOGLE_AUDIENCE: ${{ vars.OBSERVABILITY_OTLP_GOOGLE_AUDIENCE }}
         run: uv run --frozen modal deploy --env="${{ inputs.modal_environment }}" src/modal/run_sweep_app.py
 
       # Writes back the manifest the move replaced, only while the stored

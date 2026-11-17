@@ -183,6 +183,35 @@ async def test_a_call_modal_gives_no_id_is_refused(monkeypatch):
         )
 
 
+def test_the_household_function_for_a_jobs_version_is_found_when_not_the_default() -> (
+    None
+):
+    """A job keeps the .py version it was created on after the default moves."""
+    workers = ManifestHouseholdWorkers(
+        manifest_store(household_worker_version(), household_worker_version("6.18.0"))
+    )
+
+    worker = workers.worker_for_version("us", "6.18.0")
+
+    assert worker.bundle.policyengine_version == "6.18.0"
+    assert worker.application_name == v2_application_name("6.18.0")
+    assert worker.function_name == "calculate_household_us"
+
+
+def test_a_version_the_manifest_no_longer_holds_has_no_household_function() -> None:
+    workers = ManifestHouseholdWorkers(manifest_store(household_worker_version()))
+
+    with pytest.raises(HouseholdFunctionUnavailableError) as raised:
+        workers.worker_for_version("us", "6.0.0")
+
+    assert str(raised.value) == "the v2 version manifest has no worker for .py 6.0.0"
+
+
+def test_a_household_version_lookup_reads_an_unreadable_store_as_unavailable() -> None:
+    with pytest.raises(VersionManifestUnavailableError):
+        ManifestHouseholdWorkers({}).worker_for_version("us", POLICYENGINE_VERSION)
+
+
 REPORT_RUN_ID = UUID("00000000-0000-4000-8000-0000000000ab")
 
 

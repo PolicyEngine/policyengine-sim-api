@@ -194,3 +194,33 @@ def test_a_call_modal_gives_no_id_is_an_error(modal_functions, object_id) -> Non
                 worker, {}, {}, observability_context=None
             )
         )
+
+
+def test_the_worker_for_a_runs_version_is_found_when_it_is_not_the_default() -> None:
+    """A run keeps the .py version it was created on after the default moves."""
+    workers = ManifestEconomyWorkers(
+        manifest_store(household_worker_version(), household_worker_version("6.18.0"))
+    )
+
+    worker = workers.worker_for_version("us", "6.18.0")
+
+    assert worker.version == "6.18.0"
+    assert worker.policyengine_version == "6.18.0"
+    assert worker.application_name == v2_application_name("6.18.0")
+    assert worker.simulation_callable == "run_single_simulation_us"
+
+
+def test_a_version_the_manifest_no_longer_holds_has_no_economy_worker() -> None:
+    workers = ManifestEconomyWorkers(manifest_store(household_worker_version()))
+
+    with pytest.raises(EconomyWorkerUnavailableError) as raised:
+        workers.worker_for_version("us", "6.0.0")
+
+    assert str(raised.value) == "the v2 version manifest has no worker for .py 6.0.0"
+
+
+def test_a_workers_version_lookup_reads_an_unreadable_manifest_as_unavailable() -> None:
+    with pytest.raises(VersionManifestUnavailableError):
+        ManifestEconomyWorkers(UnreadableStore()).worker_for_version(
+            "us", POLICYENGINE_VERSION
+        )
