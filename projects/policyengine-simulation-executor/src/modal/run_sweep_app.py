@@ -65,6 +65,7 @@ sweep_image = (
         "policyengine_simulation_executor",
         "policyengine_simulation_observability",
         "policyengine_simulation_contract",
+        "policyengine_simulation_persistence",
         "policyengine_stage12_persistence",
         copy=True,
     )

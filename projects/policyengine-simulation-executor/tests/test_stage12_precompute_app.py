@@ -58,6 +58,7 @@ def test_precompute_image_installs_only_the_us_bundle(monkeypatch) -> None:
     )
     assert "policyengine_simulation_executor" in local_source[1]
     assert "policyengine_stage12_persistence" in local_source[1]
+    assert "policyengine_simulation_persistence" in local_source[1]
 
 
 def test_precompute_image_refreshes_ca_certificates_before_installing_packages(
