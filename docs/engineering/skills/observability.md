@@ -16,6 +16,19 @@ Use each identifier for its defined scope:
 | `evaluation_id` | One Stage 12 report | Stage 12 report construction | Yes, as functional report state |
 | `simulation_execution_id` | One Stage 12 baseline or reform simulation | Stage 12 coordinator | Yes, as functional simulation state |
 | `submission_claim_id` | One API v1 attempt to acquire ownership of a simulation submission | API v1 | Only where the simulation request is stored |
+| `database_table` | The Public API table holding the row one v2 Modal function call works on: `household_jobs`, `report_runs` (a report run or a household report run) or `simulation_runs` | The simulation service, which creates the row | Yes, as the row |
+| `database_row_id` | That row's UUID | The simulation service, which creates the row | Yes, as the row |
+| `modal_call_id` | One Modal function call of a v2 Modal function | Modal | Yes, where the row records the call that claimed it |
+
+Each v2 Modal function's operation (`src/modal/v2_app.py`) names its
+`modal_call_id` and, when its call works on a detailed-save row, that row's
+`database_table` and `database_row_id`; a US segment worker names the
+simulation run its simulation worker records. They go to the operation's log
+records and span only, never to metrics, where each distinct ID would make a
+separate series. The observability package drops every attribute whose key
+contains `household`, `reform`, `payload` or `person`, among others, so no key
+for these IDs names one. Do not use `job_id` for a v2 call: it names one
+annual Modal invocation of the v1 executor.
 
 `observability_id` is a canonical UUID string and has diagnostic meaning only.
 Do not use it for idempotency, authorization, database identity, routing, or

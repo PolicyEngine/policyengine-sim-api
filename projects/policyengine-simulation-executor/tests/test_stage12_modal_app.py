@@ -94,8 +94,9 @@ def _invoke(
         )
 
     # The US and UK workers pass their own Modal call ID to the runtime, so the
-    # stand-in ``modal`` module needs one; a test that set its own keeps it.
-    if not hasattr(module.modal, "current_function_call_id"):
+    # stand-in ``modal`` module, which answers None, needs one; a test that set
+    # its own keeps it.
+    if module.modal.current_function_call_id() is None:
         monkeypatch.setattr(
             module.modal,
             "current_function_call_id",

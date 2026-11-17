@@ -26,6 +26,12 @@ from .fanout import (
 )
 from .household_job_recording import run_household_job
 from .household_report_recording import run_household_report
+from .operation_records import (
+    operation_record_attributes,
+    report_run_named_by,
+    row_id_or_none,
+    simulation_run_named_by,
+)
 from .partition import (
     should_segment_simulation,
     stage12_region_groups,
@@ -72,13 +78,17 @@ __all__ = [
     "coordinate_report",
     "coordinate_window_year",
     "merge_segment_results",
+    "operation_record_attributes",
     "redacted_failure_detail",
+    "report_run_named_by",
+    "row_id_or_none",
     "run_household_job",
     "run_household_report",
     "run_segmented_simulation",
     "run_single_simulation",
     "should_segment_simulation",
     "simulation_input_sha256",
+    "simulation_run_named_by",
     "stage12_region_groups",
     "stage12_region_groups_for_model",
     "validate_policy_periods",
