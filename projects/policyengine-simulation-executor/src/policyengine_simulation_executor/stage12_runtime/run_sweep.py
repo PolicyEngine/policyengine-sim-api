@@ -176,7 +176,7 @@ SWEPT_KINDS = (
 
 @dataclass(frozen=True)
 class SweepSummary:
-    """What the sweep did with the runs and household jobs it listed, together.
+    """What the sweep did with the runs, household jobs and cliff results it listed.
 
     ``checked`` runs were judged after the minimum age: ``failed`` because
     their call ended, ``failed_without_call`` because they stayed pending with

@@ -87,7 +87,7 @@ _EVERY_NAMED_COLUMN: Final = {"render_nulls": True}
 
 @dataclass(frozen=True)
 class ActiveRun:
-    """A pending or running run or household job, and its recorded Modal call.
+    """A pending or running run, household job or cliff result, and its Modal call.
 
     ``modal_call_id`` is None for a run with no call recorded.
     ``budget_window_run_id`` is the budget-window run a report run is a year

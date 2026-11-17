@@ -157,9 +157,9 @@ worker_secrets = [
     hf_secret,
     comparison_runtime_secret,
 ]
-# Only the functions that record a report run's, simulation run's or
-# household job's status and results hold the Modal worker role's database
-# credentials.
+# Only the functions that record a report run's, simulation run's, cliff
+# result's or household job's status and results hold the Modal worker role's
+# database credentials.
 modal_worker_database_secret = modal.Secret.from_name(
     MODAL_WORKER_DATABASE_SECRET_NAME,
     required_keys=[MODAL_WORKER_DATABASE_URL_ENV],

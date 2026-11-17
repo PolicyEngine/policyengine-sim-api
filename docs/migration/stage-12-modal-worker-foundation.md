@@ -370,10 +370,12 @@ holds, or one that failed, it returns `{"deduplicated": true,
 **A simulation run's cliff result** (C1 · 24, answer 4b). Each simulation run
 can have one cliff result, its cliff gap and cliff share, which every report
 naming the run reads: a row of the Public API's `cliff_impacts`, one per
-calculation. The simulation service inserts it pending, starts the country's
-simulation worker (`run_single_simulation_us` or `run_single_simulation_uk`)
-with the run's own simulation input and a context naming the row
-(`Stage12InvocationContext.cliff_result_id`), and records the call. The worker
+calculation. Nothing starts one yet. The simulation service is to insert it
+pending, start the country's simulation worker (`run_single_simulation_us` or
+`run_single_simulation_uk`) with the run's own simulation input, built as a
+standalone run's, and a context naming the row
+(`Stage12InvocationContext.cliff_result_id`, left out of a context that names
+none, which older workers refuse), and record the call (C1 · 39). The worker
 claims the row as a run is claimed, and refuses, failing it with
 `cliff_result_input_mismatch`, an input that is not the simulation of the
 row's run on that run's year and versions; the calculation then checks those
@@ -396,7 +398,10 @@ it returns its values again when Modal restarts it. A failure fails the row
 with its redacted cause; the stuck-run sweep fails one whose call ended
 without an outcome, and a failed row never counts, so the next request starts
 another calculation. The worker writes nothing to the simulation run, its
-output file or any report run.
+output file or any report run. The Public API's revision that adds
+`cliff_impacts` must be applied in an environment before this release deploys
+there: the stuck-run sweep lists the table on every pass, and the service's
+`/ready` privilege check names it.
 
 **What a simulation run stores** (C1 · 24, answer 4). A run's output file
 depends on its simulation alone, never on a report naming it
@@ -407,7 +412,7 @@ policy turns a response on; in the US, the two inputs .py's labour-supply
 output reads from either side (`self_employment_income`,
 `weekly_hours_worked`); and never the cliff columns, so a US national run keeps
 its region-group split. Cliffs are a calculation of each simulation run of
-their own (below). A report run asking for them (`include_cliffs: true`) still
+their own (above). A report run asking for them (`include_cliffs: true`) still
 fails before any worker starts, with `cliff_impacts_unavailable`, and touches
 none of its simulation runs, and its completion never writes `report_runs`'
 four cliff columns. The
