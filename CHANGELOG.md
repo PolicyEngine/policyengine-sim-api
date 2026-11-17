@@ -10,6 +10,29 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.19.0] - 2026-11-17
+
+### Added
+
+- `POST /reports` takes `data_source: "local_area_dataset"` on UK-wide and nation economy reports: the report runs on the bundle's local-area dataset (the one constituency and local-authority regions use) and returns its full results with its constituency and local-authority results. Another value, another country or region, and a release that routes those areas to no dataset of their own (`no_local_area_dataset`) are refused with 422. The staging economy check's Wales report runs on that dataset.
+
+### Removed
+
+- `POST /reports` (economy reports and budget windows) and `POST /simulations` no longer take `dataset_name`, and refuse it with 422: a report or simulation runs on the dataset the catalog gives its region, or on the local-area dataset with `data_source`. The Public API stopped sending it in PolicyEngine/policyengine-api#4307, which must be deployed first.
+
+
+## [0.18.0] - 2026-11-17
+
+### Changed
+
+- Identical simulation, report and budget-window requests now end on the same rows, sent together or apart. `POST /reports` (economy, budget-window and household reports), `POST /simulations` and the re-run routes find or create each simulation and report by a key of its definition and join its run on the default worker's versions when one hasn't failed and wasn't forced, so the service starts a Modal calculation only for a run its own request created; a budget-window year and a single-year report of that year share their simulation runs. A re-run with `force`, and every re-run of a report created before keys, calculates an extra run marked forced that nothing joins. No re-run answers 409 `run_in_progress` any more. The service stores no report label, description or user and no run trigger on these shared rows: `label` and `description` are accepted, optional, and not stored.
+
+### Removed
+
+- `POST /reports` refuses `include_cliffs: true` with 422 `cliffs_not_available`, and so does a re-run of a stored report that asked for cliffs, until cliff impacts are calculated for each simulation run.
+- The Simulation Entrypoint's deployment no longer sets `V2_SIMULATION_OUTPUT_BUCKET` on its Cloud Run service or requires the `beta` and `prod` GitHub variable of that name for the entrypoint's deploy step; the service never used it. The Stage 12 deployment steps still pass it to the Modal coordinator and workers, which write simulation output files to that bucket. The simulation persistence library drops the create functions that use no definition keys, the search for an earlier succeeded simulation run to reuse, and the `reuse` parameters of the economy store's input reads, none of which the service has called since reports, simulations and runs are found or created by key. Requests and answers are unchanged.
+
+
 ## [0.17.1] - 2026-11-17
 
 ### Changed

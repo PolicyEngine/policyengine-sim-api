@@ -22,6 +22,7 @@ from policyengine_simulation_persistence.economy_inputs import (
     EconomyReportInputs,
     EconomyRequest,
     EconomySimulationInputs,
+    LocalAreaDatasetMismatchError,
     ReportSide,
     ReportSideError,
     SideRefusal,
@@ -152,15 +153,23 @@ class EconomyRunStore:
         *,
         baseline: SimulationChoice,
         reform: SimulationChoice,
+        local_area_dataset_name: str | None = None,
     ) -> EconomyReportInputs:
         """Read a report's catalog rows and both sides' values together.
 
-        Raise UnknownCatalogVersionError, UnknownRegionError or
-        UnknownDatasetError, or ReportSideError naming the side whose policy
-        or dynamic is refused.
+        With ``local_area_dataset_name``, the dataset the default worker
+        calculates local-area reports on, the report is read on the catalog
+        version's local-area dataset (``read_local_area_dataset``) in place
+        of the region's default. Raise ValueError when ``request`` also names
+        a dataset; otherwise UnknownCatalogVersionError, UnknownRegionError
+        or UnknownDatasetError, ReportSideError naming the side whose policy
+        or dynamic is refused, or LocalAreaDatasetMismatchError when the
+        catalog version doesn't give both area types that dataset.
         """
         with self._transaction() as connection:
-            catalog = read_catalog_rows(connection, request)
+            catalog = read_catalog_rows(
+                connection, request, local_area_dataset_name=local_area_dataset_name
+            )
             return read_report_sides(
                 connection, request, catalog, baseline=baseline, reform=reform
             )
@@ -381,6 +390,7 @@ __all__ = [
     "EconomyRequest",
     "EconomyRunStore",
     "EconomySimulationInputs",
+    "LocalAreaDatasetMismatchError",
     "ReportSide",
     "ReportSideError",
     "SideRefusal",
