@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final
 
+from policyengine_simulation_persistence.cliff_impact_tables import CliffImpact
 from policyengine_simulation_persistence.tables import (
     BudgetWindowRun,
     HouseholdJob,
@@ -63,7 +64,7 @@ class RunKind(StrEnum):
     HOUSEHOLD_JOB = "household_job"
 
 
-type RunModel = type[ReportRun | SimulationRun | HouseholdJob]
+type RunModel = type[ReportRun | SimulationRun | HouseholdJob | CliffImpact]
 
 RUN_MODELS: Final[dict[RunKind, RunModel]] = {
     RunKind.REPORT_RUN: ReportRun,
@@ -75,6 +76,7 @@ _ROW_NOUNS: Final[dict[RunModel, str]] = {
     ReportRun: "report run",
     SimulationRun: "simulation run",
     HouseholdJob: "household job",
+    CliffImpact: "cliff result",
 }
 # A bulk insert otherwise leaves out each column a row sets to None. Every row
 # names the same columns, so the insert stays one statement that sets them NULL.
@@ -714,8 +716,8 @@ def _uniform_rows(rows: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
 def running_under_call(model: RunModel, modal_call_id: str) -> ColumnElement[bool]:
     """Return the condition that a row is running under ``modal_call_id``.
 
-    A run or household job is completed or failed by a call only while that
-    call holds it running.
+    A run, household job or cliff result is completed or failed by a call only
+    while that call holds it running.
     """
     return and_(
         model.status == RunStatus.RUNNING.value,

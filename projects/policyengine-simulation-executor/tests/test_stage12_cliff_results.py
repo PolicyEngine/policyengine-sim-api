@@ -123,7 +123,7 @@ def _run_cliff_worker(
         required_country=simulation.geography.country,
         modal_call_id=dependencies.pop("modal_call_id", WORKER_CALL_ID),
         dependencies=SimulationWorkerDependencies(
-            report_runs=cliff_results, **dependencies
+            cliff_results=cliff_results, **dependencies
         ),
     )
 

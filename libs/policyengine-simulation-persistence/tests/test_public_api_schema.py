@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 from policyengine_simulation_persistence import (
+    CliffImpact,
     input_metadata,
     referenced_metadata,
     result_metadata,
@@ -71,6 +72,35 @@ def test_the_models_match_the_public_api_tables(
         real_engine.dispose()
 
     assert set(models.tables) == set(table_names)
+    compared_with = os.environ.get(COMMIT_VARIABLE) or "an unrecorded commit"
+    assert schema_differences(models, real) == [], (
+        f"compared with the Public API at {compared_with}"
+    )
+
+
+@pytest.mark.public_api_schema
+def test_the_cliff_calculation_model_matches_the_public_api_table(
+    disposable_database, public_api_database_url
+) -> None:
+    """A simulation run's cliff calculations match the Public API's ``cliff_impacts``.
+
+    The service's other tables are compared with it above; this names the
+    table alone, so a difference there is reported as the cliff table's.
+    """
+    models_engine = _engine(disposable_database.superuser_url)
+    real_engine = _engine(public_api_database_url)
+    try:
+        referenced_metadata.create_all(models_engine)
+        service_metadata.create_all(models_engine)
+        with models_engine.connect() as connection:
+            models = describe_tables(connection, [CliffImpact.__tablename__])
+        with real_engine.connect() as connection:
+            real = describe_tables(connection, [CliffImpact.__tablename__])
+    finally:
+        models_engine.dispose()
+        real_engine.dispose()
+
+    assert set(real.tables) == {"cliff_impacts"}
     compared_with = os.environ.get(COMMIT_VARIABLE) or "an unrecorded commit"
     assert schema_differences(models, real) == [], (
         f"compared with the Public API at {compared_with}"

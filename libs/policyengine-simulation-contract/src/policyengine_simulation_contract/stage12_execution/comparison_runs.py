@@ -73,9 +73,11 @@ class Stage12InvocationContext(StrictContractModel):
 
     A detailed-save call works on the Public API's run tables instead of the
     comparison path's records: a report coordinator's call names its report
-    run and both simulation runs in ``report_run``, and a simulation worker's
-    call names the one simulation run it claims in ``simulation_run_id``.
-    Its simulation output files go to their own bucket, which keeps them.
+    run and both simulation runs in ``report_run``, a simulation worker's
+    call names the one simulation run it claims in ``simulation_run_id``, and
+    a simulation worker's call that calculates a run's cliff gap and share
+    names the cliff result it claims in ``cliff_result_id``. Its simulation
+    output files go to their own bucket, which keeps them.
     """
 
     contract_version: Literal[1] = 1
@@ -97,9 +99,10 @@ class Stage12InvocationContext(StrictContractModel):
     production_function_call_id: ContractText | None = None
     created_at: datetime
     retention_expires_at: datetime
-    # Comparison runs leave both unset and record only the Stage 12 tables.
+    # Comparison runs leave all three unset and record only the Stage 12 tables.
     report_run: ReportRunIds | None = None
     simulation_run_id: UUID | None = None
+    cliff_result_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_retention(self) -> Stage12InvocationContext:
@@ -111,21 +114,37 @@ class Stage12InvocationContext(StrictContractModel):
     def validate_report_run_is_direct(self) -> Stage12InvocationContext:
         """Reject runs on a shadow run compared with a production call.
 
-        A call names a report run, for its coordinator, or a simulation run,
-        for a worker, not both.
+        A call names at most one of a report run, for its coordinator, a
+        simulation run, for a worker, and a cliff result, for a worker
+        calculating a run's cliffs.
         """
         if self.records_runs and self.production_function_call_id:
             msg = "a run compared with a production function call has no report run"
             raise ValueError(msg)
-        if self.report_run is not None and self.simulation_run_id is not None:
-            msg = "a call names a report run or a simulation run, not both"
+        if len(self._named_records()) > 1:
+            msg = (
+                "a call names one of a report run, a simulation run and a "
+                "cliff result, not two"
+            )
             raise ValueError(msg)
         return self
 
     @property
     def records_runs(self) -> bool:
         """Whether this is a detailed-save call, which works on the run tables."""
-        return self.report_run is not None or self.simulation_run_id is not None
+        return bool(self._named_records())
+
+    def _named_records(self) -> tuple[object, ...]:
+        """Return the report run, simulation run and cliff result the call names."""
+        return tuple(
+            record
+            for record in (
+                self.report_run,
+                self.simulation_run_id,
+                self.cliff_result_id,
+            )
+            if record is not None
+        )
 
 
 ErrorCode = Annotated[str, Field(min_length=1, max_length=64)]

@@ -12,6 +12,7 @@ from policyengine_simulation_persistence.budget_window_records import (
     WindowSide,
     WindowYearRuns,
 )
+from policyengine_simulation_persistence.cliff_impact_tables import CliffImpact
 from policyengine_simulation_persistence.definition_keys import (
     KEY_VERSION,
     EconomyReportDefinition,
@@ -230,6 +231,7 @@ __all__ = [
     "BudgetWindowRun",
     "CatalogDataset",
     "CatalogRegion",
+    "CliffImpact",
     "CongressionalDistrictImpact",
     "ConstituencyImpact",
     "Dataset",
