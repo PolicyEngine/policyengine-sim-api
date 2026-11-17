@@ -503,3 +503,28 @@ def test_a_later_year_is_deferred_without_a_call_once_the_wait_has_run_out(
         "database_table": "report_runs",
         "database_row_id": str(second_year.report_run_id),
     }
+
+
+def test_a_later_year_modal_refuses_is_logged_naming_the_report(caplog) -> None:
+    store = FakeWindowStore()
+
+    with (
+        caplog.at_level(logging.INFO, logger=budget_window_submissions.__name__),
+        pytest.raises(EconomySubmissionUnavailableError),
+    ):
+        _submit(
+            _service(store, caller=RefusingAfterFirstCaller()), budget_window_size=3
+        )
+
+    (record,) = [
+        item
+        for item in caplog.records
+        if item.getMessage() == "budget_window_call_unconfirmed"
+    ]
+    fields = record.policyengine_attributes
+    assert (fields["database_table"], fields["database_row_id"]) == (
+        "reports",
+        str(store.windows[0].report_id),
+    )
+    # The runtime emits no list, so the years started are one string.
+    assert isinstance(fields["started_years"], str)

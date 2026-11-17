@@ -119,3 +119,19 @@ def test_a_household_key_is_dropped_even_in_policyengine_attributes(
 
     record = _record_with_message(written_records, "household_job_not_failed")
     assert record["attributes"] == {"error_type": "OperationalError"}
+
+
+def test_a_field_named_like_a_log_record_attribute_is_emitted_without_raising(
+    written_records,
+) -> None:
+    # ``logging`` refuses an ``extra`` key that names a LogRecord attribute,
+    # and these calls sit in error handlers, where raising would turn a
+    # handled failure into an unhandled one.
+    from policyengine_simulation_observability.log_records import log_extra
+
+    logging.getLogger("policyengine_simulation_entry.test").warning(
+        "budget_window_not_started", extra=log_extra(name="window", module="entry")
+    )
+
+    record = _record_with_message(written_records, "budget_window_not_started")
+    assert record["attributes"] == {"name": "window", "module": "entry"}
