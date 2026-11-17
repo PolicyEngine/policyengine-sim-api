@@ -526,5 +526,6 @@ def test_a_later_year_modal_refuses_is_logged_naming_the_report(caplog) -> None:
         "reports",
         str(store.windows[0].report_id),
     )
-    # The runtime emits no list, so the years started are one string.
-    assert isinstance(fields["started_years"], str)
+    # The runtime emits no list, so the years started (only the first, whose
+    # call Modal accepted) are one string.
+    assert fields["started_years"] == "2026"

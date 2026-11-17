@@ -19,7 +19,7 @@ from policyengine_observability import (
     ServiceIdentity,
 )
 from policyengine_observability.schema import normalize_attributes
-from policyengine_simulation_entry.app import create_app
+from policyengine_simulation_entry.app import PACKAGE_LOGGER_NAME, create_app
 
 PACKAGE_DIRECTORY = Path(policyengine_simulation_entry.__file__).parent
 PROOF_FIXTURES = (
@@ -132,7 +132,7 @@ def test_the_entrypoint_emits_its_info_level_log_records() -> None:
     # The root logger stays at WARNING, so without a level of its own an INFO
     # record, such as ``budget_window_year_deferred``, is discarded before the
     # observability runtime's handler sees it.
-    package_logger = logging.getLogger("policyengine_simulation_entry")
+    package_logger = logging.getLogger(PACKAGE_LOGGER_NAME)
     previous_level = package_logger.level
     # ``setLevel`` also clears the loggers' cached answers to ``isEnabledFor``.
     package_logger.setLevel(logging.NOTSET)
@@ -144,7 +144,7 @@ def test_the_entrypoint_emits_its_info_level_log_records() -> None:
         )
 
         assert logging.getLogger(
-            "policyengine_simulation_entry.budget_window_submissions"
+            f"{PACKAGE_LOGGER_NAME}.budget_window_submissions"
         ).isEnabledFor(logging.INFO)
     finally:
         package_logger.setLevel(previous_level)

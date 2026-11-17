@@ -42,8 +42,11 @@ record's `policyengine_attributes`: any other key passed in `extra=` stays on
 the Python `LogRecord` and never reaches Cloud Logging. In the Simulation
 Entrypoint, pass every log call's fields through `log_extra(...)` from
 `policyengine_simulation_observability.log_records`, which puts them in both
-places, and name a row with `database_row_attributes(table, row_id)` (rule
-`sim.observability.log-fields-through-log-extra`). Each field must be a
+places (a field named like a `LogRecord` attribute, such as `name`, goes only
+to `policyengine_attributes`, since `logging` refuses it), and name a row with `database_row_attributes(table, row_id)` (rule
+`sim.observability.log-fields-through-log-extra`; its check reads only the
+field names written as keywords in the `log_extra(...)` call, not keys unpacked
+from a dictionary with `**`). Each field must be a
 string, a number or a boolean; the runtime drops a list. The Entrypoint sets
 its package logger to INFO: the root logger stays at WARNING, which would
 discard INFO records before the handler sees them. Some Stage 12 runtime and

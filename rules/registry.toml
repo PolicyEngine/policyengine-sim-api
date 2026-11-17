@@ -976,7 +976,7 @@ kind = "none"
 [[rule]]
 id = "sim.observability.log-fields-through-log-extra"
 category = "observability"
-statement = "Every Simulation Entrypoint log call that passes fields passes them through log_extra, so they reach the emitted record, and names none with a word the observability package drops (household, reform, payload, person and others)."
+statement = "Every Simulation Entrypoint log call that passes fields passes them through log_extra, so they reach the emitted record, and no field name written as a keyword in that call contains a word the observability package drops (household, reform, payload, person and others)."
 rationale = "docs/engineering/skills/observability.md#standard-library-log-fields"
 scope = ["projects/policyengine-simulation-entry/src/**/*.py"]
 tier = "mechanical"

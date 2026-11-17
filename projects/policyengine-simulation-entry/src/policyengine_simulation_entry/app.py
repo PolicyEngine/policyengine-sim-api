@@ -128,7 +128,7 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 # Every module of the package logs under this logger.
-PACKAGE_LOGGER_NAME = "policyengine_simulation_entry"
+PACKAGE_LOGGER_NAME = __name__.rpartition(".")[0]
 SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS = 3.0
 # The database ends each statement of a household route that runs longer.
 HOUSEHOLD_STATEMENT_TIMEOUT_MILLISECONDS = 5000
