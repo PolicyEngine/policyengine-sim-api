@@ -503,17 +503,21 @@ def test_a_stored_household_the_builder_cannot_read_is_not_calculable():
     assert [reason.type for reason in raised.value.reasons] == ["household_unreadable"]
 
 
-def test_two_sides_recording_one_simulation_run_are_built_wrong():
-    side = HouseholdReportSideInputs(
-        simulation_run_id=BASELINE_RUN_ID, policy_values={}
-    )
-
-    with pytest.raises(HouseholdReportBuildError, match="different simulation runs"):
+def test_one_simulation_run_on_both_sides_with_two_policies_is_built_wrong():
+    # One run on both sides is one calculation, which a report comparing a
+    # policy with itself names; with two policies it can't be one.
+    with pytest.raises(
+        HouseholdReportBuildError, match="one simulation run on both sides"
+    ):
         household_report_calculation(
             household=_stored_household(),
             year=2026,
-            baseline=side,
-            reform=side,
+            baseline=HouseholdReportSideInputs(
+                simulation_run_id=BASELINE_RUN_ID, policy_values={}
+            ),
+            reform=HouseholdReportSideInputs(
+                simulation_run_id=BASELINE_RUN_ID, policy_values=REFORM
+            ),
             worker=manifest_household_worker("us"),
         )
 

@@ -120,6 +120,11 @@ def _coordinate_comparison(
     # Open the shared child-wait window before any setup work.
     child_wait_deadline = dependencies.monotonic() + dependencies.wait_timeout_seconds
     report = ReportExecutionInput.model_validate(payload)
+    # Only a report run may name one simulation run on both sides: the
+    # comparison path keys a child record by its execution ID.
+    if report.baseline.simulation_execution_id == report.reform.simulation_execution_id:
+        msg = "baseline and reform simulation identifiers must differ"
+        raise ValueError(msg)
     submitted_parent = ComparisonReportRecord.model_validate(parent_payload)
     validate_dispatch_context(report, context, invocation.application_name)
     validate_submitted_parent(
