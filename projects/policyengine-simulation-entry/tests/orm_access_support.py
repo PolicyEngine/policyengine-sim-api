@@ -33,15 +33,15 @@ Every reference to a Core table is a finding, so its statements, methods,
 column collections and joins all count. Each file's module name is its path
 below ``src``; two files with one module name are refused, since imports
 resolve by name. Eight rules go by a method or attribute name alone, so they
-apply only in modules that import sqlalchemy: a mapped attribute's ``.table``,
+apply only in modules that import sqlalchemy: any ``.table`` read,
 and the ``.connect()``, ``.connection()``, ``.raw_connection()``,
 ``.get_bind()``, ``.begin()``, ``.cursor()`` and ``.exec_driver_sql()`` calls.
 The checks guard against ordinary Core use, not against deliberate evasion.
 They don't follow imports made through ``importlib`` or ``__import__``, tables
 or engines passed around without a type annotation, tables held in a
-container such as a dict, a class attribute read in another module, or a
-Session's ``bind`` attribute, and a name derived from a Core table counts as
-one throughout its module.
+container such as a dict, a class or instance attribute read in another
+module, or a Session's ``bind`` attribute, and a name derived from a Core
+table counts as one throughout its module.
 """
 
 from __future__ import annotations
@@ -102,7 +102,8 @@ TABLE_ATTRIBUTES = frozenset(
 MAPPER_TABLE_ATTRIBUTES = frozenset({"selectable", "tables"})
 MAPPER_FUNCTIONS = frozenset({"class_mapper", "inspect", "object_mapper"})
 MAPPER_NAMES = frozenset({"__mapper__", "mapper"})
-# A mapped attribute's table, as in HouseholdJob.id.table.
+# A column's or mapped attribute's table, as in HouseholdJob.id.table: read in a
+# module that imports sqlalchemy, any .table is reported.
 COLUMN_TABLE_ATTRIBUTE = "table"
 METADATA_SUFFIX = "metadata"
 RAW_SQL_FUNCTIONS = frozenset({"TextClause", "literal_column", "text"})
@@ -453,6 +454,19 @@ def _bound_to_calls(
     return names, attributes
 
 
+def _paired(target: ast.expr, value: ast.expr) -> Iterator[tuple[ast.expr, ast.expr]]:
+    """Pair each part of a tuple target with its value, nested tuples included."""
+    if (
+        isinstance(target, (ast.Tuple, ast.List))
+        and isinstance(value, (ast.Tuple, ast.List))
+        and len(target.elts) == len(value.elts)
+    ):
+        for element, element_value in zip(target.elts, value.elts, strict=True):
+            yield from _paired(element, element_value)
+    else:
+        yield target, value
+
+
 def _assignment_nodes(
     tree: ast.AST,
 ) -> Iterator[tuple[ast.stmt | ast.expr, list[ast.expr], ast.expr]]:
@@ -462,23 +476,9 @@ def _assignment_nodes(
     """
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
-            pairs: list[tuple[list[ast.expr], ast.expr]] = []
             for target in node.targets:
-                if (
-                    isinstance(target, (ast.Tuple, ast.List))
-                    and isinstance(node.value, (ast.Tuple, ast.List))
-                    and len(target.elts) == len(node.value.elts)
-                ):
-                    pairs.extend(
-                        ([element], value)
-                        for element, value in zip(
-                            target.elts, node.value.elts, strict=True
-                        )
-                    )
-                else:
-                    pairs.append(([target], node.value))
-            for targets, value in pairs:
-                yield node, targets, value
+                for part, value in _paired(target, node.value):
+                    yield node, [part], value
         elif (isinstance(node, ast.AnnAssign) and node.value is not None) or isinstance(
             node, ast.NamedExpr
         ):
@@ -527,8 +527,9 @@ def _is_core_expression(
 def _core_tables(module: _Module, modules: Mapping[str, _Module]) -> None:
     """Record the names and attributes that hold a Core table within the module.
 
-    A class attribute counts only within the module that declares it: another
-    module reading it gets the table from a reference already reported here.
+    A class or instance attribute counts only within the module that sets it:
+    another module reading it gets the table that a reported reference stored
+    there, wherever that reference was made.
     """
     class_body = _class_body_statements(module.tree)
     annotated_names, annotated_attributes = _annotated_as(
@@ -613,6 +614,7 @@ class _ModuleContext:
     mapper_names: set[str]
     engine_names: set[str]
     schema_details: set[int]
+    called: set[int]
 
 
 def _forbidden_connection_name(name: str, context: _ModuleContext) -> bool:
@@ -644,10 +646,11 @@ def _reaches_mapped_table(node: ast.Attribute, context: _ModuleContext) -> bool:
         return True
     receiver = node.value
     if node.attr == COLUMN_TABLE_ATTRIBUTE:
+        # A column's table is read, never called: sa.table(...) is a function.
         return (
             context.module.uses_sqlalchemy
-            and isinstance(receiver, ast.Attribute)
-            and _root_name(receiver)[:1].isupper()
+            and isinstance(node.ctx, ast.Load)
+            and id(node) not in context.called
         )
     if node.attr not in MAPPER_TABLE_ATTRIBUTES:
         return False
@@ -757,6 +760,11 @@ def orm_access_findings(sources: Mapping[str, str]) -> list[Finding]:
             )
             | _names_and_attributes(_annotated_as(module, ENGINE_TYPES)),
             schema_details=_schema_detail_calls(module.tree),
+            called={
+                id(node.func)
+                for node in ast.walk(module.tree)
+                if isinstance(node, ast.Call)
+            },
         )
         findings.extend(
             Finding(module.file, getattr(node, "lineno", 0), check, source)

@@ -57,8 +57,10 @@ What the ORM means here:
   condition.
 
 - **Schema inspection**, for the deployment check that compares the live
-  schema with the models, runs as `inspect(engine)` in the library's
-  `engine.py`, which needs no Connection.
+  schema with the models, reads the live schema as `inspect(engine)` in the
+  library's `engine.py`, which needs no Connection, and the models' columns
+  and keys from their mappers (`inspect(Model).columns`, `.primary_key`) and
+  `__table_args__`, none of which is reported.
 
 `projects/policyengine-simulation-entry/tests/test_orm_only.py` runs the checks
 in `orm_access_support.py` over the same files as the guard below. They look
@@ -77,11 +79,12 @@ A Core table is, in one module:
 - a name or attribute it assigns from an expression rooted at a Core table,
   such as `previous = household_jobs.alias()` or
   `self.jobs = tables.household_jobs`, with a tuple assignment pairing each
-  name with its value;
+  name with its value, nested tuples included;
 - a class attribute it declares as a table, such as a dataclass field
-  `table: Table`, wherever the module reads it. Another module reading the
-  attribute isn't followed: the reference that stored the table there is
-  reported where it was made.
+  `table: Table`, wherever the module reads it. Another module's read of a
+  class or instance attribute is reported only when the attribute is named
+  `table`; otherwise the reference that stored the table there is reported
+  where it was made.
 
 Each finding is one of:
 
@@ -94,8 +97,9 @@ Each finding is one of:
   `selectable` of a mapper (`__mapper__`, `.mapper`, or `inspect(...)`,
   `class_mapper(...)` or `object_mapper(...)`, called or held in a name, or a
   name assigned `__mapper__` or `.mapper`) or of a MetaData (a name bound to
-  `MetaData(...)` or ending in `metadata`); and a mapped attribute's `table`,
-  as in `HouseholdJob.id.table`.
+  `MetaData(...)` or ending in `metadata`); and any `.table` read, which is
+  how a column or mapped attribute reaches its table, as in
+  `HouseholdJob.id.table`.
 - **Core engine or connection:** `Connection` or `AsyncConnection` from
   SQLAlchemy in any module; `Engine`, `create_engine` and the like outside a
   library's `engine.py`, imported or referenced as `sa.Engine`; any
@@ -108,15 +112,15 @@ Each finding is one of:
 - **sqlmodel import.**
 
 Eight of these go by a method or attribute name alone, so they apply only in
-modules that import sqlalchemy: a mapped attribute's `.table`, and the
+modules that import sqlalchemy: any `.table` read, and the
 `.connect()`, `.connection()`, `.raw_connection()`, `.get_bind()`,
 `.begin()`, `.cursor()` and `.exec_driver_sql()` calls.
 
 The checks read source, not types, and guard against ordinary Core use, not
 against deliberate evasion. They miss imports through `importlib`, tables and
 engines passed around without a type annotation, tables held in a container
-such as a dict, a class attribute read in another module, and a Session's
-`bind` attribute. A name derived from a Core table counts as one throughout
+such as a dict, a class or instance attribute read in another module, and a
+Session's `bind` attribute. A name derived from a Core table counts as one throughout
 its module. Once a library's tables are mapped classes and its declarations
 are gone, every route to a Core table starts at a reported reference, such as
 `__table__`.

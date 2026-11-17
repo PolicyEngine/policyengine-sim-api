@@ -456,28 +456,82 @@ def test_a_table_stored_in_another_module_is_reported_where_it_is_stored():
 
     @dataclass
     class ResultRows:
-        table: Table
+        target: Table
 
     def job_rows(rows: ResultRows):
-        return rows.table
+        return rows.target
 
-    JOB_ROWS = ResultRows(table=household_jobs)
+    JOB_ROWS = ResultRows(target=household_jobs)
     """
     store = """
     from sqlalchemy import insert
 
     from example.results import JOB_ROWS, ResultRows
 
-    def write(result_rows: ResultRows, layout):
-        return insert(result_rows.table), layout.table
+    def write(result_rows: ResultRows):
+        return insert(result_rows.target)
     """
     sources = {"libs/example/src/example/results.py": results, STORE: store}
 
     assert _checks(sources, "libs/example/src/example/results.py") == [
-        (CORE_TABLE_ACCESS, "rows.table"),
+        (CORE_TABLE_ACCESS, "rows.target"),
         (CORE_TABLE_ACCESS, "household_jobs"),
     ]
     assert _checks(sources, STORE) == []
+
+
+@pytest.mark.parametrize(
+    "expression", ["key.table", "job_id.table", "self.model.id.table", "rows.table"]
+)
+def test_any_table_read_in_a_module_using_sqlalchemy_is_core_table_access(
+    expression,
+):
+    store = f"""
+    from sqlalchemy import insert
+
+    def write(self, key, job_id, rows):
+        return insert({expression})
+    """
+
+    assert _checks({STORE: store}, STORE) == [(CORE_TABLE_ACCESS, expression)]
+
+
+def test_nested_tuple_assignments_pair_each_name_with_its_value():
+    store = """
+    from example.tables import household_jobs, regions
+
+    (current, label), area = (household_jobs.alias(), "jobs"), regions
+    condition = current.c.id == area.c.id
+    """
+
+    assert sorted(source for _, source in _checks({STORE: store}, STORE)) == [
+        "area",
+        "current",
+        "household_jobs",
+        "regions",
+    ]
+
+
+def test_modules_importing_each_other_settle_on_their_exports():
+    first = """
+    from example.second import regions
+    from example.tables import household_jobs
+    """
+    second = """
+    from example.first import household_jobs
+    from example.tables import regions
+
+    condition = household_jobs.c.id == regions.c.id
+    """
+    sources = {
+        "libs/example/src/example/first.py": first,
+        "libs/example/src/example/second.py": second,
+    }
+
+    assert _checks(sources, "libs/example/src/example/second.py") == [
+        (CORE_TABLE_ACCESS, "household_jobs"),
+        (CORE_TABLE_ACCESS, "regions"),
+    ]
 
 
 def test_a_class_attribute_assigned_a_core_table_is_one_where_read():
