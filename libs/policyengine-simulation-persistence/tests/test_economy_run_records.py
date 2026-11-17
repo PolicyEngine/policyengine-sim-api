@@ -1,39 +1,32 @@
-"""The simulation service's reads and writes for economy simulations and reports.
+"""The simulation service's catalog reads and run writes for economy records.
 
 These run against a database the Public API's own v2 migration chain built
 (``PUBLIC_API_SCHEMA_DATABASE_URL``), as the simulation service's role, each
-in a transaction rolled back afterwards. The Public API's rows a request names
-are inserted first, as the superuser.
+in a transaction rolled back afterwards. The Public API's rows a request
+names, and any stored report or simulation, are inserted first, as the
+superuser.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
 from conftest import act_as_the_service, rolled_back_transaction
 from economy_rows import (
-    CURRENT_LAW,
-    VERSIONS,
-    EconomyCatalog,
+    PendingReport,
+    RunShape,
     insert_economy_catalog,
-    insert_reusable_run,
+    insert_pending_report,
+    insert_simulation_run,
     insert_uk_area_regions,
 )
 from policyengine_simulation_persistence import (
-    EconomyRecordReferenceError,
-    NewEconomyReport,
-    NewEconomySimulation,
     ReportRunStatus,
-    ReportSimulation,
-    SimulationChoice,
     SimulationStatus,
     fail_unstarted_report_run,
     fail_unstarted_simulation_run,
-    insert_economy_report,
-    insert_economy_simulation,
     read_dataset,
     read_dataset_by_id,
     read_local_area_dataset,
@@ -47,7 +40,6 @@ from policyengine_simulation_persistence import (
 from public_api_rows import (
     insert_catalog_version,
     insert_dataset,
-    insert_policy,
     insert_region,
 )
 from sqlalchemy import select, text, update
@@ -57,38 +49,6 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.public_api_schema
 
-REPORT_OPTIONS = {"include_cliffs": True, "spm": {"geography_kind": "national"}}
-
-
-def _new_side(choice: SimulationChoice = CURRENT_LAW) -> ReportSimulation:
-    return ReportSimulation(
-        simulation_id=uuid4(),
-        simulation_run_id=uuid4(),
-        choice=choice,
-        reused=False,
-    )
-
-
-def _new_report(
-    economy: EconomyCatalog,
-    *,
-    baseline: ReportSimulation | None = None,
-    reform: ReportSimulation | None = None,
-) -> NewEconomyReport:
-    return NewEconomyReport(
-        id=uuid4(),
-        run_id=uuid4(),
-        country=economy.catalog.country,
-        label="Child tax credit",
-        description="A larger credit",
-        tax_benefit_model_id=economy.catalog.model_id,
-        population=economy.population(),
-        versions=VERSIONS,
-        inputs=REPORT_OPTIONS,
-        baseline=baseline or _new_side(),
-        reform=reform or _new_side(),
-    )
-
 
 def _row(connection: Connection, table_name: str, row_id: UUID) -> dict:
     row = connection.execute(
@@ -96,12 +56,6 @@ def _row(connection: Connection, table_name: str, row_id: UUID) -> dict:
         {"id": row_id},
     ).mappings()
     return dict(row.one())
-
-
-def _count(connection: Connection, table_name: str) -> int:
-    return connection.execute(
-        text(f"SELECT count(*) FROM public.{table_name}")  # noqa: S608  # fixed table names
-    ).scalar_one()
 
 
 def test_the_countrys_model_is_found_by_its_name(public_api_database_url) -> None:
@@ -284,260 +238,10 @@ def test_the_local_area_dataset_may_be_the_national_default(
     assert (found.id, found.name) == (economy.dataset_id, "populace_uk_2024")
 
 
-def test_a_report_its_simulations_and_runs_are_created_pending(
-    public_api_database_url,
-) -> None:
-    with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
-        policy_id = insert_policy(connection, economy.catalog)
-        report = _new_report(
-            economy, reform=_new_side(SimulationChoice(policy_id, dynamic_id=None))
-        )
-        act_as_the_service(connection)
-
-        insert_economy_report(connection, report)
-        stored_report = _row(connection, "reports", report.id)
-        stored_run = _row(connection, "report_runs", report.run_id)
-        baseline = _row(connection, "simulations", report.baseline.simulation_id)
-        reform = _row(connection, "simulations", report.reform.simulation_id)
-        baseline_run = _row(
-            connection, "simulation_runs", report.baseline.simulation_run_id
-        )
-        reform_run = _row(
-            connection, "simulation_runs", report.reform.simulation_run_id
-        )
-
-    population = economy.population()
-    assert {
-        key: stored_report[key]
-        for key in (
-            "label",
-            "description",
-            "country",
-            "type",
-            "user_id",
-            "tax_benefit_model_id",
-            "policy_id",
-            "baseline_simulation_id",
-            "reform_simulation_id",
-            "household_id",
-            "dataset_id",
-            "region_id",
-            "year",
-            "inputs",
-            "budget_window_size",
-        )
-    } == {
-        "label": "Child tax credit",
-        "description": "A larger credit",
-        "country": "us",
-        "type": "economy",
-        "user_id": None,
-        "tax_benefit_model_id": economy.catalog.model_id,
-        "policy_id": policy_id,
-        "baseline_simulation_id": report.baseline.simulation_id,
-        "reform_simulation_id": report.reform.simulation_id,
-        "household_id": None,
-        "dataset_id": economy.dataset_id,
-        "region_id": economy.region_id,
-        "year": 2026,
-        "inputs": REPORT_OPTIONS,
-        "budget_window_size": None,
-    }
-    assert {
-        key: stored_run[key]
-        for key in (
-            "report_id",
-            "baseline_simulation_run_id",
-            "reform_simulation_run_id",
-            "budget_window_run_id",
-            "year",
-            "country_package_version",
-            "policyengine_version",
-            "status",
-            "trigger",
-            "modal_call_id",
-            "started_at",
-            "completed_at",
-        )
-    } == {
-        "report_id": report.id,
-        "baseline_simulation_run_id": report.baseline.simulation_run_id,
-        "reform_simulation_run_id": report.reform.simulation_run_id,
-        "budget_window_run_id": None,
-        "year": None,
-        "country_package_version": VERSIONS.country_package_version,
-        "policyengine_version": VERSIONS.policyengine_version,
-        "status": "pending",
-        "trigger": "initial",
-        "modal_call_id": None,
-        "started_at": None,
-        "completed_at": None,
-    }
-    for simulation, run, expected_policy in (
-        (baseline, baseline_run, None),
-        (reform, reform_run, policy_id),
-    ):
-        assert (
-            simulation["simulation_type"],
-            simulation["policy_id"],
-            simulation["dynamic_id"],
-            simulation["household_id"],
-            simulation["dataset_id"],
-            simulation["region_id"],
-            simulation["tax_benefit_model_version_id"],
-            simulation["year"],
-            simulation["filter_field"],
-        ) == (
-            "economy",
-            expected_policy,
-            None,
-            None,
-            population.dataset_id,
-            population.region_id,
-            population.tax_benefit_model_version_id,
-            2026,
-            None,
-        )
-        assert (
-            run["simulation_id"],
-            run["year"],
-            run["tax_benefit_model_version_id"],
-            run["country_package_version"],
-            run["policyengine_version"],
-            run["dataset_id"],
-            run["region_id"],
-            run["status"],
-            run["modal_call_id"],
-            run["output_uri"],
-        ) == (
-            simulation["id"],
-            2026,
-            population.tax_benefit_model_version_id,
-            VERSIONS.country_package_version,
-            VERSIONS.policyengine_version,
-            population.dataset_id,
-            population.region_id,
-            "pending",
-            None,
-            None,
-        )
-
-
-def test_a_side_reusing_a_succeeded_run_creates_nothing_for_that_side(
-    public_api_database_url,
-) -> None:
-    with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
-        reused = insert_reusable_run(connection, economy)
-        report = _new_report(
-            economy,
-            baseline=ReportSimulation(
-                simulation_id=reused.simulation_id,
-                simulation_run_id=reused.simulation_run_id,
-                choice=CURRENT_LAW,
-                reused=True,
-            ),
-        )
-        simulations_before = _count(connection, "simulations")
-        runs_before = _count(connection, "simulation_runs")
-        act_as_the_service(connection)
-
-        insert_economy_report(connection, report)
-        stored_report = _row(connection, "reports", report.id)
-        stored_run = _row(connection, "report_runs", report.run_id)
-        simulations_after = _count(connection, "simulations")
-        runs_after = _count(connection, "simulation_runs")
-
-    assert stored_report["baseline_simulation_id"] == reused.simulation_id
-    assert stored_run["baseline_simulation_run_id"] == reused.simulation_run_id
-    assert stored_run["reform_simulation_run_id"] == report.reform.simulation_run_id
-    assert (simulations_after, runs_after) == (
-        simulations_before + 1,
-        runs_before + 1,
-    )
-
-
-@pytest.mark.parametrize(
-    ("missing_column", "table_name"),
-    [("region_id", "simulations"), ("dataset_id", "simulations")],
-)
-def test_a_report_naming_a_missing_row_names_the_column_that_refused_it(
-    public_api_database_url, missing_column: str, table_name: str
-) -> None:
-    with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
-        report = _new_report(economy)
-        population = replace(report.population, **{missing_column: uuid4()})
-        act_as_the_service(connection)
-
-        with pytest.raises(EconomyRecordReferenceError) as refusal:
-            insert_economy_report(connection, replace(report, population=population))
-
-    assert (refusal.value.table_name, refusal.value.column_name) == (
-        table_name,
-        missing_column,
-    )
-
-
-def test_a_report_naming_a_missing_dynamic_names_its_column(
-    public_api_database_url,
-) -> None:
-    with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
-        report = _new_report(
-            economy, reform=_new_side(SimulationChoice(None, dynamic_id=uuid4()))
-        )
-        act_as_the_service(connection)
-
-        with pytest.raises(EconomyRecordReferenceError) as refusal:
-            insert_economy_report(connection, report)
-
-    assert (refusal.value.table_name, refusal.value.column_name) == (
-        "simulations",
-        "dynamic_id",
-    )
-
-
-def test_a_simulation_and_its_run_are_created_pending(public_api_database_url) -> None:
-    with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
-        policy_id = insert_policy(connection, economy.catalog)
-        simulation = NewEconomySimulation(
-            id=uuid4(),
-            run_id=uuid4(),
-            choice=SimulationChoice(policy_id, dynamic_id=None),
-            population=economy.population(year=2027),
-            versions=VERSIONS,
-        )
-        act_as_the_service(connection)
-
-        insert_economy_simulation(connection, simulation)
-        stored = _row(connection, "simulations", simulation.id)
-        run = _row(connection, "simulation_runs", simulation.run_id)
-
-    assert (
-        stored["simulation_type"],
-        stored["policy_id"],
-        stored["dynamic_id"],
-        stored["dataset_id"],
-        stored["region_id"],
-        stored["year"],
-    ) == ("economy", policy_id, None, economy.dataset_id, economy.region_id, 2027)
-    assert (
-        run["simulation_id"],
-        run["year"],
-        run["status"],
-        run["modal_call_id"],
-        run["policyengine_version"],
-    ) == (simulation.id, 2027, "pending", None, VERSIONS.policyengine_version)
-
-
-def _created_report(connection: Connection) -> NewEconomyReport:
-    economy = insert_economy_catalog(connection)
-    report = _new_report(economy)
+def _created_report(connection: Connection) -> PendingReport:
+    """Insert a pending report and its runs, then act as the service."""
+    report = insert_pending_report(connection, insert_economy_catalog(connection))
     act_as_the_service(connection)
-    insert_economy_report(connection, report)
     return report
 
 
@@ -548,15 +252,15 @@ def test_a_report_runs_call_is_recorded_once_while_it_is_pending_without_one(
         report = _created_report(connection)
 
         first = record_report_run_call(
-            connection, report_run_id=report.run_id, modal_call_id="fc-first"
+            connection, report_run_id=report.report_run_id, modal_call_id="fc-first"
         )
         second = record_report_run_call(
-            connection, report_run_id=report.run_id, modal_call_id="fc-second"
+            connection, report_run_id=report.report_run_id, modal_call_id="fc-second"
         )
         unknown = record_report_run_call(
             connection, report_run_id=uuid4(), modal_call_id="fc-other"
         )
-        call_id = _row(connection, "report_runs", report.run_id)["modal_call_id"]
+        call_id = _row(connection, "report_runs", report.report_run_id)["modal_call_id"]
 
     assert (first, second, unknown) == (
         ReportRunStatus.PENDING,
@@ -572,21 +276,21 @@ def test_a_claimed_report_run_keeps_its_claim(public_api_database_url) -> None:
         connection.execute(text("RESET ROLE"))
         connection.execute(
             update(report_runs)
-            .where(report_runs.c.id == report.run_id)
+            .where(report_runs.c.id == report.report_run_id)
             .values(status=ReportRunStatus.RUNNING, modal_call_id="fc-coordinator")
         )
         act_as_the_service(connection)
 
         status = record_report_run_call(
-            connection, report_run_id=report.run_id, modal_call_id="fc-late"
+            connection, report_run_id=report.report_run_id, modal_call_id="fc-late"
         )
         failed = fail_unstarted_report_run(
             connection,
-            report_run_id=report.run_id,
+            report_run_id=report.report_run_id,
             simulation_run_ids=(report.baseline.simulation_run_id,),
             error_message="modal_call_refused: Modal refused the call.",
         )
-        stored = _row(connection, "report_runs", report.run_id)
+        stored = _row(connection, "report_runs", report.report_run_id)
         baseline = _row(
             connection, "simulation_runs", report.baseline.simulation_run_id
         )
@@ -606,7 +310,7 @@ def test_an_unstarted_report_run_and_its_new_simulation_runs_fail_at_once(
 
         failed = fail_unstarted_report_run(
             connection,
-            report_run_id=report.run_id,
+            report_run_id=report.report_run_id,
             simulation_run_ids=(
                 report.baseline.simulation_run_id,
                 report.reform.simulation_run_id,
@@ -615,11 +319,11 @@ def test_an_unstarted_report_run_and_its_new_simulation_runs_fail_at_once(
         )
         again = fail_unstarted_report_run(
             connection,
-            report_run_id=report.run_id,
+            report_run_id=report.report_run_id,
             simulation_run_ids=(),
             error_message="a second failure",
         )
-        stored = _row(connection, "report_runs", report.run_id)
+        stored = _row(connection, "report_runs", report.report_run_id)
         stored_simulation_runs = connection.execute(
             select(
                 simulation_runs.c.status,
@@ -649,45 +353,38 @@ def test_a_simulation_runs_call_is_recorded_or_the_run_failed_while_unstarted(
 ) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
-        recorded = NewEconomySimulation(
-            id=uuid4(),
-            run_id=uuid4(),
-            choice=CURRENT_LAW,
-            population=economy.population(),
-            versions=VERSIONS,
-        )
-        refused = NewEconomySimulation(
-            id=uuid4(),
-            run_id=uuid4(),
-            choice=CURRENT_LAW,
-            population=economy.population(),
-            versions=VERSIONS,
+        pending = RunShape(status=SimulationStatus.PENDING)
+        recorded, refused = (
+            insert_simulation_run(connection, economy.population(), pending)
+            for _ in range(2)
         )
         act_as_the_service(connection)
-        insert_economy_simulation(connection, recorded)
-        insert_economy_simulation(connection, refused)
 
         status = record_simulation_run_call(
-            connection, simulation_run_id=recorded.run_id, modal_call_id="fc-worker"
+            connection,
+            simulation_run_id=recorded.simulation_run_id,
+            modal_call_id="fc-worker",
         )
         not_failed = fail_unstarted_simulation_run(
             connection,
-            simulation_run_id=recorded.run_id,
+            simulation_run_id=recorded.simulation_run_id,
             error_message="modal_call_refused: refused",
         )
         failed = fail_unstarted_simulation_run(
             connection,
-            simulation_run_id=refused.run_id,
+            simulation_run_id=refused.simulation_run_id,
             error_message="modal_call_refused: refused",
         )
         not_recorded = record_simulation_run_call(
-            connection, simulation_run_id=refused.run_id, modal_call_id="fc-late"
+            connection,
+            simulation_run_id=refused.simulation_run_id,
+            modal_call_id="fc-late",
         )
         unknown = record_simulation_run_call(
             connection, simulation_run_id=uuid4(), modal_call_id="fc-other"
         )
-        recorded_run = _row(connection, "simulation_runs", recorded.run_id)
-        refused_run = _row(connection, "simulation_runs", refused.run_id)
+        recorded_run = _row(connection, "simulation_runs", recorded.simulation_run_id)
+        refused_run = _row(connection, "simulation_runs", refused.simulation_run_id)
 
     assert (status, not_failed, failed, not_recorded, unknown) == (
         SimulationStatus.PENDING,

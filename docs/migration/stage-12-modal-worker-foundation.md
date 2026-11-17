@@ -288,12 +288,15 @@ creates or claims a `stage12_evaluation_*` record. Only comparison-path calls,
 which pass an evaluation record, write those, until the comparison path is
 removed. The household functions work the same way on `household_jobs`.
 
-**A report run.** The simulation service creates, in one transaction, the
-`simulations` and `reports` rows, a `simulation_runs` row for the baseline and
-one for the reform (pending, with no `modal_call_id`; or a run that already
-succeeded, to reuse it), and the `report_runs` row naming both (pending, with no
-`modal_call_id`). It then starts the manifest's `report_coordinator_callable`
-(`coordinate_report`) with two arguments and no evaluation record:
+**A report run.** The simulation service finds or creates by definition key,
+in one transaction, the `simulations` and `reports` rows, a `simulation_runs`
+row for the baseline and one for the reform (pending, with no `modal_call_id`;
+or a run of the same simulation on the same versions that it joins, which may
+have succeeded already), and the `report_runs` row naming both (pending, with
+no `modal_call_id`, or a run on the same versions that it joins). For a report
+run it created, it then starts the manifest's `report_coordinator_callable`
+(`coordinate_report`) with two arguments and no evaluation record; a joined
+report run gets no call:
 
 - the report input, a `ReportExecutionInput` whose `evaluation_id` is the report
   run's ID and whose baseline and reform `simulation_execution_id`s are their
@@ -313,7 +316,7 @@ run row naming other simulation runs, fails the report run with
 `report_run_input_mismatch`. If a worker it starts finds its run held by
 another call, the coordinator waits for that run instead (see "Shared
 simulation runs" below). It uses the stored output of each simulation run
-that already succeeded (see the reuse of succeeded runs above), fails the
+that already succeeded (see the joined runs above), fails the
 report run with the run's own recorded failure if a run it must calculate
 already failed (`simulation_run_failed` if it recorded none), and starts a
 worker for each other one with a context naming only that
@@ -327,8 +330,10 @@ once. It returns
 `{"report_run_id", "status"}`, or the same marked `deduplicated` without running
 when another call holds the report run or it has finished.
 
-**A simulation run on its own.** The service creates the `simulations` row and
-its `simulation_runs` row (pending, no call), starts the country's
+**A simulation run on its own.** The service finds or creates by definition
+key the `simulations` row and its `simulation_runs` row (pending, no call, or
+a run on the same versions that it joins, which gets no call). For a run it
+created, it starts the country's
 `single_simulation_callable` with a `SimulationExecutionInput` (role
 `standalone`, no output plan, `evaluation_id` and `simulation_execution_id`
 both the run's ID) and a context naming the run in `simulation_run_id`, with
@@ -338,15 +343,20 @@ call as for a report run. A prefix without it fails the run. The worker plans th
 outputs with its stored plan, as a report run's coordinator does (below).
 
 **A re-run.** The service re-runs a stored report or simulation with the same
-two calls, by run ID. It creates the record's new run (a report run with
-trigger `manual`) and, for a report, a new `simulation_runs` row of each side's
-own simulation, or names that simulation's run that already succeeded on the
-same versions, unless the re-run is forced. The new runs record the catalog
-version, dataset and region of the current .py version's catalog; the
-`simulations` and `reports` rows are unchanged. A budget-window report's
-re-run is a new `budget_window_runs` row (trigger `manual`) with a report run
-per year, each on its year's own simulations, started as a new window's
-first years are. The coordinator and workers claim and calculate them as
+two calls, by run ID. A simulation's re-run, which takes no `force`, joins
+the simulation's run on the current versions, catalog version and year that
+hasn't failed and wasn't forced, which gets no call, or else creates one. A
+report's re-run, for a report created by key and unless forced, joins the
+report's run on the current versions the same way, or else creates the
+report's new run naming each side's simulation run on those versions, found
+or inserted (C1 · 24's answers 3 and 8); a forced re-run, and every re-run
+of a report created before keys, creates an extra run on a new run of each
+side, all marked forced. No new run names a trigger (answer 6). The new runs record the
+catalog version, dataset and region of the current .py version's catalog;
+the `simulations` and `reports` rows are unchanged. A budget-window report's
+re-run joins or creates a `budget_window_runs` row with a report run per
+year, each on its year's own simulations, a new one started as a new
+window's first years are. The coordinator and workers claim and calculate them as
 they would a new record's: nothing on the Modal side tells a re-run apart.
 
 **Each worker** claims its simulation run under its own Modal call ID: a pending
@@ -435,9 +445,11 @@ window of 1 to 75 consecutive years. It is an economy report whose
 the year, with its own simulation runs of that year, so a year can reuse a
 single-year report's runs, and the reverse.
 
-- **Creating and starting.** The simulation service creates every year's runs
-  in one transaction, all pending with no call, then starts the earliest
-  years within one ten-second wait for Modal, counted from the first start;
+- **Creating and starting.** The simulation service finds or creates the
+  window and its window run by key, in one transaction; a window run it
+  creates names every year's report run, each on its year's simulation runs,
+  found or created, and every run it creates is pending with no call. For a
+  window run it created, it then starts the earliest years within one ten-second wait for Modal, counted from the first start;
   a later year not confirmed within it is deferred (`YearStartDeferred`)
   and waits for a started year's coordinator. The contract's
   `year_calculation` derives each year's coordinator
@@ -921,11 +933,12 @@ pre-emption records nothing. An error in the report run's claim, or in the
 read of its simulation runs, fails the report run if the claim applied
 before the error, and leaves its simulation runs to the stuck-run sweep.
 
-A household report's re-run (`POST /reports/{report_id}/runs`) is a new
-report run, trigger `manual`, naming a new run of each side's own household
-simulation on the current catalog version, in the report's year. The
-service starts one call for it, as for a new household report, and the
-function claims and calculates it as it would a new report's run.
+A household report's re-run (`POST /reports/{report_id}/runs`) joins or
+creates its report run as an economy report's does, each side's run of its
+own household simulation on the current catalog version, in the report's
+year. The service starts one call for a run it created, as for a new
+household report, and the function claims and calculates it as it would a
+new report's run.
 
 The stuck-run sweep (`src/modal/run_sweep_app.py`) fails household jobs
 nothing will finish by the rule it applies to report runs and simulation

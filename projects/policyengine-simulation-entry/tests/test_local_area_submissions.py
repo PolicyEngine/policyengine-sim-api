@@ -70,10 +70,20 @@ CATALOG_LOCAL_AREA_DATASET = CatalogDataset(
 
 
 def _uk_report_request(**changes: Any) -> EconomyReportRequest:
-    """Return a UK-wide report request, with no SPM settings."""
+    """Return a UK-wide report request, with no SPM settings and no cliffs.
+
+    The service refuses ``include_cliffs: true`` until per-run cliff
+    calculations exist (C1 · 24's interim answer A).
+    """
     body = {name: value for name, value in REPORT_BODY.items() if name != "spm"}
     return EconomyReportRequest.model_validate(
-        {**body, "country": "uk", "region_code": "uk", **changes}
+        {
+            **body,
+            "country": "uk",
+            "region_code": "uk",
+            "include_cliffs": False,
+            **changes,
+        }
     )
 
 
@@ -172,15 +182,18 @@ def test_the_report_is_calculated_on_the_local_area_dataset_the_worker_routes_to
     assert request.dataset_name is None
     (report,) = store.reports
     assert report.population.dataset_id == CATALOG_LOCAL_AREA_DATASET.id
-    # An ordinary report: its options are the request's, cliffs included.
-    assert report.inputs == {"include_cliffs": True}
+    # Its key names the local-area dataset, so it is found apart from the
+    # national report on the region's default dataset.
+    assert report.definition.dataset_name == LOCAL_AREA_DATASET.identity
+    # An ordinary report: it stores no option but an SPM selection.
+    assert report.inputs == {}
     ((_, payload, _, _),) = caller.report_runs
     execution = ReportExecutionInput.model_validate(payload)
     for side in (execution.baseline, execution.reform):
         assert side.bundle.dataset.identity == LOCAL_AREA_DATASET.identity
         assert side.population.artifact.uri == LOCAL_AREA_DATASET.uri
         assert side.geography.region == "uk"
-        assert side.options == {"include_cliffs": True}
+        assert side.options == {}
 
 
 def test_a_catalog_whose_area_regions_use_another_dataset_is_refused() -> None:
@@ -212,7 +225,7 @@ def test_a_report_on_the_local_area_dataset_is_rerun_on_it() -> None:
         country="uk",
         region_code="uk",
         dataset_name=LOCAL_AREA_DATASET.identity,
-        inputs={"include_cliffs": True},
+        inputs={},
     )
     store = FakeRerunStore(
         report_definition=stored,

@@ -2,28 +2,37 @@
 
 The Simulation Entrypoint creates an economy report, or a standalone economy
 simulation, in three steps, each its own transaction, with the Modal call
-started between them: it reads the request's inputs, creates the rows, then
-records the call or fails the run it started. ``EconomyRunStore`` runs the
-reads and writes of ``economy_run_records`` and ``policy_reform`` that way.
+started between them: it reads the request's inputs, finds or creates the
+rows by key, then records the call on a run it created or fails that run.
+A stored record's re-run takes the same steps, joining or creating its new
+runs instead. ``EconomyRunStore`` runs the reads and writes of
+``economy_inputs``, ``keyed_economy_records``, ``keyed_window_records``,
+``economy_rerun_records`` and ``economy_run_records`` that way.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from policyengine_simulation_persistence.budget_window_records import (
-    insert_budget_window_report,
-)
-from policyengine_simulation_persistence.economy_catalog_rows import (
+from policyengine_simulation_persistence.economy_inputs import (
+    BudgetWindowInputs,
     EconomyCatalogRows,
+    EconomyReportInputs,
     EconomyRequest,
+    EconomySimulationInputs,
     LocalAreaDatasetMismatchError,
+    ReportSide,
+    ReportSideError,
+    SideRefusal,
+    SimulationInputs,
     UnknownDatasetError,
     UnknownRegionError,
     read_catalog_rows,
+    read_report_sides,
+    read_simulation_values,
+    read_window_sides,
 )
 from policyengine_simulation_persistence.economy_rerun_records import (
     insert_report_rerun,
@@ -37,62 +46,28 @@ from policyengine_simulation_persistence.economy_run_reads import (
     read_economy_simulation,
 )
 from policyengine_simulation_persistence.economy_run_records import (
-    EconomyPopulation,
-    ReusableRun,
-    RunVersions,
     SimulationChoice,
     fail_unstarted_report_run,
     fail_unstarted_simulation_run,
-    find_reusable_run,
-    find_reusable_run_of,
-    insert_economy_report,
-    insert_economy_simulation,
     record_report_run_call,
     record_simulation_run_call,
 )
 from policyengine_simulation_persistence.engine import bounded_transaction
-from policyengine_simulation_persistence.policy_reform import (
-    MissingPolicyParametersError,
-    OverlappingReformError,
-    UnknownDynamicError,
-    UnknownPolicyError,
-    combine_reforms,
-    read_dynamic_reform,
-    read_policy_reform,
+from policyengine_simulation_persistence.keyed_economy_records import (
+    find_or_create_economy_report,
+    find_or_create_economy_simulation,
+)
+from policyengine_simulation_persistence.keyed_window_records import (
+    find_or_create_budget_window,
 )
 
-# The public names, with the catalog-row ones moved to economy_catalog_rows,
-# which stay importable from here.
-__all__ = [
-    "BudgetWindowInputs",
-    "EconomyCatalogRows",
-    "EconomyRecordOutcomeUnknownError",
-    "EconomyReportInputs",
-    "EconomyRequest",
-    "EconomyRunStore",
-    "EconomySimulationInputs",
-    "LocalAreaDatasetMismatchError",
-    "ReportSide",
-    "ReportSideError",
-    "ReusableRunSearch",
-    "RunReuse",
-    "SideRefusal",
-    "SimulationInputs",
-    "TransactionFactory",
-    "UnknownDatasetError",
-    "UnknownRegionError",
-]
-
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Sequence
+    from collections.abc import Callable, Sequence
     from contextlib import AbstractContextManager
     from uuid import UUID
 
     from sqlalchemy import Connection, Engine
 
-    from policyengine_simulation_persistence.budget_window_records import (
-        NewBudgetWindowReport,
-    )
     from policyengine_simulation_persistence.economy_rerun_records import (
         NewReportRerun,
         NewSimulationRerun,
@@ -100,54 +75,31 @@ if TYPE_CHECKING:
         ReportDefinition,
         SideDefinition,
         SimulationDefinition,
-        WindowYearDefinition,
     )
     from policyengine_simulation_persistence.economy_run_reads import (
         EconomyReportState,
         EconomySimulationState,
     )
-    from policyengine_simulation_persistence.economy_run_records import (
-        NewEconomyReport,
-        NewEconomySimulation,
+    from policyengine_simulation_persistence.keyed_economy_records import (
+        FoundEconomyReport,
+        FoundEconomySimulation,
+        KeyedEconomyReport,
+        KeyedEconomySimulation,
     )
-    from policyengine_simulation_persistence.policy_reform import PolicyReform
+    from policyengine_simulation_persistence.keyed_window_records import (
+        FoundBudgetWindow,
+        KeyedBudgetWindow,
+    )
+    from policyengine_simulation_persistence.shared_rows import (
+        FoundReportRun,
+        FoundSimulationRun,
+    )
     from policyengine_simulation_persistence.tables import (
         ReportRunStatus,
         SimulationStatus,
     )
 
 type TransactionFactory = Callable[[], AbstractContextManager[Connection]]
-# Which of a report's simulations a value belongs to.
-type ReportSide = Literal["baseline", "reform"]
-# Finds a report side's reusable run, given the side, its policy and dynamic,
-# and the run the other side reuses, which it must not.
-type ReusableRunSearch = Callable[
-    [ReportSide, SimulationChoice, UUID | None], ReusableRun | None
-]
-# The errors a simulation's own policy or dynamic can raise.
-type SideRefusal = (
-    UnknownPolicyError
-    | UnknownDynamicError
-    | MissingPolicyParametersError
-    | OverlappingReformError
-)
-# Caught by the type itself, so the two never name different errors.
-_SIDE_ERRORS: tuple[type[SideRefusal], ...] = get_args(SideRefusal.__value__)
-
-
-class ReportSideError(Exception):
-    """A report side's policy or dynamic is refused.
-
-    ``side`` names the side, and ``error`` is the policy reader's refusal:
-    UnknownPolicyError, UnknownDynamicError, MissingPolicyParametersError or
-    OverlappingReformError.
-    """
-
-    def __init__(self, side: ReportSide, error: SideRefusal) -> None:
-        """Keep the side and the refusal."""
-        super().__init__(f"the report's {side}: {error}")
-        self.side: ReportSide = side
-        self.error = error
 
 
 class EconomyRecordOutcomeUnknownError(RuntimeError):
@@ -156,65 +108,6 @@ class EconomyRecordOutcomeUnknownError(RuntimeError):
     PostgreSQL may have applied the commit before the connection failed, so
     the caller must not answer that nothing was created.
     """
-
-
-@dataclass(frozen=True)
-class RunReuse:
-    """How a report looks for simulation runs to reuse (``find_reusable_run``).
-
-    ``versions`` are those the new runs would calculate on, ``inputs`` the
-    report's options, and ``output_uri_prefix`` the output bucket's
-    ``gs://<bucket>/``.
-    """
-
-    versions: RunVersions
-    inputs: dict[str, Any]
-    output_uri_prefix: str
-
-
-@dataclass(frozen=True)
-class SimulationInputs:
-    """One simulation's policy and dynamic, and the values they set together.
-
-    ``reusable_run`` names a succeeded run the simulation may use instead of
-    a new one, when the request looked for one and one exists.
-    """
-
-    choice: SimulationChoice
-    reform: PolicyReform
-    reusable_run: ReusableRun | None = None
-
-
-@dataclass(frozen=True)
-class EconomySimulationInputs:
-    """What a standalone economy simulation is read from."""
-
-    catalog: EconomyCatalogRows
-    simulation: SimulationInputs
-
-
-@dataclass(frozen=True)
-class EconomyReportInputs:
-    """What an economy report is read from: the catalog rows and both sides."""
-
-    catalog: EconomyCatalogRows
-    baseline: SimulationInputs
-    reform: SimulationInputs
-
-
-@dataclass(frozen=True)
-class BudgetWindowInputs:
-    """What a budget-window report is read from, and each year's reusable runs.
-
-    ``baseline`` and ``reform`` hold each side's values, the same in every
-    year. ``reusable_runs`` gives, by year, the baseline's and the reform's
-    reusable run, each None when there is none.
-    """
-
-    catalog: EconomyCatalogRows
-    baseline: SimulationInputs
-    reform: SimulationInputs
-    reusable_runs: dict[int, tuple[ReusableRun | None, ReusableRun | None]]
 
 
 class EconomyRunStore:
@@ -249,7 +142,7 @@ class EconomyRunStore:
         """
         with self._transaction() as connection:
             catalog = read_catalog_rows(connection, request)
-            simulation = _simulation_inputs(
+            simulation = read_simulation_values(
                 connection, request.country, catalog.catalog_version_id, choice
             )
         return EconomySimulationInputs(catalog=catalog, simulation=simulation)
@@ -260,14 +153,11 @@ class EconomyRunStore:
         *,
         baseline: SimulationChoice,
         reform: SimulationChoice,
-        reuse: RunReuse | None,
         local_area_dataset_name: str | None = None,
     ) -> EconomyReportInputs:
-        """Read a report's catalog rows, both sides' values and reusable runs.
+        """Read a report's catalog rows and both sides' values together.
 
-        With ``reuse``, each side gets the run ``find_reusable_run`` finds,
-        and the reform never gets the baseline's. With
-        ``local_area_dataset_name``, the dataset the default worker
+        With ``local_area_dataset_name``, the dataset the default worker
         calculates local-area reports on, the report is read on the catalog
         version's local-area dataset (``read_local_area_dataset``) in place
         of the region's default. Raise ValueError when ``request`` also names
@@ -280,20 +170,8 @@ class EconomyRunStore:
             catalog = read_catalog_rows(
                 connection, request, local_area_dataset_name=local_area_dataset_name
             )
-            search = (
-                None
-                if reuse is None
-                else _search_by_definition(
-                    connection, catalog.population(request.year), reuse
-                )
-            )
-            return _report_inputs(
-                connection,
-                request,
-                catalog,
-                baseline=baseline,
-                reform=reform,
-                search=search,
+            return read_report_sides(
+                connection, request, catalog, baseline=baseline, reform=reform
             )
 
     def read_report_definition(self, report_id: UUID) -> ReportDefinition | None:
@@ -314,38 +192,21 @@ class EconomyRunStore:
         *,
         baseline: SideDefinition,
         reform: SideDefinition,
-        reuse: RunReuse | None,
     ) -> EconomyReportInputs:
-        """Read a report re-run's catalog rows, both sides' values and reusable runs.
+        """Read a report re-run's catalog rows and both sides' values.
 
         ``request`` names the stored report's region code and dataset name,
-        found in the catalog version of the current .py version. With
-        ``reuse``, each side gets the run ``find_reusable_run_of`` finds among
-        its own simulation's runs, and the reform never gets the baseline's.
-        Raise the errors ``read_report_inputs`` raises.
+        found in the catalog version of the current .py version. Raise the
+        errors ``read_report_inputs`` raises.
         """
         with self._transaction() as connection:
             catalog = read_catalog_rows(connection, request)
-            search = (
-                None
-                if reuse is None
-                else _search_own_runs(
-                    connection,
-                    catalog.population(request.year),
-                    reuse,
-                    {
-                        "baseline": baseline.simulation_id,
-                        "reform": reform.simulation_id,
-                    },
-                )
-            )
-            return _report_inputs(
+            return read_report_sides(
                 connection,
                 request,
                 catalog,
                 baseline=baseline.choice,
                 reform=reform.choice,
-                search=search,
             )
 
     def read_window_rerun_inputs(
@@ -354,64 +215,43 @@ class EconomyRunStore:
         *,
         baseline: SimulationChoice,
         reform: SimulationChoice,
-        years: Sequence[WindowYearDefinition],
-        reuse: RunReuse | None,
     ) -> BudgetWindowInputs:
-        """Read a window re-run's catalog rows, both sides' values and each year's runs.
+        """Read a window re-run's catalog rows and both sides' values.
 
-        ``request.year`` is the window's first year. With ``reuse``, each
-        year's sides get the runs ``find_reusable_run_of`` finds among that
-        year's own simulations' runs, and the reform never gets the
-        baseline's. Raise the errors ``read_report_inputs`` raises.
+        ``request.year`` is the window's first year, and ``request`` names
+        the stored report's region code and dataset name, found in the
+        catalog version of the current .py version. Raise the errors
+        ``read_report_inputs`` raises.
         """
         with self._transaction() as connection:
             catalog = read_catalog_rows(connection, request)
-            return _window_inputs(
-                connection,
-                request,
-                catalog,
-                baseline=baseline,
-                reform=reform,
-                searches=(
-                    (
-                        window_year.year,
-                        None
-                        if reuse is None
-                        else _search_own_runs(
-                            connection,
-                            catalog.population(window_year.year),
-                            reuse,
-                            {
-                                "baseline": window_year.baseline_simulation_id,
-                                "reform": window_year.reform_simulation_id,
-                            },
-                        ),
-                    )
-                    for window_year in years
-                ),
+            return read_window_sides(
+                connection, request, catalog, baseline=baseline, reform=reform
             )
 
-    def create_window_rerun(self, rerun: NewWindowRerun) -> None:
-        """Create the window's new run and its years' runs; see ``insert_window_rerun``.
+    def create_window_rerun(self, rerun: NewWindowRerun) -> FoundBudgetWindow:
+        """Join or create the window's run and its years; see ``insert_window_rerun``.
 
-        Raise EconomyRecordOutcomeUnknownError as ``create_report`` does.
+        Raise EconomyRecordOutcomeUnknownError as ``find_or_create_report`` does.
         """
-        self._create(lambda connection: insert_window_rerun(connection, rerun))
+        return self._create(lambda connection: insert_window_rerun(connection, rerun))
 
-    def create_report_rerun(self, rerun: NewReportRerun) -> None:
-        """Create the report's new run and its sides' new simulation runs.
+    def create_report_rerun(self, rerun: NewReportRerun) -> FoundReportRun:
+        """Join or create the report's run; see ``insert_report_rerun``.
 
         Raise ``insert_report_rerun``'s errors, and
-        EconomyRecordOutcomeUnknownError as ``create_report`` does.
+        EconomyRecordOutcomeUnknownError as ``find_or_create_report`` does.
         """
-        self._create(lambda connection: insert_report_rerun(connection, rerun))
+        return self._create(lambda connection: insert_report_rerun(connection, rerun))
 
-    def create_simulation_rerun(self, rerun: NewSimulationRerun) -> None:
-        """Create the simulation's new run; see ``insert_simulation_rerun``.
+    def create_simulation_rerun(self, rerun: NewSimulationRerun) -> FoundSimulationRun:
+        """Join or create the simulation's run; see ``insert_simulation_rerun``.
 
-        Raise EconomyRecordOutcomeUnknownError as ``create_report`` does.
+        Raise EconomyRecordOutcomeUnknownError as ``find_or_create_report`` does.
         """
-        self._create(lambda connection: insert_simulation_rerun(connection, rerun))
+        return self._create(
+            lambda connection: insert_simulation_rerun(connection, rerun)
+        )
 
     def read_budget_window_inputs(
         self,
@@ -419,81 +259,71 @@ class EconomyRunStore:
         *,
         baseline: SimulationChoice,
         reform: SimulationChoice,
-        reuse: RunReuse | None,
-        years: Sequence[int],
     ) -> BudgetWindowInputs:
-        """Read a window's catalog rows and both sides' values, then each year's runs.
+        """Read a window's catalog rows and both sides' values together.
 
-        ``request.year`` is the window's first year. With ``reuse``, each
-        year's sides get the runs ``find_reusable_run`` finds for that year,
-        and the reform never gets the baseline's. Raise the errors
+        ``request.year`` is the window's first year. Raise the errors
         ``read_report_inputs`` raises.
         """
         with self._transaction() as connection:
             catalog = read_catalog_rows(connection, request)
-            return _window_inputs(
-                connection,
-                request,
-                catalog,
-                baseline=baseline,
-                reform=reform,
-                searches=(
-                    (
-                        year,
-                        None
-                        if reuse is None
-                        else _search_by_definition(
-                            connection, catalog.population(year), reuse
-                        ),
-                    )
-                    for year in years
-                ),
+            return read_window_sides(
+                connection, request, catalog, baseline=baseline, reform=reform
             )
 
-    def create_budget_window_report(self, report: NewBudgetWindowReport) -> None:
-        """Create the window's report, its budget-window run and each year's runs.
+    def find_or_create_report(self, report: KeyedEconomyReport) -> FoundEconomyReport:
+        """Find the report by key, with its run, or create them.
 
-        Raise ``insert_budget_window_report``'s errors, and
+        See ``find_or_create_economy_report``; raise its errors, and
         EconomyRecordOutcomeUnknownError when the commit fails after the
         rows were inserted.
         """
-        self._create(lambda connection: insert_budget_window_report(connection, report))
-
-    def create_report(self, report: NewEconomyReport) -> None:
-        """Create the report, its new simulations and its runs.
-
-        Raise ``insert_economy_report``'s errors, and
-        EconomyRecordOutcomeUnknownError when the commit fails after the
-        rows were inserted.
-        """
-        self._create(lambda connection: insert_economy_report(connection, report))
-
-    def create_simulation(self, simulation: NewEconomySimulation) -> None:
-        """Create the simulation and its run; see ``insert_economy_simulation``.
-
-        Raise EconomyRecordOutcomeUnknownError as ``create_report`` does.
-        """
-        self._create(
-            lambda connection: insert_economy_simulation(connection, simulation)
+        return self._create(
+            lambda connection: find_or_create_economy_report(connection, report)
         )
 
-    def _create(self, insert: Callable[[Connection], None]) -> None:
+    def find_or_create_budget_window(
+        self, window: KeyedBudgetWindow
+    ) -> FoundBudgetWindow:
+        """Find the window by key, with its window run, or create them.
+
+        See ``find_or_create_budget_window``; raise as
+        ``find_or_create_report`` does.
+        """
+        return self._create(
+            lambda connection: find_or_create_budget_window(connection, window)
+        )
+
+    def find_or_create_simulation(
+        self, simulation: KeyedEconomySimulation
+    ) -> FoundEconomySimulation:
+        """Find the simulation by key, with its run, or create them.
+
+        Raise as ``find_or_create_report`` does.
+        """
+        return self._create(
+            lambda connection: find_or_create_economy_simulation(connection, simulation)
+        )
+
+    def _create[Created](self, insert: Callable[[Connection], Created]) -> Created:
         """Run ``insert`` in a transaction, telling a failed commit apart.
 
-        An error from ``insert`` leaves nothing written and propagates. An
-        error once it has run is the commit's, after which the rows may
-        exist: EconomyRecordOutcomeUnknownError.
+        Return what ``insert`` returns. An error from ``insert`` leaves
+        nothing written and propagates. An error once it has run is the
+        commit's, after which the rows may exist:
+        EconomyRecordOutcomeUnknownError.
         """
         inserted = False
         try:
             with self._transaction() as connection:
-                insert(connection)
+                created = insert(connection)
                 inserted = True
         except SQLAlchemyError as error:
             if not inserted:
                 raise
             msg = "the create's commit failed after its rows were inserted"
             raise EconomyRecordOutcomeUnknownError(msg) from error
+        return created
 
     def record_report_call(
         self, report_run_id: UUID, modal_call_id: str
@@ -552,157 +382,20 @@ class EconomyRunStore:
             return read_economy_simulation(connection, simulation_id)
 
 
-def _simulation_inputs(
-    connection: Connection,
-    country: str,
-    catalog_version_id: UUID,
-    choice: SimulationChoice,
-) -> SimulationInputs:
-    """Read one simulation's policy and dynamic values, combined."""
-    policy_reform = (
-        {}
-        if choice.policy_id is None
-        else read_policy_reform(
-            connection,
-            country=country,
-            policy_id=choice.policy_id,
-            catalog_version_id=catalog_version_id,
-        )
-    )
-    dynamic_reform = (
-        {}
-        if choice.dynamic_id is None
-        else read_dynamic_reform(
-            connection,
-            dynamic_id=choice.dynamic_id,
-            catalog_version_id=catalog_version_id,
-        )
-    )
-    return SimulationInputs(
-        choice=choice, reform=combine_reforms(policy_reform, dynamic_reform)
-    )
-
-
-def _side_inputs(
-    connection: Connection,
-    request: EconomyRequest,
-    catalog: EconomyCatalogRows,
-    side: ReportSide,
-    choice: SimulationChoice,
-) -> SimulationInputs:
-    """Read one report side's values; raise ReportSideError naming a refused side."""
-    try:
-        return _simulation_inputs(
-            connection, request.country, catalog.catalog_version_id, choice
-        )
-    except _SIDE_ERRORS as error:
-        raise ReportSideError(side, error) from error
-
-
-def _report_inputs(  # noqa: PLR0913  # the request's rows, both sides and the search
-    connection: Connection,
-    request: EconomyRequest,
-    catalog: EconomyCatalogRows,
-    *,
-    baseline: SimulationChoice,
-    reform: SimulationChoice,
-    search: ReusableRunSearch | None,
-) -> EconomyReportInputs:
-    """Read both sides' values and, with ``search``, each side's reusable run.
-
-    The reform never gets the run the baseline reuses.
-    """
-    sides: list[SimulationInputs] = []
-    excluded_run_id: UUID | None = None
-    requested: tuple[tuple[ReportSide, SimulationChoice], ...] = (
-        ("baseline", baseline),
-        ("reform", reform),
-    )
-    for side, choice in requested:
-        inputs = _side_inputs(connection, request, catalog, side, choice)
-        reusable_run = None if search is None else search(side, choice, excluded_run_id)
-        if reusable_run is not None:
-            excluded_run_id = reusable_run.simulation_run_id
-            inputs = replace(inputs, reusable_run=reusable_run)
-        sides.append(inputs)
-    return EconomyReportInputs(catalog=catalog, baseline=sides[0], reform=sides[1])
-
-
-def _window_inputs(  # noqa: PLR0913  # the request's rows, both sides and each year's search
-    connection: Connection,
-    request: EconomyRequest,
-    catalog: EconomyCatalogRows,
-    *,
-    baseline: SimulationChoice,
-    reform: SimulationChoice,
-    searches: Iterable[tuple[int, ReusableRunSearch | None]],
-) -> BudgetWindowInputs:
-    """Read both sides' values, and each year's reusable runs with its search.
-
-    A year without a search reuses nothing; in each year the reform never
-    gets the run the baseline reuses.
-    """
-    baseline_inputs = _side_inputs(connection, request, catalog, "baseline", baseline)
-    reform_inputs = _side_inputs(connection, request, catalog, "reform", reform)
-    reusable_runs: dict[int, tuple[ReusableRun | None, ReusableRun | None]] = {}
-    for year, search in searches:
-        baseline_run = reform_run = None
-        if search is not None:
-            baseline_run = search("baseline", baseline, None)
-            reform_run = search(
-                "reform",
-                reform,
-                None if baseline_run is None else baseline_run.simulation_run_id,
-            )
-        reusable_runs[year] = (baseline_run, reform_run)
-    return BudgetWindowInputs(
-        catalog=catalog,
-        baseline=baseline_inputs,
-        reform=reform_inputs,
-        reusable_runs=reusable_runs,
-    )
-
-
-def _search_by_definition(
-    connection: Connection, population: EconomyPopulation, reuse: RunReuse
-) -> ReusableRunSearch:
-    """Search any simulation with the side's definition (a new report's sides)."""
-
-    def search(
-        _side: ReportSide, choice: SimulationChoice, excluded_run_id: UUID | None
-    ) -> ReusableRun | None:
-        return find_reusable_run(
-            connection,
-            choice=choice,
-            population=population,
-            versions=reuse.versions,
-            inputs=reuse.inputs,
-            output_uri_prefix=reuse.output_uri_prefix,
-            excluded_run_id=excluded_run_id,
-        )
-
-    return search
-
-
-def _search_own_runs(
-    connection: Connection,
-    population: EconomyPopulation,
-    reuse: RunReuse,
-    simulation_ids: dict[ReportSide, UUID],
-) -> ReusableRunSearch:
-    """Search only each side's own simulation's runs (a stored report's re-run)."""
-
-    def search(
-        side: ReportSide, _choice: SimulationChoice, excluded_run_id: UUID | None
-    ) -> ReusableRun | None:
-        return find_reusable_run_of(
-            connection,
-            simulation_id=simulation_ids[side],
-            population=population,
-            versions=reuse.versions,
-            inputs=reuse.inputs,
-            output_uri_prefix=reuse.output_uri_prefix,
-            excluded_run_id=excluded_run_id,
-        )
-
-    return search
+__all__ = [
+    "BudgetWindowInputs",
+    "EconomyCatalogRows",
+    "EconomyRecordOutcomeUnknownError",
+    "EconomyReportInputs",
+    "EconomyRequest",
+    "EconomyRunStore",
+    "EconomySimulationInputs",
+    "LocalAreaDatasetMismatchError",
+    "ReportSide",
+    "ReportSideError",
+    "SideRefusal",
+    "SimulationInputs",
+    "TransactionFactory",
+    "UnknownDatasetError",
+    "UnknownRegionError",
+]

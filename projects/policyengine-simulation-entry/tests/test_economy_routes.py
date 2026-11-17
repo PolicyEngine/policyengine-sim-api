@@ -550,7 +550,6 @@ def test_a_configured_service_builds_economy_submissions_without_connecting():
             make_settings(
                 simulation_database_url=DATABASE_URL,
                 v2_modal_environment="staging",
-                v2_simulation_output_bucket="policyengine-v2-outputs-staging",
             ),
             database,
         )

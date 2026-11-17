@@ -1,21 +1,24 @@
-"""The catalog rows an economy request is calculated on, read in its transaction.
+"""What an economy request is read from: its catalog rows and its sides' values.
 
-A request names a country, the .py version it runs on, a region by code and
-a year; the store reads the country's catalog version for that .py version,
-its model, the region and the dataset: the region's default, a re-run's
-stored dataset by name, or the catalog version's local-area dataset for a
-report created with ``data_source``.
+A request names a region code, a dataset name (or the region's default, or
+the catalog version's local-area dataset for a report created with
+``data_source``) and a year, for the .py version of the default worker, and
+each side's stored policy and dynamic. ``read_catalog_rows`` reads the
+catalog version's model, region and dataset; ``read_report_sides`` and
+``read_window_sides`` read each side's values on that catalog version.
+``EconomyRunStore`` runs these in its transactions.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, get_args
 
 from policyengine_simulation_persistence.economy_run_records import (
     CatalogDataset,
     CatalogRegion,
     EconomyPopulation,
+    SimulationChoice,
     read_dataset,
     read_dataset_by_id,
     read_local_area_dataset,
@@ -28,11 +31,34 @@ from policyengine_simulation_persistence.household_job_records import (
 from policyengine_simulation_persistence.household_job_store import (
     UnknownCatalogVersionError,
 )
+from policyengine_simulation_persistence.policy_reform import (
+    MissingPolicyParametersError,
+    OverlappingReformError,
+    UnknownDynamicError,
+    UnknownPolicyError,
+    combine_reforms,
+    read_dynamic_reform,
+    read_policy_reform,
+)
 
 if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy import Connection
+
+    from policyengine_simulation_persistence.policy_reform import PolicyReform
+
+# Which of a report's simulations a value belongs to.
+type ReportSide = Literal["baseline", "reform"]
+# The errors a simulation's own policy or dynamic can raise.
+type SideRefusal = (
+    UnknownPolicyError
+    | UnknownDynamicError
+    | MissingPolicyParametersError
+    | OverlappingReformError
+)
+# Caught by the type itself, so the two never name different errors.
+SIDE_ERRORS: tuple[type[SideRefusal], ...] = get_args(SideRefusal.__value__)
 
 
 class UnknownRegionError(LookupError):
@@ -58,6 +84,21 @@ class LocalAreaDatasetMismatchError(LookupError):
             f"not all use {declared_dataset}"
         )
         self.declared_dataset = declared_dataset
+
+
+class ReportSideError(Exception):
+    """A report side's policy or dynamic is refused.
+
+    ``side`` names the side, and ``error`` is the policy reader's refusal:
+    UnknownPolicyError, UnknownDynamicError, MissingPolicyParametersError or
+    OverlappingReformError.
+    """
+
+    def __init__(self, side: ReportSide, error: SideRefusal) -> None:
+        """Keep the side and the refusal."""
+        super().__init__(f"the report's {side}: {error}")
+        self.side: ReportSide = side
+        self.error = error
 
 
 @dataclass(frozen=True)
@@ -93,6 +134,44 @@ class EconomyCatalogRows:
             dataset_id=self.dataset.id,
             year=year,
         )
+
+
+@dataclass(frozen=True)
+class SimulationInputs:
+    """One simulation's policy and dynamic, and the values they set together."""
+
+    choice: SimulationChoice
+    reform: PolicyReform
+
+
+@dataclass(frozen=True)
+class EconomySimulationInputs:
+    """What a standalone economy simulation is read from."""
+
+    catalog: EconomyCatalogRows
+    simulation: SimulationInputs
+
+
+@dataclass(frozen=True)
+class EconomyReportInputs:
+    """What an economy report is read from: the catalog rows and both sides."""
+
+    catalog: EconomyCatalogRows
+    baseline: SimulationInputs
+    reform: SimulationInputs
+
+
+@dataclass(frozen=True)
+class BudgetWindowInputs:
+    """What a budget-window report is read from: the catalog rows and both sides.
+
+    ``baseline`` and ``reform`` hold each side's values, the same in every
+    year.
+    """
+
+    catalog: EconomyCatalogRows
+    baseline: SimulationInputs
+    reform: SimulationInputs
 
 
 def read_catalog_rows(
@@ -164,4 +243,83 @@ def read_catalog_rows(
         model_id=model_id,
         region=region,
         dataset=dataset,
+    )
+
+
+def read_simulation_values(
+    connection: Connection,
+    country: str,
+    catalog_version_id: UUID,
+    choice: SimulationChoice,
+) -> SimulationInputs:
+    """Read one simulation's policy and dynamic values, combined."""
+    policy_reform = (
+        {}
+        if choice.policy_id is None
+        else read_policy_reform(
+            connection,
+            country=country,
+            policy_id=choice.policy_id,
+            catalog_version_id=catalog_version_id,
+        )
+    )
+    dynamic_reform = (
+        {}
+        if choice.dynamic_id is None
+        else read_dynamic_reform(
+            connection,
+            dynamic_id=choice.dynamic_id,
+            catalog_version_id=catalog_version_id,
+        )
+    )
+    return SimulationInputs(
+        choice=choice, reform=combine_reforms(policy_reform, dynamic_reform)
+    )
+
+
+def read_side_values(
+    connection: Connection,
+    request: EconomyRequest,
+    catalog: EconomyCatalogRows,
+    side: ReportSide,
+    choice: SimulationChoice,
+) -> SimulationInputs:
+    """Read one report side's values; raise ReportSideError naming a refused side."""
+    try:
+        return read_simulation_values(
+            connection, request.country, catalog.catalog_version_id, choice
+        )
+    except SIDE_ERRORS as error:
+        raise ReportSideError(side, error) from error
+
+
+def read_report_sides(
+    connection: Connection,
+    request: EconomyRequest,
+    catalog: EconomyCatalogRows,
+    *,
+    baseline: SimulationChoice,
+    reform: SimulationChoice,
+) -> EconomyReportInputs:
+    """Read both sides' values, the baseline's first."""
+    return EconomyReportInputs(
+        catalog=catalog,
+        baseline=read_side_values(connection, request, catalog, "baseline", baseline),
+        reform=read_side_values(connection, request, catalog, "reform", reform),
+    )
+
+
+def read_window_sides(
+    connection: Connection,
+    request: EconomyRequest,
+    catalog: EconomyCatalogRows,
+    *,
+    baseline: SimulationChoice,
+    reform: SimulationChoice,
+) -> BudgetWindowInputs:
+    """Read both sides' values, the baseline's first, for every year of a window."""
+    return BudgetWindowInputs(
+        catalog=catalog,
+        baseline=read_side_values(connection, request, catalog, "baseline", baseline),
+        reform=read_side_values(connection, request, catalog, "reform", reform),
     )
