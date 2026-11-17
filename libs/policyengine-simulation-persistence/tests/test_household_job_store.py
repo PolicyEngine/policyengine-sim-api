@@ -34,6 +34,11 @@ from public_api_rows import (
     insert_policy,
 )
 from sqlalchemy.exc import OperationalError
+from transaction_fakes import (
+    CommitFailingTransaction,
+    RecordingConnection,
+    StatementFailingTransaction,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -246,47 +251,10 @@ def _job_naming_no_rows() -> NewHouseholdJob:
     )
 
 
-class _CommitFails:
-    """A transaction whose block runs, and whose commit then fails."""
-
-    def __init__(self, connection) -> None:
-        self.connection = connection
-
-    def __enter__(self):
-        return self.connection
-
-    def __exit__(self, error_type, error, traceback) -> None:
-        if error is None:
-            statement = "COMMIT"
-            raise OperationalError(statement, {}, Exception("connection lost"))
-
-
-class _RecordingConnection:
-    def __init__(self) -> None:
-        self.statements: list[object] = []
-
-    def execute(self, statement, *arguments):
-        self.statements.append(statement)
-
-
-class _StatementFails:
-    """A transaction whose first statement fails, so nothing is committed."""
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, error_type, error, traceback) -> None:
-        return None
-
-    def execute(self, statement, *arguments):
-        failed_statement = "INSERT"
-        raise OperationalError(failed_statement, {}, Exception("connection lost"))
-
-
 def test_a_job_whose_commit_fails_may_have_been_created() -> None:
     """PostgreSQL may have applied the commit before the connection failed."""
-    connection = _RecordingConnection()
-    store = HouseholdJobStore(lambda: _CommitFails(connection))
+    connection = RecordingConnection()
+    store = HouseholdJobStore(lambda: CommitFailingTransaction(connection))
 
     with pytest.raises(EconomyRecordOutcomeUnknownError) as raised:
         store.create_job(_job_naming_no_rows())
@@ -296,7 +264,7 @@ def test_a_job_whose_commit_fails_may_have_been_created() -> None:
 
 
 def test_a_job_whose_insert_fails_was_not_created() -> None:
-    store = HouseholdJobStore(_StatementFails)
+    store = HouseholdJobStore(StatementFailingTransaction)
 
     with pytest.raises(OperationalError):
         store.create_job(_job_naming_no_rows())

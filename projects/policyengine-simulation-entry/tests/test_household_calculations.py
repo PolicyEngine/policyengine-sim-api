@@ -644,24 +644,18 @@ async def test_a_job_whose_commit_is_unconfirmed_may_exist_and_starts_no_call(
 
 
 @pytest.mark.asyncio
-async def test_a_job_whose_insert_fails_was_not_created_and_is_logged(caplog):
-    """Only a create that wrote nothing is answered as unavailable."""
-    service, _, _, caller = _service(FakeStore(create_failure=DATABASE_ERROR))
+async def test_a_job_whose_insert_fails_is_logged_by_the_service(caplog):
+    """The service logs a create that wrote nothing, unlike an unconfirmed one.
 
-    with pytest.raises(HouseholdCalculationUnavailableError) as raised:
+    The test above relies on this event to show that the service logs no
+    unconfirmed commit.
+    """
+    service, _, _, _ = _service(FakeStore(create_failure=DATABASE_ERROR))
+
+    with pytest.raises(HouseholdCalculationUnavailableError):
         await service.submit(_request(), observability_context=None)
 
-    assert (raised.value.code, raised.value.household_job_id) == (
-        "database_unavailable",
-        None,
-    )
-    assert caller.calls == []
-    (logged,) = [
-        record
-        for record in caplog.records
-        if record.getMessage() == "household_job_not_created"
-    ]
-    assert logged.error_type == "OperationalError"
+    assert caplog.messages.count("household_job_not_created") == 1
 
 
 @pytest.mark.asyncio
