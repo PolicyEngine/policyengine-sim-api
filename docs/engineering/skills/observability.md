@@ -16,7 +16,7 @@ Use each identifier for its defined scope:
 | `evaluation_id` | One Stage 12 report | Stage 12 report construction | Yes, as functional report state |
 | `simulation_execution_id` | One Stage 12 baseline or reform simulation | Stage 12 coordinator | Yes, as functional simulation state |
 | `submission_claim_id` | One API v1 attempt to acquire ownership of a simulation submission | API v1 | Only where the simulation request is stored |
-| `database_table` | The Public API table holding the row one v2 Modal function call works on: `household_jobs`, `report_runs` (a report run or a household report run) or `simulation_runs` | The v2 Modal function, as a fixed name for its kind of call | No: telemetry only |
+| `database_table` | The Public API table holding the row a v2 Modal function call, or a Simulation Entrypoint log record, is about: `household_jobs`, `report_runs` (a report run or a household report run), `simulation_runs`, `reports` or `simulations` | The code writing the record, as a fixed name | No: telemetry only |
 | `database_row_id` | That row's UUID | The simulation service, which creates the row | Yes, as the row's ID |
 | `modal_call_id` | One Modal function call of a v2 Modal function | Modal | Only where the row records the call that claimed it; a segment worker's call is recorded nowhere, and its `database_row_id` names the simulation run its simulation worker's call claimed |
 
@@ -29,6 +29,19 @@ separate series. The observability package drops every attribute whose key
 contains `household`, `reform`, `payload` or `person`, among others, so no key
 for these IDs names one. Do not use `job_id` for a v2 call: it names one
 annual Modal invocation of the v1 executor.
+
+## Standard-library log fields
+
+The observability runtime's standard-library log handler emits only a log
+record's `policyengine_attributes`: any other key passed in `extra=` stays on
+the Python `LogRecord` and never reaches Cloud Logging. Pass every log call's
+fields through `log_extra(...)` from
+`policyengine_simulation_observability.log_records`, which puts them in both
+places, and name a row with `database_row_attributes(table, row_id)`. Each
+field must be a string, a number or a boolean; the runtime drops a list. In
+the Simulation Entrypoint, `tests/test_log_fields.py` checks that every log call
+with `extra=` uses `log_extra` and that no literal field name contains a word
+the package drops.
 
 `observability_id` is a canonical UUID string and has diagnostic meaning only.
 Do not use it for idempotency, authorization, database identity, routing, or

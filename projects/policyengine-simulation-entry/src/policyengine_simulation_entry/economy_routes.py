@@ -52,6 +52,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
+from policyengine_simulation_observability.log_records import log_extra
 
 from policyengine_simulation_entry.budget_window_api_models import (
     BudgetWindowReportCreated,
@@ -339,7 +340,7 @@ def _outcome_unknown_response(
     written = f"the {error.record}'s new run" if error.rerun else f"the {error.record}"
     logger.error(
         "economy_record_outcome_unknown",
-        extra={**fields, "policyengine_attributes": fields},
+        extra=log_extra(**fields),
     )
     return error_response(
         status.HTTP_500_INTERNAL_SERVER_ERROR,

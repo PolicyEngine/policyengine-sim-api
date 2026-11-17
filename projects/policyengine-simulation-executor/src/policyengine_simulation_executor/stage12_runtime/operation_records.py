@@ -24,9 +24,10 @@ from collections.abc import Mapping
 from typing import Literal
 from uuid import UUID
 
-DATABASE_TABLE_ATTRIBUTE = "database_table"
-DATABASE_ROW_ID_ATTRIBUTE = "database_row_id"
-MODAL_CALL_ID_ATTRIBUTE = "modal_call_id"
+from policyengine_simulation_observability.log_records import (
+    MODAL_CALL_ID_ATTRIBUTE,
+    database_row_attributes,
+)
 
 DatabaseTable = Literal["household_jobs", "report_runs", "simulation_runs"]
 
@@ -40,10 +41,9 @@ def operation_record_attributes(
 
     A missing row or Modal call ID is left out.
     """
-    attributes: dict[str, str] = {}
-    if row_id is not None:
-        attributes[DATABASE_TABLE_ATTRIBUTE] = table
-        attributes[DATABASE_ROW_ID_ATTRIBUTE] = str(row_id)
+    attributes: dict[str, str] = (
+        {} if row_id is None else database_row_attributes(table, row_id)
+    )
     if modal_call_id:
         attributes[MODAL_CALL_ID_ATTRIBUTE] = modal_call_id
     return attributes

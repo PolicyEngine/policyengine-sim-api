@@ -12,6 +12,8 @@ import contextlib
 import traceback
 from typing import TYPE_CHECKING, Any
 
+from policyengine_simulation_observability.log_records import log_extra
+
 if TYPE_CHECKING:
     import logging
 
@@ -108,7 +110,7 @@ def log_unexpected_failure(
         "stack_frames": frames,
         "stack_frames_omitted": omitted_frame_count,
     }
-    logger.error(event, extra={**fields, "policyengine_attributes": fields})
+    logger.error(event, extra=log_extra(**fields))
 
 
 def observability_context(entry: EntryRuntime, observability_id: str) -> dict[str, Any]:

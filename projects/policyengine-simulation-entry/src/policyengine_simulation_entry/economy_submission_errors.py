@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from policyengine_simulation_persistence import (
     MissingPolicyParametersError,
@@ -64,6 +64,11 @@ REFERENCE_REFUSALS: dict[str, tuple[EconomyRefusalCode, str]] = {
 }
 # What a submission creates, or a re-run calculates again.
 RecordName = Literal["report", "simulation"]
+# The Public API table holding each record, as telemetry names it.
+RECORD_TABLES: Final[dict[RecordName, str]] = {
+    "report": "reports",
+    "simulation": "simulations",
+}
 
 
 @dataclass(frozen=True)

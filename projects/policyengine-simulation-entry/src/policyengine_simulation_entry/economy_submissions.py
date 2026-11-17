@@ -48,6 +48,10 @@ from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID, uuid4
 
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
+from policyengine_simulation_observability.log_records import (
+    database_row_attributes,
+    log_extra,
+)
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
@@ -81,6 +85,7 @@ from policyengine_simulation_entry.economy_requests import (
     stored_options,
 )
 from policyengine_simulation_entry.economy_submission_errors import (
+    RECORD_TABLES,
     REQUEST_BODY,
     EconomySubmissionOutcomeUnknownError,
     EconomySubmissionRefusedError,
@@ -412,7 +417,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         except SQLAlchemyError as error:
             logger.warning(
                 "economy_state_unreadable",
-                extra={"error_type": type(error).__name__},
+                extra=log_extra(error_type=type(error).__name__),
             )
             raise _database_unavailable() from None
 
@@ -444,7 +449,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         except VersionManifestUnavailableError as error:
             logger.warning(
                 "economy_manifest_unavailable",
-                extra={"error_type": type(error.__cause__).__name__},
+                extra=log_extra(error_type=type(error.__cause__).__name__),
             )
             raise EconomySubmissionUnavailableError(
                 code="manifest_unavailable",
@@ -464,7 +469,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         except SQLAlchemyError as error:
             logger.warning(
                 "economy_inputs_unreadable",
-                extra={"error_type": type(error).__name__},
+                extra=log_extra(error_type=type(error).__name__),
             )
             raise _database_unavailable() from None
         except Exception as error:
@@ -503,7 +508,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         except (SharedRowNotSettledError, SQLAlchemyError) as error:
             logger.warning(
                 "economy_records_not_created",
-                extra={"error_type": type(error).__name__},
+                extra=log_extra(error_type=type(error).__name__),
             )
             raise _database_unavailable() from None
 
@@ -621,11 +626,10 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         # The log names the error type only; its text could repeat request data.
         logger.error(
             "economy_call_unconfirmed",
-            extra={
-                "record": record,
-                "record_id": str(record_id),
-                "error_type": type(error).__name__,
-            },
+            extra=log_extra(
+                error_type=type(error).__name__,
+                **database_row_attributes(RECORD_TABLES[record], record_id),
+            ),
         )
         message = (
             f"modal_call_refused: Modal did not accept the {record}'s call "
@@ -636,11 +640,10 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         except SQLAlchemyError as write_error:
             logger.warning(
                 "economy_run_not_failed",
-                extra={
-                    "record": record,
-                    "record_id": str(record_id),
-                    "error_type": type(write_error).__name__,
-                },
+                extra=log_extra(
+                    error_type=type(write_error).__name__,
+                    **database_row_attributes(RECORD_TABLES[record], record_id),
+                ),
             )
             return False
 
@@ -660,11 +663,10 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         except SQLAlchemyError as error:
             logger.warning(
                 "economy_call_not_recorded",
-                extra={
-                    "record": record,
-                    "record_id": str(record_id),
-                    "error_type": type(error).__name__,
-                },
+                extra=log_extra(
+                    error_type=type(error).__name__,
+                    **database_row_attributes(RECORD_TABLES[record], record_id),
+                ),
             )
             return None
         return None if status is None else str(status)

@@ -34,6 +34,10 @@ from uuid import UUID, uuid4
 from policyengine_simulation_contract.household_execution import (
     HouseholdExecutionRequest,
 )
+from policyengine_simulation_observability.log_records import (
+    database_row_attributes,
+    log_extra,
+)
 from policyengine_simulation_persistence import (
     HouseholdJobReferenceError,
     HouseholdJobStatus,
@@ -386,7 +390,7 @@ class HouseholdCalculationService:
         except SQLAlchemyError as error:
             logger.warning(
                 "household_job_read_failed",
-                extra={"error_type": type(error).__name__},
+                extra=log_extra(error_type=type(error).__name__),
             )
             raise _database_unavailable() from None
 
@@ -400,7 +404,7 @@ class HouseholdCalculationService:
         except VersionManifestUnavailableError as error:
             logger.warning(
                 "household_manifest_unavailable",
-                extra={"error_type": type(error.__cause__).__name__},
+                extra=log_extra(error_type=type(error.__cause__).__name__),
             )
             raise HouseholdCalculationUnavailableError(
                 code="manifest_unavailable",
@@ -449,7 +453,7 @@ class HouseholdCalculationService:
         except SQLAlchemyError as error:
             logger.warning(
                 "household_inputs_unreadable",
-                extra={"error_type": type(error).__name__},
+                extra=log_extra(error_type=type(error).__name__),
             )
             raise _database_unavailable() from None
         return prepare_household_job(request, worker, inputs, job_id=self._new_job_id())
@@ -475,7 +479,7 @@ class HouseholdCalculationService:
         except SQLAlchemyError as error:
             logger.warning(
                 "household_job_not_created",
-                extra={"error_type": type(error).__name__},
+                extra=log_extra(error_type=type(error).__name__),
             )
             raise _database_unavailable() from None
 
@@ -496,7 +500,10 @@ class HouseholdCalculationService:
         # The log names the error type only; its text could repeat request data.
         logger.error(
             "household_call_unconfirmed",
-            extra={"household_job_id": str(job_id), "error_type": type(error).__name__},
+            extra=log_extra(
+                error_type=type(error).__name__,
+                **database_row_attributes("household_jobs", job_id),
+            ),
         )
         message = (
             "Modal did not accept the household function's call "
@@ -510,10 +517,10 @@ class HouseholdCalculationService:
             # The stuck-run sweep fails the job later if it stays pending.
             logger.warning(
                 "household_job_not_failed",
-                extra={
-                    "household_job_id": str(job_id),
-                    "error_type": type(write_error).__name__,
-                },
+                extra=log_extra(
+                    error_type=type(write_error).__name__,
+                    **database_row_attributes("household_jobs", job_id),
+                ),
             )
             return HouseholdCalculationAccepted(
                 job_id=job_id, status=HouseholdJobStatus.PENDING
@@ -532,10 +539,10 @@ class HouseholdCalculationService:
         except SQLAlchemyError as read_error:
             logger.warning(
                 "household_job_not_read",
-                extra={
-                    "household_job_id": str(job_id),
-                    "error_type": type(read_error).__name__,
-                },
+                extra=log_extra(
+                    error_type=type(read_error).__name__,
+                    **database_row_attributes("household_jobs", job_id),
+                ),
             )
         else:
             if record is not None:
@@ -555,10 +562,10 @@ class HouseholdCalculationService:
         except SQLAlchemyError as error:
             logger.warning(
                 "household_call_not_recorded",
-                extra={
-                    "household_job_id": str(job_id),
-                    "error_type": type(error).__name__,
-                },
+                extra=log_extra(
+                    error_type=type(error).__name__,
+                    **database_row_attributes("household_jobs", job_id),
+                ),
             )
             return HouseholdJobStatus.PENDING
         return HouseholdJobStatus.PENDING if status is None else status

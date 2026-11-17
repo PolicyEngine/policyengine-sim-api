@@ -38,6 +38,10 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12InvocationContext,
     year_calculation,
 )
+from policyengine_simulation_observability.log_records import (
+    database_row_attributes,
+    log_extra,
+)
 from policyengine_simulation_persistence import (
     EconomyReportDefinition,
     KeyedBudgetWindow,
@@ -302,22 +306,21 @@ class ReportSubmissionService[Store: BudgetWindowRuns = BudgetWindowRuns](
         except SQLAlchemyError as error:
             logger.warning(
                 "budget_window_not_started",
-                extra={
-                    "record": "report",
-                    "record_id": str(report_id),
-                    "error_type": type(error).__name__,
-                },
+                extra=log_extra(
+                    error_type=type(error).__name__,
+                    **database_row_attributes("reports", report_id),
+                ),
             )
             return ReportRunStatus.PENDING
         if advance.status is RunStatus.FAILED:
             # The budget-window store logs the refused call's error type.
             logger.error(
                 "budget_window_call_unconfirmed",
-                extra={
-                    "record": "report",
-                    "record_id": str(report_id),
-                    "started_years": list(advance.started_years),
-                },
+                extra=log_extra(
+                    # The runtime emits no list, so the years are joined.
+                    started_years=",".join(str(year) for year in advance.started_years),
+                    **database_row_attributes("reports", report_id),
+                ),
             )
             refused = call_refused(
                 "report", report_id, rerun_id=window_run_id if rerun else None
@@ -372,7 +375,10 @@ class _YearStarts:
         later_year = year_to_start.year != self._first_year
         remaining_seconds = self._wait_ends_at - time.monotonic()
         if later_year and remaining_seconds <= 0:
-            logger.info("budget_window_year_deferred", extra=_deferral(year_to_start))
+            logger.info(
+                "budget_window_year_deferred",
+                extra=log_extra(**_deferral(year_to_start)),
+            )
             raise YearStartDeferred
         payload, context = self._calculation(year_to_start)
         started = asyncio.run_coroutine_threadsafe(
@@ -390,7 +396,8 @@ class _YearStarts:
             started.cancel()
             if later_year:
                 logger.info(
-                    "budget_window_year_deferred", extra=_deferral(year_to_start)
+                    "budget_window_year_deferred",
+                    extra=log_extra(**_deferral(year_to_start)),
                 )
                 raise YearStartDeferred from None
             raise
@@ -414,11 +421,11 @@ class _YearStarts:
         return year_report.model_dump(mode="json"), year_context.model_dump(mode="json")
 
 
-def _deferral(year_to_start: YearToStart) -> dict[str, Any]:
+def _deferral(year_to_start: YearToStart) -> dict[str, int | str]:
     """Return a deferred year's log fields: its year and its report run."""
     return {
         "year": year_to_start.year,
-        "record_id": str(year_to_start.run_ids.report_run_id),
+        **database_row_attributes("report_runs", year_to_start.run_ids.report_run_id),
     }
 
 

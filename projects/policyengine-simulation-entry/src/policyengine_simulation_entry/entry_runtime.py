@@ -16,6 +16,7 @@ from policyengine_simulation_observability.identifiers import (
     normalize_observability_id,
     resolve_observability_id,
 )
+from policyengine_simulation_observability.log_records import log_extra
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from policyengine_simulation_entry.backend import (
@@ -123,9 +124,9 @@ def route_template(request: Request) -> str:
     return getattr(request.scope.get("route"), "path", request.url.path)
 
 
-def request_identifiers(request: Request) -> RequestIdentifiers:
-    """Return the job, batch and evaluation IDs in the request's path."""
-    identifiers: RequestIdentifiers = {}
+def request_identifiers(request: Request) -> dict[str, str]:
+    """Return the job, batch and evaluation IDs in the request's path, as log fields."""
+    identifiers: dict[str, str] = {}
     job_id = request.path_params.get("job_id")
     batch_job_id = request.path_params.get("batch_job_id")
     evaluation_id = request.path_params.get("evaluation_id")
@@ -486,18 +487,18 @@ class EntryRuntime:
         except TimeoutError:
             logger.error(  # noqa: TRY400  # an expected timeout, fully described by timeout_seconds; the traceback would show only asyncio cancellation
                 "stage12_comparison_dispatch_timed_out",
-                extra={
-                    "request_id": request.state.request_id,
-                    "timeout_seconds": STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
-                },
+                extra=log_extra(
+                    request_id=request.state.request_id,
+                    timeout_seconds=STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
+                ),
             )
         # Automatic Stage 12 work must never change the production v1
         # response, including for unexpected integration failures.
         except Exception as error:  # noqa: BLE001  # Stage 12 dispatch must never change the v1 response
             logger.error(  # noqa: TRY400  # Stage 12 failure logs carry only the error type; a traceback could expose request or calculation data
                 "stage12_comparison_dispatch_failed",
-                extra={
-                    "request_id": request.state.request_id,
-                    "error_type": type(error).__name__,
-                },
+                extra=log_extra(
+                    request_id=request.state.request_id,
+                    error_type=type(error).__name__,
+                ),
             )
