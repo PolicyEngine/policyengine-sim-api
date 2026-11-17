@@ -20,6 +20,7 @@ import pytest
 from policyengine_simulation_persistence import (
     input_metadata,
     referenced_metadata,
+    result_metadata,
     service_metadata,
 )
 from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
@@ -61,6 +62,38 @@ def test_the_models_match_the_public_api_tables(
         # tables their keys name come first.
         referenced_metadata.create_all(models_engine)
         service_metadata.create_all(models_engine)
+        with models_engine.connect() as connection:
+            models = describe_tables(connection, table_names)
+        with real_engine.connect() as connection:
+            real = describe_tables(connection, table_names)
+    finally:
+        models_engine.dispose()
+        real_engine.dispose()
+
+    assert set(models.tables) == set(table_names)
+    compared_with = os.environ.get(COMMIT_VARIABLE) or "an unrecorded commit"
+    assert schema_differences(models, real) == [], (
+        f"compared with the Public API at {compared_with}"
+    )
+
+
+@pytest.mark.public_api_schema
+def test_the_result_models_match_the_public_api_tables(
+    disposable_database, public_api_database_url
+) -> None:
+    """The result tables the Modal worker role writes match, as the service's do.
+
+    Their keys name the service's run tables, so those are built first, after
+    the Public API's tables the run tables' own keys name.
+    """
+    table_names = [table.name for table in result_metadata.tables.values()]
+    models_engine = _engine(disposable_database.superuser_url)
+    real_engine = _engine(public_api_database_url)
+    try:
+        # Tests may build the models' tables; runtime code never does.
+        referenced_metadata.create_all(models_engine)
+        service_metadata.create_all(models_engine)
+        result_metadata.create_all(models_engine)
         with models_engine.connect() as connection:
             models = describe_tables(connection, table_names)
         with real_engine.connect() as connection:

@@ -1,6 +1,8 @@
 """Connections to the Public API's database for the simulation service."""
 
 from policyengine_simulation_persistence.access import (
+    MODAL_WORKER_TABLE_PRIVILEGES,
+    MODAL_WORKER_UPDATABLE_COLUMNS,
     SERVICE_TABLE_PRIVILEGES,
     SERVICE_UPDATABLE_COLUMNS,
     missing_table_privileges,
@@ -85,6 +87,7 @@ from policyengine_simulation_persistence.economy_run_store import (
 from policyengine_simulation_persistence.engine import (
     bounded_transaction,
     create_simulation_engine,
+    create_unpooled_engine,
     normalized_database_url,
 )
 from policyengine_simulation_persistence.household_job_records import (
@@ -145,6 +148,11 @@ from policyengine_simulation_persistence.policy_reform import (
     read_dynamic_reform,
     read_policy_reform,
 )
+from policyengine_simulation_persistence.result_tables import (
+    DecileType,
+    UKAreaType,
+    result_metadata,
+)
 from policyengine_simulation_persistence.shared_rows import (
     FoundReportRun,
     FoundRow,
@@ -181,11 +189,14 @@ __all__ = [
     "KEY_VERSION",
     "LATEST_YEAR",
     "MAX_BUDGET_WINDOW_YEARS",
+    "MODAL_WORKER_TABLE_PRIVILEGES",
+    "MODAL_WORKER_UPDATABLE_COLUMNS",
     "SERVICE_TABLE_PRIVILEGES",
     "SERVICE_UPDATABLE_COLUMNS",
     "BudgetWindowInputs",
     "CatalogDataset",
     "CatalogRegion",
+    "DecileType",
     "EconomyCatalogRows",
     "EconomyPopulation",
     "EconomyRecordOutcomeUnknownError",
@@ -253,6 +264,7 @@ __all__ = [
     "SimulationStatus",
     "SimulationType",
     "StoredHousehold",
+    "UKAreaType",
     "UnknownCatalogVersionError",
     "UnknownDatasetError",
     "UnknownDynamicError",
@@ -268,6 +280,7 @@ __all__ = [
     "canonical_json",
     "combine_reforms",
     "create_simulation_engine",
+    "create_unpooled_engine",
     "definition_key",
     "fail_unstarted_household_job",
     "fail_unstarted_report_run",
@@ -313,6 +326,7 @@ __all__ = [
     "referenced_metadata",
     "report_runs",
     "reports",
+    "result_metadata",
     "service_metadata",
     "simulation_runs",
     "simulations",

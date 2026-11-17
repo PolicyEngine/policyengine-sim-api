@@ -5,13 +5,18 @@ The tests marked ``postgres`` need a disposable PostgreSQL server (``conftest``)
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from policyengine_simulation_persistence import (
     bounded_transaction,
     create_simulation_engine,
+    create_unpooled_engine,
     normalized_database_url,
 )
-from sqlalchemy import text
+from policyengine_simulation_persistence import engine as engine_module
+from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool, QueuePool
 
 
 def test_database_url_selects_psycopg_without_changing_the_secret_format() -> None:
@@ -68,6 +73,65 @@ def test_runtime_engine_never_prepares_server_side_statements(monkeypatch) -> No
     assert captured_options["connect_args"]["connect_timeout"] > 0
     assert captured_options["pool_pre_ping"] is True
     assert captured_options["pool_size"] >= 1
+
+
+def test_the_unpooled_engine_holds_no_connection_and_selects_psycopg(
+    monkeypatch,
+) -> None:
+    captured_options = {}
+
+    def capture_engine(url, **options):
+        captured_options.update(options, url=url)
+        return object()
+
+    monkeypatch.setattr(engine_module, "create_engine", capture_engine)
+
+    create_unpooled_engine("postgresql://modal_worker:secret@db.example/postgres")
+
+    assert captured_options["url"].drivername == "postgresql+psycopg"
+    assert captured_options["poolclass"] is NullPool
+    assert captured_options["connect_args"] == {"connect_timeout": 10}
+
+
+@pytest.mark.parametrize("fail_transaction", [False, True])
+def test_the_unpooled_engine_closes_connections_between_transactions(
+    monkeypatch, fail_transaction
+) -> None:
+    """A long calculation holds no idle database session after its operation."""
+
+    def local_engine(_url, **options):
+        # Exercise the unpooled configuration with a real local DBAPI.
+        # PostgreSQL's default is QueuePool; SQLite's memory default differs.
+        options.pop("connect_args")
+        options.setdefault("poolclass", QueuePool)
+        return create_engine("sqlite://", **options)
+
+    monkeypatch.setattr(engine_module, "create_engine", local_engine)
+    engine = create_unpooled_engine("postgresql://runtime:secret@db.example/postgres")
+    try:
+        try:
+            with engine.begin() as connection:
+                physical_connection = connection.connection.driver_connection
+                assert connection.exec_driver_sql("SELECT 1").scalar_one() == 1
+                if fail_transaction:
+                    _fail_the_calculation()
+        except RuntimeError:
+            assert fail_transaction
+
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            physical_connection.execute("SELECT 1")
+
+        with engine.begin() as connection:
+            assert connection.connection.driver_connection is not physical_connection
+            assert connection.exec_driver_sql("SELECT 1").scalar_one() == 1
+    finally:
+        engine.dispose()
+
+
+def _fail_the_calculation() -> None:
+    """Raise the failure a calculation inside the transaction would."""
+    msg = "calculation failed"
+    raise RuntimeError(msg)
 
 
 @pytest.mark.postgres

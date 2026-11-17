@@ -44,7 +44,7 @@ def test_the_store_connects_as_the_modal_worker_role(store) -> None:
 
 
 def test_the_modal_worker_role_cannot_create_a_report_run(store, seeded_run) -> None:
-    from policyengine_stage12_persistence.report_run_tables import report_runs
+    from policyengine_simulation_persistence.tables import report_runs
 
     with (
         pytest.raises(ProgrammingError, match="permission denied"),

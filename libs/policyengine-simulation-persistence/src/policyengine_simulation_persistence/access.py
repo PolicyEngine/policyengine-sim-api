@@ -1,9 +1,11 @@
-"""The privileges the simulation service's role needs on the Public API's tables.
+"""The privileges sim's two roles need on the Public API's tables.
 
-The Public API's privilege manifest grants the role these privileges, and
-its migration chain creates the tables. The readiness check reports any the
-connected role lacks, which shows that the deployment's database URL and the
-role's grants both reached the running service.
+The Public API's privilege manifest grants each role these privileges, and
+its migration chain creates the tables. The simulation service's readiness
+check reports any its role lacks, which shows that the deployment's database
+URL and the role's grants both reached the running service. The v2 Modal
+calls' role, ``policyengine_v2_modal_worker``, has lists of its own, which
+CI checks against the manifest's grants.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from sqlalchemy import (
     values,
 )
 
+from policyengine_simulation_persistence.result_tables import result_metadata
 from policyengine_simulation_persistence.tables import TABLE_SCHEMA
 
 if TYPE_CHECKING:
@@ -98,6 +101,53 @@ SERVICE_UPDATABLE_COLUMNS: Final[Mapping[str, frozenset[str]]] = MappingProxyTyp
     }
 )
 
+# A run's state, which the Modal call holding it records: its claim, its
+# outcome and when each happened.
+_RUN_STATE: Final = frozenset(
+    {
+        "status",
+        "modal_call_id",
+        "error_message",
+        "started_at",
+        "completed_at",
+        "updated_at",
+    }
+)
+# The v2 Modal coordinators, workers, household functions and stuck-run sweep
+# read the runs they were given and insert their results, once each.
+MODAL_WORKER_TABLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
+    {
+        "report_runs": _READ,
+        "simulation_runs": _READ,
+        "household_jobs": _READ,
+        "budget_window_runs": _READ,
+        **{
+            table.name: frozenset({"INSERT"})
+            for table in result_metadata.tables.values()
+        },
+    }
+)
+# The columns the Modal worker role may UPDATE, by table: each run's state and
+# the results its own row holds. A budget-window run has no Modal call of its
+# own; its years' coordinators record its status, failure and times.
+MODAL_WORKER_UPDATABLE_COLUMNS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
+    {
+        "report_runs": _RUN_STATE
+        | {
+            "baseline_cliff_gap",
+            "baseline_cliff_share",
+            "reform_cliff_gap",
+            "reform_cliff_share",
+            "spm_provenance",
+            "data_version",
+        },
+        "simulation_runs": _RUN_STATE
+        | {"output_uri", "output_sha256", "household_result"},
+        "household_jobs": _RUN_STATE | {"result"},
+        "budget_window_runs": _RUN_STATE - {"modal_call_id"},
+    }
+)
+
 
 def _public_tables() -> Subquery:
     """Select the oid and name of each table in the ``public`` schema."""
@@ -114,7 +164,9 @@ def _public_tables() -> Subquery:
     )
 
 
-def _missing_table_grants(connection: Connection) -> list[tuple[str, str, str]]:
+def _missing_table_grants(
+    connection: Connection, table_privileges: Mapping[str, frozenset[str]]
+) -> list[tuple[str, str, str]]:
     """Return ``(table, privilege, "")`` for each table privilege the role lacks."""
     required = values(
         column("table_name", String),
@@ -123,7 +175,7 @@ def _missing_table_grants(connection: Connection) -> list[tuple[str, str, str]]:
     ).data(
         [
             (table_name, privilege)
-            for table_name, privileges in SERVICE_TABLE_PRIVILEGES.items()
+            for table_name, privileges in table_privileges.items()
             for privilege in sorted(privileges)
         ]
     )
@@ -146,7 +198,9 @@ def _missing_table_grants(connection: Connection) -> list[tuple[str, str, str]]:
     return [(table_name, privilege, "") for table_name, privilege in rows]
 
 
-def _missing_column_grants(connection: Connection) -> list[tuple[str, str, str]]:
+def _missing_column_grants(
+    connection: Connection, updatable_columns: Mapping[str, frozenset[str]]
+) -> list[tuple[str, str, str]]:
     """Return ``(table, "UPDATE", column)`` for each column the role can't update."""
     required = values(
         column("table_name", String),
@@ -155,7 +209,7 @@ def _missing_column_grants(connection: Connection) -> list[tuple[str, str, str]]
     ).data(
         [
             (table_name, column_name)
-            for table_name, column_names in SERVICE_UPDATABLE_COLUMNS.items()
+            for table_name, column_names in updatable_columns.items()
             for column_name in sorted(column_names)
         ]
     )
@@ -189,18 +243,28 @@ def _missing_column_grants(connection: Connection) -> list[tuple[str, str, str]]
     return [(table_name, "UPDATE", column_name) for table_name, column_name in rows]
 
 
-def missing_table_privileges(connection: Connection) -> list[str]:
+def missing_table_privileges(
+    connection: Connection,
+    *,
+    table_privileges: Mapping[str, frozenset[str]] = SERVICE_TABLE_PRIVILEGES,
+    updatable_columns: Mapping[str, frozenset[str]] = SERVICE_UPDATABLE_COLUMNS,
+) -> list[str]:
     """Return each required privilege the connected role lacks, ordered by table.
 
-    A table privilege is named as ``"<PRIVILEGE> on <table>"`` and a column
-    privilege as ``"UPDATE (<column>) on <table>"``. A table missing from the
-    ``public`` schema lacks every privilege the service needs on it, and a
-    missing column lacks its own. A role without the USAGE privilege on that
-    schema can't use any of its grants, so ``"USAGE on schema public"`` comes
-    first.
+    The required privileges are the simulation service's unless another
+    role's lists are given, such as ``MODAL_WORKER_TABLE_PRIVILEGES`` and
+    ``MODAL_WORKER_UPDATABLE_COLUMNS``. A table privilege is named as
+    ``"<PRIVILEGE> on <table>"`` and a column privilege as
+    ``"UPDATE (<column>) on <table>"``. A table missing from the ``public``
+    schema lacks every privilege required on it, and a missing column lacks
+    its own. A role without the USAGE privilege on that schema can't use any
+    of its grants, so ``"USAGE on schema public"`` comes first.
     """
     missing_grants = sorted(
-        [*_missing_table_grants(connection), *_missing_column_grants(connection)]
+        [
+            *_missing_table_grants(connection, table_privileges),
+            *_missing_column_grants(connection, updatable_columns),
+        ]
     )
     missing = [
         f"{privilege} ({column_name}) on {table_name}"

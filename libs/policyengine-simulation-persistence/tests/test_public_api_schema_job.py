@@ -95,6 +95,56 @@ def test_the_job_builds_the_reference_and_compares_without_skipping() -> None:
     )
 
 
+STAGE12_LIBRARY = "libs/policyengine-stage12-persistence"
+MODAL_WORKER_ROLE = "policyengine_v2_modal_worker"
+
+
+def test_the_job_runs_the_stage12_tests_as_the_modal_worker_role() -> None:
+    """The Stage 12 stores' tests run on the same tables, as the role they use.
+
+    The Public API's manifest creates the role without a login, so a step
+    gives it one, with a password that exists only in the job's database.
+    """
+    job = _jobs()[JOB_ID]
+    password = job["services"]["postgres"]["env"]["POSTGRES_PASSWORD"]
+    names = [step.get("name") for step in job["steps"]]
+    compare = _step(job, "Compare sim's table models with the Public API's tables")
+    login = _step(job, "Give the Modal worker role a login on the job's database")
+    install = _step(job, "Install the Stage 12 library's dependencies")
+    stage12_tests = _step(
+        job, "Run the Stage 12 library's tests as the Modal worker role"
+    )
+    on_default_branch = _step(
+        job, "Require the pinned commit on the Public API's default branch"
+    )
+    worker_password = login["env"]["MODAL_WORKER_TEST_PASSWORD"]
+
+    assert login["run"] == ".github/scripts/public-api-schema-worker-login.sh"
+    assert install["working-directory"] == STAGE12_LIBRARY
+    assert install["run"] == "uv sync --extra test --frozen"
+    assert stage12_tests["working-directory"] == STAGE12_LIBRARY
+    assert stage12_tests["run"] == "uv run --frozen pytest tests/ -v"
+    assert stage12_tests["env"] == {
+        "REPORT_RUN_TEST_DATABASE_URL": (
+            f"postgresql://{MODAL_WORKER_ROLE}:{worker_password}@127.0.0.1:5432/"
+            "policyengine_v2_alembic_test"
+        ),
+        "REPORT_RUN_TEST_SEED_DATABASE_URL": (
+            f"postgresql+psycopg://postgres:{password}@127.0.0.1:5432/"
+            "policyengine_v2_alembic_test"
+        ),
+        # A missing database fails the tests instead of skipping them.
+        "REPORT_RUN_REQUIRE_DATABASE_TESTS": "1",
+    }
+    assert (
+        names.index(compare["name"])
+        < names.index(login["name"])
+        < names.index(install["name"])
+        < names.index(stage12_tests["name"])
+        < names.index(on_default_branch["name"])
+    )
+
+
 def test_the_job_reads_no_secret() -> None:
     job_text = yaml.safe_dump(_jobs()[JOB_ID])
 

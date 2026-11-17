@@ -1,4 +1,4 @@
-"""Database connections for the simulation service's own role."""
+"""Database connections for the simulation service and the v2 Modal calls."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
+from sqlalchemy.pool import NullPool
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -20,6 +21,8 @@ CONNECT_TIMEOUT_SECONDS = 5
 # enough.
 POOL_SIZE = 2
 MAX_OVERFLOW = 3
+# A v2 Modal call connects across the internet to the database's pooler.
+UNPOOLED_CONNECT_TIMEOUT_SECONDS = 10
 
 
 def normalized_database_url(database_url: str) -> URL:
@@ -60,6 +63,21 @@ def create_simulation_engine(database_url: str) -> Engine:
             # works through Supabase's session and transaction poolers.
             "prepare_threshold": None,
         },
+    )
+
+
+def create_unpooled_engine(database_url: str) -> Engine:
+    """Build an engine that opens a connection per operation and closes it after.
+
+    The v2 Modal coordinators, workers and household functions, and the
+    comparison path, spend most of their lifetime calculating or waiting, so
+    each database session ends with its short operation instead of holding a
+    pooler slot through that idle time. It creates no objects.
+    """
+    return create_engine(
+        normalized_database_url(database_url),
+        poolclass=NullPool,
+        connect_args={"connect_timeout": UNPOOLED_CONNECT_TIMEOUT_SECONDS},
     )
 
 

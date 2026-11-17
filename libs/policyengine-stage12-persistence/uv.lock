@@ -637,11 +637,32 @@ requires-dist = [
 provides-extras = ["test", "build"]
 
 [[package]]
+name = "policyengine-simulation-persistence"
+version = "0.1.0"
+source = { editable = "../policyengine-simulation-persistence" }
+dependencies = [
+    { name = "psycopg", extra = ["binary"] },
+    { name = "sqlalchemy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
+    { name = "pyright", marker = "extra == 'build'", specifier = ">=1.1.401" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.1.1" },
+    { name = "pyyaml", marker = "extra == 'test'", specifier = ">=6.0.2" },
+    { name = "sqlalchemy", specifier = ">=2,<2.1" },
+]
+provides-extras = ["test", "build"]
+
+[[package]]
 name = "policyengine-stage12-persistence"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "policyengine-simulation-contract" },
+    { name = "policyengine-simulation-persistence" },
     { name = "psycopg", extra = ["binary"] },
     { name = "sqlalchemy" },
 ]
@@ -660,11 +681,12 @@ test = [
 requires-dist = [
     { name = "black", marker = "extra == 'build'", specifier = ">=25.1.0" },
     { name = "policyengine-simulation-contract", editable = "../policyengine-simulation-contract" },
+    { name = "policyengine-simulation-persistence", editable = "../policyengine-simulation-persistence" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
     { name = "pyright", marker = "extra == 'build'", specifier = ">=1.1.401" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.1.1" },
-    { name = "sqlalchemy", specifier = ">=2,<3" },
+    { name = "sqlalchemy", specifier = ">=2,<2.1" },
 ]
 provides-extras = ["test", "build"]
 
