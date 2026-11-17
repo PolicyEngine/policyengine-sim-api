@@ -23,6 +23,7 @@ its households' weights, and the share is taken once, from the merged rows.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -82,6 +83,8 @@ if TYPE_CHECKING:
 
     from .failures import Stage12FailureDetail
     from .simulation import SimulationCalculation, SimulationWorkerDependencies
+
+logger = logging.getLogger(__name__)
 
 # The payload is not the simulation of the cliff result's run, on its year
 # and versions.
@@ -478,11 +481,16 @@ def _taken_from_call(recorder: CliffResultRecorder) -> bool:
     """Return whether the cliff result is no longer running under this call.
 
     A segmented calculation checks it between polls. A failed read is
-    treated as not taken, so the calculation goes on.
+    logged and treated as not taken, so the calculation goes on.
     """
     try:
         return not recorder.still_held()
-    except Exception:  # noqa: BLE001  # a failed read must not stop the calculation
+    except Exception as error:  # noqa: BLE001  # a failed read must not stop the calculation
+        logger.warning(
+            "Could not read cliff result %s (%s)",
+            recorder.cliff_result_id,
+            type(error).__name__,
+        )
         return False
 
 
