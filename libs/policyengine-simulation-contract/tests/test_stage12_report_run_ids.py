@@ -18,6 +18,7 @@ NOW = datetime(2026, 11, 3, tzinfo=UTC)
 REPORT_RUN_ID = UUID("00000000-0000-0000-0000-0000000000a1")
 BASELINE_RUN_ID = UUID("00000000-0000-0000-0000-0000000000b1")
 REFORM_RUN_ID = UUID("00000000-0000-0000-0000-0000000000c1")
+CLIFF_RESULT_ID = UUID("00000000-0000-0000-0000-0000000000f1")
 
 
 def _context_fields(**overrides: Any) -> dict[str, Any]:
@@ -141,11 +142,52 @@ def test_only_a_detailed_save_call_records_runs() -> None:
 
 
 def test_a_context_names_a_report_run_or_a_simulation_run_not_both() -> None:
-    with pytest.raises(ValidationError, match="report run or a simulation run"):
+    with pytest.raises(ValidationError, match="one of a report run, a simulation run"):
         Stage12InvocationContext(
             **_context_fields(
                 report_run=_run_ids().model_dump(mode="json"),
                 simulation_run_id=str(BASELINE_RUN_ID),
+            )
+        )
+
+
+def test_a_cliff_workers_context_names_the_cliff_result_its_call_claims() -> None:
+    context = Stage12InvocationContext(
+        **_context_fields(cliff_result_id=str(CLIFF_RESULT_ID))
+    )
+
+    assert context.cliff_result_id == CLIFF_RESULT_ID
+    assert (context.report_run, context.simulation_run_id) == (None, None)
+    assert context.records_runs
+    restored = Stage12InvocationContext.model_validate(context.model_dump(mode="json"))
+    assert restored.cliff_result_id == CLIFF_RESULT_ID
+    # A context naming no cliff result keeps its JSON, for the deployed workers.
+    assert "cliff_result_id" not in Stage12InvocationContext(
+        **_context_fields(simulation_run_id=str(BASELINE_RUN_ID))
+    ).model_dump(mode="json", exclude_none=True)
+
+
+@pytest.mark.parametrize(
+    "named_run",
+    [
+        {"report_run": _run_ids().model_dump(mode="json")},
+        {"simulation_run_id": str(BASELINE_RUN_ID)},
+    ],
+    ids=["report-run", "simulation-run"],
+)
+def test_a_context_naming_a_cliff_result_names_no_run(named_run) -> None:
+    with pytest.raises(ValidationError, match="one of a report run, a simulation run"):
+        Stage12InvocationContext(
+            **_context_fields(cliff_result_id=str(CLIFF_RESULT_ID), **named_run)
+        )
+
+
+def test_a_shadow_comparison_run_cannot_record_a_cliff_result() -> None:
+    with pytest.raises(ValidationError, match="production function call"):
+        Stage12InvocationContext(
+            **_context_fields(
+                production_function_call_id="fc-production",
+                cliff_result_id=str(CLIFF_RESULT_ID),
             )
         )
 
