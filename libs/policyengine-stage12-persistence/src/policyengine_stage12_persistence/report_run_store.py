@@ -136,7 +136,8 @@ class ReportRunStore:
     """Status writes to the Public API's run tables and household jobs.
 
     It also reads a simulation run's state, for a report run that names one
-    that already succeeded.
+    that already succeeded. The sweep's listing and failure of stuck rows
+    serve every ``RunKind``, simulation runs' cliff results included.
     """
 
     def __init__(

@@ -376,7 +376,9 @@ def run_single_simulation_segment_us(
     memory=32768,
     timeout=US_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
-    # Both simulations of every coordinator call that may run at once.
+    # Both simulations of every coordinator call that may run at once. The
+    # simulation runs and cliff calculations the simulation service starts
+    # directly share the same containers.
     max_containers=50,
     secrets=report_run_writer_secrets,
 )
@@ -451,7 +453,9 @@ def run_single_simulation_us(
     memory=32768,
     timeout=UK_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
-    # Both simulations of every coordinator call that may run at once.
+    # Both simulations of every coordinator call that may run at once. The
+    # simulation runs and cliff calculations the simulation service starts
+    # directly share the same containers.
     max_containers=50,
     secrets=report_run_writer_secrets,
 )

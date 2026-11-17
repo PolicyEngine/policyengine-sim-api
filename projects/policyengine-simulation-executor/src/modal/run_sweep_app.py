@@ -1,4 +1,4 @@
-"""A scheduled Modal function that fails runs and household jobs nothing will finish.
+"""A scheduled Modal function that fails the runs nothing will finish.
 
 Every ten minutes it lists the Public API's report runs, simulation runs,
 household jobs and simulation runs' cliff results that have been pending or

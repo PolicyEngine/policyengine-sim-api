@@ -1,4 +1,4 @@
-"""The sweep that fails runs and household jobs nothing will finish.
+"""The sweep that fails runs, household jobs and cliff results nothing will finish.
 
 A coordinator or worker records the Modal call running each run it claims,
 and the simulation service is to record the call it starts on a pending
@@ -120,7 +120,7 @@ class StuckRunStore(Protocol):
         active_since_before: datetime,
         regardless_of_report_runs: bool = False,
     ) -> tuple[ActiveRun, ...]:
-        """Return the pending and running runs, or household jobs, older than a time.
+        """Return the pending and running runs of ``kind`` older than a time.
 
         A simulation run an unfinished report run names is left out, unless
         ``regardless_of_report_runs`` and it records a call.
