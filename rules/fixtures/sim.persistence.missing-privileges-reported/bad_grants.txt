@@ -12,6 +12,8 @@ INSERT budget_window_runs
 SELECT budget_window_runs
 INSERT household_jobs
 SELECT household_jobs
+INSERT cliff_impacts
+SELECT cliff_impacts
 SELECT policies
 SELECT households
 SELECT tax_benefit_models
@@ -39,3 +41,8 @@ UPDATE household_jobs error_message
 UPDATE household_jobs modal_call_id
 UPDATE household_jobs status
 UPDATE household_jobs updated_at
+UPDATE cliff_impacts completed_at
+UPDATE cliff_impacts error_message
+UPDATE cliff_impacts modal_call_id
+UPDATE cliff_impacts status
+UPDATE cliff_impacts updated_at
