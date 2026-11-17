@@ -40,8 +40,8 @@ requests, missing jobs, or ordinary status requests.
 The observability runtime's standard-library log handler emits only a log
 record's `policyengine_attributes`: any other key passed in `extra=` stays on
 the Python `LogRecord` and never reaches Cloud Logging. In the Simulation
-Entrypoint and in Stage 12 (`stage12_runtime` and `src/modal/v2_app.py`), pass
-every log call's fields through `log_extra(...)` from
+Entrypoint and in Stage 12 (the executor's `stage12_*` modules and the
+Stage 12 and v2 Modal applications), pass every log call's fields through `log_extra(...)` from
 `policyengine_simulation_observability.log_records`, which puts them in both
 places (a field named like a `LogRecord` attribute, such as `name`, goes only
 to `policyengine_attributes`, since `logging` refuses it), and name a row with `database_row_attributes(table, row_id)` (rule
