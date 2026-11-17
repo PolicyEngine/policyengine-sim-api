@@ -1,9 +1,10 @@
 """Rows for the economy simulation and report tests.
 
 The catalog rows a request names are the Public API's, inserted as the
-superuser. A run that already succeeded, and the report run that used it, are
-written as the superuser too, through the service tables' models: the
-service's role can neither mark a run succeeded nor record its output.
+superuser. A stored simulation, report and their runs are written as the
+superuser too, through the service tables' models: the service's role can
+neither mark a run succeeded nor record its output. None of them has a
+definition key, as a record the service created before keys has none.
 """
 
 from __future__ import annotations
@@ -146,15 +147,14 @@ class StoredRun:
 class RunShape:
     """What a stored economy simulation and its run hold.
 
-    A succeeded run records an output file in the output bucket unless
-    ``output_uri`` names another.
+    A succeeded run records an output file in the output bucket. ``forced``
+    marks a forced re-run's run.
     """
 
     choice: SimulationChoice = CURRENT_LAW
     status: SimulationStatus = SimulationStatus.SUCCEEDED
     versions: RunVersions = VERSIONS
-    output_uri: str | None = None
-    completed_at: datetime = COMPLETED_AT
+    forced: bool = False
 
 
 def insert_simulation_run(
@@ -205,13 +205,12 @@ def insert_run_of(
             dataset_id=population.dataset_id,
             region_id=population.region_id,
             status=shape.status,
-            completed_at=shape.completed_at if finished else None,
+            completed_at=COMPLETED_AT if finished else None,
             output_uri=(
-                (shape.output_uri or f"{OUTPUT_BUCKET_PREFIX}outputs/{run_id}.parquet")
-                if succeeded
-                else None
+                f"{OUTPUT_BUCKET_PREFIX}outputs/{run_id}.parquet" if succeeded else None
             ),
             output_sha256="d" * 64 if succeeded else None,
+            forced=shape.forced,
         )
     )
     return StoredRun(simulation_id=simulation_id, simulation_run_id=run_id)
@@ -219,11 +218,13 @@ def insert_run_of(
 
 @dataclass(frozen=True)
 class ReportRunOutcome:
-    """How a stored report run ended, and the options its report has."""
+    """How a stored report run ended, its versions and trigger, and its options."""
 
     status: ReportRunStatus = ReportRunStatus.SUCCEEDED
     inputs: dict[str, Any] | None = None
     error_message: str | None = None
+    versions: RunVersions = VERSIONS
+    trigger: ReportRunTrigger = ReportRunTrigger.INITIAL
 
 
 def insert_report_run_naming(
@@ -298,10 +299,10 @@ def insert_report_run_of(
             report_id=report_id,
             baseline_simulation_run_id=baseline.simulation_run_id,
             reform_simulation_run_id=reform.simulation_run_id,
-            country_package_version=COUNTRY_PACKAGE_VERSION,
-            policyengine_version=POLICYENGINE_VERSION,
+            country_package_version=outcome.versions.country_package_version,
+            policyengine_version=outcome.versions.policyengine_version,
             status=outcome.status,
-            trigger=ReportRunTrigger.INITIAL,
+            trigger=outcome.trigger,
             completed_at=COMPLETED_AT if finished else None,
             error_message=outcome.error_message,
         )
@@ -309,23 +310,43 @@ def insert_report_run_of(
     return run_id
 
 
-def insert_reusable_run(
-    connection: Connection,
-    economy: EconomyCatalog,
-    shape: RunShape | None = None,
-    *,
-    inputs: dict[str, Any] | None = None,
-) -> StoredRun:
-    """Insert a run shaped ``shape`` that a succeeded report run used, with ``inputs``.
+@dataclass(frozen=True)
+class PendingReport:
+    """A stored report whose first run, and both its new simulation runs, wait.
 
-    The report run's other simulation run failed, so it is never reusable.
+    Every run is ``pending`` with no Modal call ID, as the service left a
+    report it had just created.
     """
+
+    report_id: UUID
+    report_run_id: UUID
+    baseline: StoredRun
+    reform: StoredRun
+
+    @property
+    def simulation_run_ids(self) -> tuple[UUID, UUID]:
+        """Return the baseline's simulation run, then the reform's."""
+        return (self.baseline.simulation_run_id, self.reform.simulation_run_id)
+
+
+def insert_pending_report(
+    connection: Connection, economy: EconomyCatalog
+) -> PendingReport:
+    """Insert a current-law report and its first run, all runs pending."""
     population = economy.population()
-    reused = insert_simulation_run(connection, population, shape)
-    other_side = insert_simulation_run(
-        connection, population, RunShape(status=SimulationStatus.FAILED)
+    pending = RunShape(status=SimulationStatus.PENDING)
+    baseline = insert_simulation_run(connection, population, pending)
+    reform = insert_simulation_run(connection, population, pending)
+    report_id = insert_report_of(connection, economy, (baseline, reform))
+    report_run_id = insert_report_run_of(
+        connection,
+        report_id,
+        (baseline, reform),
+        ReportRunOutcome(status=ReportRunStatus.PENDING),
     )
-    insert_report_run_naming(
-        connection, economy, (reused, other_side), ReportRunOutcome(inputs=inputs)
+    return PendingReport(
+        report_id=report_id,
+        report_run_id=report_run_id,
+        baseline=baseline,
+        reform=reform,
     )
-    return reused

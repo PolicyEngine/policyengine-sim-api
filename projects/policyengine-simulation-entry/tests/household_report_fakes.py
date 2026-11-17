@@ -28,6 +28,9 @@ from policyengine_simulation_entry.household_workers import (
     default_household_worker,
 )
 from policyengine_simulation_persistence import (
+    FoundHouseholdReport,
+    FoundReportRun,
+    FoundSide,
     HouseholdReportInputs,
     ReportRunStatus,
     StoredHousehold,
@@ -37,7 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from policyengine_simulation_persistence import (
-        NewHouseholdReport,
+        KeyedHouseholdReport,
         NewHouseholdReportRerun,
     )
 
@@ -122,7 +125,11 @@ class FakeHouseholdReportStore:
 
     ``claimed`` marks the report run as claimed by its household function: a
     failure write then changes nothing. ``rerun_failure`` is raised by a
-    re-run's create instead of recording it.
+    re-run's create instead of recording it. ``joined_run`` is a report run
+    an identical request created, which a create or an unforced re-run
+    joins; ``joined_side_runs`` names, by side, a simulation run another
+    report run created, which a run this request creates names instead of
+    its own.
     """
 
     default_year: int | None = 2026
@@ -133,8 +140,10 @@ class FakeHouseholdReportStore:
     fail_failure: Exception | None = None
     rerun_failure: Exception | None = None
     claimed: bool = False
+    joined_run: FoundReportRun | None = None
+    joined_side_runs: dict[str, UUID] = field(default_factory=dict)
     reads: list[dict[str, Any]] = field(default_factory=list)
-    reports: list[NewHouseholdReport] = field(default_factory=list)
+    keyed_reports: list[KeyedHouseholdReport] = field(default_factory=list)
     report_reruns: list[NewHouseholdReportRerun] = field(default_factory=list)
     recorded_calls: list[tuple[UUID, str]] = field(default_factory=list)
     failed_runs: list[tuple[UUID, tuple[UUID, ...], str]] = field(default_factory=list)
@@ -172,15 +181,67 @@ class FakeHouseholdReportStore:
             },
         )
 
-    def create_report(self, report: NewHouseholdReport) -> None:
+    def find_or_create_report(
+        self, report: KeyedHouseholdReport
+    ) -> FoundHouseholdReport:
         if self.create_failure is not None:
             raise self.create_failure
-        self.reports.append(report)
+        self.keyed_reports.append(report)
+        proposed = {
+            side: (side_ids.simulation_id, side_ids.simulation_run_id)
+            for side, side_ids in report.proposed_sides.items()
+        }
+        run = self._run(report.run_id, proposed, may_join=True)
+        run_ids = {"baseline": run.baseline_simulation_run_id}
+        run_ids["reform"] = run.reform_simulation_run_id
+        sides = {
+            side: FoundSide(
+                simulation_id=simulation_id,
+                simulation_run_id=run_ids[side],
+                run_inserted=run.inserted and run_ids[side] == proposed_run_id,
+            )
+            for side, (simulation_id, proposed_run_id) in proposed.items()
+        }
+        return FoundHouseholdReport(
+            report_id=report.report_id,
+            report_inserted=run.inserted,
+            run=run,
+            baseline=sides["baseline"],
+            reform=sides.get("reform"),
+        )
 
-    def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> None:
+    def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> FoundReportRun:
         if self.rerun_failure is not None:
             raise self.rerun_failure
         self.report_reruns.append(rerun)
+        proposed = {
+            side: (side_ids.simulation_id, side_ids.simulation_run_id)
+            for side, side_ids in rerun.named_sides.items()
+        }
+        # As the store does, a forced re-run joins nothing.
+        return self._run(rerun.run_id, proposed, may_join=not rerun.forced)
+
+    def _run(
+        self,
+        run_id: UUID,
+        proposed: dict[str, tuple[UUID, UUID]],
+        *,
+        may_join: bool,
+    ) -> FoundReportRun:
+        """Return the joined run, or the one created, naming any joined side runs."""
+        if may_join and self.joined_run is not None:
+            return self.joined_run
+        run_ids = {
+            side: (self.joined_side_runs.get(side, run) if may_join else run)
+            for side, (_, run) in proposed.items()
+        }
+        return FoundReportRun(
+            id=run_id,
+            inserted=True,
+            status=ReportRunStatus.PENDING,
+            baseline_simulation_run_id=run_ids["baseline"],
+            reform_simulation_run_id=run_ids.get("reform"),
+        )
 
     def record_report_call(
         self, report_run_id: UUID, modal_call_id: str

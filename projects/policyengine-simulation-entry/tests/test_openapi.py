@@ -394,6 +394,9 @@ def test_economy_routes_declare_every_answer():
         record = path.removeprefix("/").removesuffix("s")
         assert f"{record}_id" in responses["503"]["description"]
         assert "nothing was written" in responses["400"]["description"]
+        # A create answers the record and run it ended on, joined or created.
+        assert "joined" in responses["201"]["description"]
+        assert "found or created" in responses["503"]["description"]
     error_properties = spec["components"]["schemas"]["EconomyError"]["properties"]
     assert {"code", "detail", "report_id", "simulation_id", "run_id"} == set(
         error_properties
@@ -458,16 +461,28 @@ def test_rerun_routes_declare_every_answer():
         for status_code in ("400", "404", "409", "500", "503"):
             assert _response_schema(responses[status_code]) == error
         assert _response_schema(responses["422"]) == unprocessable
-        assert "run_id" in responses["409"]["description"]
         assert "run_id" in responses["503"]["description"]
+        # Both answer the run they ended on, created or joined.
+        assert "joined" in responses["201"]["description"]
+    # No re-run is refused while a run is under way: an unforced one joins
+    # it, and a forced one is an extra run (C1 · 24's answers 3 and 8).
+    for path in ("/reports/{report_id}/runs", "/simulations/{simulation_id}/runs"):
+        conflict = _responses(spec, "post", path)["409"]
+        assert "run_in_progress" not in conflict["description"]
+        assert "rerun_not_supported" in conflict["description"]
     codes = set(
         spec["components"]["schemas"]["EconomyError"]["properties"]["code"]["enum"]
     )
-    assert {"run_in_progress", "rerun_not_supported"} <= codes
+    assert "rerun_not_supported" in codes
+    assert "run_in_progress" not in codes
     # A household report's re-run names its household's own codes.
     report_answers = _responses(spec, "post", "/reports/{report_id}/runs")
     assert "unknown_household" in report_answers["400"]["description"]
     assert "household_not_calculable" in report_answers["422"]["description"]
+    # A report stored asking for cliffs is refused until they exist.
+    assert "cliffs_not_available" in report_answers["422"]["description"]
+    simulation_answers = _responses(spec, "post", "/simulations/{simulation_id}/runs")
+    assert "cliffs_not_available" not in simulation_answers["422"]["description"]
     report_rerun = spec["components"]["schemas"]["ReportRerunRequest"]
     assert set(report_rerun["properties"]) == {"force"}
     assert (
@@ -516,6 +531,21 @@ def test_economy_requests_name_no_version_and_no_record_id():
     assert spm["$ref"] == "#/components/schemas/SPMSelection"
     assert "default" not in spm
     assert "spm" not in schemas["EconomyReportRequest"].get("required", [])
+
+
+def test_a_reports_label_and_description_are_optional_and_never_stored():
+    """Answer 6: each user's saved report holds them, in the Public API."""
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    for name in (
+        "EconomyReportRequest",
+        "BudgetWindowReportRequest",
+        "HouseholdReportRequest",
+    ):
+        request = schemas[name]
+        assert {"label", "description"} <= set(request["properties"]), name
+        assert "label" not in request.get("required", []), name
+        assert "not stored" in request["properties"]["label"]["description"], name
 
 
 def test_a_report_request_is_an_economy_report_a_budget_window_or_a_household():
@@ -570,7 +600,6 @@ def test_a_household_report_names_its_household_and_each_sides_policy():
     assert set(household_report["required"]) == {
         "country",
         "report_type",
-        "label",
         "household_id",
         "baseline",
     }

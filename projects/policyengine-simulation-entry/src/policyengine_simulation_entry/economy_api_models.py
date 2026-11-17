@@ -18,10 +18,10 @@ Answers the Public API reads:
   is written;
 - 404 ``unknown_report`` or ``unknown_simulation`` when a re-run names no
   stored record;
-- 409 with ``code`` and ``detail`` when a stored record is not re-run now:
-  ``run_in_progress``, naming the run pending or running (``run_id``), or
-  ``rerun_not_supported`` for a record this service does not re-run.
-  Nothing is written;
+- 409 with ``code`` and ``detail``, ``rerun_not_supported``, for a stored
+  record this service does not re-run. Nothing is written. No re-run is
+  refused while a run is under way: an unforced one joins it, and a forced
+  one is an extra run;
 - 422 when the request's fields, or the stored values it names, cannot be
   calculated. Nothing is written;
 - 503 with ``code`` and ``detail`` when the service cannot answer now. Only
@@ -52,6 +52,15 @@ SimulationYear = Annotated[int, Field(ge=1900, le=2200, description="The year")]
 CatalogKey = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^\S+$")]
 ReportLabel = Annotated[str, Field(min_length=1, max_length=255)]
 ReportDescription = Annotated[str, Field(max_length=10_000)]
+# A report's name and description are accepted and not stored: each user's
+# saved report in the Public API holds them (C1 · 24's answer 6).
+LABEL_NOT_STORED = (
+    "The report's name, accepted for the Public API's callers and not stored: "
+    "each user's saved report holds it."
+)
+DESCRIPTION_NOT_STORED = (
+    "The report's description, accepted and not stored, as the label is."
+)
 
 # Why a request is refused (400), naming a row the caller chose that doesn't
 # exist: the Public API answers these as its caller's error. On a re-run they
@@ -85,13 +94,12 @@ EconomyUnprocessableCode = Literal[
     # be read, or the household functions' contract refuses what the report
     # would calculate: located at the household or a side's policy.
     "household_not_calculable",
+    # A report asks for cliffs (include_cliffs: true), which wait for each
+    # simulation run's own cliff calculation (C1 · 39); located at the field.
+    "cliffs_not_available",
 ]
 # Why a stored record is not re-run now (409).
 EconomyConflictCode = Literal[
-    # The record has a run pending or running; ``run_id`` names it: for a
-    # report, its budget-window run, or else its report run; for a
-    # simulation, its simulation run.
-    "run_in_progress",
     # The service does not re-run this kind of record, or the record lacks a
     # row it calculates on.
     "rerun_not_supported",
@@ -154,16 +162,19 @@ class EconomyReportRequest(_Request):
     """An economy report: a baseline and a reform simulation of one region's data.
 
     Both simulations use the report's year, region and dataset, as
-    ``EconomySimulationRequest`` describes them. ``include_cliffs`` also
-    calculates the baseline's and reform's cliff impact. ``spm`` selects the
+    ``EconomySimulationRequest`` describes them. ``include_cliffs: true`` is
+    refused (422 ``cliffs_not_available``) until cliffs are calculated per
+    simulation run (C1 · 39). ``spm`` selects the
     SPM forecast scenario and geography; omit it, rather than sending null,
     to use the bundle's certified defaults.
     """
 
     country: CountryId
     report_type: Literal["economy"]
-    label: ReportLabel
-    description: ReportDescription | None = None
+    label: ReportLabel | None = Field(default=None, description=LABEL_NOT_STORED)
+    description: ReportDescription | None = Field(
+        default=None, description=DESCRIPTION_NOT_STORED
+    )
     year: SimulationYear
     region_code: CatalogKey
     dataset_name: CatalogKey | None = None
@@ -184,10 +195,11 @@ class EconomyReportRequest(_Request):
         return value
 
     def options(self) -> dict[str, Any]:
-        """Return the report's options as it stores them (``reports.inputs``).
+        """Return the request's options, as its calculation reads them.
 
         ``spm`` holds only the settings the request gave, and is left out
-        when it gave none.
+        when it gave none. The report stores the selection alone
+        (``economy_requests.stored_options``).
         """
         options: dict[str, Any] = {"include_cliffs": self.include_cliffs}
         if self.spm is not None:
@@ -198,9 +210,14 @@ class EconomyReportRequest(_Request):
 class ReportRerunRequest(_Request):
     """A stored report's re-run on the default worker's versions.
 
-    Without ``force``, a side reuses a run of its own simulation that
-    succeeded on those versions, as a new report's side does; with it, both
-    simulations are calculated again.
+    Without ``force``, a re-run of a report created by key (economy,
+    budget window or household) joins the report's run on those versions
+    that hasn't failed and wasn't forced, pending, running or succeeded,
+    and otherwise each side joins its simulation's run on them or gets a
+    new one, as a new report's side does. With it, and always for a report
+    created before keys (C1 · 24's interim answer B), the report's
+    simulations are calculated again, as an extra run marked forced that
+    nothing joins.
     """
 
     force: StrictBool = False
@@ -211,12 +228,14 @@ class _Answer(BaseModel):
 
 
 class EconomySimulationCreated(_Answer):
-    """The simulation a request created or re-ran, its new run and its status.
+    """The simulation a request created or re-ran, its run and that run's status.
 
-    The status is the run's when its call's ID was recorded: ``pending``, or
-    whatever the simulation function had made it by then if it claimed the
-    run first. A run whose call Modal didn't confirm, or whose call's ID
-    couldn't be recorded, is answered ``pending``.
+    For a run the request created, the status is the run's when its call's
+    ID was recorded: ``pending``, or whatever the simulation function had
+    made it by then if it claimed the run first. A run whose call Modal
+    didn't confirm, or whose call's ID couldn't be recorded, is answered
+    ``pending``. A re-run that joined a run answers that run's status as
+    read.
     """
 
     simulation_id: UUID
@@ -225,14 +244,17 @@ class EconomySimulationCreated(_Answer):
 
 
 class EconomyReportCreated(_Answer):
-    """The report a request created or re-ran, its new run and its status.
+    """The report a request ended on, its run and that run's status.
 
-    The status is the run's when its call's ID was recorded: ``pending``, or
-    whatever the coordinator had made it by then if it claimed the run
-    first. A run whose call Modal didn't confirm, or whose call's ID couldn't
-    be recorded, is answered ``pending``. Each side names its
-    simulation and simulation run; ``…_reused`` is true for a side that
-    names a run that already succeeded, rather than a new one.
+    The report and run are the ones a create found or created by key, or a
+    re-run joined or created. For a run the request created, the status is
+    the run's when its call's ID was recorded: ``pending``, or whatever the
+    coordinator had made it by then if it claimed the run first. A run whose
+    call Modal didn't confirm, or whose call's ID couldn't be recorded, is
+    answered ``pending``. A joined run answers its status as read. Each side
+    names its simulation and simulation run; ``…_reused`` is true for a side
+    whose run this request didn't create: another request's run, in any
+    state, that the side joined, or, on a joined report run, that run's own.
     """
 
     report_id: UUID
@@ -303,10 +325,7 @@ class EconomyError(_Answer):
     ``/simulations``) is set only with ``modal_call_refused``: it names the
     record the service created or re-ran, whose new run it failed because
     Modal refused the call or didn't accept it in time. ``run_id`` names
-    that new run on a re-run (a budget window's: its budget-window run),
-    and with ``run_in_progress`` the record's run that is pending or
-    running: a report's budget-window run, or else its report run, or a
-    simulation's run.
+    that new run on a re-run (a budget window's: its budget-window run).
     """
 
     code: EconomyErrorCode

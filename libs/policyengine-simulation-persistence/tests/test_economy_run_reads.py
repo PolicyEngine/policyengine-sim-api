@@ -21,6 +21,7 @@ from economy_rows import (
     RunShape,
     insert_economy_catalog,
     insert_report_run_naming,
+    insert_run_of,
     insert_simulation_run,
 )
 from policyengine_simulation_persistence import (
@@ -39,7 +40,13 @@ EARLIER = datetime(2026, 11, 1, tzinfo=UTC)
 
 
 def _report_with_runs(connection, economy: EconomyCatalog) -> tuple[UUID, list[UUID]]:
-    """Insert a report and three runs of it; return the report and its runs."""
+    """Insert a report and three runs of it; return the report and its runs.
+
+    The first failed; the two after it are forced re-runs' runs, still
+    pending, as only forced runs share one report's versions with another
+    run that hasn't failed. Each forced run names forced simulation runs of
+    its own, as a forced re-run creates them.
+    """
     population = economy.population()
     baseline = insert_simulation_run(connection, population)
     reform = insert_simulation_run(
@@ -58,18 +65,24 @@ def _report_with_runs(connection, economy: EconomyCatalog) -> tuple[UUID, list[U
         .one()
         .report_id
     )
+    forced_shape = RunShape(status=SimulationStatus.PENDING, forced=True)
     for _ in range(2):
         run_id = uuid4()
+        forced_baseline, forced_reform = (
+            insert_run_of(connection, side.simulation_id, population, forced_shape)
+            for side in (baseline, reform)
+        )
         connection.execute(
             report_runs.insert().values(
                 id=run_id,
                 report_id=report_id,
-                baseline_simulation_run_id=baseline.simulation_run_id,
-                reform_simulation_run_id=reform.simulation_run_id,
+                baseline_simulation_run_id=forced_baseline.simulation_run_id,
+                reform_simulation_run_id=forced_reform.simulation_run_id,
                 country_package_version=COUNTRY_PACKAGE_VERSION,
                 policyengine_version=POLICYENGINE_VERSION,
                 status=ReportRunStatus.PENDING,
                 trigger="manual",
+                forced=True,
             )
         )
         run_ids.append(run_id)
