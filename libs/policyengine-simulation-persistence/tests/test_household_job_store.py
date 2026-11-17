@@ -16,12 +16,15 @@ from uuid import uuid4
 import pytest
 from conftest import act_as_the_service, rolled_back_transaction
 from policyengine_simulation_persistence import (
+    EconomyRecordOutcomeUnknownError,
+    HouseholdJobReferenceError,
     HouseholdJobStatus,
     HouseholdJobStore,
     NewHouseholdJob,
     UnknownCatalogVersionError,
     UnknownHouseholdError,
     UnknownPolicyError,
+    create_simulation_engine,
 )
 from public_api_rows import (
     StoredValue,
@@ -30,6 +33,7 @@ from public_api_rows import (
     insert_model,
     insert_policy,
 )
+from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -225,3 +229,94 @@ def test_a_refused_call_fails_its_job(public_api_database_url) -> None:
         HouseholdJobStatus.FAILED,
         "Modal refused the call.",
     )
+
+
+def _job_naming_no_rows() -> NewHouseholdJob:
+    """Return a job whose household and catalog version are random IDs."""
+    return NewHouseholdJob(
+        id=uuid4(),
+        country="us",
+        household_id=uuid4(),
+        policy_id=None,
+        year=2026,
+        request_data={"country": "us"},
+        tax_benefit_model_version_id=uuid4(),
+        country_package_version="2.2.1",
+        policyengine_version=POLICYENGINE_VERSION,
+    )
+
+
+class _CommitFails:
+    """A transaction whose block runs, and whose commit then fails."""
+
+    def __init__(self, connection) -> None:
+        self.connection = connection
+
+    def __enter__(self):
+        return self.connection
+
+    def __exit__(self, error_type, error, traceback) -> None:
+        if error is None:
+            statement = "COMMIT"
+            raise OperationalError(statement, {}, Exception("connection lost"))
+
+
+class _RecordingConnection:
+    def __init__(self) -> None:
+        self.statements: list[object] = []
+
+    def execute(self, statement, *arguments):
+        self.statements.append(statement)
+
+
+class _StatementFails:
+    """A transaction whose first statement fails, so nothing is committed."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, error_type, error, traceback) -> None:
+        return None
+
+    def execute(self, statement, *arguments):
+        failed_statement = "INSERT"
+        raise OperationalError(failed_statement, {}, Exception("connection lost"))
+
+
+def test_a_job_whose_commit_fails_may_have_been_created() -> None:
+    """PostgreSQL may have applied the commit before the connection failed."""
+    connection = _RecordingConnection()
+    store = HouseholdJobStore(lambda: _CommitFails(connection))
+
+    with pytest.raises(EconomyRecordOutcomeUnknownError) as raised:
+        store.create_job(_job_naming_no_rows())
+
+    assert isinstance(raised.value.__cause__, OperationalError)
+    assert connection.statements
+
+
+def test_a_job_whose_insert_fails_was_not_created() -> None:
+    store = HouseholdJobStore(_StatementFails)
+
+    with pytest.raises(OperationalError):
+        store.create_job(_job_naming_no_rows())
+
+
+def test_a_job_naming_missing_rows_is_refused_before_its_commit(
+    public_api_database_url,
+) -> None:
+    """The keys refuse the insert itself, in a transaction of its own.
+
+    A key checked only at commit would make the refusal look like a lost
+    commit; this database's keys refuse the statement.
+    """
+    engine = create_simulation_engine(public_api_database_url)
+    try:
+        store = HouseholdJobStore.from_engine(
+            engine, statement_timeout_milliseconds=5_000
+        )
+
+        with pytest.raises(HouseholdJobReferenceError):
+            store.create_job(_job_naming_no_rows())
+    finally:
+        engine.dispose()

@@ -21,6 +21,7 @@ from policyengine_simulation_entry.household_api_models import (
 )
 from policyengine_simulation_entry.household_calculations import (
     HouseholdCalculationInternalError,
+    HouseholdCalculationOutcomeUnknownError,
     HouseholdCalculationRefusedError,
     HouseholdCalculationService,
     HouseholdCalculationUnavailableError,
@@ -501,6 +502,36 @@ def test_an_unexpected_failure_answers_a_json_500_without_its_values(
     assert frames[-1].endswith(f" in {HANDLER_OF_METHOD[method]}")
     assert not any(key.startswith("error.") for key in record)
     assert "a value that must not be logged" not in printed
+
+
+def test_a_job_whose_commit_is_unconfirmed_answers_a_500_and_is_logged(
+    client_for, capsys
+):
+    """A 500 tells the Public API the job may exist; a 503 would say it doesn't."""
+    calculations = FakeHouseholdCalculations(
+        failure=HouseholdCalculationOutcomeUnknownError(
+            household_job_id=JOB_ID, error_type="OperationalError"
+        )
+    )
+
+    with client_for(calculations) as client:
+        result = client.post("/household-calculations", json=SUBMISSION)
+
+    assert result.status_code == 500
+    assert "Retry-After" not in result.headers
+    assert result.json() == {
+        "code": "internal_error",
+        "detail": (
+            "The service may have created the household job, but could not "
+            "confirm it was written."
+        ),
+    }
+    printed = capsys.readouterr().out
+    (record,) = _emitted_records(printed, "household_job_outcome_unknown")
+    assert record["attributes"]["household_job_id"] == str(JOB_ID)
+    assert record["attributes"]["error_type"] == "OperationalError"
+    # One event for one outcome.
+    assert _emitted_records(printed, "household_route_failed") == []
 
 
 # A string limit that holds a few frames only, and enough calls to pass it.
