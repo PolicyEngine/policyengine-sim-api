@@ -193,6 +193,7 @@ def test_a_parameter_annotated_as_a_sqlalchemy_table_is_a_core_table():
         "inspect(HouseholdJob).mapper.tables",
         "job_mapper.tables",
         "held_mapper.tables",
+        "inspected_mapper.tables",
         "HouseholdJob.id.table",
     ],
 )
@@ -204,6 +205,7 @@ def test_reaching_a_mapped_class_or_metadata_table_is_core_table_access(expressi
     schema = MetaData()
     job_mapper = inspect(HouseholdJob)
     held_mapper = HouseholdJob.__mapper__
+    inspected_mapper = inspect(job).mapper
     table = {expression}
     """
 
@@ -444,37 +446,38 @@ def test_the_runtime_check_accepts_tables_mapped_by_either_declarative_base(
     ]
 
 
-def test_a_dataclass_field_typed_as_a_table_is_one_in_modules_importing_it():
+def test_a_table_stored_in_another_module_is_reported_where_it_is_stored():
     results = """
     from dataclasses import dataclass
 
     from sqlalchemy import Table
 
+    from example.tables import household_jobs
+
     @dataclass
     class ResultRows:
         table: Table
-        rows: list
+
+    def job_rows(rows: ResultRows):
+        return rows.table
+
+    JOB_ROWS = ResultRows(table=household_jobs)
     """
     store = """
     from sqlalchemy import insert
 
-    from example.results import ResultRows
+    from example.results import JOB_ROWS, ResultRows
 
-    def write(result_rows: ResultRows):
-        return insert(result_rows.table)
+    def write(result_rows: ResultRows, layout):
+        return insert(result_rows.table), layout.table
     """
-    unrelated = """
-    def describe(layout):
-        return layout.table
-    """
-    sources = {
-        "libs/example/src/example/results.py": results,
-        STORE: store,
-        GATEWAY: unrelated,
-    }
+    sources = {"libs/example/src/example/results.py": results, STORE: store}
 
-    assert _checks(sources, STORE) == [(CORE_TABLE_ACCESS, "result_rows.table")]
-    assert _checks(sources, GATEWAY) == []
+    assert _checks(sources, "libs/example/src/example/results.py") == [
+        (CORE_TABLE_ACCESS, "rows.table"),
+        (CORE_TABLE_ACCESS, "household_jobs"),
+    ]
+    assert _checks(sources, STORE) == []
 
 
 def test_a_class_attribute_assigned_a_core_table_is_one_where_read():

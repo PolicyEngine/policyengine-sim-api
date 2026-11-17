@@ -42,7 +42,6 @@ libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence
 libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core engine or connection: sqlalchemy.Connection
 libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core table access: budget_window_runs
 libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core table access: budget_window_runs
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core table access: key.table
 libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core table access: report_runs
 libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core table access: report_runs
 libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core table access: report_runs
@@ -630,8 +629,6 @@ libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/repor
 libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core table access: report_runs
 libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core table access: report_runs
 libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core table access: report_runs
-libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core table access: result_rows.table
-libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core table access: result_rows.table
 libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core table access: simulation_runs
 libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core table access: simulation_runs
 libs/policyengine-stage12-persistence/src/policyengine_stage12_persistence/report_run_store.py: Core table access: simulation_runs

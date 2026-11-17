@@ -26,18 +26,20 @@ table is, within one module:
   such as ``previous = household_jobs.alias()`` or ``self.jobs =
   tables.household_jobs``, pairing the names and values of a tuple
   assignment;
-- a class attribute it, or a module it imports from, declares as a table,
-  such as a dataclass field ``table: Table``, wherever it is read.
+- a class attribute it declares as a table, such as a dataclass field
+  ``table: Table``, wherever the module reads it.
 
 Every reference to a Core table is a finding, so its statements, methods,
 column collections and joins all count. Each file's module name is its path
 below ``src``; two files with one module name are refused, since imports
-resolve by name. The rules that go by a method or attribute name alone
-(``.table``, ``.connect()``, ``.cursor()``, ``.begin()`` on an engine) apply
-only in modules that import sqlalchemy. The checks guard against ordinary
-Core use, not against deliberate evasion. They don't follow imports made
-through ``importlib`` or ``__import__``, tables or engines passed around
-without a type annotation, tables held in a container such as a dict, or a
+resolve by name. Eight rules go by a method or attribute name alone, so they
+apply only in modules that import sqlalchemy: a mapped attribute's ``.table``,
+and the ``.connect()``, ``.connection()``, ``.raw_connection()``,
+``.get_bind()``, ``.begin()``, ``.cursor()`` and ``.exec_driver_sql()`` calls.
+The checks guard against ordinary Core use, not against deliberate evasion.
+They don't follow imports made through ``importlib`` or ``__import__``, tables
+or engines passed around without a type annotation, tables held in a
+container such as a dict, a class attribute read in another module, or a
 Session's ``bind`` attribute, and a name derived from a Core table counts as
 one throughout its module.
 """
@@ -276,7 +278,6 @@ class _Module:
     core_tables: set[str] = field(default_factory=set)
     core_attributes: set[str] = field(default_factory=set)
     star_names: set[str] = field(default_factory=set)
-    attribute_exports: set[str] = field(default_factory=set)
     exports: set[str] = field(default_factory=set)
 
     @property
@@ -363,18 +364,13 @@ def _packages(modules: Mapping[str, _Module]) -> set[str]:
     }
 
 
-def _imported_tables(
-    module: _Module, modules: Mapping[str, _Module]
-) -> tuple[set[str], set[str]]:
-    """Return the Core table names and attributes the module imports.
+def _imported_tables(module: _Module, modules: Mapping[str, _Module]) -> set[str]:
+    """Return the Core table names the module imports.
 
     A name imported from a module that exports a Core table under it is one,
-    and so is every name a star import brings in. A class attribute another
-    module holds a Core table in counts as one in every module that imports
-    from that module or binds it.
+    and so is every name a star import brings in.
     """
     names: set[str] = set()
-    attributes: set[str] = set()
     module.star_names = set()
     for node in ast.walk(module.tree):
         if not isinstance(node, ast.ImportFrom):
@@ -382,18 +378,13 @@ def _imported_tables(
         source = modules.get(module.resolve(node) or "")
         if source is None:
             continue
-        attributes |= source.attribute_exports
         for alias in node.names:
             if alias.name == STAR_IMPORT:
                 names |= source.exports
                 module.star_names |= source.exports
             elif alias.name in source.exports:
                 names.add(alias.asname or alias.name)
-    for dotted in module.module_aliases.values():
-        source = modules.get(dotted)
-        if source is not None:
-            attributes |= source.attribute_exports
-    return names, attributes
+    return names
 
 
 def _class_body_statements(tree: ast.Module) -> set[int]:
@@ -534,39 +525,18 @@ def _is_core_expression(
 
 
 def _core_tables(module: _Module, modules: Mapping[str, _Module]) -> None:
-    """Record the names and attributes that hold a Core table within the module."""
+    """Record the names and attributes that hold a Core table within the module.
+
+    A class attribute counts only within the module that declares it: another
+    module reading it gets the table from a reference already reported here.
+    """
     class_body = _class_body_statements(module.tree)
-    imported_names, imported_attributes = _imported_tables(module, modules)
     annotated_names, annotated_attributes = _annotated_as(
         module, frozenset({TABLE_TYPE})
     )
     built_names, built_attributes = _bound_to_calls(module, TABLE_FACTORIES)
-    names = imported_names | annotated_names | built_names
-    attributes = imported_attributes | annotated_attributes | built_attributes
-    # The class attributes the module declares as tables, which modules that
-    # import it read as tables too.
-    class_attributes = {
-        name
-        for node in ast.walk(module.tree)
-        if isinstance(node, ast.ClassDef)
-        for statement in node.body
-        if (
-            isinstance(statement, ast.AnnAssign)
-            and TABLE_TYPE in _annotation_names(statement.annotation, module.imported)
-        )
-        or (
-            isinstance(statement, (ast.Assign, ast.AnnAssign))
-            and isinstance(statement.value, ast.Call)
-            and _sqlalchemy_name(statement.value.func, module.imported)
-            in TABLE_FACTORIES
-        )
-        for target in (
-            statement.targets
-            if isinstance(statement, ast.Assign)
-            else [statement.target]
-        )
-        for name in _bound_names(target)
-    }
+    names = _imported_tables(module, modules) | annotated_names | built_names
+    attributes = annotated_attributes | built_attributes
     assignments = list(_assignment_nodes(module.tree))
     grew = True
     while grew:
@@ -574,21 +544,15 @@ def _core_tables(module: _Module, modules: Mapping[str, _Module]) -> None:
         for node, targets, value in assignments:
             if not _is_core_expression(value, module, modules, (names, attributes)):
                 continue
-            in_class_body = id(node) in class_body
             new_names, new_attributes = _split_targets(
-                targets, in_class_body=in_class_body
+                targets, in_class_body=id(node) in class_body
             )
-            new_names -= names
-            new_attributes -= attributes
-            if in_class_body:
-                class_attributes |= new_attributes
-            if new_names or new_attributes:
+            if not new_names <= names or not new_attributes <= attributes:
                 names |= new_names
                 attributes |= new_attributes
                 grew = True
     module.core_tables = names
     module.core_attributes = attributes
-    module.attribute_exports = class_attributes
 
 
 def _index_modules(sources: Mapping[str, str]) -> dict[str, _Module]:
@@ -607,18 +571,18 @@ def _index_modules(sources: Mapping[str, str]) -> dict[str, _Module]:
     for module in modules.values():
         module.packages = packages
         module.module_aliases = _module_aliases(module, packages)
-    # A module exports the Core tables it binds or imports at module level, and
-    # the class attributes it holds them in; imports chain through packages,
-    # so repeat until nothing more is exported.
+    # A module exports the Core tables it binds or imports at module level;
+    # imports chain through packages, so repeat until no export is added.
+    # Exports only grow from one pass to the next, so the loop ends.
     grew = True
     while grew:
         grew = False
         for module in modules.values():
-            previous = (set(module.exports), set(module.attribute_exports))
+            previous = set(module.exports)
             _core_tables(module, modules)
             exported = _module_level_names(module.tree) | module.star_names
             module.exports = module.core_tables & exported
-            if (module.exports, module.attribute_exports) != previous:
+            if module.exports != previous:
                 grew = True
     return modules
 
