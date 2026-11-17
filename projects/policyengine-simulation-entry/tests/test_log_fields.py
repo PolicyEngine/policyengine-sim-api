@@ -1,4 +1,8 @@
-"""Every Simulation Entrypoint log call's fields reach the emitted log record.
+"""Every Simulation Entrypoint and Stage 12 log call's fields reach the log record.
+
+Stage 12 here is the v2 Modal application (``src/modal/v2_app.py``) and the
+executor's ``stage12_runtime`` package. The v1 code's logs are left as they
+are.
 
 The observability runtime's log handler keeps only a record's
 ``policyengine_attributes``, and drops each of those whose key contains
@@ -22,8 +26,18 @@ from policyengine_observability.schema import normalize_attributes
 from policyengine_simulation_entry.app import PACKAGE_LOGGER_NAME, create_app
 
 PACKAGE_DIRECTORY = Path(policyengine_simulation_entry.__file__).parent
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+EXECUTOR_SOURCE = (
+    REPOSITORY_ROOT / "projects" / "policyengine-simulation-executor" / "src"
+)
+STAGE12_SOURCES = (
+    *(EXECUTOR_SOURCE / "policyengine_simulation_executor" / "stage12_runtime").rglob(
+        "*.py"
+    ),
+    EXECUTOR_SOURCE / "modal" / "v2_app.py",
+)
 PROOF_FIXTURES = (
-    Path(__file__).resolve().parents[3]
+    REPOSITORY_ROOT
     / "rules"
     / "fixtures"
     / "sim.observability.log-fields-through-log-extra"
@@ -98,12 +112,13 @@ def _dropped_field_names(calls: list[tuple[str, ast.expr]]) -> list[tuple[str, s
 
 
 def _package_log_calls() -> list[tuple[str, ast.expr]]:
-    return _log_calls_with_extra(list(PACKAGE_DIRECTORY.rglob("*.py")))
+    return _log_calls_with_extra([*PACKAGE_DIRECTORY.rglob("*.py"), *STAGE12_SOURCES])
 
 
 def test_the_package_has_log_calls_with_fields() -> None:
-    # Guards the next tests against finding nothing to check.
-    assert len(_package_log_calls()) >= 30
+    # Guards the next tests against finding nothing to check: the
+    # Entrypoint's 33 calls and the Stage 12 runtime's.
+    assert len(_package_log_calls()) >= 37
 
 
 def test_every_log_call_passes_its_fields_through_log_extra() -> None:

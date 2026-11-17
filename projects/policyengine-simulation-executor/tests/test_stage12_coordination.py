@@ -635,6 +635,15 @@ def test_shadow_comparison_logs_its_outcome_and_times_its_stage(caplog):
     assert record.production_job_id == "production-job-1"
     assert record.comparison_status == "matched"
     assert record.difference_count == 0
+    # The observability runtime's log handler emits only these.
+    assert set(record.policyengine_attributes) == {
+        "evaluation_id",
+        "production_job_id",
+        "comparison_status",
+        "difference_count",
+        "production_result_sha256",
+        "stage12_result_sha256",
+    }
     assert store.parent.comparison_status is ResultComparisonStatus.MATCHED
 
 
@@ -675,3 +684,13 @@ def test_comparison_state_update_failure_is_logged_without_values(caplog):
     assert failure_record.levelno == logging.ERROR
     assert failure_record.exc_info is None
     assert failure_record.error_type == "ValidationError"
+    # The observability runtime's log handler emits only these.
+    assert state_record.policyengine_attributes == {
+        "evaluation_id": str(EVALUATION_ID),
+        "production_job_id": "production-job-1",
+    }
+    assert failure_record.policyengine_attributes == {
+        "evaluation_id": str(EVALUATION_ID),
+        "production_job_id": "production-job-1",
+        "error_type": "ValidationError",
+    }
