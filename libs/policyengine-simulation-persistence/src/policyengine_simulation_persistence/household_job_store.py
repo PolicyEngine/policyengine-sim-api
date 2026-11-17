@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from policyengine_simulation_persistence.engine import bounded_transaction
 from policyengine_simulation_persistence.household_job_records import (
     fail_unstarted_household_job,
@@ -124,9 +126,27 @@ class HouseholdJobStore:
         )
 
     def create_job(self, job: NewHouseholdJob) -> None:
-        """Create the job ``pending`` with no call; see ``insert_household_job``."""
-        with self._transaction() as connection:
-            insert_household_job(connection, job)
+        """Create the job ``pending`` with no call; see ``insert_household_job``.
+
+        An error while the insert runs leaves nothing written and propagates,
+        a refused reference as HouseholdJobReferenceError. An error once it
+        has run is the commit's, after which the job may exist:
+        EconomyRecordOutcomeUnknownError, caused by the commit's error.
+        """
+        from policyengine_simulation_persistence.economy_run_store import (  # noqa: PLC0415  # economy_run_store imports this module at import time
+            EconomyRecordOutcomeUnknownError,
+        )
+
+        inserted = False
+        try:
+            with self._transaction() as connection:
+                insert_household_job(connection, job)
+                inserted = True
+        except SQLAlchemyError as error:
+            if not inserted:
+                raise
+            msg = "the household job's commit failed after its row was inserted"
+            raise EconomyRecordOutcomeUnknownError(msg) from error
 
     def record_call(
         self, job_id: UUID, modal_call_id: str

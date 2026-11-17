@@ -637,10 +637,7 @@ async def test_a_job_whose_commit_is_unconfirmed_may_exist_and_starts_no_call(
     with pytest.raises(HouseholdCalculationOutcomeUnknownError) as raised:
         await service.submit(_request(), observability_context=None)
 
-    assert (raised.value.household_job_id, raised.value.error_type) == (
-        JOB_ID,
-        "OperationalError",
-    )
+    assert raised.value.error_type == "OperationalError"
     assert caller.calls == []
     # The route logs the outcome, once; the service logs no failed create.
     assert "household_job_not_created" not in caplog.messages

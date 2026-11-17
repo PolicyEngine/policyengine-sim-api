@@ -76,7 +76,11 @@ transactions. `HouseholdJobStore` runs them as the Simulation Entrypoint
 does, each step in a transaction of its own: `read_inputs` reads the catalog
 version, the household and the policy's reform values together, and
 `create_job`, `record_call`, `fail_unstarted` and `read` each write or read
-the job. `HouseholdJobStore.from_engine` opens each with `bounded_transaction`,
+the job. A `create_job` whose commit fails after the job's row was inserted
+raises `EconomyRecordOutcomeUnknownError`, as the economy and household
+report creates do: PostgreSQL may have applied the commit, so the job may
+exist. A failure while the insert runs leaves nothing written and is raised
+as it is. `HouseholdJobStore.from_engine` opens each with `bounded_transaction`,
 which commits when its block ends and sets `statement_timeout` with
 `set_config`, local to the transaction, so the database ends a statement that
 runs too long and the limit never stays on a pooled connection.

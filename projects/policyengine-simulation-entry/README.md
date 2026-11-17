@@ -98,14 +98,19 @@ default year, the policy sets parameters that catalog version lacks, or the
 household contract refuses the stored data. A job naming a row deleted
 since the reads is refused by the database's foreign keys, also with 400.
 The routes answer 503 with `Retry-After` when the manifest or the database
-can't be read. When Modal refuses the call, or doesn't confirm it within ten
-seconds, the job is failed at once and the 503 (`modal_call_refused`) names
-it; a job the household function claimed meanwhile is answered with 202 as
-it stands, and a job whose state couldn't then be recorded or read with 202
-`pending`, to be read rather than submitted again (the stuck-run sweep fails
-it if no call ever starts). Every 500 of either route, from an unexpected
-failure or a request the service built and the household contract refuses,
-is the JSON error with code `internal_error`. `DEPLOYMENT.md` describes the deployment settings and the
+can't be read and no job was written. When Modal refuses the call, or doesn't
+confirm it within ten seconds, the job is failed at once and the 503
+(`modal_call_refused`) names it; a job the household function claimed
+meanwhile is answered with 202 as it stands, and a job whose state couldn't
+then be recorded or read with 202 `pending`, to be read rather than
+submitted again (the stuck-run sweep fails it if no call ever starts). Every
+500 of either route is the JSON error with code `internal_error`: an
+unexpected failure, a request the service built and the household contract
+refuses, or a job whose commit failed after its row was inserted. That job
+may exist, so the 500 never says nothing was created; no call is started for
+it, the stuck-run sweep fails it if it was written, and the failure is
+logged as `household_job_outcome_unknown` with the commit error's type.
+`DEPLOYMENT.md` describes the deployment settings and the
 staging check.
 
 ## Economy reports and simulations

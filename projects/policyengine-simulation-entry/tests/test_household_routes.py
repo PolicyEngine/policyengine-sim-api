@@ -509,13 +509,15 @@ def test_a_job_whose_commit_is_unconfirmed_answers_a_500_and_is_logged(
 ):
     """A 500 tells the Public API the job may exist; a 503 would say it doesn't."""
     calculations = FakeHouseholdCalculations(
-        failure=HouseholdCalculationOutcomeUnknownError(
-            household_job_id=JOB_ID, error_type="OperationalError"
-        )
+        failure=HouseholdCalculationOutcomeUnknownError(error_type="OperationalError")
     )
 
     with client_for(calculations) as client:
-        result = client.post("/household-calculations", json=SUBMISSION)
+        result = client.post(
+            "/household-calculations",
+            json=SUBMISSION,
+            headers={OBSERVABILITY_ID_HEADER: OBSERVABILITY_ID},
+        )
 
     assert result.status_code == 500
     assert "Retry-After" not in result.headers
@@ -528,8 +530,14 @@ def test_a_job_whose_commit_is_unconfirmed_answers_a_500_and_is_logged(
     }
     printed = capsys.readouterr().out
     (record,) = _emitted_records(printed, "household_job_outcome_unknown")
-    assert record["attributes"]["household_job_id"] == str(JOB_ID)
-    assert record["attributes"]["error_type"] == "OperationalError"
+    # Every attribute was kept, none with a key the runtime drops, and the
+    # submission's observability ID ties the event to its request.
+    assert record["attributes"] == {
+        "error_type": "OperationalError",
+        "observability_id": OBSERVABILITY_ID,
+    }
+    assert "attributes.omitted_count" not in record
+    assert record["severity"] == "ERROR"
     # One event for one outcome.
     assert _emitted_records(printed, "household_route_failed") == []
 

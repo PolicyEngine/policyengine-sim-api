@@ -14,9 +14,11 @@ it needs, is missing) or 422 (its fields, or the stored data it names, cannot
 be calculated), naming why. Either route answers 503 with ``Retry-After``
 when household calculations are not configured or a dependency cannot be
 read, and a submission does too when Modal refuses the call and its job was
-failed. Every 500 of either route, an unexpected failure or a request the
-service built and the household contract refuses, is the JSON error with
-code ``internal_error``.
+failed; a submission's 503 always means no job will run. Every 500 of either
+route is the JSON error with code ``internal_error``: an unexpected failure,
+a request the service built and the household contract refuses, or a
+submission whose job's commit failed after its row was inserted, so the job
+may exist.
 
 A submission gets its observability ID from the caller's header, or a new
 one, and passes it to the household function. ``household_jobs`` keeps no
@@ -41,6 +43,7 @@ from policyengine_simulation_entry.household_api_models import (
 )
 from policyengine_simulation_entry.household_calculations import (
     HouseholdCalculationInternalError,
+    HouseholdCalculationOutcomeUnknownError,
     HouseholdCalculationRefusedError,
     HouseholdCalculationUnavailableError,
     HouseholdCalculationUnprocessableError,
@@ -80,19 +83,20 @@ _SUBMISSION_UNPROCESSABLE = {
 }
 _SUBMISSION_UNAVAILABLE = {
     "description": (
-        "Household calculations are not configured; the v2 version manifest "
-        "or the database cannot be read; or Modal refused the household "
-        "function's call, or didn't accept it in time, and the job named by "
-        "household_job_id was failed (modal_call_refused). Retry after "
-        "Retry-After seconds"
+        "No job will run: household calculations are not configured; the v2 "
+        "version manifest or the database cannot be read, and no job was "
+        "written; or Modal refused the household function's call, or didn't "
+        "accept it in time, and the job named by household_job_id was failed "
+        "(modal_call_refused). Retry after Retry-After seconds"
     ),
     "headers": _RETRY_AFTER,
     **_ERROR,
 }
 _SUBMISSION_INTERNAL_ERROR = {
     "description": (
-        "The service failed unexpectedly, or built a household function "
-        "request the household contract refuses (internal_error)"
+        "The service failed unexpectedly; built a household function request "
+        "the household contract refuses; or may have created the job but "
+        "could not confirm its commit, so the job may exist (internal_error)"
     ),
     **_ERROR,
 }
@@ -171,10 +175,40 @@ def _unavailable(error: HouseholdCalculationUnavailableError) -> JSONResponse:
     )
 
 
+def _outcome_unknown_response(
+    error: HouseholdCalculationOutcomeUnknownError,
+) -> JSONResponse:
+    """Answer a create whose commit can't be confirmed with the JSON 500.
+
+    The Public API reads a 500 as a job that may exist; a 503 would tell it
+    nothing was created. The log is the fixed event
+    ``household_job_outcome_unknown`` with the commit error's type, never
+    its text, as ``economy_record_outcome_unknown`` logs. It names no job:
+    the observability runtime drops every attribute whose key contains
+    ``household``, and ``job_id`` names a Modal invocation.
+    """
+    fields = {"error_type": error.error_type}
+    logger.error(
+        "household_job_outcome_unknown",
+        extra={**fields, "policyengine_attributes": fields},
+    )
+    return _error_response(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        HouseholdCalculationError(
+            code="internal_error",
+            detail=(
+                "The service may have created the household job, but could not "
+                "confirm it was written."
+            ),
+        ),
+    )
+
+
 _SUBMISSION_FAILURES = (
     HouseholdCalculationRefusedError,
     HouseholdCalculationUnprocessableError,
     HouseholdCalculationInternalError,
+    HouseholdCalculationOutcomeUnknownError,
     HouseholdCalculationUnavailableError,
 )
 
@@ -198,6 +232,8 @@ def _submission_failure_response(error: Exception) -> JSONResponse:
         )
     if isinstance(error, HouseholdCalculationUnavailableError):
         return _unavailable(error)
+    if isinstance(error, HouseholdCalculationOutcomeUnknownError):
+        return _outcome_unknown_response(error)
     # The message names the refused fields the service built, never a value.
     logger.error("household_request_built_wrong: %s", error)
     return _error_response(
