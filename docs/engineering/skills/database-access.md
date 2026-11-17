@@ -55,6 +55,9 @@ What the ORM means here:
   find-or-create inserts atomic.
 - **SQL text** appears only as a model's server default or a partial index's
   condition.
+- **Names:** an attribute or field that holds a mapped class is named after
+  what it holds, such as `model`, never `table`: every `.table` read is
+  reported, because that is how a column reaches its Core table.
 
 - **Schema inspection**, for the deployment check that compares the live
   schema with the models, reads the live schema as `inspect(engine)` in the
@@ -82,9 +85,10 @@ A Core table is, in one module:
   name with its value, nested tuples included;
 - a class attribute it declares as a table, such as a dataclass field
   `table: Table`, wherever the module reads it. Another module's read of a
-  class or instance attribute is reported only when the attribute is named
-  `table`; otherwise the reference that stored the table there is reported
-  where it was made.
+  class or instance attribute is reported when the reading module imports
+  sqlalchemy and the attribute is named `table`, or when the name matches one
+  of the reading module's own table attributes. Otherwise it isn't, and the
+  reference that stored the table there is reported where it was made.
 
 Each finding is one of:
 
@@ -99,7 +103,8 @@ Each finding is one of:
   name assigned `__mapper__` or `.mapper`) or of a MetaData (a name bound to
   `MetaData(...)` or ending in `metadata`); and any `.table` read, which is
   how a column or mapped attribute reaches its table, as in
-  `HouseholdJob.id.table`.
+  `HouseholdJob.id.table`. A called `.table`, such as `sa.table(...)`, isn't
+  a read.
 - **Core engine or connection:** `Connection` or `AsyncConnection` from
   SQLAlchemy in any module; `Engine`, `create_engine` and the like outside a
   library's `engine.py`, imported or referenced as `sa.Engine`; any
@@ -112,18 +117,20 @@ Each finding is one of:
 - **sqlmodel import.**
 
 Eight of these go by a method or attribute name alone, so they apply only in
-modules that import sqlalchemy: any `.table` read, and the
-`.connect()`, `.connection()`, `.raw_connection()`, `.get_bind()`,
-`.begin()`, `.cursor()` and `.exec_driver_sql()` calls.
+modules that import sqlalchemy: any `.table` read, and the `.connect()`,
+`.connection()`, `.raw_connection()`, `.get_bind()`, `.begin()`, `.cursor()`
+and `.exec_driver_sql()` calls.
 
 The checks read source, not types, and guard against ordinary Core use, not
 against deliberate evasion. They miss imports through `importlib`, tables and
 engines passed around without a type annotation, tables held in a container
-such as a dict, a class or instance attribute read in another module, and a
-Session's `bind` attribute. A name derived from a Core table counts as one throughout
-its module. Once a library's tables are mapped classes and its declarations
-are gone, every route to a Core table starts at a reported reference, such as
-`__table__`.
+such as a dict, a class or instance attribute read in another module (other
+than the reads above), a `.table` read in a module that doesn't import
+sqlalchemy, and a Session's `bind` attribute. A name derived from a Core table
+counts as one throughout its module. Once a library's tables are mapped
+classes and its declarations are gone, the ordinary routes to a Core table,
+such as `__table__`, `.table` and a mapper's `tables`, are all reported; the
+routes listed here are the exceptions.
 
 `test_every_table_is_mapped_by_a_class` also imports both persistence libraries
 and reports every table they hold that no mapped class maps.

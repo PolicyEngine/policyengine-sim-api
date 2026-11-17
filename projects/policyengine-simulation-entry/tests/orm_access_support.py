@@ -40,8 +40,9 @@ The checks guard against ordinary Core use, not against deliberate evasion.
 They don't follow imports made through ``importlib`` or ``__import__``, tables
 or engines passed around without a type annotation, tables held in a
 container such as a dict, a class or instance attribute read in another
-module, or a Session's ``bind`` attribute, and a name derived from a Core
-table counts as one throughout its module.
+module (unless it is a ``.table`` read, or its name matches one of the reading
+module's own table attributes), or a Session's ``bind`` attribute, and a name
+derived from a Core table counts as one throughout its module.
 """
 
 from __future__ import annotations

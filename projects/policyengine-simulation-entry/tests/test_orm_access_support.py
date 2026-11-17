@@ -528,10 +528,24 @@ def test_modules_importing_each_other_settle_on_their_exports():
         "libs/example/src/example/second.py": second,
     }
 
+    assert _checks(sources, "libs/example/src/example/first.py") == []
     assert _checks(sources, "libs/example/src/example/second.py") == [
         (CORE_TABLE_ACCESS, "household_jobs"),
         (CORE_TABLE_ACCESS, "regions"),
     ]
+
+
+def test_a_called_or_assigned_table_attribute_is_not_a_table_read():
+    store = """
+    import sqlalchemy as sa
+
+    class Report:
+        def __init__(self, rows, model):
+            self.table = model
+            self.rows = rows.table(columns=["id"])
+    """
+
+    assert _checks({STORE: store}, STORE) == []
 
 
 def test_a_class_attribute_assigned_a_core_table_is_one_where_read():
