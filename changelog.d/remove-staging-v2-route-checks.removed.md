@@ -1,0 +1,1 @@
+Staging deployments no longer calculate a staging household or create a staging economy report through the v2 routes after moving the v2 default. Those checks need the Public API's catalog to have the release's policyengine.py version, which it publishes only once the Public API itself moves to that version, after this service has deployed it.
