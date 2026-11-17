@@ -149,8 +149,8 @@ def test_the_sweep_lists_runs_older_than_its_minimum_age() -> None:
         minimum_age=timedelta(minutes=15),
     )
 
-    # Report runs, simulation runs and household jobs.
-    assert store.cutoffs == [NOW - timedelta(minutes=15)] * 3
+    # Report runs, simulation runs, household jobs and cliff results.
+    assert store.cutoffs == [NOW - timedelta(minutes=15)] * 4
 
 
 def test_report_runs_are_swept_before_simulation_runs_are_listed() -> None:
@@ -440,9 +440,9 @@ def test_the_age_limit_fails_a_simulation_run_whatever_report_runs_name_it() -> 
     sweep_stuck_runs(store, call_state=lambda _: CallState.ENDED, now=NOW)
 
     assert [run for run, _, _ in store.failed] == [expired, judged]
-    # The age limit's three listings and its failure ignore report runs; the
-    # minimum age's three listings and failure don't.
-    assert store.listed_regardless == [True] * 3 + [False] * 3
+    # The age limit's four listings and its failure ignore report runs; the
+    # minimum age's four listings and failure don't.
+    assert store.listed_regardless == [True] * 4 + [False] * 4
     assert store.failed_regardless == [True, False]
 
 
@@ -474,8 +474,8 @@ def test_the_age_limit_is_checked_first_with_its_own_cutoff() -> None:
         maximum_age=timedelta(hours=24),
     )
 
-    assert store.expired_cutoffs == [NOW - timedelta(hours=24)] * 3
-    assert store.cutoffs == [NOW - timedelta(minutes=10)] * 3
+    assert store.expired_cutoffs == [NOW - timedelta(hours=24)] * 4
+    assert store.cutoffs == [NOW - timedelta(minutes=10)] * 4
     # Every kind's age check comes before any lookup.
     assert asked == [
         (
@@ -484,6 +484,7 @@ def test_the_age_limit_is_checked_first_with_its_own_cutoff() -> None:
                 "list-expired:report_run",
                 "list-expired:simulation_run",
                 "list-expired:household_job",
+                "list-expired:cliff_result",
                 "list:report_run",
             ],
         )
