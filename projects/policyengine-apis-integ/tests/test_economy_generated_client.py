@@ -245,14 +245,8 @@ def test_a_simulation_rerun_is_read_with_its_new_run():
     ("status_code", "body"),
     [
         (404, {"code": "unknown_report", "detail": f"There is no report {REPORT_ID}."}),
-        (
-            409,
-            {
-                "code": "run_in_progress",
-                "detail": "The report has a run pending or running.",
-                "run_id": RUN_ID,
-            },
-        ),
+        # No re-run is refused while a run is under way (C1 · 27): an
+        # unforced one joins it, so the only 409 is rerun_not_supported.
         (409, {"code": "rerun_not_supported", "detail": "Not yet."}),
         (
             503,

@@ -18,12 +18,12 @@ import pytest
 from conftest import act_as_the_service, rolled_back_transaction
 from economy_rows import (
     CURRENT_LAW,
-    OPTIONS,
-    OUTPUT_BUCKET_PREFIX,
     POLICYENGINE_VERSION,
     VERSIONS,
+    RunShape,
     insert_economy_catalog,
-    insert_reusable_run,
+    insert_pending_report,
+    insert_simulation_run,
 )
 from policyengine_simulation_persistence import (
     CatalogDataset,
@@ -34,14 +34,11 @@ from policyengine_simulation_persistence import (
     EconomyRequest,
     EconomyRunStore,
     MissingPolicyParametersError,
-    NewEconomyReport,
-    NewEconomySimulation,
+    NewReportRerun,
     OverlappingReformError,
     ReportRunStatus,
     ReportSideError,
-    ReportSimulation,
-    ReusableRun,
-    RunReuse,
+    RerunSide,
     SideRefusal,
     SimulationChoice,
     SimulationStatus,
@@ -50,6 +47,7 @@ from policyengine_simulation_persistence import (
     UnknownDynamicError,
     UnknownPolicyError,
     UnknownRegionError,
+    economy_inputs,
     economy_run_store,
 )
 from public_api_rows import StoredValue, insert_dataset, insert_dynamic, insert_policy
@@ -72,9 +70,6 @@ REQUEST = EconomyRequest(
     region_code="us",
     dataset_name=None,
     year=2026,
-)
-REUSE = RunReuse(
-    versions=VERSIONS, inputs=OPTIONS, output_uri_prefix=OUTPUT_BUCKET_PREFIX
 )
 
 
@@ -100,16 +95,11 @@ def test_a_reports_inputs_are_read_together(public_api_database_url) -> None:
         dynamic_id = insert_dynamic(
             connection, economy.catalog, [StoredValue(ELASTICITY, -0.05, START)]
         )
-        reused = insert_reusable_run(connection, economy)
         act_as_the_service(connection)
-        store = _store_on(connection)
         reform_choice = SimulationChoice(policy_id=policy_id, dynamic_id=dynamic_id)
 
-        inputs = store.read_report_inputs(
-            REQUEST, baseline=CURRENT_LAW, reform=reform_choice, reuse=REUSE
-        )
-        without_reuse = store.read_report_inputs(
-            REQUEST, baseline=CURRENT_LAW, reform=reform_choice, reuse=None
+        inputs = _store_on(connection).read_report_inputs(
+            REQUEST, baseline=CURRENT_LAW, reform=reform_choice
         )
 
     catalog = inputs.catalog
@@ -133,27 +123,6 @@ def test_a_reports_inputs_are_read_together(public_api_database_url) -> None:
         CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000},
         ELASTICITY: {"2026-01-01.2200-12-31": -0.05},
     }
-    assert inputs.baseline.reusable_run == ReusableRun(
-        simulation_id=reused.simulation_id, simulation_run_id=reused.simulation_run_id
-    )
-    assert inputs.reform.reusable_run is None
-    assert without_reuse.baseline.reusable_run is None
-
-
-def test_the_two_sides_never_reuse_the_same_run(public_api_database_url) -> None:
-    with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
-        only = insert_reusable_run(connection, economy)
-        act_as_the_service(connection)
-
-        inputs = _store_on(connection).read_report_inputs(
-            REQUEST, baseline=CURRENT_LAW, reform=CURRENT_LAW, reuse=REUSE
-        )
-
-    assert inputs.baseline.reusable_run == ReusableRun(
-        simulation_id=only.simulation_id, simulation_run_id=only.simulation_run_id
-    )
-    assert inputs.reform.reusable_run is None
 
 
 def test_a_named_dataset_is_read_instead_of_the_regions_default(
@@ -174,7 +143,6 @@ def test_a_named_dataset_is_read_instead_of_the_regions_default(
         "acs_local_2024",
     )
     assert (inputs.simulation.choice, inputs.simulation.reform) == (CURRENT_LAW, {})
-    assert inputs.simulation.reusable_run is None
 
 
 @pytest.mark.parametrize(
@@ -208,9 +176,7 @@ def test_each_missing_row_a_request_names_is_refused(
         # A report names the side whose policy or dynamic is missing.
         side_refused = missing in {"policy", "dynamic"}
         with pytest.raises(ReportSideError if side_refused else error_type) as raised:
-            store.read_report_inputs(
-                request, baseline=CURRENT_LAW, reform=choice, reuse=REUSE
-            )
+            store.read_report_inputs(request, baseline=CURRENT_LAW, reform=choice)
         with pytest.raises(error_type):
             store.read_simulation_inputs(request, choice)
 
@@ -264,39 +230,25 @@ def _status(connection: Connection, table_name: str, run_id) -> tuple:
     )
 
 
-def test_a_report_is_created_then_its_call_recorded_or_its_run_failed(
+def test_a_reports_call_is_recorded_or_its_run_failed(
     public_api_database_url,
 ) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
+        recorded, refused = (
+            insert_pending_report(connection, economy) for _ in range(2)
+        )
         act_as_the_service(connection)
         store = _store_on(connection)
-        reports = [
-            NewEconomyReport(
-                id=uuid4(),
-                run_id=uuid4(),
-                country="us",
-                label=f"Report {number}",
-                description=None,
-                tax_benefit_model_id=economy.catalog.model_id,
-                population=economy.population(),
-                versions=VERSIONS,
-                inputs=OPTIONS,
-                baseline=ReportSimulation(uuid4(), uuid4(), CURRENT_LAW, reused=False),
-                reform=ReportSimulation(uuid4(), uuid4(), CURRENT_LAW, reused=False),
-            )
-            for number in (1, 2)
-        ]
-        for report in reports:
-            store.create_report(report)
-        recorded, refused = reports
 
-        status = store.record_report_call(recorded.run_id, "fc-coordinator")
+        status = store.record_report_call(recorded.report_run_id, "fc-coordinator")
         failed = store.fail_unstarted_report(
-            refused.run_id, refused.new_simulation_run_ids, "modal_call_refused: no"
+            refused.report_run_id,
+            refused.simulation_run_ids,
+            "modal_call_refused: no",
         )
-        recorded_state = _status(connection, "report_runs", recorded.run_id)
-        refused_state = _status(connection, "report_runs", refused.run_id)
+        recorded_state = _status(connection, "report_runs", recorded.report_run_id)
+        refused_state = _status(connection, "report_runs", refused.report_run_id)
         refused_baseline = _status(
             connection, "simulation_runs", refused.baseline.simulation_run_id
         )
@@ -307,33 +259,29 @@ def test_a_report_is_created_then_its_call_recorded_or_its_run_failed(
     assert refused_baseline == ("failed", None)
 
 
-def test_a_simulation_is_created_then_its_call_recorded_or_its_run_failed(
+def test_a_simulations_call_is_recorded_or_its_run_failed(
     public_api_database_url,
 ) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
+        pending = RunShape(status=SimulationStatus.PENDING)
+        recorded, refused = (
+            insert_simulation_run(connection, economy.population(), pending)
+            for _ in range(2)
+        )
         act_as_the_service(connection)
         store = _store_on(connection)
-        simulations = [
-            NewEconomySimulation(
-                id=uuid4(),
-                run_id=uuid4(),
-                choice=CURRENT_LAW,
-                population=economy.population(),
-                versions=VERSIONS,
-            )
-            for _ in range(2)
-        ]
-        for simulation in simulations:
-            store.create_simulation(simulation)
-        recorded, refused = simulations
 
-        status = store.record_simulation_call(recorded.run_id, "fc-worker")
+        status = store.record_simulation_call(recorded.simulation_run_id, "fc-worker")
         failed = store.fail_unstarted_simulation(
-            refused.run_id, "modal_call_refused: no"
+            refused.simulation_run_id, "modal_call_refused: no"
         )
-        recorded_state = _status(connection, "simulation_runs", recorded.run_id)
-        refused_state = _status(connection, "simulation_runs", refused.run_id)
+        recorded_state = _status(
+            connection, "simulation_runs", recorded.simulation_run_id
+        )
+        refused_state = _status(
+            connection, "simulation_runs", refused.simulation_run_id
+        )
 
     assert (status, failed) == (SimulationStatus.PENDING, True)
     assert recorded_state == ("pending", "fc-worker")
@@ -344,26 +292,12 @@ def test_a_report_and_a_simulation_are_read_as_they_stand(
     public_api_database_url,
 ) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
+        report = insert_pending_report(connection, insert_economy_catalog(connection))
         act_as_the_service(connection)
         store = _store_on(connection)
-        report = NewEconomyReport(
-            id=uuid4(),
-            run_id=uuid4(),
-            country="us",
-            label="Read back",
-            description=None,
-            tax_benefit_model_id=economy.catalog.model_id,
-            population=economy.population(),
-            versions=VERSIONS,
-            inputs=OPTIONS,
-            baseline=ReportSimulation(uuid4(), uuid4(), CURRENT_LAW, reused=False),
-            reform=ReportSimulation(uuid4(), uuid4(), CURRENT_LAW, reused=False),
-        )
-        store.create_report(report)
-        store.record_report_call(report.run_id, "fc-coordinator")
+        store.record_report_call(report.report_run_id, "fc-coordinator")
 
-        stored_report = store.read_report(report.id)
+        stored_report = store.read_report(report.report_id)
         stored_simulation = store.read_simulation(report.baseline.simulation_id)
         missing = (store.read_report(uuid4()), store.read_simulation(uuid4()))
 
@@ -371,7 +305,7 @@ def test_a_report_and_a_simulation_are_read_as_they_stand(
     assert stored_report is not None
     assert stored_report.run is not None
     assert (stored_report.run.id, stored_report.run.status) == (
-        report.run_id,
+        report.report_run_id,
         ReportRunStatus.PENDING,
     )
     assert stored_simulation is not None
@@ -421,7 +355,6 @@ def test_a_reports_refused_values_name_the_side_they_belong_to(
                 REQUEST,
                 baseline=choices["baseline"],
                 reform=choices["reform"],
-                reuse=None,
             )
 
     assert raised.value.side == side
@@ -451,14 +384,11 @@ class _RecordingConnection:
         self.statements.append(statement)
 
 
-def _new_report() -> NewEconomyReport:
-    return NewEconomyReport(
-        id=uuid4(),
+def _forced_rerun() -> NewReportRerun:
+    """Return a forced report re-run, whose create only inserts rows."""
+    return NewReportRerun(
+        report_id=uuid4(),
         run_id=uuid4(),
-        country="us",
-        label="Lost commit",
-        description=None,
-        tax_benefit_model_id=uuid4(),
         population=EconomyPopulation(
             tax_benefit_model_version_id=uuid4(),
             region_id=uuid4(),
@@ -466,29 +396,18 @@ def _new_report() -> NewEconomyReport:
             year=2026,
         ),
         versions=VERSIONS,
-        inputs=OPTIONS,
-        baseline=ReportSimulation(uuid4(), uuid4(), CURRENT_LAW, reused=False),
-        reform=ReportSimulation(uuid4(), uuid4(), CURRENT_LAW, reused=False),
+        baseline=RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4()),
+        reform=RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4()),
+        forced=True,
     )
 
 
 def test_a_create_whose_commit_fails_may_have_been_written() -> None:
     connection = _RecordingConnection()
     store = EconomyRunStore(lambda: _CommitFails(connection))
-    report = _new_report()
 
     with pytest.raises(EconomyRecordOutcomeUnknownError) as raised:
-        store.create_report(report)
-    with pytest.raises(EconomyRecordOutcomeUnknownError):
-        store.create_simulation(
-            NewEconomySimulation(
-                id=uuid4(),
-                run_id=uuid4(),
-                choice=CURRENT_LAW,
-                population=report.population,
-                versions=VERSIONS,
-            )
-        )
+        store.create_report_rerun(_forced_rerun())
 
     assert isinstance(raised.value.__cause__, OperationalError)
     assert connection.statements
@@ -510,7 +429,7 @@ def test_a_create_whose_statement_fails_is_not_written() -> None:
     store = EconomyRunStore(_StatementFails)
 
     with pytest.raises(OperationalError):
-        store.create_report(_new_report())
+        store.create_report_rerun(_forced_rerun())
 
 
 def test_every_side_refusal_is_raised_with_its_side(monkeypatch) -> None:
@@ -521,7 +440,8 @@ def test_every_side_refusal_is_raised_with_its_side(monkeypatch) -> None:
         region=CatalogRegion(id=uuid4(), code="us", default_dataset_id=uuid4()),
         dataset=CatalogDataset(id=uuid4(), name="populace_us_2024"),
     )
-    monkeypatch.setattr(economy_run_store, "_catalog_rows", lambda *_: catalog)
+    # Each patch replaces the name where its caller looks it up.
+    monkeypatch.setattr(economy_run_store, "read_catalog_rows", lambda *_: catalog)
     refusals = {
         UnknownPolicyError: UnknownPolicyError("no policy"),
         UnknownDynamicError: UnknownDynamicError("no dynamic"),
@@ -540,9 +460,7 @@ def test_every_side_refusal_is_raised_with_its_side(monkeypatch) -> None:
         def refuse(*_, refusal=refusal):
             raise refusal
 
-        monkeypatch.setattr(economy_run_store, "_simulation_inputs", refuse)
+        monkeypatch.setattr(economy_inputs, "read_simulation_values", refuse)
         with pytest.raises(ReportSideError) as raised:
-            store.read_report_inputs(
-                REQUEST, baseline=CURRENT_LAW, reform=CURRENT_LAW, reuse=None
-            )
+            store.read_report_inputs(REQUEST, baseline=CURRENT_LAW, reform=CURRENT_LAW)
         assert (raised.value.side, raised.value.error) == ("baseline", refusal)

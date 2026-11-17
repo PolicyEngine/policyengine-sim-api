@@ -1,9 +1,9 @@
 """Re-running a stored economy report or simulation on a later catalog version.
 
-A re-run reads what the stored report or simulation calculates, creates a new
-run of it on the current versions, and keeps every earlier run. A report's
-side may reuse a run of its own simulation that succeeded on those versions;
-nothing is created while the record has a run pending or running.
+A re-run reads what the stored report or simulation calculates, joins or
+creates its run on the current versions, and keeps every earlier run. A
+report's side joins its own simulation's run on those versions, or creates
+one; a forced re-run creates an extra run beside any run under way.
 
 These run against a database the Public API's own v2 migration chain built
 (``PUBLIC_API_SCHEMA_DATABASE_URL``), as the simulation service's role, each
@@ -25,7 +25,6 @@ from economy_rows import (
     LATER_POLICYENGINE_VERSION,
     LATER_VERSIONS,
     OPTIONS,
-    OUTPUT_BUCKET_PREFIX,
     VERSIONS,
     EconomyCatalog,
     ReportRunOutcome,
@@ -42,6 +41,7 @@ from policyengine_simulation_persistence import (
     EconomyRecordReferenceError,
     EconomyRequest,
     EconomyRunStore,
+    FoundReportRun,
     MissingPolicyParametersError,
     NewReportRerun,
     NewSimulationRerun,
@@ -51,9 +51,6 @@ from policyengine_simulation_persistence import (
     ReportSideError,
     RerunRecordDeletedError,
     RerunSide,
-    ReusableRun,
-    RunInProgressError,
-    RunReuse,
     SideDefinition,
     SimulationChoice,
     SimulationDefinition,
@@ -61,8 +58,6 @@ from policyengine_simulation_persistence import (
     SimulationType,
     UnknownDatasetError,
     UnknownRegionError,
-    find_reusable_run,
-    find_reusable_run_of,
     insert_report_rerun,
     insert_simulation_rerun,
     lock_reruns_of,
@@ -78,7 +73,7 @@ from public_api_rows import (
     insert_policy,
     insert_region,
 )
-from sqlalchemy import insert, text
+from sqlalchemy import bindparam, event, insert, text
 from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
@@ -98,9 +93,6 @@ LATER_REQUEST = EconomyRequest(
     region_code="us",
     dataset_name="populace_us_2024",
     year=2026,
-)
-LATER_REUSE = RunReuse(
-    versions=LATER_VERSIONS, inputs=OPTIONS, output_uri_prefix=OUTPUT_BUCKET_PREFIX
 )
 
 
@@ -253,135 +245,71 @@ def test_a_stored_economy_simulations_definition_is_read(
     )
 
 
-def _find_later_run_of(
-    connection: Connection,
-    simulation_id: UUID,
-    later: EconomyCatalog,
-    *,
-    excluded_run_id: UUID | None = None,
-) -> ReusableRun | None:
-    return find_reusable_run_of(
-        connection,
-        simulation_id=simulation_id,
-        population=later.population(),
-        versions=LATER_VERSIONS,
-        inputs=OPTIONS,
-        output_uri_prefix=OUTPUT_BUCKET_PREFIX,
-        excluded_run_id=excluded_run_id,
-    )
-
-
 def _used_on_later_catalog(
-    connection: Connection, stored: StoredReport, later: EconomyCatalog
+    connection: Connection,
+    stored: StoredReport,
+    economy: EconomyCatalog,
+    later: EconomyCatalog,
 ) -> StoredRun:
-    """Insert a succeeded later run of the baseline that a succeeded re-run used."""
+    """Insert a succeeded later run of the baseline that another report used.
+
+    The other report, created on ``economy`` beside the stored one, compares
+    the stored report's baseline simulation (naming its run) with a reform
+    simulation of its own; its initial run succeeded, and its manual re-run
+    on the later catalog created both sides' later runs and succeeded. The
+    stored report has no run on the later versions, so a re-run of it has
+    none to join, and its reform simulation has no later run.
+    """
+    other_reform = insert_simulation_run(connection, economy.population())
+    other_report_id = insert_report_of(
+        connection, economy, (stored.baseline, other_reform)
+    )
+    insert_report_run_of(connection, other_report_id, (stored.baseline, other_reform))
     later_shape = RunShape(versions=LATER_VERSIONS)
-    later_baseline = insert_run_of(
-        connection, stored.baseline.simulation_id, later.population(), later_shape
+    later_baseline, later_other_reform = (
+        insert_run_of(connection, simulation_id, later.population(), later_shape)
+        for simulation_id in (stored.baseline.simulation_id, other_reform.simulation_id)
     )
-    later_reform = insert_run_of(
+    insert_report_run_of(
         connection,
-        stored.reform.simulation_id,
-        later.population(),
-        replace(later_shape, status=SimulationStatus.FAILED),
+        other_report_id,
+        (later_baseline, later_other_reform),
+        ReportRunOutcome(versions=LATER_VERSIONS, trigger=ReportRunTrigger.MANUAL),
     )
-    insert_report_run_of(connection, stored.report_id, (later_baseline, later_reform))
     return later_baseline
 
 
-def test_a_simulations_own_run_on_a_later_catalog_version_is_reused(
-    public_api_database_url,
-) -> None:
-    with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
-        later = insert_later_catalog(connection, economy)
-        stored = _stored_report(connection, economy)
-        later_baseline = _used_on_later_catalog(connection, stored, later)
-        act_as_the_service(connection)
-
-        found = _find_later_run_of(connection, stored.baseline.simulation_id, later)
-        excluded = _find_later_run_of(
-            connection,
-            stored.baseline.simulation_id,
-            later,
-            excluded_run_id=later_baseline.simulation_run_id,
-        )
-        # The run on the earlier catalog version is not on the current versions.
-        earlier = find_reusable_run_of(
-            connection,
-            simulation_id=stored.baseline.simulation_id,
-            population=economy.population(),
-            versions=LATER_VERSIONS,
-            inputs=OPTIONS,
-            output_uri_prefix=OUTPUT_BUCKET_PREFIX,
-        )
-
-    assert found == ReusableRun(
-        simulation_id=stored.baseline.simulation_id,
-        simulation_run_id=later_baseline.simulation_run_id,
-    )
-    assert excluded is None
-    assert earlier is None
-
-
-def test_another_simulations_run_is_not_reused_for_a_simulations_rerun(
-    public_api_database_url,
-) -> None:
-    with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
-        later = insert_later_catalog(connection, economy)
-        stored = _stored_report(connection, economy)
-        _used_on_later_catalog(connection, stored, later)
-        other = _stored_report(connection, economy)
-        act_as_the_service(connection)
-
-        found = _find_later_run_of(connection, other.baseline.simulation_id, later)
-
-    assert found is None
-
-
-def _rerun_of(
-    stored: StoredReport,
-    later: EconomyCatalog,
-    *,
-    baseline_reused: StoredRun | None = None,
-) -> NewReportRerun:
-    baseline = (
-        RerunSide(
-            simulation_id=stored.baseline.simulation_id,
-            simulation_run_id=uuid4(),
-            reused=False,
-        )
-        if baseline_reused is None
-        else RerunSide(
-            simulation_id=baseline_reused.simulation_id,
-            simulation_run_id=baseline_reused.simulation_run_id,
-            reused=True,
-        )
-    )
+def _rerun_of(stored: StoredReport, later: EconomyCatalog) -> NewReportRerun:
+    """Return an unforced re-run of ``stored`` on the later catalog's versions."""
     return NewReportRerun(
         report_id=stored.report_id,
         run_id=uuid4(),
         population=later.population(),
         versions=LATER_VERSIONS,
-        baseline=baseline,
+        baseline=RerunSide(
+            simulation_id=stored.baseline.simulation_id,
+            simulation_run_id=uuid4(),
+        ),
         reform=RerunSide(
             simulation_id=stored.reform.simulation_id,
             simulation_run_id=uuid4(),
-            reused=False,
         ),
     )
 
 
-def test_a_report_rerun_creates_runs_of_the_reports_own_simulations(
+def test_a_report_rerun_joins_or_creates_runs_of_the_reports_own_simulations(
     public_api_database_url,
 ) -> None:
+    """Answers 4 and 5: a side joins its simulation's run on the versions.
+
+    The baseline's later run is another report's; the reform has none.
+    """
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         later = insert_later_catalog(connection, economy)
         stored = _stored_report(connection, economy)
-        reused = _used_on_later_catalog(connection, stored, later)
-        rerun = _rerun_of(stored, later, baseline_reused=reused)
+        joined = _used_on_later_catalog(connection, stored, economy, later)
+        rerun = _rerun_of(stored, later)
         act_as_the_service(connection)
 
         insert_report_rerun(connection, rerun)
@@ -390,7 +318,6 @@ def test_a_report_rerun_creates_runs_of_the_reports_own_simulations(
         earlier_run = _row(connection, "report_runs", stored.report_run_id)
         baseline_runs = _count_runs_of(connection, stored.baseline.simulation_id)
 
-    assert rerun.new_simulation_run_ids == (rerun.reform.simulation_run_id,)
     assert {
         key: report_run[key]
         for key in (
@@ -407,12 +334,13 @@ def test_a_report_rerun_creates_runs_of_the_reports_own_simulations(
         )
     } == {
         "report_id": stored.report_id,
-        "baseline_simulation_run_id": reused.simulation_run_id,
+        "baseline_simulation_run_id": joined.simulation_run_id,
         "reform_simulation_run_id": rerun.reform.simulation_run_id,
         "country_package_version": LATER_VERSIONS.country_package_version,
         "policyengine_version": LATER_VERSIONS.policyengine_version,
         "status": ReportRunStatus.PENDING,
-        "trigger": ReportRunTrigger.MANUAL,
+        # Answer 6: the trigger is each user's record's, not the shared run's.
+        "trigger": None,
         "modal_call_id": None,
         "budget_window_run_id": None,
         "year": None,
@@ -441,31 +369,75 @@ def test_a_report_rerun_creates_runs_of_the_reports_own_simulations(
         "status": SimulationStatus.PENDING,
         "modal_call_id": None,
     }
-    # The earlier run is kept, and the reused side gets no new run.
+    # The earlier run is kept, and the joining side gets no new run.
     assert earlier_run["status"] == ReportRunStatus.SUCCEEDED
     assert baseline_runs == 2
+    assert reform_run["forced"] is False
 
 
-@pytest.mark.parametrize("status", [ReportRunStatus.PENDING, ReportRunStatus.RUNNING])
-def test_a_report_rerun_is_refused_while_a_run_is_pending_or_running(
+def _unforced_rerun_on_unchanged_versions(
+    stored: StoredReport, economy: EconomyCatalog
+) -> NewReportRerun:
+    """Return a re-run of ``stored`` on the versions it already ran on."""
+    return replace(_forced_rerun_of(stored, economy), run_id=uuid4(), forced=False)
+
+
+@pytest.mark.parametrize(
+    "status",
+    [ReportRunStatus.PENDING, ReportRunStatus.RUNNING, ReportRunStatus.SUCCEEDED],
+)
+def test_a_report_rerun_joins_the_reports_run_on_its_versions(
     public_api_database_url, status: ReportRunStatus
 ) -> None:
+    """Answer 3: a re-run joins a run under way, so #1059's 409 goes."""
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
-        later = insert_later_catalog(connection, economy)
         stored = _stored_report(connection, economy, run_status=status)
-        rerun = _rerun_of(stored, later)
+        rerun = _unforced_rerun_on_unchanged_versions(stored, economy)
         act_as_the_service(connection)
 
-        with pytest.raises(RunInProgressError) as refused:
-            insert_report_rerun(connection, rerun)
-        created = connection.execute(
+        joined = insert_report_rerun(connection, rerun)
+        created_report_runs = connection.execute(
             text("SELECT count(*) FROM public.report_runs WHERE id = :id"),
             {"id": rerun.run_id},
         ).scalar_one()
+        created_simulation_runs = connection.execute(
+            text(
+                "SELECT count(*) FROM public.simulation_runs WHERE id IN :ids"
+            ).bindparams(bindparam("ids", expanding=True)),
+            {"ids": list(rerun.new_simulation_run_ids)},
+        ).scalar_one()
 
-    assert refused.value.run_id == stored.report_run_id
-    assert created == 0
+    assert joined == FoundReportRun(
+        id=stored.report_run_id,
+        inserted=False,
+        status=status,
+        baseline_simulation_run_id=stored.baseline.simulation_run_id,
+        reform_simulation_run_id=stored.reform.simulation_run_id,
+    )
+    assert (created_report_runs, created_simulation_runs) == (0, 0)
+
+
+def test_a_report_rerun_beside_a_run_under_way_on_older_versions_creates_its_own(
+    public_api_database_url,
+) -> None:
+    """A run on other versions is no run to join; the re-run is for the current ones."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        later = insert_later_catalog(connection, economy)
+        stored = _stored_report(connection, economy, run_status=ReportRunStatus.RUNNING)
+        rerun = _rerun_of(stored, later)
+        act_as_the_service(connection)
+
+        created = insert_report_rerun(connection, rerun)
+        report_run = _row(connection, "report_runs", rerun.run_id)
+
+    assert (created.id, created.inserted, created.status) == (
+        rerun.run_id,
+        True,
+        ReportRunStatus.PENDING,
+    )
+    assert report_run["policyengine_version"] == LATER_POLICYENGINE_VERSION
 
 
 def test_a_report_whose_runs_have_ended_is_rerun_again(public_api_database_url) -> None:
@@ -476,15 +448,20 @@ def test_a_report_whose_runs_have_ended_is_rerun_again(public_api_database_url) 
         first = _rerun_of(stored, later)
         act_as_the_service(connection)
         insert_report_rerun(connection, first)
-        # The first re-run's run fails before a second re-run.
+        # The first re-run's run, and the simulation runs it created, fail
+        # before a second re-run.
         connection.execute(text("RESET ROLE"))
-        connection.execute(
-            text(
-                "UPDATE public.report_runs SET status = 'failed', "
-                "completed_at = now() WHERE id = :id"
-            ),
-            {"id": first.run_id},
-        )
+        for table_name, run_ids in (
+            ("report_runs", [first.run_id]),
+            ("simulation_runs", list(first.new_simulation_run_ids)),
+        ):
+            connection.execute(
+                text(
+                    f"UPDATE public.{table_name} SET status = 'failed', "  # noqa: S608  # fixed table names
+                    "completed_at = now() WHERE id IN :ids"
+                ).bindparams(bindparam("ids", expanding=True)),
+                {"ids": run_ids},
+            )
         second = _rerun_of(stored, later)
         act_as_the_service(connection)
 
@@ -495,9 +472,10 @@ def test_a_report_whose_runs_have_ended_is_rerun_again(public_api_database_url) 
         )
 
 
-def test_a_simulation_rerun_creates_a_run_and_is_refused_while_one_is_under_way(
+def test_a_simulation_rerun_joins_its_run_on_the_current_versions_until_it_fails(
     public_api_database_url,
 ) -> None:
+    """Answer 3: a re-run joins a run under way or succeeded; 2: never a failed one."""
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         later = insert_later_catalog(connection, economy)
@@ -510,25 +488,61 @@ def test_a_simulation_rerun_creates_a_run_and_is_refused_while_one_is_under_way(
         )
         act_as_the_service(connection)
 
-        insert_simulation_rerun(connection, rerun)
+        inserted = insert_simulation_rerun(connection, rerun)
         created = _row(connection, "simulation_runs", rerun.run_id)
-        with pytest.raises(RunInProgressError) as refused:
-            insert_simulation_rerun(connection, replace(rerun, run_id=uuid4()))
-        earlier = _row(connection, "simulation_runs", stored.simulation_run_id)
+        joined_under_way = insert_simulation_rerun(
+            connection, replace(rerun, run_id=uuid4())
+        )
+        joined_succeeded = insert_simulation_rerun(
+            connection,
+            NewSimulationRerun(
+                simulation_id=stored.simulation_id,
+                run_id=uuid4(),
+                population=economy.population(),
+                versions=VERSIONS,
+            ),
+        )
+        connection.execute(text("RESET ROLE"))
+        connection.execute(
+            text(
+                "UPDATE public.simulation_runs SET status = 'failed', "
+                "completed_at = now() WHERE id = :id"
+            ),
+            {"id": rerun.run_id},
+        )
+        act_as_the_service(connection)
+        after_failure = insert_simulation_rerun(
+            connection, replace(rerun, run_id=uuid4())
+        )
+        runs_of_the_simulation = _count_runs_of(connection, stored.simulation_id)
 
+    assert (inserted.id, inserted.inserted, inserted.status) == (
+        rerun.run_id,
+        True,
+        SimulationStatus.PENDING,
+    )
     assert (
         created["simulation_id"],
         created["tax_benefit_model_version_id"],
         created["policyengine_version"],
         created["status"],
+        created["forced"],
     ) == (
         stored.simulation_id,
         later.catalog.version_id,
         LATER_POLICYENGINE_VERSION,
         SimulationStatus.PENDING,
+        False,
     )
-    assert refused.value.run_id == rerun.run_id
-    assert earlier["status"] == SimulationStatus.SUCCEEDED
+    assert (joined_under_way.id, joined_under_way.inserted) == (rerun.run_id, False)
+    assert (
+        joined_succeeded.id,
+        joined_succeeded.inserted,
+        joined_succeeded.status,
+    ) == (stored.simulation_run_id, False, SimulationStatus.SUCCEEDED)
+    assert after_failure.inserted is True
+    assert after_failure.id not in {rerun.run_id, stored.simulation_run_id}
+    assert runs_of_the_simulation == 3
 
 
 def test_a_rerun_holds_its_records_lock_until_its_transaction_ends(
@@ -561,53 +575,21 @@ def test_a_report_reruns_inputs_are_read_on_the_current_catalog_version(
         )
         reform_choice = SimulationChoice(policy_id=policy_id, dynamic_id=None)
         stored = _stored_report(connection, economy, reform_choice=reform_choice)
-        reused = _used_on_later_catalog(connection, stored, later)
         act_as_the_service(connection)
-        store = _store_on(connection)
-        sides = {
-            "baseline": SideDefinition(stored.baseline.simulation_id, CURRENT_LAW),
-            "reform": SideDefinition(stored.reform.simulation_id, reform_choice),
-        }
 
-        inputs = store.read_report_rerun_inputs(
-            LATER_REQUEST, **sides, reuse=LATER_REUSE
+        inputs = _store_on(connection).read_report_rerun_inputs(
+            LATER_REQUEST,
+            baseline=SideDefinition(stored.baseline.simulation_id, CURRENT_LAW),
+            reform=SideDefinition(stored.reform.simulation_id, reform_choice),
         )
-        forced = store.read_report_rerun_inputs(LATER_REQUEST, **sides, reuse=None)
 
     assert (inputs.catalog.catalog_version_id, inputs.catalog.region.id) == (
         later.catalog.version_id,
         later.region_id,
     )
     assert inputs.catalog.dataset.id == later.dataset_id
-    assert inputs.baseline.reusable_run == ReusableRun(
-        simulation_id=stored.baseline.simulation_id,
-        simulation_run_id=reused.simulation_run_id,
-    )
-    assert inputs.reform.reusable_run is None
+    assert inputs.baseline.reform == {}
     assert inputs.reform.reform == {CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000}}
-    assert forced.baseline.reusable_run is None
-
-
-def test_both_sides_of_one_simulation_never_reuse_the_same_run(
-    public_api_database_url,
-) -> None:
-    with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
-        later = insert_later_catalog(connection, economy)
-        stored = _stored_report(connection, economy)
-        reused = _used_on_later_catalog(connection, stored, later)
-        act_as_the_service(connection)
-        side = SideDefinition(stored.baseline.simulation_id, CURRENT_LAW)
-
-        inputs = _store_on(connection).read_report_rerun_inputs(
-            LATER_REQUEST, baseline=side, reform=side, reuse=LATER_REUSE
-        )
-
-    assert inputs.baseline.reusable_run == ReusableRun(
-        simulation_id=stored.baseline.simulation_id,
-        simulation_run_id=reused.simulation_run_id,
-    )
-    assert inputs.reform.reusable_run is None
 
 
 def test_a_rerun_names_the_side_whose_policy_the_current_catalog_cannot_set(
@@ -628,7 +610,6 @@ def test_a_rerun_names_the_side_whose_policy_the_current_catalog_cannot_set(
                 LATER_REQUEST,
                 baseline=SideDefinition(stored.baseline.simulation_id, CURRENT_LAW),
                 reform=SideDefinition(stored.reform.simulation_id, reform_choice),
-                reuse=None,
             )
 
     assert refused.value.side == "reform"
@@ -667,7 +648,6 @@ def test_a_rerun_is_refused_when_the_current_catalog_lacks_its_region_or_dataset
                 request,
                 baseline=SideDefinition(stored.baseline.simulation_id, CURRENT_LAW),
                 reform=SideDefinition(stored.reform.simulation_id, CURRENT_LAW),
-                reuse=None,
             )
 
 
@@ -714,12 +694,11 @@ def test_a_rerun_and_its_runs_are_created_through_the_store(
         store.create_simulation_rerun(simulation_rerun)
         definition = store.read_report_definition(stored.report_id)
         simulation = store.read_simulation_definition(simulation_rerun.simulation_id)
-        with pytest.raises(RunInProgressError):
-            store.create_report_rerun(_rerun_of(stored, later))
+        # A second re-run joins the first's run, which is still pending.
+        joined = store.create_report_rerun(_rerun_of(stored, later))
+        assert (joined.id, joined.inserted) == (rerun.run_id, False)
 
-        assert _row(connection, "report_runs", rerun.run_id)["trigger"] == (
-            ReportRunTrigger.MANUAL
-        )
+        assert _row(connection, "report_runs", rerun.run_id)["trigger"] is None
         assert _row(connection, "simulation_runs", simulation_rerun.run_id)[
             "status"
         ] == (SimulationStatus.PENDING)
@@ -727,47 +706,6 @@ def test_a_rerun_and_its_runs_are_created_through_the_store(
     assert definition.id == stored.report_id
     assert simulation is not None
     assert simulation.id == simulation_rerun.simulation_id
-
-
-def test_a_run_on_another_catalog_version_is_not_reused_by_a_new_report(
-    public_api_database_url,
-) -> None:
-    """Only the run's own catalog version differs from the request's.
-
-    It is also the newest run, so it would be found without that condition.
-    """
-    with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
-        later = insert_later_catalog(connection, economy)
-        stored = _stored_report(connection, economy)
-        connection.execute(
-            text(
-                "UPDATE public.simulation_runs "
-                "SET tax_benefit_model_version_id = :later, "
-                "completed_at = completed_at + interval '1 day' WHERE id = :id"
-            ),
-            {
-                "later": later.catalog.version_id,
-                "id": stored.baseline.simulation_run_id,
-            },
-        )
-        act_as_the_service(connection)
-
-        found = find_reusable_run(
-            connection,
-            choice=CURRENT_LAW,
-            population=economy.population(),
-            versions=VERSIONS,
-            inputs=OPTIONS,
-            output_uri_prefix=OUTPUT_BUCKET_PREFIX,
-        )
-
-    # The reform's run, the same simulation definition on the right catalog
-    # version, is the only one left to reuse.
-    assert found == ReusableRun(
-        simulation_id=stored.reform.simulation_id,
-        simulation_run_id=stored.reform.simulation_run_id,
-    )
 
 
 def test_a_household_or_filtered_simulation_and_another_model_are_read_as_such(
@@ -886,9 +824,7 @@ def test_a_rerun_of_a_deleted_report_or_simulation_says_the_record_is_gone(
         # A report whose side simulation is gone names that simulation instead.
         gone_side = replace(
             _rerun_of(stored, later),
-            reform=RerunSide(
-                simulation_id=uuid4(), simulation_run_id=uuid4(), reused=False
-            ),
+            reform=RerunSide(simulation_id=uuid4(), simulation_run_id=uuid4()),
         )
         with (
             pytest.raises(EconomyRecordReferenceError) as refused,
@@ -900,3 +836,112 @@ def test_a_rerun_of_a_deleted_report_or_simulation_says_the_record_is_gone(
         "simulation_runs",
         "simulation_id",
     )
+
+
+def _forced_rerun_of(stored: StoredReport, economy: EconomyCatalog) -> NewReportRerun:
+    """Return a forced re-run of ``stored`` on the versions it already ran on."""
+    return NewReportRerun(
+        report_id=stored.report_id,
+        run_id=uuid4(),
+        population=economy.population(),
+        versions=VERSIONS,
+        baseline=RerunSide(
+            simulation_id=stored.baseline.simulation_id,
+            simulation_run_id=uuid4(),
+        ),
+        reform=RerunSide(
+            simulation_id=stored.reform.simulation_id,
+            simulation_run_id=uuid4(),
+        ),
+        forced=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [ReportRunStatus.PENDING, ReportRunStatus.RUNNING, ReportRunStatus.SUCCEEDED],
+)
+def test_a_forced_report_rerun_is_an_extra_run_beside_any_run_on_its_versions(
+    public_api_database_url, status: ReportRunStatus
+) -> None:
+    """Answer 3: forced runs are marked, never refused and never conflict."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        stored = _stored_report(connection, economy, run_status=status)
+        rerun = _forced_rerun_of(stored, economy)
+        act_as_the_service(connection)
+
+        insert_report_rerun(connection, rerun)
+        report_run = _row(connection, "report_runs", rerun.run_id)
+        simulation_runs = [
+            _row(connection, "simulation_runs", run_id)
+            for run_id in rerun.new_simulation_run_ids
+        ]
+        earlier_run = _row(connection, "report_runs", stored.report_run_id)
+
+    assert (report_run["forced"], report_run["trigger"], report_run["status"]) == (
+        True,
+        None,
+        ReportRunStatus.PENDING,
+    )
+    assert len(simulation_runs) == 2
+    assert all(run["forced"] for run in simulation_runs)
+    assert all(run["status"] == SimulationStatus.PENDING for run in simulation_runs)
+    assert earlier_run["status"] == status
+    assert earlier_run["forced"] is False
+
+
+def test_a_report_rerun_losing_to_a_run_created_after_its_lookup_joins_it(
+    committed_engine, committed_catalog
+) -> None:
+    """It joins that run and takes back the simulation runs it had inserted."""
+    economy = committed_catalog
+    failed = RunShape(status=SimulationStatus.FAILED)
+    with committed_engine.begin() as connection:
+        baseline = insert_simulation_run(connection, economy.population(), failed)
+        reform = insert_simulation_run(connection, economy.population(), failed)
+        report_id = insert_report_of(connection, economy, (baseline, reform))
+    stored = StoredReport(
+        report_id=report_id,
+        baseline=baseline,
+        reform=reform,
+        report_run_id=uuid4(),
+    )
+    rerun = _unforced_rerun_on_unchanged_versions(stored, economy)
+    competing_run_ids: list[UUID] = []
+
+    def create_a_competing_run_first(
+        _connection, _cursor, statement, _parameters, _context, _executemany
+    ) -> None:
+        if competing_run_ids or not statement.lstrip().startswith(
+            "INSERT INTO public.report_runs"
+        ):
+            return
+        with committed_engine.begin() as other:
+            competing_run_ids.append(
+                insert_report_run_of(
+                    other,
+                    report_id,
+                    (baseline, reform),
+                    ReportRunOutcome(status=ReportRunStatus.PENDING),
+                )
+            )
+
+    with committed_engine.begin() as connection:
+        act_as_the_service(connection)
+        event.listen(connection, "before_cursor_execute", create_a_competing_run_first)
+        try:
+            joined = insert_report_rerun(connection, rerun)
+        finally:
+            event.remove(
+                connection, "before_cursor_execute", create_a_competing_run_first
+            )
+        kept = connection.execute(
+            text(
+                "SELECT count(*) FROM public.simulation_runs WHERE id IN :ids"
+            ).bindparams(bindparam("ids", expanding=True)),
+            {"ids": list(rerun.new_simulation_run_ids)},
+        ).scalar_one()
+
+    assert (joined.id, joined.inserted) == (competing_run_ids[0], False)
+    assert kept == 0
