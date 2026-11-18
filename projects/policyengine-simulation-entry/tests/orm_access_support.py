@@ -34,8 +34,10 @@ connections passed around without an ``Engine`` or ``Connection`` annotation, so
 a connection held under a name such as ``session`` isn't reported, a statement
 method passed without being called, a function that returns an engine with no
 return annotation, the engine an ``Inspector`` holds in ``bind`` or ``engine``, a
-type alias of ``Table`` such as ``Jobs = Table``, a ``.table`` read in a module
-that doesn't import sqlalchemy, or a Session's ``bind`` attribute. ``.tables`` of
+quoted name inside an annotation such as ``Optional["Table"]``, ``Table`` under
+another local name such as ``Jobs = Table``, names from ``from sqlalchemy import
+*``, a ``.table`` read in a module that doesn't import sqlalchemy, or a Session's
+``bind`` attribute. ``.tables`` of
 a MetaData isn't reported when the name holding it doesn't end in ``metadata`` and
 wasn't assigned ``MetaData(...)``.
 """
@@ -65,7 +67,6 @@ TABLE_CONSTRUCTORS = frozenset(
 TABLE_TYPES = frozenset({"Table", "TableClause"})
 # A declarative base's classes may annotate what each of them maps.
 MAPPED_TABLE_ATTRIBUTE = "__table__"
-LITERAL_TYPE = "Literal"
 METADATA_CONSTRUCTOR = "MetaData"
 DECLARATIVE_BASE_MODULE_NAME = "orm_base.py"
 # The one module per library that may create and hold an engine, to hand out
@@ -190,33 +191,24 @@ def _sqlalchemy_name(node: ast.expr, imported: Mapping[str, str]) -> str:
 def _annotation_names(
     annotation: ast.expr | None, imported: Mapping[str, str]
 ) -> set[str]:
-    """Return the sqlalchemy names an annotation refers to.
+    """Return the sqlalchemy names an annotation refers to, unions included.
 
-    Quoted names count wherever they appear, as in ``Optional["Table"]``, apart
-    from the values of a ``Literal``.
+    A wholly quoted annotation is parsed. Strings inside one aren't, because
+    they may be anything, such as ``Literal`` values or ``Annotated`` metadata.
     """
-    names: set[str] = set()
-    pending = [] if annotation is None else [annotation]
-    while pending:
-        node = pending.pop()
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            try:
-                pending.append(ast.parse(node.value, mode="eval").body)
-            except (SyntaxError, ValueError):
-                continue
-        elif not (isinstance(node, ast.Subscript) and _is_literal(node)):
-            if isinstance(node, (ast.Name, ast.Attribute)):
-                names.add(_sqlalchemy_name(node, imported))
-            pending.extend(
-                child
-                for child in ast.iter_child_nodes(node)
-                if isinstance(child, ast.expr)
-            )
-    return names - {""}
-
-
-def _is_literal(node: ast.Subscript) -> bool:
-    return _last_name(node.value) == LITERAL_TYPE
+    if annotation is None:
+        return set()
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            annotation = ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return set()
+    return {
+        name
+        for node in ast.walk(annotation)
+        if isinstance(node, (ast.Name, ast.Attribute))
+        and (name := _sqlalchemy_name(node, imported))
+    }
 
 
 def _bound_targets(target: ast.expr) -> list[str]:
@@ -487,6 +479,16 @@ def _table_annotation_findings(
     return [(CORE_TABLE_ACCESS, f"{label}{_annotation_text(annotation)}")]
 
 
+def _class_level_statements(node: ast.ClassDef) -> Iterator[ast.stmt]:
+    """Yield a class's own statements, including those under an ``if``."""
+    pending: list[ast.stmt] = list(node.body)
+    while pending:
+        statement = pending.pop()
+        yield statement
+        if isinstance(statement, ast.If):
+            pending.extend([*statement.body, *statement.orelse])
+
+
 def _mapped_table_annotations(module: _Module) -> set[int]:
     """Return each class's bare ``__table__`` annotation in a declarative base."""
     if not module.is_declarative_base:
@@ -495,7 +497,7 @@ def _mapped_table_annotations(module: _Module) -> set[int]:
         id(statement)
         for node in ast.walk(module.tree)
         if isinstance(node, ast.ClassDef)
-        for statement in node.body
+        for statement in _class_level_statements(node)
         if isinstance(statement, ast.AnnAssign)
         and statement.value is None
         and isinstance(statement.target, ast.Name)
