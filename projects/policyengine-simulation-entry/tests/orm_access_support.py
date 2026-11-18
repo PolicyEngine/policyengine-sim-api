@@ -14,10 +14,11 @@ mapped classes passes. Each file is checked on its own, through its own imports:
 ``from sqlalchemy import text`` and ``import sqlalchemy as sa`` both count, and
 a ``text``, ``Table`` or ``update`` from another package doesn't. A Core table is
 reported where it starts: where it is declared, where it is read from a mapped
-class, mapper or MetaData or as the bare name ``__table__``, and where an annotation names ``Table`` or
-``TableClause``, apart from a class's bare ``__table__`` annotation in a
-declarative base module. Its later uses aren't reported, because the rule has no
-baseline and the first finding already fails it.
+class, mapper or MetaData or as the bare name ``__table__``, and where an
+annotation names ``Table`` or ``TableClause``, apart from a class's bare
+``__table__`` annotation in a declarative base module. Its later uses aren't
+reported, because the rule has no baseline and the first finding already fails
+it.
 
 A public function of an engine module may not return an Engine or Connection,
 and only an engine module may read ``factory.kw["bind"]``. The rules that go by a
