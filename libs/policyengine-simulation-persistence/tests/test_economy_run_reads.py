@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import act_as_the_service, in_session, rolled_back_transaction
 from economy_rows import (
     COUNTRY_PACKAGE_VERSION,
     POLICYENGINE_VERSION,
@@ -108,8 +108,8 @@ def test_a_report_is_read_with_its_newest_run(public_api_database_url) -> None:
         )
         act_as_the_service(connection)
 
-        report = read_economy_report(connection, report_id)
-        missing = read_economy_report(connection, uuid4())
+        report = in_session(connection, read_economy_report, report_id)
+        missing = in_session(connection, read_economy_report, uuid4())
 
     assert missing is None
     assert report is not None
@@ -148,7 +148,7 @@ def test_a_failed_newest_run_is_read_with_its_error(public_api_database_url) -> 
         )
         act_as_the_service(connection)
 
-        report = read_economy_report(connection, report_id)
+        report = in_session(connection, read_economy_report, report_id)
 
     assert report is not None
     assert (report.baseline_simulation_id, report.reform_simulation_id) == (
@@ -196,8 +196,10 @@ def test_a_simulation_is_read_with_its_newest_run(public_api_database_url) -> No
         )
         act_as_the_service(connection)
 
-        simulation = read_economy_simulation(connection, stored.simulation_id)
-        missing = read_economy_simulation(connection, uuid4())
+        simulation = in_session(
+            connection, read_economy_simulation, stored.simulation_id
+        )
+        missing = in_session(connection, read_economy_simulation, uuid4())
 
     assert missing is None
     assert simulation is not None

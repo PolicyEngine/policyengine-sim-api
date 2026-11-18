@@ -37,7 +37,6 @@ from household_report_rows import insert_household_report_rows
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
-    EconomyRequest,
     HouseholdJob,
     HouseholdJobStatus,
     HouseholdJobStore,
@@ -61,7 +60,6 @@ from policyengine_simulation_persistence import (
     read_stored_household,
     record_household_call,
 )
-from policyengine_simulation_persistence.economy_inputs import read_catalog_rows
 from policyengine_simulation_persistence.household_report_records import (
     household_simulation_run_row,
     insert_household_simulation_run,
@@ -70,6 +68,12 @@ from policyengine_simulation_persistence.keyed_economy_records import (
     find_or_insert_report_run_on_sides,
 )
 from public_api_rows import insert_household
+from session_probes import (
+    end_connection_at,
+    orm_statement_flags,
+    statements_sent,
+    terminate_backend,
+)
 from sqlalchemy import event, func, select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 
@@ -85,8 +89,6 @@ pytestmark = pytest.mark.public_api_schema
 
 STATEMENT_TIMEOUT_MILLISECONDS = 5_000
 SHORT_STATEMENT_TIMEOUT_MILLISECONDS = 200
-# How long PostgreSQL may take to end a backend it is told to end.
-TERMINATE_TIMEOUT_MILLISECONDS = 5_000
 CURRENT_LAW = SimulationChoice(policy_id=None, dynamic_id=None)
 # The .py version and so the catalog version of ``VERSIONS``, on a newer country
 # package: a re-run on these versions joins no run on ``VERSIONS``.
@@ -181,66 +183,12 @@ def _report_store(session_factory: sessionmaker[Session]) -> HouseholdReportStor
     )
 
 
-def _end_connection_at(
-    session_factory: sessionmaker[Session], session_event: str, engine: Engine
-) -> list[int]:
-    """End each session's connection at ``session_event``, from another one.
-
-    Return a list that gains, each time, how many added rows the session had
-    not yet flushed.
-    """
-    unflushed_counts: list[int] = []
-
-    def end_the_connection(session: Session, *_event_details: object) -> None:
-        unflushed_counts.append(len(session.new))
-        backend_id = session.execute(select(func.pg_backend_pid())).scalar_one()
-        _terminate_backend(engine, backend_id)
-
-    event.listen(session_factory, session_event, end_the_connection)
-    return unflushed_counts
-
-
-def _terminate_backend(engine: Engine, backend_id: int) -> None:
-    """End the backend from another connection, and wait until it has gone."""
-    with engine.connect() as connection:
-        ended = connection.execute(
-            select(
-                func.pg_terminate_backend(backend_id, TERMINATE_TIMEOUT_MILLISECONDS)
-            )
-        ).scalar_one()
-    assert ended
-
-
-def _statements_sent(engine_or_connection: Engine | Connection) -> list[str]:
-    """Return a list that gains each statement sent to the database from now on."""
-    statements: list[str] = []
-
-    def record_statement(
-        _connection, _cursor, statement, _parameters, _context, _executemany
-    ) -> None:
-        statements.append(statement)
-
-    event.listen(engine_or_connection, "before_cursor_execute", record_statement)
-    return statements
-
-
 def _count(engine: Engine, table_name: str, row_id: UUID) -> int:
     with engine.connect() as connection:
         return connection.execute(
             text(f"SELECT count(*) FROM public.{table_name} WHERE id = :id"),  # noqa: S608  # fixed table names
             {"id": row_id},
         ).scalar_one()
-
-
-def _orm_statement_flags(session: Session) -> list[bool]:
-    """Return a list that gains, per statement, whether it names mapped classes."""
-    flags: list[bool] = []
-    event.listen(
-        session,
-        "do_orm_execute",
-        lambda execute_state: flags.append(execute_state.is_orm_statement),
-    )
-    return flags
 
 
 def _flushed_rows(session: Session) -> list[object]:
@@ -346,7 +294,7 @@ def test_the_job_functions_run_orm_statements_on_their_session(
         act_as_the_service(connection)
 
         with session_in(connection) as session:
-            orm_statements = _orm_statement_flags(session)
+            orm_statements = orm_statement_flags(session)
             read_catalog_version_id(
                 session, country="us", policyengine_version=POLICYENGINE_VERSION
             )
@@ -513,34 +461,6 @@ def test_a_report_run_losing_a_race_on_a_session_keeps_nothing_and_goes_on(
     assert kept_runs == 0
 
 
-def test_an_economy_request_reads_its_catalog_version_on_its_own_connection(
-    public_api_database_url,
-) -> None:
-    """Economy code still holds a connection, inside or outside a savepoint."""
-    request = EconomyRequest(
-        country="us",
-        policyengine_version=POLICYENGINE_VERSION,
-        region_code="us",
-        dataset_name=None,
-        year=2026,
-    )
-    with rolled_back_transaction(public_api_database_url) as connection:
-        economy = insert_economy_catalog(connection)
-        act_as_the_service(connection)
-
-        in_transaction = read_catalog_rows(connection, request)
-        with connection.begin_nested():
-            in_savepoint = read_catalog_rows(connection, request)
-        catalog_rows_still_visible = connection.execute(
-            text("SELECT count(*) FROM public.datasets WHERE id = :id"),
-            {"id": economy.dataset_id},
-        ).scalar_one()
-
-    assert in_transaction.catalog_version_id == economy.catalog.version_id
-    assert in_savepoint.catalog_version_id == economy.catalog.version_id
-    assert catalog_rows_still_visible == 1
-
-
 def test_a_job_goes_through_its_sessions_and_stays_readable(
     committed_engine, committed_household, session_factory
 ) -> None:
@@ -570,7 +490,7 @@ def test_a_connection_lost_at_a_jobs_commit_leaves_the_outcome_unknown(
     committed_engine, committed_household, session_factory
 ) -> None:
     """The flush succeeded; PostgreSQL may have applied the commit."""
-    unflushed_counts = _end_connection_at(
+    unflushed_counts = end_connection_at(
         session_factory, "before_commit", committed_engine
     )
     job = _new_job(committed_household.catalog, committed_household.household_id)
@@ -585,7 +505,7 @@ def test_a_connection_lost_at_a_jobs_commit_leaves_the_outcome_unknown(
 def test_a_connection_lost_during_a_jobs_flush_is_not_a_lost_commit(
     committed_engine, committed_household, session_factory
 ) -> None:
-    unflushed_counts = _end_connection_at(
+    unflushed_counts = end_connection_at(
         session_factory, "before_flush", committed_engine
     )
     job = _new_job(committed_household.catalog, committed_household.household_id)
@@ -636,8 +556,8 @@ def test_a_connection_lost_at_a_reruns_commit_leaves_the_outcome_unknown(
     committed_engine, committed_household, session_factory
 ) -> None:
     rerun = _forced_rerun(committed_engine, committed_household)
-    statements = _statements_sent(committed_engine)
-    unflushed_counts = _end_connection_at(
+    statements = statements_sent(committed_engine)
+    unflushed_counts = end_connection_at(
         session_factory, "before_commit", committed_engine
     )
 
@@ -658,7 +578,7 @@ def test_a_connection_lost_during_a_reruns_flush_is_not_a_lost_commit(
     committed_engine, committed_household, session_factory
 ) -> None:
     rerun = _forced_rerun(committed_engine, committed_household)
-    _end_connection_at(session_factory, "before_flush", committed_engine)
+    end_connection_at(session_factory, "before_flush", committed_engine)
 
     with pytest.raises(OperationalError):
         _report_store(session_factory).create_report_rerun(rerun)
@@ -705,7 +625,7 @@ def test_a_refusal_inside_the_savepoint_takes_back_the_other_sides_run(
         )
         act_as_the_service(connection)
         inserted_run_id = uuid4()
-        statements = _statements_sent(connection)
+        statements = statements_sent(connection)
 
         with session_in(connection) as session:
             with pytest.raises(IntegrityError):
@@ -752,7 +672,7 @@ def test_an_unforced_rerun_refused_inside_its_savepoint_names_the_refusal(
         rerun,
         baseline=HouseholdRerunSide(simulation_id=uuid4(), simulation_run_id=uuid4()),
     )
-    statements = _statements_sent(committed_engine)
+    statements = statements_sent(committed_engine)
 
     with pytest.raises(EconomyRecordReferenceError) as refused:
         _report_store(session_factory).create_report_rerun(missing_simulation)
@@ -774,7 +694,7 @@ def test_a_connection_lost_inside_an_unforced_reruns_savepoint_is_not_a_lost_com
 ) -> None:
     """The find-or-insert of the report run fails after the side's run was inserted."""
     rerun = _unforced_rerun(committed_engine, committed_household)
-    statements = _statements_sent(committed_engine)
+    statements = statements_sent(committed_engine)
     ended_backends: list[int] = []
 
     def end_the_connection_at_the_report_run(
@@ -787,7 +707,7 @@ def test_a_connection_lost_inside_an_unforced_reruns_savepoint_is_not_a_lost_com
         ):
             return
         ended_backends.append(cursor.connection.info.backend_pid)
-        _terminate_backend(committed_engine, ended_backends[0])
+        terminate_backend(committed_engine, ended_backends[0])
 
     event.listen(
         committed_engine, "before_cursor_execute", end_the_connection_at_the_report_run
