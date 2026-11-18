@@ -44,7 +44,7 @@ from policyengine_simulation_persistence.policy_reform import (
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from sqlalchemy import Connection
+    from sqlalchemy.orm import Session
 
     from policyengine_simulation_persistence.policy_reform import PolicyReform
 
@@ -175,7 +175,7 @@ class BudgetWindowInputs:
 
 
 def read_catalog_rows(
-    connection: Connection,
+    session: Session,
     request: EconomyRequest,
     *,
     local_area_dataset_name: str | None = None,
@@ -197,16 +197,16 @@ def read_catalog_rows(
         raise ValueError(msg)
     country = request.country
     catalog_version_id = read_catalog_version_id(
-        connection,
+        session,
         country=country,
         policyengine_version=request.policyengine_version,
     )
-    model_id = read_model_id(connection, country=country)
+    model_id = read_model_id(session, country=country)
     if catalog_version_id is None or model_id is None:
         msg = f"{country} has no catalog version for .py {request.policyengine_version}"
         raise UnknownCatalogVersionError(msg)
     region = read_region(
-        connection,
+        session,
         catalog_version_id=catalog_version_id,
         region_code=request.region_code,
     )
@@ -218,19 +218,19 @@ def read_catalog_rows(
         raise UnknownRegionError(msg)
     if local_area_dataset_name is not None:
         dataset = read_local_area_dataset(
-            connection, catalog_version_id=catalog_version_id
+            session, catalog_version_id=catalog_version_id
         )
         if dataset is None or dataset.name != local_area_dataset_name:
             raise LocalAreaDatasetMismatchError(local_area_dataset_name)
     elif request.dataset_name is None:
         dataset = read_dataset_by_id(
-            connection,
+            session,
             catalog_version_id=catalog_version_id,
             dataset_id=region.default_dataset_id,
         )
     else:
         dataset = read_dataset(
-            connection, catalog_version_id=catalog_version_id, name=request.dataset_name
+            session, catalog_version_id=catalog_version_id, name=request.dataset_name
         )
     if dataset is None:
         msg = (
@@ -247,7 +247,7 @@ def read_catalog_rows(
 
 
 def read_simulation_values(
-    connection: Connection,
+    session: Session,
     country: str,
     catalog_version_id: UUID,
     choice: SimulationChoice,
@@ -257,7 +257,7 @@ def read_simulation_values(
         {}
         if choice.policy_id is None
         else read_policy_reform(
-            connection,
+            session,
             country=country,
             policy_id=choice.policy_id,
             catalog_version_id=catalog_version_id,
@@ -267,7 +267,7 @@ def read_simulation_values(
         {}
         if choice.dynamic_id is None
         else read_dynamic_reform(
-            connection,
+            session,
             dynamic_id=choice.dynamic_id,
             catalog_version_id=catalog_version_id,
         )
@@ -278,7 +278,7 @@ def read_simulation_values(
 
 
 def read_side_values(
-    connection: Connection,
+    session: Session,
     request: EconomyRequest,
     catalog: EconomyCatalogRows,
     side: ReportSide,
@@ -287,14 +287,14 @@ def read_side_values(
     """Read one report side's values; raise ReportSideError naming a refused side."""
     try:
         return read_simulation_values(
-            connection, request.country, catalog.catalog_version_id, choice
+            session, request.country, catalog.catalog_version_id, choice
         )
     except SIDE_ERRORS as error:
         raise ReportSideError(side, error) from error
 
 
 def read_report_sides(
-    connection: Connection,
+    session: Session,
     request: EconomyRequest,
     catalog: EconomyCatalogRows,
     *,
@@ -304,13 +304,13 @@ def read_report_sides(
     """Read both sides' values, the baseline's first."""
     return EconomyReportInputs(
         catalog=catalog,
-        baseline=read_side_values(connection, request, catalog, "baseline", baseline),
-        reform=read_side_values(connection, request, catalog, "reform", reform),
+        baseline=read_side_values(session, request, catalog, "baseline", baseline),
+        reform=read_side_values(session, request, catalog, "reform", reform),
     )
 
 
 def read_window_sides(
-    connection: Connection,
+    session: Session,
     request: EconomyRequest,
     catalog: EconomyCatalogRows,
     *,
@@ -320,6 +320,6 @@ def read_window_sides(
     """Read both sides' values, the baseline's first, for every year of a window."""
     return BudgetWindowInputs(
         catalog=catalog,
-        baseline=read_side_values(connection, request, catalog, "baseline", baseline),
-        reform=read_side_values(connection, request, catalog, "reform", reform),
+        baseline=read_side_values(session, request, catalog, "baseline", baseline),
+        reform=read_side_values(session, request, catalog, "reform", reform),
     )

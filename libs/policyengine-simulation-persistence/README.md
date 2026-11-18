@@ -35,8 +35,8 @@ Stage 12 library's `create_stage12_session_factory` builds its sessions on it.
 Attributes keep their values after the transaction commits, apart from one set
 to a SQL expression such as `func.now()`, which must be refreshed before the
 session closes. `bounded_session` runs one transaction on such a factory with a
-`statement_timeout` local to it, as `bounded_transaction` does for code still
-on connections. The classes declare
+`statement_timeout` local to it. `bounded_transaction` does the same on a Core
+connection; the service's stores no longer use it. The classes declare
 no relationships, so a session doesn't order inserts by foreign key: flush a
 referenced row before adding the row that names it.
 
@@ -118,16 +118,17 @@ call (`fail_unstarted_household_job`). Both updates apply only while the job
 is still `pending` with no call ID, and set `updated_at` themselves. A job
 naming a household, policy or catalog version that does not exist is refused
 by its foreign key with SQLSTATE `23503`; `HouseholdJobReferenceError` names
-the column. Each function takes a connection, so the caller chooses the
+the column. Each function takes an ORM session, so the caller chooses the
 transactions. `HouseholdJobStore` runs them as the Simulation Entrypoint
-does, each step in a transaction of its own: `read_inputs` reads the catalog
-version, the household and the policy's reform values together, and
-`create_job`, `record_call`, `fail_unstarted` and `read` each write or read
-the job. A `create_job` whose commit fails after the job's row was inserted
-raises `EconomyRecordOutcomeUnknownError`, as the economy and household
-report creates do: PostgreSQL may have applied the commit, so the job may
-exist. A failure while the insert runs leaves nothing written and is raised
-as it is. `HouseholdJobStore.from_engine` opens each with `bounded_transaction`,
+does, each step in a session and transaction of its own: `read_inputs` reads
+the catalog version, the household and the policy's reform values together,
+and `create_job`, `record_call`, `fail_unstarted` and `read` each write or
+read the job. `insert_household_job` flushes the new row, so its INSERT runs
+before the commit. A `create_job` whose commit fails after that flush raises
+`EconomyRecordOutcomeUnknownError`, as the economy and household report
+creates do: PostgreSQL may have applied the commit, so the job may exist. A
+failure during the flush leaves nothing written and is raised as it is.
+`HouseholdJobStore.from_session_factory` opens each with `bounded_session`,
 which commits when its block ends and sets `statement_timeout` with
 `set_config`, local to the transaction, so the database ends a statement that
 runs too long and the limit never stays on a pooled connection.
@@ -156,7 +157,8 @@ runs created for it. `economy_run_reads.py` reads a report, or a simulation,
 with its newest run's state.
 
 `EconomyRunStore` runs them as the Simulation Entrypoint does, each step in
-a transaction of its own: `read_report_inputs` reads the catalog version,
+an ORM session and transaction of its own (`from_session_factory` opens each
+with `bounded_session`): `read_report_inputs` reads the catalog version,
 model, region and dataset, and each side's policy and dynamic values
 together; `read_simulation_inputs` does the same for one simulation, and
 `read_budget_window_inputs` for a budget window's two sides; the writes and
@@ -246,7 +248,8 @@ Modal call ID (`household_simulation_run_row`,
 `insert_household_simulation_run`). A row naming one that does not exist
 is refused as `EconomyRecordReferenceError`.
 
-`HouseholdReportStore` runs the steps in transactions of their own:
+`HouseholdReportStore` runs the steps in ORM sessions and transactions of
+their own, opened by `from_session_factory` with `bounded_session`:
 `read_inputs` reads the catalog version for the .py version, the country's
 model, the stored household and each side's policy values together,
 raising `UnknownCatalogVersionError`, `UnknownHouseholdError` or

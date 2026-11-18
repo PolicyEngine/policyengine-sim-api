@@ -11,6 +11,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from policyengine_simulation_persistence import (
+    create_session_factory,
     create_simulation_engine,
     read_missing_table_privileges,
 )
@@ -93,6 +94,7 @@ class SimulationDatabase:
     def __init__(self, engine: Engine) -> None:
         """Use ``engine``, which connects as the simulation service's role."""
         self.engine = engine
+        self.session_factory = create_session_factory(engine)
         # One thread of its own: waiting for a pooled connection, connecting
         # and a dead socket aren't bounded by the database's time limit, so a
         # stalled database may hold this thread, but never more than this one,

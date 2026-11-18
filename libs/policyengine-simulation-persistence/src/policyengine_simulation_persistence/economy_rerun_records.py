@@ -34,7 +34,7 @@ re-run takes no lock.
 
 A forced re-run (C1 · 24's answer 3) is an extra run instead: its report
 run, or each year's report run of a budget window, and the simulation runs
-it calculates are marked ``forced``, which the Public API's one-unfailed-run
+it calculates are marked ``forced``, which API v1's one-unfailed-run
 indexes leave out, so it is created beside any run on the same versions,
 even one under way, and nothing ever joins it.
 
@@ -91,17 +91,17 @@ from policyengine_simulation_persistence.shared_rows import (
     find_or_insert_window_run,
 )
 from policyengine_simulation_persistence.tables import (
+    BudgetWindowRun,
+    ReportRun,
     ReportRunStatus,
-    budget_window_runs,
-    report_runs,
-    simulation_runs,
+    SimulationRun,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
     from uuid import UUID
 
-    from sqlalchemy import Column, Connection
+    from sqlalchemy.orm import InstrumentedAttribute, Session
 
     from policyengine_simulation_persistence.economy_run_records import (
         EconomyPopulation,
@@ -261,18 +261,18 @@ class RerunRecordDeletedError(LookupError):
     """
 
 
-def lock_reruns_of(connection: Connection, record_id: UUID) -> None:
+def lock_reruns_of(session: Session, record_id: UUID) -> None:
     """Wait for, then hold until the transaction ends, the record's re-run lock.
 
     It is a transaction-level advisory lock keyed on the record's ID, which
     any role may take: a second re-run of the same report waits here until
     the first one's transaction ends, then sees its run, which an economy
     or household report's re-run, or a budget window's, joins. A
-    simulation's re-run takes none, as the Public API's index on runs
+    simulation's re-run takes none, as API v1's index on runs
     lets one joinable run exist, and neither does a forced re-run, which
     nothing joins.
     """
-    connection.execute(
+    session.execute(
         select(
             func.pg_advisory_xact_lock(
                 func.hashtextextended(literal(f"rerun:{record_id}"), 0)
@@ -281,9 +281,7 @@ def lock_reruns_of(connection: Connection, record_id: UUID) -> None:
     )
 
 
-def insert_report_rerun(
-    connection: Connection, rerun: NewReportRerun
-) -> FoundReportRun:
+def insert_report_rerun(session: Session, rerun: NewReportRerun) -> FoundReportRun:
     """Join the report's run on the re-run's versions, or create it, pending.
 
     A single-year report's re-run (the service re-runs a budget window with
@@ -306,9 +304,9 @@ def insert_report_rerun(
     """
     versions = rerun.versions
     if not rerun.forced:
-        lock_reruns_of(connection, rerun.report_id)
+        lock_reruns_of(session, rerun.report_id)
         joined = find_joinable_report_run(
-            connection,
+            session,
             report_id=rerun.report_id,
             country_package_version=versions.country_package_version,
             policyengine_version=versions.policyengine_version,
@@ -319,20 +317,20 @@ def insert_report_rerun(
         run_id=rerun.run_id, report_id=rerun.report_id, versions=versions
     )
     sides: dict[Side, RerunSide] = {"baseline": rerun.baseline, "reform": rerun.reform}
-    with _record_checked(report_runs.c.report_id), references_checked():
+    with _record_checked(ReportRun.report_id), references_checked():
         if rerun.forced:
             for side in sides.values():
                 insert_simulation_run(
-                    connection,
+                    session,
                     run_id=side.simulation_run_id,
                     simulation_id=side.simulation_id,
                     population=rerun.population,
                     versions=versions,
                     forced=True,
                 )
-            return _insert_forced_report_run(connection, row, sides)
+            return _insert_forced_report_run(session, row, sides)
         found, _ = find_or_insert_report_run_on_sides(
-            connection,
+            session,
             row,
             {
                 name: simulation_run_row(
@@ -367,7 +365,7 @@ def _rerun_report_run_row(
 
 
 def _insert_forced_report_run(
-    connection: Connection,
+    session: Session,
     row: dict[str, Any],
     side_runs: Mapping[Side, RerunSide | HouseholdRerunSide],
 ) -> FoundReportRun:
@@ -375,8 +373,8 @@ def _insert_forced_report_run(
     reform = side_runs.get("reform")
     baseline_run_id = side_runs["baseline"].simulation_run_id
     reform_run_id = None if reform is None else reform.simulation_run_id
-    connection.execute(
-        insert(report_runs).values(
+    session.execute(
+        insert(ReportRun).values(
             {
                 **row,
                 "baseline_simulation_run_id": baseline_run_id,
@@ -394,9 +392,7 @@ def _insert_forced_report_run(
     )
 
 
-def insert_window_rerun(
-    connection: Connection, rerun: NewWindowRerun
-) -> FoundBudgetWindow:
+def insert_window_rerun(session: Session, rerun: NewWindowRerun) -> FoundBudgetWindow:
     """Join the window's run on the re-run's versions, or create it, pending.
 
     Unforced (a keyed window's re-run), take the report's re-run lock and
@@ -437,20 +433,20 @@ def insert_window_rerun(
         recalculate=rerun.recalculate,
     )
     with (
-        _record_checked(budget_window_runs.c.report_id, report_runs.c.report_id),
+        _record_checked(BudgetWindowRun.report_id, ReportRun.report_id),
         references_checked(),
     ):
         if rerun.recalculate:
             # First, so a report deleted after its reads is told apart from
             # a year's simulation deleted with it.
-            connection.execute(insert(budget_window_runs).values(row))
+            session.execute(insert(BudgetWindowRun).values(row))
             window_run = FoundWindowRun(
                 id=rerun.window_run_id, inserted=True, status=ReportRunStatus.PENDING
             )
         else:
-            lock_reruns_of(connection, rerun.report_id)
+            lock_reruns_of(session, rerun.report_id)
             joined = find_joinable_window_run(
-                connection,
+                session,
                 report_id=rerun.report_id,
                 tax_benefit_model_version_id=(
                     rerun.population.tax_benefit_model_version_id
@@ -460,7 +456,7 @@ def insert_window_rerun(
             window_run = (
                 joined
                 if joined is not None
-                else find_or_insert_window_run(connection, row)
+                else find_or_insert_window_run(session, row)
             )
             if not window_run.inserted:
                 return FoundBudgetWindow(
@@ -468,7 +464,7 @@ def insert_window_rerun(
                     report_inserted=False,
                     window_run=window_run,
                     years=stored_window_years(
-                        connection,
+                        session,
                         window_run.id,
                         {
                             (year.year, side): year.simulation_ids[side]
@@ -478,7 +474,7 @@ def insert_window_rerun(
                     ),
                 )
         found_years = insert_window_years(
-            connection,
+            session,
             years,
             report_id=rerun.report_id,
             window_run_id=rerun.window_run_id,
@@ -495,7 +491,7 @@ def insert_window_rerun(
 
 
 def insert_household_report_rerun(
-    connection: Connection, rerun: NewHouseholdReportRerun
+    session: Session, rerun: NewHouseholdReportRerun
 ) -> FoundReportRun:
     """Join the household report's run on the re-run's versions, or create it.
 
@@ -521,20 +517,20 @@ def insert_household_report_rerun(
     )
     sides = rerun.named_sides
     if not rerun.forced:
-        lock_reruns_of(connection, rerun.report_id)
+        lock_reruns_of(session, rerun.report_id)
         joined = find_joinable_report_run(
-            connection,
+            session,
             report_id=rerun.report_id,
             country_package_version=versions.country_package_version,
             policyengine_version=versions.policyengine_version,
         )
         if joined is not None:
             return joined
-    with _record_checked(report_runs.c.report_id), references_checked():
+    with _record_checked(ReportRun.report_id), references_checked():
         if rerun.forced:
             for side in sides.values():
                 insert_household_simulation_run(
-                    connection,
+                    session,
                     run_id=side.simulation_run_id,
                     simulation_id=side.simulation_id,
                     year=rerun.year,
@@ -542,9 +538,9 @@ def insert_household_report_rerun(
                     versions=versions,
                     forced=True,
                 )
-            return _insert_forced_report_run(connection, row, sides)
+            return _insert_forced_report_run(session, row, sides)
         found, _ = find_or_insert_report_run_on_sides(
-            connection,
+            session,
             row,
             {
                 name: household_simulation_run_row(
@@ -561,7 +557,7 @@ def insert_household_report_rerun(
 
 
 def insert_simulation_rerun(
-    connection: Connection, rerun: NewSimulationRerun
+    session: Session, rerun: NewSimulationRerun
 ) -> FoundSimulationRun:
     """Join the simulation's run on the re-run's versions, or create it, pending.
 
@@ -572,9 +568,9 @@ def insert_simulation_rerun(
     Raise RerunRecordDeletedError or EconomyRecordReferenceError as
     ``insert_report_rerun`` does.
     """
-    with _record_checked(simulation_runs.c.simulation_id), references_checked():
+    with _record_checked(SimulationRun.simulation_id), references_checked():
         return find_or_insert_simulation_run(
-            connection,
+            session,
             simulation_run_row(
                 run_id=rerun.run_id,
                 simulation_id=rerun.simulation_id,
@@ -585,17 +581,17 @@ def insert_simulation_rerun(
 
 
 @contextmanager
-def _record_checked(*own_keys: Column[Any]) -> Iterator[None]:
+def _record_checked(*own_keys: InstrumentedAttribute[Any]) -> Iterator[None]:
     """Turn a refusal of a new run's key to the record into RerunRecordDeletedError.
 
-    ``own_keys`` are those keys' columns; a refusal of any other row
-    propagates unchanged.
+    ``own_keys`` are those keys' mapped attributes; a refusal of any other
+    row propagates unchanged.
     """
     try:
         yield
     except EconomyRecordReferenceError as error:
         refused = (error.table_name, error.column_name)
-        if refused in {(key.table.name, key.key) for key in own_keys}:
+        if refused in {(key.class_.__tablename__, key.key) for key in own_keys}:
             raise RerunRecordDeletedError from None
         raise
 
