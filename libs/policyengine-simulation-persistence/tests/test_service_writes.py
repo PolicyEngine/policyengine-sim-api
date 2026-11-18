@@ -13,6 +13,7 @@ import pytest
 from conftest import (
     act_as_the_service,
     connection_as_the_service,
+    in_session,
     rolled_back_transaction,
 )
 from policyengine_simulation_persistence import (
@@ -34,7 +35,7 @@ def test_the_service_role_holds_every_privilege_the_service_needs(
     public_api_database_url,
 ) -> None:
     with connection_as_the_service(public_api_database_url) as connection:
-        assert missing_table_privileges(connection) == []
+        assert in_session(connection, missing_table_privileges) == []
 
 
 def test_the_service_role_creates_and_reads_a_row_in_every_table_it_writes(

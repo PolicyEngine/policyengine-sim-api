@@ -5,14 +5,15 @@ declarative base and ``MetaData``. One base can't hold them all: the read-only
 models in ``InputBase`` and the key targets in ``ReferencedBase`` describe some
 of the same tables, and a ``MetaData`` holds one table of each name. Keys
 between the groups name the other group's mapped attribute, such as
-``ReportRun.id``.
+``ReportRun.id``. A fifth base, ``CatalogBase``, maps the PostgreSQL catalog
+tables the privilege check reads.
 
-Every ``MetaData`` names the ``public`` schema, so statements reach API v1's
-tables whatever the role's ``search_path``. A ``MetaData`` holds a group's
-tables once the module declaring them is imported, so each of those modules
-exports its own: ``service_metadata`` from ``tables``, ``referenced_metadata``
-from ``referenced_tables``, ``input_metadata`` from ``input_tables`` and
-``result_metadata`` from ``result_tables``.
+The four groups' ``MetaData`` name the ``public`` schema, so statements reach
+API v1's tables whatever the role's ``search_path``. A ``MetaData`` holds a
+group's tables once the module declaring them is imported, so each of those
+modules exports its own: ``service_metadata`` from ``tables``,
+``referenced_metadata`` from ``referenced_tables``, ``input_metadata`` from
+``input_tables`` and ``result_metadata`` from ``result_tables``.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import MappedColumn
 
 TABLE_SCHEMA: Final = "public"
+CATALOG_SCHEMA: Final = "pg_catalog"
 
 
 class _TableModel:
@@ -62,6 +64,12 @@ class ResultBase(_TableModel, DeclarativeBase):
     """Base of the result tables the Modal worker role inserts into."""
 
     metadata = MetaData(schema=TABLE_SCHEMA)
+
+
+class CatalogBase(_TableModel, DeclarativeBase):
+    """Base of the PostgreSQL catalog tables the privilege check reads."""
+
+    metadata = MetaData(schema=CATALOG_SCHEMA)
 
 
 def enum_type(values: type[StrEnum], name: str) -> Enum:

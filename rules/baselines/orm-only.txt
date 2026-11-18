@@ -4,40 +4,6 @@
 # C1 · 33e convert the code and remove its entries; tests/test_orm_only.py in
 # projects/policyengine-simulation-entry fails on a finding missing from here
 # and on an entry that no longer matches one.
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core engine or connection: engine.connect()
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core engine or connection: sqlalchemy.Connection
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core engine or connection: sqlalchemy.Engine
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: _pg_attribute
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: _pg_attribute
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: _pg_attribute
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: _pg_attribute
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: _pg_attribute
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: _pg_attribute
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: _pg_class
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: _pg_class
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: _pg_class
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: _pg_class
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: _pg_namespace
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: _pg_namespace
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: _pg_namespace
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table access: result_metadata.tables
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('attisdropped')
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('attname')
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('attnum')
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('attrelid')
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('column_name', ...)
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('nspname')
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('oid')
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('oid')
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('privilege', ...)
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('relkind')
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('relname')
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('relnamespace')
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('table_name', ...)
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: column('table_name', ...)
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: table('pg_attribute', ...)
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: table('pg_class', ...)
-libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core table declaration: table('pg_namespace', ...)
 libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_inputs.py: Core engine or connection: sqlalchemy.Connection
 libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core engine or connection: sqlalchemy.Connection
 libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/economy_rerun_records.py: Core table access: budget_window_runs

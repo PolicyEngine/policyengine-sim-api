@@ -11,6 +11,7 @@ from policyengine_simulation_persistence import (
     MODAL_WORKER_UPDATABLE_COLUMNS,
     SERVICE_TABLE_PRIVILEGES,
     SERVICE_UPDATABLE_COLUMNS,
+    create_session_factory,
     create_simulation_engine,
     missing_table_privileges,
     read_missing_table_privileges,
@@ -18,9 +19,15 @@ from policyengine_simulation_persistence import (
     service_metadata,
 )
 from policyengine_simulation_persistence import access as access_module
+from policyengine_simulation_persistence.catalog_tables import (
+    PgAttribute,
+    PgClass,
+    PgNamespace,
+)
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
 PROOF_FIXTURES = (
     Path(__file__).resolve().parents[3]
@@ -231,8 +238,8 @@ def _grant_every_required_privilege(database, *, except_for=()):
 def _missing_privileges_as_the_service(database):
     engine = create_simulation_engine(database.service_url)
     try:
-        with engine.connect() as connection:
-            return missing_table_privileges(connection)
+        with create_session_factory(engine).begin() as session:
+            return missing_table_privileges(session)
     finally:
         engine.dispose()
 
@@ -342,9 +349,9 @@ def test_the_check_names_what_a_role_lacks_of_another_roles_lists(
     )
     engine = create_simulation_engine(disposable_database.service_url)
     try:
-        with engine.connect() as connection:
+        with create_session_factory(engine).begin() as session:
             missing = missing_table_privileges(
-                connection,
+                session,
                 table_privileges={
                     "report_runs": frozenset({"SELECT"}),
                     "poverty": frozenset({"INSERT"}),
@@ -355,6 +362,112 @@ def test_the_check_names_what_a_role_lacks_of_another_roles_lists(
         engine.dispose()
 
     assert missing == ["INSERT on poverty", "UPDATE (started_at) on report_runs"]
+
+
+@pytest.mark.postgres
+def test_a_partitioned_table_counts_as_the_table(disposable_database):
+    """API v1 could partition a table; its grants still count."""
+    other_tables = [name for name in SERVICE_TABLE_PRIVILEGES if name != "reports"]
+    _create_tables(disposable_database, other_tables)
+    _grant(
+        disposable_database,
+        ["CREATE TABLE public.reports (id uuid) PARTITION BY HASH (id)"],
+    )
+    _grant_every_required_privilege(disposable_database)
+
+    assert _missing_privileges_as_the_service(disposable_database) == []
+
+
+@pytest.mark.postgres
+def test_a_view_of_a_required_tables_name_doesnt_count(disposable_database):
+    """Grants on a view say nothing about the table the role needs."""
+    other_tables = [name for name in SERVICE_TABLE_PRIVILEGES if name != "reports"]
+    _create_tables(disposable_database, other_tables)
+    _grant(
+        disposable_database,
+        ["CREATE VIEW public.reports AS SELECT gen_random_uuid() AS id"],
+    )
+    _grant_every_required_privilege(disposable_database)
+
+    assert _missing_privileges_as_the_service(disposable_database) == [
+        "INSERT on reports",
+        "SELECT on reports",
+    ]
+
+
+@pytest.mark.postgres
+def test_a_dropped_column_lacks_its_privilege(disposable_database):
+    _create_tables(disposable_database, SERVICE_TABLE_PRIVILEGES)
+    _grant_every_required_privilege(disposable_database)
+    _grant(
+        disposable_database,
+        ["ALTER TABLE public.report_runs DROP COLUMN modal_call_id"],
+    )
+
+    assert _missing_privileges_as_the_service(disposable_database) == [
+        "UPDATE (modal_call_id) on report_runs",
+    ]
+
+
+@pytest.mark.postgres
+def test_a_system_column_isnt_a_column_the_role_can_update(disposable_database):
+    """PostgreSQL numbers system columns below zero; they can't be granted."""
+    _grant(
+        disposable_database,
+        [
+            "CREATE TABLE public.report_runs (id uuid PRIMARY KEY)",
+            f"GRANT UPDATE ON public.report_runs TO {SERVICE_TEST_ROLE}",
+        ],
+    )
+    engine = create_simulation_engine(disposable_database.service_url)
+    try:
+        with create_session_factory(engine).begin() as session:
+            missing = missing_table_privileges(
+                session,
+                table_privileges={"report_runs": frozenset({"UPDATE"})},
+                updatable_columns={"report_runs": frozenset({"id", "xmin"})},
+            )
+    finally:
+        engine.dispose()
+
+    assert missing == ["UPDATE (xmin) on report_runs"]
+
+
+@pytest.mark.postgres
+def test_the_catalog_classes_read_postgresqls_catalog(disposable_database):
+    """Each mapped column of the catalog classes exists under its own name."""
+    _grant(
+        disposable_database,
+        ["CREATE TABLE public.reports (id uuid PRIMARY KEY, label text)"],
+    )
+    engine = create_simulation_engine(disposable_database.service_url)
+    try:
+        with create_session_factory(engine).begin() as session:
+            table_row = session.execute(
+                select(PgClass.relname, PgClass.relkind, PgNamespace.nspname)
+                .join(PgNamespace, PgNamespace.oid == PgClass.relnamespace)
+                .where(PgClass.relname == "reports")
+            ).one()
+            column_rows = session.execute(
+                select(PgAttribute.attname, PgAttribute.attisdropped)
+                .join(PgClass, PgClass.oid == PgAttribute.attrelid)
+                .where(PgClass.relname == "reports", PgAttribute.attnum > 0)
+                .order_by(PgAttribute.attnum)
+            ).all()
+    finally:
+        engine.dispose()
+
+    assert tuple(table_row) == ("reports", "r", "public")
+    assert [tuple(row) for row in column_rows] == [("id", False), ("label", False)]
+
+
+def test_the_catalog_classes_name_postgresqls_catalog_schema() -> None:
+    for model, table_name in (
+        (PgClass, "pg_class"),
+        (PgNamespace, "pg_namespace"),
+        (PgAttribute, "pg_attribute"),
+    ):
+        assert model.__table__.fullname == f"pg_catalog.{table_name}"
 
 
 def _put_a_decoy_schema_first(database):
@@ -480,7 +593,7 @@ def test_the_bounded_check_reads_the_privileges_and_leaves_no_timeout_behind(
     engine = _service_engine_with_one_connection(disposable_database)
     try:
         missing = read_missing_table_privileges(
-            engine, statement_timeout_milliseconds=2000
+            create_session_factory(engine), statement_timeout_milliseconds=2000
         )
         timeout_afterwards = _statement_timeout(engine)
     finally:
@@ -491,18 +604,56 @@ def test_the_bounded_check_reads_the_privileges_and_leaves_no_timeout_behind(
 
 
 @pytest.mark.postgres
+def test_the_bounded_check_runs_every_statement_in_one_session(
+    disposable_database, monkeypatch
+):
+    """The limit is set on the session the check itself then reads through."""
+    sessions_used = []
+
+    def record_session(session, **keywords):
+        sessions_used.append(
+            (
+                session,
+                session.execute(
+                    select(func.current_setting("statement_timeout"))
+                ).scalar_one(),
+            )
+        )
+        return original_check(session, **keywords)
+
+    original_check = access_module.missing_table_privileges
+    monkeypatch.setattr(access_module, "missing_table_privileges", record_session)
+    _create_tables(disposable_database, SERVICE_TABLE_PRIVILEGES)
+    _grant_every_required_privilege(disposable_database)
+    engine = _service_engine_with_one_connection(disposable_database)
+    try:
+        missing = read_missing_table_privileges(
+            create_session_factory(engine), statement_timeout_milliseconds=2000
+        )
+    finally:
+        engine.dispose()
+
+    assert missing == []
+    [(session, timeout)] = sessions_used
+    assert isinstance(session, Session)
+    assert timeout == "2s"
+
+
+@pytest.mark.postgres
 def test_the_database_ends_a_bounded_check_that_runs_too_long(
     disposable_database, monkeypatch
 ):
-    def sleep_instead(connection):
-        connection.execute(select(func.pg_sleep(2)))
+    def sleep_instead(session):
+        session.execute(select(func.pg_sleep(2)))
         return []
 
     monkeypatch.setattr(access_module, "missing_table_privileges", sleep_instead)
     engine = _service_engine_with_one_connection(disposable_database)
     try:
         with pytest.raises(OperationalError, match="statement timeout"):
-            read_missing_table_privileges(engine, statement_timeout_milliseconds=100)
+            read_missing_table_privileges(
+                create_session_factory(engine), statement_timeout_milliseconds=100
+            )
         timeout_afterwards = _statement_timeout(engine)
     finally:
         engine.dispose()

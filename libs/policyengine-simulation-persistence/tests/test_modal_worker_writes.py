@@ -18,6 +18,7 @@ import pytest
 from conftest import (
     act_as_the_modal_worker,
     act_as_the_service,
+    in_session,
     rolled_back_transaction,
 )
 from policyengine_simulation_persistence import (
@@ -51,8 +52,9 @@ def test_the_modal_worker_role_holds_every_privilege_the_modal_calls_need(
         act_as_the_modal_worker(connection)
 
         assert (
-            missing_table_privileges(
+            in_session(
                 connection,
+                missing_table_privileges,
                 table_privileges=MODAL_WORKER_TABLE_PRIVILEGES,
                 updatable_columns=MODAL_WORKER_UPDATABLE_COLUMNS,
             )
