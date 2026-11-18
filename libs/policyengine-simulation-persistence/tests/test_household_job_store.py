@@ -1,27 +1,35 @@
 """The household calculation store: each read and write in a transaction of its own.
 
-These run against a database the Public API's own v2 migration chain built
-(``PUBLIC_API_SCHEMA_DATABASE_URL``). The store opens each transaction
-through a function it is given; here each is a savepoint of one connection,
-acting as the simulation service's role, which the test rolls back.
+These run against a database API v1's own v2 migration chain built
+(``PUBLIC_API_SCHEMA_DATABASE_URL``). The store opens each transaction as an
+ORM session from the factory it is given; here each session's transaction is
+a savepoint of one connection, acting as the simulation service's role,
+which the test rolls back.
 """
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import (
+    act_as_the_service,
+    rolled_back_transaction,
+    session_factory_on,
+    simulation_engine,
+)
 from policyengine_simulation_persistence import (
+    EconomyRecordOutcomeUnknownError,
+    HouseholdJobReferenceError,
     HouseholdJobStatus,
     HouseholdJobStore,
     NewHouseholdJob,
     UnknownCatalogVersionError,
     UnknownHouseholdError,
     UnknownPolicyError,
+    create_session_factory,
 )
 from public_api_rows import (
     StoredValue,
@@ -30,14 +38,19 @@ from public_api_rows import (
     insert_model,
     insert_policy,
 )
+from sqlalchemy.exc import OperationalError
+from transaction_fakes import (
+    CommitFailingTransaction,
+    FlushFailingTransaction,
+    RecordingSession,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from sqlalchemy import Connection
 
 pytestmark = pytest.mark.public_api_schema
 
+STATEMENT_TIMEOUT_MILLISECONDS = 5_000
 POLICYENGINE_VERSION = "6.17.1"
 CTC_AMOUNT = "gov.irs.credits.ctc.amount.base[0].amount"
 DOCUMENT = {
@@ -54,13 +67,10 @@ DOCUMENT = {
 
 def _store_on(connection: Connection) -> HouseholdJobStore:
     """Return a store whose transactions are savepoints of ``connection``."""
-
-    @contextmanager
-    def savepoint() -> Iterator[Connection]:
-        with connection.begin_nested():
-            yield connection
-
-    return HouseholdJobStore(savepoint)
+    return HouseholdJobStore.from_session_factory(
+        session_factory_on(connection),
+        statement_timeout_milliseconds=STATEMENT_TIMEOUT_MILLISECONDS,
+    )
 
 
 def test_the_inputs_are_read_together(public_api_database_url) -> None:
@@ -225,3 +235,59 @@ def test_a_refused_call_fails_its_job(public_api_database_url) -> None:
         HouseholdJobStatus.FAILED,
         "Modal refused the call.",
     )
+
+
+def _job_naming_no_rows() -> NewHouseholdJob:
+    """Return a job whose household and catalog version are random IDs."""
+    return NewHouseholdJob(
+        id=uuid4(),
+        country="us",
+        household_id=uuid4(),
+        policy_id=None,
+        year=2026,
+        request_data={"country": "us"},
+        tax_benefit_model_version_id=uuid4(),
+        country_package_version="2.2.1",
+        policyengine_version=POLICYENGINE_VERSION,
+    )
+
+
+def test_a_job_whose_commit_fails_may_have_been_created() -> None:
+    """PostgreSQL may have applied the commit before the connection failed."""
+    session = RecordingSession()
+    store = HouseholdJobStore(lambda: CommitFailingTransaction(session))
+
+    with pytest.raises(EconomyRecordOutcomeUnknownError) as raised:
+        store.create_job(_job_naming_no_rows())
+
+    assert isinstance(raised.value.__cause__, OperationalError)
+    assert session.added
+    assert session.flushed
+
+
+def test_a_job_whose_flush_fails_was_not_created() -> None:
+    store = HouseholdJobStore(FlushFailingTransaction)
+
+    with pytest.raises(OperationalError):
+        store.create_job(_job_naming_no_rows())
+
+
+def test_a_job_naming_missing_rows_is_refused_before_its_commit(
+    public_api_database_url,
+) -> None:
+    """The keys refuse the insert itself, in a transaction of its own.
+
+    A key checked only at commit would make the refusal look like a lost
+    commit; this database's keys refuse the statement.
+    """
+    engine = simulation_engine(public_api_database_url)
+    try:
+        store = HouseholdJobStore.from_session_factory(
+            create_session_factory(engine),
+            statement_timeout_milliseconds=STATEMENT_TIMEOUT_MILLISECONDS,
+        )
+
+        with pytest.raises(HouseholdJobReferenceError):
+            store.create_job(_job_naming_no_rows())
+    finally:
+        engine.dispose()

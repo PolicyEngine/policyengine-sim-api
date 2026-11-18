@@ -23,6 +23,7 @@ from uuid import uuid4
 import pytest
 from budget_window_database import BudgetWindowSeeder, SeededWindow
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
+from policyengine_simulation_persistence.engine import create_session_factory
 from policyengine_stage12_persistence import (
     BUDGET_WINDOW_MAX_RUNNING_YEARS,
     ActiveRun,
@@ -81,12 +82,8 @@ class RecordingStarter:
 
 
 @pytest.fixture
-def store() -> Iterator[BudgetWindowStore]:
-    window_store = BudgetWindowStore(worker_database_url())
-    try:
-        yield window_store
-    finally:
-        window_store.engine.dispose()
+def store() -> BudgetWindowStore:
+    return BudgetWindowStore(worker_database_url())
 
 
 @pytest.fixture
@@ -327,7 +324,8 @@ def test_a_refused_start_names_its_cause_on_its_own_simulations(
 def test_the_service_role_starts_and_fails_a_window(windows, window) -> None:
     # The simulation service starts a window's first years with the same
     # store, as its own role, and fails the window when Modal refuses one.
-    service_store = BudgetWindowStore(engine=_engine_as_the_service(windows))
+    engine = _engine_as_the_service(windows)
+    service_store = BudgetWindowStore(session_factory=create_session_factory(engine))
     try:
         starter = RecordingStarter(refused=_run_ids(window, [2028]))
 
@@ -335,7 +333,7 @@ def test_the_service_role_starts_and_fails_a_window(windows, window) -> None:
             window.window_run_id, now=LATER, start_year=starter
         )
     finally:
-        service_store.engine.dispose()
+        engine.dispose()
 
     assert advance.started_years == (2026, 2027)
     assert windows.window_row(window)["status"] == "failed"
@@ -599,12 +597,8 @@ def test_a_window_whose_year_changed_recently_is_not_idle(
 
 
 @pytest.fixture
-def run_store() -> Iterator[ReportRunStore]:
-    report_run_store = ReportRunStore(worker_database_url())
-    try:
-        yield report_run_store
-    finally:
-        report_run_store.engine.dispose()
+def run_store() -> ReportRunStore:
+    return ReportRunStore(worker_database_url())
 
 
 def _listed_report_runs(run_store: ReportRunStore) -> dict[UUID, ActiveRun]:

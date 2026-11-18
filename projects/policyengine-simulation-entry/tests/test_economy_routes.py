@@ -559,6 +559,40 @@ def test_a_configured_service_builds_economy_submissions_without_connecting():
     assert isinstance(submissions, EconomySubmissionService)
 
 
+def test_the_economy_store_runs_in_sessions_on_the_service_database(monkeypatch):
+    """Each operation is a session on the database's engine, with the same limit."""
+    stores_built: list[tuple[object, int]] = []
+
+    def build_store(session_factory, *, statement_timeout_milliseconds):
+        stores_built.append((session_factory, statement_timeout_milliseconds))
+        return object()
+
+    monkeypatch.setattr(
+        app_module.EconomyRunStore,
+        "from_session_factory",
+        build_store,
+        raising=False,
+    )
+    database = SimulationDatabase.from_url(DATABASE_URL)
+    try:
+        app_module.economy_submissions_for(
+            make_settings(
+                simulation_database_url=DATABASE_URL,
+                v2_modal_environment="staging",
+            ),
+            database,
+        )
+    finally:
+        database.dispose()
+
+    assert stores_built == [
+        (
+            database.session_factory,
+            app_module.ECONOMY_STATEMENT_TIMEOUT_MILLISECONDS,
+        )
+    ]
+
+
 @pytest.mark.parametrize(
     "settings_changes",
     [

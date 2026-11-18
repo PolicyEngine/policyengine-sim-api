@@ -11,13 +11,17 @@ a transaction rolled back afterwards.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import (
+    act_as_the_service,
+    economy_store_on,
+    in_session,
+    rolled_back_transaction,
+)
 from economy_rows import (
     CURRENT_LAW,
     LATER_POLICYENGINE_VERSION,
@@ -32,16 +36,17 @@ from economy_rows import (
     insert_simulation_run,
 )
 from policyengine_simulation_persistence import (
+    BudgetWindowRun,
     EconomyPopulation,
     EconomyRecordReferenceError,
     EconomyReportDefinition,
     EconomyRequest,
-    EconomyRunStore,
     FoundBudgetWindow,
     KeyedBudgetWindow,
     KeyedWindowYear,
     NewWindowRerun,
     ProposedSide,
+    ReportRun,
     ReportRunStatus,
     ReportRunTrigger,
     RerunRecordDeletedError,
@@ -49,17 +54,13 @@ from policyengine_simulation_persistence import (
     SimulationStatus,
     WindowRerunYear,
     WindowYearDefinition,
-    budget_window_runs,
     find_or_create_budget_window,
     insert_window_rerun,
     read_report_definition,
-    report_runs,
 )
 from sqlalchemy import insert, text
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from sqlalchemy import Connection
 
 pytestmark = pytest.mark.public_api_schema
@@ -125,7 +126,7 @@ def _insert_window_rows(
     )
     window_run_id = uuid4()
     connection.execute(
-        insert(budget_window_runs).values(
+        insert(BudgetWindowRun).values(
             id=window_run_id,
             report_id=report_id,
             tax_benefit_model_version_id=economy.catalog.version_id,
@@ -135,7 +136,7 @@ def _insert_window_rows(
         )
     )
     connection.execute(
-        insert(report_runs),
+        insert(ReportRun),
         [
             {
                 "id": window_year.report_run_id,
@@ -206,17 +207,6 @@ def _stored_window(
     return report
 
 
-def _store_on(connection: Connection) -> EconomyRunStore:
-    """Return a store whose transactions are savepoints of ``connection``."""
-
-    @contextmanager
-    def savepoint() -> Iterator[Connection]:
-        with connection.begin_nested():
-            yield connection
-
-    return EconomyRunStore(savepoint)
-
-
 def _row(connection: Connection, table_name: str, row_id: UUID) -> dict:
     row = connection.execute(
         text(f"SELECT * FROM public.{table_name} WHERE id = :id"),  # noqa: S608  # fixed table names
@@ -260,7 +250,7 @@ def test_a_budget_windows_definition_names_each_years_simulations(
         stored = _stored_window(connection, economy)
         act_as_the_service(connection)
 
-        definition = read_report_definition(connection, stored.report_id)
+        definition = in_session(connection, read_report_definition, stored.report_id)
 
     assert definition is not None
     assert (definition.kind, definition.year, definition.budget_window_size) == (
@@ -297,9 +287,9 @@ def test_a_definitions_years_come_from_the_newest_window_run(
             ),
         )
         act_as_the_service(connection)
-        insert_window_rerun(connection, replace(rerun, years=tuple(years)))
+        in_session(connection, insert_window_rerun, replace(rerun, years=tuple(years)))
 
-        definition = read_report_definition(connection, stored.report_id)
+        definition = in_session(connection, read_report_definition, stored.report_id)
 
     assert definition is not None
     assert [year.baseline_simulation_id for year in definition.window_years] == [
@@ -320,7 +310,7 @@ def test_a_forced_window_rerun_creates_a_window_run_and_each_years_new_runs(
         rerun = _window_rerun_of(stored, later, recalculate=True)
         act_as_the_service(connection)
 
-        found = insert_window_rerun(connection, rerun)
+        found = in_session(connection, insert_window_rerun, rerun)
         window_run = _row(connection, "budget_window_runs", rerun.window_run_id)
         year_runs = [
             _row(connection, "report_runs", year.report_run_id) for year in rerun.years
@@ -401,8 +391,9 @@ def _keyed_window(connection: Connection, economy: EconomyCatalog) -> FoundBudge
         budget_window_size=len(WINDOW_YEARS),
         spm=None,
     )
-    return find_or_create_budget_window(
+    return in_session(
         connection,
+        find_or_create_budget_window,
         KeyedBudgetWindow(
             definition=definition,
             report_id=uuid4(),
@@ -465,7 +456,9 @@ def test_an_unforced_window_rerun_joins_a_keyed_windows_run_on_its_versions(
         act_as_the_service(connection)
         found = _keyed_window(connection, economy)
 
-        joined = insert_window_rerun(connection, _rerun_of_keyed(found, economy))
+        joined = in_session(
+            connection, insert_window_rerun, _rerun_of_keyed(found, economy)
+        )
 
     assert (joined.window_run.id, joined.window_run.inserted) == (
         found.window_run.id,
@@ -495,7 +488,7 @@ def test_an_unforced_window_rerun_after_a_failed_run_names_its_years_runs(
         act_as_the_service(connection)
         rerun = _rerun_of_keyed(found, economy)
 
-        created = insert_window_rerun(connection, rerun)
+        created = in_session(connection, insert_window_rerun, rerun)
         window_run = _row(connection, "budget_window_runs", rerun.window_run_id)
 
     assert (created.window_run.id, created.window_run.inserted) == (
@@ -517,7 +510,7 @@ def test_a_window_reruns_inputs_are_read_on_the_current_catalog_version(
         _stored_window(connection, economy)
         act_as_the_service(connection)
 
-        inputs = _store_on(connection).read_window_rerun_inputs(
+        inputs = economy_store_on(connection).read_window_rerun_inputs(
             LATER_REQUEST, baseline=CURRENT_LAW, reform=CURRENT_LAW
         )
 
@@ -536,7 +529,7 @@ def test_a_window_rerun_is_created_through_the_store(public_api_database_url) ->
         stored = _stored_window(connection, economy)
         rerun = _window_rerun_of(stored, later)
         act_as_the_service(connection)
-        store = _store_on(connection)
+        store = economy_store_on(connection)
 
         created = store.create_window_rerun(rerun)
         joined = store.create_window_rerun(_window_rerun_of(stored, later))
@@ -595,7 +588,7 @@ def test_a_year_naming_no_reform_is_left_out_of_a_windows_definition(
         )
         act_as_the_service(connection)
 
-        definition = read_report_definition(connection, stored.report_id)
+        definition = in_session(connection, read_report_definition, stored.report_id)
 
     assert definition is not None
     assert [year.year for year in definition.window_years] == [2026, 2028]
@@ -616,20 +609,25 @@ def test_a_window_rerun_of_a_deleted_report_or_year_simulation_is_refused(
         )
 
         with pytest.raises(RerunRecordDeletedError), connection.begin_nested():
-            insert_window_rerun(connection, replace(rerun, report_id=uuid4()))
+            in_session(
+                connection, insert_window_rerun, replace(rerun, report_id=uuid4())
+            )
         # A report deleted with a year's simulation: the window run is
         # inserted first, so the report's own key refuses it.
         with pytest.raises(RerunRecordDeletedError), connection.begin_nested():
-            insert_window_rerun(
+            in_session(
                 connection,
+                insert_window_rerun,
                 replace(rerun, report_id=uuid4(), years=(*rerun.years[:2], gone_year)),
             )
         with (
             pytest.raises(EconomyRecordReferenceError) as refused,
             connection.begin_nested(),
         ):
-            insert_window_rerun(
-                connection, replace(rerun, years=(*rerun.years[:2], gone_year))
+            in_session(
+                connection,
+                insert_window_rerun,
+                replace(rerun, years=(*rerun.years[:2], gone_year)),
             )
 
     assert (refused.value.table_name, refused.value.column_name) == (
@@ -654,7 +652,7 @@ def test_a_forced_window_rerun_is_an_extra_run_beside_any_run_on_its_versions(
         )
         act_as_the_service(connection)
 
-        insert_window_rerun(connection, rerun)
+        in_session(connection, insert_window_rerun, rerun)
         window_run = _row(connection, "budget_window_runs", rerun.window_run_id)
         year_runs = [
             _row(connection, "report_runs", year.report_run_id) for year in rerun.years

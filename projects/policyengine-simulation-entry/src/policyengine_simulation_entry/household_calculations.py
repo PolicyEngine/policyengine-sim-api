@@ -9,7 +9,10 @@ service:
    worker's .py version, the stored household and the policy's reform
    values, and builds the household contract's request for the household's
    ``default_year``, with the new job's ID as its calculation ID;
-3. creates the job ``pending`` with no Modal call ID;
+3. creates the job ``pending`` with no Modal call ID. When the commit fails
+   after the job's row was inserted, PostgreSQL may have applied it: the job
+   may exist, so no call is started and the submission is answered as one
+   that may have created it;
 4. starts the household function's call with ``spawn``, passing the job's
    ID, then records the call's ID while the job is still pending with none
    (the function may have claimed it already). When Modal refuses the call,
@@ -39,6 +42,7 @@ from policyengine_simulation_observability.log_records import (
     log_extra,
 )
 from policyengine_simulation_persistence import (
+    EconomyRecordOutcomeUnknownError,
     HouseholdJobReferenceError,
     HouseholdJobStatus,
     MissingPolicyParametersError,
@@ -132,6 +136,21 @@ class HouseholdCalculationInternalError(Exception):
 
     The message names each refused field the service built, never a value.
     """
+
+
+class HouseholdCalculationOutcomeUnknownError(Exception):
+    """The job may have been created, but that can't be confirmed.
+
+    The commit failed after the job's row was inserted, and no call was
+    started. The route answers 500, which the Public API reads as a job that
+    may exist, never a 503, which it reads as nothing created.
+    ``error_type`` is the commit error's type.
+    """
+
+    def __init__(self, *, error_type: str) -> None:
+        """Keep the commit error's type."""
+        super().__init__("the household job may have been created")
+        self.error_type = error_type
 
 
 class HouseholdCalculationUnavailableError(Exception):
@@ -355,8 +374,10 @@ class HouseholdCalculationService:
         Raise HouseholdCalculationRefusedError (400) or
         HouseholdCalculationUnprocessableError (422) before writing anything,
         HouseholdCalculationInternalError (500) when the service builds a
-        request the contract refuses, and HouseholdCalculationUnavailableError
-        (503) when the manifest or database cannot be read, or Modal doesn't
+        request the contract refuses, HouseholdCalculationOutcomeUnknownError
+        (500) when the job's commit failed after its row was inserted, and
+        HouseholdCalculationUnavailableError (503) when the manifest or
+        database cannot be read and no job was written, or Modal doesn't
         confirm the call and the job was failed.
         """
         worker = await self._default_worker(request.country)
@@ -475,6 +496,11 @@ class HouseholdCalculationService:
             )
             raise HouseholdCalculationRefusedError(
                 code="missing_reference", detail=detail
+            ) from None
+        except EconomyRecordOutcomeUnknownError as error:
+            # The route logs it, with the commit error's type.
+            raise HouseholdCalculationOutcomeUnknownError(
+                error_type=type(error.__cause__).__name__
             ) from None
         except SQLAlchemyError as error:
             logger.warning(

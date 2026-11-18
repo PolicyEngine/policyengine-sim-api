@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import select
+from sqlalchemy.orm import aliased
 
 from policyengine_simulation_persistence.economy_run_records import (
     ECONOMY_REPORT_TYPE,
@@ -22,24 +23,25 @@ from policyengine_simulation_persistence.household_report_records import (
 )
 from policyengine_simulation_persistence.input_tables import (
     MODEL_NAME_PREFIX,
-    datasets,
-    regions,
-    tax_benefit_model_versions,
-    tax_benefit_models,
+    Dataset,
+    Region,
+    TaxBenefitModel,
+    TaxBenefitModelVersion,
 )
 from policyengine_simulation_persistence.tables import (
+    BudgetWindowRun,
+    Report,
+    ReportRun,
+    Simulation,
+    SimulationRun,
     SimulationType,
-    budget_window_runs,
-    report_runs,
-    reports,
-    simulation_runs,
-    simulations,
 )
 
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from sqlalchemy import Connection, RowMapping
+    from sqlalchemy import RowMapping
+    from sqlalchemy.orm import Session
 
 # What a stored report or simulation calculates, as a re-run tells them apart:
 # a single-year economy report or simulation, a budget window, a household
@@ -118,39 +120,39 @@ class SimulationDefinition:
 
 
 def read_report_definition(
-    connection: Connection, report_id: UUID
+    session: Session, report_id: UUID
 ) -> ReportDefinition | None:
     """Return what the stored report calculates, or None when there is none."""
-    region = regions.alias("report_region")
-    dataset = datasets.alias("report_dataset")
-    baseline = simulations.alias("baseline_simulation")
-    reform = simulations.alias("reform_simulation")
+    region = aliased(Region, name="report_region")
+    dataset = aliased(Dataset, name="report_dataset")
+    baseline = aliased(Simulation, name="baseline_simulation")
+    reform = aliased(Simulation, name="reform_simulation")
     row = (
-        connection.execute(
+        session.execute(
             select(
-                reports.c.id,
-                reports.c.country,
-                reports.c.type,
-                reports.c.household_id,
-                reports.c.budget_window_size,
-                reports.c.year,
-                reports.c.inputs,
-                reports.c.key_version,
-                region.c.code.label("region_code"),
-                dataset.c.name.label("dataset_name"),
-                baseline.c.id.label("baseline_id"),
-                baseline.c.policy_id.label("baseline_policy_id"),
-                baseline.c.dynamic_id.label("baseline_dynamic_id"),
-                reform.c.id.label("reform_id"),
-                reform.c.policy_id.label("reform_policy_id"),
-                reform.c.dynamic_id.label("reform_dynamic_id"),
+                Report.id,
+                Report.country,
+                Report.type,
+                Report.household_id,
+                Report.budget_window_size,
+                Report.year,
+                Report.inputs,
+                Report.key_version,
+                region.code.label("region_code"),
+                dataset.name.label("dataset_name"),
+                baseline.id.label("baseline_id"),
+                baseline.policy_id.label("baseline_policy_id"),
+                baseline.dynamic_id.label("baseline_dynamic_id"),
+                reform.id.label("reform_id"),
+                reform.policy_id.label("reform_policy_id"),
+                reform.dynamic_id.label("reform_dynamic_id"),
             )
-            .select_from(reports)
-            .outerjoin(region, region.c.id == reports.c.region_id)
-            .outerjoin(dataset, dataset.c.id == reports.c.dataset_id)
-            .outerjoin(baseline, baseline.c.id == reports.c.baseline_simulation_id)
-            .outerjoin(reform, reform.c.id == reports.c.reform_simulation_id)
-            .where(reports.c.id == report_id)
+            .select_from(Report)
+            .outerjoin(region, region.id == Report.region_id)
+            .outerjoin(dataset, dataset.id == Report.dataset_id)
+            .outerjoin(baseline, baseline.id == Report.baseline_simulation_id)
+            .outerjoin(reform, reform.id == Report.reform_simulation_id)
+            .where(Report.id == report_id)
         )
         .mappings()
         .one_or_none()
@@ -170,7 +172,7 @@ def read_report_definition(
         reform=_side(row, "reform"),
         budget_window_size=row["budget_window_size"],
         window_years=(
-            _window_years(connection, report_id) if kind == "budget_window" else ()
+            _window_years(session, report_id) if kind == "budget_window" else ()
         ),
         household_id=row["household_id"],
         keyed=row["key_version"] is not None,
@@ -178,35 +180,32 @@ def read_report_definition(
 
 
 def _window_years(
-    connection: Connection, report_id: UUID
+    session: Session, report_id: UUID
 ) -> tuple[WindowYearDefinition, ...]:
     """Return the years of the report's newest budget-window run, earliest first.
 
     A year whose report run names no reform is left out.
     """
     newest_window_run = (
-        select(budget_window_runs.c.id)
-        .where(budget_window_runs.c.report_id == report_id)
-        .order_by(
-            budget_window_runs.c.created_at.desc(), budget_window_runs.c.id.desc()
-        )
+        select(BudgetWindowRun.id)
+        .where(BudgetWindowRun.report_id == report_id)
+        .order_by(BudgetWindowRun.created_at.desc(), BudgetWindowRun.id.desc())
         .limit(1)
         .scalar_subquery()
     )
-    baseline_run = simulation_runs.alias("baseline_run")
-    reform_run = simulation_runs.alias("reform_run")
-    rows = connection.execute(
+    baseline_run = aliased(SimulationRun, name="baseline_run")
+    reform_run = aliased(SimulationRun, name="reform_run")
+    rows = session.execute(
         select(
-            report_runs.c.year,
-            baseline_run.c.simulation_id.label("baseline_simulation_id"),
-            reform_run.c.simulation_id.label("reform_simulation_id"),
+            ReportRun.year,
+            baseline_run.simulation_id.label("baseline_simulation_id"),
+            reform_run.simulation_id.label("reform_simulation_id"),
         )
-        .join(
-            baseline_run, baseline_run.c.id == report_runs.c.baseline_simulation_run_id
-        )
-        .join(reform_run, reform_run.c.id == report_runs.c.reform_simulation_run_id)
-        .where(report_runs.c.budget_window_run_id == newest_window_run)
-        .order_by(report_runs.c.year)
+        .select_from(ReportRun)
+        .join(baseline_run, baseline_run.id == ReportRun.baseline_simulation_run_id)
+        .join(reform_run, reform_run.id == ReportRun.reform_simulation_run_id)
+        .where(ReportRun.budget_window_run_id == newest_window_run)
+        .order_by(ReportRun.year)
     )
     return tuple(
         WindowYearDefinition(
@@ -243,35 +242,34 @@ def _side(
 
 
 def read_simulation_definition(
-    connection: Connection, simulation_id: UUID
+    session: Session, simulation_id: UUID
 ) -> SimulationDefinition | None:
     """Return what the stored simulation calculates, or None when there is none."""
     row = (
-        connection.execute(
+        session.execute(
             select(
-                simulations.c.id,
-                simulations.c.simulation_type,
-                simulations.c.filter_field,
-                simulations.c.year,
-                simulations.c.policy_id,
-                simulations.c.dynamic_id,
-                tax_benefit_models.c.name.label("model_name"),
-                regions.c.code.label("region_code"),
-                datasets.c.name.label("dataset_name"),
+                Simulation.id,
+                Simulation.simulation_type,
+                Simulation.filter_field,
+                Simulation.year,
+                Simulation.policy_id,
+                Simulation.dynamic_id,
+                TaxBenefitModel.name.label("model_name"),
+                Region.code.label("region_code"),
+                Dataset.name.label("dataset_name"),
             )
-            .select_from(simulations)
+            .select_from(Simulation)
             .join(
-                tax_benefit_model_versions,
-                tax_benefit_model_versions.c.id
-                == simulations.c.tax_benefit_model_version_id,
+                TaxBenefitModelVersion,
+                TaxBenefitModelVersion.id == Simulation.tax_benefit_model_version_id,
             )
             .join(
-                tax_benefit_models,
-                tax_benefit_models.c.id == tax_benefit_model_versions.c.model_id,
+                TaxBenefitModel,
+                TaxBenefitModel.id == TaxBenefitModelVersion.model_id,
             )
-            .outerjoin(regions, regions.c.id == simulations.c.region_id)
-            .outerjoin(datasets, datasets.c.id == simulations.c.dataset_id)
-            .where(simulations.c.id == simulation_id)
+            .outerjoin(Region, Region.id == Simulation.region_id)
+            .outerjoin(Dataset, Dataset.id == Simulation.dataset_id)
+            .where(Simulation.id == simulation_id)
         )
         .mappings()
         .one_or_none()

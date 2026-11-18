@@ -10,6 +10,26 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.20.0] - 2026-11-18
+
+### Added
+
+- The rule `sim.persistence.orm-only` requires database code to declare tables as SQLAlchemy ORM mapped classes and to run every statement through an ORM Session. The unused `policyengine_fastapi.database` module is removed.
+
+### Changed
+
+- The Stage 12 deployment check now uses one database connection for its role check, schema reads and rolled-back test writes, so it needs one free client slot on the database pooler. The check now fails after 15 minutes if the database stops responding.
+- Run the simulation service's economy reports, simulations, re-runs and budget windows on SQLAlchemy ORM sessions and mapped classes.
+- Run the simulation service's household job and household report stores on SQLAlchemy ORM sessions and mapped classes.
+- Require SQLAlchemy ORM sessions and mapped classes in all of sim's database code, run the database privilege check on them, and remove the unused SQLModel dependency.
+- Described the database tables as SQLAlchemy ORM mapped classes and added ORM sessions with a per-transaction statement timeout. The schema and the service's behaviour don't change.
+- The v2 Modal runtime's database stores now run on SQLAlchemy ORM sessions. They send the same statements as before, plus one `SELECT true` that checks out each operation's connection. Only that opening step is retried, so a write is never repeated. The Stage 12 deployment check now repeats a step when the database refuses or loses a connection.
+
+### Fixed
+
+- `POST /household-calculations` answers 500 `internal_error`, not 503 `database_unavailable`, when the database fails after the household job's row was inserted, since PostgreSQL may have applied the commit and the job may exist. It logs the failure as `household_job_outcome_unknown` with the commit error's type, and still answers 503 `database_unavailable` when no job was written.
+
+
 ## [0.19.1] - 2026-11-17
 
 ### Changed

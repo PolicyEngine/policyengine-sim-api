@@ -17,6 +17,7 @@ from economy_output import (
     uk_output_with_withheld_codes,
     us_output_with_every_part,
 )
+from policyengine_simulation_persistence.result_tables import BudgetSummary
 from policyengine_stage12_persistence import (
     DistrictCodes,
     ReportRunStore,
@@ -59,11 +60,7 @@ LABOR_SUPPLY_TABLES = ("labor_supply_responses", "labor_supply_decile_responses"
 
 @pytest.fixture
 def store():
-    run_store = ReportRunStore(worker_database_url())
-    try:
-        yield run_store
-    finally:
-        run_store.engine.dispose()
+    return ReportRunStore(worker_database_url())
 
 
 DISTRICT_CODES = DistrictCodes(
@@ -434,10 +431,10 @@ def test_a_result_that_cannot_be_stored_leaves_the_report_run_running(
         run_ids.report_run_id, modal_call_id="fc-coordinator", claimed_at=NOW
     )
     result = report_run_result(US_ECONOMY_OUTPUT, run_ids=run_ids, country="us")
-    budget = next(rows for rows in result.rows if rows.table.name == "budget_summary")
+    budget = next(rows for rows in result.rows if rows.model is BudgetSummary)
     # The same row twice breaks the table's unique key in the last insert.
     duplicated = ResultRows(
-        table=budget.table,
+        model=budget.model,
         rows=(*budget.rows, {**budget.rows[0], "id": uuid4()}),
         shared_by_reports=False,
     )

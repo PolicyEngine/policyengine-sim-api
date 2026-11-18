@@ -15,9 +15,9 @@ one transaction:
 3. the report's window run on the current catalog version and .py version
    that hasn't failed and isn't a recalculation: when there is one, the
    request joins it, with its year runs, and inserts nothing more;
-4. otherwise the window run, recording its .py version, against the Public
-   API's window run index (``find_or_insert_window_run``), so a request
-   inserting one another request has inserted waits for it and joins it;
+4. otherwise the window run, recording its .py version, against API v1's
+   window run index (``find_or_insert_window_run``), so a request inserting
+   one another request has inserted waits for it and joins it;
    then each distinct simulation's run on those versions, catalog version
    and year that hasn't failed and wasn't forced, found or inserted in
    simulation ID order, and each year's report run naming them.
@@ -59,15 +59,15 @@ from policyengine_simulation_persistence.shared_rows import (
     find_or_insert_window_run,
 )
 from policyengine_simulation_persistence.tables import (
+    ReportRun,
     ReportRunStatus,
-    report_runs,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from uuid import UUID
 
-    from sqlalchemy import Connection
+    from sqlalchemy.orm import Session
 
     from policyengine_simulation_persistence.definition_keys import (
         EconomyReportDefinition,
@@ -166,7 +166,7 @@ class FoundBudgetWindow:
 
 
 def find_or_create_budget_window(
-    connection: Connection, request: KeyedBudgetWindow
+    session: Session, request: KeyedBudgetWindow
 ) -> FoundBudgetWindow:
     """Find the window the request names, and its window run, or create them.
 
@@ -176,10 +176,10 @@ def find_or_create_budget_window(
     transaction, or its savepoint.
     """
     with references_checked():
-        simulation_ids = _find_or_insert_simulations(connection, request)
+        simulation_ids = _find_or_insert_simulations(session, request)
         first_year = request.years[0].year
         report = find_or_insert_report(
-            connection,
+            session,
             economy_report_row(
                 request.definition,
                 report_id=request.report_id,
@@ -194,7 +194,7 @@ def find_or_create_budget_window(
         )
         versions = request.versions
         joined = find_joinable_window_run(
-            connection,
+            session,
             report_id=report.id,
             tax_benefit_model_version_id=request.population.tax_benefit_model_version_id,
             policyengine_version=versions.policyengine_version,
@@ -203,7 +203,7 @@ def find_or_create_budget_window(
             # The window run first: a request inserting one another request
             # has inserted waits for it, then joins it with its year runs.
             window_run = find_or_insert_window_run(
-                connection,
+                session,
                 window_run_row(
                     run_id=request.window_run_id,
                     report_id=report.id,
@@ -214,7 +214,7 @@ def find_or_create_budget_window(
             )
             if window_run.inserted:
                 years = insert_window_years(
-                    connection,
+                    session,
                     _years_to_insert(request, simulation_ids),
                     report_id=report.id,
                     window_run_id=request.window_run_id,
@@ -233,7 +233,7 @@ def find_or_create_budget_window(
             report_id=report.id,
             report_inserted=report.inserted,
             window_run=joined,
-            years=stored_window_years(connection, joined.id, simulation_ids),
+            years=stored_window_years(session, joined.id, simulation_ids),
         )
 
 
@@ -287,7 +287,7 @@ def window_year_run_row(  # noqa: PLR0913  # the year's run, then what it calcul
 
 
 def _find_or_insert_simulations(
-    connection: Connection, request: KeyedBudgetWindow
+    session: Session, request: KeyedBudgetWindow
 ) -> dict[YearSide, UUID]:
     """Return each year's sides' simulation IDs, found by key or inserted.
 
@@ -307,7 +307,7 @@ def _find_or_insert_simulations(
         year_sides = by_key[key]
         year, side = year_sides[0]
         found = find_or_insert_simulation(
-            connection,
+            session,
             economy_simulation_row(
                 request.definition.simulation(side, year=year),
                 proposed[year, side].simulation_id,
@@ -320,7 +320,7 @@ def _find_or_insert_simulations(
 
 
 def insert_window_years(  # noqa: PLR0913  # the years, then the window they belong to
-    connection: Connection,
+    session: Session,
     years: Sequence[WindowYearToInsert],
     *,
     report_id: UUID,
@@ -342,7 +342,7 @@ def insert_window_years(  # noqa: PLR0913  # the years, then the window they bel
         for window_year in years:
             for side in _SIDE_NAMES:
                 insert_simulation_run(
-                    connection,
+                    session,
                     run_id=window_year.proposed_run_ids[side],
                     simulation_id=window_year.simulation_ids[side],
                     population=replace(population, year=window_year.year),
@@ -372,7 +372,7 @@ def insert_window_years(  # noqa: PLR0913  # the years, then the window they bel
                     population=replace(population, year=window_year.year),
                     versions=versions,
                 )
-        runs = find_or_insert_simulation_runs(connection, rows)
+        runs = find_or_insert_simulation_runs(session, rows)
         found_years = tuple(
             _found_year(
                 window_year,
@@ -386,8 +386,9 @@ def insert_window_years(  # noqa: PLR0913  # the years, then the window they bel
             )
             for window_year in years
         )
-    connection.execute(
-        insert(report_runs),
+    # A multi-row insert leaves out a None unless told to send it.
+    session.execute(
+        insert(ReportRun).execution_options(render_nulls=True),
         [
             window_year_run_row(
                 run_id=year.report_run_id,
@@ -459,7 +460,7 @@ def _years_to_insert(
 
 
 def stored_window_years(
-    connection: Connection,
+    session: Session,
     window_run_id: UUID,
     simulation_ids: dict[YearSide, UUID],
 ) -> tuple[FoundWindowYear, ...]:
@@ -468,15 +469,15 @@ def stored_window_years(
     Raise ValueError when its years aren't the request's: a window run of
     one report always has them.
     """
-    rows = connection.execute(
+    rows = session.execute(
         select(
-            report_runs.c.id,
-            report_runs.c.year,
-            report_runs.c.baseline_simulation_run_id,
-            report_runs.c.reform_simulation_run_id,
+            ReportRun.id,
+            ReportRun.year,
+            ReportRun.baseline_simulation_run_id,
+            ReportRun.reform_simulation_run_id,
         )
-        .where(report_runs.c.budget_window_run_id == window_run_id)
-        .order_by(report_runs.c.year)
+        .where(ReportRun.budget_window_run_id == window_run_id)
+        .order_by(ReportRun.year)
     ).all()
     requested = sorted({year for year, _ in simulation_ids})
     if [row.year for row in rows] != requested:

@@ -29,11 +29,7 @@ NOT_STARTED_MESSAGE = "run_not_started: no Modal call was recorded for the run"
 
 @pytest.fixture
 def store():
-    run_store = ReportRunStore(worker_database_url())
-    try:
-        yield run_store
-    finally:
-        run_store.engine.dispose()
+    return ReportRunStore(worker_database_url())
 
 
 def _set_run(seeder, table_name, run_id, **values):
@@ -301,12 +297,8 @@ def test_two_sweeps_at_once_fail_each_run_exactly_once(
             for run in runs
         ]
 
-    try:
-        with ThreadPoolExecutor(max_workers=len(stores)) as pool:
-            changes = list(pool.map(sweep, stores))
-    finally:
-        for run_store in stores:
-            run_store.engine.dispose()
+    with ThreadPoolExecutor(max_workers=len(stores)) as pool:
+        changes = list(pool.map(sweep, stores))
 
     assert [sum(column) for column in zip(*changes, strict=True)] == [1, 1, 1]
     assert seeder.row("report_runs", seeded_run.run_ids.report_run_id)["status"] == (

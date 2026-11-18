@@ -139,7 +139,7 @@ def test_coordinator_completes_its_report_run_with_the_economy_output_as_rows() 
     _coordinate(report_runs, invoker, artifacts)
 
     result = report_runs.report_runs[REPORT_RUN_ID].result
-    rows = {rows.table.name: rows.rows for rows in result.rows}
+    rows = {rows.model.__tablename__: rows.rows for rows in result.rows}
     budget = {row["variable_name"]: row for row in rows["budget_summary"]}
     assert budget["household_tax"]["change"] == 100.0
     assert budget["household_tax"]["report_run_id"] == REPORT_RUN_ID

@@ -2,7 +2,7 @@
 
 A household report's re-run gives each side a new run of its own household
 simulation, never reusing one, under a new report run with trigger
-``manual``. These run against a database the Public API's own v2 migration
+``manual``. These run against a database API v1's own v2 migration
 chain built (``PUBLIC_API_SCHEMA_DATABASE_URL``). The stored report and its
 first runs are written as the superuser; the re-run's reads and writes run
 as the simulation service's role, in a transaction the test rolls back.
@@ -10,13 +10,17 @@ as the simulation service's role, in a transaction the test rolls back.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import (
+    act_as_the_service,
+    in_session,
+    rolled_back_transaction,
+    session_factory_on,
+)
 from household_report_rows import insert_household_report_rows
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
@@ -41,9 +45,9 @@ from public_api_rows import (
 )
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
+from transaction_fakes import CommitFailingTransaction, RecordingSession
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from uuid import UUID
 
     from household_report_rows import StoredHouseholdReport
@@ -52,6 +56,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.public_api_schema
 
+STATEMENT_TIMEOUT_MILLISECONDS = 5_000
 VERSIONS = RunVersions(country_package_version="1.764.6", policyengine_version="6.17.1")
 # A later release's versions, with a catalog version of its own.
 LATER_VERSIONS = RunVersions(
@@ -76,13 +81,10 @@ CURRENT_LAW = SimulationChoice(policy_id=None, dynamic_id=None)
 
 def _store_on(connection: Connection) -> HouseholdReportStore:
     """Return a store whose transactions are savepoints of ``connection``."""
-
-    @contextmanager
-    def savepoint() -> Iterator[Connection]:
-        with connection.begin_nested():
-            yield connection
-
-    return HouseholdReportStore(savepoint)
+    return HouseholdReportStore.from_session_factory(
+        session_factory_on(connection),
+        statement_timeout_milliseconds=STATEMENT_TIMEOUT_MILLISECONDS,
+    )
 
 
 def _catalogs(connection: Connection) -> tuple[CatalogVersion, CatalogVersion]:
@@ -125,8 +127,9 @@ def _stored_report(
         with_reform=with_reform,
     )
     if first_run_ended:
-        fail_unstarted_report_run(
+        in_session(
             connection,
+            fail_unstarted_report_run,
             report_run_id=report.run_id,
             simulation_run_ids=report.simulation_run_ids,
             error_message="run_not_started: no call was recorded",
@@ -204,8 +207,10 @@ def test_a_household_report_is_read_with_its_household_and_each_sides_policy(
         baseline_alone = _stored_report(connection, catalog, with_reform=False)
         act_as_the_service(connection)
 
-        definition = read_report_definition(connection, report.id)
-        alone_definition = read_report_definition(connection, baseline_alone.id)
+        definition = in_session(connection, read_report_definition, report.id)
+        alone_definition = in_session(
+            connection, read_report_definition, baseline_alone.id
+        )
 
     assert definition is not None
     assert alone_definition is not None
@@ -364,6 +369,11 @@ def test_a_forced_household_rerun_beside_a_run_under_way_is_an_extra_run(
             report.baseline.simulation_id,
         )
         first_run = _row(connection, "report_runs", report.run_id)
+        extra_run = _row(connection, "report_runs", rerun.run_id)
+        extra_side_runs = [
+            _row(connection, "simulation_runs", run_id)
+            for run_id in rerun.simulation_run_ids
+        ]
 
     assert (created.id, created.inserted, created.status) == (
         rerun.run_id,
@@ -376,6 +386,8 @@ def test_a_forced_household_rerun_beside_a_run_under_way_is_an_extra_run(
     ) == rerun.simulation_run_ids
     assert (report_runs, baseline_runs) == (2, 2)
     assert first_run["status"] == ReportRunStatus.PENDING
+    assert extra_run["forced"] is True
+    assert [run["forced"] for run in extra_side_runs] == [True, True]
 
 
 def test_a_rerun_naming_a_deleted_report_or_simulation_is_refused_by_its_key(
@@ -407,40 +419,9 @@ def test_a_rerun_naming_a_deleted_report_or_simulation_is_refused_by_its_key(
     assert report_runs == 1
 
 
-class _CommitFails:
-    """A transaction whose block runs, and whose commit then fails."""
-
-    def __init__(self, connection) -> None:
-        self.connection = connection
-
-    def __enter__(self):
-        return self.connection
-
-    def __exit__(self, error_type, error, traceback) -> None:
-        if error is None:
-            statement = "COMMIT"
-            raise OperationalError(statement, {}, Exception("connection lost"))
-
-
-class _RecordingConnection:
-    """Records each statement it is given, and answers each with no rows."""
-
-    def __init__(self) -> None:
-        self.statements: list[object] = []
-
-    def execute(self, statement, *arguments):
-        self.statements.append(statement)
-        return _NoRows()
-
-
-class _NoRows:
-    def scalar_one_or_none(self) -> None:
-        return None
-
-
 def test_a_rerun_whose_commit_fails_may_have_been_written() -> None:
-    connection = _RecordingConnection()
-    store = HouseholdReportStore(lambda: _CommitFails(connection))
+    session = RecordingSession()
+    store = HouseholdReportStore(lambda: CommitFailingTransaction(session))
 
     with pytest.raises(EconomyRecordOutcomeUnknownError) as raised:
         store.create_report_rerun(
@@ -459,4 +440,6 @@ def test_a_rerun_whose_commit_fails_may_have_been_written() -> None:
         )
 
     assert isinstance(raised.value.__cause__, OperationalError)
-    assert connection.statements
+    assert session.added
+    assert session.flushed
+    assert session.statements

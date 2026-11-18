@@ -1,4 +1,7 @@
-"""Database connections for the simulation service and the v2 Modal calls."""
+"""ORM sessions for the simulation service and the v2 Modal calls.
+
+Each engine stays in this module; everything else receives a ``sessionmaker``.
+"""
 
 from __future__ import annotations
 
@@ -8,12 +11,14 @@ from typing import TYPE_CHECKING
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
-from sqlalchemy.pool import NullPool
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool, QueuePool
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from sqlalchemy import Connection, Engine
+    from sqlalchemy import Engine, Select
+    from sqlalchemy.orm import Session
 
 CONNECT_TIMEOUT_SECONDS = 5
 # Each Cloud Run instance serves up to 80 concurrent requests. Each database
@@ -23,6 +28,10 @@ POOL_SIZE = 2
 MAX_OVERFLOW = 3
 # A v2 Modal call connects across the internet to the database's pooler.
 UNPOOLED_CONNECT_TIMEOUT_SECONDS = 10
+SINGLE_CONNECTION_CONNECT_TIMEOUT_SECONDS = 10
+# How long a single-connection engine's user waits for the connection. Its users
+# take turns, so waiting at all means one of them kept it.
+SINGLE_CONNECTION_WAIT_SECONDS = 5
 
 
 def normalized_database_url(database_url: str) -> URL:
@@ -50,7 +59,7 @@ def normalized_database_url(database_url: str) -> URL:
     return parsed.set(drivername="postgresql+psycopg")
 
 
-def create_simulation_engine(database_url: str) -> Engine:
+def _create_pooled_engine(database_url: str) -> Engine:
     """Build the engine the simulation service uses; it creates no objects."""
     return create_engine(
         normalized_database_url(database_url),
@@ -66,7 +75,7 @@ def create_simulation_engine(database_url: str) -> Engine:
     )
 
 
-def create_unpooled_engine(database_url: str) -> Engine:
+def _create_unpooled_engine(database_url: str) -> Engine:
     """Build an engine that opens a connection per operation and closes it after.
 
     The v2 Modal coordinators, workers and household functions, and the
@@ -81,26 +90,100 @@ def create_unpooled_engine(database_url: str) -> Engine:
     )
 
 
-@contextmanager
-def bounded_transaction(
-    engine: Engine, *, statement_timeout_milliseconds: int
-) -> Iterator[Connection]:
-    """Yield a connection in a transaction whose statements the database bounds.
+def _create_single_connection_engine(database_url: str) -> Engine:
+    """Build an engine whose sessions and schema reads share one connection.
 
-    The transaction commits when the block ends and rolls back when it
-    raises. ``statement_timeout`` is set with ``set_config`` local to the
-    transaction, so it works through Supabase's transaction pooler and never
-    stays on the pooled connection; a statement that runs longer raises the
-    database's cancellation as an OperationalError.
+    A short task that opens many sessions or reads the schema piece by piece
+    then takes one client slot of the database's pooler. Each user must return
+    the connection before the next takes it. A connection checked out after it
+    was lost is replaced, and no statement is prepared on the server, so the
+    engine works through Supabase's session and transaction poolers.
     """
-    with engine.begin() as connection:
-        connection.execute(
-            select(
-                func.set_config(
-                    "statement_timeout",
-                    str(statement_timeout_milliseconds),
-                    True,  # noqa: FBT003  # set_config's is_local argument
-                )
-            )
+    return create_engine(
+        normalized_database_url(database_url),
+        poolclass=QueuePool,
+        pool_size=1,
+        max_overflow=0,
+        pool_timeout=SINGLE_CONNECTION_WAIT_SECONDS,
+        pool_pre_ping=True,
+        connect_args={
+            "connect_timeout": SINGLE_CONNECTION_CONNECT_TIMEOUT_SECONDS,
+            "prepare_threshold": None,
+        },
+    )
+
+
+def create_session_factory(engine: Engine) -> sessionmaker[Session]:
+    """Return the factory of ORM sessions on ``engine``.
+
+    Attributes keep their values after the transaction commits, so a function
+    can return what it wrote once its session has closed. An attribute set to a
+    SQL expression, such as ``func.now()``, is the exception: only the database
+    knows its value, so refresh the object before the session closes. Run a
+    transaction as ``with session_factory.begin() as session:``.
+    """
+    return sessionmaker(engine, expire_on_commit=False)
+
+
+def create_simulation_session_factory(database_url: str) -> sessionmaker[Session]:
+    """Return the session factory of the simulation service's connection pool.
+
+    Raises ValueError, without echoing the URL, when it is malformed. Nothing
+    connects until a session runs its first statement.
+    """
+    return create_session_factory(_create_pooled_engine(database_url))
+
+
+def create_unpooled_session_factory(database_url: str) -> sessionmaker[Session]:
+    """Return a factory of sessions that each open and close their connection.
+
+    Raises ValueError, without echoing the URL, when it is malformed. Nothing
+    connects until a session runs its first statement.
+    """
+    return create_session_factory(_create_unpooled_engine(database_url))
+
+
+def create_single_connection_session_factory(
+    database_url: str,
+) -> sessionmaker[Session]:
+    """Return a factory of sessions that take turns on one kept connection.
+
+    Raises ValueError, without echoing the URL, when it is malformed. Nothing
+    connects until a session runs its first statement. Close the connection
+    with ``dispose_session_factory``.
+    """
+    return create_session_factory(_create_single_connection_engine(database_url))
+
+
+def dispose_session_factory(session_factory: sessionmaker[Session]) -> None:
+    """Close every pooled connection of the engine ``session_factory`` uses."""
+    session_factory.kw["bind"].dispose()
+
+
+def _set_statement_timeout(statement_timeout_milliseconds: int) -> Select[tuple[str]]:
+    """Return the statement that bounds the rest of the current transaction."""
+    return select(
+        func.set_config(
+            "statement_timeout",
+            str(statement_timeout_milliseconds),
+            True,  # noqa: FBT003  # set_config's is_local argument
         )
-        yield connection
+    )
+
+
+@contextmanager
+def bounded_session(
+    session_factory: sessionmaker[Session], *, statement_timeout_milliseconds: int
+) -> Iterator[Session]:
+    """Yield a session in a transaction whose statements the database bounds.
+
+    The transaction commits when the block ends, flushing what the session
+    holds under the same limit, and rolls back when it raises.
+    ``statement_timeout`` is set with ``set_config`` local to the transaction,
+    so it works through Supabase's transaction pooler and never stays on the
+    pooled connection; a statement that runs longer raises the database's
+    cancellation as an OperationalError.
+    """
+    with session_factory.begin() as session:
+        session.execute(_set_statement_timeout(statement_timeout_milliseconds))
+        yield session
