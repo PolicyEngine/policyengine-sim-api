@@ -23,6 +23,7 @@ from policyengine_simulation_entry.household_api_models import (
 )
 from policyengine_simulation_entry.household_calculations import (
     HouseholdCalculationInternalError,
+    HouseholdCalculationOutcomeUnknownError,
     HouseholdCalculationRefusedError,
     HouseholdCalculationService,
     HouseholdCalculationUnavailableError,
@@ -36,6 +37,7 @@ from policyengine_simulation_entry.household_workers import (
     default_household_worker,
 )
 from policyengine_simulation_persistence import (
+    EconomyRecordOutcomeUnknownError,
     HouseholdCalculationInputs,
     HouseholdJobRecord,
     HouseholdJobReferenceError,
@@ -621,6 +623,39 @@ async def test_a_row_deleted_before_the_job_is_created_is_named(column_name, det
 
     assert (raised.value.code, raised.value.detail) == ("missing_reference", detail)
     assert caller.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_job_whose_commit_is_unconfirmed_may_exist_and_starts_no_call(
+    caplog,
+):
+    """The commit may have been applied, so no 503 may say nothing was created."""
+    lost_commit = EconomyRecordOutcomeUnknownError("the commit failed")
+    lost_commit.__cause__ = DATABASE_ERROR
+    service, _, _, caller = _service(FakeStore(create_failure=lost_commit))
+
+    with pytest.raises(HouseholdCalculationOutcomeUnknownError) as raised:
+        await service.submit(_request(), observability_context=None)
+
+    assert raised.value.error_type == "OperationalError"
+    assert caller.calls == []
+    # The route logs the outcome, once; the service logs no failed create.
+    assert "household_job_not_created" not in caplog.messages
+
+
+@pytest.mark.asyncio
+async def test_a_job_whose_insert_fails_is_logged_by_the_service(caplog):
+    """The service logs a create that wrote nothing, unlike an unconfirmed one.
+
+    The test above relies on this event to show that the service logs no
+    unconfirmed commit.
+    """
+    service, _, _, _ = _service(FakeStore(create_failure=DATABASE_ERROR))
+
+    with pytest.raises(HouseholdCalculationUnavailableError):
+        await service.submit(_request(), observability_context=None)
+
+    assert caplog.messages.count("household_job_not_created") == 1
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,1 @@
+The rule `sim.persistence.orm-only` requires database code to declare tables as SQLAlchemy ORM mapped classes and to run every statement through an ORM Session. The unused `policyengine_fastapi.database` module is removed.

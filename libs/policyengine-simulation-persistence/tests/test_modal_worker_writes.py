@@ -18,20 +18,23 @@ import pytest
 from conftest import (
     act_as_the_modal_worker,
     act_as_the_service,
+    in_session,
     rolled_back_transaction,
 )
 from policyengine_simulation_persistence import (
     MODAL_WORKER_TABLE_PRIVILEGES,
     MODAL_WORKER_UPDATABLE_COLUMNS,
-    budget_window_runs,
-    household_jobs,
+    BudgetWindowRun,
+    HouseholdJob,
+    Poverty,
+    ReportRun,
+    SimulationRun,
     missing_table_privileges,
-    report_runs,
     result_metadata,
-    simulation_runs,
 )
 from service_rows import ServiceRows, insert_public_api_rows, insert_service_rows
 from sqlalchemy import Enum, Float, Integer, String, func, insert, select, text, update
+from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
     from sqlalchemy import Connection, Table
@@ -49,8 +52,9 @@ def test_the_modal_worker_role_holds_every_privilege_the_modal_calls_need(
         act_as_the_modal_worker(connection)
 
         assert (
-            missing_table_privileges(
+            in_session(
                 connection,
+                missing_table_privileges,
                 table_privileges=MODAL_WORKER_TABLE_PRIVILEGES,
                 updatable_columns=MODAL_WORKER_UPDATABLE_COLUMNS,
             )
@@ -71,7 +75,7 @@ def _run_state(service_rows: ServiceRows) -> dict[Table, tuple[Any, dict[str, An
         "updated_at": NOW,
     }
     return {
-        report_runs: (
+        ReportRun.__table__: (
             service_rows.report_run_id,
             {
                 **finished,
@@ -85,7 +89,7 @@ def _run_state(service_rows: ServiceRows) -> dict[Table, tuple[Any, dict[str, An
                 "data_version": "test-data-version",
             },
         ),
-        simulation_runs: (
+        SimulationRun.__table__: (
             service_rows.baseline_run_id,
             {
                 **finished,
@@ -96,7 +100,7 @@ def _run_state(service_rows: ServiceRows) -> dict[Table, tuple[Any, dict[str, An
                 "household_result": None,
             },
         ),
-        household_jobs: (
+        HouseholdJob.__table__: (
             service_rows.household_job_id,
             {
                 **finished,
@@ -105,7 +109,7 @@ def _run_state(service_rows: ServiceRows) -> dict[Table, tuple[Any, dict[str, An
                 "result": None,
             },
         ),
-        budget_window_runs: (
+        BudgetWindowRun.__table__: (
             service_rows.budget_window_run_id,
             {
                 "status": "running",
@@ -161,6 +165,29 @@ def _stored_as_sql_null(connection: Connection, table: Table, column_name: str) 
     ).scalar_one()
 
 
+def test_the_modal_worker_role_inserts_a_result_through_its_class(
+    public_api_database_url,
+) -> None:
+    """A session's insert reads the row's server defaults back with ``RETURNING``."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        public_api_rows = insert_public_api_rows(connection)
+        act_as_the_service(connection)
+        service_rows = insert_service_rows(connection, public_api_rows)
+        act_as_the_modal_worker(connection)
+        result = Poverty(
+            simulation_run_id=service_rows.baseline_run_id,
+            poverty_type="spm",
+            entity="person",
+        )
+
+        with Session(connection, join_transaction_mode="create_savepoint") as session:
+            session.add(result)
+            session.flush()
+            created_at = result.created_at
+
+    assert created_at is not None
+
+
 def test_the_modal_worker_role_records_its_runs_and_inserts_every_result(
     public_api_database_url,
 ) -> None:
@@ -185,6 +212,11 @@ def test_the_modal_worker_role_records_its_runs_and_inserts_every_result(
                 select(func.count()).select_from(table)
             ).scalar_one()
             assert stored >= 1, table.name
-        assert _stored_as_sql_null(connection, report_runs, "spm_provenance") == 1
-        assert _stored_as_sql_null(connection, simulation_runs, "household_result") == 1
-        assert _stored_as_sql_null(connection, household_jobs, "result") == 1
+        assert (
+            _stored_as_sql_null(connection, ReportRun.__table__, "spm_provenance") == 1
+        )
+        assert (
+            _stored_as_sql_null(connection, SimulationRun.__table__, "household_result")
+            == 1
+        )
+        assert _stored_as_sql_null(connection, HouseholdJob.__table__, "result") == 1

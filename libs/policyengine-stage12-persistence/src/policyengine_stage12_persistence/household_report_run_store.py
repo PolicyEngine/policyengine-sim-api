@@ -20,10 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from policyengine_simulation_persistence.tables import (
-    report_runs,
-    simulation_runs,
-)
+from policyengine_simulation_persistence.tables import ReportRun, SimulationRun
 from sqlalchemy import select, update
 
 from policyengine_stage12_persistence.report_run_store import (
@@ -52,11 +49,11 @@ class HouseholdReportRunStore(ReportRunStore):
         LookupError when the report run does not exist.
         """
         statement = select(
-            report_runs.c.baseline_simulation_run_id,
-            report_runs.c.reform_simulation_run_id,
-        ).where(report_runs.c.id == report_run_id)
-        with self._transaction("household_report_simulation_runs") as connection:
-            named = connection.execute(statement).one_or_none()
+            ReportRun.baseline_simulation_run_id,
+            ReportRun.reform_simulation_run_id,
+        ).where(ReportRun.id == report_run_id)
+        with self.sessions.transaction("household_report_simulation_runs") as session:
+            named = session.execute(statement).one_or_none()
         if named is None:
             msg = f"report run {report_run_id} does not exist"
             raise LookupError(msg)
@@ -76,10 +73,10 @@ class HouseholdReportRunStore(ReportRunStore):
         as JSON.
         """
         statement = (
-            update(simulation_runs)
+            update(SimulationRun)
             .where(
-                simulation_runs.c.id == simulation_run_id,
-                running_under_call(simulation_runs, modal_call_id),
+                SimulationRun.id == simulation_run_id,
+                running_under_call(SimulationRun, modal_call_id),
             )
             .values(
                 status=RunStatus.SUCCEEDED.value,
@@ -90,7 +87,7 @@ class HouseholdReportRunStore(ReportRunStore):
             )
         )
         return self._write(
-            simulation_runs,
+            SimulationRun,
             simulation_run_id,
             statement,
             "complete_household_simulation_run",
@@ -112,10 +109,10 @@ class HouseholdReportRunStore(ReportRunStore):
         for a failure outside the calculation.
         """
         statement = (
-            update(simulation_runs)
+            update(SimulationRun)
             .where(
-                simulation_runs.c.id == simulation_run_id,
-                running_under_call(simulation_runs, modal_call_id),
+                SimulationRun.id == simulation_run_id,
+                running_under_call(SimulationRun, modal_call_id),
             )
             .values(
                 status=RunStatus.FAILED.value,
@@ -128,7 +125,7 @@ class HouseholdReportRunStore(ReportRunStore):
             )
         )
         return self._write(
-            simulation_runs,
+            SimulationRun,
             simulation_run_id,
             statement,
             "fail_household_simulation_run",
@@ -147,10 +144,10 @@ class HouseholdReportRunStore(ReportRunStore):
         run holds its calculated household.
         """
         statement = (
-            update(report_runs)
+            update(ReportRun)
             .where(
-                report_runs.c.id == report_run_id,
-                running_under_call(report_runs, modal_call_id),
+                ReportRun.id == report_run_id,
+                running_under_call(ReportRun, modal_call_id),
             )
             .values(
                 status=RunStatus.SUCCEEDED.value,
@@ -160,5 +157,5 @@ class HouseholdReportRunStore(ReportRunStore):
             )
         )
         return self._write(
-            report_runs, report_run_id, statement, "complete_household_report_run"
+            ReportRun, report_run_id, statement, "complete_household_report_run"
         )

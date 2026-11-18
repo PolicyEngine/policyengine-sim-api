@@ -13,16 +13,17 @@ import pytest
 from conftest import (
     act_as_the_service,
     connection_as_the_service,
+    in_session,
     rolled_back_transaction,
 )
 from policyengine_simulation_persistence import (
-    budget_window_runs,
-    household_jobs,
+    BudgetWindowRun,
+    HouseholdJob,
+    Report,
+    ReportRun,
+    Simulation,
+    SimulationRun,
     missing_table_privileges,
-    report_runs,
-    reports,
-    simulation_runs,
-    simulations,
 )
 from service_rows import insert_public_api_rows, insert_service_rows
 from sqlalchemy import func, select
@@ -34,7 +35,7 @@ def test_the_service_role_holds_every_privilege_the_service_needs(
     public_api_database_url,
 ) -> None:
     with connection_as_the_service(public_api_database_url) as connection:
-        assert missing_table_privileges(connection) == []
+        assert in_session(connection, missing_table_privileges) == []
 
 
 def test_the_service_role_creates_and_reads_a_row_in_every_table_it_writes(
@@ -47,10 +48,10 @@ def test_the_service_role_creates_and_reads_a_row_in_every_table_it_writes(
 
         compared_runs = connection.execute(
             select(
-                report_runs.c.baseline_simulation_run_id,
-                report_runs.c.reform_simulation_run_id,
-                report_runs.c.budget_window_run_id,
-            ).where(report_runs.c.id == service_rows.report_run_id)
+                ReportRun.baseline_simulation_run_id,
+                ReportRun.reform_simulation_run_id,
+                ReportRun.budget_window_run_id,
+            ).where(ReportRun.id == service_rows.report_run_id)
         ).one()
         assert tuple(compared_runs) == (
             service_rows.baseline_run_id,
@@ -58,12 +59,12 @@ def test_the_service_role_creates_and_reads_a_row_in_every_table_it_writes(
             service_rows.budget_window_run_id,
         )
         for table in (
-            simulations,
-            reports,
-            simulation_runs,
-            budget_window_runs,
-            report_runs,
-            household_jobs,
+            Simulation.__table__,
+            Report.__table__,
+            SimulationRun.__table__,
+            BudgetWindowRun.__table__,
+            ReportRun.__table__,
+            HouseholdJob.__table__,
         ):
             assert (
                 connection.execute(select(func.count()).select_from(table)).scalar_one()

@@ -6,6 +6,11 @@ import os
 from typing import TYPE_CHECKING
 
 import pytest
+from policyengine_simulation_persistence.engine import (
+    create_session_factory,
+    create_unpooled_session_factory,
+    dispose_session_factory,
+)
 from report_run_database import (
     SEED_URL_ENV,
     ReportRunSeeder,
@@ -13,10 +18,14 @@ from report_run_database import (
     SeededReportRun,
     worker_database_url,
 )
+from session_database import RUNTIME_ROLE, StatementLog, act_as_role
 from sqlalchemy import create_engine
+from sqlalchemy.pool import NullPool
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from sqlalchemy.orm import Session, sessionmaker
 
 
 @pytest.fixture
@@ -48,3 +57,33 @@ def seeded_household_job(seeder: ReportRunSeeder) -> Iterator[SeededHouseholdJob
         yield seeded
     finally:
         seeder.remove_household_job(seeded)
+
+
+@pytest.fixture
+def worker_sessions() -> Iterator[sessionmaker[Session]]:
+    """Yield a session factory connecting as the Modal worker role."""
+    session_factory = create_unpooled_session_factory(worker_database_url())
+    try:
+        yield session_factory
+    finally:
+        dispose_session_factory(session_factory)
+
+
+@pytest.fixture
+def statements(worker_sessions: sessionmaker[Session]) -> Iterator[StatementLog]:
+    """Record the worker sessions; fail if a statement bypassed them."""
+    log = StatementLog(worker_sessions)
+    yield log
+    log.assert_every_statement_ran_on_a_session()
+
+
+@pytest.fixture
+def runtime_sessions() -> Iterator[sessionmaker[Session]]:
+    """Yield a session factory acting as the comparison path's runtime role."""
+    worker_database_url()
+    engine = create_engine(os.environ[SEED_URL_ENV], poolclass=NullPool)
+    act_as_role(engine, RUNTIME_ROLE)
+    try:
+        yield create_session_factory(engine)
+    finally:
+        engine.dispose()

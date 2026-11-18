@@ -17,14 +17,14 @@ from uuid import uuid4
 
 from policyengine_simulation_persistence import (
     HOUSEHOLD_REPORT_TYPE,
+    Report,
+    ReportRun,
     ReportRunStatus,
     ReportRunTrigger,
+    Simulation,
+    SimulationRun,
     SimulationStatus,
     SimulationType,
-    report_runs,
-    reports,
-    simulation_runs,
-    simulations,
 )
 from sqlalchemy import insert
 
@@ -108,7 +108,7 @@ def insert_household_report_rows(  # noqa: PLR0913  # the report's catalog, hous
     )
     for side in report.sides:
         connection.execute(
-            insert(simulations).values(
+            insert(Simulation).values(
                 id=side.simulation_id,
                 simulation_type=SimulationType.HOUSEHOLD,
                 dataset_id=None,
@@ -121,13 +121,13 @@ def insert_household_report_rows(  # noqa: PLR0913  # the report's catalog, hous
             )
         )
         connection.execute(
-            insert(simulation_runs).values(
+            insert(SimulationRun).values(
                 _pending_run(side, catalog=catalog, year=year, versions=versions)
             )
         )
     reform = report.reform
     connection.execute(
-        insert(reports).values(
+        insert(Report).values(
             id=report.id,
             label="A larger child tax credit",
             description="For one family",
@@ -147,7 +147,7 @@ def insert_household_report_rows(  # noqa: PLR0913  # the report's catalog, hous
         )
     )
     connection.execute(
-        insert(report_runs).values(
+        insert(ReportRun).values(
             id=report.run_id,
             report_id=report.id,
             baseline_simulation_run_id=report.baseline.simulation_run_id,

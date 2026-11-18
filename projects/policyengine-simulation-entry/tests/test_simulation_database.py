@@ -20,6 +20,7 @@ from policyengine_simulation_entry.simulation_database import (
     missing_privilege_log_messages,
 )
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import sessionmaker
 
 DATABASE_URL = "postgresql://simulation_service:secret@db.example:5432/postgres"
 
@@ -318,17 +319,22 @@ def test_the_check_runs_on_its_own_thread_within_the_database_time_limit(
 ):
     calls = []
 
-    def read_missing_table_privileges(engine, *, statement_timeout_milliseconds):
+    def read_missing_table_privileges(
+        session_factory, *, statement_timeout_milliseconds
+    ):
         calls.append(
-            (engine, statement_timeout_milliseconds, threading.current_thread().name)
+            (
+                session_factory,
+                statement_timeout_milliseconds,
+                threading.current_thread().name,
+            )
         )
         return ["INSERT on reports"]
 
     monkeypatch.setattr(
         database_module, "read_missing_table_privileges", read_missing_table_privileges
     )
-    engine = object()
-    database = SimulationDatabase(engine)
+    database = SimulationDatabase(sessionmaker(object()))
 
     try:
         missing = asyncio.run(database.missing_privileges())
@@ -336,8 +342,8 @@ def test_the_check_runs_on_its_own_thread_within_the_database_time_limit(
         database.executor.shutdown(wait=True)
 
     assert missing == ["INSERT on reports"]
-    [(called_engine, timeout_milliseconds, thread_name)] = calls
-    assert called_engine is engine
+    [(session_factory, timeout_milliseconds, thread_name)] = calls
+    assert session_factory is database.session_factory
     expected_timeout = database_module.READINESS_STATEMENT_TIMEOUT_MILLISECONDS
     assert timeout_milliseconds == expected_timeout
     assert timeout_milliseconds < (
@@ -355,7 +361,7 @@ def test_a_stalled_database_holds_one_thread_and_no_thread_of_the_default_pool(
     most_running_at_once = []
     lock = threading.Lock()
 
-    def stall(engine, *, statement_timeout_milliseconds):
+    def stall(session_factory, *, statement_timeout_milliseconds):
         with lock:
             running.append(threading.current_thread().name)
             most_running_at_once.append(len(running))
@@ -365,7 +371,7 @@ def test_a_stalled_database_holds_one_thread_and_no_thread_of_the_default_pool(
         return []
 
     monkeypatch.setattr(database_module, "read_missing_table_privileges", stall)
-    database = SimulationDatabase(object())
+    database = SimulationDatabase(sessionmaker(object()))
 
     async def three_checks_that_time_out():
         results = await asyncio.gather(
@@ -395,6 +401,39 @@ def test_a_stalled_database_holds_one_thread_and_no_thread_of_the_default_pool(
     assert default_pool_threads == []
 
 
+def test_the_database_holds_the_session_factory_it_is_given():
+    session_factory = sessionmaker(object())
+
+    database = SimulationDatabase(session_factory)
+
+    try:
+        assert database.session_factory is session_factory
+        assert not hasattr(database, "engine")
+    finally:
+        database.executor.shutdown(wait=True)
+
+
+def test_a_database_from_a_url_builds_the_services_session_factory(monkeypatch):
+    built_from = []
+    session_factory = sessionmaker(object())
+
+    def build_session_factory(database_url):
+        built_from.append(database_url)
+        return session_factory
+
+    monkeypatch.setattr(
+        database_module, "create_simulation_session_factory", build_session_factory
+    )
+
+    database = SimulationDatabase.from_url(DATABASE_URL)
+
+    try:
+        assert built_from == [DATABASE_URL]
+        assert database.session_factory is session_factory
+    finally:
+        database.executor.shutdown(wait=True)
+
+
 def test_disposing_the_database_also_stops_its_thread(monkeypatch):
     class FakeEngine:
         disposed = False
@@ -405,10 +444,10 @@ def test_disposing_the_database_also_stops_its_thread(monkeypatch):
     monkeypatch.setattr(
         database_module,
         "read_missing_table_privileges",
-        lambda engine, *, statement_timeout_milliseconds: [],
+        lambda session_factory, *, statement_timeout_milliseconds: [],
     )
     engine = FakeEngine()
-    database = SimulationDatabase(engine)
+    database = SimulationDatabase(sessionmaker(engine))
     asyncio.run(database.missing_privileges())
     [worker] = [
         thread
@@ -431,9 +470,9 @@ def test_a_disposed_database_reports_every_later_check_as_failed(monkeypatch):
     monkeypatch.setattr(
         database_module,
         "read_missing_table_privileges",
-        lambda engine, *, statement_timeout_milliseconds: [],
+        lambda session_factory, *, statement_timeout_milliseconds: [],
     )
-    database = SimulationDatabase(FakeEngine())
+    database = SimulationDatabase(sessionmaker(FakeEngine()))
     database.dispose()
 
     with _client(FakeBackend(), database) as client:

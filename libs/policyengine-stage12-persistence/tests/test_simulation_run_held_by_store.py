@@ -26,11 +26,7 @@ ENDED_CALL_MESSAGE = "modal_call_ended: the holder's call ended."
 
 @pytest.fixture
 def store():
-    run_store = ReportRunStore(worker_database_url())
-    try:
-        yield run_store
-    finally:
-        run_store.engine.dispose()
+    return ReportRunStore(worker_database_url())
 
 
 def _recorded_call(seeder, run_id, modal_call_id: str) -> None:

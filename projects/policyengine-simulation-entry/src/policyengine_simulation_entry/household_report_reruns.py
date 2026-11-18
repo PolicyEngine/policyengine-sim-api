@@ -310,8 +310,8 @@ def household_reports_for(
     ):
         return None
     return HouseholdReportRerunService(
-        store=HouseholdReportStore.from_engine(
-            database.engine,
+        store=HouseholdReportStore.from_session_factory(
+            database.session_factory,
             statement_timeout_milliseconds=STATEMENT_TIMEOUT_MILLISECONDS,
         ),
         workers=ManifestHouseholdWorkers.from_modal(

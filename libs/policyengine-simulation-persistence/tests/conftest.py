@@ -26,12 +26,16 @@ from uuid import uuid4
 import pytest
 from committed_rows import delete_catalog_rows
 from economy_rows import insert_economy_catalog
-from policyengine_simulation_persistence import create_simulation_engine
+from policyengine_simulation_persistence import (
+    EconomyRunStore,
+    create_simulation_session_factory,
+)
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, make_url
+from sqlalchemy.orm import Session, sessionmaker
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from economy_rows import EconomyCatalog
     from sqlalchemy import Connection, Engine
@@ -47,6 +51,8 @@ REQUIRE_PUBLIC_API_VARIABLE = "SIMULATION_REQUIRE_PUBLIC_API_SCHEMA"
 # service; the deployed SIMULATION_SERVICE_DATABASE_URL logs in as it.
 SERVICE_ROLE = "policyengine_v2_simulation_service"
 MODAL_WORKER_ROLE = "policyengine_v2_modal_worker"
+# The limit on each statement of a store a test builds on one connection.
+STORE_STATEMENT_TIMEOUT_MILLISECONDS = 5_000
 
 
 @dataclass(frozen=True)
@@ -120,10 +126,15 @@ def public_api_database_url() -> str:
     return configured
 
 
+def simulation_engine(database_url: str) -> Engine:
+    """Return the engine of the service's session factory, for test setup."""
+    return create_simulation_session_factory(database_url).kw["bind"]
+
+
 @contextmanager
 def rolled_back_transaction(database_url: str) -> Iterator[Connection]:
     """Yield the superuser's connection in a transaction rolled back afterwards."""
-    engine = create_simulation_engine(database_url)
+    engine = simulation_engine(database_url)
     try:
         with engine.connect() as connection:
             transaction = connection.begin()
@@ -133,6 +144,44 @@ def rolled_back_transaction(database_url: str) -> Iterator[Connection]:
                 transaction.rollback()
     finally:
         engine.dispose()
+
+
+def session_factory_on(connection: Connection) -> sessionmaker[Session]:
+    """Return a factory of sessions inside ``connection``'s transaction.
+
+    Each session's transaction is a savepoint, so its commit releases the
+    savepoint and its rollback returns to it, and the test's own transaction
+    decides what is kept.
+    """
+    return sessionmaker(
+        connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
+    )
+
+
+@contextmanager
+def session_in(connection: Connection) -> Iterator[Session]:
+    """Yield a session in a savepoint of ``connection``'s transaction."""
+    with session_factory_on(connection).begin() as session:
+        yield session
+
+
+def in_session[Result](
+    connection: Connection,
+    operation: Callable[..., Result],
+    *arguments: object,
+    **keywords: object,
+) -> Result:
+    """Run a function that takes a session, in a savepoint of ``connection``."""
+    with session_in(connection) as session:
+        return operation(session, *arguments, **keywords)
+
+
+def economy_store_on(connection: Connection) -> EconomyRunStore:
+    """Return an economy store whose sessions run in savepoints of ``connection``."""
+    return EconomyRunStore.from_session_factory(
+        session_factory_on(connection),
+        statement_timeout_milliseconds=STORE_STATEMENT_TIMEOUT_MILLISECONDS,
+    )
 
 
 def act_as_the_service(connection: Connection) -> None:
@@ -165,7 +214,7 @@ def connection_as_the_service(database_url: str) -> Iterator[Connection]:
 @pytest.fixture
 def committed_engine(public_api_database_url) -> Iterator[Engine]:
     """Return an engine on the Public API's database, disposed afterwards."""
-    engine = create_simulation_engine(public_api_database_url)
+    engine = simulation_engine(public_api_database_url)
     try:
         yield engine
     finally:

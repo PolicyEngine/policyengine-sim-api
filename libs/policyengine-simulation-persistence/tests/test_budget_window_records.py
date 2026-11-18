@@ -9,24 +9,16 @@ role in a transaction the test rolls back.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import act_as_the_service, economy_store_on, rolled_back_transaction
 from economy_rows import CURRENT_LAW, POLICYENGINE_VERSION, insert_economy_catalog
 from policyengine_simulation_persistence import (
     EconomyRequest,
-    EconomyRunStore,
     SimulationChoice,
 )
 from public_api_rows import StoredValue, insert_policy
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
-    from sqlalchemy import Connection
 
 pytestmark = pytest.mark.public_api_schema
 
@@ -41,17 +33,6 @@ REQUEST = EconomyRequest(
 )
 
 
-def _store_on(connection: Connection) -> EconomyRunStore:
-    """Return a store whose transactions are savepoints of ``connection``."""
-
-    @contextmanager
-    def savepoint() -> Iterator[Connection]:
-        with connection.begin_nested():
-            yield connection
-
-    return EconomyRunStore(savepoint)
-
-
 def test_a_windows_catalog_rows_and_both_sides_values_are_read(
     public_api_database_url,
 ) -> None:
@@ -63,7 +44,7 @@ def test_a_windows_catalog_rows_and_both_sides_values_are_read(
         act_as_the_service(connection)
         reform_choice = SimulationChoice(policy_id=policy_id, dynamic_id=None)
 
-        inputs = _store_on(connection).read_budget_window_inputs(
+        inputs = economy_store_on(connection).read_budget_window_inputs(
             REQUEST, baseline=CURRENT_LAW, reform=reform_choice
         )
 
