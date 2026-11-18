@@ -24,8 +24,9 @@ table is, within one module:
 - a parameter, variable or attribute annotated as SQLAlchemy's ``Table``;
 - a name or attribute it assigns from an expression rooted at a Core table,
   such as ``previous = household_jobs.alias()`` or ``self.jobs =
-  tables.household_jobs``, pairing the names and values of a tuple
-  assignment;
+  tables.household_jobs``, or from one that reads a mapped class's table, such
+  as ``household_jobs = HouseholdJob.__table__``, pairing the names and values
+  of a tuple assignment;
 - a class attribute it declares as a table, such as a dataclass field
   ``table: Table``, wherever the module reads it.
 
@@ -37,13 +38,22 @@ apply only in modules that import sqlalchemy: any ``.table`` read,
 and the ``.connect()``, ``.connection()``, ``.raw_connection()``,
 ``.get_bind()``, ``.begin()``, ``.cursor()`` and ``.exec_driver_sql()`` calls.
 The checks guard against ordinary Core use, not against deliberate evasion.
-They don't follow imports made through ``importlib`` or ``__import__``, tables
-or engines passed around without a ``Table`` or ``Engine`` annotation, a
+They don't follow imports made through ``importlib`` or ``__import__``, tables,
+engines or connections passed around without a ``Table``, ``Engine`` or
+``Connection`` annotation, so a statement on mapped classes run through such a
+connection isn't reported, a
 ``.table`` read in a module that doesn't import sqlalchemy, tables held in a
 container such as a dict, a class or instance attribute read in another
 module (unless it is a ``.table`` read, or its name matches one of the reading
-module's own table attributes), or a Session's ``bind`` attribute, and a name
-derived from a Core table counts as one throughout its module.
+module's own table attributes), or a Session's ``bind`` attribute. A name counts
+as a Core table throughout its module once it is assigned an expression rooted
+at one. Other names that come to hold a table aren't followed: one assigned
+``alias(table)``, a conditional or boolean expression, ``Model.id.table``,
+``metadata.tables[...]`` or ``inspect(Model).selectable``, a ``for`` or ``with``
+target, and a comprehension variable. The table reference they start from is
+reported, but their later uses aren't. ``.tables`` of a MetaData isn't reported
+when the name holding it doesn't end in ``metadata`` and wasn't assigned
+``MetaData(...)``.
 """
 
 from __future__ import annotations
@@ -67,7 +77,7 @@ SOURCE_DIRECTORY = "src"
 PACKAGE_MODULE = "__init__"
 # Core's table declarations, the lightweight table() and column() included.
 # MetaData may be built only in a declarative base module, as the metadata of
-# the library's DeclarativeBase.
+# one of the library's DeclarativeBase classes.
 TABLE_CONSTRUCTORS = frozenset(
     {"Column", "ColumnClause", "MetaData", "Table", "TableClause", "column", "table"}
 )
@@ -509,13 +519,20 @@ def _is_core_expression(
     modules: Mapping[str, _Module],
     tables: tuple[set[str], set[str]],
 ) -> bool:
-    """Whether an expression is rooted at a Core table, through any attributes."""
+    """Whether an expression is rooted at a Core table, through any attributes.
+
+    ``__table__`` and the other attributes in ``TABLE_ATTRIBUTES`` yield a Core
+    table whatever they are read from, so a name assigned from one, such as
+    ``household_jobs = HouseholdJob.__table__``, stays a Core table.
+    """
     names, attributes = tables
     node = value
     while True:
         if isinstance(node, ast.Attribute):
-            if node.attr in attributes or _exported_table_attribute(
-                node, module, modules
+            if (
+                node.attr in TABLE_ATTRIBUTES
+                or node.attr in attributes
+                or _exported_table_attribute(node, module, modules)
             ):
                 return True
             node = node.value

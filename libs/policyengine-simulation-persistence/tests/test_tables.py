@@ -15,7 +15,7 @@ from policyengine_simulation_persistence import (
     simulation_runs,
     simulations,
 )
-from policyengine_simulation_persistence import tables as tables_module
+from policyengine_simulation_persistence.orm_base import enum_type
 from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
 from sqlalchemy import Enum, ForeignKeyConstraint, Index, Table, UniqueConstraint
 
@@ -136,7 +136,7 @@ def test_every_enum_type_names_the_public_schema() -> None:
     for column in enum_columns:
         assert column.type.schema == "public", f"{column.table.name}.{column.name}"
     # The helper every enum column uses, before any table adopts its type.
-    helper_type = tables_module._enum_type(SimulationStatus, "v2_example")
+    helper_type = enum_type(SimulationStatus, "v2_example")
     assert helper_type.schema == "public"
 
 

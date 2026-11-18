@@ -31,13 +31,26 @@ operation's session ends with it and a call that spends most of its life
 calculating holds no pooler slot, and it waits 10 seconds to connect. The
 Stage 12 library binds it as `create_stage12_engine`.
 
+`create_session_factory` turns an engine into a `sessionmaker` for the ORM.
+Attributes keep their values after the transaction commits, apart from one set
+to a SQL expression such as `func.now()`, which must be refreshed before the
+session closes. `bounded_session` runs one transaction on such a factory with a
+`statement_timeout` local to it, as `bounded_transaction` does for code still
+on connections. The classes declare
+no relationships, so a session doesn't order inserts by foreign key: flush a
+referenced row before adding the row that names it.
+
 ## Tables
 
-`tables.py` models, with SQLAlchemy Core, the six tables the service creates
-rows in: `simulations`, `reports`, `simulation_runs`, `report_runs`,
-`budget_window_runs` and `household_jobs`, all in `service_metadata`,
-which names the `public` schema so writes reach those tables whatever the
-role's `search_path`.
+`tables.py` models, as SQLAlchemy ORM mapped classes, the six tables the
+service creates rows in: `Simulation`, `Report`, `SimulationRun`, `ReportRun`,
+`BudgetWindowRun` and `HouseholdJob`, for `simulations`, `reports`,
+`simulation_runs`, `report_runs`, `budget_window_runs` and `household_jobs`.
+They derive from `ServiceBase` in `orm_base.py`, and their tables are in
+`service_metadata`, which names the `public` schema so writes reach those
+tables whatever the role's `search_path`. Until the stores name the classes,
+each table is also available under its old name, as `Report.__table__` is
+`reports`.
 Each model matches the table the Public API's v2 migration chain builds:
 every column with its type, nullability and server default, and every
 constraint and index under the chain's name. The models only describe the
@@ -52,9 +65,10 @@ stay: 20 keys name rows the Public API writes in its users, policies,
 dynamics, households, datasets, regions and model catalog tables. PostgreSQL
 checks each of them on insert, as the referenced table's owner, so the
 service's role needs no privilege on those tables for it, and a row naming
-one that doesn't exist fails with SQLSTATE `23503`. Those tables are modelled
-in `referenced_metadata` by their `id` alone, the column every key names, so
-SQLAlchemy can declare the keys; nothing reads or writes through them. Code
+one that doesn't exist fails with SQLSTATE `23503`. `referenced_tables.py`
+models those tables, in `referenced_metadata`, by their `id` alone, the column
+every key names, so SQLAlchemy can declare the keys; nothing reads or writes
+through them. Code
 that builds the models' tables in a test database creates
 `referenced_metadata`'s tables first.
 
@@ -85,7 +99,8 @@ run's economy output.
 calculation is read from: `households`, `policies`, `dynamics`, `parameters`,
 `parameter_values`, `regions`, `datasets`, `tax_benefit_models` and
 `tax_benefit_model_versions`, in `input_metadata`. The service only reads them, with `SELECT`. Each names only
-the columns the service reads, so they are not models of the whole tables,
+the columns the service reads and its primary key, `id`, which a mapped class
+needs, so they are not models of the whole tables,
 and they are kept apart from the models of the tables the service writes
 (`service_metadata`) and from the tables those name by `id` alone
 (`referenced_metadata`).
@@ -426,8 +441,9 @@ refuses any other change to a run. The Public API's privilege manifest grants
 them all.
 
 `MODAL_WORKER_TABLE_PRIVILEGES` and `MODAL_WORKER_UPDATABLE_COLUMNS` list what
-the Modal worker role needs: `SELECT` on the four run tables, `INSERT` on
-every result table, and `UPDATE` of each run's state (`status`,
+the Modal worker role needs: `SELECT` on the four run tables, `SELECT` and
+`INSERT` on every result table, because a session's insert reads the row's
+server defaults back, and `UPDATE` of each run's state (`status`,
 `modal_call_id`, `error_message`, `started_at`, `completed_at` and
 `updated_at`; a budget-window run has no call of its own) and of the results
 its own row holds: a report run's cliff impact, `spm_provenance` and

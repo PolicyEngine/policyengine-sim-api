@@ -114,17 +114,15 @@ _RUN_STATE: Final = frozenset(
     }
 )
 # The v2 Modal coordinators, workers, household functions and stuck-run sweep
-# read the runs they were given and insert their results, once each.
+# read the runs they were given and insert their results, once each. A session's
+# insert of a result also reads the row's server defaults back.
 MODAL_WORKER_TABLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
     {
         "report_runs": _READ,
         "simulation_runs": _READ,
         "household_jobs": _READ,
         "budget_window_runs": _READ,
-        **{
-            table.name: frozenset({"INSERT"})
-            for table in result_metadata.tables.values()
-        },
+        **{table.name: _CREATE for table in result_metadata.tables.values()},
     }
 )
 # The columns the Modal worker role may UPDATE, by table: each run's state and

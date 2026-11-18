@@ -38,14 +38,26 @@ libraries had when it was added, and issue #1097 tracks converting them.
 What the ORM means here:
 
 - **Models** are SQLAlchemy 2.0 typed declarative classes (`Mapped[...]`,
-  `mapped_column`) deriving from one `DeclarativeBase` per library. A
-  library's `MetaData`, with its schema, is built only in its `orm_base.py`.
-  Constraints and indexes go in `__table_args__` under the Public API's names.
-  Use SQLAlchemy's own ORM, not SQLModel.
+  `mapped_column`). Each derives from a `DeclarativeBase` in its library's
+  `orm_base.py`, the only module that builds a `MetaData`, with its schema. A
+  library has one base per `MetaData` it needs. A `MetaData` holds one table of
+  each name, so `policyengine-simulation-persistence` has four: `ServiceBase`,
+  `ReferencedBase`, `InputBase` and `ResultBase`, because its read-only models
+  and its key targets describe some of the same tables. A key to another
+  base's table names that class's attribute, such as `ReportRun.id`.
+  `policyengine-stage12-persistence` has `ComparisonBase`. Constraints and
+  indexes go in `__table_args__` under API v1's names. Use SQLAlchemy's own
+  ORM, not SQLModel.
 - **Sessions:** only a library's `engine.py` creates or holds an `Engine`, and
-  it hands out a `sessionmaker`. Everything else receives a `sessionmaker` or a
+  it hands out a `sessionmaker` (`create_session_factory`, with
+  `expire_on_commit=False`). Everything else receives a `sessionmaker` or a
   `Session`, and runs a transaction as `with session_factory.begin() as
-  session:`.
+  session:`, or as `with bounded_session(session_factory,
+  statement_timeout_milliseconds=...) as session:` to limit its statements.
+  The classes declare no relationships, so a flush doesn't order inserts by
+  foreign key: flush the referenced row first. An attribute set to a SQL
+  expression, such as `func.now()`, must be refreshed before the session closes
+  if it will be read afterwards.
 - **Statements** name mapped classes or their attributes: `session.get`,
   `session.add`, `session.scalars(select(Model))`, and ORM-enabled
   `update(Model)`, `insert(Model)` or
@@ -59,6 +71,10 @@ What the ORM means here:
   what it holds, such as `model`, never `table`: every `.table` read in a
   module that imports sqlalchemy is reported, because that is how a column
   reaches its Core table.
+
+- **While code is converted**, a table module keeps each table's old name as
+  `household_jobs = HouseholdJob.__table__`, so unconverted statements keep
+  working. That name is a Core table, so each of its uses stays a finding.
 
 - **Schema inspection**, for the deployment check that compares the live
   schema with the models, reads the live schema as `inspect(engine)` in the
@@ -82,8 +98,10 @@ A Core table is, in one module:
 - a parameter, variable or attribute annotated as SQLAlchemy's `Table`;
 - a name or attribute it assigns from an expression rooted at a Core table,
   such as `previous = household_jobs.alias()` or
-  `self.jobs = tables.household_jobs`, with a tuple assignment pairing each
-  name with its value, nested tuples included;
+  `self.jobs = tables.household_jobs`, or from one that reads `__table__`,
+  `local_table`, `persist_selectable` or `sorted_tables`, such as
+  `household_jobs = HouseholdJob.__table__`, with a tuple assignment pairing
+  each name with its value, nested tuples included;
 - a class attribute it declares as a table, such as a dataclass field
   `table: Table`, wherever the module reads it. Another module's read of a
   class or instance attribute is reported when the reading module imports
@@ -124,13 +142,21 @@ modules that import sqlalchemy: any `.table` read, and the `.connect()`,
 and `.exec_driver_sql()` calls.
 
 The checks read source, not types, and guard against ordinary Core use, not
-against deliberate evasion. They miss imports through `importlib`, tables and
-engines passed around without a `Table` or `Engine` annotation, tables held in
-a container
+against deliberate evasion. They miss imports through `importlib`; tables,
+engines and connections passed around without a `Table`, `Engine` or
+`Connection` annotation, so a statement on mapped classes run through such a
+connection isn't reported; tables held in a container
 such as a dict, a class or instance attribute read in another module (other
 than the reads above), a `.table` read in a module that doesn't import
-sqlalchemy, and a Session's `bind` attribute. A name derived from a Core table
-counts as one throughout its module. Once a library's tables are mapped
+sqlalchemy, and a Session's `bind` attribute. A name counts as a Core table
+throughout its module once it is assigned an expression rooted at one. Other
+names that come to hold a table aren't followed: one assigned `alias(table)`, a
+conditional or boolean expression, `Model.id.table`, `metadata.tables[...]` or
+`inspect(Model).selectable`, a `for` or `with` target, and a comprehension
+variable. The table reference they start from is reported, but their later uses
+aren't. `.tables` of a `MetaData` isn't reported when the name holding it
+doesn't end in `metadata` and wasn't assigned `MetaData(...)`. Once a library's
+tables are mapped
 classes and its declarations are gone, the ordinary routes to a Core table,
 such as `__table__` and `.table`, are reported; the routes listed here are the
 exceptions.
@@ -162,7 +188,8 @@ and this repository has no migration chain of its own
   `policies`, `parameters`, `parameter_values`, `tax_benefit_models` and
   `tax_benefit_model_versions`), which the simulation service only reads.
   Their read-only models in that library's `input_tables.py` name only the
-  columns the service reads, apart from the models of the tables it writes.
+  columns the service reads and each table's primary key, apart from the
+  models of the tables it writes.
 - the run tables the v2 Modal coordinator, workers, household functions and
   stuck-run sweep write as the Modal worker role: `report_runs`,
   `simulation_runs`, `budget_window_runs`, the result tables and

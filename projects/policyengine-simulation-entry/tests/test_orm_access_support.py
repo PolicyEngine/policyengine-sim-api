@@ -25,6 +25,7 @@ ENGINE = "libs/example/src/example/engine.py"
 ORM_BASE = "libs/example/src/example/orm_base.py"
 GATEWAY = "projects/gateway/src/gateway/regions.py"
 PACKAGE = "libs/example/src/example/__init__.py"
+MODELS = "libs/example/src/example/models.py"
 
 # Core tables under generic names, as the persistence library declares them.
 CORE_TABLES_MODULE = """
@@ -614,3 +615,84 @@ def test_name_rules_apply_only_in_modules_that_use_sqlalchemy():
     """
 
     assert _checks({GATEWAY: gateway}, GATEWAY) == []
+
+
+@pytest.mark.parametrize(
+    "table_expression",
+    [
+        "HouseholdJob.__table__",
+        "inspect(HouseholdJob).local_table",
+        "inspect(HouseholdJob).persist_selectable",
+        "Base.metadata.sorted_tables",
+    ],
+)
+def test_a_name_assigned_a_table_attribute_stays_a_core_table(table_expression):
+    models = f"""
+    from example.orm_base import Base, HouseholdJob
+    from sqlalchemy import inspect, select
+
+    jobs = {table_expression}
+    statement = select(jobs)
+    """
+
+    assert _checks({MODELS: models}, MODELS) == [
+        (CORE_TABLE_ACCESS, table_expression),
+        (CORE_TABLE_ACCESS, "jobs"),
+    ]
+
+
+def test_a_mapped_classs_table_stays_a_core_table_through_imports():
+    """A store keeps its findings when its table becomes ``X.__table__``."""
+    models = """
+    from example.orm_base import HouseholdJob
+
+    household_jobs = HouseholdJob.__table__
+    """
+    package = """
+    from example.models import household_jobs
+    """
+    store = """
+    from example import household_jobs as jobs
+    from example import models
+    from sqlalchemy import select
+
+    by_name = select(jobs)
+    by_module = select(models.household_jobs)
+    """
+
+    assert _checks({MODELS: models, PACKAGE: package, STORE: store}, STORE) == [
+        (CORE_TABLE_ACCESS, "jobs"),
+        (CORE_TABLE_ACCESS, "models.household_jobs"),
+    ]
+
+
+def test_an_attribute_assigned_a_mapped_classs_table_is_one_where_read():
+    store = """
+    from example.orm_base import HouseholdJob
+    from sqlalchemy import select
+
+    class Store:
+        def __init__(self):
+            self.jobs = HouseholdJob.__table__
+
+        def statement(self):
+            return select(self.jobs)
+    """
+
+    assert _checks({STORE: store}, STORE) == [
+        (CORE_TABLE_ACCESS, "HouseholdJob.__table__"),
+        (CORE_TABLE_ACCESS, "self.jobs"),
+    ]
+
+
+def test_a_name_assigned_a_mapped_class_or_its_table_name_is_not_a_table():
+    store = """
+    from example.orm_base import HouseholdJob
+    from sqlalchemy import select
+
+    job_model = HouseholdJob
+    table_name = HouseholdJob.__tablename__
+    statement = select(job_model).where(job_model.id == table_name)
+    """
+
+    assert _checks({STORE: store}, STORE) == []

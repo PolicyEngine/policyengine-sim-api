@@ -23,6 +23,7 @@ from conftest import (
 from policyengine_simulation_persistence import (
     MODAL_WORKER_TABLE_PRIVILEGES,
     MODAL_WORKER_UPDATABLE_COLUMNS,
+    Poverty,
     budget_window_runs,
     household_jobs,
     missing_table_privileges,
@@ -32,6 +33,7 @@ from policyengine_simulation_persistence import (
 )
 from service_rows import ServiceRows, insert_public_api_rows, insert_service_rows
 from sqlalchemy import Enum, Float, Integer, String, func, insert, select, text, update
+from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
     from sqlalchemy import Connection, Table
@@ -159,6 +161,29 @@ def _stored_as_sql_null(connection: Connection, table: Table, column_name: str) 
         .select_from(table)
         .where(table.c[column_name].is_(None), table.c.modal_call_id == MODAL_CALL_ID)
     ).scalar_one()
+
+
+def test_the_modal_worker_role_inserts_a_result_through_its_class(
+    public_api_database_url,
+) -> None:
+    """A session's insert reads the row's server defaults back with ``RETURNING``."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        public_api_rows = insert_public_api_rows(connection)
+        act_as_the_service(connection)
+        service_rows = insert_service_rows(connection, public_api_rows)
+        act_as_the_modal_worker(connection)
+        result = Poverty(
+            simulation_run_id=service_rows.baseline_run_id,
+            poverty_type="spm",
+            entity="person",
+        )
+
+        with Session(connection, join_transaction_mode="create_savepoint") as session:
+            session.add(result)
+            session.flush()
+            created_at = result.created_at
+
+    assert created_at is not None
 
 
 def test_the_modal_worker_role_records_its_runs_and_inserts_every_result(
