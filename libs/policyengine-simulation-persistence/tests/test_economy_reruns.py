@@ -246,8 +246,8 @@ def _used_on_later_catalog(
 
     The other report, created on ``economy`` beside the stored one, compares
     the stored report's baseline simulation (naming its run) with a reform
-    simulation of its own; its initial run succeeded, and its manual re-run
-    on the later catalog created both sides' later runs and succeeded. The
+    simulation of its own; its first run succeeded, and its re-run on the
+    later catalog created both sides' later runs and succeeded. The
     stored report has no run on the later versions, so a re-run of it has
     none to join, and its reform simulation has no later run.
     """
