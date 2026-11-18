@@ -28,17 +28,13 @@ def test_a_window_names_its_years_from_its_first() -> None:
     assert request.years == tuple(range(2026, 2036))
 
 
-def test_a_windows_calculation_options_ask_for_no_cliffs() -> None:
+def test_a_windows_calculation_options_hold_only_its_spm_selection() -> None:
     # The report stores the SPM selection alone (stored_options); its years
-    # share runs with single-year reports by key.
-    assert _request().options() == {
-        "include_cliffs": False,
-        "spm": {"geography_kind": "national"},
-    }
+    # share runs with single-year reports by key. No options object holds
+    # include_cliffs, which a window never takes.
+    assert _request().options() == {"spm": {"geography_kind": "national"}}
     without_spm = {name: value for name, value in WINDOW_BODY.items() if name != "spm"}
-    assert BudgetWindowReportRequest.model_validate(without_spm).options() == {
-        "include_cliffs": False
-    }
+    assert BudgetWindowReportRequest.model_validate(without_spm).options() == {}
 
 
 @pytest.mark.parametrize(

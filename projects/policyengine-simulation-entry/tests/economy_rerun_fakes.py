@@ -6,7 +6,7 @@ persistence library; here a fake records what the re-run service asks of it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, NoReturn
 from uuid import UUID
 
@@ -60,7 +60,8 @@ SIMULATION_ID = UUID("00000000-0000-4000-8000-0000000000a4")
 CURRENT_LAW = SimulationChoice(policy_id=None, dynamic_id=None)
 REFORM_CHOICE = SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID)
 # A report stored before C1 · 27 kept the request's options; one asking for
-# cliffs is refused until cliffs are calculated per run (interim answer A).
+# cliffs asks for its runs' cliffs when re-run, and its stored option never
+# reaches the coordinator.
 STORED_OPTIONS: dict[str, Any] = {
     "include_cliffs": False,
     "spm": {"geography_kind": "national"},
@@ -247,7 +248,22 @@ class FakeRerunStore(FakeWindowStore):
     def create_report_rerun(self, rerun: NewReportRerun) -> FoundReportRun:
         if self.rerun_failure is not None:
             raise self.rerun_failure
+        if rerun.cliffs is not None and self.cliff_failure is not None:
+            raise self.cliff_failure
         self.report_reruns.append(rerun)
+        found = self._report_rerun_run(rerun)
+        if rerun.cliffs is None or found.reform_simulation_run_id is None:
+            return found
+        return replace(
+            found,
+            cliffs=self.found_cliffs(
+                rerun.cliffs,
+                baseline_simulation_run_id=found.baseline_simulation_run_id,
+                reform_simulation_run_id=found.reform_simulation_run_id,
+            ),
+        )
+
+    def _report_rerun_run(self, rerun: NewReportRerun) -> FoundReportRun:
         # As the store does, a forced re-run joins nothing.
         if self.joined_report_run is not None and not rerun.forced:
             return self.joined_report_run

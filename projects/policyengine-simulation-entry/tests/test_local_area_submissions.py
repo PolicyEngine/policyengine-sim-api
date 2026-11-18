@@ -70,11 +70,7 @@ CATALOG_LOCAL_AREA_DATASET = CatalogDataset(
 
 
 def _uk_report_request(**changes: Any) -> EconomyReportRequest:
-    """Return a UK-wide report request, with no SPM settings and no cliffs.
-
-    The service refuses ``include_cliffs: true`` until per-run cliff
-    calculations exist (C1 · 24's interim answer A).
-    """
+    """Return a UK-wide report request, with no SPM settings and no cliffs."""
     body = {name: value for name, value in REPORT_BODY.items() if name != "spm"}
     return EconomyReportRequest.model_validate(
         {

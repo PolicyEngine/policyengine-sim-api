@@ -182,6 +182,32 @@ def test_a_standalone_run_starts_the_countrys_simulation_function(
     ]
 
 
+def test_a_cliff_calculation_starts_the_countrys_simulation_function(
+    modal_functions,
+) -> None:
+    """C1 · 38's cliff mode: the context names the cliff result, not a run."""
+    looked_up, function = modal_functions
+    worker = default_economy_worker(economy_manifest(), "uk")
+
+    call_id = asyncio.run(
+        ModalEconomyRunCaller("main").start_cliff_calculation(
+            worker,
+            {"simulation": 1},
+            {"cliff_result_id": "cliffs"},
+            observability_context={"observability_id": "observed"},
+        )
+    )
+
+    assert call_id == "fc-started"
+    assert looked_up == [(worker.application_name, "run_single_simulation_uk", "main")]
+    assert function.spawns == [
+        (
+            ({"simulation": 1}, {"cliff_result_id": "cliffs"}),
+            {"observability_context": {"observability_id": "observed"}},
+        )
+    ]
+
+
 @pytest.mark.parametrize("object_id", [None, ""])
 def test_a_call_modal_gives_no_id_is_an_error(modal_functions, object_id) -> None:
     _, function = modal_functions

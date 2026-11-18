@@ -28,9 +28,14 @@ from household_fixtures import POLICYENGINE_VERSION
 from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
     ReportRunIds,
+    SimulationExecutionInput,
     Stage12InvocationContext,
 )
-from policyengine_simulation_entry.economy_api_models import EconomyReportRequest
+from policyengine_simulation_entry.economy_api_models import (
+    CliffCalculationState,
+    EconomyReportRequest,
+    ReportCliffs,
+)
 from policyengine_simulation_entry.economy_submission_errors import (
     EconomySubmissionOutcomeUnknownError,
     EconomySubmissionRefusedError,
@@ -53,6 +58,7 @@ from policyengine_simulation_persistence import (
     EconomyRequest,
     EconomySimulationDefinition,
     EconomySimulationState,
+    FoundCliffCalculation,
     FoundEconomyReport,
     FoundEconomySimulation,
     FoundReportRun,
@@ -284,24 +290,316 @@ def test_a_report_without_spm_settings_stores_none() -> None:
     assert payload.reform.options == {}
 
 
-def test_a_report_asking_for_cliffs_is_refused_before_anything_is_read() -> None:
-    """Interim answer A: a 422 until per-run cliff calculations exist (C1 · 39)."""
+def _started_cliff_calculations(caller: FakeCaller) -> dict[UUID, UUID]:
+    """Return each cliff calculation the service started, by its simulation run."""
+    started: dict[UUID, UUID] = {}
+    for _, payload, context, _ in caller.cliff_calculations:
+        simulation = SimulationExecutionInput.model_validate(payload)
+        cliff_result_id = Stage12InvocationContext.model_validate(
+            context
+        ).cliff_result_id
+        assert cliff_result_id is not None
+        started[simulation.simulation_execution_id] = cliff_result_id
+    return started
+
+
+def _cliff_payloads(caller: FakeCaller) -> dict[UUID, SimulationExecutionInput]:
+    return {
+        payload.simulation_execution_id: payload
+        for payload in (
+            SimulationExecutionInput.model_validate(started[1])
+            for started in caller.cliff_calculations
+        )
+    }
+
+
+def test_a_report_asking_for_cliffs_starts_each_side_runs_cliff_calculation() -> None:
+    """Interim answer A is lifted: one cliff calculation per simulation run (4b)."""
     store = FakeStore()
     caller = FakeCaller()
 
-    with pytest.raises(EconomySubmissionUnprocessableError) as refusal:
+    created = _submit_report(
+        service(store, caller=caller), report_request(include_cliffs=True)
+    )
+
+    (proposed,) = store.cliff_requests
+    assert set(proposed) == {UUID(int=4), UUID(int=6)}
+    assert _started_cliff_calculations(caller) == proposed
+    payloads = _cliff_payloads(caller)
+    assert (payloads[UUID(int=4)].policy, payloads[UUID(int=6)].policy) == ({}, REFORM)
+    assert payloads[UUID(int=6)].options == {"spm": {"geography_kind": "national"}}
+    assert all(observed == OBSERVED for *_, observed in caller.cliff_calculations)
+    assert sorted(cliff_id for cliff_id, _ in store.recorded_cliff_calls) == sorted(
+        proposed.values()
+    )
+    assert created.cliffs == ReportCliffs(
+        baseline=CliffCalculationState(
+            cliff_result_id=proposed[UUID(int=4)], status=SimulationStatus.PENDING
+        ),
+        reform=CliffCalculationState(
+            cliff_result_id=proposed[UUID(int=6)], status=SimulationStatus.PENDING
+        ),
+    )
+    # The report run is calculated as ever, and its coordinator plans no cliffs.
+    assert store.recorded_calls == [(UUID(int=2), "fc-coordinator")]
+    report = ReportExecutionInput.model_validate(caller.report_runs[0][1])
+    assert (
+        report.baseline.options
+        == report.reform.options
+        == {"spm": {"geography_kind": "national"}}
+    )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [SimulationStatus.PENDING, SimulationStatus.RUNNING, SimulationStatus.SUCCEEDED],
+)
+def test_a_side_run_with_a_cliff_calculation_gets_no_new_one(
+    status: SimulationStatus,
+) -> None:
+    """Being calculated, or calculated: the request joins it and starts nothing."""
+    existing = FoundCliffCalculation(
+        id=UUID(int=70), simulation_run_id=UUID(int=6), inserted=False, status=status
+    )
+    store = FakeStore(cliff_calculations={UUID(int=6): existing})
+    caller = FakeCaller()
+
+    created = _submit_report(
+        service(store, caller=caller), report_request(include_cliffs=True)
+    )
+
+    started = _started_cliff_calculations(caller)
+    assert list(started) == [UUID(int=4)]
+    assert UUID(int=70) not in {cliff_id for cliff_id, _ in store.recorded_cliff_calls}
+    assert created.cliffs is not None
+    assert created.cliffs.reform == CliffCalculationState(
+        cliff_result_id=UUID(int=70), status=status
+    )
+    assert created.cliffs.baseline.cliff_result_id == started[UUID(int=4)]
+
+
+def test_one_run_on_both_sides_gets_one_cliff_calculation() -> None:
+    store = FakeStore()
+    caller = FakeCaller()
+
+    created = _submit_report(
+        service(store, caller=caller),
+        report_request(
+            include_cliffs=True, reform={"policy_id": None, "dynamic_id": None}
+        ),
+    )
+
+    (proposed,) = store.cliff_requests
+    assert list(proposed) == [UUID(int=4)]
+    assert _started_cliff_calculations(caller) == proposed
+    assert created.cliffs is not None
+    assert created.cliffs.baseline == created.cliffs.reform
+    assert created.cliffs.baseline.cliff_result_id == proposed[UUID(int=4)]
+
+
+def test_a_joined_report_run_asking_for_cliffs_starts_its_runs_missing_ones() -> None:
+    """A re-asked report: its run is joined, and its runs get their cliffs."""
+    store = FakeStore(
+        found_report=_found_report(run_inserted=False, status=ReportRunStatus.SUCCEEDED)
+    )
+    caller = FakeCaller()
+
+    created = _submit_report(
+        service(store, caller=caller), report_request(include_cliffs=True)
+    )
+
+    assert caller.report_runs == []
+    started = _started_cliff_calculations(caller)
+    assert set(started) == {REUSED.simulation_run_id, UUID(int=93)}
+    payloads = _cliff_payloads(caller)
+    assert payloads[REUSED.simulation_run_id].policy == {}
+    assert payloads[UUID(int=93)].policy == REFORM
+    assert (created.report_run_id, created.status) == (
+        UUID(int=91),
+        ReportRunStatus.SUCCEEDED,
+    )
+    assert created.cliffs is not None
+    assert created.cliffs.reform.cliff_result_id == started[UUID(int=93)]
+
+
+def test_two_identical_requests_start_one_cliff_calculation_per_run() -> None:
+    store = FakeStore()
+    caller = FakeCaller()
+    submissions = service(store, caller=caller)
+
+    first = _submit_report(submissions, report_request(include_cliffs=True))
+    # The second ends on the first's report and runs, as the store finds them.
+    store.found_report = FoundEconomyReport(
+        report_id=first.report_id,
+        report_inserted=False,
+        run=FoundReportRun(
+            id=first.report_run_id,
+            inserted=False,
+            status=ReportRunStatus.PENDING,
+            baseline_simulation_run_id=first.baseline_simulation_run_id,
+            reform_simulation_run_id=first.reform_simulation_run_id,
+        ),
+        baseline=FoundSide(
+            simulation_id=first.baseline_simulation_id,
+            simulation_run_id=first.baseline_simulation_run_id,
+            run_inserted=False,
+        ),
+        reform=FoundSide(
+            simulation_id=first.reform_simulation_id,
+            simulation_run_id=first.reform_simulation_run_id,
+            run_inserted=False,
+        ),
+    )
+    second = _submit_report(submissions, report_request(include_cliffs=True))
+
+    assert len(caller.cliff_calculations) == 2
+    assert len(caller.report_runs) == 1
+    assert second.cliffs == first.cliffs
+
+
+def test_include_cliffs_changes_no_key_and_is_never_stored() -> None:
+    """Answer 4b: a request option, in no key and no stored row."""
+    stores = {asked: FakeStore() for asked in (True, False)}
+    callers = {asked: FakeCaller() for asked in (True, False)}
+
+    for asked, store in stores.items():
+        _submit_report(
+            service(store, caller=callers[asked]),
+            report_request(include_cliffs=asked),
+        )
+
+    (with_cliffs,) = stores[True].reports
+    (without_cliffs,) = stores[False].reports
+    assert with_cliffs.definition == without_cliffs.definition
+    assert with_cliffs.definition.definition_key == (
+        without_cliffs.definition.definition_key
+    )
+    assert with_cliffs.definition.dataset_independent_key == (
+        without_cliffs.definition.dataset_independent_key
+    )
+    assert (
+        with_cliffs.inputs
+        == without_cliffs.inputs
+        == {"spm": {"geography_kind": "national"}}
+    )
+    payloads = [
+        ReportExecutionInput.model_validate(callers[asked].report_runs[0][1])
+        for asked in (True, False)
+    ]
+    assert payloads[0].baseline.options == payloads[1].baseline.options
+
+
+def test_a_report_not_asking_for_cliffs_touches_no_cliff_calculation() -> None:
+    store = FakeStore()
+    caller = FakeCaller()
+
+    created = _submit_report(service(store, caller=caller))
+
+    assert (store.cliff_requests, caller.cliff_calculations) == ([], [])
+    assert created.cliffs is None
+    assert "cliffs" not in created.model_dump(mode="json")
+
+
+def test_a_cliff_call_modal_refuses_fails_that_calculation_and_answers_the_report() -> (
+    None
+):
+    """The report run is calculated; the next request asking starts cliffs again."""
+    store = FakeStore()
+    caller = FakeCaller(cliff_failure=RuntimeError("refused"))
+
+    created = _submit_report(
+        service(store, caller=caller), report_request(include_cliffs=True)
+    )
+
+    (proposed,) = store.cliff_requests
+    failed = dict(store.failed_cliff_calculations)
+    assert set(failed) == set(proposed.values())
+    assert all(
+        message.startswith("modal_call_refused: ") for message in failed.values()
+    )
+    assert store.recorded_cliff_calls == []
+    assert (created.report_run_id, created.status) == (
+        UUID(int=2),
+        ReportRunStatus.PENDING,
+    )
+    assert created.cliffs is not None
+    assert created.cliffs.baseline.status is SimulationStatus.FAILED
+    assert created.cliffs.reform.status is SimulationStatus.FAILED
+
+
+def test_a_cliff_calculation_its_function_claimed_meanwhile_is_answered_pending() -> (
+    None
+):
+    """Modal accepted the call after the wait ended; the row is left as it is."""
+    store = FakeStore(claimed=True)
+    caller = FakeCaller(cliff_failure=TimeoutError())
+
+    created = _submit_report(
+        service(store, caller=caller), report_request(include_cliffs=True)
+    )
+
+    assert store.failed_cliff_calculations == []
+    assert created.cliffs is not None
+    assert created.cliffs.baseline.status is SimulationStatus.PENDING
+
+
+def test_a_create_whose_cliff_calculations_cannot_be_written_starts_nothing() -> None:
+    """Review round 1: they're written with the report, so a 503 wrote nothing."""
+    store = FakeStore(cliff_failure=DATABASE_ERROR)
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionUnavailableError) as unavailable:
         _submit_report(
             service(store, caller=caller), report_request(include_cliffs=True)
         )
 
-    assert refusal.value.code == "cliffs_not_available"
-    ((reason),) = refusal.value.reasons
-    assert (reason.loc, reason.type) == (
-        ("body", "include_cliffs"),
-        "cliffs_not_available",
+    assert unavailable.value.code == "database_unavailable"
+    assert store.reports == []
+    assert (caller.report_runs, caller.cliff_calculations) == ([], [])
+
+
+def test_a_report_whose_coordinator_modal_refuses_still_starts_its_cliffs() -> None:
+    """The calculations were written with the report: each run's, kept for others."""
+    store = FakeStore()
+    caller = FakeCaller(failure=RuntimeError("refused"))
+
+    with pytest.raises(EconomySubmissionUnavailableError) as unavailable:
+        _submit_report(
+            service(store, caller=caller), report_request(include_cliffs=True)
+        )
+
+    assert unavailable.value.code == "modal_call_refused"
+    (proposed,) = store.cliff_requests
+    assert _started_cliff_calculations(caller) == proposed
+
+
+def test_a_cliff_call_whose_id_cannot_be_recorded_is_answered_pending() -> None:
+    """The function claims a pending calculation with no call ID itself."""
+    store = FakeStore(record_failure=DATABASE_ERROR)
+    caller = FakeCaller()
+
+    created = _submit_report(
+        service(store, caller=caller), report_request(include_cliffs=True)
     )
-    assert "cliff" in reason.msg
-    assert (store.report_reads, store.reports, caller.report_runs) == ([], [], [])
+
+    assert len(caller.cliff_calculations) == 2
+    assert created.cliffs is not None
+    assert created.cliffs.baseline.status is SimulationStatus.PENDING
+    assert created.cliffs.reform.status is SimulationStatus.PENDING
+
+
+def test_a_refused_cliff_call_whose_failure_cannot_be_written_is_pending() -> None:
+    """The stuck-run sweep fails the calculation if no call ever claims it."""
+    store = FakeStore(fail_failure=DATABASE_ERROR)
+    caller = FakeCaller(cliff_failure=RuntimeError("refused"))
+
+    created = _submit_report(
+        service(store, caller=caller), report_request(include_cliffs=True)
+    )
+
+    assert store.failed_cliff_calculations == []
+    assert created.cliffs is not None
+    assert created.cliffs.baseline.status is SimulationStatus.PENDING
 
 
 @pytest.mark.parametrize(
