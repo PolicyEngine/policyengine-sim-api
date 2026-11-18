@@ -33,6 +33,10 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
+from policyengine_simulation_observability.log_records import (
+    database_row_attributes,
+    log_extra,
+)
 from policyengine_simulation_persistence import SimulationStatus
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -198,10 +202,10 @@ class CliffCalculationStarts:
             # The function claims a pending calculation with no call ID itself.
             logger.warning(
                 "cliff_calculation_call_not_recorded",
-                extra={
-                    "cliff_result_id": str(cliff_result_id),
-                    "error_type": type(error).__name__,
-                },
+                extra=log_extra(
+                    error_type=type(error).__name__,
+                    **database_row_attributes("cliff_impacts", cliff_result_id),
+                ),
             )
             return SimulationStatus.PENDING
         return SimulationStatus.PENDING if status is None else status
@@ -218,10 +222,10 @@ class CliffCalculationStarts:
         # The log names the error type only; its text could repeat request data.
         logger.error(
             "cliff_calculation_call_unconfirmed",
-            extra={
-                "cliff_result_id": str(cliff_result_id),
-                "error_type": type(error).__name__,
-            },
+            extra=log_extra(
+                error_type=type(error).__name__,
+                **database_row_attributes("cliff_impacts", cliff_result_id),
+            ),
         )
         message = (
             "modal_call_refused: Modal did not accept the cliff calculation's "
@@ -234,9 +238,9 @@ class CliffCalculationStarts:
         except SQLAlchemyError as write_error:
             logger.warning(
                 "cliff_calculation_not_failed",
-                extra={
-                    "cliff_result_id": str(cliff_result_id),
-                    "error_type": type(write_error).__name__,
-                },
+                extra=log_extra(
+                    error_type=type(write_error).__name__,
+                    **database_row_attributes("cliff_impacts", cliff_result_id),
+                ),
             )
             return False
