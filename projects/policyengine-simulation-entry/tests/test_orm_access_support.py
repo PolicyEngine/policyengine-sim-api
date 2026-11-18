@@ -282,6 +282,16 @@ def test_two_files_may_share_a_module_name():
     assert orm_access_findings(sources) == []
 
 
+def test_a_bare_mapped_table_read_is_reported_without_a_sqlalchemy_import():
+    source = """
+    class JobRecord:
+        __table__ = build_jobs_table()
+        pending = __table__.select()
+    """
+
+    assert _checks({STORE: source}, STORE) == [(CORE_TABLE_ACCESS, "__table__")]
+
+
 def test_names_shared_with_core_tables_elsewhere_are_not_core_tables():
     gateway = """
     import pyarrow as pa

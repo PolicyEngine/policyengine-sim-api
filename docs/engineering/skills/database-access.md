@@ -95,8 +95,8 @@ including one on expressions, labels, subqueries and aliases.
 Each file is checked on its own, through its own imports. A Core table is
 reported where it starts, not at each later use, because the first finding
 already fails the rule: where it is declared, where it is read from a mapped
-class, mapper or `MetaData`, and where an annotation names `Table` or
-`TableClause`.
+class, mapper or `MetaData` or as the bare name `__table__`, and where an
+annotation names `Table` or `TableClause`.
 
 Each finding is one of:
 
