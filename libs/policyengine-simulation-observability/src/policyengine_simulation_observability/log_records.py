@@ -1,4 +1,4 @@
-"""Telemetry fields that name a Public API row, and log fields that are emitted.
+"""Telemetry fields that name an API v1 row, and log fields that are emitted.
 
 ``policyengine-observability``'s standard-library log handler emits only a
 log record's ``policyengine_attributes``; every other key passed in
@@ -21,7 +21,7 @@ DATABASE_TABLE_ATTRIBUTE = "database_table"
 DATABASE_ROW_ID_ATTRIBUTE = "database_row_id"
 MODAL_CALL_ID_ATTRIBUTE = "modal_call_id"
 
-# The Public API tables whose rows telemetry names.
+# The API v1 tables whose rows telemetry names.
 DatabaseTable = Literal[
     "household_jobs", "report_runs", "reports", "simulation_runs", "simulations"
 ]
@@ -35,7 +35,7 @@ _LOG_RECORD_ATTRIBUTES: Final = frozenset(
 
 
 def database_row_attributes(table: DatabaseTable, row_id: UUID) -> dict[str, str]:
-    """Return the attributes naming row ``row_id`` of the Public API's ``table``."""
+    """Return the attributes naming row ``row_id`` of API v1's ``table``."""
     return {DATABASE_TABLE_ATTRIBUTE: table, DATABASE_ROW_ID_ATTRIBUTE: str(row_id)}
 
 

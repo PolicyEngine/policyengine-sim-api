@@ -33,6 +33,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
+from policyengine_simulation_observability.log_records import log_extra
 
 from policyengine_simulation_entry.household_api_models import (
     HouseholdCalculationAccepted,
@@ -184,13 +185,11 @@ def _outcome_unknown_response(
     nothing was created. The log is the fixed event
     ``household_job_outcome_unknown`` with the commit error's type, never
     its text, as ``economy_record_outcome_unknown`` logs. It names no job:
-    the observability runtime drops every attribute whose key contains
-    ``household``, and ``job_id`` names a Modal invocation.
+    the error carries only that type.
     """
-    fields = {"error_type": error.error_type}
     logger.error(
         "household_job_outcome_unknown",
-        extra={**fields, "policyengine_attributes": fields},
+        extra=log_extra(error_type=error.error_type),
     )
     return _error_response(
         status.HTTP_500_INTERNAL_SERVER_ERROR,

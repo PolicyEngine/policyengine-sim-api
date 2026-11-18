@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 65 | 0 | 0 | 14 | 79 |
+| mechanical | 66 | 0 | 0 | 14 | 80 |
 | metric | 1 | 0 | 0 | 0 | 1 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 66 of 80 rules.
+**Blocking:** 67 of 81 rules.
 
 ## Gaps
 
