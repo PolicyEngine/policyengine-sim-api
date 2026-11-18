@@ -185,7 +185,7 @@ def test_every_enum_type_names_the_public_schema() -> None:
     ]
 
     # Including cliff_impacts.status, which reuses the simulation runs' type.
-    assert len(enum_columns) == 8
+    assert len(enum_columns) == 6
     for column in enum_columns:
         assert column.type.schema == "public", f"{column.table.name}.{column.name}"
     # The helper every enum column uses, before any table adopts its type.
