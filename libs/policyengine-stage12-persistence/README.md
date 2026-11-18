@@ -25,7 +25,7 @@ time and repeats a step after an `OperationalError`, up to five attempts, since
 each step only reads or rolls back what it wrote. The deployment command gives
 it `create_stage12_check_session_factory`, whose one-connection pool lets the
 role check, every schema read and the rolled-back writes share one connection,
-and ends the process with a failure if the check runs for five minutes.
+and ends the process with a failure if the check runs for 15 minutes.
 
 - **The Stage 12 comparison tables** (`Stage12PersistenceStore`): temporary
   state of the comparison path, removed with it.

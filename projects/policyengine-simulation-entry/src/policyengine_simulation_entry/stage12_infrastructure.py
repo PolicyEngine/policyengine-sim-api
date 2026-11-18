@@ -15,20 +15,23 @@ from policyengine_stage12_persistence import (
     validate_runtime_database,
 )
 
-# The check's own attempts and waits fit well within this. A connection that
+# Room for every attempt and wait of the check when the database's host name has
+# up to four addresses, each with its own connect timeout. A connection that
 # goes silent raises no error, so nothing else would end a read blocked on it.
-CHECK_TIME_LIMIT_SECONDS = 300
+CHECK_TIME_LIMIT_SECONDS = 900
 
 
 def _end_the_stalled_check() -> None:
     """Fail the deployment at once: cleaning up could block on the same read."""
-    print(
-        "Stage 12 runtime database verification did not finish within "
-        f"{CHECK_TIME_LIMIT_SECONDS} seconds",
-        file=sys.stderr,
-        flush=True,
-    )
-    os._exit(1)
+    try:
+        print(
+            "Stage 12 runtime database verification did not finish within "
+            f"{CHECK_TIME_LIMIT_SECONDS} seconds",
+            file=sys.stderr,
+            flush=True,
+        )
+    finally:
+        os._exit(1)
 
 
 def _parser() -> argparse.ArgumentParser:
