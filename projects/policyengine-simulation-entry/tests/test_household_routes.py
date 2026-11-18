@@ -431,7 +431,7 @@ def test_the_household_store_runs_in_sessions_on_the_service_database(monkeypatc
             app_module.HOUSEHOLD_STATEMENT_TIMEOUT_MILLISECONDS,
         )
     ]
-    assert session_engine is database.engine
+    assert session_engine is database.session_factory.kw["bind"]
 
 
 def test_a_configured_service_builds_household_calculations_without_connecting():

@@ -86,10 +86,11 @@ from policyengine_simulation_persistence.economy_run_store import (
 )
 from policyengine_simulation_persistence.engine import (
     bounded_session,
-    bounded_transaction,
     create_session_factory,
-    create_simulation_engine,
-    create_unpooled_engine,
+    create_simulation_session_factory,
+    create_single_connection_session_factory,
+    create_unpooled_session_factory,
+    dispose_session_factory,
     normalized_database_url,
 )
 from policyengine_simulation_persistence.household_job_records import (
@@ -212,13 +213,7 @@ from policyengine_simulation_persistence.tables import (
     SimulationRun,
     SimulationStatus,
     SimulationType,
-    budget_window_runs,
-    household_jobs,
-    report_runs,
-    reports,
     service_metadata,
-    simulation_runs,
-    simulations,
 )
 
 __all__ = [
@@ -344,14 +339,14 @@ __all__ = [
     "WindowYearRuns",
     "WithheldAreaCode",
     "bounded_session",
-    "bounded_transaction",
-    "budget_window_runs",
     "canonical_json",
     "combine_reforms",
     "create_session_factory",
-    "create_simulation_engine",
-    "create_unpooled_engine",
+    "create_simulation_session_factory",
+    "create_single_connection_session_factory",
+    "create_unpooled_session_factory",
     "definition_key",
+    "dispose_session_factory",
     "fail_unstarted_household_job",
     "fail_unstarted_report_run",
     "fail_unstarted_simulation_run",
@@ -365,7 +360,6 @@ __all__ = [
     "find_or_insert_simulation",
     "find_or_insert_simulation_run",
     "find_or_insert_simulation_runs",
-    "household_jobs",
     "input_metadata",
     "insert_household_job",
     "insert_household_report_rerun",
@@ -394,10 +388,6 @@ __all__ = [
     "record_report_run_call",
     "record_simulation_run_call",
     "referenced_metadata",
-    "report_runs",
-    "reports",
     "result_metadata",
     "service_metadata",
-    "simulation_runs",
-    "simulations",
 ]

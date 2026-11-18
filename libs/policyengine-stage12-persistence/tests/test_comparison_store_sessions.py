@@ -6,6 +6,7 @@ manifest grants on the two temporary tables.
 
 from __future__ import annotations
 
+import os
 import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self
@@ -20,10 +21,15 @@ from policyengine_simulation_contract.stage12_execution import (
     ResultComparisonStatus,
     SimulationRole,
 )
-from policyengine_simulation_persistence.engine import create_session_factory
+from policyengine_simulation_persistence import engine as persistence_engine
+from policyengine_simulation_persistence.engine import (
+    create_session_factory,
+    dispose_session_factory,
+)
 from policyengine_stage12_persistence import (
     Stage12PersistenceStore,
     Stage12RuntimeAccessError,
+    create_stage12_check_session_factory,
     validate_runtime_database,
     validation,
 )
@@ -37,14 +43,17 @@ from policyengine_stage12_persistence.validation import (
     _validate_foreign_key,
     _validate_table_schema,
 )
+from report_run_database import SEED_URL_ENV, worker_database_url
 from session_database import (
     RUNTIME_ROLE,
     StatementLog,
+    act_as_role,
     limit_open_connections,
+    record_opened_connections,
     refuse_connection_numbers,
 )
-from sqlalchemy import delete, func, inspect, select
-from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy import delete, event, func, inspect, make_url, select, true
+from sqlalchemy.exc import InternalError, OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
@@ -57,8 +66,9 @@ NOW = datetime(2026, 9, 22, tzinfo=UTC)
 LATER = NOW + timedelta(minutes=5)
 PLACEHOLDER_CALL = "dispatch-pending-1"
 DIGEST = "a" * 64
-# The connections a passing deployment check opens, one at a time: its role
-# check, the schema inspector, eleven schema reads and its rolled-back writes.
+# The connections a passing deployment check opens without a pool, one at a
+# time: its role check, the schema inspector, eleven schema reads and its
+# rolled-back writes.
 CHECK_CONNECTIONS = 14
 
 
@@ -123,6 +133,27 @@ def store(
 ) -> Stage12PersistenceStore:
     assert statements.sent == []
     return Stage12PersistenceStore(session_factory=runtime_sessions)
+
+
+def _deployment_command_sessions() -> sessionmaker[Session]:
+    """Return the deployment command's session factory, as the runtime role."""
+    worker_database_url()
+    database_url = make_url(os.environ[SEED_URL_ENV]).set(drivername="postgresql")
+    session_factory = create_stage12_check_session_factory(
+        database_url.render_as_string(hide_password=False)
+    )
+    act_as_role(session_factory.kw["bind"], RUNTIME_ROLE)
+    return session_factory
+
+
+@pytest.fixture
+def check_sessions() -> Iterator[sessionmaker[Session]]:
+    """Yield the deployment command's session factory, as the runtime role."""
+    session_factory = _deployment_command_sessions()
+    try:
+        yield session_factory
+    finally:
+        dispose_session_factory(session_factory)
 
 
 @pytest.fixture
@@ -325,6 +356,138 @@ def test_the_deployment_check_passes_and_leaves_no_row(
     assert comparison_rows() == before
 
 
+def _comparison_report_count(seeder: ReportRunSeeder) -> int:
+    with Session(seeder.engine) as session:
+        return session.execute(
+            select(func.count()).select_from(ComparisonReport)
+        ).scalar_one()
+
+
+def test_the_deployment_command_runs_its_check_on_one_real_connection(
+    check_sessions, retry_waits
+) -> None:
+    opened = record_opened_connections(check_sessions)
+
+    validate_runtime_database(
+        check_sessions, expected_role=RUNTIME_ROLE, environment="staging"
+    )
+
+    assert len(opened) == 1
+    assert retry_waits == []
+
+
+def _terminate_the_connection_at_the_first_insert(
+    session_factory: sessionmaker[Session], seeder: ReportRunSeeder
+) -> list[int]:
+    """End the server process during the check's first insert; return its ID."""
+    terminated_backends: list[int] = []
+
+    def terminate_during_the_first_insert(
+        connection, _cursor, statement, _parameters, _context, _many
+    ) -> None:
+        if terminated_backends or not statement.startswith(
+            f"INSERT INTO public.{REPORT_TABLE_NAME}"
+        ):
+            return
+        backend = connection.connection.dbapi_connection.info.backend_pid
+        terminated_backends.append(backend)
+        with seeder.engine.begin() as administrator:
+            administrator.execute(select(func.pg_terminate_backend(backend)))
+
+    event.listen(
+        session_factory.kw["bind"],
+        "before_cursor_execute",
+        terminate_during_the_first_insert,
+    )
+    return terminated_backends
+
+
+def test_the_deployment_command_replaces_a_connection_it_loses(
+    check_sessions, seeder, retry_waits
+) -> None:
+    opened = record_opened_connections(check_sessions)
+    reports_before = _comparison_report_count(seeder)
+    terminated_backends = _terminate_the_connection_at_the_first_insert(
+        check_sessions, seeder
+    )
+
+    validate_runtime_database(
+        check_sessions, expected_role=RUNTIME_ROLE, environment="staging"
+    )
+
+    assert len(terminated_backends) == 1
+    assert len(opened) == 2
+    assert retry_waits == [1.0]
+    assert _comparison_report_count(seeder) == reports_before
+
+
+def test_the_deployment_command_retries_a_refused_replacement_connection(
+    check_sessions, seeder, retry_waits
+) -> None:
+    attempts = refuse_connection_numbers(check_sessions, {2})
+    terminated_backends = _terminate_the_connection_at_the_first_insert(
+        check_sessions, seeder
+    )
+
+    validate_runtime_database(
+        check_sessions, expected_role=RUNTIME_ROLE, environment="staging"
+    )
+
+    assert len(terminated_backends) == 1
+    assert len(attempts) == 3
+    assert retry_waits == [1.0, 2.0]
+
+
+def test_the_deployment_command_replaces_a_connection_lost_while_idle(
+    check_sessions, seeder, retry_waits
+) -> None:
+    # The connection is checked before reuse, so no step fails or waits.
+    opened = record_opened_connections(check_sessions)
+    terminated_backends: list[int] = []
+
+    def terminate_the_first_returned_connection(
+        dbapi_connection, _connection_record
+    ) -> None:
+        if terminated_backends:
+            return
+        backend = dbapi_connection.info.backend_pid
+        terminated_backends.append(backend)
+        with seeder.engine.begin() as administrator:
+            administrator.execute(select(func.pg_terminate_backend(backend)))
+
+    event.listen(
+        check_sessions.kw["bind"], "checkin", terminate_the_first_returned_connection
+    )
+
+    validate_runtime_database(
+        check_sessions, expected_role=RUNTIME_ROLE, environment="staging"
+    )
+
+    assert len(terminated_backends) == 1
+    assert len(opened) == 2
+    assert retry_waits == []
+
+
+def test_the_deployment_check_reports_a_connection_another_step_kept(
+    retry_waits, monkeypatch
+) -> None:
+    monkeypatch.setattr(persistence_engine, "SINGLE_CONNECTION_WAIT_SECONDS", 0.05)
+    session_factory = _deployment_command_sessions()
+    try:
+        with session_factory() as holder:
+            holder.execute(select(true())).scalar_one()
+            with pytest.raises(Stage12RuntimeAccessError, match="TimeoutError"):
+                validate_runtime_database(
+                    session_factory,
+                    expected_role=RUNTIME_ROLE,
+                    environment="staging",
+                )
+    finally:
+        dispose_session_factory(session_factory)
+
+    assert retry_waits == []
+
+
 def test_the_deployment_check_needs_one_free_pooler_slot(runtime_sessions) -> None:
     # The deployment URL names a session pooler with a fixed client limit, so
     # the check never holds one connection while it opens another.
@@ -411,16 +574,26 @@ class FailingSessions:
 
 
 @pytest.mark.parametrize(
-    ("error_type", "retries"),
+    ("error_type", "connection_invalidated", "retries"),
     [
-        pytest.param(OperationalError, 4, id="connection-error-is-retried"),
-        pytest.param(ProgrammingError, 0, id="other-database-error-is-not"),
+        pytest.param(OperationalError, False, 4, id="connection-error-is-retried"),
+        # A pooler ending a connection can report it as an internal error.
+        pytest.param(InternalError, True, 4, id="lost-connection-is-retried"),
+        pytest.param(InternalError, False, 0, id="internal-error-is-not"),
+        pytest.param(ProgrammingError, False, 0, id="other-database-error-is-not"),
     ],
 )
 def test_the_deployment_check_reports_a_database_error_without_its_text(
-    retry_waits, error_type, retries
+    retry_waits, error_type, connection_invalidated, retries
 ) -> None:
-    sessions = FailingSessions(error_type(None, None, Exception("password=hidden")))
+    sessions = FailingSessions(
+        error_type(
+            None,
+            None,
+            Exception("password=hidden"),
+            connection_invalidated=connection_invalidated,
+        )
+    )
 
     with pytest.raises(Stage12RuntimeAccessError) as failure:
         validate_runtime_database(

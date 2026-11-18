@@ -127,11 +127,13 @@ def test_every_result_row_goes_in_a_shared_result_table_model() -> None:
 
 def test_the_stores_connect_with_the_service_librarys_one_engine_helper() -> None:
     """One URL check and one unpooled engine serve every Modal call's store."""
-    assert stage12_engine.create_unpooled_engine is engine.create_unpooled_engine
-    assert stage12_engine.create_session_factory is engine.create_session_factory
+    assert (
+        stage12_engine.create_unpooled_session_factory
+        is engine.create_unpooled_session_factory
+    )
     assert not hasattr(store, "normalized_database_url")
     for store_module in (store, report_run_store, budget_window_store):
-        assert not hasattr(store_module, "create_unpooled_engine")
+        assert not hasattr(store_module, "create_unpooled_session_factory")
 
 
 @pytest.mark.parametrize(

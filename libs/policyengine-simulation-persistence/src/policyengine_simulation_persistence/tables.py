@@ -730,11 +730,3 @@ class HouseholdJob(ServiceBase):
 
 
 service_metadata = ServiceBase.metadata
-
-# The Core tables the stores' statements use until they name these classes.
-simulations = Simulation.__table__
-reports = Report.__table__
-simulation_runs = SimulationRun.__table__
-budget_window_runs = BudgetWindowRun.__table__
-report_runs = ReportRun.__table__
-household_jobs = HouseholdJob.__table__

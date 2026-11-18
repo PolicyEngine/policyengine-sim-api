@@ -156,14 +156,3 @@ class Dynamic(InputBase):
 
 
 input_metadata = InputBase.metadata
-
-# The Core tables the stores' statements use until they name these classes.
-tax_benefit_models = TaxBenefitModel.__table__
-tax_benefit_model_versions = TaxBenefitModelVersion.__table__
-regions = Region.__table__
-datasets = Dataset.__table__
-households = Household.__table__
-policies = Policy.__table__
-parameters = Parameter.__table__
-parameter_values = ParameterValue.__table__
-dynamics = Dynamic.__table__

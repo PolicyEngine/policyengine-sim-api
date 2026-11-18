@@ -66,7 +66,7 @@ modal-simulation-image = [
     # this directly; it is also a transitive dependency of policyengine.
     "requests>=2.32,<3",
     "pyarrow>=20,<24",
-    # The Stage 12 stores use typed SQLAlchemy Core DML through the shared
+    # The Stage 12 stores use SQLAlchemy ORM sessions and the shared
     # table-model library (policyengine-simulation-persistence), whose ranges
     # these are. They are explicit because only this group is installed in
     # Modal.

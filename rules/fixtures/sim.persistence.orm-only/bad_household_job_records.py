@@ -62,3 +62,8 @@ def count_pending_jobs(engine: Engine) -> int:
         return connection.execute(
             text("SELECT count(*) FROM household_jobs WHERE status = 'pending'")
         ).scalar_one()
+
+
+def household_job_columns(jobs: Table) -> list[str]:
+    """Read column names from a Core table passed in."""
+    return list(jobs.c.keys())

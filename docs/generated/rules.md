@@ -8,7 +8,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 64 | 1 | 0 | 14 | 79 |
+| mechanical | 65 | 0 | 0 | 14 | 79 |
 | metric | 1 | 0 | 0 | 0 | 1 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
@@ -65,7 +65,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 ### Ratcheted (existing violations still tolerated)
 
-- `sim.persistence.orm-only`: 64 remaining in `rules/baselines/orm-only.txt`
+- None.
 
 ### Exceptions and review dates
 
@@ -82,7 +82,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 | `sim.boundaries.gateway-executor-decoupled` | The gateway and executor never import each other; they communicate only through the models and state helpers in policyengine-simulation-contract. | mechanical | doc-only | no | nothing | — | — |
 | `sim.boundaries.sqlalchemy-and-alembic-only` | Code connects to databases only through SQLAlchemy engines and connections, never by importing a database driver directly, and runtime code never changes the schema, which changes only through Alembic migrations. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_database_access_boundaries.py` | `pr.yml:test` | yes |
 | `sim.boundaries.unit-tests-need-no-services` | Unit tests never require real network credentials, Modal, Hugging Face, GCP or deployed services; those seams are mocked. | mechanical | doc-only | no | nothing | — | — |
-| `sim.persistence.orm-only` | Code that reads or writes database rows declares tables only as SQLAlchemy ORM mapped classes and runs every statement through an ORM Session against those classes, never through Core Table objects or Connections. | mechanical | ratcheted | yes | pytest `projects/policyengine-simulation-entry/tests/test_database_access_boundaries.py`, `projects/policyengine-simulation-entry/tests/test_orm_only.py` | `pr.yml:test` | yes |
+| `sim.persistence.orm-only` | Code that reads or writes database rows declares tables only as SQLAlchemy ORM mapped classes and runs every statement through an ORM Session against those classes, never through Core Table objects or Connections. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_database_access_boundaries.py`, `projects/policyengine-simulation-entry/tests/test_orm_only.py` | `pr.yml:test` | yes |
 
 ```mermaid
 flowchart LR
@@ -92,7 +92,7 @@ flowchart LR
   e_pytest_projects_policyengine_simulation_entry_tests_test_database_access_boundaries_py["pytest projects/policyengine-simulation-entry/tests/test_database_access_boundaries.py"]
   j_CI_pr_yml_test["CI pr.yml:test"]
   r_sim_boundaries_unit_tests_need_no_services("sim.boundaries.unit-tests-need-no-services (doc-only)")
-  r_sim_persistence_orm_only("sim.persistence.orm-only (ratcheted)")
+  r_sim_persistence_orm_only("sim.persistence.orm-only (enforced)")
   e_pytest_projects_policyengine_simulation_entry_tests_test_database_access_boundaries_py__projects_policyengine_simulation_entry_tests_test_orm_only_py["pytest projects/policyengine-simulation-entry/tests/test_database_access_boundaries.py, projects/policyengine-simulation-entry/tests/test_orm_only.py"]
   r_sim_boundaries_gateway_executor_decoupled -.-> gap_unenforced
   r_sim_boundaries_sqlalchemy_and_alembic_only --> e_pytest_projects_policyengine_simulation_entry_tests_test_database_access_boundaries_py

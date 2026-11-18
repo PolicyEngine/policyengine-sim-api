@@ -6,10 +6,10 @@ The tests marked ``postgres`` need a disposable PostgreSQL server (``conftest``)
 from __future__ import annotations
 
 import pytest
+from conftest import simulation_engine
 from policyengine_simulation_persistence import (
     bounded_session,
     create_session_factory,
-    create_simulation_engine,
 )
 from sqlalchemy import Integer, String, create_engine, func, text
 from sqlalchemy.exc import OperationalError
@@ -95,7 +95,7 @@ def test_a_bounded_session_limits_its_own_statements_and_commits(
     disposable_database,
 ) -> None:
     """The limit is set for the transaction alone, so a pooled connection keeps none."""
-    engine = create_simulation_engine(disposable_database.superuser_url)
+    engine = simulation_engine(disposable_database.superuser_url)
     session_factory = create_session_factory(engine)
     try:
         _Base.metadata.create_all(engine)
@@ -129,7 +129,7 @@ def _add_then_fail(session_factory) -> None:
 def test_a_bounded_session_rolls_back_when_its_block_raises(
     disposable_database,
 ) -> None:
-    engine = create_simulation_engine(disposable_database.superuser_url)
+    engine = simulation_engine(disposable_database.superuser_url)
     session_factory = create_session_factory(engine)
     try:
         _Base.metadata.create_all(engine)
@@ -153,7 +153,7 @@ def test_a_bounded_session_limits_the_flush_at_its_commit(
     disposable_database,
 ) -> None:
     """What the block leaves pending is written under the same limit."""
-    engine = create_simulation_engine(disposable_database.superuser_url)
+    engine = simulation_engine(disposable_database.superuser_url)
     session_factory = create_session_factory(engine)
     try:
         _Base.metadata.create_all(engine)
@@ -190,7 +190,7 @@ def _sleep_past_the_limit(session_factory) -> None:
 def test_a_bounded_session_cancels_a_statement_past_its_limit(
     disposable_database,
 ) -> None:
-    engine = create_simulation_engine(disposable_database.superuser_url)
+    engine = simulation_engine(disposable_database.superuser_url)
     session_factory = create_session_factory(engine)
     try:
         with pytest.raises(OperationalError, match="statement timeout"):

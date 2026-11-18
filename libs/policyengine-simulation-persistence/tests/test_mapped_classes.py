@@ -13,7 +13,7 @@ from typing import Any, Union, get_args, get_origin
 from uuid import UUID, uuid4
 
 import pytest
-from conftest import SERVICE_TEST_ROLE
+from conftest import SERVICE_TEST_ROLE, simulation_engine
 from policyengine_simulation_persistence import (
     BudgetSummary,
     BudgetWindowRun,
@@ -50,7 +50,6 @@ from policyengine_simulation_persistence import (
     TaxBenefitModelVersion,
     WithheldAreaCode,
     create_session_factory,
-    create_simulation_engine,
     input_metadata,
     input_tables,
     referenced_metadata,
@@ -243,7 +242,7 @@ def test_a_session_writes_and_reads_a_household_job_through_its_class(
     disposable_database,
 ) -> None:
     """Python and server defaults, the enum and JSON ``NULL`` all round-trip."""
-    engine = create_simulation_engine(disposable_database.superuser_url)
+    engine = simulation_engine(disposable_database.superuser_url)
     session_factory = create_session_factory(engine)
     try:
         # Tests may build the models' tables; runtime code never does.
@@ -316,8 +315,8 @@ def test_a_written_result_stays_readable_after_its_session_closes(
     disposable_database,
 ) -> None:
     """A role with API v1's grants on a result table reads its defaults back."""
-    owner_engine = create_simulation_engine(disposable_database.superuser_url)
-    writer_engine = create_simulation_engine(disposable_database.service_url)
+    owner_engine = simulation_engine(disposable_database.superuser_url)
+    writer_engine = simulation_engine(disposable_database.service_url)
     try:
         # Tests may build the models' tables; runtime code never does.
         referenced_metadata.create_all(owner_engine)

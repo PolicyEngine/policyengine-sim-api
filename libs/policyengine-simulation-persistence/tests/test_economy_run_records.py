@@ -23,7 +23,9 @@ from economy_rows import (
     insert_uk_area_regions,
 )
 from policyengine_simulation_persistence import (
+    ReportRun,
     ReportRunStatus,
+    SimulationRun,
     SimulationStatus,
     fail_unstarted_report_run,
     fail_unstarted_simulation_run,
@@ -34,8 +36,6 @@ from policyengine_simulation_persistence import (
     read_region,
     record_report_run_call,
     record_simulation_run_call,
-    report_runs,
-    simulation_runs,
 )
 from public_api_rows import (
     insert_catalog_version,
@@ -307,8 +307,8 @@ def test_a_claimed_report_run_keeps_its_claim(public_api_database_url) -> None:
         report = _created_report(connection)
         connection.execute(text("RESET ROLE"))
         connection.execute(
-            update(report_runs)
-            .where(report_runs.c.id == report.report_run_id)
+            update(ReportRun)
+            .where(ReportRun.id == report.report_run_id)
             .values(status=ReportRunStatus.RUNNING, modal_call_id="fc-coordinator")
         )
         act_as_the_service(connection)
@@ -364,11 +364,11 @@ def test_an_unstarted_report_run_and_its_new_simulation_runs_fail_at_once(
         stored = _row(connection, "report_runs", report.report_run_id)
         stored_simulation_runs = connection.execute(
             select(
-                simulation_runs.c.status,
-                simulation_runs.c.error_message,
-                simulation_runs.c.completed_at,
+                SimulationRun.status,
+                SimulationRun.error_message,
+                SimulationRun.completed_at,
             ).where(
-                simulation_runs.c.id.in_(
+                SimulationRun.id.in_(
                     [
                         report.baseline.simulation_run_id,
                         report.reform.simulation_run_id,

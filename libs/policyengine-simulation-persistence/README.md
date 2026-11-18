@@ -1,6 +1,6 @@
 # PolicyEngine simulation persistence
 
-Database connections and table models for the simulation service (the
+Database sessions and table models for the simulation service (the
 Simulation Entrypoint on Cloud Run) and the v2 Modal runtime. The service
 connects to the Public API's Postgres database with its own role, and writes
 rows in tables the Public API's migration chain creates. This repository has
@@ -16,28 +16,33 @@ modules) imports neither library. The temporary Stage 12 comparison tables
 are not modelled here: the Stage 12 library keeps them until the comparison
 path is removed.
 
-## Connections
+## Sessions
 
-`create_simulation_engine` builds the runtime engine from the canonical
-`postgresql://` URL the deployment stores, selecting the psycopg 3 driver. It
-keeps a small pool, checks connections before use, and never prepares
-server-side statements, so the same URL works through Supabase's session and
-transaction poolers. A malformed URL raises `ValueError` without repeating the
-URL, which holds a password.
+`engine.py` keeps each engine to itself and hands out `sessionmaker`s.
 
-`create_unpooled_engine` builds the engine the v2 Modal calls and the
-comparison path use, from the same URL check: it keeps no pool, so each
-operation's session ends with it and a call that spends most of its life
-calculating holds no pooler slot, and it waits 10 seconds to connect. The
-Stage 12 library's `create_stage12_session_factory` builds its sessions on it.
+`create_simulation_session_factory` builds the runtime sessions from the
+canonical `postgresql://` URL the deployment stores, selecting the psycopg 3
+driver. They share a small pool, check connections before use, and never
+prepare server-side statements, so the same URL works through Supabase's
+session and transaction poolers. A malformed URL raises `ValueError` without
+repeating the URL, which holds a password.
 
-`create_session_factory` turns an engine into a `sessionmaker` for the ORM.
-Attributes keep their values after the transaction commits, apart from one set
-to a SQL expression such as `func.now()`, which must be refreshed before the
-session closes. `bounded_session` runs one transaction on such a factory with a
-`statement_timeout` local to it. `bounded_transaction` does the same on a Core
-connection; the service's stores no longer use it. The classes declare
-no relationships, so a session doesn't order inserts by foreign key: flush a
+`create_unpooled_session_factory` builds the sessions the v2 Modal calls and
+the comparison path use, from the same URL check: it keeps no pool, so each
+operation's session ends with its connection and a call that spends most of
+its life calculating holds no pooler slot, and it waits 10 seconds to connect.
+The Stage 12 library's `create_stage12_session_factory` returns these.
+`create_single_connection_session_factory` keeps one connection that its
+sessions and schema reads take turns on, for a short task such as the Stage 12
+deployment check. `dispose_session_factory` closes a factory's pooled
+connections.
+
+`create_session_factory` turns an engine into a `sessionmaker`, for tests that
+build their own engine. Attributes keep their values after the transaction
+commits, apart from one set to a SQL expression such as `func.now()`, which
+must be refreshed before the session closes. `bounded_session` runs one
+transaction on such a factory with a `statement_timeout` local to it. The
+classes declare no relationships, so a session doesn't order inserts by foreign key: flush a
 referenced row before adding the row that names it.
 
 ## Tables
@@ -48,9 +53,7 @@ service creates rows in: `Simulation`, `Report`, `SimulationRun`, `ReportRun`,
 `simulation_runs`, `report_runs`, `budget_window_runs` and `household_jobs`.
 They derive from `ServiceBase` in `orm_base.py`, and their tables are in
 `service_metadata`, which names the `public` schema so writes reach those
-tables whatever the role's `search_path`. Until the stores name the classes,
-each table is also available under its old name, as `Report.__table__` is
-`reports`.
+tables whatever the role's `search_path`.
 Each model matches the table the Public API's v2 migration chain builds:
 every column with its type, nullability and server default, and every
 constraint and index under the chain's name. The models only describe the
@@ -464,11 +467,12 @@ public"`), since it can use none of its grants. The check doesn't look for
 privileges the role holds beyond these: `UPDATE` on a whole table satisfies
 each column's check, and the Public API's own privilege verification fails
 when the role holds it. Tables and columns are found through PostgreSQL's
-catalog, which needs no privilege. `read_missing_table_privileges` runs that
-check in a transaction whose `statement_timeout` it sets with `set_config`,
-local to the transaction, so the database ends any statement of the check
-that runs too long;
-the Simulation Entrypoint's readiness check uses it, on a thread of its own,
+catalog, which needs no privilege, through the mapped classes in
+`catalog_tables.py`. `missing_table_privileges` takes a `Session`, and
+`read_missing_table_privileges` runs it from a session factory, in a
+transaction whose `statement_timeout` it sets with `set_config`, local to the
+transaction, so the database ends any statement of the check that runs too
+long; the Simulation Entrypoint's readiness check uses it, on a thread of its own,
 reports whether any privilege is missing, and logs the names.
 
 ## Tests

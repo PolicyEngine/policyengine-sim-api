@@ -18,18 +18,19 @@ import pytest
 from conftest import (
     act_as_the_modal_worker,
     act_as_the_service,
+    in_session,
     rolled_back_transaction,
 )
 from policyengine_simulation_persistence import (
     MODAL_WORKER_TABLE_PRIVILEGES,
     MODAL_WORKER_UPDATABLE_COLUMNS,
+    BudgetWindowRun,
+    HouseholdJob,
     Poverty,
-    budget_window_runs,
-    household_jobs,
+    ReportRun,
+    SimulationRun,
     missing_table_privileges,
-    report_runs,
     result_metadata,
-    simulation_runs,
 )
 from service_rows import ServiceRows, insert_public_api_rows, insert_service_rows
 from sqlalchemy import Enum, Float, Integer, String, func, insert, select, text, update
@@ -51,8 +52,9 @@ def test_the_modal_worker_role_holds_every_privilege_the_modal_calls_need(
         act_as_the_modal_worker(connection)
 
         assert (
-            missing_table_privileges(
+            in_session(
                 connection,
+                missing_table_privileges,
                 table_privileges=MODAL_WORKER_TABLE_PRIVILEGES,
                 updatable_columns=MODAL_WORKER_UPDATABLE_COLUMNS,
             )
@@ -73,7 +75,7 @@ def _run_state(service_rows: ServiceRows) -> dict[Table, tuple[Any, dict[str, An
         "updated_at": NOW,
     }
     return {
-        report_runs: (
+        ReportRun.__table__: (
             service_rows.report_run_id,
             {
                 **finished,
@@ -87,7 +89,7 @@ def _run_state(service_rows: ServiceRows) -> dict[Table, tuple[Any, dict[str, An
                 "data_version": "test-data-version",
             },
         ),
-        simulation_runs: (
+        SimulationRun.__table__: (
             service_rows.baseline_run_id,
             {
                 **finished,
@@ -98,7 +100,7 @@ def _run_state(service_rows: ServiceRows) -> dict[Table, tuple[Any, dict[str, An
                 "household_result": None,
             },
         ),
-        household_jobs: (
+        HouseholdJob.__table__: (
             service_rows.household_job_id,
             {
                 **finished,
@@ -107,7 +109,7 @@ def _run_state(service_rows: ServiceRows) -> dict[Table, tuple[Any, dict[str, An
                 "result": None,
             },
         ),
-        budget_window_runs: (
+        BudgetWindowRun.__table__: (
             service_rows.budget_window_run_id,
             {
                 "status": "running",
@@ -210,6 +212,11 @@ def test_the_modal_worker_role_records_its_runs_and_inserts_every_result(
                 select(func.count()).select_from(table)
             ).scalar_one()
             assert stored >= 1, table.name
-        assert _stored_as_sql_null(connection, report_runs, "spm_provenance") == 1
-        assert _stored_as_sql_null(connection, simulation_runs, "household_result") == 1
-        assert _stored_as_sql_null(connection, household_jobs, "result") == 1
+        assert (
+            _stored_as_sql_null(connection, ReportRun.__table__, "spm_provenance") == 1
+        )
+        assert (
+            _stored_as_sql_null(connection, SimulationRun.__table__, "household_result")
+            == 1
+        )
+        assert _stored_as_sql_null(connection, HouseholdJob.__table__, "result") == 1

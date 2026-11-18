@@ -5,13 +5,23 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
+from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 import yaml
 from policyengine_simulation_entry import stage12_infrastructure
+from policyengine_simulation_persistence.engine import (
+    SINGLE_CONNECTION_CONNECT_TIMEOUT_SECONDS,
+)
+from policyengine_stage12_persistence import validation
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import QueuePool
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / ".github/scripts/stage12-validate-infrastructure.sh"
@@ -415,17 +425,10 @@ def test_both_stage12_deploy_steps_receive_the_simulation_output_bucket() -> Non
         )
 
 
-def test_the_deployment_check_runs_on_a_session_factory_of_the_given_url(
-    tmp_path, monkeypatch, capsys
-) -> None:
+def _prepare_the_check_command(tmp_path, monkeypatch) -> list[object]:
+    """Prepare the command's arguments; return the factories it disposes of."""
     url_file = tmp_path / "database-url"
     url_file.write_text("postgresql://role@database.example/postgres\n")
-    checked: list[tuple[object, dict[str, str]]] = []
-    monkeypatch.setattr(
-        stage12_infrastructure,
-        "validate_runtime_database",
-        lambda session_factory, **options: checked.append((session_factory, options)),
-    )
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -438,13 +441,222 @@ def test_the_deployment_check_runs_on_a_session_factory_of_the_given_url(
             "staging",
         ],
     )
+    disposed: list[object] = []
+    monkeypatch.setattr(
+        stage12_infrastructure, "dispose_session_factory", disposed.append
+    )
+    return disposed
+
+
+def test_the_deployment_check_shares_one_connection_of_the_given_url(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    disposed = _prepare_the_check_command(tmp_path, monkeypatch)
+    checked: list[tuple[object, dict[str, str]]] = []
+    monkeypatch.setattr(
+        stage12_infrastructure,
+        "validate_runtime_database",
+        lambda session_factory, **options: checked.append((session_factory, options)),
+    )
 
     stage12_infrastructure.main()
 
     [(session_factory, options)] = checked
     assert isinstance(session_factory, sessionmaker)
+    engine = session_factory.kw["bind"]
+    assert engine.url.host == "database.example"
+    assert engine.url.username == "role"
+    assert isinstance(engine.pool, QueuePool)
+    assert engine.pool.size() == 1
     assert options == {
         "expected_role": "policyengine_v2_runtime",
         "environment": "staging",
     }
+    assert disposed == [session_factory]
     assert "role=policyengine_v2_runtime" in capsys.readouterr().out
+
+
+def test_a_failed_deployment_check_closes_its_connection(tmp_path, monkeypatch) -> None:
+    disposed = _prepare_the_check_command(tmp_path, monkeypatch)
+
+    def refuse(_session_factory, **_options) -> None:
+        message = "runtime role lacks SELECT"
+        raise stage12_infrastructure.Stage12RuntimeAccessError(message)
+
+    monkeypatch.setattr(stage12_infrastructure, "validate_runtime_database", refuse)
+
+    with pytest.raises(SystemExit, match="runtime role lacks SELECT"):
+        stage12_infrastructure.main()
+
+    assert len(disposed) == 1
+
+
+class RecordedTimer:
+    """Stands in for ``threading.Timer``, recording how the command uses it."""
+
+    created: ClassVar[list[RecordedTimer]] = []
+
+    def __init__(self, interval: float, function: Callable[[], None]) -> None:
+        self.interval = interval
+        self.function = function
+        self.daemon = False
+        self.started = False
+        self.cancelled = False
+        self.created.append(self)
+
+    def start(self) -> None:
+        self.started = True
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+@pytest.mark.parametrize("check_passes", [True, False])
+def test_the_check_time_limit_ends_with_the_command(
+    tmp_path, monkeypatch, check_passes
+) -> None:
+    _prepare_the_check_command(tmp_path, monkeypatch)
+    monkeypatch.setattr(RecordedTimer, "created", [])
+    monkeypatch.setattr(stage12_infrastructure.threading, "Timer", RecordedTimer)
+
+    def dispose_while_the_limit_runs(_session_factory) -> None:
+        [timer] = RecordedTimer.created
+        assert not timer.cancelled
+
+    monkeypatch.setattr(
+        stage12_infrastructure, "dispose_session_factory", dispose_while_the_limit_runs
+    )
+
+    def finish_the_check(_session_factory, **_options) -> None:
+        [timer] = RecordedTimer.created
+        assert timer.started
+        assert not timer.cancelled
+        if not check_passes:
+            message = "runtime role lacks SELECT"
+            raise stage12_infrastructure.Stage12RuntimeAccessError(message)
+
+    monkeypatch.setattr(
+        stage12_infrastructure, "validate_runtime_database", finish_the_check
+    )
+
+    if check_passes:
+        stage12_infrastructure.main()
+    else:
+        with pytest.raises(SystemExit):
+            stage12_infrastructure.main()
+
+    [timer] = RecordedTimer.created
+    assert timer.interval == stage12_infrastructure.CHECK_TIME_LIMIT_SECONDS
+    assert timer.daemon is True
+    assert timer.cancelled
+
+
+def _run_a_stalled_check_command(
+    tmp_path, *, before_the_command: str = ""
+) -> subprocess.CompletedProcess[str]:
+    """Run the real command in a process whose check blocks forever."""
+    url_file = tmp_path / "database-url"
+    url_file.write_text("postgresql://role@database.example/postgres\n")
+    program = "\n".join(
+        [
+            "import os",
+            "import sys",
+            "import threading",
+            "from policyengine_simulation_entry import (",
+            "    stage12_infrastructure as command,",
+            ")",
+            before_the_command,
+            "command.CHECK_TIME_LIMIT_SECONDS = 0.2",
+            "command.TIME_LIMIT_MESSAGE_WAIT_SECONDS = 0.2",
+            "command.validate_runtime_database = (",
+            "    lambda _session_factory, **_options: threading.Event().wait()",
+            ")",
+            "sys.argv = [",
+            '    "stage12_infrastructure",',
+            '    "--database-url-file",',
+            f"    {str(url_file)!r},",
+            '    "--expected-role",',
+            '    "policyengine_v2_runtime",',
+            '    "--environment",',
+            '    "staging",',
+            "]",
+            "command.main()",
+        ]
+    )
+    return subprocess.run(
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
+def test_a_stalled_deployment_check_ends_the_real_process(tmp_path) -> None:
+    # A connection that goes silent blocks its reader with no error to handle,
+    # so the limit must end the process while the main thread is still blocked.
+    result = _run_a_stalled_check_command(tmp_path)
+
+    assert result.returncode == 1
+    assert "did not finish within 0.2 seconds" in result.stderr
+
+
+def test_the_time_limit_ends_the_process_when_standard_error_is_full(
+    tmp_path,
+) -> None:
+    fill_standard_error = textwrap.dedent(
+        """
+        reader, writer = os.pipe()
+        os.set_blocking(writer, False)
+        try:
+            while True:
+                os.write(writer, b"x" * 4096)
+        except BlockingIOError:
+            pass
+        os.set_blocking(writer, True)
+        os.dup2(writer, 2)
+        """
+    )
+
+    result = _run_a_stalled_check_command(
+        tmp_path, before_the_command=fill_standard_error
+    )
+
+    assert result.returncode == 1
+
+
+def test_the_time_limit_ends_the_process_when_its_message_cannot_be_written(
+    monkeypatch,
+) -> None:
+    class ClosedStream:
+        def write(self, _text: str) -> int:
+            raise BrokenPipeError
+
+        def flush(self) -> None:
+            raise BrokenPipeError
+
+    exit_statuses: list[int] = []
+    monkeypatch.setattr(stage12_infrastructure.sys, "stderr", ClosedStream())
+    monkeypatch.setattr(stage12_infrastructure.os, "_exit", exit_statuses.append)
+
+    stage12_infrastructure._end_the_stalled_check()
+
+    assert exit_statuses == [1]
+
+
+def test_the_time_limit_leaves_room_for_every_attempt_of_every_step() -> None:
+    # The driver gives each address of the host name the full connect timeout,
+    # and the database pooler's host names resolve to as many as three. This
+    # counts one connection per attempt, what a lost or refused connection costs.
+    addresses = 4
+    steps = 4
+    waits = sum(
+        validation.FIRST_RETRY_DELAY_SECONDS * 2**attempt
+        for attempt in range(validation.STEP_ATTEMPTS - 1)
+    )
+    connecting = (
+        validation.STEP_ATTEMPTS * addresses * SINGLE_CONNECTION_CONNECT_TIMEOUT_SECONDS
+    )
+    time_needed = steps * (connecting + waits)
+
+    assert time_needed < stage12_infrastructure.CHECK_TIME_LIMIT_SECONDS

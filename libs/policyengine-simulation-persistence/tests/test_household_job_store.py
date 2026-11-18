@@ -14,7 +14,12 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction, session_factory_on
+from conftest import (
+    act_as_the_service,
+    rolled_back_transaction,
+    session_factory_on,
+    simulation_engine,
+)
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     HouseholdJobReferenceError,
@@ -25,7 +30,6 @@ from policyengine_simulation_persistence import (
     UnknownHouseholdError,
     UnknownPolicyError,
     create_session_factory,
-    create_simulation_engine,
 )
 from public_api_rows import (
     StoredValue,
@@ -276,7 +280,7 @@ def test_a_job_naming_missing_rows_is_refused_before_its_commit(
     A key checked only at commit would make the refusal look like a lost
     commit; this database's keys refuse the statement.
     """
-    engine = create_simulation_engine(public_api_database_url)
+    engine = simulation_engine(public_api_database_url)
     try:
         store = HouseholdJobStore.from_session_factory(
             create_session_factory(engine),

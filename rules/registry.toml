@@ -143,7 +143,7 @@ statement = "Code that reads or writes database rows declares tables only as SQL
 rationale = "docs/engineering/skills/database-access.md#orm"
 scope = ["projects/*/src/**/*.py", "libs/*/src/**/*.py", ".github/scripts/**/*.py"]
 tier = "mechanical"
-status = "ratcheted"
+status = "enforced"
 autofix = false
 [rule.enforcer]
 kind = "pytest"
@@ -151,6 +151,7 @@ project = "projects/policyengine-simulation-entry"
 nodes = [
   "tests/test_orm_only.py::test_database_code_uses_only_the_orm",
   "tests/test_orm_only.py::test_every_table_is_mapped_by_a_class",
+  "tests/test_orm_only.py::test_no_project_installs_sqlmodel",
   "tests/test_database_access_boundaries.py::test_every_source_directory_is_scanned",
 ]
 [[rule.ci]]
@@ -162,12 +163,6 @@ bad_fixture = "rules/fixtures/sim.persistence.orm-only/bad_household_job_records
 good_fixture = "rules/fixtures/sim.persistence.orm-only/good_household_job_records.py"
 project = "projects/policyengine-simulation-entry"
 test = "tests/test_orm_only.py::test_rule_proof_orm_only"
-[rule.baseline]
-file = "rules/baselines/orm-only.txt"
-count = 64
-[rule.downgrade]
-reason = "Every database module used SQLAlchemy Core when the rule was added. A maintainer chose to start it ratcheted: each conversion removes its baseline entries, and the last one makes the rule enforced."
-issue = 1097
 
 # --- Simulation service database ------------------------------------------
 

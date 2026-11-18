@@ -552,17 +552,6 @@ class Inequality(ResultBase):
 
 
 result_metadata = ResultBase.metadata
-
-# The Core tables the stores' statements use until they name these classes.
-labor_supply_responses = LaborSupplyResponse.__table__
-labor_supply_decile_responses = LaborSupplyDecileResponse.__table__
-budget_summary = BudgetSummary.__table__
-decile_impacts = DecileImpact.__table__
-intra_decile_impacts = IntraDecileImpact.__table__
-program_statistics = ProgramStatistics.__table__
-congressional_district_impacts = CongressionalDistrictImpact.__table__
-constituency_impacts = ConstituencyImpact.__table__
-local_authority_impacts = LocalAuthorityImpact.__table__
-withheld_area_codes = WithheldAreaCode.__table__
-poverty = Poverty.__table__
-inequality = Inequality.__table__
+RESULT_TABLE_NAMES: Final = tuple(
+    sorted(mapper.class_.__tablename__ for mapper in ResultBase.registry.mappers)
+)

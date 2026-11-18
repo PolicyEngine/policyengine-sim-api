@@ -15,11 +15,11 @@ from uuid import uuid4
 import pytest
 from conftest import act_as_the_service, in_session, rolled_back_transaction
 from policyengine_simulation_persistence import (
+    HouseholdJob,
     HouseholdJobReferenceError,
     HouseholdJobStatus,
     NewHouseholdJob,
     fail_unstarted_household_job,
-    household_jobs,
     insert_household_job,
     read_catalog_version_id,
     read_household_job,
@@ -245,8 +245,8 @@ def test_a_job_the_function_already_claimed_keeps_its_claim(
         in_session(connection, insert_household_job, new_job)
         connection.execute(text("RESET ROLE"))
         connection.execute(
-            update(household_jobs)
-            .where(household_jobs.c.id == new_job.id)
+            update(HouseholdJob)
+            .where(HouseholdJob.id == new_job.id)
             .values(status=HouseholdJobStatus.RUNNING, modal_call_id="fc-claimed")
         )
         act_as_the_service(connection)
