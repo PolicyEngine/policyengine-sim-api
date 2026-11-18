@@ -8,7 +8,9 @@ one ``UPDATE`` conditional on the row's status and recorded call.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Barrier
 from uuid import uuid4
 
 import pytest
@@ -99,6 +101,30 @@ def test_a_cliff_result_is_claimed_once_and_resumed_by_the_same_call(
     row = _cliff_row(seeder, cliff_result_id)
     assert (row["status"], row["modal_call_id"]) == ("running", WORKER_CALL_ID)
     assert row["started_at"] == NOW
+
+
+def test_concurrent_starts_leave_the_cliff_result_with_one_call(
+    worker_sessions, statements, seeder, seeded_run
+) -> None:
+    """Two starts calculate once, however close together they claim the row."""
+    assert statements.sent == []
+    cliff_result_id = _insert_cliff_result(seeder, seeded_run)
+    claimants = 6
+    start_together = Barrier(claimants)
+
+    def claim(claimant: int) -> tuple[str, RunWrite]:
+        claiming_store = CliffResultStore(session_factory=worker_sessions)
+        call = f"fc-claimant-{claimant}"
+        start_together.wait(timeout=10)
+        return call, _claim(claiming_store, cliff_result_id, call)
+
+    with ThreadPoolExecutor(max_workers=claimants) as executor:
+        outcomes = list(executor.map(claim, range(claimants)))
+
+    winners = [call for call, write in outcomes if write.changed]
+    assert len(winners) == 1
+    assert _cliff_row(seeder, cliff_result_id)["modal_call_id"] == winners[0]
+    assert all(write.status is RunStatus.RUNNING for _call, write in outcomes)
 
 
 def test_a_pending_cliff_result_is_claimed_only_by_the_call_recorded_on_it(
