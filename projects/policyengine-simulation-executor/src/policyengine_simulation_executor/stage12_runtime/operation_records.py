@@ -15,7 +15,9 @@ The observability package drops every attribute whose key contains
 ``household``, among other words, so no key here names one. A call that
 works on no detailed-save row (a comparison-path call, a standalone
 simulation, a release validation's household calculation) names only its
-Modal call.
+Modal call. So does a US region-group segment of a cliff calculation: the
+segment's record can name only a simulation run, and its cliff result is named
+by the simulation worker's operation, which its trace context leads to.
 """
 
 from __future__ import annotations

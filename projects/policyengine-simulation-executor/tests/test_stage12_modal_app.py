@@ -1198,8 +1198,17 @@ def test_a_malformed_simulation_run_id_is_left_out_of_the_operation_record(
     assert "database_table" not in completion["attributes"]
 
 
+@pytest.mark.parametrize(
+    ("context", "expected_simulation_run_id"),
+    [
+        ({"simulation_run_id": SIMULATION_RUN_ID}, UUID(SIMULATION_RUN_ID)),
+        # A segment's record names simulation runs, so a cliff result isn't one.
+        ({"cliff_result_id": CLIFF_RESULT_ID}, None),
+    ],
+    ids=["simulation-run", "cliff-result"],
+)
 def test_the_us_simulation_worker_passes_its_simulation_run_to_its_segments(
-    monkeypatch,
+    monkeypatch, context, expected_simulation_run_id
 ) -> None:
     from policyengine_simulation_executor import stage12_runtime
 
@@ -1228,13 +1237,11 @@ def test_the_us_simulation_worker_passes_its_simulation_run_to_its_segments(
     monkeypatch.setattr(stage12_runtime, "run_single_simulation", run_single_simulation)
 
     module.run_single_simulation_us(
-        {"role": "baseline"},
-        {"simulation_run_id": SIMULATION_RUN_ID},
-        observability_context=None,
+        {"role": "baseline"}, context, observability_context=None
     )
 
     (segmented_run,) = segmented_runs
-    assert segmented_run["simulation_run_id"] == UUID(SIMULATION_RUN_ID)
+    assert segmented_run["simulation_run_id"] == expected_simulation_run_id
 
 
 @pytest.mark.parametrize(

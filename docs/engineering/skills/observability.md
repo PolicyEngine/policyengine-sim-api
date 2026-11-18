@@ -23,10 +23,12 @@ Use each identifier for its defined scope:
 Each v2 Modal function's operation (`src/modal/v2_app.py`) names its
 `modal_call_id` and, when its call works on a detailed-save row, that row's
 `database_table` and `database_row_id`; a US segment worker names the
-simulation run its simulation worker records, and a segment of a cliff
-calculation names no row, linking to its cliff result through the trace. They
-go to the operation's log records and span only, never to metrics, where each
-distinct ID would make a separate series. The observability package drops every attribute whose key
+simulation run its simulation worker records. A segment of a cliff calculation
+names no row: it joins the simulation worker's trace, whose operation names the
+cliff result, or, if it starts too late to join, links to that trace with a span
+link, so its log records then carry another trace ID. The attributes go to the
+operation's log records and span only, never to metrics, where each distinct ID
+would make a separate series. The observability package drops every attribute whose key
 contains `household`, `reform`, `payload` or `person`, among others, so no key
 for these IDs names one. Do not use `job_id` for a v2 call: it names one
 annual Modal invocation of the v1 executor.
