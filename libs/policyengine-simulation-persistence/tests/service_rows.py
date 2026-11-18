@@ -19,7 +19,6 @@ from policyengine_simulation_persistence import (
     Report,
     ReportRun,
     ReportRunStatus,
-    ReportRunTrigger,
     Simulation,
     SimulationRun,
     SimulationStatus,
@@ -163,7 +162,6 @@ def insert_service_rows(
     report_id = connection.execute(
         insert(Report)
         .values(
-            label="Test report",
             country="us",
             tax_benefit_model_id=public_api_rows.tax_benefit_model_id,
             baseline_simulation_id=baseline_simulation_id,
@@ -186,7 +184,6 @@ def insert_service_rows(
         .values(
             report_id=report_id,
             tax_benefit_model_version_id=public_api_rows.model_version_id,
-            trigger=ReportRunTrigger.INITIAL,
             recalculate=False,
             status=ReportRunStatus.PENDING,
         )
@@ -203,7 +200,6 @@ def insert_service_rows(
             country_package_version=COUNTRY_PACKAGE_VERSION,
             policyengine_version=POLICYENGINE_VERSION,
             status=ReportRunStatus.PENDING,
-            trigger=ReportRunTrigger.INITIAL,
         )
         .returning(ReportRun.id)
     ).scalar_one()

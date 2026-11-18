@@ -277,7 +277,6 @@ def test_a_household_report_run_completes_only_while_its_call_holds_it(
     row = seeder.row("report_runs", report_run_id)
     assert row["completed_at"] == LATER
     assert row["error_message"] is None
-    assert row["baseline_cliff_gap"] is None
     assert row["spm_provenance"] is None
 
 

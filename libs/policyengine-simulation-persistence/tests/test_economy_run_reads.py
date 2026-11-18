@@ -83,7 +83,6 @@ def _report_with_runs(connection, economy: EconomyCatalog) -> tuple[UUID, list[U
                 country_package_version=COUNTRY_PACKAGE_VERSION,
                 policyengine_version=POLICYENGINE_VERSION,
                 status=ReportRunStatus.PENDING,
-                trigger="manual",
                 forced=True,
             )
         )

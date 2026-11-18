@@ -199,13 +199,13 @@ def test_rule_proof_models_match_public_api() -> None:
 def test_the_public_api_keeps_its_keys_from_the_services_tables(
     public_api_database_url,
 ) -> None:
-    """The keys from the service's tables to the Public API's own are the 20 expected.
+    """The keys from the service's tables to API v1's own are the 19 expected.
 
     Each is compared by its table, its name and the table it names; the
     comparison with the models checks the rest of its definition.
 
-    The Public API's own tables are those ``referenced_metadata`` models: users,
-    policies, dynamics, households, datasets, regions and the model catalog.
+    API v1's own tables are those ``referenced_metadata`` models: policies,
+    dynamics, households, datasets, regions and the model catalog.
     """
     table_names = [table.name for table in service_metadata.tables.values()]
     public_api_tables = {table.name for table in referenced_metadata.tables.values()}
