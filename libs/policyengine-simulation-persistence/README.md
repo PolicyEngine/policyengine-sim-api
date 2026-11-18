@@ -219,12 +219,12 @@ report and run rows (C1 · 24). These modules do it:
   simulation run's cliff calculation, against `uq_cliff_impacts_unfailed`,
   in simulation run ID order: a run's calculation that hasn't failed is
   found, and otherwise one is inserted pending with no Modal call. A
-  keyed report's create, or an economy report's re-run, whose request asks
-  for cliffs (`KeyedEconomyReport.cliffs`, `NewReportRerun.cliffs`, the
-  IDs it proposes) runs it on the two simulation runs of the report run it
-  ended on, in the same transaction (`find_or_insert_report_run_cliffs`), so a
-  refused calculation writes nothing, and returns each side's calculation
-  (`FoundCliffs`). `EconomyRunStore.record_cliff_call` and
+  keyed report's create (`KeyedEconomyReport.cliffs`, the IDs it proposes)
+  or an economy report's re-run (`insert_report_rerun_with_cliffs`) whose
+  request asks for cliffs runs it on the two simulation runs of the report
+  run it ended on, in the same transaction
+  (`find_or_insert_report_run_cliffs`), so a refused calculation writes
+  nothing, and returns each side's calculation (`FoundCliffs`). `EconomyRunStore.record_cliff_call` and
   `fail_unstarted_cliff_calculation` record a calculation's call, or fail
   it when Modal refused it, each only while it is pending with no call.
 - `keyed_economy_records.py` runs a report's find-or-create in one

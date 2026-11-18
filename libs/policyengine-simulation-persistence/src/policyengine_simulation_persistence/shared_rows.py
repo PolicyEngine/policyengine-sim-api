@@ -101,8 +101,6 @@ class FoundReportRun:
     status: ReportRunStatus
     baseline_simulation_run_id: UUID
     reform_simulation_run_id: UUID | None
-    # Each side's run's cliff calculation, when the request asked for cliffs.
-    cliffs: FoundCliffs | None = None
 
 
 @dataclass(frozen=True)

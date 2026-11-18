@@ -114,6 +114,7 @@ if TYPE_CHECKING:
     )
     from policyengine_simulation_persistence.keyed_economy_records import Side
     from policyengine_simulation_persistence.shared_rows import (
+        FoundCliffs,
         FoundSimulationRun,
         ProposedCliffs,
     )
@@ -140,8 +141,7 @@ class NewReportRerun:
     that hasn't failed and wasn't forced, or inserts one; a side's
     ``simulation_run_id`` is the ID it proposes, used only if it inserts the
     run. ``forced`` makes it a forced re-run's extra run, which inserts a
-    new run of each side, marked forced. ``cliffs``, set when the re-run
-    asks for cliffs, proposes its sides' cliff calculations' IDs.
+    new run of each side, marked forced.
     """
 
     report_id: UUID
@@ -151,7 +151,6 @@ class NewReportRerun:
     baseline: RerunSide
     reform: RerunSide
     forced: bool = False
-    cliffs: ProposedCliffs | None = None
 
     @property
     def new_simulation_run_ids(self) -> tuple[UUID, ...]:
@@ -161,6 +160,14 @@ class NewReportRerun:
         a run the re-run inserts.
         """
         return (self.baseline.simulation_run_id, self.reform.simulation_run_id)
+
+
+@dataclass(frozen=True)
+class FoundReportRerun:
+    """The report run a re-run asking for cliffs ended on, and its runs' cliffs."""
+
+    run: FoundReportRun
+    cliffs: FoundCliffs
 
 
 @dataclass(frozen=True)
@@ -304,9 +311,7 @@ def insert_report_rerun(session: Session, rerun: NewReportRerun) -> FoundReportR
     run is joined, and this call's simulation runs are taken back. A forced
     re-run inserts its runs, marked forced, and is never joined. Return the
     run and whether this call created it, which only then needs its Modal
-    call. A re-run asking for cliffs also finds or inserts the cliff
-    calculation of each simulation run that report run names, joined or
-    created, and returns them with it.
+    call.
 
     Raise RerunRecordDeletedError when the database refuses the new run's
     key to the report, which no longer exists, and
@@ -314,16 +319,6 @@ def insert_report_rerun(session: Session, rerun: NewReportRerun) -> FoundReportR
     name, such as a side's simulation; either refusal ends the caller's
     transaction, or its savepoint.
     """
-    found = _insert_report_rerun_run(session, rerun)
-    if rerun.cliffs is None:
-        return found
-    return replace(
-        found, cliffs=find_or_insert_report_run_cliffs(session, found, rerun.cliffs)
-    )
-
-
-def _insert_report_rerun_run(session: Session, rerun: NewReportRerun) -> FoundReportRun:
-    """Join or create the re-run's report run, as ``insert_report_rerun`` says."""
     versions = rerun.versions
     if not rerun.forced:
         lock_reruns_of(session, rerun.report_id)
@@ -365,6 +360,21 @@ def _insert_report_rerun_run(session: Session, rerun: NewReportRerun) -> FoundRe
             },
         )
         return found
+
+
+def insert_report_rerun_with_cliffs(
+    session: Session, rerun: NewReportRerun, proposed: ProposedCliffs
+) -> FoundReportRerun:
+    """Join or create the report's run, with its runs' cliff calculations.
+
+    As ``insert_report_rerun``, then, in the same transaction, finds or
+    inserts the cliff calculation of each simulation run that report run
+    names, joined or created (``find_or_insert_report_run_cliffs``).
+    """
+    run = insert_report_rerun(session, rerun)
+    return FoundReportRerun(
+        run=run, cliffs=find_or_insert_report_run_cliffs(session, run, proposed)
+    )
 
 
 def _rerun_report_run_row(
@@ -620,6 +630,7 @@ def _record_checked(*own_keys: InstrumentedAttribute[Any]) -> Iterator[None]:
 
 # The definition reads moved to rerun_definitions; their names stay importable here.
 __all__ = [
+    "FoundReportRerun",
     "HouseholdRerunSide",
     "NewHouseholdReportRerun",
     "NewReportRerun",
@@ -635,6 +646,7 @@ __all__ = [
     "WindowYearDefinition",
     "insert_household_report_rerun",
     "insert_report_rerun",
+    "insert_report_rerun_with_cliffs",
     "insert_simulation_rerun",
     "insert_window_rerun",
     "lock_reruns_of",

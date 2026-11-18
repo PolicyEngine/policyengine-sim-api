@@ -69,21 +69,28 @@ if TYPE_CHECKING:
     from sqlalchemy import ColumnElement
     from sqlalchemy.orm import Session
 
-# The two classes whose runs a Modal call calculates.
+# The classes whose rows a Modal call calculates: runs and cliff calculations.
 type RunModel = type[SimulationRun | ReportRun | CliffImpact]
 
 # PostgreSQL's SQLSTATE for a row naming one that does not exist.
 FOREIGN_KEY_VIOLATION: Final = "23503"
 # A report's type, as API v1 reads it.
 ECONOMY_REPORT_TYPE: Final = "economy"
-# Both run tables' statuses use these values.
+# These classes' statuses use these values.
 _PENDING: Final = SimulationStatus.PENDING.value
 _FAILED: Final = SimulationStatus.FAILED.value
 # Each foreign key of the tables the service writes, by name: its table and
 # the first column it constrains.
 _KEY_COLUMNS: Final = {
     str(constraint.name): (model.__tablename__, constraint.column_keys[0])
-    for model in (Simulation, SimulationRun, Report, ReportRun, BudgetWindowRun)
+    for model in (
+        Simulation,
+        SimulationRun,
+        Report,
+        ReportRun,
+        BudgetWindowRun,
+        CliffImpact,
+    )
     for constraint in model.__table_args__
     if isinstance(constraint, ForeignKeyConstraint)
 }

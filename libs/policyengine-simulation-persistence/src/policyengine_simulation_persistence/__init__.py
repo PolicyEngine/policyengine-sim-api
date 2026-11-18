@@ -22,6 +22,7 @@ from policyengine_simulation_persistence.definition_keys import (
     definition_key,
 )
 from policyengine_simulation_persistence.economy_rerun_records import (
+    FoundReportRerun,
     HouseholdRerunSide,
     NewHouseholdReportRerun,
     NewReportRerun,
@@ -37,6 +38,7 @@ from policyengine_simulation_persistence.economy_rerun_records import (
     WindowYearDefinition,
     insert_household_report_rerun,
     insert_report_rerun,
+    insert_report_rerun_with_cliffs,
     insert_simulation_rerun,
     insert_window_rerun,
     lock_reruns_of,
@@ -139,6 +141,7 @@ from policyengine_simulation_persistence.keyed_economy_records import (
     ProposedSide,
     find_or_create_economy_report,
     find_or_create_economy_simulation,
+    find_or_insert_report_run_cliffs,
 )
 from policyengine_simulation_persistence.keyed_household_records import (
     FoundHouseholdReport,
@@ -260,6 +263,7 @@ __all__ = [
     "FoundEconomyReport",
     "FoundEconomySimulation",
     "FoundHouseholdReport",
+    "FoundReportRerun",
     "FoundReportRun",
     "FoundRow",
     "FoundSide",
@@ -367,6 +371,7 @@ __all__ = [
     "find_or_insert_cliff_calculations",
     "find_or_insert_report",
     "find_or_insert_report_run",
+    "find_or_insert_report_run_cliffs",
     "find_or_insert_simulation",
     "find_or_insert_simulation_run",
     "find_or_insert_simulation_runs",
@@ -374,6 +379,7 @@ __all__ = [
     "insert_household_job",
     "insert_household_report_rerun",
     "insert_report_rerun",
+    "insert_report_rerun_with_cliffs",
     "insert_simulation_rerun",
     "insert_window_rerun",
     "lock_reruns_of",

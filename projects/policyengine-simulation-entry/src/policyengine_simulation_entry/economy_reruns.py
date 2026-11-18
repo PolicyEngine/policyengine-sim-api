@@ -114,8 +114,11 @@ if TYPE_CHECKING:
         BudgetWindowInputs,
         EconomyReportInputs,
         FoundBudgetWindow,
+        FoundCliffs,
+        FoundReportRerun,
         FoundReportRun,
         FoundSimulationRun,
+        ProposedCliffs,
         ReportDefinition,
         SideDefinition,
         SimulationChoice,
@@ -192,6 +195,12 @@ class EconomyRerunRuns(BudgetWindowRuns, Protocol):
 
     def create_report_rerun(self, rerun: NewReportRerun) -> FoundReportRun:
         """Join the report's run on the re-run's versions, or create it."""
+        ...
+
+    def create_report_rerun_with_cliffs(
+        self, rerun: NewReportRerun, cliffs: ProposedCliffs
+    ) -> FoundReportRerun:
+        """Join or create the report's run, with its runs' cliff calculations."""
         ...
 
     def create_simulation_rerun(self, rerun: NewSimulationRerun) -> FoundSimulationRun:
@@ -312,14 +321,14 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             baseline=self._new_side(stored.baseline.simulation_id),
             reform=self._new_side(stored.reform.simulation_id),
             forced=forced,
-            cliffs=(
-                self._proposed_cliffs()
-                if asks_for_cliffs(
-                    include_cliffs=request.include_cliffs,
-                    stored_inputs=definition.inputs,
-                )
-                else None
-            ),
+        )
+        proposed_cliffs = (
+            self._proposed_cliffs()
+            if asks_for_cliffs(
+                include_cliffs=request.include_cliffs,
+                stored_inputs=definition.inputs,
+            )
+            else None
         )
         scope = rerun_scope(
             stored.country,
@@ -328,24 +337,20 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             inputs.catalog,
             options=definition.inputs,
         )
-        found = await self._create_rerun(
-            _REPORT,
-            lambda: self._store.create_report_rerun(rerun),
-            source=STORED_REPORT,
-        )
+        found, found_cliffs = await self._create_report_rerun(rerun, proposed_cliffs)
         answer = (
             _created_report_run(stored, rerun, found)
             if found.inserted
             else _joined_report_run(stored, found)
         )
         cliffs = None
-        if found.cliffs is not None:
+        if found_cliffs is not None:
             # Written with the report run, so started before its coordinator.
             cliffs = await self._start_cliffs(
                 worker,
                 scope,
                 request_id,
-                found=found.cliffs,
+                found=found_cliffs,
                 baseline_policy=inputs.baseline.reform,
                 reform_policy=inputs.reform.reform,
                 observability_context=observability_context,
@@ -375,6 +380,24 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             )
             answer = answer.model_copy(update={"status": status})
         return answer.model_copy(update={"cliffs": cliffs})
+
+    async def _create_report_rerun(
+        self, rerun: NewReportRerun, proposed_cliffs: ProposedCliffs | None
+    ) -> tuple[FoundReportRun, FoundCliffs | None]:
+        """Join or create the report's run, with its cliffs when they're asked for."""
+        if proposed_cliffs is None:
+            run = await self._create_rerun(
+                _REPORT,
+                lambda: self._store.create_report_rerun(rerun),
+                source=STORED_REPORT,
+            )
+            return run, None
+        found = await self._create_rerun(
+            _REPORT,
+            lambda: self._store.create_report_rerun_with_cliffs(rerun, proposed_cliffs),
+            source=STORED_REPORT,
+        )
+        return found.run, found.cliffs
 
     async def rerun_simulation(
         self,
