@@ -19,7 +19,7 @@ from committed_rows import (
     run_together,
     wait_until_another_backend_waits_for,
 )
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import act_as_the_service, in_session, rolled_back_transaction
 from economy_rows import (
     CURRENT_LAW,
     LATER_VERSIONS,
@@ -139,12 +139,16 @@ def test_a_simulation_is_inserted_once_and_then_found_by_its_key(
         act_as_the_service(connection)
         first_values = _simulation_values(economy, _key("simulation"))
 
-        first = find_or_insert_simulation(connection, first_values)
-        again = find_or_insert_simulation(
-            connection, _simulation_values(economy, _key("simulation"))
+        first = in_session(connection, find_or_insert_simulation, first_values)
+        again = in_session(
+            connection,
+            find_or_insert_simulation,
+            _simulation_values(economy, _key("simulation")),
         )
-        other = find_or_insert_simulation(
-            connection, _simulation_values(economy, _key("another simulation"))
+        other = in_session(
+            connection,
+            find_or_insert_simulation,
+            _simulation_values(economy, _key("another simulation")),
         )
 
         assert (first.id, first.inserted) == (first_values["id"], True)
@@ -159,14 +163,18 @@ def test_a_report_is_inserted_once_and_then_found_by_its_key(
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         act_as_the_service(connection)
-        simulation = find_or_insert_simulation(
-            connection, _simulation_values(economy, _key("simulation"))
+        simulation = in_session(
+            connection,
+            find_or_insert_simulation,
+            _simulation_values(economy, _key("simulation")),
         )
         first_values = _report_values(economy, _key("report"), simulation.id)
 
-        first = find_or_insert_report(connection, first_values)
-        again = find_or_insert_report(
-            connection, _report_values(economy, _key("report"), simulation.id)
+        first = in_session(connection, find_or_insert_report, first_values)
+        again = in_session(
+            connection,
+            find_or_insert_report,
+            _report_values(economy, _key("report"), simulation.id),
         )
 
         assert (first.id, first.inserted) == (first_values["id"], True)
@@ -179,24 +187,34 @@ def test_a_simulation_run_is_joined_on_its_version_set_until_it_fails(
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         act_as_the_service(connection)
-        simulation = find_or_insert_simulation(
-            connection, _simulation_values(economy, _key("simulation"))
+        simulation = in_session(
+            connection,
+            find_or_insert_simulation,
+            _simulation_values(economy, _key("simulation")),
         )
 
-        first = find_or_insert_simulation_run(
-            connection, _simulation_run_values(economy, simulation.id)
+        first = in_session(
+            connection,
+            find_or_insert_simulation_run,
+            _simulation_run_values(economy, simulation.id),
         )
-        joined = find_or_insert_simulation_run(
-            connection, _simulation_run_values(economy, simulation.id)
+        joined = in_session(
+            connection,
+            find_or_insert_simulation_run,
+            _simulation_run_values(economy, simulation.id),
         )
-        later_versions = find_or_insert_simulation_run(
-            connection, _simulation_run_values(economy, simulation.id, LATER_VERSIONS)
+        later_versions = in_session(
+            connection,
+            find_or_insert_simulation_run,
+            _simulation_run_values(economy, simulation.id, LATER_VERSIONS),
         )
         connection.execute(text("RESET ROLE"))
         _fail(connection, "simulation_runs", first.id)
         act_as_the_service(connection)
-        after_failure = find_or_insert_simulation_run(
-            connection, _simulation_run_values(economy, simulation.id)
+        after_failure = in_session(
+            connection,
+            find_or_insert_simulation_run,
+            _simulation_run_values(economy, simulation.id),
         )
 
         assert first.inserted is True
@@ -212,14 +230,18 @@ def test_a_forced_run_is_never_joined_and_never_takes_a_runs_place(
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         act_as_the_service(connection)
-        simulation = find_or_insert_simulation(
-            connection, _simulation_values(economy, _key("simulation"))
+        simulation = in_session(
+            connection,
+            find_or_insert_simulation,
+            _simulation_values(economy, _key("simulation")),
         )
         forced_values = _simulation_run_values(economy, simulation.id)
         connection.execute(insert(simulation_runs).values(**forced_values, forced=True))
 
-        first = find_or_insert_simulation_run(
-            connection, _simulation_run_values(economy, simulation.id)
+        first = in_session(
+            connection,
+            find_or_insert_simulation_run,
+            _simulation_run_values(economy, simulation.id),
         )
         # Another forced run beside an unforced one conflicts with neither.
         connection.execute(
@@ -231,8 +253,9 @@ def test_a_forced_run_is_never_joined_and_never_takes_a_runs_place(
         assert first.inserted is True
         assert first.id != forced_values["id"]
         with pytest.raises(ValueError, match="forced"):
-            find_or_insert_simulation_run(
+            in_session(
                 connection,
+                find_or_insert_simulation_run,
                 {**_simulation_run_values(economy, simulation.id), "forced": True},
             )
 
@@ -243,21 +266,31 @@ def test_a_report_run_is_joined_on_its_versions_outside_budget_windows(
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         act_as_the_service(connection)
-        simulation = find_or_insert_simulation(
-            connection, _simulation_values(economy, _key("simulation"))
+        simulation = in_session(
+            connection,
+            find_or_insert_simulation,
+            _simulation_values(economy, _key("simulation")),
         )
-        simulation_run = find_or_insert_simulation_run(
-            connection, _simulation_run_values(economy, simulation.id)
+        simulation_run = in_session(
+            connection,
+            find_or_insert_simulation_run,
+            _simulation_run_values(economy, simulation.id),
         )
-        report = find_or_insert_report(
-            connection, _report_values(economy, _key("report"), simulation.id)
+        report = in_session(
+            connection,
+            find_or_insert_report,
+            _report_values(economy, _key("report"), simulation.id),
         )
 
-        first = find_or_insert_report_run(
-            connection, _report_run_values(report.id, simulation_run.id)
+        first = in_session(
+            connection,
+            find_or_insert_report_run,
+            _report_run_values(report.id, simulation_run.id),
         )
-        joined = find_or_insert_report_run(
-            connection, _report_run_values(report.id, simulation_run.id)
+        joined = in_session(
+            connection,
+            find_or_insert_report_run,
+            _report_run_values(report.id, simulation_run.id),
         )
 
         assert first.inserted is True
@@ -266,8 +299,9 @@ def test_a_report_run_is_joined_on_its_versions_outside_budget_windows(
         assert joined.baseline_simulation_run_id == simulation_run.id
         assert joined.reform_simulation_run_id == simulation_run.id
         with pytest.raises(ValueError, match="budget window"):
-            find_or_insert_report_run(
+            in_session(
                 connection,
+                find_or_insert_report_run,
                 {
                     **_report_run_values(report.id, simulation_run.id),
                     "budget_window_run_id": uuid4(),
@@ -282,8 +316,10 @@ def test_a_transaction_inserting_a_run_another_has_inserted_waits_and_joins_it(
     economy = committed_catalog
     with committed_engine.begin() as connection:
         act_as_the_service(connection)
-        simulation = find_or_insert_simulation(
-            connection, _simulation_values(economy, _key("shared simulation"))
+        simulation = in_session(
+            connection,
+            find_or_insert_simulation,
+            _simulation_values(economy, _key("shared simulation")),
         )
     first_has_inserted = threading.Event()
     found: dict[str, Any] = {}
@@ -291,8 +327,10 @@ def test_a_transaction_inserting_a_run_another_has_inserted_waits_and_joins_it(
     def insert_then_commit_once_the_other_waits() -> None:
         with committed_engine.begin() as connection:
             act_as_the_service(connection)
-            found["first"] = find_or_insert_simulation_run(
-                connection, _simulation_run_values(economy, simulation.id)
+            found["first"] = in_session(
+                connection,
+                find_or_insert_simulation_run,
+                _simulation_run_values(economy, simulation.id),
             )
             holder_pid = connection.execute(
                 text("SELECT pg_backend_pid()")
@@ -304,8 +342,10 @@ def test_a_transaction_inserting_a_run_another_has_inserted_waits_and_joins_it(
         assert first_has_inserted.wait(LOCK_WAIT_TIMEOUT_SECONDS)
         with committed_engine.begin() as connection:
             act_as_the_service(connection)
-            found["second"] = find_or_insert_simulation_run(
-                connection, _simulation_run_values(economy, simulation.id)
+            found["second"] = in_session(
+                connection,
+                find_or_insert_simulation_run,
+                _simulation_run_values(economy, simulation.id),
             )
 
     run_together(
@@ -323,11 +363,15 @@ def test_a_run_that_fails_between_the_insert_and_the_read_is_inserted_again(
     economy = committed_catalog
     with committed_engine.begin() as connection:
         act_as_the_service(connection)
-        simulation = find_or_insert_simulation(
-            connection, _simulation_values(economy, _key("shared simulation"))
+        simulation = in_session(
+            connection,
+            find_or_insert_simulation,
+            _simulation_values(economy, _key("shared simulation")),
         )
-        earlier = find_or_insert_simulation_run(
-            connection, _simulation_run_values(economy, simulation.id)
+        earlier = in_session(
+            connection,
+            find_or_insert_simulation_run,
+            _simulation_run_values(economy, simulation.id),
         )
 
     def fail_the_earlier_run_before_the_read(
@@ -350,8 +394,10 @@ def test_a_run_that_fails_between_the_insert_and_the_read_is_inserted_again(
             connection, "before_cursor_execute", fail_the_earlier_run_before_the_read
         )
         try:
-            again = find_or_insert_simulation_run(
-                connection, _simulation_run_values(economy, simulation.id)
+            again = in_session(
+                connection,
+                find_or_insert_simulation_run,
+                _simulation_run_values(economy, simulation.id),
             )
         finally:
             event.remove(
