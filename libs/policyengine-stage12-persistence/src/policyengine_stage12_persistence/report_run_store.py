@@ -6,7 +6,8 @@ changes nothing that is already final. A report run's completion sets its own
 result columns in the same update, and inserts its result rows in the same
 transaction, only when its update changed the run. A household job is
 written the same way, and its result document is set in the update that
-finishes it.
+finishes it. The stuck-run sweep's reads and failures here also serve cliff
+results, which ``CliffResultStore`` otherwise writes.
 """
 
 from __future__ import annotations
@@ -15,9 +16,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final
 
-from policyengine_simulation_persistence.cliff_impact_tables import CliffImpact
 from policyengine_simulation_persistence.tables import (
     BudgetWindowRun,
+    CliffImpact,
     HouseholdJob,
     ReportRun,
     SimulationRun,
@@ -564,8 +565,8 @@ class ReportRunStore:
     ) -> tuple[ActiveRun, ...]:
         """Return the pending and running runs of ``kind`` active since before a time.
 
-        A run counts from its first claim, or from its creation while it is
-        pending; a household job counts from its creation, as the table's
+        A run or cliff result counts from its first claim, or from its creation
+        while it is pending; a household job counts from its creation, as the table's
         status and creation index allows. Runs are oldest first, with or
         without a recorded Modal call. A simulation run is listed only while
         no pending or running report run names it as its baseline or reform:

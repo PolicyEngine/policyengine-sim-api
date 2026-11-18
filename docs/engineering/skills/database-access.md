@@ -184,9 +184,8 @@ and this repository has no migration chain of its own
   stuck-run sweep write as the Modal worker role: `report_runs`,
   `simulation_runs`, `budget_window_runs`, the result tables,
   `household_jobs` and `cliff_impacts`. They use the same models, in
-  `libs/policyengine-simulation-persistence` (`tables.py`,
-  `cliff_impact_tables.py` and `result_tables.py`, which
-  `sim.persistence.models-match-public-api`
+  `libs/policyengine-simulation-persistence` (`tables.py` and
+  `result_tables.py`, which `sim.persistence.models-match-public-api`
   compares with the Public API's tables), through the stores in
   `libs/policyengine-stage12-persistence`. The v1 `run_simulation` code
   imports neither library.

@@ -40,7 +40,7 @@ from policyengine_simulation_executor.stage12_runtime import (
     cliff_results as cliff_results_module,
 )
 from policyengine_simulation_executor.stage12_runtime.cliff_results import (
-    cliff_impact_from_frames,
+    cliff_totals_from_frames,
 )
 from policyengine_simulation_executor.stage12_runtime.output_planning import (
     plan_simulation_input,
@@ -436,7 +436,7 @@ def test_the_cliff_gap_and_share_are_pys_own_from_the_same_rows() -> None:
         ),
     )
 
-    impact = cliff_impact_from_frames(frames, cliff_plan())
+    impact = cliff_totals_from_frames(frames, cliff_plan())
 
     expected = calculate_cliff_impact(calculated, calculated).baseline
     assert (impact.cliff_gap, impact.cliff_share) == (
@@ -506,7 +506,7 @@ def test_merged_region_group_rows_give_the_cliffs_of_the_whole_country() -> None
 
     merged = merge_segment_results(simulation, payloads, groups=groups)
 
-    split = cliff_impact_from_frames(merged.frames, plan)
-    whole = cliff_impact_from_frames({"person": country}, plan)
+    split = cliff_totals_from_frames(merged.frames, plan)
+    whole = cliff_totals_from_frames({"person": country}, plan)
     assert split.cliff_gap == pytest.approx(whole.cliff_gap, rel=1e-12)
     assert split.cliff_share == pytest.approx(whole.cliff_share, rel=1e-12)

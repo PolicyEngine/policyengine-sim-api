@@ -12,7 +12,6 @@ from policyengine_simulation_persistence.budget_window_records import (
     WindowSide,
     WindowYearRuns,
 )
-from policyengine_simulation_persistence.cliff_impact_tables import CliffImpact
 from policyengine_simulation_persistence.definition_keys import (
     KEY_VERSION,
     EconomyReportDefinition,
@@ -204,6 +203,7 @@ from policyengine_simulation_persistence.tables import (
     LATEST_YEAR,
     MAX_BUDGET_WINDOW_YEARS,
     BudgetWindowRun,
+    CliffImpact,
     HouseholdJob,
     HouseholdJobStatus,
     Report,

@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from policyengine_simulation_persistence.cliff_impact_tables import CliffImpact
+from policyengine_simulation_persistence.tables import CliffImpact
 from sqlalchemy import func, or_, select, update
 
 from policyengine_stage12_persistence.report_run_store import (

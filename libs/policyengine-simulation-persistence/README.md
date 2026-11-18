@@ -47,10 +47,11 @@ referenced row before adding the row that names it.
 
 ## Tables
 
-`tables.py` models, as SQLAlchemy ORM mapped classes, the six tables the
+`tables.py` models, as SQLAlchemy ORM mapped classes, the seven tables the
 service creates rows in: `Simulation`, `Report`, `SimulationRun`, `ReportRun`,
-`BudgetWindowRun` and `HouseholdJob`, for `simulations`, `reports`,
-`simulation_runs`, `report_runs`, `budget_window_runs` and `household_jobs`.
+`BudgetWindowRun`, `HouseholdJob` and `CliffImpact`, for `simulations`,
+`reports`, `simulation_runs`, `report_runs`, `budget_window_runs`,
+`household_jobs` and `cliff_impacts`.
 They derive from `ServiceBase` in `orm_base.py`, and their tables are in
 `service_metadata`, which names the `public` schema so writes reach those
 tables whatever the role's `search_path`.
@@ -81,13 +82,12 @@ household report with only a baseline). A report with a `budget_window_size`
 is calculated as a `budget_window_runs` row with one report run per year; each
 year's report run names that row and its year, and belongs to the same report.
 
-`cliff_impact_tables.py` maps a seventh table the service creates rows in, on
-`ServiceBase` too: `cliff_impacts` (`CliffImpact`), each cliff calculation of a
-simulation run. The service inserts a row pending and records the Modal call
-it starts; the Modal worker role claims it and records the run's cliff gap
-and cliff share, or the failure. A run has at most one calculation that
-hasn't failed (`uq_cliff_impacts_unfailed`), so identical requests join it,
-and a failed one stays recorded. Deleting a run deletes its calculations.
+`CliffImpact` is one cliff calculation of a simulation run. The service inserts
+a row pending and records the Modal call it starts; the Modal worker role claims
+it and records the run's cliff gap and cliff share, or the failure. A run has at
+most one calculation that hasn't failed (`uq_cliff_impacts_unfailed`), so
+identical requests join it, and a failed one stays recorded. Deleting a run
+deletes its calculations.
 
 ## Result tables
 

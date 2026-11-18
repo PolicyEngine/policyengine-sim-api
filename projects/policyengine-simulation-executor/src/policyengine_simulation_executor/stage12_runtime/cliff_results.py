@@ -142,8 +142,8 @@ class CliffResultWriter(Protocol):
 
 
 @dataclass(frozen=True)
-class CliffImpact:
-    """One simulation's cliff gap and cliff share."""
+class CliffTotals:
+    """One simulation's calculated cliff gap and cliff share."""
 
     cliff_gap: float
     cliff_share: float
@@ -177,13 +177,13 @@ class CliffResultRecorder:
             and state.modal_call_id == self.modal_call_id
         )
 
-    def complete(self, impact: CliffImpact) -> RunWrite:
+    def complete(self, totals: CliffTotals) -> RunWrite:
         """Record the cliff gap and share; mark the cliff result succeeded."""
         return self.writer.complete_cliff_result(
             self.cliff_result_id,
             modal_call_id=self.modal_call_id,
-            cliff_gap=impact.cliff_gap,
-            cliff_share=impact.cliff_share,
+            cliff_gap=totals.cliff_gap,
+            cliff_share=totals.cliff_share,
             completed_at=datetime.now(UTC),
         )
 
@@ -306,8 +306,8 @@ def run_cliff_result(  # noqa: PLR0913  # the call's inputs, then the worker's s
             cancellation_requested=partial(_taken_from_call, recorder),
         )
         validate_output_frames(calculation.frames, simulation.output_plan)
-        impact = cliff_impact_from_frames(calculation.frames, simulation.output_plan)
-        _require_completed(recorder, impact)
+        totals = cliff_totals_from_frames(calculation.frames, simulation.output_plan)
+        _require_completed(recorder, totals)
     except Stage12CancellationError:
         msg = "Stage 12 cliff calculation was cancelled"
         raise RuntimeError(msg) from None
@@ -321,8 +321,8 @@ def run_cliff_result(  # noqa: PLR0913  # the call's inputs, then the worker's s
         "cliff_result_id": str(recorder.cliff_result_id),
         "simulation_run_id": str(simulation.simulation_execution_id),
         "status": RunStatus.SUCCEEDED.value,
-        "cliff_gap": impact.cliff_gap,
-        "cliff_share": impact.cliff_share,
+        "cliff_gap": totals.cliff_gap,
+        "cliff_share": totals.cliff_share,
     }
 
 
@@ -353,20 +353,20 @@ def _calculation(  # noqa: PLR0913  # the simulation, then the worker's seams
     )
 
 
-def _require_completed(recorder: CliffResultRecorder, impact: CliffImpact) -> None:
+def _require_completed(recorder: CliffResultRecorder, totals: CliffTotals) -> None:
     """Record the values; raise if the cliff result was taken from this call meanwhile.
 
     One failed meanwhile, as the stuck-run sweep fails one, takes no write
     from it: ``Stage12CancellationError``.
     """
-    if not recorder.complete(impact).changed:
+    if not recorder.complete(totals).changed:
         msg = "Stage 12 cliff calculation was cancelled"
         raise Stage12CancellationError(msg)
 
 
-def cliff_impact_from_frames(
+def cliff_totals_from_frames(
     frames: Mapping[str, pd.DataFrame], output_plan: Stage12OutputPlan
-) -> CliffImpact:
+) -> CliffTotals:
     """Return the cliff gap and share of a calculation's weighted output rows.
 
     Each of .py's cliff variables is summed on the entity the plan
@@ -386,7 +386,7 @@ def cliff_impact_from_frames(
             "The calculation has no adults, or a cliff total that is not a "
             "finite number, so its cliff share has no value.",
         )
-    return CliffImpact(
+    return CliffTotals(
         cliff_gap=totals["cliff_gap"],
         cliff_share=totals["is_on_cliff"] / adults,
     )
