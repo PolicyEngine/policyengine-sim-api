@@ -46,8 +46,10 @@ from policyengine_simulation_persistence.economy_run_reads import (
 )
 from policyengine_simulation_persistence.economy_run_records import (
     SimulationChoice,
+    fail_unstarted_cliff_calculation,
     fail_unstarted_report_run,
     fail_unstarted_simulation_run,
+    record_cliff_calculation_call,
     record_report_run_call,
     record_simulation_run_call,
 )
@@ -349,6 +351,28 @@ class EconomyRunStore:
             return fail_unstarted_simulation_run(
                 session,
                 simulation_run_id=simulation_run_id,
+                error_message=error_message,
+            )
+
+    def record_cliff_call(
+        self, cliff_result_id: UUID, modal_call_id: str
+    ) -> SimulationStatus | None:
+        """Record a cliff calculation's call ID while it is pending with none."""
+        with self._transaction() as session:
+            return record_cliff_calculation_call(
+                session,
+                cliff_result_id=cliff_result_id,
+                modal_call_id=modal_call_id,
+            )
+
+    def fail_unstarted_cliff_calculation(
+        self, cliff_result_id: UUID, error_message: str
+    ) -> bool:
+        """Fail a cliff calculation while it is pending with no call ID."""
+        with self._transaction() as session:
+            return fail_unstarted_cliff_calculation(
+                session,
+                cliff_result_id=cliff_result_id,
                 error_message=error_message,
             )
 

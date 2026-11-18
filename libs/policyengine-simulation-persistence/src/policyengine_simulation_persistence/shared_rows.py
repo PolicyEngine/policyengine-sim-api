@@ -11,7 +11,9 @@ insert did nothing, by a read of the row that won:
 - a report run by report, country package version and .py version, the
   same way, outside budget windows, whose year runs no index covers;
 - a budget-window run by report, catalog version and .py version, among
-  window runs that haven't failed and aren't recalculations (answer 8).
+  window runs that haven't failed and aren't recalculations (answer 8);
+- a simulation run's cliff calculation (``CliffImpact``) by its run, among
+  calculations that haven't failed (answer 4b).
 
 Under READ COMMITTED an insert that conflicts with another transaction's
 uncommitted row waits until that transaction ends. Once it commits, the
@@ -39,6 +41,7 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from policyengine_simulation_persistence.tables import (
     BudgetWindowRun,
+    CliffImpact,
     Report,
     ReportRun,
     ReportRunStatus,
@@ -56,7 +59,7 @@ if TYPE_CHECKING:
 
 # The classes a lookup inserts into.
 type SharedRowModel = type[
-    Simulation | Report | SimulationRun | ReportRun | BudgetWindowRun
+    Simulation | Report | SimulationRun | ReportRun | BudgetWindowRun | CliffImpact
 ]
 
 # How many times a lookup inserts before giving up on a row that keeps
@@ -98,6 +101,8 @@ class FoundReportRun:
     status: ReportRunStatus
     baseline_simulation_run_id: UUID
     reform_simulation_run_id: UUID | None
+    # Each side's run's cliff calculation, when the request asked for cliffs.
+    cliffs: FoundCliffs | None = None
 
 
 @dataclass(frozen=True)
@@ -107,6 +112,40 @@ class FoundWindowRun:
     id: UUID
     inserted: bool
     status: ReportRunStatus
+
+
+@dataclass(frozen=True)
+class FoundCliffCalculation:
+    """A simulation run's cliff calculation a lookup found or inserted.
+
+    ``status`` is the calculation's: pending or running while it is being
+    calculated, succeeded once it holds the run's cliff gap and share.
+    """
+
+    id: UUID
+    simulation_run_id: UUID
+    inserted: bool
+    status: SimulationStatus
+
+
+@dataclass(frozen=True)
+class ProposedCliffs:
+    """The IDs a request asking for cliffs proposes for its sides' calculations.
+
+    Each is used only for a calculation the request inserts; one run on
+    both sides gets one calculation, with the baseline's ID.
+    """
+
+    baseline_id: UUID
+    reform_id: UUID
+
+
+@dataclass(frozen=True)
+class FoundCliffs:
+    """Each side's simulation run's cliff calculation, found or inserted."""
+
+    baseline: FoundCliffCalculation
+    reform: FoundCliffCalculation
 
 
 @dataclass(frozen=True)
@@ -336,6 +375,69 @@ def find_joinable_report_run(
         status=ReportRunStatus(row.status),
         baseline_simulation_run_id=row.baseline_simulation_run_id,
         reform_simulation_run_id=row.reform_simulation_run_id,
+    )
+
+
+_UNFAILED_CLIFF_CALCULATION: Final = _partial_index(
+    CliffImpact,
+    "uq_cliff_impacts_unfailed",
+    (CliffImpact.status != SimulationStatus.FAILED,),
+)
+
+
+def find_or_insert_cliff_calculations(
+    session: Session, proposed: Mapping[UUID, UUID]
+) -> dict[UUID, FoundCliffCalculation]:
+    """Return each simulation run's cliff calculation, inserting it when it has none.
+
+    ``proposed`` maps each simulation run's ID to the ID its calculation
+    gets if this call inserts it, pending with no Modal call. A run's
+    calculation that hasn't failed, pending, running or succeeded, is
+    found instead: a run has one cliff result, and a failed calculation
+    never counts (answer 2's rule, applied to cliffs). The lookups go in
+    simulation run ID order, so two transactions never wait for each other
+    in opposite orders. Return the calculations by simulation run ID.
+    """
+    found: dict[UUID, FoundCliffCalculation] = {}
+    for simulation_run_id in sorted(proposed):
+        row, inserted = _find_or_insert(
+            session,
+            _UNFAILED_CLIFF_CALCULATION,
+            {
+                "id": proposed[simulation_run_id],
+                "simulation_run_id": simulation_run_id,
+                "status": SimulationStatus.PENDING,
+            },
+            (CliffImpact.status,),
+        )
+        found[simulation_run_id] = FoundCliffCalculation(
+            id=row.id,
+            simulation_run_id=simulation_run_id,
+            inserted=inserted,
+            status=SimulationStatus(row.status),
+        )
+    return found
+
+
+def find_or_insert_side_cliffs(
+    session: Session,
+    proposed: ProposedCliffs,
+    *,
+    baseline_simulation_run_id: UUID,
+    reform_simulation_run_id: UUID,
+) -> FoundCliffs:
+    """Return each side's run's cliff calculation, inserting those it lacks.
+
+    Called in the transaction that settled the report run naming the two
+    runs (``keyed_economy_records.find_or_insert_report_run_cliffs``), so
+    the calculations are written with it, or not at all.
+    """
+    proposed_by_run = {baseline_simulation_run_id: proposed.baseline_id}
+    proposed_by_run.setdefault(reform_simulation_run_id, proposed.reform_id)
+    found = find_or_insert_cliff_calculations(session, proposed_by_run)
+    return FoundCliffs(
+        baseline=found[baseline_simulation_run_id],
+        reform=found[reform_simulation_run_id],
     )
 
 

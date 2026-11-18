@@ -38,6 +38,10 @@ it calculates are marked ``forced``, which API v1's one-unfailed-run
 indexes leave out, so it is created beside any run on the same versions,
 even one under way, and nothing ever joins it.
 
+An economy report's re-run asking for cliffs also finds or inserts the cliff
+calculation of each simulation run the report run it ended on names, in the
+same transaction (``find_or_insert_report_run_cliffs``, answer 4b).
+
 The service then starts and records the new run's call as it does a new
 record's (``economy_run_records``).
 """
@@ -64,6 +68,7 @@ from policyengine_simulation_persistence.household_report_records import (
     insert_household_simulation_run,
 )
 from policyengine_simulation_persistence.keyed_economy_records import (
+    find_or_insert_report_run_cliffs,
     find_or_insert_report_run_on_sides,
 )
 from policyengine_simulation_persistence.keyed_window_records import (
@@ -108,7 +113,10 @@ if TYPE_CHECKING:
         RunVersions,
     )
     from policyengine_simulation_persistence.keyed_economy_records import Side
-    from policyengine_simulation_persistence.shared_rows import FoundSimulationRun
+    from policyengine_simulation_persistence.shared_rows import (
+        FoundSimulationRun,
+        ProposedCliffs,
+    )
 
 
 @dataclass(frozen=True)
@@ -132,7 +140,8 @@ class NewReportRerun:
     that hasn't failed and wasn't forced, or inserts one; a side's
     ``simulation_run_id`` is the ID it proposes, used only if it inserts the
     run. ``forced`` makes it a forced re-run's extra run, which inserts a
-    new run of each side, marked forced.
+    new run of each side, marked forced. ``cliffs``, set when the re-run
+    asks for cliffs, proposes its sides' cliff calculations' IDs.
     """
 
     report_id: UUID
@@ -142,6 +151,7 @@ class NewReportRerun:
     baseline: RerunSide
     reform: RerunSide
     forced: bool = False
+    cliffs: ProposedCliffs | None = None
 
     @property
     def new_simulation_run_ids(self) -> tuple[UUID, ...]:
@@ -294,7 +304,9 @@ def insert_report_rerun(session: Session, rerun: NewReportRerun) -> FoundReportR
     run is joined, and this call's simulation runs are taken back. A forced
     re-run inserts its runs, marked forced, and is never joined. Return the
     run and whether this call created it, which only then needs its Modal
-    call.
+    call. A re-run asking for cliffs also finds or inserts the cliff
+    calculation of each simulation run that report run names, joined or
+    created, and returns them with it.
 
     Raise RerunRecordDeletedError when the database refuses the new run's
     key to the report, which no longer exists, and
@@ -302,6 +314,16 @@ def insert_report_rerun(session: Session, rerun: NewReportRerun) -> FoundReportR
     name, such as a side's simulation; either refusal ends the caller's
     transaction, or its savepoint.
     """
+    found = _insert_report_rerun_run(session, rerun)
+    if rerun.cliffs is None:
+        return found
+    return replace(
+        found, cliffs=find_or_insert_report_run_cliffs(session, found, rerun.cliffs)
+    )
+
+
+def _insert_report_rerun_run(session: Session, rerun: NewReportRerun) -> FoundReportRun:
+    """Join or create the re-run's report run, as ``insert_report_rerun`` says."""
     versions = rerun.versions
     if not rerun.forced:
         lock_reruns_of(session, rerun.report_id)

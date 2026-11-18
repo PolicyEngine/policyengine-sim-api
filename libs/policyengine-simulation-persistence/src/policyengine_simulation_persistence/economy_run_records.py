@@ -53,6 +53,7 @@ from policyengine_simulation_persistence.input_tables import (
 )
 from policyengine_simulation_persistence.tables import (
     BudgetWindowRun,
+    CliffImpact,
     Report,
     ReportRun,
     ReportRunStatus,
@@ -69,7 +70,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 # The two classes whose runs a Modal call calculates.
-type RunModel = type[SimulationRun | ReportRun]
+type RunModel = type[SimulationRun | ReportRun | CliffImpact]
 
 # PostgreSQL's SQLSTATE for a row naming one that does not exist.
 FOREIGN_KEY_VIOLATION: Final = "23503"
@@ -351,6 +352,18 @@ def record_simulation_run_call(
     return None if status is None else SimulationStatus(status)
 
 
+def record_cliff_calculation_call(
+    session: Session, *, cliff_result_id: UUID, modal_call_id: str
+) -> SimulationStatus | None:
+    """Record a cliff calculation's Modal call ID while it is pending with none.
+
+    Return its status afterwards, or None when there is no such row. One
+    the worker has claimed already keeps its claim.
+    """
+    status = _record_call(session, CliffImpact, cliff_result_id, modal_call_id)
+    return None if status is None else SimulationStatus(status)
+
+
 def _record_call(
     session: Session, model: RunModel, run_id: UUID, modal_call_id: str
 ) -> str | None:
@@ -400,6 +413,17 @@ def fail_unstarted_simulation_run(
     a worker has claimed, is left as it is.
     """
     return _fail_unstarted(session, SimulationRun, simulation_run_id, error_message)
+
+
+def fail_unstarted_cliff_calculation(
+    session: Session, *, cliff_result_id: UUID, error_message: str
+) -> bool:
+    """Fail a cliff calculation at once while it is pending with no Modal call ID.
+
+    Return whether it was failed: one a call has been recorded for, or one
+    the worker has claimed, is left as it is.
+    """
+    return _fail_unstarted(session, CliffImpact, cliff_result_id, error_message)
 
 
 def _fail_unstarted(
