@@ -6,6 +6,7 @@ manifest grants on the two temporary tables.
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self
 from uuid import UUID, uuid4
@@ -31,7 +32,12 @@ from policyengine_stage12_persistence.tables import (
     ComparisonReport,
 )
 from policyengine_stage12_persistence.validation import _validate_table_schema
-from session_database import RUNTIME_ROLE, StatementLog, limit_open_connections
+from session_database import (
+    RUNTIME_ROLE,
+    StatementLog,
+    limit_open_connections,
+    refuse_connection_numbers,
+)
 from sqlalchemy import delete, func, inspect, select
 from sqlalchemy.orm import Session
 
@@ -45,6 +51,9 @@ NOW = datetime(2026, 9, 22, tzinfo=UTC)
 LATER = NOW + timedelta(minutes=5)
 PLACEHOLDER_CALL = "dispatch-pending-1"
 DIGEST = "a" * 64
+# The connections a passing deployment check opens, one at a time: its role
+# check, the schema inspector, eleven schema reads and its rolled-back writes.
+CHECK_CONNECTIONS = 14
 
 
 def _report(evaluation_id: UUID) -> ComparisonReportRecord:
@@ -108,6 +117,14 @@ def store(
 ) -> Stage12PersistenceStore:
     assert statements.sent == []
     return Stage12PersistenceStore(session_factory=runtime_sessions)
+
+
+@pytest.fixture
+def retry_waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record the deployment check's waits between attempts instead of waiting."""
+    waits: list[float] = []
+    monkeypatch.setattr(time, "sleep", waits.append)
+    return waits
 
 
 @pytest.fixture
@@ -312,11 +329,48 @@ def test_the_deployment_check_needs_one_free_pooler_slot(runtime_sessions) -> No
     )
 
 
-def test_the_deployment_check_refuses_another_role(runtime_sessions) -> None:
+@pytest.mark.parametrize("refused_connection", range(1, CHECK_CONNECTIONS + 1))
+def test_the_deployment_check_survives_any_one_refused_connection(
+    runtime_sessions, retry_waits, refused_connection
+) -> None:
+    # A session pooler refuses clients while it is full, which says nothing
+    # about the schema or the role. Every step of the check may be repeated.
+    attempts = refuse_connection_numbers(runtime_sessions, {refused_connection})
+
+    validate_runtime_database(
+        runtime_sessions, expected_role=RUNTIME_ROLE, environment="staging"
+    )
+
+    assert len(attempts) == CHECK_CONNECTIONS + 1
+    assert retry_waits == [1.0]
+
+
+def test_the_deployment_check_stops_when_connections_stay_refused(
+    runtime_sessions, retry_waits
+) -> None:
+    attempts = refuse_connection_numbers(runtime_sessions, range(1, 1000))
+
+    with pytest.raises(Stage12RuntimeAccessError, match="OperationalError"):
+        validate_runtime_database(
+            runtime_sessions, expected_role=RUNTIME_ROLE, environment="staging"
+        )
+
+    assert len(attempts) == 5
+    assert retry_waits == [1.0, 2.0, 4.0, 8.0]
+
+
+def test_the_deployment_check_refuses_another_role(
+    runtime_sessions, retry_waits
+) -> None:
+    attempts = refuse_connection_numbers(runtime_sessions, ())
+
     with pytest.raises(Stage12RuntimeAccessError, match="unexpected role"):
         validate_runtime_database(
             runtime_sessions, expected_role="another_role", environment="staging"
         )
+
+    assert len(attempts) == 1
+    assert retry_waits == []
 
 
 def test_the_deployment_check_refuses_an_unknown_environment(
@@ -328,13 +382,11 @@ def test_the_deployment_check_refuses_an_unknown_environment(
         )
 
 
-def test_the_deployment_check_reports_an_unreachable_database() -> None:
+def test_the_deployment_check_reports_an_unreachable_database(retry_waits) -> None:
     from sqlalchemy.exc import OperationalError
 
     class RefusedSessions:
         """A session factory whose sessions cannot connect."""
-
-        kw: dict[str, Any] = {}  # noqa: RUF012  # the sessionmaker attribute it mimics
 
         def __call__(self) -> Self:
             return self
@@ -360,6 +412,7 @@ def test_the_deployment_check_reports_an_unreachable_database() -> None:
 
     assert "OperationalError" in str(failure.value)
     assert "password" not in str(failure.value)
+    assert len(retry_waits) == 4
 
 
 class AlteredSchema:

@@ -13,7 +13,7 @@ from sqlalchemy import event
 from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Collection
 
     from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker
 
@@ -89,8 +89,10 @@ class RetryingSessionOpener:
         return session
 
 
-def refuse_connections(session_factory: sessionmaker[Session], count: int) -> list[Any]:
-    """Refuse the factory's first ``count`` connections, as a full pooler does.
+def refuse_connection_numbers(
+    session_factory: sessionmaker[Session], numbers: Collection[int]
+) -> list[Any]:
+    """Refuse the factory's attempts to connect that have these 1-based numbers.
 
     Returns a list that gains one entry per attempt to connect.
     """
@@ -98,11 +100,19 @@ def refuse_connections(session_factory: sessionmaker[Session], count: int) -> li
 
     def refuse(dialect, _record, _arguments, _keywords) -> None:
         attempts.append(object())
-        if len(attempts) <= count:
+        if len(attempts) in numbers:
             raise dialect.loaded_dbapi.OperationalError(CONNECTION_REFUSED_MESSAGE)
 
     event.listen(session_factory.kw["bind"], "do_connect", refuse)
     return attempts
+
+
+def refuse_connections(session_factory: sessionmaker[Session], count: int) -> list[Any]:
+    """Refuse the factory's first ``count`` connections, as a full pooler does.
+
+    Returns a list that gains one entry per attempt to connect.
+    """
+    return refuse_connection_numbers(session_factory, range(1, count + 1))
 
 
 def limit_open_connections(session_factory: sessionmaker[Session], limit: int) -> None:

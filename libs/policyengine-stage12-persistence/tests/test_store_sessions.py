@@ -36,6 +36,7 @@ from report_run_database import NOW
 from session_database import (
     CONNECTION_REFUSED_MESSAGE,
     RetryingSessionOpener,
+    limit_open_connections,
     refuse_connections,
 )
 from sqlalchemy import insert, select
@@ -110,6 +111,36 @@ def test_a_refused_connection_is_opened_again_and_the_claim_runs_once(
     assert opener.operation_names == ["claim_report_run"]
     assert len(statements.starting_with("UPDATE")) == 1
     assert statements.commits == 1
+    assert seeder.row("report_runs", report_run_id)["modal_call_id"] == CALL
+
+
+def test_a_failed_connection_check_closes_its_session_before_the_retry(
+    worker_sessions, statements, seeder, seeded_run, monkeypatch
+) -> None:
+    # With one connection allowed, the retry connects only if the first
+    # session gave its connection back.
+    limit_open_connections(worker_sessions, limit=1)
+    dialect = worker_sessions.kw["bind"].dialect
+    run_statement = dialect.do_execute
+    lost_checks = [CONNECTION_CHECK_SENT]
+
+    def lose_the_first_check(cursor, statement, parameters, context=None) -> None:
+        if lost_checks and statement == lost_checks[0]:
+            lost_checks.clear()
+            message = "server closed the connection unexpectedly"
+            raise dialect.loaded_dbapi.OperationalError(message)
+        run_statement(cursor, statement, parameters, context)
+
+    monkeypatch.setattr(dialect, "do_execute", lose_the_first_check)
+    opener = RetryingSessionOpener(statements)
+    store = ReportRunStore(session_factory=worker_sessions, open_session=opener)
+    report_run_id = seeded_run.run_ids.report_run_id
+
+    write = store.claim_report_run(report_run_id, modal_call_id=CALL, claimed_at=NOW)
+
+    assert write == RunWrite(changed=True, status=RunStatus.RUNNING)
+    assert len(opener.refusals) == 1
+    assert len(statements.starting_with("UPDATE")) == 1
     assert seeder.row("report_runs", report_run_id)["modal_call_id"] == CALL
 
 
