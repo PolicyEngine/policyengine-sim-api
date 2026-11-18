@@ -114,7 +114,8 @@ def test_the_modal_worker_role_reads_its_runs_and_inserts_their_results() -> Non
 
     assert dict(MODAL_WORKER_TABLE_PRIVILEGES) == {
         **dict.fromkeys(MODAL_WORKER_RUN_TABLES, frozenset({"SELECT"})),
-        **dict.fromkeys(result_tables, frozenset({"INSERT"})),
+        # A session's insert also reads the row's server defaults back.
+        **dict.fromkeys(result_tables, frozenset({"SELECT", "INSERT"})),
     }
 
 

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import inspect as python_inspect
+import os
 from types import NoneType, UnionType
 from typing import Union, get_args, get_origin
+from uuid import uuid4
 
 import pytest
 from policyengine_stage12_persistence.orm_base import ComparisonBase
@@ -17,9 +19,11 @@ from policyengine_stage12_persistence.tables import (
     comparison_simulations,
     metadata,
 )
-from sqlalchemy import inspect, select
+from report_run_database import SEED_URL_ENV, worker_database_url
+from sqlalchemy import FetchedValue, create_engine, inspect, select
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.orm import Mapped, configure_mappers
+from sqlalchemy.orm import Mapped, Session, configure_mappers
+from test_store import _report, _simulation
 
 MAPPED_CLASSES = [
     pytest.param(
@@ -37,6 +41,9 @@ MAPPED_CLASSES = [
         id="simulation",
     ),
 ]
+# The columns API v1's tables give a server default.
+REPORT_DATABASE_DEFAULTS = {"comparison_status", "created_at", "updated_at"}
+SIMULATION_DATABASE_DEFAULTS = {"created_at", "updated_at"}
 
 
 def _allows_none(annotation: object) -> bool:
@@ -93,3 +100,59 @@ def test_a_statement_on_a_class_names_its_table_in_the_public_schema() -> None:
     assert f"FROM public.{SIMULATION_TABLE_NAME}" in str(
         statement.compile(dialect=postgresql.dialect())
     )
+
+
+@pytest.mark.parametrize(
+    ("table", "column_names"),
+    [
+        pytest.param(comparison_reports, REPORT_DATABASE_DEFAULTS, id="report"),
+        pytest.param(
+            comparison_simulations, SIMULATION_DATABASE_DEFAULTS, id="simulation"
+        ),
+    ],
+)
+def test_the_columns_the_database_fills_are_marked_as_such(table, column_names) -> None:
+    marked = {
+        column.name
+        for column in table.columns
+        if isinstance(column.server_default, FetchedValue)
+    }
+
+    assert marked == column_names
+
+
+def test_a_session_insert_leaves_the_tables_defaults_to_the_database() -> None:
+    worker_database_url()
+    report_id = uuid4()
+    report_values = {
+        **_report().model_dump(exclude=REPORT_DATABASE_DEFAULTS),
+        "evaluation_id": report_id,
+    }
+    simulation_values = {
+        **_simulation().model_dump(exclude=SIMULATION_DATABASE_DEFAULTS),
+        "simulation_execution_id": uuid4(),
+        "evaluation_id": report_id,
+    }
+    report = ComparisonReport(**report_values)
+    simulation = ComparisonSimulation(**simulation_values)
+    engine = create_engine(os.environ[SEED_URL_ENV])
+    try:
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            with Session(
+                connection, join_transaction_mode="create_savepoint"
+            ) as session:
+                session.add(report)
+                session.flush()
+                session.add(simulation)
+                session.flush()
+                stored_status = report.comparison_status
+                report_created_at = report.created_at
+                simulation_created_at = simulation.created_at
+            transaction.rollback()
+    finally:
+        engine.dispose()
+
+    assert stored_status == "not_requested"
+    assert report_created_at is not None
+    assert simulation_created_at is not None

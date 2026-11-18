@@ -13,9 +13,8 @@ from typing import Any, Union, get_args, get_origin
 from uuid import UUID, uuid4
 
 import pytest
-from conftest import MODAL_WORKER_ROLE, SERVICE_TEST_ROLE
+from conftest import SERVICE_TEST_ROLE
 from policyengine_simulation_persistence import (
-    MODAL_WORKER_TABLE_PRIVILEGES,
     BudgetSummary,
     BudgetWindowRun,
     CongressionalDistrictImpact,
@@ -63,7 +62,7 @@ from policyengine_simulation_persistence import (
 )
 from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
 from schema_comparison import describe_tables
-from sqlalchemy import create_engine, func, inspect, select, text, update
+from sqlalchemy import create_engine, inspect, select, text, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Mapped, configure_mappers
@@ -210,17 +209,6 @@ def test_the_keys_to_api_v1s_tables_name_the_referenced_classes() -> None:
     assert len(KEYS_TO_PUBLIC_API_TABLES) == 20
 
 
-def test_the_modal_worker_may_insert_into_every_result_class() -> None:
-    """The privilege list is built from the result classes when it is imported."""
-    insert_only = {
-        table_name
-        for table_name, privileges in MODAL_WORKER_TABLE_PRIVILEGES.items()
-        if privileges == {"INSERT"}
-    }
-
-    assert insert_only == set(RESULT_CLASSES)
-
-
 def test_every_mapper_configures() -> None:
     configure_mappers()
 
@@ -350,33 +338,6 @@ def test_a_written_result_stays_readable_after_its_session_closes(
 
     assert isinstance(result.id, UUID)
     assert result.created_at is not None
-
-
-@pytest.mark.public_api_schema
-def test_the_modal_worker_role_may_read_back_the_results_it_inserts(
-    public_api_database_url,
-) -> None:
-    """A session's insert of a result class reads its defaults with ``RETURNING``."""
-    engine = create_engine(
-        make_url(public_api_database_url).set(drivername="postgresql+psycopg")
-    )
-    try:
-        with engine.connect() as connection:
-            unreadable = [
-                table_name
-                for table_name in RESULT_CLASSES
-                if not connection.scalar(
-                    select(
-                        func.has_table_privilege(
-                            MODAL_WORKER_ROLE, f"public.{table_name}", "SELECT"
-                        )
-                    )
-                )
-            ]
-    finally:
-        engine.dispose()
-
-    assert unreadable == []
 
 
 @pytest.mark.public_api_schema

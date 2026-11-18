@@ -11,9 +11,10 @@ from policyengine_simulation_persistence import (
     create_session_factory,
     create_simulation_engine,
 )
-from sqlalchemy import Integer, create_engine, text
+from sqlalchemy import Integer, String, create_engine, func, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+from sqlalchemy.orm.exc import DetachedInstanceError
 
 
 class _Base(DeclarativeBase):
@@ -26,6 +27,7 @@ class _Written(_Base):
     __tablename__ = "written"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    label: Mapped[str | None] = mapped_column(String)
 
 
 def _statement_timeout(session: Session) -> str:
@@ -58,6 +60,32 @@ def test_a_committed_object_stays_readable_after_its_session_closes() -> None:
             session.add(row)
 
         assert row.id == 1
+    finally:
+        engine.dispose()
+
+
+def test_an_attribute_set_to_a_sql_expression_needs_a_refresh_to_stay_readable() -> (
+    None
+):
+    """Only the database knows the value, so it must be read before the close."""
+    engine = create_engine("sqlite://")
+    try:
+        _Base.metadata.create_all(engine)
+        session_factory = create_session_factory(engine)
+
+        with session_factory.begin() as session:
+            refreshed_row = _Written(id=1)
+            unrefreshed_row = _Written(id=2)
+            session.add_all([refreshed_row, unrefreshed_row])
+            session.flush()
+            refreshed_row.label = func.lower("LABEL")
+            unrefreshed_row.label = func.lower("LABEL")
+            session.flush()
+            session.refresh(refreshed_row)
+
+        assert refreshed_row.label == "label"
+        with pytest.raises(DetachedInstanceError):
+            _ = unrefreshed_row.label
     finally:
         engine.dispose()
 
