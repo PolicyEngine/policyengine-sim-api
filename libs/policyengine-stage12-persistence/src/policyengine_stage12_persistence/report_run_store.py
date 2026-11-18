@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from policyengine_simulation_contract.stage12_execution import ReportRunIds
-    from sqlalchemy import ColumnElement, Update
+    from sqlalchemy import ColumnElement, SQLColumnExpression, Update
     from sqlalchemy.orm import Session, sessionmaker
 
     from policyengine_stage12_persistence.report_run_results import ReportRunResult
@@ -723,7 +723,7 @@ def running_under_call(model: RunModel, modal_call_id: str) -> ColumnElement[boo
     )
 
 
-def _active_since(kind: RunKind) -> ColumnElement[datetime]:
+def _active_since(kind: RunKind) -> SQLColumnExpression[datetime]:
     """Return when a run of ``kind`` became active, for the sweep's ages.
 
     A household job counts from its creation. A run counts from its first
