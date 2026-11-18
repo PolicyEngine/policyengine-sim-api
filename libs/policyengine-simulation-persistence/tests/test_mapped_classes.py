@@ -1,8 +1,7 @@
 """The ORM mapped classes of API v1's tables.
 
-Each table has one typed mapped class. The stores' statements still use the
-class's Core table, under the name the table had before it was mapped, until
-they are converted.
+Each table has one typed mapped class, and the stores' statements name those
+classes. The modules no longer export a Core table under the table's name.
 """
 
 from __future__ import annotations
@@ -161,9 +160,12 @@ def test_the_groups_keep_the_tables_they_share_a_name_with_apart() -> None:
 
 
 @pytest.mark.parametrize(("module", "classes"), TABLE_NAME_MODULES)
-def test_each_table_name_the_stores_import_is_its_classs_table(module, classes) -> None:
-    for table_name, mapped_class in classes.items():
-        assert getattr(module, table_name) is mapped_class.__table__, table_name
+def test_the_table_modules_export_no_core_table_names(module, classes) -> None:
+    exported_table_names = [
+        table_name for table_name in classes if hasattr(module, table_name)
+    ]
+
+    assert exported_table_names == []
 
 
 @pytest.mark.parametrize("mapped_class", ALL_CLASSES, ids=lambda item: item.__name__)
