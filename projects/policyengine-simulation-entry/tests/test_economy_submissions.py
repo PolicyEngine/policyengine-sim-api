@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import replace
 from uuid import UUID
 
@@ -817,3 +818,31 @@ def test_a_create_whose_commit_is_unconfirmed_may_have_written_the_record(
         "OperationalError",
     )
     assert (caller.report_runs, caller.simulation_runs) == ([], [])
+
+
+@pytest.mark.parametrize(
+    ("submit", "expected_table"),
+    [(_submit_report, "reports"), (_submit_simulation, "simulations")],
+    ids=["report", "simulation"],
+)
+def test_an_unconfirmed_call_is_logged_naming_its_report_or_simulation(
+    caplog, submit, expected_table
+) -> None:
+    store = FakeStore()
+
+    with (
+        caplog.at_level(logging.INFO),
+        pytest.raises(EconomySubmissionUnavailableError) as unavailable,
+    ):
+        submit(service(store, caller=FakeCaller(failure=ConnectionError("refused"))))
+
+    (record,) = [
+        item
+        for item in caplog.records
+        if item.getMessage() == "economy_call_unconfirmed"
+    ]
+    assert record.policyengine_attributes == {
+        "error_type": "ConnectionError",
+        "database_table": expected_table,
+        "database_row_id": str(unavailable.value.record_id),
+    }

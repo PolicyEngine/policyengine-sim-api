@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 65 | 0 | 0 | 14 | 79 |
+| mechanical | 66 | 0 | 0 | 14 | 80 |
 | metric | 1 | 0 | 0 | 0 | 1 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 66 of 80 rules.
+**Blocking:** 67 of 81 rules.
 
 ## Gaps
 
@@ -311,6 +311,7 @@ flowchart LR
 | `sim.observability.failures-never-break-requests` | Invalid observability configuration fails at build or deploy time, and telemetry failures at runtime never fail a request or computation. | mechanical | doc-only | no | nothing | — | — |
 | `sim.observability.header-transport-only` | observability_id travels only in the X-PolicyEngine-Observability-Id header, never in a simulation JSON body, and polling never invents one. | mechanical | doc-only | no | nothing | — | — |
 | `sim.observability.id-is-diagnostic-only` | observability_id has diagnostic meaning only: never use it for idempotency, authorization, database identity, routing or business logic. | mechanical | doc-only | no | nothing | — | — |
+| `sim.observability.log-fields-through-log-extra` | Every Simulation Entrypoint log call that passes fields passes them through log_extra, so they reach the emitted record, and no field name written as a keyword in that call contains a word the observability package drops (household, reform, payload, person and others). | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_log_fields.py` | `pr.yml:test` | yes |
 | `sim.observability.registered-stages-only` | Span names come from the stage plans in policyengine_simulation_observability.stages; runtime code never adds span-name string literals. | mechanical | doc-only | no | nothing | — | — |
 
 ```mermaid
@@ -319,10 +320,15 @@ flowchart LR
   gap_unenforced>"not enforced"]
   r_sim_observability_header_transport_only("sim.observability.header-transport-only (doc-only)")
   r_sim_observability_id_is_diagnostic_only("sim.observability.id-is-diagnostic-only (doc-only)")
+  r_sim_observability_log_fields_through_log_extra("sim.observability.log-fields-through-log-extra (enforced)")
+  e_pytest_projects_policyengine_simulation_entry_tests_test_log_fields_py["pytest projects/policyengine-simulation-entry/tests/test_log_fields.py"]
+  j_CI_pr_yml_test["CI pr.yml:test"]
   r_sim_observability_registered_stages_only("sim.observability.registered-stages-only (doc-only)")
   r_sim_observability_failures_never_break_requests -.-> gap_unenforced
   r_sim_observability_header_transport_only -.-> gap_unenforced
   r_sim_observability_id_is_diagnostic_only -.-> gap_unenforced
+  r_sim_observability_log_fields_through_log_extra --> e_pytest_projects_policyengine_simulation_entry_tests_test_log_fields_py
+  e_pytest_projects_policyengine_simulation_entry_tests_test_log_fields_py --> j_CI_pr_yml_test
   r_sim_observability_registered_stages_only -.-> gap_unenforced
 ```
 

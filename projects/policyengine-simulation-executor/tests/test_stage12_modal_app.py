@@ -95,8 +95,9 @@ def _invoke(
         )
 
     # The US and UK workers pass their own Modal call ID to the runtime, so the
-    # stand-in ``modal`` module needs one; a test that set its own keeps it.
-    if not hasattr(module.modal, "current_function_call_id"):
+    # stand-in ``modal`` module, which answers None, needs one; a test that set
+    # its own keeps it.
+    if module.modal.current_function_call_id() is None:
         monkeypatch.setattr(
             module.modal,
             "current_function_call_id",
@@ -934,3 +935,289 @@ def test_modal_app_name_cannot_override_bundle_selection(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="does not match"):
         importlib.import_module("src.modal.v2_app")
+
+
+SIMULATION_RUN_ID = "00000000-0000-4000-8000-00000000b001"
+REPORT_RUN_ID = "00000000-0000-4000-8000-00000000b002"
+HOUSEHOLD_JOB_ID = "00000000-0000-4000-8000-00000000a001"
+HOUSEHOLD_REPORT_RUN_ID = "00000000-0000-4000-8000-00000000a002"
+OPERATION_RECORD_KEYS = ("database_table", "database_row_id", "modal_call_id")
+
+
+def _report_run_context() -> dict:
+    """Return a detailed-save coordinator call's context naming its report run."""
+    return {
+        "report_run": {
+            "report_run_id": REPORT_RUN_ID,
+            "baseline_simulation_run_id": "00000000-0000-4000-8000-00000000b003",
+            "reform_simulation_run_id": "00000000-0000-4000-8000-00000000b004",
+        }
+    }
+
+
+def _invoke_with_record(
+    monkeypatch, module, call_name: str, *, names_record: bool
+) -> dict:
+    """Call one v2 Modal function, naming its database row when ``names_record``.
+
+    Every application function is replaced with one returning ``{"ok": True}``.
+    """
+    from policyengine_simulation_executor import household_calculation, stage12_runtime
+
+    def succeed(*_arguments, **_keywords) -> dict:
+        return {"ok": True}
+
+    if call_name in ("run_single_simulation_us", "run_single_simulation_uk"):
+        monkeypatch.setattr(stage12_runtime, "run_single_simulation", succeed)
+        context = {"simulation_run_id": SIMULATION_RUN_ID} if names_record else {}
+        return getattr(module, call_name)(
+            {"role": "baseline"}, context, observability_context=None
+        )
+    if call_name == "run_single_simulation_segment_us":
+
+        class SegmentResult:
+            def model_dump(self, *, mode):
+                return {"ok": True}
+
+        monkeypatch.setattr(
+            stage12_runtime, "calculate_segment", lambda *_, **__: SegmentResult()
+        )
+        keywords = {"simulation_run_id": SIMULATION_RUN_ID} if names_record else {}
+        return module.run_single_simulation_segment_us(
+            {"simulation": {"role": "baseline"}, "segment_index": 0},
+            observability_context=None,
+            **keywords,
+        )
+    if call_name == "coordinate_report":
+        monkeypatch.setattr(stage12_runtime, "coordinate_report", succeed)
+        monkeypatch.setattr(
+            stage12_runtime,
+            "coordinate_window_year",
+            lambda coordinate, **_keywords: coordinate(),
+        )
+        context = _report_run_context() if names_record else {}
+        return module.coordinate_report({}, context, observability_context=None)
+
+    function_name, record_kind = call_name.split(":")
+    country = function_name.rsplit("_", 1)[1]
+    monkeypatch.setattr(stage12_runtime, "run_household_job", succeed)
+    monkeypatch.setattr(stage12_runtime, "run_household_report", succeed)
+
+    class HouseholdOutcome:
+        def model_dump(self, *, mode):
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        household_calculation,
+        "calculate_household",
+        lambda *_, **__: HouseholdOutcome(),
+    )
+    if not names_record:
+        return getattr(module, function_name)(
+            _household_payload(country), observability_context=None
+        )
+    if record_kind == "job":
+        return getattr(module, function_name)(
+            _household_payload(country),
+            observability_context=None,
+            household_job_id=HOUSEHOLD_JOB_ID,
+        )
+    return getattr(module, function_name)(
+        _household_report_payload(country),
+        observability_context=None,
+        household_report_run_id=HOUSEHOLD_REPORT_RUN_ID,
+    )
+
+
+def _capture_metric_attributes(monkeypatch) -> list[dict]:
+    """Return the list every metric's attributes are appended to, after filtering."""
+    from policyengine_observability import otel
+
+    captured: list[dict] = []
+    filter_metric_attributes = otel.metric_attributes
+
+    def record_metric_attributes(values, config):
+        filtered = filter_metric_attributes(values, config)
+        captured.append(filtered)
+        return filtered
+
+    monkeypatch.setattr(otel, "metric_attributes", record_metric_attributes)
+    return captured
+
+
+@pytest.mark.parametrize(
+    ("call_name", "expected_table", "expected_row_id"),
+    [
+        ("run_single_simulation_us", "simulation_runs", SIMULATION_RUN_ID),
+        ("run_single_simulation_uk", "simulation_runs", SIMULATION_RUN_ID),
+        ("run_single_simulation_segment_us", "simulation_runs", SIMULATION_RUN_ID),
+        ("coordinate_report", "report_runs", REPORT_RUN_ID),
+        ("calculate_household_us:job", "household_jobs", HOUSEHOLD_JOB_ID),
+        ("calculate_household_uk:job", "household_jobs", HOUSEHOLD_JOB_ID),
+        ("calculate_household_us:report", "report_runs", HOUSEHOLD_REPORT_RUN_ID),
+        ("calculate_household_uk:report", "report_runs", HOUSEHOLD_REPORT_RUN_ID),
+    ],
+)
+def test_v2_functions_name_their_database_row_and_modal_call_in_the_operation_record(
+    monkeypatch,
+    recorded_observability_runtime,
+    call_name,
+    expected_table,
+    expected_row_id,
+) -> None:
+    # H7 · 1 links an interrupted operation in production's logs to its row.
+    runtime, written_records = recorded_observability_runtime
+    module = _load(monkeypatch)
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+    monkeypatch.setattr(
+        module.modal, "current_function_call_id", lambda: "fc-operation"
+    )
+    metric_attributes = _capture_metric_attributes(monkeypatch)
+
+    assert _invoke_with_record(
+        monkeypatch, module, call_name, names_record=True
+    ) == {"ok": True}
+
+    [completion] = [
+        record
+        for record in written_records
+        if record.get("event.name") == "operation.completed"
+    ]
+    # Read after the package's attribute filter, which drops a key naming a
+    # household, a reform or a payload, among others.
+    assert completion["attributes"]["database_table"] == expected_table
+    assert completion["attributes"]["database_row_id"] == expected_row_id
+    assert completion["attributes"]["modal_call_id"] == "fc-operation"
+    # Each distinct ID would make a separate metric series.
+    assert metric_attributes
+    for attributes in metric_attributes:
+        assert not set(OPERATION_RECORD_KEYS) & set(attributes)
+
+
+@pytest.mark.parametrize(
+    "call_name",
+    [
+        "run_single_simulation_us",
+        "run_single_simulation_uk",
+        "run_single_simulation_segment_us",
+        "coordinate_report",
+        "calculate_household_us:none",
+        "calculate_household_uk:none",
+    ],
+)
+def test_v2_functions_naming_no_row_name_only_their_modal_call(
+    monkeypatch, recorded_observability_runtime, call_name
+) -> None:
+    # A comparison-path call, a standalone simulation, or a release
+    # validation's household calculation works on no detailed-save row.
+    runtime, written_records = recorded_observability_runtime
+    module = _load(monkeypatch)
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+    monkeypatch.setattr(
+        module.modal, "current_function_call_id", lambda: "fc-operation"
+    )
+
+    _invoke_with_record(monkeypatch, module, call_name, names_record=False)
+
+    [completion] = [
+        record
+        for record in written_records
+        if record.get("event.name") == "operation.completed"
+    ]
+    assert completion["attributes"]["modal_call_id"] == "fc-operation"
+    assert "database_table" not in completion["attributes"]
+    assert "database_row_id" not in completion["attributes"]
+
+
+def test_a_malformed_simulation_run_id_is_left_out_of_the_operation_record(
+    monkeypatch, recorded_observability_runtime
+) -> None:
+    # The worker refuses the context itself; telemetry names only a UUID.
+    from policyengine_simulation_executor import stage12_runtime
+
+    runtime, written_records = recorded_observability_runtime
+    module = _load(monkeypatch)
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+    monkeypatch.setattr(
+        module.modal, "current_function_call_id", lambda: "fc-operation"
+    )
+    monkeypatch.setattr(
+        stage12_runtime, "run_single_simulation", lambda *_, **__: {"ok": True}
+    )
+
+    module.run_single_simulation_us(
+        {"role": "baseline"},
+        {"simulation_run_id": "not a run ID"},
+        observability_context=None,
+    )
+
+    [completion] = [
+        record
+        for record in written_records
+        if record.get("event.name") == "operation.completed"
+    ]
+    assert "database_row_id" not in completion["attributes"]
+    assert "database_table" not in completion["attributes"]
+
+
+def test_the_us_simulation_worker_passes_its_simulation_run_to_its_segments(
+    monkeypatch,
+) -> None:
+    from policyengine_simulation_executor import stage12_runtime
+
+    module = _load(monkeypatch)
+    monkeypatch.setattr(
+        module, "init_process_observability", lambda **_: RecordingRuntime()
+    )
+    monkeypatch.setattr(
+        module.modal, "current_function_call_id", lambda: "fc-simulation-worker"
+    )
+    segmented_runs: list[dict] = []
+
+    def run_segmented_simulation(simulation, **keywords):
+        segmented_runs.append({"simulation": simulation, **keywords})
+        return "calculated"
+
+    def run_single_simulation(payload, context, **keywords):
+        planned_simulation = object()
+        return keywords["dependencies"].segmented_calculator(
+            planned_simulation, lambda: False
+        )
+
+    monkeypatch.setattr(
+        stage12_runtime, "run_segmented_simulation", run_segmented_simulation
+    )
+    monkeypatch.setattr(stage12_runtime, "run_single_simulation", run_single_simulation)
+
+    module.run_single_simulation_us(
+        {"role": "baseline"},
+        {"simulation_run_id": SIMULATION_RUN_ID},
+        observability_context=None,
+    )
+
+    (segmented_run,) = segmented_runs
+    assert segmented_run["simulation_run_id"] == UUID(SIMULATION_RUN_ID)
+
+
+@pytest.mark.parametrize(
+    "function_name", ["run_single_simulation_us", "run_single_simulation_uk"]
+)
+def test_simulation_workers_close_runtime_when_their_modal_call_id_is_unreadable(
+    monkeypatch, function_name
+) -> None:
+    module = _load(monkeypatch)
+    runtime = RecordingRuntime()
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+
+    def unreadable_call_id():
+        msg = "Modal call ID is unreadable"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(module.modal, "current_function_call_id", unreadable_call_id)
+
+    with pytest.raises(RuntimeError, match="unreadable"):
+        getattr(module, function_name)(
+            {"role": "baseline"}, {}, observability_context=None
+        )
+
+    assert runtime.shutdown_calls == 1

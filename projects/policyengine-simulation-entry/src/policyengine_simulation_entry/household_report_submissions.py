@@ -46,6 +46,10 @@ import logging
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID, uuid4
 
+from policyengine_simulation_observability.log_records import (
+    database_row_attributes,
+    log_extra,
+)
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
@@ -380,7 +384,7 @@ class HouseholdReportSubmissionService[Store: HouseholdReports = HouseholdReport
         except VersionManifestUnavailableError as error:
             logger.warning(
                 "household_report_manifest_unavailable",
-                extra={"error_type": type(error.__cause__).__name__},
+                extra=log_extra(error_type=type(error.__cause__).__name__),
             )
             raise EconomySubmissionUnavailableError(
                 code="manifest_unavailable",
@@ -410,7 +414,7 @@ class HouseholdReportSubmissionService[Store: HouseholdReports = HouseholdReport
         except SQLAlchemyError as error:
             logger.warning(
                 "household_report_inputs_unreadable",
-                extra={"error_type": type(error).__name__},
+                extra=log_extra(error_type=type(error).__name__),
             )
             raise _database_unavailable() from None
         except Exception as error:
@@ -498,7 +502,7 @@ class HouseholdReportSubmissionService[Store: HouseholdReports = HouseholdReport
         except (SharedRowNotSettledError, SQLAlchemyError) as error:
             logger.warning(
                 "household_report_not_created",
-                extra={"error_type": type(error).__name__},
+                extra=log_extra(error_type=type(error).__name__),
             )
             raise _database_unavailable() from None
 
@@ -554,10 +558,10 @@ class HouseholdReportSubmissionService[Store: HouseholdReports = HouseholdReport
             # itself, so the calculation goes ahead either way.
             logger.warning(
                 "household_report_call_not_recorded",
-                extra={
-                    "report_id": str(report_id),
-                    "error_type": type(error).__name__,
-                },
+                extra=log_extra(
+                    error_type=type(error).__name__,
+                    **database_row_attributes("reports", report_id),
+                ),
             )
             return ReportRunStatus.PENDING
         return ReportRunStatus.PENDING if status is None else status
@@ -581,7 +585,10 @@ class HouseholdReportSubmissionService[Store: HouseholdReports = HouseholdReport
         # The log names the error type only; its text could repeat request data.
         logger.error(
             "household_report_call_unconfirmed",
-            extra={"report_id": str(report_id), "error_type": type(error).__name__},
+            extra=log_extra(
+                error_type=type(error).__name__,
+                **database_row_attributes("reports", report_id),
+            ),
         )
         message = (
             "modal_call_refused: Modal did not accept the report's call "
@@ -597,10 +604,10 @@ class HouseholdReportSubmissionService[Store: HouseholdReports = HouseholdReport
         except SQLAlchemyError as write_error:
             logger.warning(
                 "household_report_run_not_failed",
-                extra={
-                    "report_id": str(report_id),
-                    "error_type": type(write_error).__name__,
-                },
+                extra=log_extra(
+                    error_type=type(write_error).__name__,
+                    **database_row_attributes("reports", report_id),
+                ),
             )
             return False
 

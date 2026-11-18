@@ -150,6 +150,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Observability
 
+- Checked: `sim.observability.log-fields-through-log-extra`
 - `sim.observability.failures-never-break-requests`: Invalid observability configuration fails at build or deploy time, and telemetry failures at runtime never fail a request or computation. (doc-only, not checked: follow it yourself)
 - `sim.observability.header-transport-only`: observability_id travels only in the X-PolicyEngine-Observability-Id header, never in a simulation JSON body, and polling never invents one. (doc-only, not checked: follow it yourself)
 - `sim.observability.id-is-diagnostic-only`: observability_id has diagnostic meaning only: never use it for idempotency, authorization, database identity, routing or business logic. (doc-only, not checked: follow it yourself)

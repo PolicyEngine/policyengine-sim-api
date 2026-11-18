@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from policyengine_simulation_persistence import (
     LocalAreaDatasetMismatchError,
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from uuid import UUID
 
+    from policyengine_simulation_observability.log_records import DatabaseTable
     from policyengine_simulation_persistence import (
         EconomyRecordReferenceError,
         EconomyRequest,
@@ -66,6 +67,11 @@ REFERENCE_REFUSALS: dict[str, tuple[EconomyRefusalCode, str]] = {
 }
 # What a submission creates, or a re-run calculates again.
 RecordName = Literal["report", "simulation"]
+# The API v1 table holding each record, as telemetry names it.
+RECORD_TABLES: Final[dict[RecordName, DatabaseTable]] = {
+    "report": "reports",
+    "simulation": "simulations",
+}
 
 
 @dataclass(frozen=True)

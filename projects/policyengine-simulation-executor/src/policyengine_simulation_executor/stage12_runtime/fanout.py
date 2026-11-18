@@ -23,6 +23,7 @@ from .segmentation import build_segment_inputs, merge_segment_results
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from types import ModuleType
+    from uuid import UUID
 
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.stage12_execution import (
@@ -66,21 +67,25 @@ class SegmentRunnerSeams:
 class Stage12SegmentRunner:
     """Start, collect, and merge the 20 parts of one logical simulation."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913  # the simulation, then keyword-only app, runtime, cancellation, run and seams
         self,
         simulation: PlannedSimulationExecutionInput,
         *,
         app_name: str,
         runtime: ObservabilityRuntime,
         cancellation_requested: Callable[[], bool] | None = None,
+        simulation_run_id: UUID | None = None,
         seams: SegmentRunnerSeams | None = None,
     ) -> None:
         """Look up the segment function deployed in ``app_name``.
 
-        ``cancellation_requested`` is checked between polls.
+        ``cancellation_requested`` is checked between polls. Each segment's
+        call is passed ``simulation_run_id``, the detailed-save simulation run
+        this simulation records, for its telemetry.
         """
         seams = seams or SegmentRunnerSeams()
         self.simulation = simulation
+        self.simulation_run_id = simulation_run_id
         self.runtime = runtime
         self.sleep = seams.sleep
         self.poll_interval_initial_seconds = seams.poll_interval_seconds
@@ -131,6 +136,7 @@ class Stage12SegmentRunner:
                     call = self.child_function.spawn(
                         segment.model_dump(mode="python"),
                         observability_context=self.runtime.capture_context(),
+                        **self._segment_record_keywords(),
                     )
                     # Kept inside the span, so an interruption as it closes
                     # still finds the call to cancel.
@@ -223,6 +229,15 @@ class Stage12SegmentRunner:
             raise RuntimeError(msg)
         return [result for result in results if result is not None]
 
+    def _segment_record_keywords(self) -> dict[str, str]:
+        """Return the keyword naming the simulation run, when there is one.
+
+        A comparison-path simulation records no simulation run.
+        """
+        if self.simulation_run_id is None:
+            return {}
+        return {"simulation_run_id": str(self.simulation_run_id)}
+
     def _wait_with_cancellation(
         self,
         seconds: float,
@@ -265,11 +280,16 @@ def run_segmented_simulation(
     app_name: str,
     runtime: ObservabilityRuntime,
     cancellation_requested: Callable[[], bool] | None = None,
+    simulation_run_id: UUID | None = None,
 ) -> SimulationCalculation:
-    """Calculate ``simulation`` as region-group segments in ``app_name``; merge them."""
+    """Calculate ``simulation`` as region-group segments in ``app_name``; merge them.
+
+    Each segment's telemetry names ``simulation_run_id``, when given.
+    """
     return Stage12SegmentRunner(
         simulation,
         app_name=app_name,
         runtime=runtime,
         cancellation_requested=cancellation_requested,
+        simulation_run_id=simulation_run_id,
     ).run()

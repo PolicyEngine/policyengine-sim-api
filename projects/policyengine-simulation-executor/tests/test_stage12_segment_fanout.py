@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
+from uuid import UUID
 
 import pandas as pd
 import pytest
@@ -335,3 +336,61 @@ def test_merge_error_is_raised_from_the_real_merge_span(
 
     with pytest.raises(ValueError, match="duplicate index"):
         runner.run()
+
+
+class FunctionRecordingSpawnKeywords(FakeFunction):
+    """A segment function that also records each spawn's keyword arguments."""
+
+    def __init__(self, results: list[dict]) -> None:
+        super().__init__(results, {})
+        self.spawn_keywords: list[dict] = []
+
+    def spawn(self, payload: dict, **keywords):
+        self.spawn_keywords.append(keywords)
+        return super().spawn(
+            payload, observability_context=keywords["observability_context"]
+        )
+
+
+@pytest.mark.parametrize(
+    ("simulation_run_id", "expected_keyword"),
+    [
+        (UUID("00000000-0000-4000-8000-00000000b001"), {
+            "simulation_run_id": "00000000-0000-4000-8000-00000000b001"
+        }),
+        (None, {}),
+    ],
+    ids=["simulation-run", "comparison-path"],
+)
+def test_segments_are_started_naming_the_simulation_run_of_their_worker(
+    simulation_run_id, expected_keyword
+) -> None:
+    # Each segment's telemetry names the simulation run it calculates part of.
+    simulation = planned_simulation(SimulationRole.BASELINE)
+    function = FunctionRecordingSpawnKeywords(_results(simulation))
+
+    class FunctionLookup:
+        @staticmethod
+        def from_name(_app_name, _function_name):
+            return function
+
+    runner = Stage12SegmentRunner(
+        simulation,
+        app_name="stage12-app",
+        runtime=cast("ObservabilityRuntime", FakeRuntime()),
+        simulation_run_id=simulation_run_id,
+        seams=SegmentRunnerSeams(
+            modal_module=SimpleNamespace(Function=FunctionLookup),
+            groups=US_REGION_GROUPS,
+            sleep=lambda _seconds: None,
+        ),
+    )
+
+    runner.run()
+
+    assert len(function.spawn_keywords) == 20
+    for keywords in function.spawn_keywords:
+        assert set(keywords) == {"observability_context", *expected_keyword}
+        assert keywords.get("simulation_run_id") == expected_keyword.get(
+            "simulation_run_id"
+        )

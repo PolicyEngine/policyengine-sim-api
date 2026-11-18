@@ -8,6 +8,7 @@ persistence library.
 from __future__ import annotations
 
 import asyncio
+import logging
 from uuid import UUID
 
 import pytest
@@ -595,3 +596,25 @@ def test_a_refusal_of_the_missing_variables_option_is_the_services_fault():
 
     with pytest.raises(HouseholdReportBuildError, match="add_missing_variables"):
         household_report_calculations._contract_reasons(refused.value, "baseline")
+
+
+def test_an_unconfirmed_call_is_logged_naming_its_report(caplog):
+    store = FakeHouseholdReportStore()
+    caller = FakeHouseholdReportCaller(failure=RuntimeError("refused"))
+
+    with (
+        caplog.at_level(logging.INFO),
+        pytest.raises(EconomySubmissionUnavailableError),
+    ):
+        _submit(household_report_service(store, caller=caller))
+
+    (record,) = [
+        item
+        for item in caplog.records
+        if item.getMessage() == "household_report_call_unconfirmed"
+    ]
+    assert record.policyengine_attributes == {
+        "error_type": "RuntimeError",
+        "database_table": "reports",
+        "database_row_id": str(REPORT_ID),
+    }

@@ -142,5 +142,7 @@ def install_fake_modal(monkeypatch: pytest.MonkeyPatch) -> None:
     modal.App = FakeApp
     modal.Cron = lambda schedule: {"schedule": schedule}
     modal.is_local = lambda: True
+    # Modal answers None outside a function call.
+    modal.current_function_call_id = lambda: None
     modal.asgi_app = lambda: lambda function: function
     monkeypatch.setitem(sys.modules, "modal", modal)

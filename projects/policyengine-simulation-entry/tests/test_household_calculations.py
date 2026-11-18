@@ -7,6 +7,8 @@ persistence library; here a fake store records what the service asks of it.
 from __future__ import annotations
 
 import asyncio
+import logging
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -837,3 +839,53 @@ async def test_a_job_that_cannot_be_read_is_unavailable():
         await service.read(JOB_ID)
 
     assert raised.value.code == "database_unavailable"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("store", "caller", "event", "error_type"),
+    [
+        (
+            FakeStore(),
+            FakeCaller(failure=ConnectionError("Modal is unreachable")),
+            "household_call_unconfirmed",
+            "ConnectionError",
+        ),
+        (
+            FakeStore(fail_failure=DATABASE_ERROR),
+            FakeCaller(failure=ConnectionError("Modal is unreachable")),
+            "household_job_not_failed",
+            "OperationalError",
+        ),
+        (
+            FakeStore(claimed_by_function=True, job_read_failure=DATABASE_ERROR),
+            FakeCaller(failure=ConnectionError("Modal is unreachable")),
+            "household_job_not_read",
+            "OperationalError",
+        ),
+        (
+            FakeStore(record_failure=DATABASE_ERROR),
+            FakeCaller(),
+            "household_call_not_recorded",
+            "OperationalError",
+        ),
+    ],
+    ids=["unconfirmed", "not-failed", "not-read", "not-recorded"],
+)
+async def test_a_household_jobs_log_names_its_row_in_the_emitted_fields(
+    caplog, store, caller, event, error_type
+):
+    # The runtime's log handler emits only ``policyengine_attributes``, and
+    # drops a key naming a household, so the job is named by its table and row.
+    service, _, _, _ = _service(store, caller=caller)
+
+    # A failed job is answered with an error; the others are accepted.
+    with caplog.at_level(logging.INFO), suppress(HouseholdCalculationUnavailableError):
+        await service.submit(_request(), observability_context=None)
+
+    (record,) = [item for item in caplog.records if item.getMessage() == event]
+    assert record.policyengine_attributes == {
+        "database_table": "household_jobs",
+        "database_row_id": str(JOB_ID),
+        "error_type": error_type,
+    }

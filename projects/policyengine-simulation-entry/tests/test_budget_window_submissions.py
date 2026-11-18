@@ -496,7 +496,36 @@ def test_a_later_year_is_deferred_without_a_call_once_the_wait_has_run_out(
         if record.getMessage() == "budget_window_year_deferred"
     ]
     second_year = store.windows[0].years[1]
-    assert (deferral.year, deferral.record_id) == (
-        2027,
-        str(second_year.report_run_id),
+    # These fields reach the emitted log record; a report run is a
+    # ``report_runs`` row.
+    assert deferral.policyengine_attributes == {
+        "year": 2027,
+        "database_table": "report_runs",
+        "database_row_id": str(second_year.report_run_id),
+    }
+
+
+def test_a_later_year_modal_refuses_is_logged_naming_the_report(caplog) -> None:
+    store = FakeWindowStore()
+
+    with (
+        caplog.at_level(logging.INFO, logger=budget_window_submissions.__name__),
+        pytest.raises(EconomySubmissionUnavailableError),
+    ):
+        _submit(
+            _service(store, caller=RefusingAfterFirstCaller()), budget_window_size=3
+        )
+
+    (record,) = [
+        item
+        for item in caplog.records
+        if item.getMessage() == "budget_window_call_unconfirmed"
+    ]
+    fields = record.policyengine_attributes
+    assert (fields["database_table"], fields["database_row_id"]) == (
+        "reports",
+        str(store.windows[0].report_id),
     )
+    # The runtime emits no list, so the years started (only the first, whose
+    # call Modal accepted) are one string.
+    assert fields["started_years"] == "2026"

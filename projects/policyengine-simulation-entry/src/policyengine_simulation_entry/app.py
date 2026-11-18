@@ -38,6 +38,7 @@ from policyengine_simulation_observability.identifiers import (
     OBSERVABILITY_ID_HEADER,
     normalize_observability_id,
 )
+from policyengine_simulation_observability.log_records import log_extra
 from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
@@ -126,6 +127,8 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+# Every module of the package logs under this logger.
+PACKAGE_LOGGER_NAME = __name__.rpartition(".")[0]
 SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS = 3.0
 # The database ends each statement of a household route that runs longer.
 HOUSEHOLD_STATEMENT_TIMEOUT_MILLISECONDS = 5000
@@ -174,12 +177,12 @@ def _install_request_context(app: FastAPI, settings: Settings) -> None:
         except Exception:
             logger.exception(
                 "simulation_entry_unhandled_request",
-                extra={
-                    "request_id": request_id,
-                    "method": request.method,
-                    "path": route_template(request),
+                extra=log_extra(
+                    request_id=request_id,
+                    method=request.method,
+                    path=route_template(request),
                     **request_identifiers(request),
-                },
+                ),
             )
             response = Response(
                 content="Internal Server Error",
@@ -257,10 +260,10 @@ def _register_temporary_stage12_submission(
         except Exception as error:  # noqa: BLE001  # every integration failure becomes a 503
             logger.error(  # noqa: TRY400  # Stage 12 failure logs carry only the error type; a traceback could expose request or calculation data
                 "stage12_direct_submission_failed",
-                extra={
-                    "request_id": request.state.request_id,
-                    "error_type": type(error).__name__,
-                },
+                extra=log_extra(
+                    request_id=request.state.request_id,
+                    error_type=type(error).__name__,
+                ),
             )
             return _stage12_unavailable_response(
                 "Stage 12 direct execution is unavailable."
@@ -314,11 +317,11 @@ def _register_temporary_stage12_status(
         except Exception as error:  # noqa: BLE001  # any status-read failure becomes a 503
             logger.error(  # noqa: TRY400  # Stage 12 failure logs carry only the error type; a traceback could expose request or calculation data
                 "stage12_direct_status_failed",
-                extra={
-                    "request_id": request.state.request_id,
-                    "evaluation_id": str(evaluation_id),
-                    "error_type": type(error).__name__,
-                },
+                extra=log_extra(
+                    request_id=request.state.request_id,
+                    evaluation_id=str(evaluation_id),
+                    error_type=type(error).__name__,
+                ),
             )
             return _stage12_unavailable_response(
                 "Stage 12 report status is unavailable."
@@ -717,6 +720,9 @@ def create_app(
         platform="google_cloud_run",
         environment=runtime_settings.environment,
     )
+    # The root logger stays at WARNING, which would discard this package's
+    # INFO records before the observability runtime's handler sees them.
+    logging.getLogger(PACKAGE_LOGGER_NAME).setLevel(logging.INFO)
 
     runtime_backend = backend or OldGatewayBackend(runtime_settings, runtime=runtime)
     authenticate = auth_dependency or CallerAuthenticator(runtime_settings, runtime)

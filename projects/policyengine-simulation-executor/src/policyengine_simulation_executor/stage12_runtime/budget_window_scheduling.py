@@ -16,12 +16,10 @@ everywhere in the coordinator.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, Protocol
-from uuid import UUID
 
 from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
@@ -29,8 +27,11 @@ from policyengine_simulation_contract.stage12_execution import (
     year_calculation,
 )
 
+from .operation_records import report_run_named_by
+
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
+    from uuid import UUID
 
     from policyengine_stage12_persistence import (
         WindowAdvance,
@@ -132,7 +133,7 @@ def coordinate_window_year[CoordinatorResult](
     itself fails, nothing is marked and the window is looked up again once
     the year ends.
     """
-    report_run_id = _report_run_named_by(context)
+    report_run_id = report_run_named_by(context)
     window_store = None if report_run_id is None else _built(windows)
     if report_run_id is None or window_store is None:
         return coordinate()
@@ -208,18 +209,6 @@ def _captured(
             "next years (%s)",
             type(error).__name__,
         )
-        return None
-
-
-def _report_run_named_by(context: Mapping[str, Any]) -> UUID | None:
-    """Return the report run a coordinator call's context names, if any."""
-    report_run = context.get("report_run")
-    if not isinstance(report_run, Mapping):
-        return None
-    try:
-        return UUID(str(report_run["report_run_id"]))
-    except (KeyError, ValueError):
-        # The coordinator refuses the malformed context itself.
         return None
 
 

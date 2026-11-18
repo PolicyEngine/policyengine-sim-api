@@ -331,8 +331,13 @@ def run_single_simulation_segment_us(
     payload: dict,
     *,
     observability_context: dict | None = None,
+    simulation_run_id: str | None = None,
 ) -> dict:
-    """Calculate one US region-group segment and return its artifact descriptor."""
+    """Calculate one US region-group segment and return its artifact descriptor.
+
+    ``simulation_run_id`` names the detailed-save simulation run the segment
+    calculates part of, for its telemetry only.
+    """
     runtime = init_process_observability(
         service_name="policyengine-stage12-us-segment-worker",
         service_role="stage12_segment_worker",
@@ -348,6 +353,11 @@ def run_single_simulation_segment_us(
                 "runner_name": "stage12",
                 "simulation_role": payload.get("simulation", {}).get("role"),
                 "segment_index": payload.get("segment_index"),
+                **stage12_runtime.operation_record_attributes(
+                    "simulation_runs",
+                    stage12_runtime.row_id_or_none(simulation_run_id),
+                    modal.current_function_call_id(),
+                ),
             },
             remote_context=propagated,
         ):
@@ -387,6 +397,9 @@ def run_single_simulation_us(
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
 
+    # Read inside ``try``, so the runtime is shut down whatever happens.
+    simulation_run_id = None
+
     def segmented_calculator(
         simulation: PlannedSimulationExecutionInput,
         cancellation_requested: Callable[[], bool],
@@ -396,15 +409,21 @@ def run_single_simulation_us(
             app_name=APP_NAME,
             runtime=runtime,
             cancellation_requested=cancellation_requested,
+            simulation_run_id=simulation_run_id,
         )
 
     try:
+        modal_call_id = modal.current_function_call_id()
+        simulation_run_id = stage12_runtime.simulation_run_named_by(context)
         propagated = normalize_observability_context(observability_context)
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
                 "runner_name": "stage12",
                 "simulation_role": payload.get("role"),
+                **stage12_runtime.operation_record_attributes(
+                    "simulation_runs", simulation_run_id, modal_call_id
+                ),
             },
             remote_context=propagated,
         ):
@@ -416,7 +435,7 @@ def run_single_simulation_us(
                     segmented_calculator=segmented_calculator,
                     runtime=runtime,
                 ),
-                modal_call_id=modal.current_function_call_id(),
+                modal_call_id=modal_call_id,
             )
     finally:
         runtime.shutdown()
@@ -451,12 +470,18 @@ def run_single_simulation_uk(
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
     try:
+        modal_call_id = modal.current_function_call_id()
         propagated = normalize_observability_context(observability_context)
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
                 "runner_name": "stage12",
                 "simulation_role": payload.get("role"),
+                **stage12_runtime.operation_record_attributes(
+                    "simulation_runs",
+                    stage12_runtime.simulation_run_named_by(context),
+                    modal_call_id,
+                ),
             },
             remote_context=propagated,
         ):
@@ -467,7 +492,7 @@ def run_single_simulation_uk(
                 dependencies=stage12_runtime.SimulationWorkerDependencies(
                     runtime=runtime
                 ),
-                modal_call_id=modal.current_function_call_id(),
+                modal_call_id=modal_call_id,
             )
     finally:
         runtime.shutdown()
@@ -529,6 +554,11 @@ def coordinate_report(
                     "shadow"
                     if context.get("production_function_call_id")
                     else "authoritative"
+                ),
+                **stage12_runtime.operation_record_attributes(
+                    "report_runs",
+                    stage12_runtime.report_run_named_by(context),
+                    coordinator_invocation_id,
                 ),
             },
             remote_context=propagated,
@@ -635,10 +665,25 @@ def _run_household_calculation(
             msg = "a household call names either a household job or a report run"
             raise ValueError(msg)
         propagated = normalize_observability_context(observability_context)
+        modal_call_id = modal.current_function_call_id()
+        # A household report run is a ``report_runs`` row.
+        record_attributes = (
+            stage12_runtime.operation_record_attributes(
+                "report_runs",
+                stage12_runtime.row_id_or_none(household_report_run_id),
+                modal_call_id,
+            )
+            if household_report_run_id is not None
+            else stage12_runtime.operation_record_attributes(
+                "household_jobs",
+                stage12_runtime.row_id_or_none(household_job_id),
+                modal_call_id,
+            )
+        )
         result = None
         with runtime.operation(
             V2_HOUSEHOLD_STAGES.name(Stage.V2_HOUSEHOLD_EXECUTION),
-            attributes={"country": country},
+            attributes={"country": country, **record_attributes},
             remote_context=propagated,
         ):
             if household_report_run_id is not None:
@@ -648,7 +693,7 @@ def _run_household_calculation(
                     UUID(household_report_run_id),
                     payload,
                     calculate_request,
-                    modal_call_id=modal.current_function_call_id(),
+                    modal_call_id=modal_call_id,
                     runtime=runtime,
                 )
             elif household_job_id is None:
@@ -657,7 +702,7 @@ def _run_household_calculation(
                 result = stage12_runtime.run_household_job(
                     UUID(household_job_id),
                     calculate,
-                    modal_call_id=modal.current_function_call_id(),
+                    modal_call_id=modal_call_id,
                     runtime=runtime,
                 )
         if result is None:

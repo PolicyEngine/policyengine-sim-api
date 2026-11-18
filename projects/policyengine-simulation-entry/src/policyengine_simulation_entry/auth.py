@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from policyengine_simulation_observability.log_records import log_extra
 
 from policyengine_simulation_entry.schemas import CallerIdentity
 
@@ -79,7 +80,7 @@ class JWTDecoder:
             reason = type(error).__name__
             logger.info(
                 "invalid_simulation_entry_bearer_token",
-                extra={"error_type": reason},
+                extra=log_extra(error_type=reason),
             )
             runtime.event(
                 "simulation_entry_auth_rejected",
