@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy import ColumnElement, Connection, Table
+    from sqlalchemy.orm import Session
 
 # PostgreSQL's SQLSTATE for a row naming one that does not exist.
 FOREIGN_KEY_VIOLATION: Final = "23503"
@@ -150,7 +151,7 @@ class EconomyRecordReferenceError(LookupError):
         super().__init__(f"{named} names no stored row")
 
 
-def read_model_id(connection: Connection, *, country: str) -> UUID | None:
+def read_model_id(connection: Connection | Session, *, country: str) -> UUID | None:
     """Return the id of the country's tax-benefit model, or None."""
     return connection.execute(
         select(tax_benefit_models.c.id).where(
@@ -323,7 +324,7 @@ def _pending_without_call(
 
 
 def record_report_run_call(
-    connection: Connection, *, report_run_id: UUID, modal_call_id: str
+    connection: Connection | Session, *, report_run_id: UUID, modal_call_id: str
 ) -> ReportRunStatus | None:
     """Record the report run's Modal call ID while it is pending with none.
 
@@ -347,7 +348,7 @@ def record_simulation_run_call(
 
 
 def _record_call(
-    connection: Connection, table: Table, run_id: UUID, modal_call_id: str
+    connection: Connection | Session, table: Table, run_id: UUID, modal_call_id: str
 ) -> str | None:
     recorded = connection.execute(
         update(table)
@@ -364,7 +365,7 @@ def _record_call(
 
 
 def fail_unstarted_report_run(
-    connection: Connection,
+    connection: Connection | Session,
     *,
     report_run_id: UUID,
     simulation_run_ids: Sequence[UUID],
@@ -399,7 +400,7 @@ def fail_unstarted_simulation_run(
 
 
 def _fail_unstarted(
-    connection: Connection, table: Table, run_id: UUID, error_message: str
+    connection: Connection | Session, table: Table, run_id: UUID, error_message: str
 ) -> bool:
     failed = connection.execute(
         update(table)

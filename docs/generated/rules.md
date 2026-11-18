@@ -65,7 +65,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 ### Ratcheted (existing violations still tolerated)
 
-- `sim.persistence.orm-only`: 612 remaining in `rules/baselines/orm-only.txt`
+- `sim.persistence.orm-only`: 566 remaining in `rules/baselines/orm-only.txt`
 
 ### Exceptions and review dates
 

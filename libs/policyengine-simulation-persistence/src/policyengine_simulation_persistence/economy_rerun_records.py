@@ -102,6 +102,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy import Column, Connection
+    from sqlalchemy.orm import Session
 
     from policyengine_simulation_persistence.economy_run_records import (
         EconomyPopulation,
@@ -261,7 +262,7 @@ class RerunRecordDeletedError(LookupError):
     """
 
 
-def lock_reruns_of(connection: Connection, record_id: UUID) -> None:
+def lock_reruns_of(connection: Connection | Session, record_id: UUID) -> None:
     """Wait for, then hold until the transaction ends, the record's re-run lock.
 
     It is a transaction-level advisory lock keyed on the record's ID, which
@@ -367,7 +368,7 @@ def _rerun_report_run_row(
 
 
 def _insert_forced_report_run(
-    connection: Connection,
+    connection: Connection | Session,
     row: dict[str, Any],
     side_runs: Mapping[Side, RerunSide | HouseholdRerunSide],
 ) -> FoundReportRun:
@@ -495,7 +496,7 @@ def insert_window_rerun(
 
 
 def insert_household_report_rerun(
-    connection: Connection, rerun: NewHouseholdReportRerun
+    session: Session, rerun: NewHouseholdReportRerun
 ) -> FoundReportRun:
     """Join the household report's run on the re-run's versions, or create it.
 
@@ -521,9 +522,9 @@ def insert_household_report_rerun(
     )
     sides = rerun.named_sides
     if not rerun.forced:
-        lock_reruns_of(connection, rerun.report_id)
+        lock_reruns_of(session, rerun.report_id)
         joined = find_joinable_report_run(
-            connection,
+            session,
             report_id=rerun.report_id,
             country_package_version=versions.country_package_version,
             policyengine_version=versions.policyengine_version,
@@ -534,7 +535,7 @@ def insert_household_report_rerun(
         if rerun.forced:
             for side in sides.values():
                 insert_household_simulation_run(
-                    connection,
+                    session,
                     run_id=side.simulation_run_id,
                     simulation_id=side.simulation_id,
                     year=rerun.year,
@@ -542,9 +543,9 @@ def insert_household_report_rerun(
                     versions=versions,
                     forced=True,
                 )
-            return _insert_forced_report_run(connection, row, sides)
+            return _insert_forced_report_run(session, row, sides)
         found, _ = find_or_insert_report_run_on_sides(
-            connection,
+            session,
             row,
             {
                 name: household_simulation_run_row(

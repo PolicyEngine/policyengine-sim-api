@@ -10,10 +10,12 @@ function may already have claimed it, and the stuck-run sweep fails a pending
 job no call was recorded for. The household function writes the rest:
 ``running``, then the result and ``succeeded`` or ``failed``.
 
-Every function takes a connection, so the caller chooses the transactions.
-Each update sets only the columns the service's role may update, with
-``updated_at``, whose automatic update the Public API's models make on their
-own side only.
+Every function takes an ORM session, so the caller chooses the transactions.
+Reads select the mapped classes' attributes, so they return what the database
+holds now, whatever the session has loaded. Each update is one conditional
+statement that leaves the session's objects alone, and sets only the columns
+the service's role may update, with ``updated_at``, whose automatic update the
+Public API's models make on their own side only.
 """
 
 from __future__ import annotations
@@ -21,32 +23,34 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import ForeignKeyConstraint, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from policyengine_simulation_persistence.input_tables import (
     MODEL_NAME_PREFIX,
-    households,
-    tax_benefit_model_versions,
-    tax_benefit_models,
+    Household,
+    TaxBenefitModel,
+    TaxBenefitModelVersion,
 )
 from policyengine_simulation_persistence.tables import (
+    HouseholdJob,
     HouseholdJobStatus,
-    household_jobs,
 )
 
 if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
-    from sqlalchemy import ColumnElement, Connection
+    from sqlalchemy import ColumnElement
+    from sqlalchemy.orm import Session
 
 # PostgreSQL's SQLSTATE for a row naming one that does not exist.
 FOREIGN_KEY_VIOLATION = "23503"
 # Each of the job's foreign keys, by name, and the column it constrains.
 _KEY_COLUMNS = {
     str(constraint.name): constraint.column_keys[0]
-    for constraint in household_jobs.foreign_key_constraints
+    for constraint in HouseholdJob.__table_args__
+    if isinstance(constraint, ForeignKeyConstraint)
 }
 
 
@@ -127,29 +131,26 @@ class HouseholdJobReferenceError(LookupError):
 
 
 def read_catalog_version_id(
-    connection: Connection, *, country: str, policyengine_version: str
+    session: Session, *, country: str, policyengine_version: str
 ) -> UUID | None:
     """Return the id of the country's catalog version for a .py version, or None."""
-    return connection.execute(
-        select(tax_benefit_model_versions.c.id)
-        .join(
-            tax_benefit_models,
-            tax_benefit_models.c.id == tax_benefit_model_versions.c.model_id,
-        )
+    return session.execute(
+        select(TaxBenefitModelVersion.id)
+        .join(TaxBenefitModel, TaxBenefitModel.id == TaxBenefitModelVersion.model_id)
         .where(
-            tax_benefit_models.c.name == f"{MODEL_NAME_PREFIX}{country}",
-            tax_benefit_model_versions.c.version == policyengine_version,
+            TaxBenefitModel.name == f"{MODEL_NAME_PREFIX}{country}",
+            TaxBenefitModelVersion.version == policyengine_version,
         )
     ).scalar_one_or_none()
 
 
 def read_stored_household(
-    connection: Connection, *, country: str, household_id: UUID
+    session: Session, *, country: str, household_id: UUID
 ) -> StoredHousehold | None:
     """Return the country's stored household, or None when it has no such one."""
-    row = connection.execute(
-        select(households.c.default_year, households.c.household_data).where(
-            households.c.id == household_id, households.c.country_id == country
+    row = session.execute(
+        select(Household.default_year, Household.household_data).where(
+            Household.id == household_id, Household.country_id == country
         )
     ).one_or_none()
     if row is None:
@@ -162,29 +163,32 @@ def read_stored_household(
     )
 
 
-def insert_household_job(connection: Connection, job: NewHouseholdJob) -> None:
+def insert_household_job(session: Session, job: NewHouseholdJob) -> None:
     """Create the job ``pending``, with no Modal call ID and no dynamic.
 
-    Raise HouseholdJobReferenceError when the database refuses a row it
-    names. The refusal ends the caller's transaction, or its savepoint.
+    The row is flushed here, so a failure of its INSERT is raised here and
+    never at the commit. Raise HouseholdJobReferenceError when the database
+    refuses a row it names. The refusal ends the caller's transaction, or its
+    savepoint.
     """
-    try:
-        connection.execute(
-            insert(household_jobs).values(
-                id=job.id,
-                country=job.country,
-                household_id=job.household_id,
-                policy_id=job.policy_id,
-                dynamic_id=None,
-                year=job.year,
-                request_data=job.request_data,
-                tax_benefit_model_version_id=job.tax_benefit_model_version_id,
-                country_package_version=job.country_package_version,
-                policyengine_version=job.policyengine_version,
-                status=HouseholdJobStatus.PENDING,
-                modal_call_id=None,
-            )
+    session.add(
+        HouseholdJob(
+            id=job.id,
+            country=job.country,
+            household_id=job.household_id,
+            policy_id=job.policy_id,
+            dynamic_id=None,
+            year=job.year,
+            request_data=job.request_data,
+            tax_benefit_model_version_id=job.tax_benefit_model_version_id,
+            country_package_version=job.country_package_version,
+            policyengine_version=job.policyengine_version,
+            status=HouseholdJobStatus.PENDING,
+            modal_call_id=None,
         )
+    )
+    try:
+        session.flush()
     except IntegrityError as error:
         driver_error = error.orig
         if getattr(driver_error, "sqlstate", None) != FOREIGN_KEY_VIOLATION:
@@ -199,44 +203,45 @@ def insert_household_job(connection: Connection, job: NewHouseholdJob) -> None:
 
 def _pending_without_call(job_id: UUID) -> tuple[ColumnElement[bool], ...]:
     return (
-        household_jobs.c.id == job_id,
-        household_jobs.c.status == HouseholdJobStatus.PENDING,
-        household_jobs.c.modal_call_id.is_(None),
+        HouseholdJob.id == job_id,
+        HouseholdJob.status == HouseholdJobStatus.PENDING,
+        HouseholdJob.modal_call_id.is_(None),
     )
 
 
 def record_household_call(
-    connection: Connection, *, job_id: UUID, modal_call_id: str
+    session: Session, *, job_id: UUID, modal_call_id: str
 ) -> HouseholdJobStatus | None:
     """Record the job's Modal call ID while it is pending with none.
 
     Return the job's status afterwards, or None when there is no such job. A
     job the household function has claimed already keeps its claim.
     """
-    recorded = connection.execute(
-        update(household_jobs)
+    recorded = session.execute(
+        update(HouseholdJob)
         .where(*_pending_without_call(job_id))
         .values(modal_call_id=modal_call_id, updated_at=func.now())
-        .returning(household_jobs.c.status)
+        .returning(HouseholdJob.status)
+        .execution_options(synchronize_session=False)
     ).scalar_one_or_none()
     if recorded is not None:
         return HouseholdJobStatus(recorded)
-    status = connection.execute(
-        select(household_jobs.c.status).where(household_jobs.c.id == job_id)
+    status = session.execute(
+        select(HouseholdJob.status).where(HouseholdJob.id == job_id)
     ).scalar_one_or_none()
     return None if status is None else HouseholdJobStatus(status)
 
 
 def fail_unstarted_household_job(
-    connection: Connection, *, job_id: UUID, error_message: str
+    session: Session, *, job_id: UUID, error_message: str
 ) -> bool:
     """Fail the job at once while it is pending with no Modal call ID.
 
     Return whether it was failed: a job a call has been recorded for, or one
     the household function has claimed, is left as it is.
     """
-    failed = connection.execute(
-        update(household_jobs)
+    failed = session.execute(
+        update(HouseholdJob)
         .where(*_pending_without_call(job_id))
         .values(
             status=HouseholdJobStatus.FAILED,
@@ -244,34 +249,33 @@ def fail_unstarted_household_job(
             completed_at=func.now(),
             updated_at=func.now(),
         )
-        .returning(household_jobs.c.id)
+        .returning(HouseholdJob.id)
+        .execution_options(synchronize_session=False)
     ).scalar_one_or_none()
     return failed is not None
 
 
-def read_household_job(
-    connection: Connection, job_id: UUID
-) -> HouseholdJobRecord | None:
+def read_household_job(session: Session, job_id: UUID) -> HouseholdJobRecord | None:
     """Return the household job as it stands, or None when there is no such job."""
-    row = connection.execute(
+    row = session.execute(
         select(
-            household_jobs.c.id,
-            household_jobs.c.status,
-            household_jobs.c.country,
-            household_jobs.c.household_id,
-            household_jobs.c.policy_id,
-            household_jobs.c.year,
-            household_jobs.c.request_data,
-            household_jobs.c.tax_benefit_model_version_id,
-            household_jobs.c.country_package_version,
-            household_jobs.c.policyengine_version,
-            household_jobs.c.modal_call_id,
-            household_jobs.c.result,
-            household_jobs.c.error_message,
-            household_jobs.c.created_at,
-            household_jobs.c.started_at,
-            household_jobs.c.completed_at,
-        ).where(household_jobs.c.id == job_id)
+            HouseholdJob.id,
+            HouseholdJob.status,
+            HouseholdJob.country,
+            HouseholdJob.household_id,
+            HouseholdJob.policy_id,
+            HouseholdJob.year,
+            HouseholdJob.request_data,
+            HouseholdJob.tax_benefit_model_version_id,
+            HouseholdJob.country_package_version,
+            HouseholdJob.policyengine_version,
+            HouseholdJob.modal_call_id,
+            HouseholdJob.result,
+            HouseholdJob.error_message,
+            HouseholdJob.created_at,
+            HouseholdJob.started_at,
+            HouseholdJob.completed_at,
+        ).where(HouseholdJob.id == job_id)
     ).one_or_none()
     if row is None:
         return None

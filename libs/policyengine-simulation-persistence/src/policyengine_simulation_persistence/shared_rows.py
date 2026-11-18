@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy import ColumnElement, Connection, Row, Table
+    from sqlalchemy.orm import Session
 
 # How many times a lookup inserts before giving up on a row that keeps
 # failing between its insert and its read.
@@ -153,7 +154,7 @@ _JOINABLE_REPORT_RUN: Final = _partial_index(
 
 
 def find_or_insert_simulation(
-    connection: Connection, values: Mapping[str, Any]
+    connection: Connection | Session, values: Mapping[str, Any]
 ) -> FoundRow:
     """Return the simulation with ``values``' key, inserting ``values`` if none.
 
@@ -165,7 +166,7 @@ def find_or_insert_simulation(
 
 
 def find_or_insert_report(
-    connection: Connection, values: Mapping[str, Any]
+    connection: Connection | Session, values: Mapping[str, Any]
 ) -> FoundRow:
     """Return the report with ``values``' key, inserting ``values`` if none.
 
@@ -176,7 +177,7 @@ def find_or_insert_report(
 
 
 def find_or_insert_simulation_run(
-    connection: Connection, values: Mapping[str, Any]
+    connection: Connection | Session, values: Mapping[str, Any]
 ) -> FoundSimulationRun:
     """Return the simulation's joinable run on ``values``' versions, or insert it.
 
@@ -193,7 +194,7 @@ def find_or_insert_simulation_run(
 
 
 def find_or_insert_simulation_runs(
-    connection: Connection, rows: Mapping[UUID, Mapping[str, Any]]
+    connection: Connection | Session, rows: Mapping[UUID, Mapping[str, Any]]
 ) -> dict[UUID, FoundSimulationRun]:
     """Return each simulation's joinable run, by simulation ID, or insert ``rows``.
 
@@ -264,7 +265,7 @@ def find_joinable_window_run(
 
 
 def find_or_insert_report_run(
-    connection: Connection, values: Mapping[str, Any]
+    connection: Connection | Session, values: Mapping[str, Any]
 ) -> FoundReportRun:
     """Return the report's joinable run on ``values``' versions, or insert it.
 
@@ -296,7 +297,7 @@ def find_or_insert_report_run(
 
 
 def find_joinable_report_run(
-    connection: Connection,
+    connection: Connection | Session,
     *,
     report_id: UUID,
     country_package_version: str,
@@ -338,7 +339,7 @@ def _refuse_forced(values: Mapping[str, Any]) -> None:
 
 
 def _find_or_insert(
-    connection: Connection,
+    connection: Connection | Session,
     index: _UniqueIndex,
     values: Mapping[str, Any],
     returned: Sequence[ColumnElement[Any]],

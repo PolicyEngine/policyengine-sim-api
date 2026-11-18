@@ -219,6 +219,17 @@ def _orm_statement_flags(session: Session) -> list[bool]:
     return flags
 
 
+def _flushed_rows(session: Session) -> list[object]:
+    """Return a list that gains each new mapped object the session flushes."""
+    flushed: list[object] = []
+    event.listen(
+        session,
+        "after_flush",
+        lambda flushing_session, _flush_context: flushed.extend(flushing_session.new),
+    )
+    return flushed
+
+
 def _stored_job(connection: Connection) -> NewHouseholdJob:
     """Insert, as the superuser, the rows a job names; return a job naming them."""
     economy = insert_economy_catalog(connection)
@@ -310,21 +321,19 @@ def test_a_new_job_is_a_mapped_row_written_before_the_insert_returns(
         act_as_the_service(connection)
 
         with session_in(connection) as session:
+            flushed = _flushed_rows(session)
             insert_household_job(session, new_job)
-            held_jobs = [
-                instance
-                for instance in session.identity_map.values()
-                if isinstance(instance, HouseholdJob)
-            ]
             written = connection.execute(
                 text("SELECT count(*) FROM public.household_jobs WHERE id = :id"),
                 {"id": new_job.id},
             ).scalar_one()
 
-    assert [job.id for job in held_jobs] == [new_job.id]
+    assert [type(row) for row in flushed] == [HouseholdJob]
+    job = flushed[0]
+    assert job.id == new_job.id
     assert written == 1
-    assert held_jobs[0].created_at is not None
-    assert held_jobs[0].updated_at is not None
+    assert job.created_at is not None
+    assert job.updated_at is not None
 
 
 def test_a_job_read_in_the_session_that_changed_it_is_current(
@@ -381,6 +390,7 @@ def test_a_household_simulation_run_is_written_before_anything_names_it(
         run_id = uuid4()
 
         with session_in(connection) as session:
+            flushed = _flushed_rows(session)
             insert_household_simulation_run(
                 session,
                 run_id=run_id,
@@ -390,19 +400,16 @@ def test_a_household_simulation_run_is_written_before_anything_names_it(
                 versions=VERSIONS,
                 forced=True,
             )
-            held_runs = [
-                instance
-                for instance in session.identity_map.values()
-                if isinstance(instance, SimulationRun)
-            ]
             forced = connection.execute(
                 text("SELECT forced FROM public.simulation_runs WHERE id = :id"),
                 {"id": run_id},
             ).scalar_one()
 
-    assert [run.id for run in held_runs] == [run_id]
+    assert [type(row) for row in flushed] == [SimulationRun]
+    run = flushed[0]
+    assert run.id == run_id
     assert forced is True
-    assert held_runs[0].created_at is not None
+    assert run.created_at is not None
 
 
 def test_a_report_run_losing_a_race_on_a_session_keeps_nothing_and_goes_on(

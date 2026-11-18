@@ -118,16 +118,17 @@ call (`fail_unstarted_household_job`). Both updates apply only while the job
 is still `pending` with no call ID, and set `updated_at` themselves. A job
 naming a household, policy or catalog version that does not exist is refused
 by its foreign key with SQLSTATE `23503`; `HouseholdJobReferenceError` names
-the column. Each function takes a connection, so the caller chooses the
+the column. Each function takes an ORM session, so the caller chooses the
 transactions. `HouseholdJobStore` runs them as the Simulation Entrypoint
-does, each step in a transaction of its own: `read_inputs` reads the catalog
-version, the household and the policy's reform values together, and
-`create_job`, `record_call`, `fail_unstarted` and `read` each write or read
-the job. A `create_job` whose commit fails after the job's row was inserted
-raises `EconomyRecordOutcomeUnknownError`, as the economy and household
-report creates do: PostgreSQL may have applied the commit, so the job may
-exist. A failure while the insert runs leaves nothing written and is raised
-as it is. `HouseholdJobStore.from_engine` opens each with `bounded_transaction`,
+does, each step in a session and transaction of its own: `read_inputs` reads
+the catalog version, the household and the policy's reform values together,
+and `create_job`, `record_call`, `fail_unstarted` and `read` each write or
+read the job. `insert_household_job` flushes the new row, so its INSERT runs
+before the commit. A `create_job` whose commit fails after that flush raises
+`EconomyRecordOutcomeUnknownError`, as the economy and household report
+creates do: PostgreSQL may have applied the commit, so the job may exist. A
+failure during the flush leaves nothing written and is raised as it is.
+`HouseholdJobStore.from_session_factory` opens each with `bounded_session`,
 which commits when its block ends and sets `statement_timeout` with
 `set_config`, local to the transaction, so the database ends a statement that
 runs too long and the limit never stays on a pooled connection.
@@ -246,7 +247,8 @@ Modal call ID (`household_simulation_run_row`,
 `insert_household_simulation_run`). A row naming one that does not exist
 is refused as `EconomyRecordReferenceError`.
 
-`HouseholdReportStore` runs the steps in transactions of their own:
+`HouseholdReportStore` runs the steps in ORM sessions and transactions of
+their own, opened by `from_session_factory` with `bounded_session`:
 `read_inputs` reads the catalog version for the .py version, the country's
 model, the stored household and each side's policy values together,
 raising `UnknownCatalogVersionError`, `UnknownHouseholdError` or

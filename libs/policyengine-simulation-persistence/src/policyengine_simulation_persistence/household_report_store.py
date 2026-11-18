@@ -8,7 +8,8 @@ report's re-run takes the same steps, joining or creating the report's new
 runs instead. ``HouseholdReportStore`` runs the reads and writes of
 ``keyed_household_records``, ``household_job_records``, ``policy_reform``,
 ``economy_rerun_records``' household report re-run and
-``economy_run_records``' report run writes that way.
+``economy_run_records``' report run writes that way, each in an ORM session
+of its own.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from policyengine_simulation_persistence.economy_run_store import (
     EconomyRecordOutcomeUnknownError,
     ReportSideError,
 )
-from policyengine_simulation_persistence.engine import bounded_transaction
+from policyengine_simulation_persistence.engine import bounded_session
 from policyengine_simulation_persistence.household_job_records import (
     read_catalog_version_id,
     read_stored_household,
@@ -53,7 +54,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
     from uuid import UUID
 
-    from sqlalchemy import Connection, Engine
+    from sqlalchemy.orm import Session, sessionmaker
 
     from policyengine_simulation_persistence.economy_rerun_records import (
         NewHouseholdReportRerun,
@@ -70,7 +71,7 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence.shared_rows import FoundReportRun
     from policyengine_simulation_persistence.tables import ReportRunStatus
 
-type TransactionFactory = Callable[[], AbstractContextManager[Connection]]
+type TransactionFactory = Callable[[], AbstractContextManager[Session]]
 
 
 @dataclass(frozen=True)
@@ -90,7 +91,7 @@ class HouseholdReportInputs:
 
 
 def _side_reform(
-    connection: Connection,
+    session: Session,
     side: ReportSide,
     *,
     country: str,
@@ -102,7 +103,7 @@ def _side_reform(
         return {}
     try:
         return read_policy_reform(
-            connection,
+            session,
             country=country,
             policy_id=policy_id,
             catalog_version_id=catalog_version_id,
@@ -115,18 +116,22 @@ class HouseholdReportStore:
     """Read and write household reports, each operation in its own transaction."""
 
     def __init__(self, transaction: TransactionFactory) -> None:
-        """Open each transaction with ``transaction``, which commits on success."""
+        """Open each session with ``transaction``, which commits on success."""
         self._transaction = transaction
 
     @classmethod
-    def from_engine(
-        cls, engine: Engine, *, statement_timeout_milliseconds: int
+    def from_session_factory(
+        cls,
+        session_factory: sessionmaker[Session],
+        *,
+        statement_timeout_milliseconds: int,
     ) -> HouseholdReportStore:
-        """Use ``engine``, bounding each statement to the given time."""
+        """Use ``session_factory``, bounding each statement to the given time."""
 
-        def transaction() -> AbstractContextManager[Connection]:
-            return bounded_transaction(
-                engine, statement_timeout_milliseconds=statement_timeout_milliseconds
+        def transaction() -> AbstractContextManager[Session]:
+            return bounded_session(
+                session_factory,
+                statement_timeout_milliseconds=statement_timeout_milliseconds,
             )
 
         return cls(transaction)
@@ -147,23 +152,23 @@ class HouseholdReportStore:
         (UnknownPolicyError) or sets parameters the catalog version lacks
         (MissingPolicyParametersError).
         """
-        with self._transaction() as connection:
+        with self._transaction() as session:
             catalog_version_id = read_catalog_version_id(
-                connection, country=country, policyengine_version=policyengine_version
+                session, country=country, policyengine_version=policyengine_version
             )
-            model_id = read_model_id(connection, country=country)
+            model_id = read_model_id(session, country=country)
             if catalog_version_id is None or model_id is None:
                 msg = f"{country} has no catalog version for .py {policyengine_version}"
                 raise UnknownCatalogVersionError(msg)
             household = read_stored_household(
-                connection, country=country, household_id=household_id
+                session, country=country, household_id=household_id
             )
             if household is None:
                 msg = f"{country} has no household {household_id}"
                 raise UnknownHouseholdError(msg)
             reforms: dict[ReportSide, PolicyReform] = {
                 side: _side_reform(
-                    connection,
+                    session,
                     side,
                     country=country,
                     policy_id=policy_id,
@@ -188,7 +193,7 @@ class HouseholdReportStore:
         rows were inserted.
         """
         return self._create(
-            lambda connection: find_or_create_household_report(connection, report)
+            lambda session: find_or_create_household_report(session, report)
         )
 
     def create_report_rerun(self, rerun: NewHouseholdReportRerun) -> FoundReportRun:
@@ -198,18 +203,19 @@ class HouseholdReportStore:
         EconomyRecordOutcomeUnknownError as ``find_or_create_report`` does.
         """
         return self._create(
-            lambda connection: insert_household_report_rerun(connection, rerun)
+            lambda session: insert_household_report_rerun(session, rerun)
         )
 
-    def _create[Created](self, insert_rows: Callable[[Connection], Created]) -> Created:
+    def _create[Created](self, insert_rows: Callable[[Session], Created]) -> Created:
         """Insert the rows in a transaction; tell a lost commit from a refusal.
 
-        Return what ``insert_rows`` returns.
+        ``insert_rows`` sends every row to the database before it returns, so
+        an error after it is the commit's. Return what it returns.
         """
         inserted = False
         try:
-            with self._transaction() as connection:
-                created = insert_rows(connection)
+            with self._transaction() as session:
+                created = insert_rows(session)
                 inserted = True
         except SQLAlchemyError as error:
             if not inserted:
@@ -222,9 +228,9 @@ class HouseholdReportStore:
         self, report_run_id: UUID, modal_call_id: str
     ) -> ReportRunStatus | None:
         """Record the report run's call ID while it is pending with none."""
-        with self._transaction() as connection:
+        with self._transaction() as session:
             return record_report_run_call(
-                connection, report_run_id=report_run_id, modal_call_id=modal_call_id
+                session, report_run_id=report_run_id, modal_call_id=modal_call_id
             )
 
     def fail_unstarted_report(
@@ -234,9 +240,9 @@ class HouseholdReportStore:
         error_message: str,
     ) -> bool:
         """Fail the report run, and its simulation runs, while it is unstarted."""
-        with self._transaction() as connection:
+        with self._transaction() as session:
             return fail_unstarted_report_run(
-                connection,
+                session,
                 report_run_id=report_run_id,
                 simulation_run_ids=simulation_run_ids,
                 error_message=error_message,

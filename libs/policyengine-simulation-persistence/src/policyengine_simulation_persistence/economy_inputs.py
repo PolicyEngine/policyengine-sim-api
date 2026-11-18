@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, get_args
 
+from sqlalchemy.orm import Session
+
 from policyengine_simulation_persistence.economy_run_records import (
     CatalogDataset,
     CatalogRegion,
@@ -174,6 +176,20 @@ class BudgetWindowInputs:
     reform: SimulationInputs
 
 
+def _read_catalog_version_id(
+    connection: Connection, *, country: str, policyengine_version: str
+) -> UUID | None:
+    """Read the catalog version through a session on the caller's connection.
+
+    The session joins the connection's transaction and leaves it open. Economy
+    code holds a connection until it moves to sessions itself.
+    """
+    with Session(connection) as session:
+        return read_catalog_version_id(
+            session, country=country, policyengine_version=policyengine_version
+        )
+
+
 def read_catalog_rows(
     connection: Connection,
     request: EconomyRequest,
@@ -196,7 +212,7 @@ def read_catalog_rows(
         )
         raise ValueError(msg)
     country = request.country
-    catalog_version_id = read_catalog_version_id(
+    catalog_version_id = _read_catalog_version_id(
         connection,
         country=country,
         policyengine_version=request.policyengine_version,

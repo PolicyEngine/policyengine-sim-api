@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy import ColumnElement, Connection
+    from sqlalchemy.orm import Session
 
 # The last day a value without an end date is applied.
 OPEN_ENDED_STOP: Final = date(LATEST_YEAR, 12, 31)
@@ -127,7 +128,7 @@ def _period(
 
 
 def read_policy_reform(
-    connection: Connection,
+    connection: Connection | Session,
     *,
     country: str,
     policy_id: UUID,
@@ -192,7 +193,7 @@ def combine_reforms(policy: PolicyReform, dynamic: PolicyReform) -> PolicyReform
 
 
 def _read_reform(
-    connection: Connection,
+    connection: Connection | Session,
     *,
     owner: ColumnElement[bool],
     catalog_version_id: UUID,

@@ -21,17 +21,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Final
 
-from sqlalchemy import insert
-
 from policyengine_simulation_persistence.tables import (
+    SimulationRun,
     SimulationStatus,
-    simulation_runs,
 )
 
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from sqlalchemy import Connection
+    from sqlalchemy.orm import Session
 
     from policyengine_simulation_persistence.economy_run_records import RunVersions
 
@@ -40,7 +38,7 @@ HOUSEHOLD_REPORT_TYPE: Final = "household"
 
 
 def insert_household_simulation_run(  # noqa: PLR0913  # the run and what it calculates on
-    connection: Connection,
+    session: Session,
     *,
     run_id: UUID,
     simulation_id: UUID,
@@ -53,22 +51,22 @@ def insert_household_simulation_run(  # noqa: PLR0913  # the run and what it cal
 
     It records the year, catalog version and versions it calculates on; a
     household run names no dataset or region. A ``forced`` run is an extra
-    run that nothing joins.
+    run that nothing joins. The row is flushed here: no relationship orders
+    it before the report run that goes on to name it.
     """
-    connection.execute(
-        insert(simulation_runs).values(
-            {
-                **household_simulation_run_row(
-                    run_id=run_id,
-                    simulation_id=simulation_id,
-                    year=year,
-                    tax_benefit_model_version_id=tax_benefit_model_version_id,
-                    versions=versions,
-                ),
-                "forced": forced,
-            }
+    session.add(
+        SimulationRun(
+            **household_simulation_run_row(
+                run_id=run_id,
+                simulation_id=simulation_id,
+                year=year,
+                tax_benefit_model_version_id=tax_benefit_model_version_id,
+                versions=versions,
+            ),
+            forced=forced,
         )
     )
+    session.flush()
 
 
 def household_simulation_run_row(
