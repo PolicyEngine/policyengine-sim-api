@@ -19,7 +19,6 @@ from policyengine_simulation_persistence import (
     Report,
     ReportRun,
     ReportRunStatus,
-    ReportRunTrigger,
     RunVersions,
     Simulation,
     SimulationChoice,
@@ -243,13 +242,12 @@ def insert_run_of(
 
 @dataclass(frozen=True)
 class ReportRunOutcome:
-    """How a stored report run ended, its versions and trigger, and its options."""
+    """How a stored report run ended, its versions, and its options."""
 
     status: ReportRunStatus = ReportRunStatus.SUCCEEDED
     inputs: dict[str, Any] | None = None
     error_message: str | None = None
     versions: RunVersions = VERSIONS
-    trigger: ReportRunTrigger = ReportRunTrigger.INITIAL
 
 
 def insert_report_run_naming(
@@ -287,7 +285,6 @@ def insert_report_of(  # noqa: PLR0913  # the report's sides and what else it ma
     connection.execute(
         insert(Report).values(
             id=report_id,
-            label="An earlier report",
             country=economy.catalog.country,
             type="economy",
             tax_benefit_model_id=economy.catalog.model_id,
@@ -327,7 +324,6 @@ def insert_report_run_of(
             country_package_version=outcome.versions.country_package_version,
             policyengine_version=outcome.versions.policyengine_version,
             status=outcome.status,
-            trigger=outcome.trigger,
             completed_at=COMPLETED_AT if finished else None,
             error_message=outcome.error_message,
         )

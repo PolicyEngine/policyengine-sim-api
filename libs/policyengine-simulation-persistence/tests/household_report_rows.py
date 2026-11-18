@@ -3,10 +3,9 @@
 The service now finds or creates a household report by definition key
 (``keyed_household_records``). A report it created before then has no key:
 each side is a household simulation of its own with one run, the report
-names the household, both simulations and the reform's policy, and its
-first run has trigger ``initial``. Every run is ``pending`` with no Modal
-call ID. ``insert_household_report_rows`` inserts such a report directly,
-as whatever role the connection acts as.
+names the household, both simulations and the reform's policy. Every run
+is ``pending`` with no Modal call ID. ``insert_household_report_rows``
+inserts such a report directly, as whatever role the connection acts as.
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ from policyengine_simulation_persistence import (
     Report,
     ReportRun,
     ReportRunStatus,
-    ReportRunTrigger,
     Simulation,
     SimulationRun,
     SimulationStatus,
@@ -129,11 +127,8 @@ def insert_household_report_rows(  # noqa: PLR0913  # the report's catalog, hous
     connection.execute(
         insert(Report).values(
             id=report.id,
-            label="A larger child tax credit",
-            description="For one family",
             country=catalog.country,
             type=HOUSEHOLD_REPORT_TYPE,
-            user_id=None,
             tax_benefit_model_id=catalog.model_id,
             policy_id=None if reform is None else reform.policy_id,
             baseline_simulation_id=report.baseline.simulation_id,
@@ -159,7 +154,6 @@ def insert_household_report_rows(  # noqa: PLR0913  # the report's catalog, hous
             country_package_version=versions.country_package_version,
             policyengine_version=versions.policyengine_version,
             status=ReportRunStatus.PENDING,
-            trigger=ReportRunTrigger.INITIAL,
             modal_call_id=None,
         )
     )

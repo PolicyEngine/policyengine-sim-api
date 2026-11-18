@@ -351,7 +351,7 @@ report's run on the current versions the same way, or else creates the
 report's new run naming each side's simulation run on those versions, found
 or inserted (C1 · 24's answers 3 and 8); a forced re-run, and every re-run
 of a report created before keys, creates an extra run on a new run of each
-side, all marked forced. No new run names a trigger (answer 6). The new runs record the
+side, all marked forced. The new runs record the
 catalog version, dataset and region of the current .py version's catalog;
 the `simulations` and `reports` rows are unchanged. A budget-window report's
 re-run joins or creates a `budget_window_runs` row with a report run per
@@ -414,8 +414,7 @@ output reads from either side (`self_employment_income`,
 its region-group split. Cliffs are a calculation of each simulation run of
 their own (above). A report run asking for them (`include_cliffs: true`) still
 fails before any worker starts, with `cliff_impacts_unavailable`, and touches
-none of its simulation runs, and its completion never writes `report_runs`'
-four cliff columns. The
+none of its simulation runs. The
 coordinator gives each worker its simulation's
 stored plan, and keeps the report's own plan, from its pair, for what the
 aggregation reads. A reused or waited-for file must hold what the report reads

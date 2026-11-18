@@ -317,9 +317,7 @@ them and the Public API's one-unfailed-run indexes leave them out, and a
 forced re-run is never refused while a run is under way. A report created
 before keys (C1 · 27), whose simulations have none, is always re-run that
 way, forced or not: its runs may have been calculated with plans that
-depended on that report (C1 · 24's interim answer B). The new report run
-names no trigger (answer 6): the Public API's per-user report-run record
-holds it. Such a
+depended on that report (C1 · 24's interim answer B). Such a
 report stored asking for cliff impacts
 (`include_cliffs: true` in its options) is refused with 422
 `cliffs_not_available`, located at `report.inputs.include_cliffs`, until
@@ -350,7 +348,7 @@ unforced re-run joins its run on the current versions, or each side joins
 its own household simulation's run on them or gets a new one; `force`, and
 every re-run of a household report created before keys, makes an extra run
 on a new run of each side, all marked `forced`. A report run it created
-(naming no trigger: answer 6) is started by one household function call, as a new
+is started by one household function call, as a new
 household report's is, and the re-run answers 201 with the household report
 create's fields.
 `POST /simulations/{simulation_id}/runs`, with no body, joins a stored

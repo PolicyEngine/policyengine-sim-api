@@ -50,7 +50,6 @@ from policyengine_simulation_persistence import (
     NewSimulationRerun,
     ReportDefinition,
     ReportRunStatus,
-    ReportRunTrigger,
     ReportSideError,
     RerunRecordDeletedError,
     RerunSide,
@@ -266,7 +265,7 @@ def _used_on_later_catalog(
         connection,
         other_report_id,
         (later_baseline, later_other_reform),
-        ReportRunOutcome(versions=LATER_VERSIONS, trigger=ReportRunTrigger.MANUAL),
+        ReportRunOutcome(versions=LATER_VERSIONS),
     )
     return later_baseline
 
@@ -319,7 +318,6 @@ def test_a_report_rerun_joins_or_creates_runs_of_the_reports_own_simulations(
             "country_package_version",
             "policyengine_version",
             "status",
-            "trigger",
             "modal_call_id",
             "budget_window_run_id",
             "year",
@@ -331,8 +329,6 @@ def test_a_report_rerun_joins_or_creates_runs_of_the_reports_own_simulations(
         "country_package_version": LATER_VERSIONS.country_package_version,
         "policyengine_version": LATER_VERSIONS.policyengine_version,
         "status": ReportRunStatus.PENDING,
-        # Answer 6: the trigger is each user's record's, not the shared run's.
-        "trigger": None,
         "modal_call_id": None,
         "budget_window_run_id": None,
         "year": None,
@@ -693,7 +689,6 @@ def test_a_rerun_and_its_runs_are_created_through_the_store(
         joined = store.create_report_rerun(_rerun_of(stored, later))
         assert (joined.id, joined.inserted) == (rerun.run_id, False)
 
-        assert _row(connection, "report_runs", rerun.run_id)["trigger"] is None
         assert _row(connection, "simulation_runs", simulation_rerun.run_id)[
             "status"
         ] == (SimulationStatus.PENDING)
@@ -881,9 +876,8 @@ def test_a_forced_report_rerun_is_an_extra_run_beside_any_run_on_its_versions(
         ]
         earlier_run = _row(connection, "report_runs", stored.report_run_id)
 
-    assert (report_run["forced"], report_run["trigger"], report_run["status"]) == (
+    assert (report_run["forced"], report_run["status"]) == (
         True,
-        None,
         ReportRunStatus.PENDING,
     )
     assert len(simulation_runs) == 2

@@ -127,7 +127,7 @@ def test_the_models_declare_every_key_to_the_public_apis_own_tables() -> None:
     }
 
     assert keys_to_public_api_tables == KEYS_TO_PUBLIC_API_TABLES
-    assert len(KEYS_TO_PUBLIC_API_TABLES) == 20
+    assert len(KEYS_TO_PUBLIC_API_TABLES) == 19
 
 
 def test_the_public_apis_tables_are_modelled_by_their_id_alone() -> None:
@@ -147,7 +147,6 @@ def test_the_public_apis_tables_are_modelled_by_their_id_alone() -> None:
         "regions",
         "tax_benefit_model_versions",
         "tax_benefit_models",
-        "users",
     }
     assert set(referenced_metadata.tables.values()) == named_tables
     for table in named_tables:
@@ -156,8 +155,7 @@ def test_the_public_apis_tables_are_modelled_by_their_id_alone() -> None:
 
 
 def test_the_columns_the_public_apis_deletes_search_are_indexed() -> None:
-    """Deleting a user or model version searches these columns for its rows."""
-    assert _indexed_columns(Report.__table__, "ix_reports_user_id") == ("user_id",)
+    """Deleting a model version searches these columns for its rows."""
     assert _indexed_columns(
         SimulationRun.__table__, "ix_simulation_runs_tax_benefit_model_version_id"
     ) == ("tax_benefit_model_version_id",)
@@ -363,15 +361,6 @@ def test_a_run_is_unforced_unless_its_insert_marks_it() -> None:
     for table in (SimulationRun.__table__, ReportRun.__table__):
         assert table.c.forced.nullable is False, table.name
         assert str(table.c.forced.server_default.arg) == "false", table.name
-
-
-def test_the_per_user_columns_are_nullable() -> None:
-    """Answer 6: the service writes no request's label, description or trigger."""
-    assert Report.label.nullable is True
-    assert Report.description.nullable is True
-    assert Report.user_id.nullable is True
-    assert ReportRun.trigger.nullable is True
-    assert BudgetWindowRun.trigger.nullable is True
 
 
 def test_a_window_run_is_one_per_report_and_version_set_unless_recalculated() -> None:

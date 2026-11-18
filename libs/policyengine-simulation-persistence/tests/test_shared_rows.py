@@ -30,7 +30,6 @@ from economy_rows import (
 from policyengine_simulation_persistence import (
     KEY_VERSION,
     ReportRunStatus,
-    ReportRunTrigger,
     RunVersions,
     SimulationRun,
     SimulationStatus,
@@ -73,7 +72,6 @@ def _report_values(
 ) -> dict[str, Any]:
     return {
         "id": uuid4(),
-        "label": "Shared report",
         "country": economy.catalog.country,
         "type": "economy",
         "tax_benefit_model_id": economy.catalog.model_id,
@@ -116,7 +114,6 @@ def _report_run_values(
         "country_package_version": versions.country_package_version,
         "policyengine_version": versions.policyengine_version,
         "status": ReportRunStatus.PENDING,
-        "trigger": ReportRunTrigger.INITIAL,
     }
 
 

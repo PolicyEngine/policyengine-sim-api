@@ -83,7 +83,6 @@ REFERENCED_CLASSES = {
     "regions": referenced_tables.ReferencedRegion,
     "tax_benefit_model_versions": referenced_tables.ReferencedTaxBenefitModelVersion,
     "tax_benefit_models": referenced_tables.ReferencedTaxBenefitModel,
-    "users": referenced_tables.ReferencedUser,
 }
 INPUT_CLASSES = {
     "tax_benefit_models": TaxBenefitModel,
