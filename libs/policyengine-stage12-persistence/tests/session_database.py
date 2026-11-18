@@ -54,7 +54,9 @@ class StatementLog:
     def assert_every_statement_ran_on_a_session(self) -> None:
         """Fail if anything reached the database without passing through a session."""
         assert self.sent, "the store sent no statement"
-        assert self.session_statements == len(self.sent), self.sent
+        # A session statement that could not connect reached no database, so
+        # sessions may have run more statements than arrived, never fewer.
+        assert len(self.sent) <= self.session_statements, self.sent
 
 
 class RetryingSessionOpener:

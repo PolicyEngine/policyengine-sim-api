@@ -7,7 +7,7 @@ manifest grants on the two temporary tables.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 from uuid import UUID, uuid4
 
 import pytest
@@ -146,7 +146,7 @@ def test_a_report_with_the_same_identity_and_other_provenance_is_refused(
         update={"evaluation_id": uuid4(), "country_package_version": "9.9.9"}
     )
 
-    with pytest.raises(ValueError, match="comparison report"):
+    with pytest.raises(ValueError, match="country_package_version"):
         store.create_or_resolve_report(conflicting)
 
 
@@ -173,7 +173,9 @@ def test_a_reports_lifecycle_is_replaced_under_its_row_lock(
 def test_a_reports_result_comparison_is_replaced_once_final(
     store, evaluation_id
 ) -> None:
-    report = _report(evaluation_id)
+    report = _report(evaluation_id).model_copy(
+        update={"comparison_status": ResultComparisonStatus.PENDING}
+    )
     store.create_or_resolve_report(report)
     matched = report.model_copy(
         update={
@@ -277,8 +279,11 @@ def test_a_simulations_invocation_replaces_only_the_placeholder(
 
 
 def test_the_deployment_check_passes_and_leaves_no_row(
-    runtime_sessions, statements, seeder
+    runtime_sessions, seeder
 ) -> None:
+    # The schema inspection reads through the engine, outside any session.
+    statements = StatementLog(runtime_sessions)
+
     def comparison_rows() -> int:
         with Session(seeder.engine) as session:
             return session.execute(
@@ -321,10 +326,10 @@ def test_the_deployment_check_reports_an_unreachable_database() -> None:
 
         kw: dict[str, Any] = {}  # noqa: RUF012  # the sessionmaker attribute it mimics
 
-        def __call__(self) -> RefusedSessions:
+        def __call__(self) -> Self:
             return self
 
-        def __enter__(self) -> RefusedSessions:
+        def __enter__(self) -> Self:
             return self
 
         def __exit__(self, *_exception_details) -> None:

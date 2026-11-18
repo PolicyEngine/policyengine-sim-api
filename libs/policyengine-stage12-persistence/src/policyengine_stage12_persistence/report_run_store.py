@@ -11,34 +11,34 @@ finishes it.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from policyengine_simulation_persistence.tables import (
-    budget_window_runs,
-    household_jobs,
-    report_runs,
-    simulation_runs,
+    BudgetWindowRun,
+    HouseholdJob,
+    ReportRun,
+    SimulationRun,
 )
 from sqlalchemy import and_, case, exists, func, insert, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
-from policyengine_stage12_persistence.store import (
-    ConnectionOpener,
-    create_stage12_engine,
-    open_connection_once,
+from policyengine_stage12_persistence.engine import (
+    WITHOUT_OBJECT_SYNC,
+    SessionOpener,
+    StoreSessions,
+    open_session_once,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping
+    from collections.abc import Callable, Mapping
     from datetime import datetime
     from uuid import UUID
 
     from policyengine_simulation_contract.stage12_execution import ReportRunIds
-    from sqlalchemy import ColumnElement, Engine, Table, Update
-    from sqlalchemy.engine import Connection
+    from sqlalchemy import ColumnElement, Update
+    from sqlalchemy.orm import Session, sessionmaker
 
     from policyengine_stage12_persistence.report_run_results import ReportRunResult
 
@@ -63,17 +63,22 @@ class RunKind(StrEnum):
     HOUSEHOLD_JOB = "household_job"
 
 
-RUN_TABLES = {
-    RunKind.REPORT_RUN: report_runs,
-    RunKind.SIMULATION_RUN: simulation_runs,
-    RunKind.HOUSEHOLD_JOB: household_jobs,
+type RunModel = type[ReportRun | SimulationRun | HouseholdJob]
+
+RUN_MODELS: Final[dict[RunKind, RunModel]] = {
+    RunKind.REPORT_RUN: ReportRun,
+    RunKind.SIMULATION_RUN: SimulationRun,
+    RunKind.HOUSEHOLD_JOB: HouseholdJob,
 }
-# What a missing row is called, by table name.
-_ROW_NOUNS = {
-    report_runs.name: "report run",
-    simulation_runs.name: "simulation run",
-    household_jobs.name: "household job",
+# What a missing row is called.
+_ROW_NOUNS: Final[dict[RunModel, str]] = {
+    ReportRun: "report run",
+    SimulationRun: "simulation run",
+    HouseholdJob: "household job",
 }
+# A bulk insert otherwise leaves out each column a row sets to None. Every row
+# names the same columns, so the insert stays one statement that sets them NULL.
+_EVERY_NAMED_COLUMN: Final = {"render_nulls": True}
 
 
 @dataclass(frozen=True)
@@ -134,31 +139,19 @@ class ReportRunStore:
         self,
         database_url: str | None = None,
         *,
-        engine: Engine | None = None,
-        open_connection: ConnectionOpener = open_connection_once,
+        session_factory: sessionmaker[Session] | None = None,
+        open_session: SessionOpener = open_session_once,
     ) -> None:
-        """Use ``engine`` if given, else build one from ``database_url``.
+        """Use ``session_factory`` if given, else build one from ``database_url``.
 
         Raises ValueError when neither is given or the URL is invalid.
         """
-        if engine is None:
-            if database_url is None:
-                msg = "report run database URL is required"
-                raise ValueError(msg)
-            engine = create_stage12_engine(database_url)
-        self.engine = engine
-        self._open_connection = open_connection
-
-    @contextmanager
-    def _transaction(self, operation_name: str) -> Iterator[Connection]:
-        # As in the Stage 12 store, the opener only opens the connection; every
-        # statement and the COMMIT run after it returns.
-        connection = self._open_connection(
-            self.engine.connect,
-            operation_name=operation_name,
+        self.sessions = StoreSessions.for_store(
+            database_url,
+            session_factory=session_factory,
+            open_session=open_session,
+            missing_url_message="report run database URL is required",
         )
-        with connection, connection.begin():
-            yield connection
 
     def require_simulation_runs(self, run_ids: ReportRunIds) -> None:
         """Check the report run names the call's baseline and reform simulation runs.
@@ -167,11 +160,11 @@ class ReportRunStore:
         when it names other simulation runs.
         """
         statement = select(
-            report_runs.c.baseline_simulation_run_id,
-            report_runs.c.reform_simulation_run_id,
-        ).where(report_runs.c.id == run_ids.report_run_id)
-        with self._transaction("require_simulation_runs") as connection:
-            named = connection.execute(statement).one_or_none()
+            ReportRun.baseline_simulation_run_id,
+            ReportRun.reform_simulation_run_id,
+        ).where(ReportRun.id == run_ids.report_run_id)
+        with self.sessions.transaction("require_simulation_runs") as session:
+            named = session.execute(statement).one_or_none()
         if named is None:
             msg = f"report run {run_ids.report_run_id} does not exist"
             raise LookupError(msg)
@@ -192,19 +185,19 @@ class ReportRunStore:
         It only reads the run. Raises LookupError when the run does not exist.
         """
         statement = select(
-            simulation_runs.c.status,
-            simulation_runs.c.year,
-            simulation_runs.c.country_package_version,
-            simulation_runs.c.policyengine_version,
-            simulation_runs.c.dataset_id,
-            simulation_runs.c.region_id,
-            simulation_runs.c.output_uri,
-            simulation_runs.c.output_sha256,
-            simulation_runs.c.modal_call_id,
-            simulation_runs.c.error_message,
-        ).where(simulation_runs.c.id == simulation_run_id)
-        with self._transaction("get_simulation_run") as connection:
-            stored = connection.execute(statement).one_or_none()
+            SimulationRun.status,
+            SimulationRun.year,
+            SimulationRun.country_package_version,
+            SimulationRun.policyengine_version,
+            SimulationRun.dataset_id,
+            SimulationRun.region_id,
+            SimulationRun.output_uri,
+            SimulationRun.output_sha256,
+            SimulationRun.modal_call_id,
+            SimulationRun.error_message,
+        ).where(SimulationRun.id == simulation_run_id)
+        with self.sessions.transaction("get_simulation_run") as session:
+            stored = session.execute(statement).one_or_none()
         if stored is None:
             msg = f"simulation run {simulation_run_id} does not exist"
             raise LookupError(msg)
@@ -236,23 +229,23 @@ class ReportRunStore:
         call ID. A run recording another call is that call's.
         """
         statement = (
-            update(report_runs)
+            update(ReportRun)
             .where(
-                report_runs.c.id == report_run_id,
-                report_runs.c.status.in_(ACTIVE_STATUSES),
+                ReportRun.id == report_run_id,
+                ReportRun.status.in_(ACTIVE_STATUSES),
                 or_(
-                    report_runs.c.modal_call_id.is_(None),
-                    report_runs.c.modal_call_id == modal_call_id,
+                    ReportRun.modal_call_id.is_(None),
+                    ReportRun.modal_call_id == modal_call_id,
                 ),
             )
             .values(
                 status=RunStatus.RUNNING.value,
                 modal_call_id=modal_call_id,
-                started_at=func.coalesce(report_runs.c.started_at, claimed_at),
+                started_at=func.coalesce(ReportRun.started_at, claimed_at),
                 updated_at=claimed_at,
             )
         )
-        return self._write(report_runs, report_run_id, statement, "claim_report_run")
+        return self._write(ReportRun, report_run_id, statement, "claim_report_run")
 
     def complete_report_run(
         self,
@@ -272,10 +265,10 @@ class ReportRunStore:
         that simulation run, keeps the stored row.
         """
         statement = (
-            update(report_runs)
+            update(ReportRun)
             .where(
-                report_runs.c.id == run_ids.report_run_id,
-                running_under_call(report_runs, modal_call_id),
+                ReportRun.id == run_ids.report_run_id,
+                running_under_call(ReportRun, modal_call_id),
             )
             .values(
                 status=RunStatus.SUCCEEDED.value,
@@ -286,7 +279,7 @@ class ReportRunStore:
             )
         )
         return self._write(
-            report_runs,
+            ReportRun,
             run_ids.report_run_id,
             statement,
             "complete_report_run",
@@ -303,10 +296,10 @@ class ReportRunStore:
     ) -> RunWrite:
         """Mark the report run failed while ``modal_call_id`` holds it running."""
         statement = (
-            update(report_runs)
+            update(ReportRun)
             .where(
-                report_runs.c.id == report_run_id,
-                running_under_call(report_runs, modal_call_id),
+                ReportRun.id == report_run_id,
+                running_under_call(ReportRun, modal_call_id),
             )
             .values(
                 status=RunStatus.FAILED.value,
@@ -315,7 +308,7 @@ class ReportRunStore:
                 updated_at=failed_at,
             )
         )
-        return self._write(report_runs, report_run_id, statement, "fail_report_run")
+        return self._write(ReportRun, report_run_id, statement, "fail_report_run")
 
     def claim_simulation_run(
         self,
@@ -333,24 +326,24 @@ class ReportRunStore:
         is that call's, which every report run naming the run waits for.
         """
         statement = (
-            update(simulation_runs)
+            update(SimulationRun)
             .where(
-                simulation_runs.c.id == simulation_run_id,
-                simulation_runs.c.status.in_(ACTIVE_STATUSES),
+                SimulationRun.id == simulation_run_id,
+                SimulationRun.status.in_(ACTIVE_STATUSES),
                 or_(
-                    simulation_runs.c.modal_call_id.is_(None),
-                    simulation_runs.c.modal_call_id == modal_call_id,
+                    SimulationRun.modal_call_id.is_(None),
+                    SimulationRun.modal_call_id == modal_call_id,
                 ),
             )
             .values(
                 status=RunStatus.RUNNING.value,
                 modal_call_id=modal_call_id,
-                started_at=func.coalesce(simulation_runs.c.started_at, claimed_at),
+                started_at=func.coalesce(SimulationRun.started_at, claimed_at),
                 updated_at=claimed_at,
             )
         )
         return self._write(
-            simulation_runs, simulation_run_id, statement, "claim_simulation_run"
+            SimulationRun, simulation_run_id, statement, "claim_simulation_run"
         )
 
     def complete_simulation_run(
@@ -368,10 +361,10 @@ class ReportRunStore:
         run was failed meanwhile records nothing.
         """
         statement = (
-            update(simulation_runs)
+            update(SimulationRun)
             .where(
-                simulation_runs.c.id == simulation_run_id,
-                running_under_call(simulation_runs, modal_call_id),
+                SimulationRun.id == simulation_run_id,
+                running_under_call(SimulationRun, modal_call_id),
             )
             .values(
                 status=RunStatus.SUCCEEDED.value,
@@ -383,7 +376,7 @@ class ReportRunStore:
             )
         )
         return self._write(
-            simulation_runs, simulation_run_id, statement, "complete_simulation_run"
+            SimulationRun, simulation_run_id, statement, "complete_simulation_run"
         )
 
     def fail_simulation_run(
@@ -402,13 +395,13 @@ class ReportRunStore:
         fails a run that way, since other report runs may share it.
         """
         held = (
-            simulation_runs.c.status.in_(ACTIVE_STATUSES)
+            SimulationRun.status.in_(ACTIVE_STATUSES)
             if modal_call_id is None
-            else running_under_call(simulation_runs, modal_call_id)
+            else running_under_call(SimulationRun, modal_call_id)
         )
         statement = (
-            update(simulation_runs)
-            .where(simulation_runs.c.id == simulation_run_id, held)
+            update(SimulationRun)
+            .where(SimulationRun.id == simulation_run_id, held)
             .values(
                 status=RunStatus.FAILED.value,
                 error_message=error_message,
@@ -417,7 +410,7 @@ class ReportRunStore:
             )
         )
         return self._write(
-            simulation_runs, simulation_run_id, statement, "fail_simulation_run"
+            SimulationRun, simulation_run_id, statement, "fail_simulation_run"
         )
 
     def fail_simulation_run_held_by(
@@ -438,11 +431,11 @@ class ReportRunStore:
         waiting for one run fail it once.
         """
         statement = (
-            update(simulation_runs)
+            update(SimulationRun)
             .where(
-                simulation_runs.c.id == simulation_run_id,
-                simulation_runs.c.status.in_(ACTIVE_STATUSES),
-                simulation_runs.c.modal_call_id == modal_call_id,
+                SimulationRun.id == simulation_run_id,
+                SimulationRun.status.in_(ACTIVE_STATUSES),
+                SimulationRun.modal_call_id == modal_call_id,
             )
             .values(
                 status=RunStatus.FAILED.value,
@@ -452,7 +445,7 @@ class ReportRunStore:
             )
         )
         return self._write(
-            simulation_runs,
+            SimulationRun,
             simulation_run_id,
             statement,
             "fail_simulation_run_held_by",
@@ -473,24 +466,24 @@ class ReportRunStore:
         call ID. A job recording another call is that call's.
         """
         statement = (
-            update(household_jobs)
+            update(HouseholdJob)
             .where(
-                household_jobs.c.id == household_job_id,
-                household_jobs.c.status.in_(ACTIVE_STATUSES),
+                HouseholdJob.id == household_job_id,
+                HouseholdJob.status.in_(ACTIVE_STATUSES),
                 or_(
-                    household_jobs.c.modal_call_id.is_(None),
-                    household_jobs.c.modal_call_id == modal_call_id,
+                    HouseholdJob.modal_call_id.is_(None),
+                    HouseholdJob.modal_call_id == modal_call_id,
                 ),
             )
             .values(
                 status=RunStatus.RUNNING.value,
                 modal_call_id=modal_call_id,
-                started_at=func.coalesce(household_jobs.c.started_at, claimed_at),
+                started_at=func.coalesce(HouseholdJob.started_at, claimed_at),
                 updated_at=claimed_at,
             )
         )
         return self._write(
-            household_jobs, household_job_id, statement, "claim_household_job"
+            HouseholdJob, household_job_id, statement, "claim_household_job"
         )
 
     def complete_household_job(
@@ -507,10 +500,10 @@ class ReportRunStore:
         The job must be running under ``modal_call_id``.
         """
         statement = (
-            update(household_jobs)
+            update(HouseholdJob)
             .where(
-                household_jobs.c.id == household_job_id,
-                running_under_call(household_jobs, modal_call_id),
+                HouseholdJob.id == household_job_id,
+                running_under_call(HouseholdJob, modal_call_id),
             )
             .values(
                 status=RunStatus.SUCCEEDED.value,
@@ -521,7 +514,7 @@ class ReportRunStore:
             )
         )
         return self._write(
-            household_jobs, household_job_id, statement, "complete_household_job"
+            HouseholdJob, household_job_id, statement, "complete_household_job"
         )
 
     def fail_household_job(
@@ -540,10 +533,10 @@ class ReportRunStore:
         calculation. ``error_message`` is the failure's one-line summary.
         """
         statement = (
-            update(household_jobs)
+            update(HouseholdJob)
             .where(
-                household_jobs.c.id == household_job_id,
-                running_under_call(household_jobs, modal_call_id),
+                HouseholdJob.id == household_job_id,
+                running_under_call(HouseholdJob, modal_call_id),
             )
             .values(
                 status=RunStatus.FAILED.value,
@@ -554,7 +547,7 @@ class ReportRunStore:
             )
         )
         return self._write(
-            household_jobs, household_job_id, statement, "fail_household_job"
+            HouseholdJob, household_job_id, statement, "fail_household_job"
         )
 
     def list_active_runs(
@@ -585,21 +578,19 @@ class ReportRunStore:
         its call long after the service created it, and nothing else changes
         a year that is pending with a call.
         """
-        table = RUN_TABLES[kind]
+        model = RUN_MODELS[kind]
         active_since = _active_since(kind)
         conditions = [
-            table.c.status.in_(ACTIVE_STATUSES),
+            model.status.in_(ACTIVE_STATUSES),
             active_since < active_since_before,
             _sweep_judges(kind, regardless_of_report_runs=regardless_of_report_runs),
         ]
-        columns = [table.c.id, table.c.status, table.c.modal_call_id]
+        columns = [model.id, model.status, model.modal_call_id]
         if kind is RunKind.REPORT_RUN:
             conditions.append(~_waiting_window_year())
-            columns.append(table.c.budget_window_run_id)
-        statement = (
-            select(*columns).where(*conditions).order_by(active_since, table.c.id)
-        )
-        with self._transaction("list_active_runs") as connection:
+            columns.append(ReportRun.budget_window_run_id)
+        statement = select(*columns).where(*conditions).order_by(active_since, model.id)
+        with self.sessions.transaction("list_active_runs") as session:
             return tuple(
                 ActiveRun(
                     kind=kind,
@@ -610,7 +601,7 @@ class ReportRunStore:
                         row.budget_window_run_id if kind is RunKind.REPORT_RUN else None
                     ),
                 )
-                for row in connection.execute(statement)
+                for row in session.execute(statement)
             )
 
     def fail_stuck_run(
@@ -636,17 +627,17 @@ class ReportRunStore:
         simulation run that records a call is failed whatever report runs
         name it.
         """
-        table = RUN_TABLES[run.kind]
+        model = RUN_MODELS[run.kind]
         same_call = (
-            table.c.modal_call_id.is_(None)
+            model.modal_call_id.is_(None)
             if run.modal_call_id is None
-            else table.c.modal_call_id == run.modal_call_id
+            else model.modal_call_id == run.modal_call_id
         )
         statement = (
-            update(table)
+            update(model)
             .where(
-                table.c.id == run.run_id,
-                table.c.status == run.status.value,
+                model.id == run.run_id,
+                model.status == run.status.value,
                 same_call,
                 _sweep_judges(
                     run.kind, regardless_of_report_runs=regardless_of_report_runs
@@ -659,52 +650,57 @@ class ReportRunStore:
                 updated_at=failed_at,
             )
         )
-        return self._write(table, run.run_id, statement, "fail_stuck_run")
+        return self._write(model, run.run_id, statement, "fail_stuck_run")
 
     def _write(
         self,
-        table: Table,
+        model: RunModel,
         run_id: UUID,
         statement: Update,
         operation_name: str,
         *,
-        after_change: Callable[[Connection], None] | None = None,
+        after_change: Callable[[Session], None] | None = None,
     ) -> RunWrite:
         """Run a conditional update; return whether it changed the run, and its status.
 
         ``after_change`` runs in the same transaction, only after the update
         changed the run. Raises LookupError when the run does not exist.
         """
-        with self._transaction(operation_name) as connection:
-            changed = connection.execute(
-                statement.returning(table.c.status)
+        with self.sessions.transaction(operation_name) as session:
+            changed = session.execute(
+                statement.returning(model.status),
+                execution_options=WITHOUT_OBJECT_SYNC,
             ).scalar_one_or_none()
             if changed is not None:
                 if after_change is not None:
-                    after_change(connection)
+                    after_change(session)
                 return RunWrite(changed=True, status=RunStatus(changed))
-            current = connection.execute(
-                select(table.c.status).where(table.c.id == run_id)
+            current = session.execute(
+                select(model.status).where(model.id == run_id)
             ).scalar_one_or_none()
         if current is None:
-            msg = f"{_ROW_NOUNS[table.name]} {run_id} does not exist"
+            msg = f"{_ROW_NOUNS[model]} {run_id} does not exist"
             raise LookupError(msg)
         return RunWrite(changed=False, status=RunStatus(current))
 
 
-def _result_inserts(result: ReportRunResult) -> Callable[[Connection], None]:
-    """Return the step that inserts ``result``'s rows on an open transaction."""
+def _result_inserts(result: ReportRunResult) -> Callable[[Session], None]:
+    """Return the step that inserts ``result``'s rows in an open transaction."""
 
-    def insert_rows(connection: Connection) -> None:
+    def insert_rows(session: Session) -> None:
         for result_rows in result.rows:
             if not result_rows.rows:
                 continue
             statement = (
-                postgresql_insert(result_rows.table).on_conflict_do_nothing()
+                postgresql_insert(result_rows.model).on_conflict_do_nothing()
                 if result_rows.shared_by_reports
-                else insert(result_rows.table)
+                else insert(result_rows.model)
             )
-            connection.execute(statement, _uniform_rows(result_rows.rows))
+            session.execute(
+                statement,
+                _uniform_rows(result_rows.rows),
+                execution_options=_EVERY_NAMED_COLUMN,
+            )
 
     return insert_rows
 
@@ -715,15 +711,15 @@ def _uniform_rows(rows: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
     return [dict.fromkeys(columns) | row for row in rows]
 
 
-def running_under_call(table: Table, modal_call_id: str) -> ColumnElement[bool]:
+def running_under_call(model: RunModel, modal_call_id: str) -> ColumnElement[bool]:
     """Return the condition that a row is running under ``modal_call_id``.
 
     A run or household job is completed or failed by a call only while that
     call holds it running.
     """
     return and_(
-        table.c.status == RunStatus.RUNNING.value,
-        table.c.modal_call_id == modal_call_id,
+        model.status == RunStatus.RUNNING.value,
+        model.modal_call_id == modal_call_id,
     )
 
 
@@ -734,18 +730,15 @@ def _active_since(kind: RunKind) -> ColumnElement[datetime]:
     claim or, before it, from its creation, except a budget window's year,
     which counts from its last change: when its call was recorded.
     """
-    table = RUN_TABLES[kind]
     if kind is RunKind.HOUSEHOLD_JOB:
-        return table.c.created_at
-    unclaimed_since = (
-        case(
-            (table.c.budget_window_run_id.is_not(None), table.c.updated_at),
-            else_=table.c.created_at,
-        )
-        if kind is RunKind.REPORT_RUN
-        else table.c.created_at
+        return HouseholdJob.created_at
+    if kind is RunKind.SIMULATION_RUN:
+        return func.coalesce(SimulationRun.started_at, SimulationRun.created_at)
+    unclaimed_since = case(
+        (ReportRun.budget_window_run_id.is_not(None), ReportRun.updated_at),
+        else_=ReportRun.created_at,
     )
-    return func.coalesce(table.c.started_at, unclaimed_since)
+    return func.coalesce(ReportRun.started_at, unclaimed_since)
 
 
 def _waiting_window_year() -> ColumnElement[bool]:
@@ -755,11 +748,11 @@ def _waiting_window_year() -> ColumnElement[bool]:
     run, so an earlier year's coordinator will start it.
     """
     return and_(
-        report_runs.c.status == RunStatus.PENDING.value,
-        report_runs.c.modal_call_id.is_(None),
+        ReportRun.status == RunStatus.PENDING.value,
+        ReportRun.modal_call_id.is_(None),
         exists().where(
-            budget_window_runs.c.id == report_runs.c.budget_window_run_id,
-            budget_window_runs.c.status.in_(ACTIVE_STATUSES),
+            BudgetWindowRun.id == ReportRun.budget_window_run_id,
+            BudgetWindowRun.status.in_(ACTIVE_STATUSES),
         ),
     )
 
@@ -773,23 +766,22 @@ def _sweep_judges(
     for the age limit, one that records a call needs none. One no call has
     claimed has no call to outlast: it waits for the report runs naming it.
     """
-    table = RUN_TABLES[kind]
     if kind is not RunKind.SIMULATION_RUN:
         return true()
     if not regardless_of_report_runs:
-        return no_active_report_run_names(table)
-    return or_(table.c.modal_call_id.is_not(None), no_active_report_run_names(table))
+        return no_active_report_run_names()
+    return or_(SimulationRun.modal_call_id.is_not(None), no_active_report_run_names())
 
 
-def no_active_report_run_names(table: Table) -> ColumnElement[bool]:
+def no_active_report_run_names() -> ColumnElement[bool]:
     """Return the condition that no pending or running report run names the run.
 
     A report run names its simulation runs as its baseline and its reform.
     """
     return ~exists().where(
         or_(
-            report_runs.c.baseline_simulation_run_id == table.c.id,
-            report_runs.c.reform_simulation_run_id == table.c.id,
+            ReportRun.baseline_simulation_run_id == SimulationRun.id,
+            ReportRun.reform_simulation_run_id == SimulationRun.id,
         ),
-        report_runs.c.status.in_(ACTIVE_STATUSES),
+        ReportRun.status.in_(ACTIVE_STATUSES),
     )

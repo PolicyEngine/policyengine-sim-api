@@ -9,8 +9,10 @@ from uuid import uuid4
 from sqlalchemy import (
     JSON,
     DateTime,
+    Index,
     Integer,
     String,
+    UniqueConstraint,
     delete,
     func,
     inspect,
@@ -20,6 +22,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ENUM, UUID, insert
 from sqlalchemy.exc import SQLAlchemyError
 
+from policyengine_stage12_persistence.engine import (
+    WITHOUT_OBJECT_SYNC,
+    inspect_live_schema,
+)
 from policyengine_stage12_persistence.tables import (
     REPORT_CHECK_CONSTRAINTS,
     REPORT_IDENTITY_CONSTRAINT,
@@ -27,12 +33,13 @@ from policyengine_stage12_persistence.tables import (
     SIMULATION_CHECK_CONSTRAINTS,
     SIMULATION_IDENTITY_CONSTRAINT,
     SIMULATION_TABLE_NAME,
-    comparison_reports,
-    comparison_simulations,
+    ComparisonReport,
+    ComparisonSimulation,
 )
 
 if TYPE_CHECKING:
-    from sqlalchemy.engine import Connection, Engine
+    from sqlalchemy.engine.reflection import Inspector
+    from sqlalchemy.orm import Session, sessionmaker
 
 REQUIRED_TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE")
 FORBIDDEN_TABLE_PRIVILEGES = ("TRUNCATE", "REFERENCES", "TRIGGER")
@@ -80,19 +87,19 @@ def _column_type_matches(expected: object, actual: object) -> bool:
 
 
 def _validate_table_schema(
-    connection: Connection,
+    live_schema: Inspector,
     *,
-    table: object,
+    model: type[ComparisonReport | ComparisonSimulation],
     table_name: str,
     identity_constraint: str,
     check_constraints: frozenset[str],
 ) -> None:
-    inspector = inspect(connection)
+    mapper = inspect(model)
     live_columns = {
         item["name"]: item
-        for item in inspector.get_columns(table_name, schema="public")
+        for item in live_schema.get_columns(table_name, schema="public")
     }
-    declared_columns = list(table.c)  # type: ignore[attr-defined]
+    declared_columns = list(mapper.columns)
     if set(live_columns) != {item.name for item in declared_columns}:
         msg = f"{table_name} columns do not match the synchronized mapping"
         raise Stage12RuntimeAccessError(msg)
@@ -107,20 +114,21 @@ def _validate_table_schema(
             column=f"{table_name}.{declared.name}",
         )
 
-    primary_key = inspector.get_pk_constraint(table_name, schema="public")
-    declared_primary_key = [column.name for column in table.primary_key]  # type: ignore[attr-defined]
+    primary_key = live_schema.get_pk_constraint(table_name, schema="public")
+    declared_primary_key = [column.name for column in mapper.primary_key]
     if primary_key.get("constrained_columns") != declared_primary_key:
         msg = f"{table_name} has an unexpected primary key"
         raise Stage12RuntimeAccessError(msg)
 
     unique_constraints = {
         item.get("name"): tuple(item.get("column_names") or ())
-        for item in inspector.get_unique_constraints(table_name, schema="public")
+        for item in live_schema.get_unique_constraints(table_name, schema="public")
     }
     declared_unique = next(
         constraint
-        for constraint in table.constraints  # type: ignore[attr-defined]
-        if constraint.name == identity_constraint
+        for constraint in model.__table_args__
+        if isinstance(constraint, UniqueConstraint)
+        and constraint.name == identity_constraint
     )
     if unique_constraints.get(identity_constraint) != tuple(
         column.name for column in declared_unique.columns
@@ -130,7 +138,7 @@ def _validate_table_schema(
 
     live_checks = {
         item.get("name")
-        for item in inspector.get_check_constraints(table_name, schema="public")
+        for item in live_schema.get_check_constraints(table_name, schema="public")
     }
     if not check_constraints.issubset(live_checks):
         msg = f"{table_name} is missing required check constraints"
@@ -138,11 +146,12 @@ def _validate_table_schema(
 
     live_indexes = {
         item.get("name"): tuple(item.get("column_names") or ())
-        for item in inspector.get_indexes(table_name, schema="public")
+        for item in live_schema.get_indexes(table_name, schema="public")
     }
     declared_indexes = {
         index.name: tuple(column.name for column in index.columns)
-        for index in table.indexes  # type: ignore[attr-defined]
+        for index in model.__table_args__
+        if isinstance(index, Index)
     }
     for name, columns in declared_indexes.items():
         if live_indexes.get(name) != columns:
@@ -150,8 +159,8 @@ def _validate_table_schema(
             raise Stage12RuntimeAccessError(msg)
 
 
-def _validate_foreign_key(connection: Connection) -> None:
-    foreign_keys = inspect(connection).get_foreign_keys(
+def _validate_foreign_key(live_schema: Inspector) -> None:
+    foreign_keys = live_schema.get_foreign_keys(
         SIMULATION_TABLE_NAME,
         schema="public",
     )
@@ -176,21 +185,21 @@ def _validate_foreign_key(connection: Connection) -> None:
         raise Stage12RuntimeAccessError(msg)
 
 
-def _has_schema_privilege(connection: Connection, privilege: str) -> bool:
+def _has_schema_privilege(session: Session, privilege: str) -> bool:
     return bool(
-        connection.execute(
+        session.execute(
             select(func.has_schema_privilege("public", privilege))
         ).scalar_one()
     )
 
 
 def _has_table_privilege(
-    connection: Connection,
+    session: Session,
     table_name: str,
     privilege: str,
 ) -> bool:
     return bool(
-        connection.execute(
+        session.execute(
             select(
                 func.has_table_privilege(
                     f"public.{table_name}",
@@ -201,29 +210,29 @@ def _has_table_privilege(
     )
 
 
-def _validate_permissions(connection: Connection, *, expected_role: str) -> None:
-    current_role = connection.execute(select(func.current_user())).scalar_one()
+def _validate_permissions(session: Session, *, expected_role: str) -> None:
+    current_role = session.execute(select(func.current_user())).scalar_one()
     if current_role != expected_role:
         msg = "Stage 12 credential authenticated as an unexpected role"
         raise Stage12RuntimeAccessError(msg)
-    if not _has_schema_privilege(connection, "USAGE"):
+    if not _has_schema_privilege(session, "USAGE"):
         msg = "runtime role lacks public-schema USAGE"
         raise Stage12RuntimeAccessError(msg)
-    if _has_schema_privilege(connection, "CREATE"):
+    if _has_schema_privilege(session, "CREATE"):
         msg = "runtime role has public-schema CREATE"
         raise Stage12RuntimeAccessError(msg)
     for table_name in (REPORT_TABLE_NAME, SIMULATION_TABLE_NAME):
         for privilege in REQUIRED_TABLE_PRIVILEGES:
-            if not _has_table_privilege(connection, table_name, privilege):
+            if not _has_table_privilege(session, table_name, privilege):
                 msg = f"runtime role lacks {privilege} on {table_name}"
                 raise Stage12RuntimeAccessError(msg)
         for privilege in FORBIDDEN_TABLE_PRIVILEGES:
-            if _has_table_privilege(connection, table_name, privilege):
+            if _has_table_privilege(session, table_name, privilege):
                 msg = f"runtime role unexpectedly has {privilege} on {table_name}"
                 raise Stage12RuntimeAccessError(msg)
 
 
-def _exercise_runtime_dml(connection: Connection, *, environment: str) -> None:
+def _exercise_runtime_dml(session: Session, *, environment: str) -> None:
     evaluation_id = uuid4()
     simulation_execution_id = uuid4()
     now = datetime.now(UTC)
@@ -272,27 +281,28 @@ def _exercise_runtime_dml(connection: Connection, *, environment: str) -> None:
         "completed_at": None,
         "retention_expires_at": retention_expires_at,
     }
-    inserted_report = connection.execute(
-        insert(comparison_reports)
+    inserted_report = session.execute(
+        insert(ComparisonReport)
         .values(**report_values)
-        .returning(comparison_reports.c.evaluation_id)
+        .returning(ComparisonReport.evaluation_id)
     ).scalar_one()
     if inserted_report != evaluation_id:
         msg = "report DML canary insert failed"
         raise Stage12RuntimeAccessError(msg)
-    selected_report = connection.execute(
-        select(comparison_reports.c.evaluation_id).where(
-            comparison_reports.c.evaluation_id == evaluation_id
+    selected_report = session.execute(
+        select(ComparisonReport.evaluation_id).where(
+            ComparisonReport.evaluation_id == evaluation_id
         )
     ).scalar_one()
     if selected_report != evaluation_id:
         msg = "report DML canary select failed"
         raise Stage12RuntimeAccessError(msg)
-    updated_report = connection.execute(
-        update(comparison_reports)
-        .where(comparison_reports.c.evaluation_id == evaluation_id)
+    updated_report = session.execute(
+        update(ComparisonReport)
+        .where(ComparisonReport.evaluation_id == evaluation_id)
         .values(updated_at=datetime.now(UTC))
-        .returning(comparison_reports.c.evaluation_id)
+        .returning(ComparisonReport.evaluation_id),
+        execution_options=WITHOUT_OBJECT_SYNC,
     ).scalar_one()
     if updated_report != evaluation_id:
         msg = "report DML canary update failed"
@@ -324,47 +334,46 @@ def _exercise_runtime_dml(connection: Connection, *, environment: str) -> None:
         "completed_at": None,
         "retention_expires_at": retention_expires_at,
     }
-    inserted_simulation = connection.execute(
-        insert(comparison_simulations)
+    inserted_simulation = session.execute(
+        insert(ComparisonSimulation)
         .values(**simulation_values)
-        .returning(comparison_simulations.c.simulation_execution_id)
+        .returning(ComparisonSimulation.simulation_execution_id)
     ).scalar_one()
     if inserted_simulation != simulation_execution_id:
         msg = "simulation DML canary insert failed"
         raise Stage12RuntimeAccessError(msg)
-    selected_simulation = connection.execute(
-        select(comparison_simulations.c.simulation_execution_id).where(
-            comparison_simulations.c.simulation_execution_id == simulation_execution_id
+    selected_simulation = session.execute(
+        select(ComparisonSimulation.simulation_execution_id).where(
+            ComparisonSimulation.simulation_execution_id == simulation_execution_id
         )
     ).scalar_one()
     if selected_simulation != simulation_execution_id:
         msg = "simulation DML canary select failed"
         raise Stage12RuntimeAccessError(msg)
-    updated_simulation = connection.execute(
-        update(comparison_simulations)
-        .where(
-            comparison_simulations.c.simulation_execution_id == simulation_execution_id
-        )
+    updated_simulation = session.execute(
+        update(ComparisonSimulation)
+        .where(ComparisonSimulation.simulation_execution_id == simulation_execution_id)
         .values(updated_at=datetime.now(UTC))
-        .returning(comparison_simulations.c.simulation_execution_id)
+        .returning(ComparisonSimulation.simulation_execution_id),
+        execution_options=WITHOUT_OBJECT_SYNC,
     ).scalar_one()
     if updated_simulation != simulation_execution_id:
         msg = "simulation DML canary update failed"
         raise Stage12RuntimeAccessError(msg)
-    deleted_simulation = connection.execute(
-        delete(comparison_simulations)
-        .where(
-            comparison_simulations.c.simulation_execution_id == simulation_execution_id
-        )
-        .returning(comparison_simulations.c.simulation_execution_id)
+    deleted_simulation = session.execute(
+        delete(ComparisonSimulation)
+        .where(ComparisonSimulation.simulation_execution_id == simulation_execution_id)
+        .returning(ComparisonSimulation.simulation_execution_id),
+        execution_options=WITHOUT_OBJECT_SYNC,
     ).scalar_one()
     if deleted_simulation != simulation_execution_id:
         msg = "simulation DML canary delete failed"
         raise Stage12RuntimeAccessError(msg)
-    deleted_report = connection.execute(
-        delete(comparison_reports)
-        .where(comparison_reports.c.evaluation_id == evaluation_id)
-        .returning(comparison_reports.c.evaluation_id)
+    deleted_report = session.execute(
+        delete(ComparisonReport)
+        .where(ComparisonReport.evaluation_id == evaluation_id)
+        .returning(ComparisonReport.evaluation_id),
+        execution_options=WITHOUT_OBJECT_SYNC,
     ).scalar_one()
     if deleted_report != evaluation_id:
         msg = "report DML canary delete failed"
@@ -372,7 +381,7 @@ def _exercise_runtime_dml(connection: Connection, *, environment: str) -> None:
 
 
 def validate_runtime_database(
-    engine: Engine,
+    session_factory: sessionmaker[Session],
     *,
     expected_role: str,
     environment: str,
@@ -382,29 +391,29 @@ def validate_runtime_database(
         msg = "environment must be staging or production"
         raise Stage12RuntimeAccessError(msg)
     try:
-        with engine.connect() as connection:
-            _validate_permissions(connection, expected_role=expected_role)
+        with session_factory() as session:
+            _validate_permissions(session, expected_role=expected_role)
+            live_schema = inspect_live_schema(session_factory)
             _validate_table_schema(
-                connection,
-                table=comparison_reports,
+                live_schema,
+                model=ComparisonReport,
                 table_name=REPORT_TABLE_NAME,
                 identity_constraint=REPORT_IDENTITY_CONSTRAINT,
                 check_constraints=REPORT_CHECK_CONSTRAINTS,
             )
             _validate_table_schema(
-                connection,
-                table=comparison_simulations,
+                live_schema,
+                model=ComparisonSimulation,
                 table_name=SIMULATION_TABLE_NAME,
                 identity_constraint=SIMULATION_IDENTITY_CONSTRAINT,
                 check_constraints=SIMULATION_CHECK_CONSTRAINTS,
             )
-            _validate_foreign_key(connection)
-            connection.rollback()
-            transaction = connection.begin()
+            _validate_foreign_key(live_schema)
+            session.rollback()
             try:
-                _exercise_runtime_dml(connection, environment=environment)
+                _exercise_runtime_dml(session, environment=environment)
             finally:
-                transaction.rollback()
+                session.rollback()
     except Stage12RuntimeAccessError:
         raise
     except SQLAlchemyError as error:

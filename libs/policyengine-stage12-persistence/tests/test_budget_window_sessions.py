@@ -159,7 +159,14 @@ def test_a_deferred_start_leaves_the_years_waiting(store, windows, window) -> No
 def test_every_year_succeeded_marks_the_window_succeeded(
     store, windows, window
 ) -> None:
-    windows.set_years(window, range(2026, 2033), status="succeeded")
+    windows.set_years(
+        window,
+        range(2026, 2033),
+        status="succeeded",
+        modal_call_id="fc-finished",
+        started_at=NOW,
+        completed_at=NOW,
+    )
 
     first = store.advance_window(window.window_run_id, now=LATER)
     second = store.advance_window(window.window_run_id, now=LATER)
@@ -172,7 +179,15 @@ def test_every_year_succeeded_marks_the_window_succeeded(
 def test_a_failed_year_fails_the_window_with_its_waiting_years(
     store, windows, window
 ) -> None:
-    windows.set_years(window, [2027], status="failed")
+    windows.set_years(
+        window,
+        [2027],
+        status="failed",
+        modal_call_id="fc-failed",
+        error_message="it broke",
+        started_at=NOW,
+        completed_at=NOW,
+    )
 
     advance = store.advance_window(window.window_run_id, now=LATER)
 
@@ -209,7 +224,9 @@ def test_an_idle_window_is_listed_and_settled_as_stalled(
 
 
 def test_a_window_with_a_year_under_way_is_not_idle(store, windows, window) -> None:
-    windows.set_years(window, [2026], status="running", modal_call_id="fc-running")
+    windows.set_years(
+        window, [2026], status="running", modal_call_id="fc-running", started_at=NOW
+    )
 
     listed = store.list_idle_windows(idle_since_before=IDLE_CUTOFF)
     settled = store.settle_idle_window(

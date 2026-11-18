@@ -8,11 +8,11 @@ from uuid import UUID
 
 import pytest
 from policyengine_simulation_contract.stage12_execution import SimulationRole
-from policyengine_simulation_executor.stage12_runtime import database_retry
-from policyengine_simulation_executor.stage12_runtime.dependencies import runtime_store
-from policyengine_simulation_executor.stage12_runtime.household_report_recording import (
-    household_report_run_store,
+from policyengine_simulation_executor.stage12_runtime import (
+    database_retry,
+    household_report_recording,
 )
+from policyengine_simulation_executor.stage12_runtime.dependencies import runtime_store
 from policyengine_simulation_executor.stage12_runtime.report_run_access import (
     MODAL_WORKER_DATABASE_URL_ENV,
     budget_window_store,
@@ -27,7 +27,6 @@ from stage12_runtime_support import (
     parent_record,
     planned_simulation,
 )
-
 
 REPORT_RUN_ID = UUID("00000000-0000-0000-0000-00000000000a")
 CLAIMED_AT = datetime(2026, 11, 4, tzinfo=UTC)
@@ -81,7 +80,7 @@ class ScriptedSession:
         if not self.connected:
             self.pooler.connect()
             self.connected = True
-            return ScriptedResult(True)
+            return ScriptedResult(row=True)
         self.pooler.statement_count += 1
         return ScriptedResult(self.pooler.rows.pop(0))
 
@@ -182,7 +181,9 @@ def _claim_a_report_run(store) -> Any:
     [
         pytest.param(report_run_store, _claim_a_report_run, id="report-runs"),
         pytest.param(
-            household_report_run_store, _claim_a_report_run, id="household-reports"
+            household_report_recording.household_report_run_store,
+            _claim_a_report_run,
+            id="household-reports",
         ),
         pytest.param(
             budget_window_store,

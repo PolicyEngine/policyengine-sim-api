@@ -347,7 +347,7 @@ def test_a_report_run_fails_only_under_its_call(store, seeder, seeded_run) -> No
     assert refused == RunWrite(changed=False, status=RunStatus.RUNNING)
     assert failed == RunWrite(changed=True, status=RunStatus.FAILED)
     assert seeder.row("report_runs", report_run_id)["error_message"] == "it broke"
-    with pytest.raises(LookupError, match="report run .* does not exist"):
+    with pytest.raises(LookupError, match=r"report run .* does not exist"):
         store.fail_report_run(
             uuid4(), modal_call_id=CALL, error_message="x", failed_at=LATER
         )
