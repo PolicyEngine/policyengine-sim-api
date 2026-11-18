@@ -169,18 +169,43 @@ def test_a_declarative_base_module_annotates_only_table_of_its_classes(
     assert _checks({ORM_BASE: source}, ORM_BASE) == [(CORE_TABLE_ACCESS, summary)]
 
 
-def test_a_guarded_table_annotation_in_a_class_is_accepted():
-    source = """
-    from typing import TYPE_CHECKING, ClassVar
+@pytest.mark.parametrize(
+    "guarded_class_body",
+    [
+        "if TYPE_CHECKING:\n        __table__: ClassVar[Table]",
+        "if RUNTIME:\n        pass\n    else:\n        __table__: ClassVar[Table]",
+        (
+            "if RUNTIME:\n        pass\n    elif TYPE_CHECKING:\n"
+            "        __table__: ClassVar[Table]"
+        ),
+    ],
+)
+def test_a_guarded_table_annotation_in_a_class_is_accepted(guarded_class_body):
+    source = f"""
+from typing import TYPE_CHECKING, ClassVar
 
-    from sqlalchemy import Table
+from sqlalchemy import Table
 
-    class TableModel:
-        if TYPE_CHECKING:
-            __table__: ClassVar[Table]
-    """
+class TableModel:
+    {guarded_class_body}
+"""
 
     assert _checks({ORM_BASE: source}, ORM_BASE) == []
+
+
+@pytest.mark.parametrize("file", [ORM_BASE, STORE])
+def test_reading_a_bare_mapped_table_name_is_core_table_access(file):
+    source = """
+    from typing import ClassVar
+
+    from sqlalchemy import select
+
+    class JobRecord:
+        __table__ = build_jobs_table()
+        pending = select(__table__)
+    """
+
+    assert _checks({file: source}, file) == [(CORE_TABLE_ACCESS, "__table__")]
 
 
 def test_a_declarative_base_module_may_not_declare_a_core_table():
