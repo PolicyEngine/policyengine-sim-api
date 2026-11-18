@@ -16,12 +16,12 @@ Every store runs each operation on one ORM `Session` from the factory it is
 given, or that `create_stage12_session_factory` builds from its URL (`engine.py`).
 Opening the session sends `SELECT true`, which makes it check out its
 connection. A `SessionOpener` wraps only that step, and the v2 Modal runtime's
-opener retries it while the connection is refused, so a retry can't repeat
-anything the operation wrote: its statements and COMMIT run after the opener
-returns, and their failures are raised without a retry.
+opener repeats it after an `OperationalError`, so a retry can't repeat anything
+the operation wrote: its statements and COMMIT run after the opener returns,
+and their failures are raised without a retry.
 
 The deployment check (`validate_runtime_database`) holds one connection at a
-time and repeats a step that loses or can't get one, up to five attempts, since
+time and repeats a step after an `OperationalError`, up to five attempts, since
 each step only reads or rolls back what it wrote.
 
 - **The Stage 12 comparison tables** (`Stage12PersistenceStore`): temporary

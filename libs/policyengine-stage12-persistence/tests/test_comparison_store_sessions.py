@@ -20,10 +20,12 @@ from policyengine_simulation_contract.stage12_execution import (
     ResultComparisonStatus,
     SimulationRole,
 )
+from policyengine_simulation_persistence.engine import create_session_factory
 from policyengine_stage12_persistence import (
     Stage12PersistenceStore,
     Stage12RuntimeAccessError,
     validate_runtime_database,
+    validation,
 )
 from policyengine_stage12_persistence.tables import (
     REPORT_CHECK_CONSTRAINTS,
@@ -31,7 +33,10 @@ from policyengine_stage12_persistence.tables import (
     REPORT_TABLE_NAME,
     ComparisonReport,
 )
-from policyengine_stage12_persistence.validation import _validate_table_schema
+from policyengine_stage12_persistence.validation import (
+    _validate_foreign_key,
+    _validate_table_schema,
+)
 from session_database import (
     RUNTIME_ROLE,
     StatementLog,
@@ -39,6 +44,7 @@ from session_database import (
     refuse_connection_numbers,
 )
 from sqlalchemy import delete, func, inspect, select
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
@@ -382,37 +388,97 @@ def test_the_deployment_check_refuses_an_unknown_environment(
         )
 
 
-def test_the_deployment_check_reports_an_unreachable_database(retry_waits) -> None:
-    from sqlalchemy.exc import OperationalError
+class FailingSessions:
+    """A session factory whose sessions fail every statement with one error."""
 
-    class RefusedSessions:
-        """A session factory whose sessions cannot connect."""
+    def __init__(self, error: Exception) -> None:
+        self.error = error
 
-        def __call__(self) -> Self:
-            return self
+    def __call__(self) -> Self:
+        return self
 
-        def __enter__(self) -> Self:
-            return self
+    def __enter__(self) -> Self:
+        return self
 
-        def __exit__(self, *_exception_details) -> None:
-            return None
+    def __exit__(self, *_exception_details) -> None:
+        return None
 
-        def rollback(self) -> None:
-            return None
+    def rollback(self) -> None:
+        return None
 
-        def execute(self, _statement: object) -> None:
-            raise OperationalError(None, None, Exception("password=hidden"))
+    def execute(self, _statement: object) -> None:
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    ("error_type", "retries"),
+    [
+        pytest.param(OperationalError, 4, id="connection-error-is-retried"),
+        pytest.param(ProgrammingError, 0, id="other-database-error-is-not"),
+    ],
+)
+def test_the_deployment_check_reports_a_database_error_without_its_text(
+    retry_waits, error_type, retries
+) -> None:
+    sessions = FailingSessions(error_type(None, None, Exception("password=hidden")))
 
     with pytest.raises(Stage12RuntimeAccessError) as failure:
         validate_runtime_database(
-            RefusedSessions(),  # type: ignore[arg-type]
+            sessions,  # type: ignore[arg-type]
             expected_role=RUNTIME_ROLE,
             environment="staging",
         )
 
-    assert "OperationalError" in str(failure.value)
+    assert error_type.__name__ in str(failure.value)
     assert "password" not in str(failure.value)
-    assert len(retry_waits) == 4
+    assert len(retry_waits) == retries
+
+
+def test_the_deployment_check_refuses_a_role_missing_a_table_privilege(
+    worker_sessions, retry_waits
+) -> None:
+    with pytest.raises(
+        Stage12RuntimeAccessError,
+        match=f"lacks SELECT on {REPORT_TABLE_NAME}",
+    ):
+        validate_runtime_database(
+            worker_sessions,
+            expected_role="policyengine_v2_modal_worker",
+            environment="staging",
+        )
+
+    assert retry_waits == []
+
+
+def test_the_deployment_check_refuses_a_role_that_may_change_the_schema(
+    seeder, retry_waits
+) -> None:
+    with pytest.raises(Stage12RuntimeAccessError, match="public-schema CREATE"):
+        validate_runtime_database(
+            create_session_factory(seeder.engine),
+            expected_role="postgres",
+            environment="staging",
+        )
+
+    assert retry_waits == []
+
+
+def test_the_deployment_check_refuses_a_forbidden_table_privilege(
+    runtime_sessions, retry_waits, monkeypatch
+) -> None:
+    has_privilege = validation._has_table_privilege
+
+    def has_truncate_too(session: Session, table_name: str, privilege: str) -> bool:
+        return privilege == "TRUNCATE" or has_privilege(session, table_name, privilege)
+
+    monkeypatch.setattr(validation, "_has_table_privilege", has_truncate_too)
+
+    with pytest.raises(Stage12RuntimeAccessError, match="unexpectedly has TRUNCATE"):
+        validate_runtime_database(
+            runtime_sessions, expected_role=RUNTIME_ROLE, environment="staging"
+        )
+
+    assert retry_waits == []
 
 
 class AlteredSchema:
@@ -446,6 +512,10 @@ def _no_columns_constrained(constraint: dict) -> dict:
 
 def _nothing(_answer: object) -> list:
     return []
+
+
+def _keys_to_another_table(foreign_keys: list[dict]) -> list[dict]:
+    return [{**key, "referred_table": "another_table"} for key in foreign_keys]
 
 
 @pytest.mark.parametrize(
@@ -500,4 +570,24 @@ def test_the_schema_check_compares_the_live_table_with_its_model(
             table_name=REPORT_TABLE_NAME,
             identity_constraint=REPORT_IDENTITY_CONSTRAINT,
             check_constraints=REPORT_CHECK_CONSTRAINTS,
+        )
+
+
+@pytest.mark.parametrize(
+    ("answer", "message"),
+    [
+        pytest.param(_nothing, "foreign key is missing", id="missing"),
+        pytest.param(
+            _keys_to_another_table, "unexpected definition", id="another-table"
+        ),
+    ],
+)
+def test_the_schema_check_compares_the_simulations_foreign_key(
+    seeder, answer, message
+) -> None:
+    _validate_foreign_key(inspect(seeder.engine))
+
+    with pytest.raises(Stage12RuntimeAccessError, match=message):
+        _validate_foreign_key(
+            AlteredSchema(inspect(seeder.engine), "get_foreign_keys", answer)
         )

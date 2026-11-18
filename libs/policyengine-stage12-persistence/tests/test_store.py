@@ -123,10 +123,10 @@ class FakeSession:
         return self
 
     def __exit__(self, *_exception_details):
-        return None
+        self.close()
 
     def close(self):
-        return None
+        self.database.closed_sessions.add(self)
 
     def commit(self):
         if self.database.commit_error is not None:
@@ -151,9 +151,13 @@ class FakeSessions:
         self.commit_error = commit_error
         self.refused_connections = refused_connections
         self.connection_attempts = 0
+        self.opened_sessions = set()
+        self.closed_sessions = set()
 
     def __call__(self):
-        return FakeSession(self)
+        session = FakeSession(self)
+        self.opened_sessions.add(session)
+        return session
 
     def connect(self):
         self.connection_attempts += 1
@@ -235,6 +239,33 @@ def test_commit_failure_is_raised_after_the_opener_returns(monkeypatch) -> None:
     assert opener.refusals == []
     assert sessions.connection_attempts == 1
     assert len(sessions.statements) == 1
+
+
+def test_every_operation_closes_its_session() -> None:
+    report = _report()
+    sessions = FakeSessions(
+        [
+            FakeResult(row=_row(report)),
+            FakeResult(row=_row(report)),
+            FakeResult(row=None),
+            FakeResult(row=None),
+        ],
+        refused_connections=1,
+    )
+    store = Stage12PersistenceStore(
+        session_factory=sessions,  # type: ignore[arg-type]
+        open_session=RetryingSessionOpener(),
+    )
+
+    store.create_or_resolve_report(report)
+    store.get_report(REPORT_ID)
+    with pytest.raises(LookupError):
+        store.get_report(REPORT_ID)
+    with pytest.raises(LookupError):
+        store.replace_report(report)
+
+    assert len(sessions.opened_sessions) == 5
+    assert sessions.closed_sessions == sessions.opened_sessions
 
 
 def test_default_store_does_not_retry_a_refused_connection() -> None:

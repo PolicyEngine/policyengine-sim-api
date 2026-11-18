@@ -550,7 +550,7 @@ def test_concurrent_sweeps_fail_a_stuck_household_job_once(
 
 
 def test_the_sweep_waits_for_report_runs_naming_a_simulation_run(
-    store, seeder, seeded_run
+    store, statements, seeder, seeded_run
 ) -> None:
     run_ids = seeded_run.run_ids
     baseline = run_ids.baseline_simulation_run_id
@@ -585,6 +585,11 @@ def test_the_sweep_waits_for_report_runs_naming_a_simulation_run(
     assert left_alone == RunWrite(changed=False, status=RunStatus.RUNNING)
     assert failed == RunWrite(changed=True, status=RunStatus.FAILED)
     assert seeder.row("simulation_runs", baseline)["error_message"] == "stuck"
+    # The session adds no primary key to find objects these updates changed.
+    sweep_updates = statements.starting_with("UPDATE public.simulation_runs")[1:]
+    assert len(sweep_updates) == 2
+    for update_sent in sweep_updates:
+        assert update_sent.endswith("RETURNING public.simulation_runs.status")
 
 
 def test_a_household_report_run_records_each_side_under_its_call(
