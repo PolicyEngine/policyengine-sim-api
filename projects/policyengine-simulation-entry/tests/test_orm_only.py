@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tomllib
 from collections import Counter
 from typing import TYPE_CHECKING
 
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
 
 BASELINE = REPOSITORY_ROOT / "rules" / "baselines" / "orm-only.txt"
 FIXTURES_ROOT = REPOSITORY_ROOT / "rules" / "fixtures" / "sim.persistence.orm-only"
+PROJECT_PATTERNS = ("projects/*/pyproject.toml", "libs/*/pyproject.toml")
 # The libraries that declare tables; every table they hold needs a mapped class.
 TABLE_PACKAGES = (
     "policyengine_simulation_persistence",
@@ -117,6 +119,22 @@ def test_every_table_is_mapped_by_a_class() -> None:
     findings = unmapped_tables_in_packages(TABLE_PACKAGES, REPOSITORY_ROOT)
 
     _assert_only_tolerated(findings, _tolerated(unmapped=True))
+
+
+def test_no_project_installs_sqlmodel() -> None:
+    """The rule's ORM is SQLAlchemy's own, so no project's lock holds SQLModel."""
+    projects_with_sqlmodel = []
+    for pattern in PROJECT_PATTERNS:
+        for pyproject in sorted(REPOSITORY_ROOT.glob(pattern)):
+            lock = tomllib.loads(
+                (pyproject.parent / "uv.lock").read_text(encoding="utf-8")
+            )
+            if any(package["name"] == "sqlmodel" for package in lock["package"]):
+                projects_with_sqlmodel.append(
+                    pyproject.parent.relative_to(REPOSITORY_ROOT).as_posix()
+                )
+
+    assert projects_with_sqlmodel == []
 
 
 def test_rule_proof_orm_only(monkeypatch: pytest.MonkeyPatch) -> None:
