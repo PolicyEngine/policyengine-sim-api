@@ -45,7 +45,9 @@ The checks guard against ordinary Core use, not against deliberate evasion.
 They don't follow imports made through ``importlib`` or ``__import__``, tables,
 engines or connections passed around without a ``Table``, ``Engine`` or
 ``Connection`` annotation, so a connection held under a name such as ``session``
-isn't reported, a
+isn't reported, a statement method passed without being called, a function that
+returns an engine with no return annotation, the engine an ``Inspector`` holds
+in ``bind`` or ``engine``, a
 ``.table`` read in a module that doesn't import sqlalchemy, tables held in a
 container such as a dict, a class or instance attribute read in another
 module (unless it is a ``.table`` read, or its name matches one of the reading

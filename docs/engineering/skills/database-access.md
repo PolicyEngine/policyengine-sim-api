@@ -156,7 +156,10 @@ The checks read source, not types, and guard against ordinary Core use, not
 against deliberate evasion. They miss imports through `importlib`; tables,
 engines and connections passed around without a `Table`, `Engine` or
 `Connection` annotation, so a connection held under a name such as `session`
-isn't reported; tables held in a container such as a dict, a class or instance attribute read in another module (other
+isn't reported; a statement method passed without being called, such as
+`run(connection.execute, statement)`; a function that returns an engine with no
+return annotation; the engine an `Inspector` holds in `bind` or `engine`; tables
+held in a container such as a dict, a class or instance attribute read in another module (other
 than the reads above), a `.table` read in a module that doesn't import
 sqlalchemy, and a Session's `bind` attribute. A name counts as a Core table
 throughout its module once it is assigned an expression rooted at one. Other
