@@ -5,9 +5,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from policyengine_simulation_persistence import dispose_session_factory
 from policyengine_stage12_persistence import (
     Stage12RuntimeAccessError,
-    create_stage12_session_factory,
+    create_stage12_check_session_factory,
     validate_runtime_database,
 )
 
@@ -29,11 +30,15 @@ def main() -> None:
     args = _parser().parse_args()
     database_url = args.database_url_file.read_text(encoding="utf-8").strip()
     try:
-        validate_runtime_database(
-            create_stage12_session_factory(database_url),
-            expected_role=args.expected_role,
-            environment=args.environment,
-        )
+        session_factory = create_stage12_check_session_factory(database_url)
+        try:
+            validate_runtime_database(
+                session_factory,
+                expected_role=args.expected_role,
+                environment=args.environment,
+            )
+        finally:
+            dispose_session_factory(session_factory)
     except (Stage12RuntimeAccessError, ValueError) as error:
         raise SystemExit(str(error)) from None
     print(

@@ -10,6 +10,7 @@ from policyengine_stage12_persistence.budget_window_store import (
 )
 from policyengine_stage12_persistence.engine import (
     SessionOpener,
+    create_stage12_check_session_factory,
     create_stage12_session_factory,
 )
 from policyengine_stage12_persistence.household_report_run_store import (
@@ -53,6 +54,7 @@ __all__ = [
     "YearStartDeferred",
     "YearStarter",
     "YearToStart",
+    "create_stage12_check_session_factory",
     "create_stage12_session_factory",
     "report_run_result",
     "validate_runtime_database",

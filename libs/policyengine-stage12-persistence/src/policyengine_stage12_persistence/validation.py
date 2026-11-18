@@ -448,7 +448,8 @@ def validate_runtime_database(
 
     It holds one connection at a time, since a session pooler may have one
     free, and retries each step a bounded number of times when the database
-    refuses or loses a connection.
+    refuses or loses a connection. With a factory from
+    ``create_stage12_check_session_factory``, every step shares one connection.
     """
     if environment not in {"staging", "production"}:
         msg = "environment must be staging or production"

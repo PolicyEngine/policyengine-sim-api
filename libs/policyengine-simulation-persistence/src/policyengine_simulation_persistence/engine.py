@@ -12,7 +12,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, QueuePool
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -28,6 +28,9 @@ POOL_SIZE = 2
 MAX_OVERFLOW = 3
 # A v2 Modal call connects across the internet to the database's pooler.
 UNPOOLED_CONNECT_TIMEOUT_SECONDS = 10
+# How long a single-connection engine's user waits for the connection. Its users
+# take turns, so waiting at all means one of them kept it.
+SINGLE_CONNECTION_WAIT_SECONDS = 5
 
 
 def normalized_database_url(database_url: str) -> URL:
@@ -86,6 +89,29 @@ def _create_unpooled_engine(database_url: str) -> Engine:
     )
 
 
+def _create_single_connection_engine(database_url: str) -> Engine:
+    """Build an engine whose sessions and schema reads share one connection.
+
+    A short task that opens many sessions or reads the schema piece by piece
+    then takes one client slot of the database's pooler. Each user must return
+    the connection before the next takes it. A connection checked out after it
+    was lost is replaced, and no statement is prepared on the server, so the
+    engine works through Supabase's session and transaction poolers.
+    """
+    return create_engine(
+        normalized_database_url(database_url),
+        poolclass=QueuePool,
+        pool_size=1,
+        max_overflow=0,
+        pool_timeout=SINGLE_CONNECTION_WAIT_SECONDS,
+        pool_pre_ping=True,
+        connect_args={
+            "connect_timeout": UNPOOLED_CONNECT_TIMEOUT_SECONDS,
+            "prepare_threshold": None,
+        },
+    )
+
+
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     """Return the factory of ORM sessions on ``engine``.
 
@@ -114,6 +140,18 @@ def create_unpooled_session_factory(database_url: str) -> sessionmaker[Session]:
     connects until a session runs its first statement.
     """
     return create_session_factory(_create_unpooled_engine(database_url))
+
+
+def create_single_connection_session_factory(
+    database_url: str,
+) -> sessionmaker[Session]:
+    """Return a factory of sessions that take turns on one kept connection.
+
+    Raises ValueError, without echoing the URL, when it is malformed. Nothing
+    connects until a session runs its first statement. Close the connection
+    with ``dispose_session_factory``.
+    """
+    return create_session_factory(_create_single_connection_engine(database_url))
 
 
 def dispose_session_factory(session_factory: sessionmaker[Session]) -> None:

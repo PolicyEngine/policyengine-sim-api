@@ -32,7 +32,10 @@ the comparison path use, from the same URL check: it keeps no pool, so each
 operation's session ends with its connection and a call that spends most of
 its life calculating holds no pooler slot, and it waits 10 seconds to connect.
 The Stage 12 library's `create_stage12_session_factory` returns these.
-`dispose_session_factory` closes a factory's pooled connections.
+`create_single_connection_session_factory` keeps one connection that its
+sessions and schema reads take turns on, for a short task such as the Stage 12
+deployment check. `dispose_session_factory` closes a factory's pooled
+connections.
 
 `create_session_factory` turns an engine into a `sessionmaker`, for tests that
 build their own engine. Attributes keep their values after the transaction

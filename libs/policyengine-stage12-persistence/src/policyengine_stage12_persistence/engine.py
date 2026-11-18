@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol
 # Every Stage 12 store connects through the simulation service library's
 # unpooled sessions, which check the URL with that library's one URL check.
 from policyengine_simulation_persistence.engine import (
+    create_single_connection_session_factory,
     create_unpooled_session_factory,
 )
 from sqlalchemy import inspect, select, true
@@ -70,10 +71,23 @@ def create_stage12_session_factory(database_url: str) -> sessionmaker[Session]:
     return create_unpooled_session_factory(database_url)
 
 
+def create_stage12_check_session_factory(
+    database_url: str,
+) -> sessionmaker[Session]:
+    """Return the session factory of the deployment check.
+
+    Its sessions and schema reads take turns on one connection, so the check
+    needs one free client slot of the database's pooler. Raises ValueError when
+    the URL is invalid. Close the connection with ``dispose_session_factory``.
+    """
+    return create_single_connection_session_factory(database_url)
+
+
 def inspect_live_schema(session_factory: sessionmaker[Session]) -> Inspector:
     """Return an inspector of the database ``session_factory`` connects to.
 
-    It connects to the database at once, and for each thing it reads.
+    It takes a connection from the factory's engine at once, and again for each
+    thing it reads. Without a pool, each of those is a new connection.
     """
     return inspect(session_factory.kw["bind"])
 

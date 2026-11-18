@@ -83,7 +83,9 @@ What the ORM means here:
 - **Schema inspection**, for the deployment check that compares the live
   schema with the models, reads the live schema through
   `inspect_live_schema(session_factory)` in the Stage 12 library's `engine.py`,
-  which needs no Connection, and the models' columns
+  which needs no Connection. An inspector on an engine takes a connection for
+  each read, so the check's factory has a one-connection pool
+  (`create_single_connection_session_factory`). It reads the models' columns
   and keys from their mappers (`inspect(Model).columns`, `.primary_key`) and
   `__table_args__`, none of which is reported.
 
