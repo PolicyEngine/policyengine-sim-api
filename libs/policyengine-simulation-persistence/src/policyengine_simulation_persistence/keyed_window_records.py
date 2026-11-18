@@ -386,8 +386,9 @@ def insert_window_years(  # noqa: PLR0913  # the years, then the window they bel
             )
             for window_year in years
         )
+    # A multi-row insert leaves out a None unless told to send it.
     session.execute(
-        insert(ReportRun),
+        insert(ReportRun).execution_options(render_nulls=True),
         [
             window_year_run_row(
                 run_id=year.report_run_id,

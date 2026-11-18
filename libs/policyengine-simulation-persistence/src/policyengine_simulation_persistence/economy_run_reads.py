@@ -1,7 +1,7 @@
 """Read a report or a simulation as it stands, with its newest run.
 
 The newest run is the one created last, with ties broken by the larger ID,
-whatever its status and versions, as the Public API reads it. The run's
+whatever its status and versions, as API v1 reads it. The run's
 results are API v1's to read: these reads give only its state. Each read
 selects the mapped classes' attributes, so it returns what the database holds
 now, whatever the session has loaded.

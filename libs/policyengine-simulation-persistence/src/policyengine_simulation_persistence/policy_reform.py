@@ -1,10 +1,10 @@
 """Read a stored policy, or dynamic, as the reform values a calculation applies.
 
-The Public API stores a policy's parameter values against the parameters of
+API v1 stores a policy's parameter values against the parameters of
 the catalog version it was saved on, each from a start date until an end
 date, or with no end date indefinitely. A calculation on any catalog version
 applies them by parameter name, as ``{parameter name: {period: value}}``, the
-shape of the Public API's policy JSON that the household functions' contract
+shape of API v1's policy JSON that the household functions' contract
 and the economy requests take. A dynamic's values are stored and read the same
 way. A simulation applies its policy's and its dynamic's values together, and
 is refused when both set the same parameter (``combine_reforms``).
@@ -61,11 +61,11 @@ type ReformSource = Literal["policy", "dynamic"]
 
 
 class UnknownPolicyError(LookupError):
-    """The Public API has no such policy in the country."""
+    """API v1 has no such policy in the country."""
 
 
 class UnknownDynamicError(LookupError):
-    """The Public API has no such dynamic."""
+    """API v1 has no such dynamic."""
 
 
 class MissingPolicyParametersError(ValueError):

@@ -34,7 +34,7 @@ re-run takes no lock.
 
 A forced re-run (C1 · 24's answer 3) is an extra run instead: its report
 run, or each year's report run of a budget window, and the simulation runs
-it calculates are marked ``forced``, which the Public API's one-unfailed-run
+it calculates are marked ``forced``, which API v1's one-unfailed-run
 indexes leave out, so it is created beside any run on the same versions,
 even one under way, and nothing ever joins it.
 
@@ -268,7 +268,7 @@ def lock_reruns_of(session: Session, record_id: UUID) -> None:
     any role may take: a second re-run of the same report waits here until
     the first one's transaction ends, then sees its run, which an economy
     or household report's re-run, or a budget window's, joins. A
-    simulation's re-run takes none, as the Public API's index on runs
+    simulation's re-run takes none, as API v1's index on runs
     lets one joinable run exist, and neither does a forced re-run, which
     nothing joins.
     """

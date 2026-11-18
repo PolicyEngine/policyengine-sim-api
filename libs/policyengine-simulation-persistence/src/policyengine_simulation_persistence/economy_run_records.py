@@ -2,7 +2,7 @@
 
 An economy report compares a baseline and a reform simulation of one
 region's data for one year. The service reads the catalog rows a request
-names from the Public API's tables (``read_model_id``, ``read_region``,
+names from API v1's tables (``read_model_id``, ``read_region``,
 ``read_dataset``), then finds or creates, by definition key, each
 simulation, the report and their runs (``keyed_economy_records``). A run
 it creates is ``pending`` with no Modal call ID; this module builds and
@@ -73,7 +73,7 @@ type RunModel = type[SimulationRun | ReportRun]
 
 # PostgreSQL's SQLSTATE for a row naming one that does not exist.
 FOREIGN_KEY_VIOLATION: Final = "23503"
-# A report's type, as the Public API reads it.
+# A report's type, as API v1 reads it.
 ECONOMY_REPORT_TYPE: Final = "economy"
 # Both run tables' statuses use these values.
 _PENDING: Final = SimulationStatus.PENDING.value
@@ -199,7 +199,7 @@ def read_local_area_dataset(
     """Return the catalog version's local-area dataset, or None when it has none.
 
     It is the one default dataset every constituency and local-authority
-    region of the version uses. The Public API's catalog lists those regions
+    region of the version uses. API v1's catalog lists those regions
     only when the .py release routes them to a dataset of their own, and
     gives them that dataset, so a version with no such regions, with only
     one of the two types, or with a dataset for each type has none: its

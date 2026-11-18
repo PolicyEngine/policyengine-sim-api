@@ -15,8 +15,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy.exc import SQLAlchemyError
-
 from policyengine_simulation_persistence.economy_inputs import (
     BudgetWindowInputs,
     EconomyCatalogRows,
@@ -53,7 +51,6 @@ from policyengine_simulation_persistence.economy_run_records import (
     record_report_run_call,
     record_simulation_run_call,
 )
-from policyengine_simulation_persistence.engine import bounded_session
 from policyengine_simulation_persistence.keyed_economy_records import (
     find_or_create_economy_report,
     find_or_create_economy_simulation,
@@ -61,10 +58,15 @@ from policyengine_simulation_persistence.keyed_economy_records import (
 from policyengine_simulation_persistence.keyed_window_records import (
     find_or_create_budget_window,
 )
+from policyengine_simulation_persistence.store_transactions import (
+    EconomyRecordOutcomeUnknownError,
+    TransactionFactory,
+    bounded_transactions,
+    create_in_transaction,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-    from contextlib import AbstractContextManager
     from uuid import UUID
 
     from sqlalchemy.orm import Session, sessionmaker
@@ -100,16 +102,6 @@ if TYPE_CHECKING:
         SimulationStatus,
     )
 
-type TransactionFactory = Callable[[], AbstractContextManager[Session]]
-
-
-class EconomyRecordOutcomeUnknownError(RuntimeError):
-    """A create's statements ran, but its commit failed: the rows may exist.
-
-    PostgreSQL may have applied the commit before the connection failed, so
-    the caller must not answer that nothing was created.
-    """
-
 
 class EconomyRunStore:
     """Read and write economy simulations and reports, each in its own transaction."""
@@ -126,14 +118,12 @@ class EconomyRunStore:
         statement_timeout_milliseconds: int,
     ) -> EconomyRunStore:
         """Use ``session_factory``, bounding each statement to the given time."""
-
-        def transaction() -> AbstractContextManager[Session]:
-            return bounded_session(
+        return cls(
+            bounded_transactions(
                 session_factory,
                 statement_timeout_milliseconds=statement_timeout_milliseconds,
             )
-
-        return cls(transaction)
+        )
 
     def read_simulation_inputs(
         self, request: EconomyRequest, choice: SimulationChoice
@@ -309,25 +299,12 @@ class EconomyRunStore:
         )
 
     def _create[Created](self, insert: Callable[[Session], Created]) -> Created:
-        """Run ``insert`` in a session, telling a failed commit apart.
-
-        Return what ``insert`` returns. Each of its writes is a statement that
-        has run by the time it returns, so the commit has nothing to flush. An
-        error from ``insert`` leaves nothing written and propagates. An error
-        once it has run is the commit's, after which the rows may exist:
-        EconomyRecordOutcomeUnknownError.
-        """
-        inserted = False
-        try:
-            with self._transaction() as session:
-                created = insert(session)
-                inserted = True
-        except SQLAlchemyError as error:
-            if not inserted:
-                raise
-            msg = "the create's commit failed after its rows were inserted"
-            raise EconomyRecordOutcomeUnknownError(msg) from error
-        return created
+        """Run ``insert`` in a session, telling a failed commit apart."""
+        return create_in_transaction(
+            self._transaction,
+            insert,
+            commit_failure="the create's commit failed after its rows were inserted",
+        )
 
     def record_report_call(
         self, report_run_id: UUID, modal_call_id: str
