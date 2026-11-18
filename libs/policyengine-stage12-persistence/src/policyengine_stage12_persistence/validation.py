@@ -393,6 +393,9 @@ def validate_runtime_database(
     try:
         with session_factory() as session:
             _validate_permissions(session, expected_role=expected_role)
+            # Ending the transaction releases the session's connection: the
+            # inspector opens its own, and a session pooler may have one slot.
+            session.rollback()
             live_schema = inspect_live_schema(session_factory)
             _validate_table_schema(
                 live_schema,
@@ -409,7 +412,6 @@ def validate_runtime_database(
                 check_constraints=SIMULATION_CHECK_CONSTRAINTS,
             )
             _validate_foreign_key(live_schema)
-            session.rollback()
             try:
                 _exercise_runtime_dml(session, environment=environment)
             finally:
