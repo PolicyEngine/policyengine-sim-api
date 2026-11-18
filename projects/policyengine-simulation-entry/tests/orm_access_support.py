@@ -38,15 +38,17 @@ apply only in modules that import sqlalchemy: any ``.table`` read,
 and the ``.connect()``, ``.connection()``, ``.raw_connection()``,
 ``.get_bind()``, ``.begin()``, ``.cursor()`` and ``.exec_driver_sql()`` calls.
 The checks guard against ordinary Core use, not against deliberate evasion.
-They don't follow imports made through ``importlib`` or ``__import__``, tables
-or engines passed around without a ``Table`` or ``Engine`` annotation, a
+They don't follow imports made through ``importlib`` or ``__import__``, tables,
+engines or connections passed around without a ``Table``, ``Engine`` or
+``Connection`` annotation, so a statement on mapped classes run through such a
+connection isn't reported, a
 ``.table`` read in a module that doesn't import sqlalchemy, tables held in a
 container such as a dict, a class or instance attribute read in another
 module (unless it is a ``.table`` read, or its name matches one of the reading
 module's own table attributes), or a Session's ``bind`` attribute. A name counts
 as a Core table throughout its module once it is assigned an expression rooted
 at one. Other names that come to hold a table aren't followed: one assigned
-``alias(table)``, a conditional expression, ``Model.id.table``,
+``alias(table)``, a conditional or boolean expression, ``Model.id.table``,
 ``metadata.tables[...]`` or ``inspect(Model).selectable``, a ``for`` or ``with``
 target, and a comprehension variable. The table reference they start from is
 reported, but their later uses aren't. ``.tables`` of a MetaData isn't reported

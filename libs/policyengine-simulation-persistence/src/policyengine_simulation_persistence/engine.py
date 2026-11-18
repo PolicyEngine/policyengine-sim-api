@@ -86,9 +86,11 @@ def create_unpooled_engine(database_url: str) -> Engine:
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     """Return the factory of ORM sessions on ``engine``.
 
-    Objects stay readable after their transaction commits, so a function can
-    return what it wrote once its session has closed. Run a transaction as
-    ``with session_factory.begin() as session:``.
+    Attributes keep their values after the transaction commits, so a function
+    can return what it wrote once its session has closed. An attribute set to a
+    SQL expression, such as ``func.now()``, is the exception: only the database
+    knows its value, so refresh the object before the session closes. Run a
+    transaction as ``with session_factory.begin() as session:``.
     """
     return sessionmaker(engine, expire_on_commit=False)
 

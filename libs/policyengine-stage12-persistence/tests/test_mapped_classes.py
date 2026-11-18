@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect as python_inspect
 import os
+from datetime import UTC, datetime, timedelta
 from types import NoneType, UnionType
 from typing import Union, get_args, get_origin
 from uuid import uuid4
@@ -124,14 +125,18 @@ def test_the_columns_the_database_fills_are_marked_as_such(table, column_names) 
 def test_a_session_insert_leaves_the_tables_defaults_to_the_database() -> None:
     worker_database_url()
     report_id = uuid4()
+    # The tables require retention to end after the database's created_at.
+    retention_expires_at = datetime.now(UTC) + timedelta(days=30)
     report_values = {
         **_report().model_dump(exclude=REPORT_DATABASE_DEFAULTS),
         "evaluation_id": report_id,
+        "retention_expires_at": retention_expires_at,
     }
     simulation_values = {
         **_simulation().model_dump(exclude=SIMULATION_DATABASE_DEFAULTS),
         "simulation_execution_id": uuid4(),
         "evaluation_id": report_id,
+        "retention_expires_at": retention_expires_at,
     }
     report = ComparisonReport(**report_values)
     simulation = ComparisonSimulation(**simulation_values)

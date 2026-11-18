@@ -55,7 +55,9 @@ What the ORM means here:
   session:`, or as `with bounded_session(session_factory,
   statement_timeout_milliseconds=...) as session:` to limit its statements.
   The classes declare no relationships, so a flush doesn't order inserts by
-  foreign key: flush the referenced row first.
+  foreign key: flush the referenced row first. An attribute set to a SQL
+  expression, such as `func.now()`, must be refreshed before the session closes
+  if it will be read afterwards.
 - **Statements** name mapped classes or their attributes: `session.get`,
   `session.add`, `session.scalars(select(Model))`, and ORM-enabled
   `update(Model)`, `insert(Model)` or
@@ -140,15 +142,16 @@ modules that import sqlalchemy: any `.table` read, and the `.connect()`,
 and `.exec_driver_sql()` calls.
 
 The checks read source, not types, and guard against ordinary Core use, not
-against deliberate evasion. They miss imports through `importlib`, tables and
-engines passed around without a `Table` or `Engine` annotation, tables held in
-a container
+against deliberate evasion. They miss imports through `importlib`; tables,
+engines and connections passed around without a `Table`, `Engine` or
+`Connection` annotation, so a statement on mapped classes run through such a
+connection isn't reported; tables held in a container
 such as a dict, a class or instance attribute read in another module (other
 than the reads above), a `.table` read in a module that doesn't import
 sqlalchemy, and a Session's `bind` attribute. A name counts as a Core table
 throughout its module once it is assigned an expression rooted at one. Other
 names that come to hold a table aren't followed: one assigned `alias(table)`, a
-conditional expression, `Model.id.table`, `metadata.tables[...]` or
+conditional or boolean expression, `Model.id.table`, `metadata.tables[...]` or
 `inspect(Model).selectable`, a `for` or `with` target, and a comprehension
 variable. The table reference they start from is reported, but their later uses
 aren't. `.tables` of a `MetaData` isn't reported when the name holding it

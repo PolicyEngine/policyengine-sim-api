@@ -14,6 +14,7 @@ from typing import ClassVar
 from sqlalchemy import (
     JSON,
     DateTime,
+    FetchedValue,
     ForeignKey,
     Index,
     Integer,
@@ -134,7 +135,11 @@ class ComparisonReport(ComparisonBase):
     aggregate_output_uri: Mapped[str | None] = mapped_column(String(2048))
     aggregate_output_sha256: Mapped[str | None] = mapped_column(String(64))
     aggregate_schema_version: Mapped[int | None] = mapped_column(Integer)
-    comparison_status: Mapped[str] = mapped_column(result_comparison_status_type)
+    # This and the two timestamps below have defaults in API v1's table, which
+    # a session leaves to the database when they aren't set.
+    comparison_status: Mapped[str] = mapped_column(
+        result_comparison_status_type, server_default=FetchedValue()
+    )
     comparison_output_uri: Mapped[str | None] = mapped_column(String(2048))
     comparison_output_sha256: Mapped[str | None] = mapped_column(String(64))
     comparison_schema_version: Mapped[int | None] = mapped_column(Integer)
@@ -143,8 +148,12 @@ class ComparisonReport(ComparisonBase):
     )
     comparison_error_code: Mapped[str | None] = mapped_column(String(64))
     comparison_error_summary: Mapped[str | None] = mapped_column(String(512))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=FetchedValue()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=FetchedValue()
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     retention_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -204,8 +213,13 @@ class ComparisonSimulation(ComparisonBase):
     )
     row_count: Mapped[int | None] = mapped_column(Integer)
     row_identity_sha256: Mapped[str | None] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Both have defaults in API v1's table.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=FetchedValue()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=FetchedValue()
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     retention_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

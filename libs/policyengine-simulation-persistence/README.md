@@ -32,9 +32,11 @@ calculating holds no pooler slot, and it waits 10 seconds to connect. The
 Stage 12 library binds it as `create_stage12_engine`.
 
 `create_session_factory` turns an engine into a `sessionmaker` for the ORM.
-Objects stay readable after their transaction commits. `bounded_session` runs
-one transaction on such a factory with a `statement_timeout` local to it, as
-`bounded_transaction` does for code still on connections. The classes declare
+Attributes keep their values after the transaction commits, apart from one set
+to a SQL expression such as `func.now()`, which must be refreshed before the
+session closes. `bounded_session` runs one transaction on such a factory with a
+`statement_timeout` local to it, as `bounded_transaction` does for code still
+on connections. The classes declare
 no relationships, so a session doesn't order inserts by foreign key: flush a
 referenced row before adding the row that names it.
 
@@ -439,8 +441,9 @@ refuses any other change to a run. The Public API's privilege manifest grants
 them all.
 
 `MODAL_WORKER_TABLE_PRIVILEGES` and `MODAL_WORKER_UPDATABLE_COLUMNS` list what
-the Modal worker role needs: `SELECT` on the four run tables, `INSERT` on
-every result table, and `UPDATE` of each run's state (`status`,
+the Modal worker role needs: `SELECT` on the four run tables, `SELECT` and
+`INSERT` on every result table, because a session's insert reads the row's
+server defaults back, and `UPDATE` of each run's state (`status`,
 `modal_call_id`, `error_message`, `started_at`, `completed_at` and
 `updated_at`; a budget-window run has no call of its own) and of the results
 its own row holds: a report run's cliff impact, `spm_provenance` and
