@@ -1,4 +1,4 @@
-"""Bounded retry for Stage 12 database connections that could not be opened."""
+"""Bounded retry for Stage 12 database sessions that could not connect."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from policyengine_observability import ObservabilityRuntime
-    from sqlalchemy.engine import Connection
+    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -40,22 +40,23 @@ class RetryTiming:
     choose_delay: Callable[[float, float], float] = random.uniform
 
 
-def open_connection_with_retry(
-    connect: Callable[[], Connection],
+def open_session_with_retry(
+    open_session: Callable[[], Session],
     *,
     operation_name: str,
     runtime: ObservabilityRuntime | None = None,
     timing: RetryTiming | None = None,
-) -> Connection:
-    """Open a Stage 12 database connection, retrying while it is refused.
+) -> Session:
+    """Open a Stage 12 database session, retrying while it cannot connect.
 
-    The persistence store passes only its connect step here. Failing that step
-    means no connection opened and no statement reached the database, so
-    opening it again cannot duplicate a write. The store runs the operation's
-    statements and its COMMIT or ROLLBACK after this returns; their failures,
-    including a COMMIT whose reply was lost, propagate without a retry.
-    Errors other than ``OperationalError`` propagate immediately, and retries
-    stop once the retry budget is spent.
+    The persistence store passes only its opening step here: a new session
+    connecting with one statement that changes nothing. Failing that step means
+    none of the operation's statements reached the database, so opening another
+    session cannot duplicate a write. The store runs the operation's statements
+    and its COMMIT or ROLLBACK after this returns; their failures, including a
+    COMMIT whose reply was lost, propagate without a retry. Errors other than
+    ``OperationalError`` propagate immediately, and retries stop once the retry
+    budget is spent.
     """
     timing = timing or RetryTiming()
     started = timing.monotonic()
@@ -63,7 +64,7 @@ def open_connection_with_retry(
     delay_ceiling = INITIAL_RETRY_DELAY_SECONDS
     while True:
         try:
-            return connect()
+            return open_session()
         except OperationalError as error:
             remaining_budget = CONNECTION_RETRY_BUDGET_SECONDS - (
                 timing.monotonic() - started

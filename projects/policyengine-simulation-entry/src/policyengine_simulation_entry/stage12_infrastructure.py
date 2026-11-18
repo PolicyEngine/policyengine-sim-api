@@ -7,7 +7,7 @@ from pathlib import Path
 
 from policyengine_stage12_persistence import (
     Stage12RuntimeAccessError,
-    create_stage12_engine,
+    create_stage12_session_factory,
     validate_runtime_database,
 )
 
@@ -30,7 +30,7 @@ def main() -> None:
     database_url = args.database_url_file.read_text(encoding="utf-8").strip()
     try:
         validate_runtime_database(
-            create_stage12_engine(database_url),
+            create_stage12_session_factory(database_url),
             expected_role=args.expected_role,
             environment=args.environment,
         )

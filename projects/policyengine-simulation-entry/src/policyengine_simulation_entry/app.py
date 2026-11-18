@@ -41,7 +41,11 @@ from policyengine_simulation_observability.identifiers import (
 from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
-from policyengine_simulation_persistence import EconomyRunStore, HouseholdJobStore
+from policyengine_simulation_persistence import (
+    EconomyRunStore,
+    HouseholdJobStore,
+    create_session_factory,
+)
 from policyengine_stage12_persistence import BudgetWindowStore
 from starlette.datastructures import MutableHeaders
 
@@ -586,7 +590,9 @@ def economy_submissions_for(
     return EconomyRerunService(
         household_reports=household_reports,
         # The service starts a budget window's first years as its own role.
-        windows=BudgetWindowStore(engine=database.engine),
+        windows=BudgetWindowStore(
+            session_factory=create_session_factory(database.engine)
+        ),
         store=EconomyRunStore.from_engine(
             database.engine,
             statement_timeout_milliseconds=ECONOMY_STATEMENT_TIMEOUT_MILLISECONDS,

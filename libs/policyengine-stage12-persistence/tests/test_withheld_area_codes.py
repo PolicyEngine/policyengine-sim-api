@@ -12,10 +12,8 @@ from economy_output import (
 )
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
-from policyengine_stage12_persistence.report_run_results import (
-    report_run_result,
-    withheld_area_codes,
-)
+from policyengine_simulation_persistence.result_tables import WithheldAreaCode
+from policyengine_stage12_persistence.report_run_results import report_run_result
 
 RUN_IDS = ReportRunIds(
     report_run_id=UUID("00000000-0000-0000-0000-00000000000a"),
@@ -31,7 +29,7 @@ RUN_KEYS = {
 
 def _withheld_rows(output: dict[str, Any]) -> list[dict[str, Any]]:
     result = report_run_result(output, run_ids=RUN_IDS, country="uk")
-    (rows,) = [rows for rows in result.rows if rows.table is withheld_area_codes]
+    (rows,) = [rows for rows in result.rows if rows.model is WithheldAreaCode]
     assert rows.shared_by_reports is False
     return [
         {name: value for name, value in row.items() if name != "id"}
@@ -55,7 +53,7 @@ def test_withheld_rows_have_their_own_ids() -> None:
     }
     result = report_run_result(output, run_ids=RUN_IDS, country="uk")
 
-    (rows,) = [rows for rows in result.rows if rows.table is withheld_area_codes]
+    (rows,) = [rows for rows in result.rows if rows.model is WithheldAreaCode]
     assert len({row["id"] for row in rows.rows}) == 2
 
 

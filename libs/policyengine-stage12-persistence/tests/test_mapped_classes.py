@@ -16,8 +16,6 @@ from policyengine_stage12_persistence.tables import (
     SIMULATION_TABLE_NAME,
     ComparisonReport,
     ComparisonSimulation,
-    comparison_reports,
-    comparison_simulations,
     metadata,
 )
 from report_run_database import SEED_URL_ENV, worker_database_url
@@ -29,14 +27,14 @@ from test_store import _report, _simulation
 MAPPED_CLASSES = [
     pytest.param(
         ComparisonReport,
-        comparison_reports,
+        ComparisonReport.__table__,
         REPORT_TABLE_NAME,
         "evaluation_id",
         id="report",
     ),
     pytest.param(
         ComparisonSimulation,
-        comparison_simulations,
+        ComparisonSimulation.__table__,
         SIMULATION_TABLE_NAME,
         "simulation_execution_id",
         id="simulation",
@@ -106,9 +104,11 @@ def test_a_statement_on_a_class_names_its_table_in_the_public_schema() -> None:
 @pytest.mark.parametrize(
     ("table", "column_names"),
     [
-        pytest.param(comparison_reports, REPORT_DATABASE_DEFAULTS, id="report"),
+        pytest.param(ComparisonReport.__table__, REPORT_DATABASE_DEFAULTS, id="report"),
         pytest.param(
-            comparison_simulations, SIMULATION_DATABASE_DEFAULTS, id="simulation"
+            ComparisonSimulation.__table__,
+            SIMULATION_DATABASE_DEFAULTS,
+            id="simulation",
         ),
     ],
 )

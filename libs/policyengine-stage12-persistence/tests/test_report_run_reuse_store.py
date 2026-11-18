@@ -28,11 +28,7 @@ OUTPUT_SHA256 = "d" * 64
 
 @pytest.fixture
 def store():
-    run_store = ReportRunStore(worker_database_url())
-    try:
-        yield run_store
-    finally:
-        run_store.engine.dispose()
+    return ReportRunStore(worker_database_url())
 
 
 def _regions(seeder) -> Table:

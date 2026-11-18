@@ -20,18 +20,18 @@ from uuid import uuid4
 
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
 from policyengine_simulation_persistence.result_tables import (
-    budget_summary,
-    congressional_district_impacts,
-    constituency_impacts,
-    decile_impacts,
-    inequality,
-    intra_decile_impacts,
-    labor_supply_decile_responses,
-    labor_supply_responses,
-    local_authority_impacts,
-    poverty,
-    program_statistics,
-    withheld_area_codes,
+    BudgetSummary,
+    CongressionalDistrictImpact,
+    ConstituencyImpact,
+    DecileImpact,
+    Inequality,
+    IntraDecileImpact,
+    LaborSupplyDecileResponse,
+    LaborSupplyResponse,
+    LocalAuthorityImpact,
+    Poverty,
+    ProgramStatistics,
+    WithheldAreaCode,
 )
 
 if TYPE_CHECKING:
@@ -50,7 +50,7 @@ if TYPE_CHECKING:
         RacePovertyOutput,
     )
     from policyengine_simulation_contract.stage12_execution import ReportRunIds
-    from sqlalchemy import Table
+    from policyengine_simulation_persistence.orm_base import ResultBase
 
 # The household variable each headline budget figure totals, and the column
 # its figure goes in. ``budgetary_impact`` is tax minus benefits, as the
@@ -119,13 +119,13 @@ class DistrictCodes:
 
 @dataclass(frozen=True)
 class ResultRows:
-    """The rows one result table receives.
+    """The rows one result table receives, and that table's mapped class.
 
     Rows ``shared_by_reports`` belong to a simulation run, which other report
     runs may share; a row such a run already holds is kept as stored.
     """
 
-    table: Table
+    model: type[ResultBase]
     rows: tuple[dict[str, Any], ...]
     shared_by_reports: bool
 
@@ -170,64 +170,64 @@ def report_run_result(
         report_run_columns=_report_run_columns(economy),
         rows=(
             ResultRows(
-                labor_supply_responses,
+                LaborSupplyResponse,
                 _labor_supply_rows(economy, report_run_key),
                 shared_by_reports=False,
             ),
             ResultRows(
-                labor_supply_decile_responses,
+                LaborSupplyDecileResponse,
                 _labor_supply_decile_rows(economy, report_run_key),
                 shared_by_reports=False,
             ),
             ResultRows(
-                budget_summary,
+                BudgetSummary,
                 _budget_rows(economy, report_keys, country),
                 shared_by_reports=False,
             ),
             ResultRows(
-                decile_impacts,
+                DecileImpact,
                 _decile_rows(economy, report_keys),
                 shared_by_reports=False,
             ),
             ResultRows(
-                intra_decile_impacts,
+                IntraDecileImpact,
                 _intra_decile_rows(economy, report_keys),
                 shared_by_reports=False,
             ),
             ResultRows(
-                poverty,
+                Poverty,
                 _poverty_rows(economy, run_ids, country),
                 shared_by_reports=True,
             ),
             ResultRows(
-                inequality,
+                Inequality,
                 _inequality_rows(economy, run_ids, country),
                 shared_by_reports=True,
             ),
             ResultRows(
-                program_statistics,
+                ProgramStatistics,
                 _program_rows(economy, report_keys),
                 shared_by_reports=False,
             ),
             ResultRows(
-                congressional_district_impacts,
+                CongressionalDistrictImpact,
                 _district_rows(economy, report_keys, district_codes),
                 shared_by_reports=False,
             ),
             ResultRows(
-                constituency_impacts,
+                ConstituencyImpact,
                 _area_rows(economy.constituency_impact, report_keys, "constituency"),
                 shared_by_reports=False,
             ),
             ResultRows(
-                local_authority_impacts,
+                LocalAuthorityImpact,
                 _area_rows(
                     economy.local_authority_impact, report_keys, "local_authority"
                 ),
                 shared_by_reports=False,
             ),
             ResultRows(
-                withheld_area_codes,
+                WithheldAreaCode,
                 _withheld_rows(economy, report_keys),
                 shared_by_reports=False,
             ),

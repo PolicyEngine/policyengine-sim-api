@@ -34,11 +34,7 @@ EXCEEDED_AGE_MESSAGE = "run_exceeded_maximum_age: too old"
 
 @pytest.fixture
 def store():
-    run_store = ReportRunStore(worker_database_url())
-    try:
-        yield run_store
-    finally:
-        run_store.engine.dispose()
+    return ReportRunStore(worker_database_url())
 
 
 def _listed(store, run_id, **options):
