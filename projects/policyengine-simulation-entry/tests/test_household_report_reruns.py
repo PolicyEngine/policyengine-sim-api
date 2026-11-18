@@ -51,6 +51,7 @@ from policyengine_simulation_entry.household_report_api_models import (
     HouseholdReportCreated,
 )
 from policyengine_simulation_entry.household_report_reruns import (
+    STATEMENT_TIMEOUT_MILLISECONDS,
     HouseholdReportRerunService,
 )
 from policyengine_simulation_entry.household_workers import (
@@ -61,6 +62,7 @@ from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
     FoundReportRun,
+    HouseholdReportStore,
     HouseholdRerunSide,
     MissingPolicyParametersError,
     NewHouseholdReportRerun,
@@ -564,6 +566,31 @@ def test_the_app_reruns_household_reports_through_its_household_report_service(
     )
 
     assert builders_given == [{"household_reports": household_reports}]
+
+
+def test_the_household_report_store_runs_in_sessions_on_the_service_database(
+    monkeypatch,
+) -> None:
+    """Each operation is a session on the database's engine, with the same limit."""
+    stores_built: list[tuple[object, int]] = []
+
+    def build_store(session_factory, *, statement_timeout_milliseconds):
+        stores_built.append((session_factory, statement_timeout_milliseconds))
+        return object()
+
+    monkeypatch.setattr(HouseholdReportStore, "from_session_factory", build_store)
+    database = SimulationDatabase.from_url(DATABASE_URL)
+    try:
+        app_module.household_reports_for(
+            make_settings(
+                simulation_database_url=DATABASE_URL, v2_modal_environment="staging"
+            ),
+            database,
+        )
+    finally:
+        database.dispose()
+
+    assert stores_built == [(database.session_factory, STATEMENT_TIMEOUT_MILLISECONDS)]
 
 
 def test_a_configured_service_builds_a_household_report_service_that_reruns() -> None:

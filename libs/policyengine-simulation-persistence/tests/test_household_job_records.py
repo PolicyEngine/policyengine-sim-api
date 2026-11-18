@@ -1,8 +1,8 @@
 """The simulation service's reads and writes for a household calculation.
 
-These run against a database the Public API's own v2 migration chain built
+These run against a database API v1's own v2 migration chain built
 (``PUBLIC_API_SCHEMA_DATABASE_URL``), as the simulation service's role, each
-in a transaction rolled back afterwards. The Public API's rows a job names are
+in a transaction rolled back afterwards. API v1's rows a job names are
 inserted first, as the superuser.
 """
 
@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import act_as_the_service, in_session, rolled_back_transaction
 from policyengine_simulation_persistence import (
     HouseholdJobReferenceError,
     HouseholdJobStatus,
@@ -102,14 +102,20 @@ def test_a_catalog_version_is_found_by_country_and_policyengine_version(
         act_as_the_service(connection)
 
         assert (
-            read_catalog_version_id(
-                connection, country="us", policyengine_version=POLICYENGINE_VERSION
+            in_session(
+                connection,
+                read_catalog_version_id,
+                country="us",
+                policyengine_version=POLICYENGINE_VERSION,
             )
             == catalog.version_id
         )
         assert (
-            read_catalog_version_id(
-                connection, country="us", policyengine_version="6.16.1"
+            in_session(
+                connection,
+                read_catalog_version_id,
+                country="us",
+                policyengine_version="6.16.1",
             )
             is None
         )
@@ -122,15 +128,22 @@ def test_a_household_is_found_in_its_own_country_only(public_api_database_url) -
         )
         act_as_the_service(connection)
 
-        stored = read_stored_household(
-            connection, country="us", household_id=household_id
+        stored = in_session(
+            connection, read_stored_household, country="us", household_id=household_id
         )
         assert (
-            read_stored_household(connection, country="uk", household_id=household_id)
+            in_session(
+                connection,
+                read_stored_household,
+                country="uk",
+                household_id=household_id,
+            )
             is None
         )
         assert (
-            read_stored_household(connection, country="us", household_id=uuid4())
+            in_session(
+                connection, read_stored_household, country="us", household_id=uuid4()
+            )
             is None
         )
 
@@ -148,8 +161,8 @@ def test_a_job_is_created_pending_with_no_call(public_api_database_url) -> None:
         new_job = _stored_job(connection)
         act_as_the_service(connection)
 
-        insert_household_job(connection, new_job)
-        job = read_household_job(connection, new_job.id)
+        in_session(connection, insert_household_job, new_job)
+        job = in_session(connection, read_household_job, new_job.id)
         dynamic_id = connection.execute(
             text("SELECT dynamic_id FROM public.household_jobs WHERE id = :id"),
             {"id": new_job.id},
@@ -192,7 +205,7 @@ def test_an_unknown_job_reads_as_none(public_api_database_url) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:
         act_as_the_service(connection)
 
-        assert read_household_job(connection, uuid4()) is None
+        assert in_session(connection, read_household_job, uuid4()) is None
 
 
 def test_a_call_is_recorded_once_while_the_job_is_pending_without_one(
@@ -201,15 +214,21 @@ def test_a_call_is_recorded_once_while_the_job_is_pending_without_one(
     with rolled_back_transaction(public_api_database_url) as connection:
         new_job = _stored_job(connection)
         act_as_the_service(connection)
-        insert_household_job(connection, new_job)
+        in_session(connection, insert_household_job, new_job)
 
-        first = record_household_call(
-            connection, job_id=new_job.id, modal_call_id="fc-first"
+        first = in_session(
+            connection,
+            record_household_call,
+            job_id=new_job.id,
+            modal_call_id="fc-first",
         )
-        second = record_household_call(
-            connection, job_id=new_job.id, modal_call_id="fc-second"
+        second = in_session(
+            connection,
+            record_household_call,
+            job_id=new_job.id,
+            modal_call_id="fc-second",
         )
-        job = read_household_job(connection, new_job.id)
+        job = in_session(connection, read_household_job, new_job.id)
 
     assert (first, second) == (HouseholdJobStatus.PENDING, HouseholdJobStatus.PENDING)
     assert job is not None
@@ -223,7 +242,7 @@ def test_a_job_the_function_already_claimed_keeps_its_claim(
     with rolled_back_transaction(public_api_database_url) as connection:
         new_job = _stored_job(connection)
         act_as_the_service(connection)
-        insert_household_job(connection, new_job)
+        in_session(connection, insert_household_job, new_job)
         connection.execute(text("RESET ROLE"))
         connection.execute(
             update(household_jobs)
@@ -232,13 +251,19 @@ def test_a_job_the_function_already_claimed_keeps_its_claim(
         )
         act_as_the_service(connection)
 
-        status = record_household_call(
-            connection, job_id=new_job.id, modal_call_id="fc-claimed"
+        status = in_session(
+            connection,
+            record_household_call,
+            job_id=new_job.id,
+            modal_call_id="fc-claimed",
         )
-        failed = fail_unstarted_household_job(
-            connection, job_id=new_job.id, error_message="Modal refused the call."
+        failed = in_session(
+            connection,
+            fail_unstarted_household_job,
+            job_id=new_job.id,
+            error_message="Modal refused the call.",
         )
-        job = read_household_job(connection, new_job.id)
+        job = in_session(connection, read_household_job, new_job.id)
 
     assert status is HouseholdJobStatus.RUNNING
     assert failed is False
@@ -254,15 +279,21 @@ def test_a_job_whose_call_was_refused_fails_at_once(public_api_database_url) -> 
     with rolled_back_transaction(public_api_database_url) as connection:
         new_job = _stored_job(connection)
         act_as_the_service(connection)
-        insert_household_job(connection, new_job)
+        in_session(connection, insert_household_job, new_job)
 
-        failed = fail_unstarted_household_job(
-            connection, job_id=new_job.id, error_message="Modal refused the call."
+        failed = in_session(
+            connection,
+            fail_unstarted_household_job,
+            job_id=new_job.id,
+            error_message="Modal refused the call.",
         )
-        failed_again = fail_unstarted_household_job(
-            connection, job_id=new_job.id, error_message="A second refusal."
+        failed_again = in_session(
+            connection,
+            fail_unstarted_household_job,
+            job_id=new_job.id,
+            error_message="A second refusal.",
         )
-        job = read_household_job(connection, new_job.id)
+        job = in_session(connection, read_household_job, new_job.id)
 
     assert (failed, failed_again) == (True, False)
     assert job is not None
@@ -278,13 +309,18 @@ def test_a_job_whose_call_was_recorded_is_not_failed_as_refused(
     with rolled_back_transaction(public_api_database_url) as connection:
         new_job = _stored_job(connection)
         act_as_the_service(connection)
-        insert_household_job(connection, new_job)
-        record_household_call(connection, job_id=new_job.id, modal_call_id="fc-1")
-
-        failed = fail_unstarted_household_job(
-            connection, job_id=new_job.id, error_message="Modal refused the call."
+        in_session(connection, insert_household_job, new_job)
+        in_session(
+            connection, record_household_call, job_id=new_job.id, modal_call_id="fc-1"
         )
-        job = read_household_job(connection, new_job.id)
+
+        failed = in_session(
+            connection,
+            fail_unstarted_household_job,
+            job_id=new_job.id,
+            error_message="Modal refused the call.",
+        )
+        job = in_session(connection, read_household_job, new_job.id)
 
     assert failed is False
     assert job is not None
@@ -304,10 +340,7 @@ def test_a_job_naming_a_row_that_does_not_exist_names_its_column(
         new_job = replace(stored, **{missing_column: uuid4()})
         act_as_the_service(connection)
 
-        with (
-            pytest.raises(HouseholdJobReferenceError) as raised,
-            connection.begin_nested(),
-        ):
-            insert_household_job(connection, new_job)
+        with pytest.raises(HouseholdJobReferenceError) as raised:
+            in_session(connection, insert_household_job, new_job)
 
     assert raised.value.column_name == missing_column

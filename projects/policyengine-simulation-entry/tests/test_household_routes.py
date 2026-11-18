@@ -401,6 +401,39 @@ def test_a_job_id_that_is_not_a_uuid_is_refused(client_for):
 DATABASE_URL = "postgresql://simulation_service:secret@db.example:5432/postgres"
 
 
+def test_the_household_store_runs_in_sessions_on_the_service_database(monkeypatch):
+    """Each operation is a session on the database's engine, with the same limit."""
+    stores_built: list[tuple[object, int]] = []
+
+    def build_store(session_factory, *, statement_timeout_milliseconds):
+        stores_built.append((session_factory, statement_timeout_milliseconds))
+        return object()
+
+    monkeypatch.setattr(
+        app_module.HouseholdJobStore, "from_session_factory", build_store
+    )
+    database = SimulationDatabase.from_url(DATABASE_URL)
+    try:
+        app_module.household_calculations_for(
+            make_settings(
+                simulation_database_url=DATABASE_URL, v2_modal_environment="staging"
+            ),
+            database,
+        )
+        with database.session_factory() as session:
+            session_engine = session.get_bind()
+    finally:
+        database.dispose()
+
+    assert stores_built == [
+        (
+            database.session_factory,
+            app_module.HOUSEHOLD_STATEMENT_TIMEOUT_MILLISECONDS,
+        )
+    ]
+    assert session_engine is database.engine
+
+
 def test_a_configured_service_builds_household_calculations_without_connecting():
     """Nothing reaches the database or Modal until the first submission."""
     database = SimulationDatabase.from_url(DATABASE_URL)

@@ -29,9 +29,10 @@ from economy_rows import insert_economy_catalog
 from policyengine_simulation_persistence import create_simulation_engine
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, make_url
+from sqlalchemy.orm import Session, sessionmaker
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from economy_rows import EconomyCatalog
     from sqlalchemy import Connection, Engine
@@ -133,6 +134,36 @@ def rolled_back_transaction(database_url: str) -> Iterator[Connection]:
                 transaction.rollback()
     finally:
         engine.dispose()
+
+
+def session_factory_on(connection: Connection) -> sessionmaker[Session]:
+    """Return a factory of sessions inside ``connection``'s transaction.
+
+    Each session's transaction is a savepoint, so its commit releases the
+    savepoint and its rollback returns to it, and the test's own transaction
+    decides what is kept.
+    """
+    return sessionmaker(
+        connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
+    )
+
+
+@contextmanager
+def session_in(connection: Connection) -> Iterator[Session]:
+    """Yield a session in a savepoint of ``connection``'s transaction."""
+    with session_factory_on(connection).begin() as session:
+        yield session
+
+
+def in_session[Result](
+    connection: Connection,
+    operation: Callable[..., Result],
+    *arguments: object,
+    **keywords: object,
+) -> Result:
+    """Run a function that takes a session, in a savepoint of ``connection``."""
+    with session_in(connection) as session:
+        return operation(session, *arguments, **keywords)
 
 
 def act_as_the_service(connection: Connection) -> None:

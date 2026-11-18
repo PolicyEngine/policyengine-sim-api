@@ -4,7 +4,8 @@ The Simulation Entrypoint creates a household job in three steps, each its
 own transaction, with the Modal call started between them: it reads the
 inputs, creates the job, then records the call or fails the job. Later reads
 return the job as it stands. ``HouseholdJobStore`` runs the reads and writes
-of ``household_job_records`` and ``policy_reform`` that way.
+of ``household_job_records`` and ``policy_reform`` that way, each in an ORM
+session of its own.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from policyengine_simulation_persistence.engine import bounded_transaction
+from policyengine_simulation_persistence.engine import bounded_session
 from policyengine_simulation_persistence.household_job_records import (
     fail_unstarted_household_job,
     insert_household_job,
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
     from uuid import UUID
 
-    from sqlalchemy import Connection, Engine
+    from sqlalchemy.orm import Session, sessionmaker
 
     from policyengine_simulation_persistence.household_job_records import (
         HouseholdJobRecord,
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence.policy_reform import PolicyReform
     from policyengine_simulation_persistence.tables import HouseholdJobStatus
 
-type TransactionFactory = Callable[[], AbstractContextManager[Connection]]
+type TransactionFactory = Callable[[], AbstractContextManager[Session]]
 
 
 class UnknownCatalogVersionError(LookupError):
@@ -48,7 +49,7 @@ class UnknownCatalogVersionError(LookupError):
 
 
 class UnknownHouseholdError(LookupError):
-    """The Public API has no such household in the country."""
+    """API v1 has no such household in the country."""
 
 
 @dataclass(frozen=True)
@@ -69,18 +70,22 @@ class HouseholdJobStore:
     """Read and write household jobs, each operation in its own transaction."""
 
     def __init__(self, transaction: TransactionFactory) -> None:
-        """Open each transaction with ``transaction``, which commits on success."""
+        """Open each session with ``transaction``, which commits on success."""
         self._transaction = transaction
 
     @classmethod
-    def from_engine(
-        cls, engine: Engine, *, statement_timeout_milliseconds: int
+    def from_session_factory(
+        cls,
+        session_factory: sessionmaker[Session],
+        *,
+        statement_timeout_milliseconds: int,
     ) -> HouseholdJobStore:
-        """Use ``engine``, bounding each statement to the given time."""
+        """Use ``session_factory``, bounding each statement to the given time."""
 
-        def transaction() -> AbstractContextManager[Connection]:
-            return bounded_transaction(
-                engine, statement_timeout_milliseconds=statement_timeout_milliseconds
+        def transaction() -> AbstractContextManager[Session]:
+            return bounded_session(
+                session_factory,
+                statement_timeout_milliseconds=statement_timeout_milliseconds,
             )
 
         return cls(transaction)
@@ -98,15 +103,15 @@ class HouseholdJobStore:
         Raise UnknownCatalogVersionError, UnknownHouseholdError, or the
         policy reader's UnknownPolicyError or MissingPolicyParametersError.
         """
-        with self._transaction() as connection:
+        with self._transaction() as session:
             catalog_version_id = read_catalog_version_id(
-                connection, country=country, policyengine_version=policyengine_version
+                session, country=country, policyengine_version=policyengine_version
             )
             if catalog_version_id is None:
                 msg = f"{country} has no catalog version for .py {policyengine_version}"
                 raise UnknownCatalogVersionError(msg)
             household = read_stored_household(
-                connection, country=country, household_id=household_id
+                session, country=country, household_id=household_id
             )
             if household is None:
                 msg = f"{country} has no household {household_id}"
@@ -115,7 +120,7 @@ class HouseholdJobStore:
                 {}
                 if policy_id is None
                 else read_policy_reform(
-                    connection,
+                    session,
                     country=country,
                     policy_id=policy_id,
                     catalog_version_id=catalog_version_id,
@@ -128,10 +133,10 @@ class HouseholdJobStore:
     def create_job(self, job: NewHouseholdJob) -> None:
         """Create the job ``pending`` with no call; see ``insert_household_job``.
 
-        An error while the insert runs leaves nothing written and propagates,
-        a refused reference as HouseholdJobReferenceError. An error once it
-        has run is the commit's, after which the job may exist:
-        EconomyRecordOutcomeUnknownError, caused by the commit's error.
+        An error while the row is flushed leaves nothing written and
+        propagates, a refused reference as HouseholdJobReferenceError. An
+        error once it is flushed is the commit's, after which the job may
+        exist: EconomyRecordOutcomeUnknownError, caused by the commit's error.
         """
         from policyengine_simulation_persistence.economy_run_store import (  # noqa: PLC0415  # economy_run_store imports this module at import time
             EconomyRecordOutcomeUnknownError,
@@ -139,8 +144,8 @@ class HouseholdJobStore:
 
         inserted = False
         try:
-            with self._transaction() as connection:
-                insert_household_job(connection, job)
+            with self._transaction() as session:
+                insert_household_job(session, job)
                 inserted = True
         except SQLAlchemyError as error:
             if not inserted:
@@ -152,19 +157,19 @@ class HouseholdJobStore:
         self, job_id: UUID, modal_call_id: str
     ) -> HouseholdJobStatus | None:
         """Record the job's call ID while it is pending with none; return its status."""
-        with self._transaction() as connection:
+        with self._transaction() as session:
             return record_household_call(
-                connection, job_id=job_id, modal_call_id=modal_call_id
+                session, job_id=job_id, modal_call_id=modal_call_id
             )
 
     def fail_unstarted(self, job_id: UUID, error_message: str) -> bool:
         """Fail the job while it is pending with no call ID; return whether it was."""
-        with self._transaction() as connection:
+        with self._transaction() as session:
             return fail_unstarted_household_job(
-                connection, job_id=job_id, error_message=error_message
+                session, job_id=job_id, error_message=error_message
             )
 
     def read(self, job_id: UUID) -> HouseholdJobRecord | None:
         """Return the job as it stands, or None when there is no such job."""
-        with self._transaction() as connection:
-            return read_household_job(connection, job_id)
+        with self._transaction() as session:
+            return read_household_job(session, job_id)

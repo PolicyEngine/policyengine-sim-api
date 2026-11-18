@@ -59,7 +59,7 @@ from policyengine_simulation_persistence.tables import (
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from sqlalchemy import Connection
+    from sqlalchemy.orm import Session
 
     from policyengine_simulation_persistence.definition_keys import (
         HouseholdReportDefinition,
@@ -116,7 +116,7 @@ class FoundHouseholdReport:
 
 
 def find_or_create_household_report(
-    connection: Connection, request: KeyedHouseholdReport
+    session: Session, request: KeyedHouseholdReport
 ) -> FoundHouseholdReport:
     """Find the household report the request names, and its run, or create them.
 
@@ -126,11 +126,11 @@ def find_or_create_household_report(
     transaction, or its savepoint.
     """
     with references_checked():
-        simulation_ids = _find_or_insert_simulations(connection, request)
-        report = find_or_insert_report(connection, _report_row(request, simulation_ids))
+        simulation_ids = _find_or_insert_simulations(session, request)
+        report = find_or_insert_report(session, _report_row(request, simulation_ids))
         versions = request.versions
         joined = find_joinable_report_run(
-            connection,
+            session,
             report_id=report.id,
             country_package_version=versions.country_package_version,
             policyengine_version=versions.policyengine_version,
@@ -138,7 +138,7 @@ def find_or_create_household_report(
         if joined is not None:
             return _found(report.id, report.inserted, joined, simulation_ids, set())
         run, runs = find_or_insert_report_run_on_sides(
-            connection,
+            session,
             _report_run_row(request, report.id),
             {
                 side: household_simulation_run_row(
@@ -156,7 +156,7 @@ def find_or_create_household_report(
 
 
 def _find_or_insert_simulations(
-    connection: Connection, request: KeyedHouseholdReport
+    session: Session, request: KeyedHouseholdReport
 ) -> dict[Side, UUID]:
     """Return each side's simulation ID, found by key or inserted, in key order."""
     definition = request.definition
@@ -168,7 +168,7 @@ def _find_or_insert_simulations(
     for key in sorted(by_key):
         sides = by_key[key]
         found = find_or_insert_simulation(
-            connection,
+            session,
             _simulation_row(request, sides[0], proposed[sides[0]].simulation_id),
         )
         for side in sides:

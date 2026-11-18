@@ -532,8 +532,8 @@ def household_calculations_for(
     ):
         return None
     return HouseholdCalculationService(
-        store=HouseholdJobStore.from_engine(
-            database.engine,
+        store=HouseholdJobStore.from_session_factory(
+            database.session_factory,
             statement_timeout_milliseconds=HOUSEHOLD_STATEMENT_TIMEOUT_MILLISECONDS,
         ),
         workers=ManifestHouseholdWorkers.from_modal(

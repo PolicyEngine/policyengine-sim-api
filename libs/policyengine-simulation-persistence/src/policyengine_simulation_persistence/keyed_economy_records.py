@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy import Connection
+    from sqlalchemy.orm import Session
 
     from policyengine_simulation_persistence.definition_keys import (
         EconomyReportDefinition,
@@ -254,7 +255,7 @@ def _find_or_insert_simulations(
 
 
 def find_or_insert_report_run_on_sides(
-    connection: Connection,
+    connection: Connection | Session,
     report_run_row: Mapping[str, Any],
     side_rows: Mapping[Side, Mapping[str, Any]],
 ) -> tuple[FoundReportRun, dict[Side, FoundSimulationRun]]:
@@ -292,7 +293,7 @@ def find_or_insert_report_run_on_sides(
 
 
 def find_or_insert_side_runs(
-    connection: Connection, side_rows: Mapping[Side, Mapping[str, Any]]
+    connection: Connection | Session, side_rows: Mapping[Side, Mapping[str, Any]]
 ) -> dict[Side, FoundSimulationRun]:
     """Return each side's run of its simulation, found or inserted.
 
