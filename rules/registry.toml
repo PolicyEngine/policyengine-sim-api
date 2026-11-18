@@ -164,7 +164,7 @@ project = "projects/policyengine-simulation-entry"
 test = "tests/test_orm_only.py::test_rule_proof_orm_only"
 [rule.baseline]
 file = "rules/baselines/orm-only.txt"
-count = 566
+count = 335
 [rule.downgrade]
 reason = "Every database module used SQLAlchemy Core when the rule was added. A maintainer chose to start it ratcheted: each conversion removes its baseline entries, and the last one makes the rule enforced."
 issue = 1097

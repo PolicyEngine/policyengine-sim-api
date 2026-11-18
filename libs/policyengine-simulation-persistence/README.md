@@ -157,7 +157,8 @@ runs created for it. `economy_run_reads.py` reads a report, or a simulation,
 with its newest run's state.
 
 `EconomyRunStore` runs them as the Simulation Entrypoint does, each step in
-a transaction of its own: `read_report_inputs` reads the catalog version,
+an ORM session and transaction of its own (`from_session_factory` opens each
+with `bounded_session`): `read_report_inputs` reads the catalog version,
 model, region and dataset, and each side's policy and dynamic values
 together; `read_simulation_inputs` does the same for one simulation, and
 `read_budget_window_inputs` for a budget window's two sides; the writes and

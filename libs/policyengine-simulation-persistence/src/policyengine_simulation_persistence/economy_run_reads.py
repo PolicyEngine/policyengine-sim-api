@@ -2,7 +2,9 @@
 
 The newest run is the one created last, with ties broken by the larger ID,
 whatever its status and versions, as the Public API reads it. The run's
-results are the Public API's to read: these reads give only its state.
+results are API v1's to read: these reads give only its state. Each read
+selects the mapped classes' attributes, so it returns what the database holds
+now, whatever the session has loaded.
 """
 
 from __future__ import annotations
@@ -13,19 +15,20 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from policyengine_simulation_persistence.tables import (
+    Report,
+    ReportRun,
     ReportRunStatus,
+    Simulation,
+    SimulationRun,
     SimulationStatus,
-    report_runs,
-    reports,
-    simulation_runs,
-    simulations,
 )
 
 if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
-    from sqlalchemy import Connection, RowMapping
+    from sqlalchemy import RowMapping
+    from sqlalchemy.orm import Session
 
 
 @dataclass(frozen=True)
@@ -77,36 +80,34 @@ class EconomySimulationState:
     run: SimulationRunState | None
 
 
-def read_economy_report(
-    connection: Connection, report_id: UUID
-) -> EconomyReportState | None:
+def read_economy_report(session: Session, report_id: UUID) -> EconomyReportState | None:
     """Return the report with its newest run, or None when there is no such report."""
-    report = connection.execute(
+    report = session.execute(
         select(
-            reports.c.id,
-            reports.c.country,
-            reports.c.baseline_simulation_id,
-            reports.c.reform_simulation_id,
-        ).where(reports.c.id == report_id)
+            Report.id,
+            Report.country,
+            Report.baseline_simulation_id,
+            Report.reform_simulation_id,
+        ).where(Report.id == report_id)
     ).one_or_none()
     if report is None:
         return None
     run = (
-        connection.execute(
+        session.execute(
             select(
-                report_runs.c.id,
-                report_runs.c.status,
-                report_runs.c.country_package_version,
-                report_runs.c.policyengine_version,
-                report_runs.c.error_message,
-                report_runs.c.created_at,
-                report_runs.c.started_at,
-                report_runs.c.completed_at,
-                report_runs.c.baseline_simulation_run_id,
-                report_runs.c.reform_simulation_run_id,
+                ReportRun.id,
+                ReportRun.status,
+                ReportRun.country_package_version,
+                ReportRun.policyengine_version,
+                ReportRun.error_message,
+                ReportRun.created_at,
+                ReportRun.started_at,
+                ReportRun.completed_at,
+                ReportRun.baseline_simulation_run_id,
+                ReportRun.reform_simulation_run_id,
             )
-            .where(report_runs.c.report_id == report_id)
-            .order_by(report_runs.c.created_at.desc(), report_runs.c.id.desc())
+            .where(ReportRun.report_id == report_id)
+            .order_by(ReportRun.created_at.desc(), ReportRun.id.desc())
             .limit(1)
         )
         .mappings()
@@ -122,28 +123,28 @@ def read_economy_report(
 
 
 def read_economy_simulation(
-    connection: Connection, simulation_id: UUID
+    session: Session, simulation_id: UUID
 ) -> EconomySimulationState | None:
     """Return the simulation with its newest run, or None when there is none."""
-    found = connection.execute(
-        select(simulations.c.id).where(simulations.c.id == simulation_id)
+    found = session.execute(
+        select(Simulation.id).where(Simulation.id == simulation_id)
     ).scalar_one_or_none()
     if found is None:
         return None
     run = (
-        connection.execute(
+        session.execute(
             select(
-                simulation_runs.c.id,
-                simulation_runs.c.status,
-                simulation_runs.c.country_package_version,
-                simulation_runs.c.policyengine_version,
-                simulation_runs.c.error_message,
-                simulation_runs.c.created_at,
-                simulation_runs.c.started_at,
-                simulation_runs.c.completed_at,
+                SimulationRun.id,
+                SimulationRun.status,
+                SimulationRun.country_package_version,
+                SimulationRun.policyengine_version,
+                SimulationRun.error_message,
+                SimulationRun.created_at,
+                SimulationRun.started_at,
+                SimulationRun.completed_at,
             )
-            .where(simulation_runs.c.simulation_id == simulation_id)
-            .order_by(simulation_runs.c.created_at.desc(), simulation_runs.c.id.desc())
+            .where(SimulationRun.simulation_id == simulation_id)
+            .order_by(SimulationRun.created_at.desc(), SimulationRun.id.desc())
             .limit(1)
         )
         .mappings()

@@ -36,10 +36,10 @@ from typing import TYPE_CHECKING, Final, Literal
 from sqlalchemy import select
 
 from policyengine_simulation_persistence.input_tables import (
-    dynamics,
-    parameter_values,
-    parameters,
-    policies,
+    Dynamic,
+    Parameter,
+    ParameterValue,
+    Policy,
 )
 from policyengine_simulation_persistence.tables import LATEST_YEAR
 
@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
-    from sqlalchemy import ColumnElement, Connection
+    from sqlalchemy import ColumnElement
     from sqlalchemy.orm import Session
 
 # The last day a value without an end date is applied.
@@ -128,7 +128,7 @@ def _period(
 
 
 def read_policy_reform(
-    connection: Connection | Session,
+    session: Session,
     *,
     country: str,
     policy_id: UUID,
@@ -141,24 +141,22 @@ def read_policy_reform(
     policy, and MissingPolicyParametersError when ``catalog_version_id``
     lacks a parameter the policy sets.
     """
-    found = connection.execute(
-        select(policies.c.id).where(
-            policies.c.id == policy_id, policies.c.country_id == country
-        )
+    found = session.execute(
+        select(Policy.id).where(Policy.id == policy_id, Policy.country_id == country)
     ).scalar_one_or_none()
     if found is None:
         msg = f"{country} has no policy {policy_id}"
         raise UnknownPolicyError(msg)
     return _read_reform(
-        connection,
-        owner=parameter_values.c.policy_id == policy_id,
+        session,
+        owner=ParameterValue.policy_id == policy_id,
         catalog_version_id=catalog_version_id,
         source="policy",
     )
 
 
 def read_dynamic_reform(
-    connection: Connection, *, dynamic_id: UUID, catalog_version_id: UUID
+    session: Session, *, dynamic_id: UUID, catalog_version_id: UUID
 ) -> PolicyReform:
     """Return the values the dynamic sets, by parameter name and period.
 
@@ -167,15 +165,15 @@ def read_dynamic_reform(
     MissingPolicyParametersError, naming the dynamic as its source, when
     ``catalog_version_id`` lacks a parameter it sets.
     """
-    found = connection.execute(
-        select(dynamics.c.id).where(dynamics.c.id == dynamic_id)
+    found = session.execute(
+        select(Dynamic.id).where(Dynamic.id == dynamic_id)
     ).scalar_one_or_none()
     if found is None:
         msg = f"there is no dynamic {dynamic_id}"
         raise UnknownDynamicError(msg)
     return _read_reform(
-        connection,
-        owner=parameter_values.c.dynamic_id == dynamic_id,
+        session,
+        owner=ParameterValue.dynamic_id == dynamic_id,
         catalog_version_id=catalog_version_id,
         source="dynamic",
     )
@@ -193,7 +191,7 @@ def combine_reforms(policy: PolicyReform, dynamic: PolicyReform) -> PolicyReform
 
 
 def _read_reform(
-    connection: Connection | Session,
+    session: Session,
     *,
     owner: ColumnElement[bool],
     catalog_version_id: UUID,
@@ -204,23 +202,24 @@ def _read_reform(
     Raise MissingPolicyParametersError, naming ``source``, when
     ``catalog_version_id`` lacks a parameter they set.
     """
-    values = connection.execute(
+    values = session.execute(
         select(
-            parameters.c.name,
-            parameter_values.c.value_json,
-            parameter_values.c.start_date,
-            parameter_values.c.end_date,
+            Parameter.name,
+            ParameterValue.value_json,
+            ParameterValue.start_date,
+            ParameterValue.end_date,
         )
-        .join(parameters, parameters.c.id == parameter_values.c.parameter_id)
+        .select_from(ParameterValue)
+        .join(Parameter, Parameter.id == ParameterValue.parameter_id)
         .where(owner)
-        .order_by(parameters.c.name, parameter_values.c.start_date)
+        .order_by(Parameter.name, ParameterValue.start_date)
     ).all()
     names = sorted({row.name for row in values})
     available = set(
-        connection.execute(
-            select(parameters.c.name).where(
-                parameters.c.tax_benefit_model_version_id == catalog_version_id,
-                parameters.c.name.in_(names),
+        session.execute(
+            select(Parameter.name).where(
+                Parameter.tax_benefit_model_version_id == catalog_version_id,
+                Parameter.name.in_(names),
             )
         ).scalars()
     )

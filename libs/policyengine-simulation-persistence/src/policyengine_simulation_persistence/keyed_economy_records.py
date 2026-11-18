@@ -56,7 +56,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from uuid import UUID
 
-    from sqlalchemy import Connection
     from sqlalchemy.orm import Session
 
     from policyengine_simulation_persistence.definition_keys import (
@@ -150,7 +149,7 @@ class FoundEconomySimulation:
 
 
 def find_or_create_economy_report(
-    connection: Connection, request: KeyedEconomyReport
+    session: Session, request: KeyedEconomyReport
 ) -> FoundEconomyReport:
     """Find the report the request names, and its run, or create them.
 
@@ -160,9 +159,9 @@ def find_or_create_economy_report(
     transaction, or its savepoint.
     """
     with references_checked():
-        simulation_ids = _find_or_insert_simulations(connection, request)
+        simulation_ids = _find_or_insert_simulations(session, request)
         report = find_or_insert_report(
-            connection,
+            session,
             economy_report_row(
                 request.definition,
                 report_id=request.report_id,
@@ -174,7 +173,7 @@ def find_or_create_economy_report(
         )
         versions = request.versions
         joined = find_joinable_report_run(
-            connection,
+            session,
             report_id=report.id,
             country_package_version=versions.country_package_version,
             policyengine_version=versions.policyengine_version,
@@ -183,7 +182,7 @@ def find_or_create_economy_report(
             return _found(report.id, report.inserted, joined, simulation_ids, set())
         proposed = {"baseline": request.baseline, "reform": request.reform}
         run, runs = find_or_insert_report_run_on_sides(
-            connection,
+            session,
             _report_run_row(request, report.id),
             {
                 side: simulation_run_row(
@@ -200,7 +199,7 @@ def find_or_create_economy_report(
 
 
 def find_or_create_economy_simulation(
-    connection: Connection, request: KeyedEconomySimulation
+    session: Session, request: KeyedEconomySimulation
 ) -> FoundEconomySimulation:
     """Find the simulation the request names, and its run, or create them.
 
@@ -208,13 +207,13 @@ def find_or_create_economy_simulation(
     """
     with references_checked():
         simulation = find_or_insert_simulation(
-            connection,
+            session,
             economy_simulation_row(
                 request.definition, request.simulation_id, request.population
             ),
         )
         run = find_or_insert_simulation_run(
-            connection,
+            session,
             simulation_run_row(
                 run_id=request.run_id,
                 simulation_id=simulation.id,
@@ -230,7 +229,7 @@ def find_or_create_economy_simulation(
 
 
 def _find_or_insert_simulations(
-    connection: Connection, request: KeyedEconomyReport
+    session: Session, request: KeyedEconomyReport
 ) -> dict[Side, UUID]:
     """Return each side's simulation ID, found by key or inserted, in key order."""
     proposed = {"baseline": request.baseline, "reform": request.reform}
@@ -242,7 +241,7 @@ def _find_or_insert_simulations(
     for key in sorted(by_key):
         sides = by_key[key]
         found = find_or_insert_simulation(
-            connection,
+            session,
             economy_simulation_row(
                 request.definition.simulation(sides[0]),
                 proposed[sides[0]].simulation_id,
@@ -255,7 +254,7 @@ def _find_or_insert_simulations(
 
 
 def find_or_insert_report_run_on_sides(
-    connection: Connection | Session,
+    session: Session,
     report_run_row: Mapping[str, Any],
     side_rows: Mapping[Side, Mapping[str, Any]],
 ) -> tuple[FoundReportRun, dict[Side, FoundSimulationRun]]:
@@ -270,12 +269,12 @@ def find_or_insert_report_run_on_sides(
     inserted is kept, so no side run is returned (the joined report run
     names its own).
     """
-    savepoint = connection.begin_nested()
+    savepoint = session.begin_nested()
     try:
-        runs = find_or_insert_side_runs(connection, side_rows)
+        runs = find_or_insert_side_runs(session, side_rows)
         reform = runs.get("reform")
         run = find_or_insert_report_run(
-            connection,
+            session,
             {
                 **report_run_row,
                 "baseline_simulation_run_id": runs["baseline"].id,
@@ -293,7 +292,7 @@ def find_or_insert_report_run_on_sides(
 
 
 def find_or_insert_side_runs(
-    connection: Connection | Session, side_rows: Mapping[Side, Mapping[str, Any]]
+    session: Session, side_rows: Mapping[Side, Mapping[str, Any]]
 ) -> dict[Side, FoundSimulationRun]:
     """Return each side's run of its simulation, found or inserted.
 
@@ -314,7 +313,7 @@ def find_or_insert_side_runs(
         for side in reversed(_SIDES)
         if side in side_rows
     }
-    found = find_or_insert_simulation_runs(connection, rows)
+    found = find_or_insert_simulation_runs(session, rows)
     return {side: found[row["simulation_id"]] for side, row in side_rows.items()}
 
 

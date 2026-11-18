@@ -22,9 +22,11 @@ nobody joins (answer 2), so the insert is tried again.
 
 A forced re-run's runs are inserted directly, marked ``forced``: no index
 covers them, so they never conflict, never join and are never joined
-(answer 3). Callers choose the transactions, and insert rows in one order
-(definitions by key, runs by simulation ID), so two transactions never wait
-for each other in opposite orders.
+(answer 3). Callers choose the transactions by the ORM session they pass, and
+insert rows in one order (definitions by key, runs by simulation ID), so two
+transactions never wait for each other in opposite orders. Each lookup is one
+statement on a mapped class, run at once, so it leaves the session nothing to
+flush and no object loaded.
 """
 
 from __future__ import annotations
@@ -32,25 +34,30 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
-from sqlalchemy import select
+from sqlalchemy import Index, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from policyengine_simulation_persistence.tables import (
+    BudgetWindowRun,
+    Report,
+    ReportRun,
     ReportRunStatus,
+    Simulation,
+    SimulationRun,
     SimulationStatus,
-    budget_window_runs,
-    report_runs,
-    reports,
-    simulation_runs,
-    simulations,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from uuid import UUID
 
-    from sqlalchemy import ColumnElement, Connection, Row, Table
-    from sqlalchemy.orm import Session
+    from sqlalchemy import ColumnElement, Row
+    from sqlalchemy.orm import InstrumentedAttribute, Session
+
+# The classes a lookup inserts into.
+type SharedRowModel = type[
+    Simulation | Report | SimulationRun | ReportRun | BudgetWindowRun
+]
 
 # How many times a lookup inserts before giving up on a row that keeps
 # failing between its insert and its read.
@@ -106,7 +113,7 @@ class FoundWindowRun:
 class _UniqueIndex:
     """A unique index a lookup inserts against: its columns and condition."""
 
-    table: Table
+    model: SharedRowModel
     columns: tuple[str, ...]
     # The partial index's predicate, as the model declares it; None for a
     # unique constraint over the whole table.
@@ -116,12 +123,16 @@ class _UniqueIndex:
 
 
 def _partial_index(
-    table: Table, name: str, read_conditions: tuple[ColumnElement[bool], ...]
+    model: SharedRowModel, name: str, read_conditions: tuple[ColumnElement[bool], ...]
 ) -> _UniqueIndex:
     """Return the model's partial unique index ``name``, with its own predicate."""
-    (index,) = (index for index in table.indexes if index.name == name)
+    (index,) = (
+        argument
+        for argument in model.__table_args__
+        if isinstance(argument, Index) and argument.name == name
+    )
     return _UniqueIndex(
-        table=table,
+        model=model,
         columns=tuple(column.name for column in index.columns),
         where=index.dialect_options["postgresql"]["where"],
         read_conditions=read_conditions,
@@ -129,55 +140,51 @@ def _partial_index(
 
 
 _SIMULATION_DEFINITION: Final = _UniqueIndex(
-    table=simulations, columns=_DEFINITION_COLUMNS, where=None, read_conditions=()
+    model=Simulation, columns=_DEFINITION_COLUMNS, where=None, read_conditions=()
 )
 _REPORT_DEFINITION: Final = _UniqueIndex(
-    table=reports, columns=_DEFINITION_COLUMNS, where=None, read_conditions=()
+    model=Report, columns=_DEFINITION_COLUMNS, where=None, read_conditions=()
 )
 _JOINABLE_SIMULATION_RUN: Final = _partial_index(
-    simulation_runs,
+    SimulationRun,
     "uq_simulation_runs_unfailed_unforced_versions",
     (
-        simulation_runs.c.status != SimulationStatus.FAILED,
-        simulation_runs.c.forced.is_(False),
+        SimulationRun.status != SimulationStatus.FAILED,
+        SimulationRun.forced.is_(False),
     ),
 )
 _JOINABLE_REPORT_RUN: Final = _partial_index(
-    report_runs,
+    ReportRun,
     "uq_report_runs_unfailed_unforced_versions",
     (
-        report_runs.c.budget_window_run_id.is_(None),
-        report_runs.c.status != ReportRunStatus.FAILED,
-        report_runs.c.forced.is_(False),
+        ReportRun.budget_window_run_id.is_(None),
+        ReportRun.status != ReportRunStatus.FAILED,
+        ReportRun.forced.is_(False),
     ),
 )
 
 
-def find_or_insert_simulation(
-    connection: Connection | Session, values: Mapping[str, Any]
-) -> FoundRow:
+def find_or_insert_simulation(session: Session, values: Mapping[str, Any]) -> FoundRow:
     """Return the simulation with ``values``' key, inserting ``values`` if none.
 
     ``values`` is the whole row, its ``key_version`` and ``definition_key``
     included.
     """
-    row, inserted = _find_or_insert(connection, _SIMULATION_DEFINITION, values, ())
+    row, inserted = _find_or_insert(session, _SIMULATION_DEFINITION, values, ())
     return FoundRow(id=row.id, inserted=inserted)
 
 
-def find_or_insert_report(
-    connection: Connection | Session, values: Mapping[str, Any]
-) -> FoundRow:
+def find_or_insert_report(session: Session, values: Mapping[str, Any]) -> FoundRow:
     """Return the report with ``values``' key, inserting ``values`` if none.
 
     ``values`` is the whole row, its three key columns included.
     """
-    row, inserted = _find_or_insert(connection, _REPORT_DEFINITION, values, ())
+    row, inserted = _find_or_insert(session, _REPORT_DEFINITION, values, ())
     return FoundRow(id=row.id, inserted=inserted)
 
 
 def find_or_insert_simulation_run(
-    connection: Connection | Session, values: Mapping[str, Any]
+    session: Session, values: Mapping[str, Any]
 ) -> FoundSimulationRun:
     """Return the simulation's joinable run on ``values``' versions, or insert it.
 
@@ -186,7 +193,7 @@ def find_or_insert_simulation_run(
     """
     _refuse_forced(values)
     row, inserted = _find_or_insert(
-        connection, _JOINABLE_SIMULATION_RUN, values, (simulation_runs.c.status,)
+        session, _JOINABLE_SIMULATION_RUN, values, (SimulationRun.status,)
     )
     return FoundSimulationRun(
         id=row.id, inserted=inserted, status=SimulationStatus(row.status)
@@ -194,7 +201,7 @@ def find_or_insert_simulation_run(
 
 
 def find_or_insert_simulation_runs(
-    connection: Connection | Session, rows: Mapping[UUID, Mapping[str, Any]]
+    session: Session, rows: Mapping[UUID, Mapping[str, Any]]
 ) -> dict[UUID, FoundSimulationRun]:
     """Return each simulation's joinable run, by simulation ID, or insert ``rows``.
 
@@ -203,23 +210,23 @@ def find_or_insert_simulation_runs(
     for each other in opposite orders.
     """
     return {
-        simulation_id: find_or_insert_simulation_run(connection, rows[simulation_id])
+        simulation_id: find_or_insert_simulation_run(session, rows[simulation_id])
         for simulation_id in sorted(rows)
     }
 
 
 _JOINABLE_WINDOW_RUN: Final = _partial_index(
-    budget_window_runs,
+    BudgetWindowRun,
     "uq_budget_window_runs_unfailed_unforced_versions",
     (
-        budget_window_runs.c.status != ReportRunStatus.FAILED,
-        budget_window_runs.c.recalculate.is_(False),
+        BudgetWindowRun.status != ReportRunStatus.FAILED,
+        BudgetWindowRun.recalculate.is_(False),
     ),
 )
 
 
 def find_or_insert_window_run(
-    connection: Connection, values: Mapping[str, Any]
+    session: Session, values: Mapping[str, Any]
 ) -> FoundWindowRun:
     """Return the report's joinable window run on ``values``' versions, or insert it.
 
@@ -231,7 +238,7 @@ def find_or_insert_window_run(
         msg = "a recalculating window run is inserted directly: nothing joins it"
         raise ValueError(msg)
     row, inserted = _find_or_insert(
-        connection, _JOINABLE_WINDOW_RUN, values, (budget_window_runs.c.status,)
+        session, _JOINABLE_WINDOW_RUN, values, (BudgetWindowRun.status,)
     )
     return FoundWindowRun(
         id=row.id, inserted=inserted, status=ReportRunStatus(row.status)
@@ -239,7 +246,7 @@ def find_or_insert_window_run(
 
 
 def find_joinable_window_run(
-    connection: Connection,
+    session: Session,
     *,
     report_id: UUID,
     tax_benefit_model_version_id: UUID,
@@ -250,12 +257,12 @@ def find_joinable_window_run(
     The one ``find_or_insert_window_run`` would join. A window run created
     before C1 · 27 records no .py version, so it is never joined.
     """
-    row = connection.execute(
-        select(budget_window_runs.c.id, budget_window_runs.c.status).where(
-            budget_window_runs.c.report_id == report_id,
-            budget_window_runs.c.tax_benefit_model_version_id
+    row = session.execute(
+        select(BudgetWindowRun.id, BudgetWindowRun.status).where(
+            BudgetWindowRun.report_id == report_id,
+            BudgetWindowRun.tax_benefit_model_version_id
             == tax_benefit_model_version_id,
-            budget_window_runs.c.policyengine_version == policyengine_version,
+            BudgetWindowRun.policyengine_version == policyengine_version,
             *_JOINABLE_WINDOW_RUN.read_conditions,
         )
     ).one_or_none()
@@ -265,7 +272,7 @@ def find_joinable_window_run(
 
 
 def find_or_insert_report_run(
-    connection: Connection | Session, values: Mapping[str, Any]
+    session: Session, values: Mapping[str, Any]
 ) -> FoundReportRun:
     """Return the report's joinable run on ``values``' versions, or insert it.
 
@@ -278,13 +285,13 @@ def find_or_insert_report_run(
         msg = "a budget window's year runs are never looked up by versions"
         raise ValueError(msg)
     row, inserted = _find_or_insert(
-        connection,
+        session,
         _JOINABLE_REPORT_RUN,
         values,
         (
-            report_runs.c.status,
-            report_runs.c.baseline_simulation_run_id,
-            report_runs.c.reform_simulation_run_id,
+            ReportRun.status,
+            ReportRun.baseline_simulation_run_id,
+            ReportRun.reform_simulation_run_id,
         ),
     )
     return FoundReportRun(
@@ -297,7 +304,7 @@ def find_or_insert_report_run(
 
 
 def find_joinable_report_run(
-    connection: Connection | Session,
+    session: Session,
     *,
     report_id: UUID,
     country_package_version: str,
@@ -308,16 +315,16 @@ def find_joinable_report_run(
     The run hasn't failed, wasn't forced, and is no budget window's year
     run: the one ``find_or_insert_report_run`` would join.
     """
-    row = connection.execute(
+    row = session.execute(
         select(
-            report_runs.c.id,
-            report_runs.c.status,
-            report_runs.c.baseline_simulation_run_id,
-            report_runs.c.reform_simulation_run_id,
+            ReportRun.id,
+            ReportRun.status,
+            ReportRun.baseline_simulation_run_id,
+            ReportRun.reform_simulation_run_id,
         ).where(
-            report_runs.c.report_id == report_id,
-            report_runs.c.country_package_version == country_package_version,
-            report_runs.c.policyengine_version == policyengine_version,
+            ReportRun.report_id == report_id,
+            ReportRun.country_package_version == country_package_version,
+            ReportRun.policyengine_version == policyengine_version,
             *_JOINABLE_REPORT_RUN.read_conditions,
         )
     ).one_or_none()
@@ -339,10 +346,10 @@ def _refuse_forced(values: Mapping[str, Any]) -> None:
 
 
 def _find_or_insert(
-    connection: Connection | Session,
+    session: Session,
     index: _UniqueIndex,
     values: Mapping[str, Any],
-    returned: Sequence[ColumnElement[Any]],
+    returned: Sequence[InstrumentedAttribute[Any]],
 ) -> tuple[Row[Any], bool]:
     """Insert ``values`` unless ``index`` holds a row like it; return the row.
 
@@ -355,27 +362,27 @@ def _find_or_insert(
     if missing:
         msg = f"the row names no {', '.join(missing)}, which find it"
         raise ValueError(msg)
-    table = index.table
-    columns = (table.c.id, *returned)
+    model = index.model
+    columns = (model.id, *returned)
     statement = (
-        postgresql_insert(table)
+        postgresql_insert(model)
         .values(dict(values))
         .on_conflict_do_nothing(index_elements=index.columns, index_where=index.where)
         .returning(*columns)
     )
     winner = select(*columns).where(
-        *(table.c[name] == values[name] for name in index.columns),
+        *(getattr(model, name) == values[name] for name in index.columns),
         *index.read_conditions,
     )
     for _attempt in range(INSERT_ATTEMPTS):
-        inserted = connection.execute(statement).one_or_none()
+        inserted = session.execute(statement).one_or_none()
         if inserted is not None:
             return inserted, True
-        found = connection.execute(winner).one_or_none()
+        found = session.execute(winner).one_or_none()
         if found is not None:
             return found, False
     msg = (
-        f"the {table.name} row that won kept failing before it was read, "
+        f"the {model.__tablename__} row that won kept failing before it was read, "
         f"{INSERT_ATTEMPTS} times"
     )
     raise SharedRowNotSettledError(msg)

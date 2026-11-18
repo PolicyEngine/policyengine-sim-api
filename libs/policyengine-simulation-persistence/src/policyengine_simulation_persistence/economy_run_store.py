@@ -7,7 +7,8 @@ rows by key, then records the call on a run it created or fails that run.
 A stored record's re-run takes the same steps, joining or creating its new
 runs instead. ``EconomyRunStore`` runs the reads and writes of
 ``economy_inputs``, ``keyed_economy_records``, ``keyed_window_records``,
-``economy_rerun_records`` and ``economy_run_records`` that way.
+``economy_rerun_records`` and ``economy_run_records`` that way, each in an ORM
+session of its own.
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ from policyengine_simulation_persistence.economy_run_records import (
     record_report_run_call,
     record_simulation_run_call,
 )
-from policyengine_simulation_persistence.engine import bounded_transaction
+from policyengine_simulation_persistence.engine import bounded_session
 from policyengine_simulation_persistence.keyed_economy_records import (
     find_or_create_economy_report,
     find_or_create_economy_simulation,
@@ -66,7 +67,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
     from uuid import UUID
 
-    from sqlalchemy import Connection, Engine
+    from sqlalchemy.orm import Session, sessionmaker
 
     from policyengine_simulation_persistence.economy_rerun_records import (
         NewReportRerun,
@@ -99,7 +100,7 @@ if TYPE_CHECKING:
         SimulationStatus,
     )
 
-type TransactionFactory = Callable[[], AbstractContextManager[Connection]]
+type TransactionFactory = Callable[[], AbstractContextManager[Session]]
 
 
 class EconomyRecordOutcomeUnknownError(RuntimeError):
@@ -114,18 +115,22 @@ class EconomyRunStore:
     """Read and write economy simulations and reports, each in its own transaction."""
 
     def __init__(self, transaction: TransactionFactory) -> None:
-        """Open each transaction with ``transaction``, which commits on success."""
+        """Open each session with ``transaction``, which commits on success."""
         self._transaction = transaction
 
     @classmethod
-    def from_engine(
-        cls, engine: Engine, *, statement_timeout_milliseconds: int
+    def from_session_factory(
+        cls,
+        session_factory: sessionmaker[Session],
+        *,
+        statement_timeout_milliseconds: int,
     ) -> EconomyRunStore:
-        """Use ``engine``, bounding each statement to the given time."""
+        """Use ``session_factory``, bounding each statement to the given time."""
 
-        def transaction() -> AbstractContextManager[Connection]:
-            return bounded_transaction(
-                engine, statement_timeout_milliseconds=statement_timeout_milliseconds
+        def transaction() -> AbstractContextManager[Session]:
+            return bounded_session(
+                session_factory,
+                statement_timeout_milliseconds=statement_timeout_milliseconds,
             )
 
         return cls(transaction)
@@ -140,10 +145,10 @@ class EconomyRunStore:
         UnknownDynamicError or MissingPolicyParametersError, or
         OverlappingReformError.
         """
-        with self._transaction() as connection:
-            catalog = read_catalog_rows(connection, request)
+        with self._transaction() as session:
+            catalog = read_catalog_rows(session, request)
             simulation = read_simulation_values(
-                connection, request.country, catalog.catalog_version_id, choice
+                session, request.country, catalog.catalog_version_id, choice
             )
         return EconomySimulationInputs(catalog=catalog, simulation=simulation)
 
@@ -166,25 +171,25 @@ class EconomyRunStore:
         or dynamic is refused, or LocalAreaDatasetMismatchError when the
         catalog version doesn't give both area types that dataset.
         """
-        with self._transaction() as connection:
+        with self._transaction() as session:
             catalog = read_catalog_rows(
-                connection, request, local_area_dataset_name=local_area_dataset_name
+                session, request, local_area_dataset_name=local_area_dataset_name
             )
             return read_report_sides(
-                connection, request, catalog, baseline=baseline, reform=reform
+                session, request, catalog, baseline=baseline, reform=reform
             )
 
     def read_report_definition(self, report_id: UUID) -> ReportDefinition | None:
         """Return what the stored report calculates, or None when there is none."""
-        with self._transaction() as connection:
-            return read_report_definition(connection, report_id)
+        with self._transaction() as session:
+            return read_report_definition(session, report_id)
 
     def read_simulation_definition(
         self, simulation_id: UUID
     ) -> SimulationDefinition | None:
         """Return what the stored simulation calculates, or None when there is none."""
-        with self._transaction() as connection:
-            return read_simulation_definition(connection, simulation_id)
+        with self._transaction() as session:
+            return read_simulation_definition(session, simulation_id)
 
     def read_report_rerun_inputs(
         self,
@@ -199,10 +204,10 @@ class EconomyRunStore:
         found in the catalog version of the current .py version. Raise the
         errors ``read_report_inputs`` raises.
         """
-        with self._transaction() as connection:
-            catalog = read_catalog_rows(connection, request)
+        with self._transaction() as session:
+            catalog = read_catalog_rows(session, request)
             return read_report_sides(
-                connection,
+                session,
                 request,
                 catalog,
                 baseline=baseline.choice,
@@ -223,10 +228,10 @@ class EconomyRunStore:
         catalog version of the current .py version. Raise the errors
         ``read_report_inputs`` raises.
         """
-        with self._transaction() as connection:
-            catalog = read_catalog_rows(connection, request)
+        with self._transaction() as session:
+            catalog = read_catalog_rows(session, request)
             return read_window_sides(
-                connection, request, catalog, baseline=baseline, reform=reform
+                session, request, catalog, baseline=baseline, reform=reform
             )
 
     def create_window_rerun(self, rerun: NewWindowRerun) -> FoundBudgetWindow:
@@ -234,7 +239,7 @@ class EconomyRunStore:
 
         Raise EconomyRecordOutcomeUnknownError as ``find_or_create_report`` does.
         """
-        return self._create(lambda connection: insert_window_rerun(connection, rerun))
+        return self._create(lambda session: insert_window_rerun(session, rerun))
 
     def create_report_rerun(self, rerun: NewReportRerun) -> FoundReportRun:
         """Join or create the report's run; see ``insert_report_rerun``.
@@ -242,16 +247,14 @@ class EconomyRunStore:
         Raise ``insert_report_rerun``'s errors, and
         EconomyRecordOutcomeUnknownError as ``find_or_create_report`` does.
         """
-        return self._create(lambda connection: insert_report_rerun(connection, rerun))
+        return self._create(lambda session: insert_report_rerun(session, rerun))
 
     def create_simulation_rerun(self, rerun: NewSimulationRerun) -> FoundSimulationRun:
         """Join or create the simulation's run; see ``insert_simulation_rerun``.
 
         Raise EconomyRecordOutcomeUnknownError as ``find_or_create_report`` does.
         """
-        return self._create(
-            lambda connection: insert_simulation_rerun(connection, rerun)
-        )
+        return self._create(lambda session: insert_simulation_rerun(session, rerun))
 
     def read_budget_window_inputs(
         self,
@@ -265,10 +268,10 @@ class EconomyRunStore:
         ``request.year`` is the window's first year. Raise the errors
         ``read_report_inputs`` raises.
         """
-        with self._transaction() as connection:
-            catalog = read_catalog_rows(connection, request)
+        with self._transaction() as session:
+            catalog = read_catalog_rows(session, request)
             return read_window_sides(
-                connection, request, catalog, baseline=baseline, reform=reform
+                session, request, catalog, baseline=baseline, reform=reform
             )
 
     def find_or_create_report(self, report: KeyedEconomyReport) -> FoundEconomyReport:
@@ -279,7 +282,7 @@ class EconomyRunStore:
         rows were inserted.
         """
         return self._create(
-            lambda connection: find_or_create_economy_report(connection, report)
+            lambda session: find_or_create_economy_report(session, report)
         )
 
     def find_or_create_budget_window(
@@ -291,7 +294,7 @@ class EconomyRunStore:
         ``find_or_create_report`` does.
         """
         return self._create(
-            lambda connection: find_or_create_budget_window(connection, window)
+            lambda session: find_or_create_budget_window(session, window)
         )
 
     def find_or_create_simulation(
@@ -302,21 +305,22 @@ class EconomyRunStore:
         Raise as ``find_or_create_report`` does.
         """
         return self._create(
-            lambda connection: find_or_create_economy_simulation(connection, simulation)
+            lambda session: find_or_create_economy_simulation(session, simulation)
         )
 
-    def _create[Created](self, insert: Callable[[Connection], Created]) -> Created:
-        """Run ``insert`` in a transaction, telling a failed commit apart.
+    def _create[Created](self, insert: Callable[[Session], Created]) -> Created:
+        """Run ``insert`` in a session, telling a failed commit apart.
 
-        Return what ``insert`` returns. An error from ``insert`` leaves
-        nothing written and propagates. An error once it has run is the
-        commit's, after which the rows may exist:
+        Return what ``insert`` returns. Each of its writes is a statement that
+        has run by the time it returns, so the commit has nothing to flush. An
+        error from ``insert`` leaves nothing written and propagates. An error
+        once it has run is the commit's, after which the rows may exist:
         EconomyRecordOutcomeUnknownError.
         """
         inserted = False
         try:
-            with self._transaction() as connection:
-                created = insert(connection)
+            with self._transaction() as session:
+                created = insert(session)
                 inserted = True
         except SQLAlchemyError as error:
             if not inserted:
@@ -329,9 +333,9 @@ class EconomyRunStore:
         self, report_run_id: UUID, modal_call_id: str
     ) -> ReportRunStatus | None:
         """Record the report run's call ID while it is pending with none."""
-        with self._transaction() as connection:
+        with self._transaction() as session:
             return record_report_run_call(
-                connection, report_run_id=report_run_id, modal_call_id=modal_call_id
+                session, report_run_id=report_run_id, modal_call_id=modal_call_id
             )
 
     def fail_unstarted_report(
@@ -341,9 +345,9 @@ class EconomyRunStore:
         error_message: str,
     ) -> bool:
         """Fail the report run, and its new simulation runs, while it is unstarted."""
-        with self._transaction() as connection:
+        with self._transaction() as session:
             return fail_unstarted_report_run(
-                connection,
+                session,
                 report_run_id=report_run_id,
                 simulation_run_ids=simulation_run_ids,
                 error_message=error_message,
@@ -353,9 +357,9 @@ class EconomyRunStore:
         self, simulation_run_id: UUID, modal_call_id: str
     ) -> SimulationStatus | None:
         """Record the simulation run's call ID while it is pending with none."""
-        with self._transaction() as connection:
+        with self._transaction() as session:
             return record_simulation_run_call(
-                connection,
+                session,
                 simulation_run_id=simulation_run_id,
                 modal_call_id=modal_call_id,
             )
@@ -364,22 +368,22 @@ class EconomyRunStore:
         self, simulation_run_id: UUID, error_message: str
     ) -> bool:
         """Fail the simulation run while it is pending with no call ID."""
-        with self._transaction() as connection:
+        with self._transaction() as session:
             return fail_unstarted_simulation_run(
-                connection,
+                session,
                 simulation_run_id=simulation_run_id,
                 error_message=error_message,
             )
 
     def read_report(self, report_id: UUID) -> EconomyReportState | None:
         """Return the report with its newest run, or None when there is none."""
-        with self._transaction() as connection:
-            return read_economy_report(connection, report_id)
+        with self._transaction() as session:
+            return read_economy_report(session, report_id)
 
     def read_simulation(self, simulation_id: UUID) -> EconomySimulationState | None:
         """Return the simulation with its newest run, or None when there is none."""
-        with self._transaction() as connection:
-            return read_economy_simulation(connection, simulation_id)
+        with self._transaction() as session:
+            return read_economy_simulation(session, simulation_id)
 
 
 __all__ = [
