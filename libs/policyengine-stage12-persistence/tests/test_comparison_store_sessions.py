@@ -376,11 +376,10 @@ def test_the_deployment_command_runs_its_check_on_one_real_connection(
     assert retry_waits == []
 
 
-def test_the_deployment_command_replaces_a_connection_it_loses(
-    check_sessions, seeder, retry_waits
-) -> None:
-    opened = record_opened_connections(check_sessions)
-    reports_before = _comparison_report_count(seeder)
+def _terminate_the_connection_at_the_first_insert(
+    session_factory: sessionmaker[Session], seeder: ReportRunSeeder
+) -> list[int]:
+    """End the server process during the check's first insert; return its ID."""
     terminated_backends: list[int] = []
 
     def terminate_during_the_first_insert(
@@ -396,9 +395,20 @@ def test_the_deployment_command_replaces_a_connection_it_loses(
             administrator.execute(select(func.pg_terminate_backend(backend)))
 
     event.listen(
-        check_sessions.kw["bind"],
+        session_factory.kw["bind"],
         "before_cursor_execute",
         terminate_during_the_first_insert,
+    )
+    return terminated_backends
+
+
+def test_the_deployment_command_replaces_a_connection_it_loses(
+    check_sessions, seeder, retry_waits
+) -> None:
+    opened = record_opened_connections(check_sessions)
+    reports_before = _comparison_report_count(seeder)
+    terminated_backends = _terminate_the_connection_at_the_first_insert(
+        check_sessions, seeder
     )
 
     validate_runtime_database(
@@ -409,6 +419,23 @@ def test_the_deployment_command_replaces_a_connection_it_loses(
     assert len(opened) == 2
     assert retry_waits == [1.0]
     assert _comparison_report_count(seeder) == reports_before
+
+
+def test_the_deployment_command_retries_a_refused_replacement_connection(
+    check_sessions, seeder, retry_waits
+) -> None:
+    attempts = refuse_connection_numbers(check_sessions, {2})
+    terminated_backends = _terminate_the_connection_at_the_first_insert(
+        check_sessions, seeder
+    )
+
+    validate_runtime_database(
+        check_sessions, expected_role=RUNTIME_ROLE, environment="staging"
+    )
+
+    assert len(terminated_backends) == 1
+    assert len(attempts) == 3
+    assert retry_waits == [1.0, 2.0]
 
 
 def test_the_deployment_command_replaces_a_connection_lost_while_idle(

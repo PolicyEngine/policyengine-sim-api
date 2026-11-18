@@ -5,14 +5,18 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import textwrap
-import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 import yaml
 from policyengine_simulation_entry import stage12_infrastructure
+from policyengine_simulation_persistence.engine import (
+    UNPOOLED_CONNECT_TIMEOUT_SECONDS,
+)
+from policyengine_stage12_persistence import validation
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
 
@@ -515,6 +519,14 @@ def test_the_check_time_limit_ends_with_the_command(
     monkeypatch.setattr(RecordedTimer, "created", [])
     monkeypatch.setattr(stage12_infrastructure.threading, "Timer", RecordedTimer)
 
+    def dispose_while_the_limit_runs(_session_factory) -> None:
+        [timer] = RecordedTimer.created
+        assert not timer.cancelled
+
+    monkeypatch.setattr(
+        stage12_infrastructure, "dispose_session_factory", dispose_while_the_limit_runs
+    )
+
     def finish_the_check(_session_factory, **_options) -> None:
         [timer] = RecordedTimer.created
         assert timer.started
@@ -539,28 +551,78 @@ def test_the_check_time_limit_ends_with_the_command(
     assert timer.cancelled
 
 
-def test_a_stalled_deployment_check_ends_the_command(
-    tmp_path, monkeypatch, capsys
-) -> None:
+def test_a_stalled_deployment_check_ends_the_real_process(tmp_path) -> None:
     # A connection that goes silent blocks its reader with no error to handle,
-    # so the limit ends the process rather than waiting for the check to return.
-    _prepare_the_check_command(tmp_path, monkeypatch)
-    monkeypatch.setattr(stage12_infrastructure, "CHECK_TIME_LIMIT_SECONDS", 0.01)
+    # so the limit must end the process while the main thread is still blocked.
+    url_file = tmp_path / "database-url"
+    url_file.write_text("postgresql://role@database.example/postgres\n")
+    program = textwrap.dedent(
+        f"""
+        import sys
+        import threading
+
+        from policyengine_simulation_entry import stage12_infrastructure as command
+
+        command.CHECK_TIME_LIMIT_SECONDS = 0.2
+        command.validate_runtime_database = (
+            lambda _session_factory, **_options: threading.Event().wait()
+        )
+        sys.argv = [
+            "stage12_infrastructure",
+            "--database-url-file",
+            {str(url_file)!r},
+            "--expected-role",
+            "policyengine_v2_runtime",
+            "--environment",
+            "staging",
+        ]
+        command.main()
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "did not finish within 0.2 seconds" in result.stderr
+
+
+def test_the_time_limit_ends_the_process_when_its_message_cannot_be_written(
+    monkeypatch,
+) -> None:
+    class ClosedStream:
+        def write(self, _text: str) -> int:
+            raise BrokenPipeError
+
+        def flush(self) -> None:
+            raise BrokenPipeError
+
     exit_statuses: list[int] = []
-    process_ended = threading.Event()
+    monkeypatch.setattr(stage12_infrastructure.sys, "stderr", ClosedStream())
+    monkeypatch.setattr(stage12_infrastructure.os, "_exit", exit_statuses.append)
 
-    def end_the_process(status: int) -> None:
-        exit_statuses.append(status)
-        process_ended.set()
-
-    monkeypatch.setattr(stage12_infrastructure.os, "_exit", end_the_process)
-
-    def stall(_session_factory, **_options) -> None:
-        assert process_ended.wait(timeout=5)
-
-    monkeypatch.setattr(stage12_infrastructure, "validate_runtime_database", stall)
-
-    stage12_infrastructure.main()
+    with pytest.raises(BrokenPipeError):
+        stage12_infrastructure._end_the_stalled_check()
 
     assert exit_statuses == [1]
-    assert "did not finish within" in capsys.readouterr().err
+
+
+def test_the_time_limit_leaves_room_for_every_attempt_of_every_step() -> None:
+    # The driver gives each address of the host name the full connect timeout,
+    # and the database pooler's host names resolve to as many as three.
+    addresses = 4
+    steps = 4
+    waits = sum(
+        validation.FIRST_RETRY_DELAY_SECONDS * 2**attempt
+        for attempt in range(validation.STEP_ATTEMPTS - 1)
+    )
+    connecting = validation.STEP_ATTEMPTS * addresses * UNPOOLED_CONNECT_TIMEOUT_SECONDS
+
+    assert steps * (
+        connecting + waits
+    ) < stage12_infrastructure.CHECK_TIME_LIMIT_SECONDS
