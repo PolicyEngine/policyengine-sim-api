@@ -12,6 +12,7 @@ from policyengine_simulation_contract.stage12_execution import (
     PlannedSimulationExecutionInput,
     Stage12InvocationContext,
 )
+from policyengine_simulation_observability.log_records import log_extra
 
 from .failure_recording import FailureSite, report_failure
 from .failures import Stage12FailureDetail, failure_detail_from_record
@@ -51,12 +52,12 @@ def _log_child_operation_failure(
         simulation.simulation_execution_id,
         simulation.evaluation_id,
         error_type,
-        extra={
-            "evaluation_id": str(simulation.evaluation_id),
-            "simulation_execution_id": str(simulation.simulation_execution_id),
-            "simulation_role": simulation.role.value,
-            "error_type": error_type,
-        },
+        extra=log_extra(
+            evaluation_id=str(simulation.evaluation_id),
+            simulation_execution_id=str(simulation.simulation_execution_id),
+            simulation_role=simulation.role.value,
+            error_type=error_type,
+        ),
     )
 
 

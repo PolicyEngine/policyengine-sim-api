@@ -40,17 +40,20 @@ requests, missing jobs, or ordinary status requests.
 The observability runtime's standard-library log handler emits only a log
 record's `policyengine_attributes`: any other key passed in `extra=` stays on
 the Python `LogRecord` and never reaches Cloud Logging. In the Simulation
-Entrypoint, pass every log call's fields through `log_extra(...)` from
+Entrypoint and in Stage 12 (the executor's `stage12_*` modules and the
+Stage 12 and v2 Modal applications), pass every log call's fields through `log_extra(...)` from
 `policyengine_simulation_observability.log_records`, which puts them in both
 places (a field named like a `LogRecord` attribute, such as `name`, goes only
 to `policyengine_attributes`, since `logging` refuses it), and name a row with `database_row_attributes(table, row_id)` (rule
 `sim.observability.log-fields-through-log-extra`; its check reads only the
 field names written as keywords in the `log_extra(...)` call, not keys unpacked
 from a dictionary with `**`). Each field must be a
-string, a number or a boolean; the runtime drops a list. The Entrypoint sets
-its package logger to INFO: the root logger stays at WARNING, which would
-discard INFO records before the handler sees them. Some Stage 12 runtime and
-contract-library logs still pass plain `extra=` fields, which are not emitted.
+string, a number or a boolean; the runtime drops a list. The Entrypoint's
+package logger and `stage12_runtime`'s are set to INFO: the root logger stays
+at WARNING, which would discard INFO records before the handler sees them. The
+v1 code's logs are left as they are, so `log_and_redact_exception` (whose
+fields also reach telemetry as its `gateway_error_redacted` event) and the
+contract library's `budget_window_state` still pass plain `extra=` fields.
 
 ## HTTP transport
 

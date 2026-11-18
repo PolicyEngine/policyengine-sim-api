@@ -1011,9 +1011,9 @@ kind = "none"
 [[rule]]
 id = "sim.observability.log-fields-through-log-extra"
 category = "observability"
-statement = "Every Simulation Entrypoint log call that passes fields passes them through log_extra, so they reach the emitted record, and no field name written as a keyword in that call contains a word the observability package drops (household, reform, payload, person and others)."
+statement = "Every Simulation Entrypoint and Stage 12 (the executor's stage12_* modules and the Stage 12 and v2 Modal applications) log call that passes fields passes them through log_extra, so they reach the emitted record, and no field name written as a keyword in that call contains a word the observability package drops (household, reform, payload, person and others)."
 rationale = "docs/engineering/skills/observability.md#standard-library-log-fields"
-scope = ["projects/policyengine-simulation-entry/src/**/*.py"]
+scope = ["projects/policyengine-simulation-entry/src/**/*.py", "projects/policyengine-simulation-executor/src/policyengine_simulation_executor/stage12_*", "projects/policyengine-simulation-executor/src/policyengine_simulation_executor/stage12_*/**/*.py", "projects/policyengine-simulation-executor/src/modal/stage12_*.py", "projects/policyengine-simulation-executor/src/modal/v2_*.py", "projects/policyengine-simulation-executor/src/modal/run_sweep_app.py"]
 tier = "mechanical"
 status = "enforced"
 autofix = false

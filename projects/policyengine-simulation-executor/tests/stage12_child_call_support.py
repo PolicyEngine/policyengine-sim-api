@@ -402,6 +402,13 @@ def assert_log_identifies_child(record, *, role: str, error_type: str) -> None:
     assert record.simulation_execution_id == simulation_execution_id
     assert record.simulation_role == role
     assert record.error_type == error_type
+    # The observability runtime's log handler emits only these.
+    assert record.policyengine_attributes == {
+        "evaluation_id": str(EVALUATION_ID),
+        "simulation_execution_id": simulation_execution_id,
+        "simulation_role": role,
+        "error_type": error_type,
+    }
     message = record.getMessage()
     assert str(EVALUATION_ID) in message
     assert simulation_execution_id in message

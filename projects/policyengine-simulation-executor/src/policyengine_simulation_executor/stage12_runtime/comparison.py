@@ -13,6 +13,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ResultComparisonStatus,
     Stage12InvocationContext,
 )
+from policyengine_simulation_observability.log_records import log_extra
 from policyengine_simulation_observability.stages import Stage, StagePlan
 
 from policyengine_simulation_executor.stage12_result_comparison import compare_results
@@ -111,14 +112,14 @@ def compare_completed_report(
         )
         logger.info(
             "stage12_result_comparison_completed",
-            extra={
-                "evaluation_id": str(parent.evaluation_id),
-                "production_job_id": production_job_id,
-                "comparison_status": comparison_status.value,
-                "difference_count": comparison.difference_count,
-                "production_result_sha256": comparison.production_result_sha256,
-                "stage12_result_sha256": comparison.stage12_result_sha256,
-            },
+            extra=log_extra(
+                evaluation_id=str(parent.evaluation_id),
+                production_job_id=production_job_id,
+                comparison_status=comparison_status.value,
+                difference_count=comparison.difference_count,
+                production_result_sha256=comparison.production_result_sha256,
+                stage12_result_sha256=comparison.stage12_result_sha256,
+            ),
         )
     # Result retrieval, validation, artifact storage, and persistence are all
     # deliberately isolated from the successful Stage 12 calculation.
@@ -147,16 +148,16 @@ def compare_completed_report(
         except Exception:
             logger.exception(
                 "stage12_result_comparison_state_update_failed",
-                extra={
-                    "evaluation_id": str(parent.evaluation_id),
-                    "production_job_id": production_job_id,
-                },
+                extra=log_extra(
+                    evaluation_id=str(parent.evaluation_id),
+                    production_job_id=production_job_id,
+                ),
             )
         logger.error(  # noqa: TRY400  # Stage 12 failure logs carry only the error type; a traceback could expose request or calculation data
             "stage12_result_comparison_failed",
-            extra={
-                "evaluation_id": str(parent.evaluation_id),
-                "production_job_id": production_job_id,
-                "error_type": type(error).__name__,
-            },
+            extra=log_extra(
+                evaluation_id=str(parent.evaluation_id),
+                production_job_id=production_job_id,
+                error_type=type(error).__name__,
+            ),
         )

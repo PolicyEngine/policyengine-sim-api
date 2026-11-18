@@ -1,5 +1,7 @@
 """Independent Stage 12 simulation execution and report coordination."""
 
+import logging
+
 from .aggregation import (
     RetainedSimulationOutput,
     build_aggregate_report,
@@ -55,6 +57,11 @@ from .simulation import (
 # Retain the existing internal import used by the focused runtime tests while
 # locating the implementation with the rest of the aggregation logic.
 _build_spm_result = build_spm_result
+
+# The root logger stays at WARNING in a worker container, which would discard
+# this package's INFO records before the observability runtime's handler sees
+# them. Only Stage 12 processes import this package; the v1 code does not.
+logging.getLogger(__name__).setLevel(logging.INFO)
 
 __all__ = [
     "CoordinatorDependencies",
