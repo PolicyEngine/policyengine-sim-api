@@ -36,21 +36,27 @@ from economy_rows import (
 )
 from policyengine_simulation_persistence import (
     CliffImpact,
+    EconomyRecordReferenceError,
     EconomyReportDefinition,
     EconomyRunStore,
+    FoundReportRun,
     KeyedEconomyReport,
     NewReportRerun,
     ProposedCliffs,
     ProposedSide,
     Report,
+    ReportRun,
+    ReportRunStatus,
     RerunSide,
     SimulationChoice,
+    SimulationRun,
     SimulationStatus,
     find_or_create_economy_report,
     find_or_insert_cliff_calculations,
+    find_or_insert_report_run_cliffs,
 )
 from public_api_rows import insert_policy
-from sqlalchemy import func, select, text, update
+from sqlalchemy import event, func, insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 if TYPE_CHECKING:
@@ -180,6 +186,65 @@ def test_each_run_named_gets_its_own_cliff_calculation(
         assert {run_id: (each.id, each.inserted) for run_id, each in found.items()} == {
             run_id: (proposed_id, True) for run_id, proposed_id in proposed.items()
         }
+
+
+def test_calculations_are_inserted_in_simulation_run_id_order(
+    public_api_database_url,
+) -> None:
+    """So two transactions never wait for each other in opposite orders."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        run_ids = sorted(
+            insert_simulation_run(connection, economy.population()).simulation_run_id
+            for _ in range(3)
+        )
+        act_as_the_service(connection)
+        inserted: list[UUID] = []
+
+        def record_the_insert(
+            _connection, _cursor, statement, parameters, _context, _executemany
+        ) -> None:
+            if statement.lstrip().startswith("INSERT INTO public.cliff_impacts"):
+                inserted.append(parameters["simulation_run_id"])
+
+        event.listen(connection, "before_cursor_execute", record_the_insert)
+        try:
+            in_session(
+                connection,
+                find_or_insert_cliff_calculations,
+                {run_id: uuid4() for run_id in reversed(run_ids)},
+            )
+        finally:
+            event.remove(connection, "before_cursor_execute", record_the_insert)
+
+        assert inserted == run_ids
+
+
+def test_a_calculation_naming_a_missing_run_names_the_refusing_column(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        act_as_the_service(connection)
+        missing_runs = FoundReportRun(
+            id=uuid4(),
+            inserted=False,
+            status=ReportRunStatus.PENDING,
+            baseline_simulation_run_id=uuid4(),
+            reform_simulation_run_id=uuid4(),
+        )
+
+        with pytest.raises(EconomyRecordReferenceError) as refused:
+            in_session(
+                connection,
+                find_or_insert_report_run_cliffs,
+                missing_runs,
+                _new_cliffs(),
+            )
+
+    assert (refused.value.table_name, refused.value.column_name) == (
+        "cliff_impacts",
+        "simulation_run_id",
+    )
 
 
 def test_a_failed_cliff_calculation_is_never_joined(public_api_database_url) -> None:
@@ -314,7 +379,7 @@ def test_a_report_created_asking_for_cliffs_inserts_its_runs_calculations_with_i
 def test_two_identical_creates_asking_for_cliffs_at_once_insert_one_each(
     committed_engine, committed_catalog
 ) -> None:
-    """Review round 2: the second loses the report run and joins its calculations.
+    """The second waits on the first's rows, then joins its run and calculations.
 
     The first holds its transaction open until the second waits on its rows.
     """
@@ -355,6 +420,74 @@ def test_two_identical_creates_asking_for_cliffs_at_once_insert_one_each(
     with committed_engine.begin() as connection:
         calculations = _calculations_of(connection, first.baseline.simulation_run_id)
     assert calculations == 1
+
+
+def test_a_request_losing_the_report_run_adds_the_winners_runs_calculations(
+    committed_engine, committed_catalog
+) -> None:
+    """Its savepoint takes back its simulation run; the cliffs follow the winner."""
+    economy = committed_catalog
+    with committed_engine.begin() as connection:
+        act_as_the_service(connection)
+        first = in_session(
+            connection, find_or_create_economy_report, _keyed_report(economy)
+        )
+    with committed_engine.begin() as connection:
+        connection.execute(
+            update(SimulationRun)
+            .where(SimulationRun.id == first.baseline.simulation_run_id)
+            .values(status=SimulationStatus.FAILED, completed_at=func.now())
+        )
+        connection.execute(
+            update(ReportRun)
+            .where(ReportRun.id == first.run.id)
+            .values(status=ReportRunStatus.FAILED, completed_at=func.now())
+        )
+    competing: list[UUID] = []
+    proposed = _new_cliffs()
+    request = _keyed_report(economy, cliffs=proposed)
+
+    def create_a_competing_run_first(
+        _connection, _cursor, statement, _parameters, _context, _executemany
+    ) -> None:
+        if competing or not statement.lstrip().startswith(
+            "INSERT INTO public.report_runs"
+        ):
+            return
+        run_id = uuid4()
+        with committed_engine.begin() as other:
+            other.execute(
+                insert(ReportRun).values(
+                    id=run_id,
+                    report_id=first.report_id,
+                    baseline_simulation_run_id=first.baseline.simulation_run_id,
+                    reform_simulation_run_id=first.reform.simulation_run_id,
+                    country_package_version=VERSIONS.country_package_version,
+                    policyengine_version=VERSIONS.policyengine_version,
+                    status=ReportRunStatus.PENDING,
+                    trigger="initial",
+                )
+            )
+        competing.append(run_id)
+
+    with committed_engine.begin() as connection:
+        act_as_the_service(connection)
+        event.listen(connection, "before_cursor_execute", create_a_competing_run_first)
+        try:
+            joined = in_session(connection, find_or_create_economy_report, request)
+        finally:
+            event.remove(
+                connection, "before_cursor_execute", create_a_competing_run_first
+            )
+        on_the_proposed_run = _calculations_of(
+            connection, request.baseline.simulation_run_id
+        )
+
+    assert (joined.run.id, joined.run.inserted) == (competing[0], False)
+    assert joined.cliffs is not None
+    assert joined.cliffs.baseline.id == proposed.baseline_id
+    assert joined.cliffs.baseline.simulation_run_id == first.baseline.simulation_run_id
+    assert on_the_proposed_run == 0
 
 
 def test_a_report_not_asking_for_cliffs_inserts_no_calculation(
@@ -418,10 +551,13 @@ def test_a_report_whose_calculations_cannot_be_inserted_writes_nothing(
 
 
 def _stored_report_with_a_failed_run(
-    connection: Connection, economy: EconomyCatalog, store: EconomyRunStore
+    connection: Connection,
+    economy: EconomyCatalog,
+    store: EconomyRunStore,
+    reform: SimulationChoice = CURRENT_LAW,
 ) -> FoundEconomyReport:
     """Create a keyed report and fail its run, so a re-run creates a new one."""
-    created = store.find_or_create_report(_keyed_report(economy))
+    created = store.find_or_create_report(_keyed_report(economy, reform=reform))
     connection.execute(text("RESET ROLE"))
     connection.execute(
         text(
@@ -439,7 +575,6 @@ def _rerun_of(
     created: FoundEconomyReport,
     *,
     forced: bool = False,
-    cliffs: ProposedCliffs | None = None,
 ) -> NewReportRerun:
     return NewReportRerun(
         report_id=created.report_id,
@@ -449,7 +584,6 @@ def _rerun_of(
         baseline=RerunSide(created.baseline.simulation_id, uuid4()),
         reform=RerunSide(created.reform.simulation_id, uuid4()),
         forced=forced,
-        cliffs=cliffs,
     )
 
 
@@ -459,26 +593,42 @@ def test_a_rerun_asking_for_cliffs_adds_its_runs_calculations_joined_or_created(
     """Answer 4b: a re-run on the current versions joins and adds its cliffs."""
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
+        policy_id = insert_policy(connection, economy.catalog)
         act_as_the_service(connection)
         store = economy_store_on(connection)
-        created = _stored_report_with_a_failed_run(connection, economy, store)
+        created = _stored_report_with_a_failed_run(
+            connection, economy, store, SimulationChoice(policy_id, None)
+        )
         proposed = _new_cliffs()
 
-        rerun = store.create_report_rerun(_rerun_of(economy, created, cliffs=proposed))
-        joined = store.create_report_rerun(
-            _rerun_of(economy, created, cliffs=_new_cliffs())
+        rerun = store.create_report_rerun_with_cliffs(
+            _rerun_of(economy, created), proposed
+        )
+        joined = store.create_report_rerun_with_cliffs(
+            _rerun_of(economy, created), _new_cliffs()
         )
 
-    assert rerun.inserted is True
-    assert rerun.cliffs is not None
+    assert rerun.run.inserted is True
     assert (rerun.cliffs.baseline.id, rerun.cliffs.baseline.inserted) == (
         proposed.baseline_id,
         True,
     )
-    assert (joined.id, joined.inserted) == (rerun.id, False)
-    assert joined.cliffs is not None
+    assert (rerun.cliffs.reform.id, rerun.cliffs.reform.inserted) == (
+        proposed.reform_id,
+        True,
+    )
+    assert rerun.cliffs.baseline.simulation_run_id == (
+        rerun.run.baseline_simulation_run_id
+    )
+    assert rerun.cliffs.reform.simulation_run_id == rerun.run.reform_simulation_run_id
+    assert rerun.run.baseline_simulation_run_id != rerun.run.reform_simulation_run_id
+    assert (joined.run.id, joined.run.inserted) == (rerun.run.id, False)
     assert (joined.cliffs.baseline.id, joined.cliffs.baseline.inserted) == (
         proposed.baseline_id,
+        False,
+    )
+    assert (joined.cliffs.reform.id, joined.cliffs.reform.inserted) == (
+        proposed.reform_id,
         False,
     )
 
@@ -491,15 +641,13 @@ def test_a_forced_rerun_asking_for_cliffs_adds_its_new_runs_calculations(
         act_as_the_service(connection)
         store = economy_store_on(connection)
         created = _stored_report_with_a_failed_run(connection, economy, store)
-        forced = _rerun_of(economy, created, forced=True, cliffs=_new_cliffs())
+        forced = _rerun_of(economy, created, forced=True)
 
-        rerun = store.create_report_rerun(forced)
+        rerun = store.create_report_rerun_with_cliffs(forced, _new_cliffs())
         unasked = store.create_report_rerun(_rerun_of(economy, created, forced=True))
 
-        assert rerun.cliffs is not None
         assert rerun.cliffs.baseline.inserted is True
         assert _calculations_of(connection, forced.baseline.simulation_run_id) == 1
-        assert unasked.cliffs is None
         assert (
             _calculations_of(
                 connection,
