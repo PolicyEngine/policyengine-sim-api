@@ -11,11 +11,8 @@ from uuid import UUID
 
 from economy_output import US_ECONOMY_OUTPUT, uk_economy_output
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
-from policyengine_stage12_persistence.report_run_results import (
-    inequality,
-    poverty,
-    report_run_result,
-)
+from policyengine_simulation_persistence.result_tables import Inequality, Poverty
+from policyengine_stage12_persistence.report_run_results import report_run_result
 
 SIMULATION_RUN_ID = UUID("00000000-0000-0000-0000-00000000000b")
 ONE_RUN_ON_BOTH_SIDES = ReportRunIds(
@@ -34,12 +31,12 @@ def _run_rows(output, run_ids: ReportRunIds, country: str):
     """Return the poverty and inequality rows of ``output``, without their IDs."""
     result = report_run_result(output, run_ids=run_ids, country=country)
     rows_by_table = {
-        rows.table.name: [
+        rows.model.__tablename__: [
             {name: value for name, value in row.items() if name != "id"}
             for row in rows.rows
         ]
         for rows in result.rows
-        if rows.table in {poverty, inequality}
+        if rows.model in {Poverty, Inequality}
     }
     return rows_by_table["poverty"], rows_by_table["inequality"]
 

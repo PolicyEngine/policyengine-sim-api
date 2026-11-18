@@ -53,7 +53,7 @@ from policyengine_simulation_executor.stage12_timeouts import (
     HOUSEHOLD_SIDE_WAIT_SECONDS,
 )
 
-from .database_retry import open_connection_with_retry
+from .database_retry import open_session_with_retry
 from .dependencies import ModalChildInvoker
 from .failure_recording import persist_failure_record
 from .household_job_recording import (
@@ -201,7 +201,7 @@ def household_report_run_store(
     """
     return HouseholdReportRunStore(
         os.environ.get(MODAL_WORKER_DATABASE_URL_ENV, ""),
-        open_connection=partial(open_connection_with_retry, runtime=runtime),
+        open_session=partial(open_session_with_retry, runtime=runtime),
     )
 
 

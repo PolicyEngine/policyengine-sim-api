@@ -8,6 +8,10 @@ from policyengine_stage12_persistence.budget_window_store import (
     YearStarter,
     YearToStart,
 )
+from policyengine_stage12_persistence.engine import (
+    SessionOpener,
+    create_stage12_session_factory,
+)
 from policyengine_stage12_persistence.household_report_run_store import (
     HouseholdReportRunStore,
 )
@@ -24,11 +28,7 @@ from policyengine_stage12_persistence.report_run_store import (
     RunWrite,
     SimulationRunState,
 )
-from policyengine_stage12_persistence.store import (
-    ConnectionOpener,
-    Stage12PersistenceStore,
-    create_stage12_engine,
-)
+from policyengine_stage12_persistence.store import Stage12PersistenceStore
 from policyengine_stage12_persistence.validation import (
     Stage12RuntimeAccessError,
     validate_runtime_database,
@@ -38,7 +38,6 @@ __all__ = [
     "BUDGET_WINDOW_MAX_RUNNING_YEARS",
     "ActiveRun",
     "BudgetWindowStore",
-    "ConnectionOpener",
     "DistrictCodes",
     "HouseholdReportRunStore",
     "ReportRunResult",
@@ -46,6 +45,7 @@ __all__ = [
     "RunKind",
     "RunStatus",
     "RunWrite",
+    "SessionOpener",
     "SimulationRunState",
     "Stage12PersistenceStore",
     "Stage12RuntimeAccessError",
@@ -53,7 +53,7 @@ __all__ = [
     "YearStartDeferred",
     "YearStarter",
     "YearToStart",
-    "create_stage12_engine",
+    "create_stage12_session_factory",
     "report_run_result",
     "validate_runtime_database",
 ]

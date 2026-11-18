@@ -29,7 +29,7 @@ URL, which holds a password.
 comparison path use, from the same URL check: it keeps no pool, so each
 operation's session ends with it and a call that spends most of its life
 calculating holds no pooler slot, and it waits 10 seconds to connect. The
-Stage 12 library binds it as `create_stage12_engine`.
+Stage 12 library's `create_stage12_session_factory` builds its sessions on it.
 
 `create_session_factory` turns an engine into a `sessionmaker` for the ORM.
 Attributes keep their values after the transaction commits, apart from one set

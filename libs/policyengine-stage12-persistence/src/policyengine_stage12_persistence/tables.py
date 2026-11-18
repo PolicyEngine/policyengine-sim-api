@@ -20,6 +20,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    inspect,
 )
 from sqlalchemy.dialects.postgresql import ENUM, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -225,12 +226,14 @@ class ComparisonSimulation(ComparisonBase):
     retention_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-# The Core tables the store's statements use until they name these classes.
-comparison_reports = ComparisonReport.__table__
-comparison_simulations = ComparisonSimulation.__table__
-
-REPORT_COLUMNS = tuple(comparison_reports.c.keys())
-SIMULATION_COLUMNS = tuple(comparison_simulations.c.keys())
+REPORT_COLUMNS = tuple(inspect(ComparisonReport).columns.keys())
+SIMULATION_COLUMNS = tuple(inspect(ComparisonSimulation).columns.keys())
+# Each class's mapped attributes, which the store selects and returns: its rows
+# stay plain values, so no statement depends on what a session already holds.
+REPORT_ATTRIBUTES = tuple(getattr(ComparisonReport, name) for name in REPORT_COLUMNS)
+SIMULATION_ATTRIBUTES = tuple(
+    getattr(ComparisonSimulation, name) for name in SIMULATION_COLUMNS
+)
 
 REPORT_CHECK_CONSTRAINTS = frozenset(
     {

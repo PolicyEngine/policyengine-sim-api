@@ -57,7 +57,10 @@ What the ORM means here:
   The classes declare no relationships, so a flush doesn't order inserts by
   foreign key: flush the referenced row first. An attribute set to a SQL
   expression, such as `func.now()`, must be refreshed before the session closes
-  if it will be read afterwards.
+  if it will be read afterwards. To retry a refused connection without any risk
+  of repeating a write, retry only a first statement that changes nothing, which
+  makes the session check out its connection, as `StoreSessions` in
+  `policyengine_stage12_persistence.engine` does.
 - **Statements** name mapped classes or their attributes: `session.get`,
   `session.add`, `session.scalars(select(Model))`, and ORM-enabled
   `update(Model)`, `insert(Model)` or

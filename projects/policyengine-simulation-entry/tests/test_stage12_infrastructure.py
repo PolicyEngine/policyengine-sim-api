@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 import yaml
+from policyengine_simulation_entry import stage12_infrastructure
+from sqlalchemy.orm import sessionmaker
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / ".github/scripts/stage12-validate-infrastructure.sh"
@@ -411,3 +413,38 @@ def test_both_stage12_deploy_steps_receive_the_simulation_output_bucket() -> Non
         assert step["env"]["V2_SIMULATION_OUTPUT_BUCKET"] == (
             "${{ vars.V2_SIMULATION_OUTPUT_BUCKET }}"
         )
+
+
+def test_the_deployment_check_runs_on_a_session_factory_of_the_given_url(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    url_file = tmp_path / "database-url"
+    url_file.write_text("postgresql://role@database.example/postgres\n")
+    checked: list[tuple[object, dict[str, str]]] = []
+    monkeypatch.setattr(
+        stage12_infrastructure,
+        "validate_runtime_database",
+        lambda session_factory, **options: checked.append((session_factory, options)),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "stage12_infrastructure",
+            "--database-url-file",
+            str(url_file),
+            "--expected-role",
+            "policyengine_v2_runtime",
+            "--environment",
+            "staging",
+        ],
+    )
+
+    stage12_infrastructure.main()
+
+    [(session_factory, options)] = checked
+    assert isinstance(session_factory, sessionmaker)
+    assert options == {
+        "expected_role": "policyengine_v2_runtime",
+        "environment": "staging",
+    }
+    assert "role=policyengine_v2_runtime" in capsys.readouterr().out
