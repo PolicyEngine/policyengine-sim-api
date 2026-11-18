@@ -278,10 +278,14 @@ def test_opening_a_connection_is_reported_in_every_module_using_sqlalchemy(call)
         ("self._connection.execute(statement)", "self._connection.execute(...)"),
         ("connection.stream(statement)", "connection.stream(...)"),
         ("connection.stream_scalars(statement)", "connection.stream_scalars(...)"),
+        ("bind.execute(statement)", "bind.execute(...)"),
+        ("database.execute(statement)", "database.execute(...)"),
+        ("self.store.execute(statement)", "self.store.execute(...)"),
+        ("connections.execute(statement)", "connections.execute(...)"),
     ],
 )
 def test_a_statement_on_an_unannotated_connection_is_reported(call, summary):
-    """A connection's name shows what the missing annotation would have."""
+    """``execute`` must run on a session, whatever else its receiver is called."""
     source = f"import sqlalchemy\n\nvalue = {call}"
 
     assert _checks({STORE: source}, STORE) == [(CORE_CONNECTION, summary)]
@@ -295,8 +299,10 @@ def test_a_statement_on_an_unannotated_connection_is_reported(call, summary):
         "session.scalars(statement)",
         "self._session.execute(statement)",
         "store_session.execute(statement)",
-        "connections.execute(statement)",
-        "connection_pool.execute(statement)",
+        "Session(bind).execute(statement)",
+        "session.execute(statement).scalars()",
+        "result.scalars()",
+        "result.scalar()",
     ],
 )
 def test_a_statement_on_a_session_is_not_reported(call):
