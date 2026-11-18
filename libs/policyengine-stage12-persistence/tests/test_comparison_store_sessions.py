@@ -53,7 +53,7 @@ from session_database import (
     refuse_connection_numbers,
 )
 from sqlalchemy import delete, event, func, inspect, make_url, select, true
-from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy.exc import InternalError, OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
@@ -574,16 +574,26 @@ class FailingSessions:
 
 
 @pytest.mark.parametrize(
-    ("error_type", "retries"),
+    ("error_type", "connection_invalidated", "retries"),
     [
-        pytest.param(OperationalError, 4, id="connection-error-is-retried"),
-        pytest.param(ProgrammingError, 0, id="other-database-error-is-not"),
+        pytest.param(OperationalError, False, 4, id="connection-error-is-retried"),
+        # A pooler ending a connection can report it as an internal error.
+        pytest.param(InternalError, True, 4, id="lost-connection-is-retried"),
+        pytest.param(InternalError, False, 0, id="internal-error-is-not"),
+        pytest.param(ProgrammingError, False, 0, id="other-database-error-is-not"),
     ],
 )
 def test_the_deployment_check_reports_a_database_error_without_its_text(
-    retry_waits, error_type, retries
+    retry_waits, error_type, connection_invalidated, retries
 ) -> None:
-    sessions = FailingSessions(error_type(None, None, Exception("password=hidden")))
+    sessions = FailingSessions(
+        error_type(
+            None,
+            None,
+            Exception("password=hidden"),
+            connection_invalidated=connection_invalidated,
+        )
+    )
 
     with pytest.raises(Stage12RuntimeAccessError) as failure:
         validate_runtime_database(

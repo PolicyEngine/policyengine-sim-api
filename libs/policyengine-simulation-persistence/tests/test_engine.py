@@ -111,7 +111,7 @@ def test_the_single_connection_session_factory_shares_one_connection(
     )
     assert captured_options["pool_pre_ping"] is True
     assert captured_options["connect_args"] == {
-        "connect_timeout": 10,
+        "connect_timeout": engine_module.SINGLE_CONNECTION_CONNECT_TIMEOUT_SECONDS,
         "prepare_threshold": None,
     }
 
