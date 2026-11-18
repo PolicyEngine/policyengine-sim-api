@@ -13,6 +13,7 @@ from typing import Any, Union, get_args, get_origin
 from uuid import UUID, uuid4
 
 import pytest
+from conftest import SERVICE_TEST_ROLE
 from policyengine_simulation_persistence import (
     MODAL_WORKER_TABLE_PRIVILEGES,
     BudgetSummary,
@@ -44,6 +45,8 @@ from policyengine_simulation_persistence import (
     ServiceBase,
     Simulation,
     SimulationRun,
+    SimulationStatus,
+    SimulationType,
     TaxBenefitModel,
     TaxBenefitModelVersion,
     WithheldAreaCode,
@@ -60,7 +63,7 @@ from policyengine_simulation_persistence import (
 )
 from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
 from schema_comparison import describe_tables
-from sqlalchemy import create_engine, inspect, select, update
+from sqlalchemy import create_engine, inspect, select, text, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Mapped, configure_mappers
@@ -292,6 +295,71 @@ def test_a_session_writes_and_reads_a_household_job_through_its_class(
     assert stored_job.request_data == {"people": {}}
     assert stored_job.result is None
     assert result_is_sql_null is True
+
+
+@pytest.mark.parametrize(
+    "mapped_class", RESULT_CLASSES.values(), ids=lambda item: item.__name__
+)
+def test_a_result_class_doesnt_read_its_row_back_on_insert(mapped_class) -> None:
+    assert inspect(mapped_class).eager_defaults is False
+
+
+def _insert_simulation_run(session_factory) -> UUID:
+    """Insert a simulation run and the rows its keys name; return its ``id``."""
+    household = referenced_tables.ReferencedHousehold(id=uuid4())
+    version = referenced_tables.ReferencedTaxBenefitModelVersion(id=uuid4())
+    simulation = Simulation(
+        simulation_type=SimulationType.HOUSEHOLD,
+        household_id=household.id,
+        tax_benefit_model_version_id=version.id,
+    )
+    with session_factory.begin() as session:
+        session.add_all([household, version])
+        session.flush()
+        session.add(simulation)
+        session.flush()
+        run = SimulationRun(
+            simulation_id=simulation.id,
+            year=2026,
+            tax_benefit_model_version_id=version.id,
+            country_package_version="1.0.0",
+            policyengine_version="2.0.0",
+            status=SimulationStatus.PENDING,
+        )
+        session.add(run)
+    return run.id
+
+
+@pytest.mark.postgres
+def test_a_role_that_may_only_insert_writes_a_result_through_its_class(
+    disposable_database,
+) -> None:
+    """The Modal worker role's list gives it ``INSERT`` alone on result tables."""
+    owner_engine = create_simulation_engine(disposable_database.superuser_url)
+    writer_engine = create_simulation_engine(disposable_database.service_url)
+    try:
+        # Tests may build the models' tables; runtime code never does.
+        referenced_metadata.create_all(owner_engine)
+        service_metadata.create_all(owner_engine)
+        result_metadata.create_all(owner_engine)
+        run_id = _insert_simulation_run(create_session_factory(owner_engine))
+        with owner_engine.begin() as connection:
+            connection.execute(
+                text(f"GRANT INSERT ON public.poverty TO {SERVICE_TEST_ROLE}")
+            )
+        result = Poverty(simulation_run_id=run_id, poverty_type="spm", entity="person")
+
+        with create_session_factory(writer_engine).begin() as session:
+            session.add(result)
+
+        with create_session_factory(owner_engine)() as session:
+            stored_result = session.get(Poverty, result.id)
+    finally:
+        owner_engine.dispose()
+        writer_engine.dispose()
+
+    assert stored_result is not None
+    assert stored_result.created_at is not None
 
 
 @pytest.mark.public_api_schema

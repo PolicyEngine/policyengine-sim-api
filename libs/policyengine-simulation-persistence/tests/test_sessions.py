@@ -115,6 +115,44 @@ def test_a_bounded_session_rolls_back_when_its_block_raises(
     assert stored_row is None
 
 
+def _add_without_flushing(session_factory) -> None:
+    with bounded_session(session_factory, statement_timeout_milliseconds=50) as session:
+        session.add(_Written(id=1))
+
+
+@pytest.mark.postgres
+def test_a_bounded_session_limits_the_flush_at_its_commit(
+    disposable_database,
+) -> None:
+    """What the block leaves pending is written under the same limit."""
+    engine = create_simulation_engine(disposable_database.superuser_url)
+    session_factory = create_session_factory(engine)
+    try:
+        _Base.metadata.create_all(engine)
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE FUNCTION slow_insert() RETURNS trigger "
+                    "LANGUAGE plpgsql AS "
+                    "$$ BEGIN PERFORM pg_sleep(5); RETURN NEW; END $$"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE TRIGGER slow_insert BEFORE INSERT ON written "
+                    "FOR EACH ROW EXECUTE FUNCTION slow_insert()"
+                )
+            )
+        with pytest.raises(OperationalError, match="statement timeout"):
+            _add_without_flushing(session_factory)
+        with session_factory() as session:
+            stored_row = session.get(_Written, 1)
+    finally:
+        engine.dispose()
+
+    assert stored_row is None
+
+
 def _sleep_past_the_limit(session_factory) -> None:
     with bounded_session(session_factory, statement_timeout_milliseconds=50) as session:
         session.execute(text("SELECT pg_sleep(5)"))
