@@ -106,6 +106,9 @@ def test_the_single_connection_session_factory_shares_one_connection(
     assert captured_options["poolclass"] is QueuePool
     assert captured_options["pool_size"] == 1
     assert captured_options["max_overflow"] == 0
+    assert (
+        captured_options["pool_timeout"] == engine_module.SINGLE_CONNECTION_WAIT_SECONDS
+    )
     assert captured_options["pool_pre_ping"] is True
     assert captured_options["connect_args"] == {
         "connect_timeout": 10,

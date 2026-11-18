@@ -21,6 +21,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ResultComparisonStatus,
     SimulationRole,
 )
+from policyengine_simulation_persistence import engine as persistence_engine
 from policyengine_simulation_persistence.engine import (
     create_session_factory,
     dispose_session_factory,
@@ -51,7 +52,7 @@ from session_database import (
     record_opened_connections,
     refuse_connection_numbers,
 )
-from sqlalchemy import delete, event, func, inspect, make_url, select
+from sqlalchemy import delete, event, func, inspect, make_url, select, true
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
@@ -65,8 +66,9 @@ NOW = datetime(2026, 9, 22, tzinfo=UTC)
 LATER = NOW + timedelta(minutes=5)
 PLACEHOLDER_CALL = "dispatch-pending-1"
 DIGEST = "a" * 64
-# The connections a passing deployment check opens, one at a time: its role
-# check, the schema inspector, eleven schema reads and its rolled-back writes.
+# The connections a passing deployment check opens without a pool, one at a
+# time: its role check, the schema inspector, eleven schema reads and its
+# rolled-back writes.
 CHECK_CONNECTIONS = 14
 
 
@@ -133,15 +135,21 @@ def store(
     return Stage12PersistenceStore(session_factory=runtime_sessions)
 
 
-@pytest.fixture
-def check_sessions() -> Iterator[sessionmaker[Session]]:
-    """Yield the deployment command's session factory, as the runtime role."""
+def _deployment_command_sessions() -> sessionmaker[Session]:
+    """Return the deployment command's session factory, as the runtime role."""
     worker_database_url()
     database_url = make_url(os.environ[SEED_URL_ENV]).set(drivername="postgresql")
     session_factory = create_stage12_check_session_factory(
         database_url.render_as_string(hide_password=False)
     )
     act_as_role(session_factory.kw["bind"], RUNTIME_ROLE)
+    return session_factory
+
+
+@pytest.fixture
+def check_sessions() -> Iterator[sessionmaker[Session]]:
+    """Yield the deployment command's session factory, as the runtime role."""
+    session_factory = _deployment_command_sessions()
     try:
         yield session_factory
     finally:
@@ -401,6 +409,56 @@ def test_the_deployment_command_replaces_a_connection_it_loses(
     assert len(opened) == 2
     assert retry_waits == [1.0]
     assert _comparison_report_count(seeder) == reports_before
+
+
+def test_the_deployment_command_replaces_a_connection_lost_while_idle(
+    check_sessions, seeder, retry_waits
+) -> None:
+    # The connection is checked before reuse, so no step fails or waits.
+    opened = record_opened_connections(check_sessions)
+    terminated_backends: list[int] = []
+
+    def terminate_the_first_returned_connection(
+        dbapi_connection, _connection_record
+    ) -> None:
+        if terminated_backends:
+            return
+        backend = dbapi_connection.info.backend_pid
+        terminated_backends.append(backend)
+        with seeder.engine.begin() as administrator:
+            administrator.execute(select(func.pg_terminate_backend(backend)))
+
+    event.listen(
+        check_sessions.kw["bind"], "checkin", terminate_the_first_returned_connection
+    )
+
+    validate_runtime_database(
+        check_sessions, expected_role=RUNTIME_ROLE, environment="staging"
+    )
+
+    assert len(terminated_backends) == 1
+    assert len(opened) == 2
+    assert retry_waits == []
+
+
+def test_the_deployment_check_reports_a_connection_another_step_kept(
+    retry_waits, monkeypatch
+) -> None:
+    monkeypatch.setattr(persistence_engine, "SINGLE_CONNECTION_WAIT_SECONDS", 0.05)
+    session_factory = _deployment_command_sessions()
+    try:
+        with session_factory() as holder:
+            holder.execute(select(true())).scalar_one()
+            with pytest.raises(Stage12RuntimeAccessError, match="TimeoutError"):
+                validate_runtime_database(
+                    session_factory,
+                    expected_role=RUNTIME_ROLE,
+                    environment="staging",
+                )
+    finally:
+        dispose_session_factory(session_factory)
+
+    assert retry_waits == []
 
 
 def test_the_deployment_check_needs_one_free_pooler_slot(runtime_sessions) -> None:

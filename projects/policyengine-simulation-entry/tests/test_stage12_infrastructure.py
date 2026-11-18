@@ -6,13 +6,18 @@ import json
 import os
 import subprocess
 import textwrap
+import threading
 from pathlib import Path
+from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 import yaml
 from policyengine_simulation_entry import stage12_infrastructure
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / ".github/scripts/stage12-validate-infrastructure.sh"
@@ -416,7 +421,7 @@ def test_both_stage12_deploy_steps_receive_the_simulation_output_bucket() -> Non
         )
 
 
-def _run_the_check_command_with_arguments(tmp_path, monkeypatch) -> list[object]:
+def _prepare_the_check_command(tmp_path, monkeypatch) -> list[object]:
     """Prepare the command's arguments; return the factories it disposes of."""
     url_file = tmp_path / "database-url"
     url_file.write_text("postgresql://role@database.example/postgres\n")
@@ -442,7 +447,7 @@ def _run_the_check_command_with_arguments(tmp_path, monkeypatch) -> list[object]
 def test_the_deployment_check_shares_one_connection_of_the_given_url(
     tmp_path, monkeypatch, capsys
 ) -> None:
-    disposed = _run_the_check_command_with_arguments(tmp_path, monkeypatch)
+    disposed = _prepare_the_check_command(tmp_path, monkeypatch)
     checked: list[tuple[object, dict[str, str]]] = []
     monkeypatch.setattr(
         stage12_infrastructure,
@@ -454,9 +459,11 @@ def test_the_deployment_check_shares_one_connection_of_the_given_url(
 
     [(session_factory, options)] = checked
     assert isinstance(session_factory, sessionmaker)
-    pool = session_factory.kw["bind"].pool
-    assert isinstance(pool, QueuePool)
-    assert pool.size() == 1
+    engine = session_factory.kw["bind"]
+    assert engine.url.host == "database.example"
+    assert engine.url.username == "role"
+    assert isinstance(engine.pool, QueuePool)
+    assert engine.pool.size() == 1
     assert options == {
         "expected_role": "policyengine_v2_runtime",
         "environment": "staging",
@@ -466,7 +473,7 @@ def test_the_deployment_check_shares_one_connection_of_the_given_url(
 
 
 def test_a_failed_deployment_check_closes_its_connection(tmp_path, monkeypatch) -> None:
-    disposed = _run_the_check_command_with_arguments(tmp_path, monkeypatch)
+    disposed = _prepare_the_check_command(tmp_path, monkeypatch)
 
     def refuse(_session_factory, **_options) -> None:
         message = "runtime role lacks SELECT"
@@ -478,3 +485,82 @@ def test_a_failed_deployment_check_closes_its_connection(tmp_path, monkeypatch) 
         stage12_infrastructure.main()
 
     assert len(disposed) == 1
+
+
+class RecordedTimer:
+    """Stands in for ``threading.Timer``, recording how the command uses it."""
+
+    created: ClassVar[list[RecordedTimer]] = []
+
+    def __init__(self, interval: float, function: Callable[[], None]) -> None:
+        self.interval = interval
+        self.function = function
+        self.daemon = False
+        self.started = False
+        self.cancelled = False
+        self.created.append(self)
+
+    def start(self) -> None:
+        self.started = True
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+@pytest.mark.parametrize("check_passes", [True, False])
+def test_the_check_time_limit_ends_with_the_command(
+    tmp_path, monkeypatch, check_passes
+) -> None:
+    _prepare_the_check_command(tmp_path, monkeypatch)
+    monkeypatch.setattr(RecordedTimer, "created", [])
+    monkeypatch.setattr(stage12_infrastructure.threading, "Timer", RecordedTimer)
+
+    def finish_the_check(_session_factory, **_options) -> None:
+        [timer] = RecordedTimer.created
+        assert timer.started
+        assert not timer.cancelled
+        if not check_passes:
+            message = "runtime role lacks SELECT"
+            raise stage12_infrastructure.Stage12RuntimeAccessError(message)
+
+    monkeypatch.setattr(
+        stage12_infrastructure, "validate_runtime_database", finish_the_check
+    )
+
+    if check_passes:
+        stage12_infrastructure.main()
+    else:
+        with pytest.raises(SystemExit):
+            stage12_infrastructure.main()
+
+    [timer] = RecordedTimer.created
+    assert timer.interval == stage12_infrastructure.CHECK_TIME_LIMIT_SECONDS
+    assert timer.daemon is True
+    assert timer.cancelled
+
+
+def test_a_stalled_deployment_check_ends_the_command(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # A connection that goes silent blocks its reader with no error to handle,
+    # so the limit ends the process rather than waiting for the check to return.
+    _prepare_the_check_command(tmp_path, monkeypatch)
+    monkeypatch.setattr(stage12_infrastructure, "CHECK_TIME_LIMIT_SECONDS", 0.01)
+    exit_statuses: list[int] = []
+    process_ended = threading.Event()
+
+    def end_the_process(status: int) -> None:
+        exit_statuses.append(status)
+        process_ended.set()
+
+    monkeypatch.setattr(stage12_infrastructure.os, "_exit", end_the_process)
+
+    def stall(_session_factory, **_options) -> None:
+        assert process_ended.wait(timeout=5)
+
+    monkeypatch.setattr(stage12_infrastructure, "validate_runtime_database", stall)
+
+    stage12_infrastructure.main()
+
+    assert exit_statuses == [1]
+    assert "did not finish within" in capsys.readouterr().err
