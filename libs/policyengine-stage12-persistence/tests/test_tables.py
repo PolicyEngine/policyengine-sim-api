@@ -11,11 +11,14 @@ from policyengine_stage12_persistence.tables import (
     SIMULATION_CHECK_CONSTRAINTS,
     SIMULATION_COLUMNS,
     SIMULATION_IDENTITY_CONSTRAINT,
-    comparison_reports,
-    comparison_simulations,
+    ComparisonReport,
+    ComparisonSimulation,
     metadata,
 )
 from sqlalchemy import ForeignKeyConstraint, String, UniqueConstraint
+
+comparison_reports = ComparisonReport.__table__
+comparison_simulations = ComparisonSimulation.__table__
 
 
 def test_mappings_cover_every_cross_service_record_field() -> None:

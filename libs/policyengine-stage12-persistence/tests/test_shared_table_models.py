@@ -39,8 +39,9 @@ from policyengine_stage12_persistence import (
     report_run_store,
     store,
 )
+from policyengine_stage12_persistence import engine as stage12_engine
 from policyengine_stage12_persistence.report_run_store import (
-    RUN_TABLES,
+    RUN_MODELS,
     RunKind,
     RunStatus,
 )
@@ -57,21 +58,21 @@ def _is_one_of(table: Table, tables: Iterable[Table]) -> bool:
 
 
 def test_the_run_stores_write_the_shared_run_table_models() -> None:
-    assert RUN_TABLES[RunKind.REPORT_RUN] is shared_tables.report_runs
-    assert RUN_TABLES[RunKind.SIMULATION_RUN] is shared_tables.simulation_runs
-    assert RUN_TABLES[RunKind.HOUSEHOLD_JOB] is shared_tables.household_jobs
-    assert report_run_store.budget_window_runs is shared_tables.budget_window_runs
+    assert RUN_MODELS[RunKind.REPORT_RUN] is shared_tables.ReportRun
+    assert RUN_MODELS[RunKind.SIMULATION_RUN] is shared_tables.SimulationRun
+    assert RUN_MODELS[RunKind.HOUSEHOLD_JOB] is shared_tables.HouseholdJob
+    assert report_run_store.BudgetWindowRun is shared_tables.BudgetWindowRun
 
 
 def test_the_budget_window_store_writes_the_shared_run_table_models() -> None:
-    assert budget_window_store.budget_window_runs is shared_tables.budget_window_runs
-    assert budget_window_store.report_runs is shared_tables.report_runs
-    assert budget_window_store.simulation_runs is shared_tables.simulation_runs
+    assert budget_window_store.BudgetWindowRun is shared_tables.BudgetWindowRun
+    assert budget_window_store.ReportRun is shared_tables.ReportRun
+    assert budget_window_store.SimulationRun is shared_tables.SimulationRun
 
 
 def test_the_household_report_store_writes_the_shared_run_table_models() -> None:
-    assert household_report_run_store.report_runs is shared_tables.report_runs
-    assert household_report_run_store.simulation_runs is shared_tables.simulation_runs
+    assert household_report_run_store.ReportRun is shared_tables.ReportRun
+    assert household_report_run_store.SimulationRun is shared_tables.SimulationRun
 
 
 def test_every_table_the_library_names_is_shared_or_a_comparison_table() -> None:
@@ -89,11 +90,12 @@ def test_every_table_the_library_names_is_shared_or_a_comparison_table() -> None
             f"{policyengine_stage12_persistence.__name__}.{module_info.name}"
         )
         for name, value in vars(module).items():
-            if not isinstance(value, Table):
+            table = getattr(value, "__table__", value)
+            if not isinstance(table, Table):
                 continue
-            assert _is_one_of(value, shared_models) or _is_one_of(
-                value, comparison_tables
-            ), f"{module_info.name}.{name} models {value.name} itself"
+            assert _is_one_of(table, shared_models) or _is_one_of(
+                table, comparison_tables
+            ), f"{module_info.name}.{name} models {table.name} itself"
 
 
 def test_every_result_row_goes_in_a_shared_result_table_model() -> None:
@@ -119,15 +121,17 @@ def test_every_result_row_goes_in_a_shared_result_table_model() -> None:
 
     for result in results:
         for result_rows in result.rows:
-            assert _is_one_of(result_rows.table, result_models), result_rows.table.name
+            table = result_rows.model.__table__
+            assert _is_one_of(table, result_models), table.name
 
 
 def test_the_stores_connect_with_the_service_librarys_one_engine_helper() -> None:
     """One URL check and one unpooled engine serve every Modal call's store."""
-    assert store.create_stage12_engine is engine.create_unpooled_engine
+    assert stage12_engine.create_unpooled_engine is engine.create_unpooled_engine
+    assert stage12_engine.create_session_factory is engine.create_session_factory
     assert not hasattr(store, "normalized_database_url")
-    assert report_run_store.create_stage12_engine is engine.create_unpooled_engine
-    assert budget_window_store.create_stage12_engine is engine.create_unpooled_engine
+    for store_module in (store, report_run_store, budget_window_store):
+        assert not hasattr(store_module, "create_unpooled_engine")
 
 
 @pytest.mark.parametrize(

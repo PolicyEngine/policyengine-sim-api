@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sqlite3
-from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -91,6 +90,9 @@ class FakeResult:
         assert self.row is not None
         return self.row
 
+    def scalar_one(self):
+        return self.one()
+
     def all(self):
         return self.rows or []
 
@@ -105,11 +107,16 @@ def _refused_connection_error() -> OperationalError:
     )
 
 
-class FakeConnection:
-    def __init__(self, results, *, commit_error=None):
-        self.results = list(results)
-        self.statements = []
-        self.commit_error = commit_error
+class FakeSession:
+    """Answer statements with scripted results, connecting on the first one.
+
+    As on a real session, the first statement checks out the connection, and
+    only what follows it is the operation's.
+    """
+
+    def __init__(self, database):
+        self.database = database
+        self.connected = False
 
     def __enter__(self):
         return self
@@ -117,45 +124,56 @@ class FakeConnection:
     def __exit__(self, *_exception_details):
         return None
 
-    @contextmanager
-    def begin(self):
-        yield
-        if self.commit_error is not None:
-            raise self.commit_error
+    def close(self):
+        return None
 
-    def execute(self, statement):
+    def commit(self):
+        if self.database.commit_error is not None:
+            raise self.database.commit_error
+
+    def execute(self, statement, *_parameters, **_options):
         assert isinstance(statement, ClauseElement)
-        self.statements.append(statement)
-        return self.results.pop(0)
+        if not self.connected:
+            self.database.connect()
+            self.connected = True
+            return FakeResult(row=True)
+        self.database.statements.append(statement)
+        return self.database.results.pop(0)
 
 
-class FakeEngine:
+class FakeSessions:
+    """A session factory over scripted results, refusing the first connections."""
+
     def __init__(self, results, *, refused_connections=0, commit_error=None):
-        self.connection = FakeConnection(results, commit_error=commit_error)
+        self.results = list(results)
+        self.statements = []
+        self.commit_error = commit_error
         self.refused_connections = refused_connections
         self.connection_attempts = 0
+
+    def __call__(self):
+        return FakeSession(self)
 
     def connect(self):
         self.connection_attempts += 1
         if self.connection_attempts <= self.refused_connections:
             raise _refused_connection_error()
-        return self.connection
 
 
-class RetryingConnectionOpener:
-    """Record each operation's connection and retry one refused connection."""
+class RetryingSessionOpener:
+    """Record each operation's opening and retry one refused connection."""
 
     def __init__(self):
         self.operation_names = []
         self.refusals = []
 
-    def __call__(self, connect, *, operation_name):
+    def __call__(self, open_session, *, operation_name):
         self.operation_names.append(operation_name)
         try:
-            return connect()
+            return open_session()
         except OperationalError as refusal:
             self.refusals.append(refusal)
-            return connect()
+            return open_session()
 
 
 def _sqlalchemy_commit_failure(monkeypatch) -> OperationalError:
@@ -179,10 +197,10 @@ def _sqlalchemy_commit_failure(monkeypatch) -> OperationalError:
     return commit_failure.value
 
 
-def test_operations_open_connections_through_the_opener_before_any_statement() -> None:
+def test_operations_open_sessions_through_the_opener_before_any_statement() -> None:
     report = _report()
     simulation = _simulation()
-    engine = FakeEngine(
+    sessions = FakeSessions(
         [
             FakeResult(row=_row(report)),
             FakeResult(row=_row(simulation)),
@@ -190,10 +208,10 @@ def test_operations_open_connections_through_the_opener_before_any_statement() -
         ],
         refused_connections=1,
     )
-    opener = RetryingConnectionOpener()
+    opener = RetryingSessionOpener()
     store = Stage12PersistenceStore(
-        engine=engine,  # type: ignore[arg-type]
-        open_connection=opener,
+        session_factory=sessions,  # type: ignore[arg-type]
+        open_session=opener,
     )
 
     created = store.create_or_resolve_simulation(simulation)
@@ -204,8 +222,8 @@ def test_operations_open_connections_through_the_opener_before_any_statement() -
     assert opener.operation_names == ["create_or_resolve_simulation", "get_simulation"]
     # The refusal reached the opener before the store sent any statement.
     assert len(opener.refusals) == 1
-    assert engine.connection_attempts == 3
-    assert len(engine.connection.statements) == 3
+    assert sessions.connection_attempts == 3
+    assert len(sessions.statements) == 3
 
 
 def test_commit_failure_is_raised_after_the_opener_returns(monkeypatch) -> None:
@@ -214,14 +232,14 @@ def test_commit_failure_is_raised_after_the_opener_returns(monkeypatch) -> None:
     lost_commit_reply = _sqlalchemy_commit_failure(monkeypatch)
     assert lost_commit_reply.statement is None
     report = _report()
-    engine = FakeEngine(
+    sessions = FakeSessions(
         [FakeResult(row=_row(report))],
         commit_error=lost_commit_reply,
     )
-    opener = RetryingConnectionOpener()
+    opener = RetryingSessionOpener()
     store = Stage12PersistenceStore(
-        engine=engine,  # type: ignore[arg-type]
-        open_connection=opener,
+        session_factory=sessions,  # type: ignore[arg-type]
+        open_session=opener,
     )
 
     with pytest.raises(OperationalError) as failure:
@@ -230,32 +248,32 @@ def test_commit_failure_is_raised_after_the_opener_returns(monkeypatch) -> None:
     assert failure.value is lost_commit_reply
     assert opener.operation_names == ["create_or_resolve_report"]
     assert opener.refusals == []
-    assert engine.connection_attempts == 1
-    assert len(engine.connection.statements) == 1
+    assert sessions.connection_attempts == 1
+    assert len(sessions.statements) == 1
 
 
 def test_default_store_does_not_retry_a_refused_connection() -> None:
-    engine = FakeEngine([], refused_connections=1)
-    store = Stage12PersistenceStore(engine=engine)  # type: ignore[arg-type]
+    sessions = FakeSessions([], refused_connections=1)
+    store = Stage12PersistenceStore(session_factory=sessions)  # type: ignore[arg-type]
 
     with pytest.raises(OperationalError, match="EMAXCONNSESSION"):
         store.get_report(REPORT_ID)
 
-    assert engine.connection_attempts == 1
+    assert sessions.connection_attempts == 1
 
 
 def test_create_and_read_report_use_sqlalchemy_statements_only() -> None:
     report = _report()
-    engine = FakeEngine([FakeResult(row=_row(report))])
-    store = Stage12PersistenceStore(engine=engine)  # type: ignore[arg-type]
+    sessions = FakeSessions([FakeResult(row=_row(report))])
+    store = Stage12PersistenceStore(session_factory=sessions)  # type: ignore[arg-type]
 
     result = store.create_or_resolve_report(report)
 
     assert result.created is True
     assert result.record == report
     assert result.record.observability_id == OBSERVABILITY_ID
-    assert len(engine.connection.statements) == 1
-    assert "observability_id" in str(engine.connection.statements[0])
+    assert len(sessions.statements) == 1
+    assert "observability_id" in str(sessions.statements[0])
 
 
 def test_report_observability_identifier_is_limited_to_36_characters() -> None:
@@ -268,13 +286,13 @@ def test_report_observability_identifier_is_limited_to_36_characters() -> None:
 
 def test_report_identity_conflict_resolves_existing_row() -> None:
     report = _report()
-    engine = FakeEngine(
+    sessions = FakeSessions(
         [
             FakeResult(row=None),
             FakeResult(row=_row(report)),
         ]
     )
-    store = Stage12PersistenceStore(engine=engine)  # type: ignore[arg-type]
+    store = Stage12PersistenceStore(session_factory=sessions)  # type: ignore[arg-type]
 
     result = store.create_or_resolve_report(report)
 
@@ -285,19 +303,19 @@ def test_report_identity_conflict_resolves_existing_row() -> None:
 def test_simulation_creation_checks_the_parent_in_the_same_transaction() -> None:
     report = _report()
     simulation = _simulation()
-    engine = FakeEngine(
+    sessions = FakeSessions(
         [
             FakeResult(row=_row(report)),
             FakeResult(row=_row(simulation)),
         ]
     )
-    store = Stage12PersistenceStore(engine=engine)  # type: ignore[arg-type]
+    store = Stage12PersistenceStore(session_factory=sessions)  # type: ignore[arg-type]
 
     result = store.create_or_resolve_simulation(simulation)
 
     assert result.created is True
     assert result.record == simulation
-    assert len(engine.connection.statements) == 2
+    assert len(sessions.statements) == 2
 
 
 def test_invalid_lifecycle_transition_is_rejected_before_update() -> None:
@@ -305,21 +323,21 @@ def test_invalid_lifecycle_transition_is_rejected_before_update() -> None:
     candidate = existing.model_copy(
         update={"status": ComparisonRunLifecycleStatus.SUCCEEDED}
     )
-    engine = FakeEngine([FakeResult(row=_row(existing))])
-    store = Stage12PersistenceStore(engine=engine)  # type: ignore[arg-type]
+    sessions = FakeSessions([FakeResult(row=_row(existing))])
+    store = Stage12PersistenceStore(session_factory=sessions)  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="lifecycle cannot move"):
         store.replace_report(candidate)
 
-    assert len(engine.connection.statements) == 1
+    assert len(sessions.statements) == 1
 
 
 def test_invocation_attachment_is_compare_and_set() -> None:
     attached = _simulation().model_copy(
         update={"modal_invocation_id": "fc-123", "updated_at": NOW}
     )
-    engine = FakeEngine([FakeResult(row=_row(attached))])
-    store = Stage12PersistenceStore(engine=engine)  # type: ignore[arg-type]
+    sessions = FakeSessions([FakeResult(row=_row(attached))])
+    store = Stage12PersistenceStore(session_factory=sessions)  # type: ignore[arg-type]
 
     result = store.attach_simulation_invocation(
         SIMULATION_ID,
@@ -342,16 +360,16 @@ def test_simulation_status_replacement_is_compare_and_set() -> None:
             "completed_at": NOW,
         }
     )
-    engine = FakeEngine(
+    sessions = FakeSessions(
         [
             FakeResult(row=_row(running)),
             FakeResult(row=_row(failed)),
         ]
     )
-    opener = RetryingConnectionOpener()
+    opener = RetryingSessionOpener()
     store = Stage12PersistenceStore(
-        engine=engine,  # type: ignore[arg-type]
-        open_connection=opener,
+        session_factory=sessions,  # type: ignore[arg-type]
+        open_session=opener,
     )
 
     result, replaced = store.replace_simulation_if_status(
@@ -362,7 +380,7 @@ def test_simulation_status_replacement_is_compare_and_set() -> None:
     assert replaced is True
     assert result == failed
     assert opener.operation_names == ["replace_simulation_if_status"]
-    assert len(engine.connection.statements) == 2
+    assert len(sessions.statements) == 2
 
 
 def test_simulation_status_replacement_preserves_a_concurrent_cancellation() -> None:
@@ -386,8 +404,8 @@ def test_simulation_status_replacement_preserves_a_concurrent_cancellation() -> 
             "completed_at": NOW,
         }
     )
-    engine = FakeEngine([FakeResult(row=_row(cancelled))])
-    store = Stage12PersistenceStore(engine=engine)  # type: ignore[arg-type]
+    sessions = FakeSessions([FakeResult(row=_row(cancelled))])
+    store = Stage12PersistenceStore(session_factory=sessions)  # type: ignore[arg-type]
 
     result, replaced = store.replace_simulation_if_status(
         succeeded,
@@ -396,4 +414,4 @@ def test_simulation_status_replacement_preserves_a_concurrent_cancellation() -> 
 
     assert replaced is False
     assert result == cancelled
-    assert len(engine.connection.statements) == 1
+    assert len(sessions.statements) == 1

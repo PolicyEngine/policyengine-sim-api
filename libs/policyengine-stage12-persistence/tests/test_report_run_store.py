@@ -29,29 +29,25 @@ LATER = NOW + timedelta(minutes=5)
 
 @pytest.fixture
 def store():
-    run_store = ReportRunStore(worker_database_url())
-    try:
-        yield run_store
-    finally:
-        run_store.engine.dispose()
+    return ReportRunStore(worker_database_url())
 
 
 def test_the_store_connects_as_the_modal_worker_role(store) -> None:
-    with store.engine.connect() as connection:
-        role = connection.execute(select(func.current_user())).scalar_one()
+    with store.sessions.reading("read_role") as session:
+        role = session.execute(select(func.current_user())).scalar_one()
 
     assert role == "policyengine_v2_modal_worker"
 
 
 def test_the_modal_worker_role_cannot_create_a_report_run(store, seeded_run) -> None:
-    from policyengine_simulation_persistence.tables import report_runs
+    from policyengine_simulation_persistence.tables import ReportRun
 
     with (
         pytest.raises(ProgrammingError, match="permission denied"),
-        store.engine.begin() as connection,
+        store.sessions.transaction("create_report_run") as session,
     ):
-        connection.execute(
-            insert(report_runs).values(id=uuid4(), status="pending", updated_at=NOW)
+        session.execute(
+            insert(ReportRun).values(id=uuid4(), status="pending", updated_at=NOW)
         )
 
 
@@ -106,17 +102,17 @@ def test_the_modal_worker_role_may_update_only_a_runs_state_and_results(
     )
     # The same update of a column the role may update succeeds, so the
     # refusal below is of the column itself, not of the row it selects.
-    with store.engine.begin() as connection:
-        allowed = connection.execute(
+    with store.sessions.transaction("update_allowed_column") as session:
+        allowed = session.execute(
             update(run_table).where(run_table.c.id == row_id).values(updated_at=LATER)
         )
     assert allowed.rowcount == 1
 
     with (
         pytest.raises(ProgrammingError, match="permission denied"),
-        store.engine.begin() as connection,
+        store.sessions.transaction("update_forbidden_column") as session,
     ):
-        connection.execute(
+        session.execute(
             update(run_table)
             .where(run_table.c.id == row_id)
             .values({column_name: value})

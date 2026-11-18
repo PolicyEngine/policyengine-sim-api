@@ -92,12 +92,8 @@ FAILURE_SUMMARY = (
 
 
 @pytest.fixture
-def store() -> Iterator[HouseholdReportRunStore]:
-    run_store = HouseholdReportRunStore(worker_database_url())
-    try:
-        yield run_store
-    finally:
-        run_store.engine.dispose()
+def store() -> HouseholdReportRunStore:
+    return HouseholdReportRunStore(worker_database_url())
 
 
 @pytest.fixture
