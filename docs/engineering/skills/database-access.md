@@ -145,10 +145,15 @@ engines passed around without a `Table` or `Engine` annotation, tables held in
 a container
 such as a dict, a class or instance attribute read in another module (other
 than the reads above), a `.table` read in a module that doesn't import
-sqlalchemy, and a Session's `bind` attribute. A name derived from a Core table
-counts as one throughout its module. A name assigned from `Model.id.table`,
-`metadata.tables[...]` or `inspect(Model).selectable` is reported where it is
-assigned, but its later uses aren't. Once a library's tables are mapped
+sqlalchemy, and a Session's `bind` attribute. A name counts as a Core table
+throughout its module once it is assigned an expression rooted at one. Other
+names that come to hold a table aren't followed: one assigned `alias(table)`, a
+conditional expression, `Model.id.table`, `metadata.tables[...]` or
+`inspect(Model).selectable`, a `for` or `with` target, and a comprehension
+variable. The table reference they start from is reported, but their later uses
+aren't. `.tables` of a `MetaData` isn't reported when the name holding it
+doesn't end in `metadata` and wasn't assigned `MetaData(...)`. Once a library's
+tables are mapped
 classes and its declarations are gone, the ordinary routes to a Core table,
 such as `__table__` and `.table`, are reported; the routes listed here are the
 exceptions.

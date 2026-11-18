@@ -43,11 +43,15 @@ or engines passed around without a ``Table`` or ``Engine`` annotation, a
 ``.table`` read in a module that doesn't import sqlalchemy, tables held in a
 container such as a dict, a class or instance attribute read in another
 module (unless it is a ``.table`` read, or its name matches one of the reading
-module's own table attributes), or a Session's ``bind`` attribute, and a name
-derived from a Core table counts as one throughout its module. A name assigned
-from ``Model.id.table``, ``metadata.tables[...]`` or
-``inspect(Model).selectable`` is reported where it is assigned, but its later
-uses aren't.
+module's own table attributes), or a Session's ``bind`` attribute. A name counts
+as a Core table throughout its module once it is assigned an expression rooted
+at one. Other names that come to hold a table aren't followed: one assigned
+``alias(table)``, a conditional expression, ``Model.id.table``,
+``metadata.tables[...]`` or ``inspect(Model).selectable``, a ``for`` or ``with``
+target, and a comprehension variable. The table reference they start from is
+reported, but their later uses aren't. ``.tables`` of a MetaData isn't reported
+when the name holding it doesn't end in ``metadata`` and wasn't assigned
+``MetaData(...)``.
 """
 
 from __future__ import annotations
