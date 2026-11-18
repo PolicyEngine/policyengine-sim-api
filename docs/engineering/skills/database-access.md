@@ -92,36 +92,21 @@ in `orm_access_support.py` over the same files as the guard below. They look
 for Core rather than for the ORM, so a statement on mapped classes passes,
 including one on expressions, labels, subqueries and aliases.
 
-Names resolve within each module, through its own imports. Each file's module
-name is its path below `src`, and two files with one module name are refused.
-A Core table is, in one module:
-
-- a name it binds to `Table(...)`, `table(...)` or `TableClause(...)`;
-- a name it imports, under any name or through `*`, from a scanned module that
-  binds or imports one at module level, and an attribute such as
-  `tables.household_jobs` or `example.tables.household_jobs` of such a module;
-- a parameter, variable or attribute annotated as SQLAlchemy's `Table`;
-- a name or attribute it assigns from an expression rooted at a Core table,
-  such as `previous = household_jobs.alias()` or
-  `self.jobs = tables.household_jobs`, or from one that reads `__table__`,
-  `local_table`, `persist_selectable` or `sorted_tables`, such as
-  `household_jobs = HouseholdJob.__table__`, with a tuple assignment pairing
-  each name with its value, nested tuples included;
-- a class attribute it declares as a table, such as a dataclass field
-  `table: Table`, wherever the module reads it. Another module's read of a
-  class or instance attribute is reported when the reading module imports
-  sqlalchemy and the attribute is named `table`, or when the name matches one
-  of the reading module's own table attributes. Otherwise it isn't, and the
-  reference that stored the table there is reported where it was made.
+Each file is checked on its own, through its own imports. A Core table is
+reported where it starts, not at each later use, because the first finding
+already fails the rule: where it is declared, where it is read from a mapped
+class, mapper or `MetaData`, and where an annotation names `Table` or
+`TableClause`.
 
 Each finding is one of:
 
 - **Core table declaration:** a `Table(...)`, `Column(...)`, `table(...)`,
   `column(...)`, `TableClause(...)`, `ColumnClause(...)` or `MetaData(...)`
   call, apart from `MetaData` in an `orm_base.py`.
-- **Core table access:** any reference to a Core table, which covers its
-  statements, methods, column collections and joins; `__table__`,
-  `local_table`, `persist_selectable` or `sorted_tables` anywhere; `tables` or
+- **Core table access:** a parameter, variable, attribute or return annotated
+  `Table` or `TableClause`, apart from `__table__` in an `orm_base.py`;
+  `__table__`, `local_table`, `persist_selectable` or `sorted_tables` anywhere;
+  `tables` or
   `selectable` of a mapper (`__mapper__`, `.mapper`, or `inspect(...)`,
   `class_mapper(...)` or `object_mapper(...)`, called or held in a name, or a
   name assigned `__mapper__` or `.mapper`) or of a MetaData (a name bound to
@@ -153,24 +138,15 @@ and the `.connect()`, `.connection()`, `.raw_connection()`,
 `.get_bind()`, `.begin()`, `.cursor()` and `.exec_driver_sql()` calls.
 
 The checks read source, not types, and guard against ordinary Core use, not
-against deliberate evasion. They miss imports through `importlib`; tables,
-engines and connections passed around without a `Table`, `Engine` or
-`Connection` annotation, so a connection held under a name such as `session`
-isn't reported; a statement method passed without being called, such as
-`run(connection.execute, statement)`; a function that returns an engine with no
-return annotation; the engine an `Inspector` holds in `bind` or `engine`; tables
-held in a container such as a dict, a class or instance attribute read in another module (other
-than the reads above), a `.table` read in a module that doesn't import
-sqlalchemy, and a Session's `bind` attribute. A name counts as a Core table
-throughout its module once it is assigned an expression rooted at one. Other
-names that come to hold a table aren't followed: one assigned `alias(table)`, a
-conditional or boolean expression, `Model.id.table`, `metadata.tables[...]` or
-`inspect(Model).selectable`, a `for` or `with` target, and a comprehension
-variable. The table reference they start from is reported, but their later uses
-aren't. `.tables` of a `MetaData` isn't reported when the name holding it
-doesn't end in `metadata` and wasn't assigned `MetaData(...)`. The ordinary
-routes to a Core table, such as `__table__` and `.table`, are reported; the
-routes listed here are the exceptions.
+against deliberate evasion. They miss imports through `importlib`; engines and
+connections passed around without an `Engine` or `Connection` annotation, so a
+connection held under a name such as `session` isn't reported; a statement method
+passed without being called, such as `run(connection.execute, statement)`; a
+function that returns an engine with no return annotation; the engine an
+`Inspector` holds in `bind` or `engine`; a `.table` read in a module that doesn't
+import sqlalchemy; and a Session's `bind` attribute. `.tables` of a `MetaData`
+isn't reported when the name holding it doesn't end in `metadata` and wasn't
+assigned `MetaData(...)`.
 
 `test_every_table_is_mapped_by_a_class` also imports both persistence libraries
 and reports every table they hold that no mapped class maps, and

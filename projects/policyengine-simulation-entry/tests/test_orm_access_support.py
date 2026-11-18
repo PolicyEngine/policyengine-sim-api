@@ -103,6 +103,22 @@ def test_a_declarative_base_module_may_annotate_a_mapped_classs_table():
     ]
 
 
+@pytest.mark.parametrize(
+    ("declaration", "summary"),
+    [
+        ("def read(jobs: Table): ...", "jobs: Table"),
+        ("selected: Table = choose()", "selected: Table"),
+        ("class Rows:\n    target: Table", "target: Table"),
+    ],
+)
+def test_a_declarative_base_module_annotates_only_table_of_its_classes(
+    declaration, summary
+):
+    source = f"from sqlalchemy import Table\n\n{declaration}\n"
+
+    assert _checks({ORM_BASE: source}, ORM_BASE) == [(CORE_TABLE_ACCESS, summary)]
+
+
 def test_a_declarative_base_module_may_not_declare_a_core_table():
     source = """
     from sqlalchemy import Table
@@ -162,7 +178,7 @@ def test_a_table_declared_in_another_module_is_reported_where_it_is_declared():
     sources = {"libs/example/src/example/tables.py": tables, STORE: store}
 
     assert _checks(sources, "libs/example/src/example/tables.py") == [
-        (CORE_TABLE_DECLARATION, "MetaData(...)"),
+        (CORE_TABLE_DECLARATION, "MetaData()"),
         (CORE_TABLE_DECLARATION, "Table('household_jobs', ...)"),
     ]
     assert _checks(sources, STORE) == []
