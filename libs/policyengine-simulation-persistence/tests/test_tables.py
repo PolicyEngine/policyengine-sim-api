@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from policyengine_simulation_persistence import (
     SERVICE_TABLE_PRIVILEGES,
     BudgetWindowRun,
@@ -16,9 +17,35 @@ from policyengine_simulation_persistence import (
     referenced_metadata,
     service_metadata,
 )
-from policyengine_simulation_persistence.orm_base import enum_type
+from policyengine_simulation_persistence.orm_base import ServiceBase, enum_type
 from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
-from sqlalchemy import Enum, ForeignKeyConstraint, Index, Table, UniqueConstraint
+from sqlalchemy import (
+    Enum,
+    ForeignKeyConstraint,
+    Index,
+    Table,
+    UniqueConstraint,
+    inspect,
+)
+
+# The columns API v1's revision 4e30076d4b9f drops. The models name none of
+# them, so a release works on a database that has them and on one that doesn't.
+COLUMNS_API_V1_DROPS = {
+    Report: {"label", "description", "user_id"},
+    ReportRun: {
+        "trigger",
+        "baseline_cliff_gap",
+        "baseline_cliff_share",
+        "reform_cliff_gap",
+        "reform_cliff_share",
+    },
+    BudgetWindowRun: {"trigger"},
+}
+# The foreign key, index and check that revision drops with those columns.
+CONSTRAINTS_API_V1_DROPS = {
+    Report: {"fk_reports_user_id_users", "ix_reports_user_id"},
+    ReportRun: {"ck_report_runs_cliff_impact_complete"},
+}
 
 
 def _key(constraint: ForeignKeyConstraint) -> tuple[tuple[str, ...], str, str]:
@@ -49,6 +76,32 @@ def _unique_keys(table: Table) -> dict[str, tuple[str, ...]]:
 def _indexed_columns(table: Table, index_name: str) -> tuple[str, ...]:
     (index,) = (index for index in table.indexes if index.name == index_name)
     return tuple(column.name for column in index.columns)
+
+
+@pytest.mark.parametrize(
+    ("model", "dropped_columns"),
+    COLUMNS_API_V1_DROPS.items(),
+    ids=lambda value: getattr(value, "__name__", None),
+)
+def test_a_model_maps_none_of_the_columns_api_v1_drops(
+    model: type[ServiceBase], dropped_columns: set[str]
+) -> None:
+    mapped_columns = {column.name for column in inspect(model).columns}
+
+    assert mapped_columns.isdisjoint(dropped_columns)
+
+
+@pytest.mark.parametrize(
+    ("model", "dropped_names"),
+    CONSTRAINTS_API_V1_DROPS.items(),
+    ids=lambda value: getattr(value, "__name__", None),
+)
+def test_a_model_declares_no_constraint_or_index_api_v1_drops(
+    model: type[ServiceBase], dropped_names: set[str]
+) -> None:
+    declared_names = {getattr(item, "name", None) for item in model.__table_args__}
+
+    assert declared_names.isdisjoint(dropped_names)
 
 
 def test_the_models_describe_every_table_the_service_creates_rows_in() -> None:
