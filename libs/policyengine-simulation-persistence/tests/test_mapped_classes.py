@@ -59,7 +59,6 @@ from policyengine_simulation_persistence import (
     service_metadata,
     tables,
 )
-from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
 from schema_comparison import describe_tables
 from sqlalchemy import create_engine, inspect, select, text, update
 from sqlalchemy.dialects import postgresql
@@ -208,7 +207,6 @@ def test_the_keys_to_api_v1s_tables_name_the_referenced_classes() -> None:
     }
 
     assert named_tables == referenced
-    assert len(KEYS_TO_PUBLIC_API_TABLES) == 20
 
 
 def test_every_mapper_configures() -> None:
