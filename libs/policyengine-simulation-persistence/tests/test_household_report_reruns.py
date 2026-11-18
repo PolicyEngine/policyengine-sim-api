@@ -40,6 +40,7 @@ from public_api_rows import (
 )
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
+from transaction_fakes import CommitFailingTransaction, RecordingSession
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -403,47 +404,9 @@ def test_a_rerun_naming_a_deleted_report_or_simulation_is_refused_by_its_key(
     assert report_runs == 1
 
 
-class _CommitFails:
-    """A transaction whose block runs, and whose commit then fails."""
-
-    def __init__(self, session) -> None:
-        self.session = session
-
-    def __enter__(self):
-        return self.session
-
-    def __exit__(self, error_type, error, traceback) -> None:
-        if error is None:
-            statement = "COMMIT"
-            raise OperationalError(statement, {}, Exception("connection lost"))
-
-
-class _RecordingSession:
-    """Keeps what it is given, and answers each statement with no rows."""
-
-    def __init__(self) -> None:
-        self.added: list[object] = []
-        self.statements: list[object] = []
-
-    def add(self, instance: object) -> None:
-        self.added.append(instance)
-
-    def flush(self) -> None:
-        return None
-
-    def execute(self, statement, *arguments):
-        self.statements.append(statement)
-        return _NoRows()
-
-
-class _NoRows:
-    def scalar_one_or_none(self) -> None:
-        return None
-
-
 def test_a_rerun_whose_commit_fails_may_have_been_written() -> None:
-    session = _RecordingSession()
-    store = HouseholdReportStore(lambda: _CommitFails(session))
+    session = RecordingSession()
+    store = HouseholdReportStore(lambda: CommitFailingTransaction(session))
 
     with pytest.raises(EconomyRecordOutcomeUnknownError) as raised:
         store.create_report_rerun(
@@ -463,4 +426,5 @@ def test_a_rerun_whose_commit_fails_may_have_been_written() -> None:
 
     assert isinstance(raised.value.__cause__, OperationalError)
     assert session.added
+    assert session.flushed
     assert session.statements

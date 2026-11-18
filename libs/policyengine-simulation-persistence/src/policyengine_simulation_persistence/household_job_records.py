@@ -2,7 +2,7 @@
 
 A household calculation is one ``household_jobs`` row, which the service
 creates and a household function on Modal calculates. The service reads the
-stored household and the catalog version from the Public API's tables, creates
+stored household and the catalog version from API v1's tables, creates
 the job ``pending`` with no Modal call ID, starts the call, then records the
 call's ID, or fails the job at once when Modal refuses the call. Both updates
 apply only while the job is still ``pending`` with no call ID: the household
@@ -14,8 +14,8 @@ Every function takes an ORM session, so the caller chooses the transactions.
 Reads select the mapped classes' attributes, so they return what the database
 holds now, whatever the session has loaded. Each update is one conditional
 statement that leaves the session's objects alone, and sets only the columns
-the service's role may update, with ``updated_at``, whose automatic update the
-Public API's models make on their own side only.
+the service's role may update, with ``updated_at``, whose automatic update
+API v1's models make on their own side only.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ _KEY_COLUMNS = {
 
 @dataclass(frozen=True)
 class StoredHousehold:
-    """A household as the Public API stores it.
+    """A household as API v1 stores it.
 
     ``document`` lists the people and each group entity as records with an
     ``id`` and ``values``, each person naming its groups, and may hold a saved

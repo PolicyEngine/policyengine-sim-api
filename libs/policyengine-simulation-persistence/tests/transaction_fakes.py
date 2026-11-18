@@ -18,6 +18,7 @@ class RecordingSession:
 
     def __init__(self) -> None:
         self.added: list[object] = []
+        self.statements: list[object] = []
         self.flushed = False
 
     def add(self, instance: object) -> None:
@@ -25,6 +26,9 @@ class RecordingSession:
 
     def flush(self) -> None:
         self.flushed = True
+
+    def execute(self, statement: object) -> None:
+        self.statements.append(statement)
 
 
 class CommitFailingTransaction:

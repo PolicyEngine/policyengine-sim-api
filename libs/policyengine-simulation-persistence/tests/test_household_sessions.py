@@ -6,7 +6,7 @@ depends on when it happens: during the flush nothing was written, and at the
 commit after a flush the rows may exist. These tests make each failure happen
 for real, by ending the session's connection at that moment.
 
-They use a database the Public API's own v2 migration chain built
+They use a database API v1's own v2 migration chain built
 (``PUBLIC_API_SCHEMA_DATABASE_URL``). A test of the stores' transactions needs
 rows it can commit, so it commits a catalog of its own and deletes it after;
 the others work in one transaction rolled back afterwards.
@@ -32,7 +32,12 @@ from conftest import (
     rolled_back_transaction,
     session_in,
 )
-from economy_rows import POLICYENGINE_VERSION, VERSIONS, insert_economy_catalog
+from economy_rows import (
+    LATER_VERSIONS,
+    POLICYENGINE_VERSION,
+    VERSIONS,
+    insert_economy_catalog,
+)
 from household_report_rows import insert_household_report_rows
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
@@ -262,7 +267,11 @@ def _keyed_report(catalog: CatalogVersion, household_id: UUID) -> KeyedHousehold
 def _forced_rerun(
     committed_engine: Engine, household: _CommittedHousehold
 ) -> NewHouseholdReportRerun:
-    """Commit a stored report of the baseline alone; return its forced re-run."""
+    """Commit a stored report of the baseline alone; return its forced re-run.
+
+    It runs on later versions than the report's first run, so an unforced
+    copy of it joins nothing and goes on to its savepoint.
+    """
     with committed_engine.begin() as connection:
         report = insert_household_report_rows(
             connection,
@@ -277,7 +286,7 @@ def _forced_rerun(
         run_id=uuid4(),
         tax_benefit_model_version_id=household.catalog.version_id,
         year=report.year,
-        versions=VERSIONS,
+        versions=LATER_VERSIONS,
         baseline=HouseholdRerunSide(
             simulation_id=report.baseline.simulation_id, simulation_run_id=uuid4()
         ),
@@ -634,6 +643,65 @@ def test_a_forced_rerun_naming_a_missing_simulation_writes_nothing(
         "simulation_id",
     )
     assert _count(committed_engine, "report_runs", rerun.run_id) == 0
+
+
+def test_a_refusal_inside_an_unforced_reruns_savepoint_writes_nothing(
+    committed_engine, committed_household, session_factory
+) -> None:
+    """The savepoint is rolled back through the session, and the refusal is named."""
+    rerun = _forced_rerun(committed_engine, committed_household)
+    missing_simulation = replace(
+        rerun,
+        forced=False,
+        baseline=HouseholdRerunSide(simulation_id=uuid4(), simulation_run_id=uuid4()),
+    )
+
+    with pytest.raises(EconomyRecordReferenceError) as refused:
+        _report_store(session_factory).create_report_rerun(missing_simulation)
+
+    assert (refused.value.table_name, refused.value.column_name) == (
+        "simulation_runs",
+        "simulation_id",
+    )
+    assert _count(committed_engine, "report_runs", rerun.run_id) == 0
+
+
+def test_a_connection_lost_inside_an_unforced_reruns_savepoint_is_not_a_lost_commit(
+    committed_engine, committed_household, session_factory
+) -> None:
+    """The report run's INSERT fails after the side's run was inserted."""
+    rerun = replace(_forced_rerun(committed_engine, committed_household), forced=False)
+    ended_backends: list[int] = []
+
+    def end_the_connection_at_the_report_run(
+        _connection, cursor, statement, _parameters, _context, _executemany
+    ) -> None:
+        if ended_backends or not statement.startswith("INSERT INTO public.report_runs"):
+            return
+        backend_id = cursor.connection.info.backend_pid
+        ended_backends.append(backend_id)
+        with committed_engine.connect() as connection:
+            connection.execute(
+                select(
+                    func.pg_terminate_backend(
+                        backend_id, TERMINATE_TIMEOUT_MILLISECONDS
+                    )
+                )
+            )
+
+    event.listen(
+        committed_engine, "before_cursor_execute", end_the_connection_at_the_report_run
+    )
+
+    with pytest.raises(OperationalError):
+        _report_store(session_factory).create_report_rerun(rerun)
+
+    assert len(ended_backends) == 1
+    assert _count(committed_engine, "report_runs", rerun.run_id) == 0
+    assert (
+        _count(committed_engine, "simulation_runs", rerun.baseline.simulation_run_id)
+        == 0
+    )
 
 
 def test_two_identical_report_requests_at_once_end_on_one_run(
