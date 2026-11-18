@@ -117,7 +117,7 @@ class CliffResultWriter(Protocol):
         """Mark a pending or running cliff result that records no other call running."""
         ...
 
-    def complete_cliff_result(  # the result, its call, then its values
+    def complete_cliff_result(
         self,
         cliff_result_id: UUID,
         *,

@@ -70,14 +70,16 @@ WEIGHTED_CLIFF_GAP = 100.0 * 1.0 + 0.0 * 3.0 + 25.0 * 2.0
 WEIGHTED_CLIFF_SHARE = (1.0 + 2.0) / (1.0 + 3.0)
 
 
-def cliff_plan(country: str = "us") -> Stage12OutputPlan:
+def cliff_plan(
+    country: str = "us", *, labor_supply_response_active: bool = False
+) -> Stage12OutputPlan:
     """Return a cliff calculation's plan: the person columns the share reads."""
     return Stage12OutputPlan(
         country=country,
         requirements=ReportOutputRequirements(
             aggregates=tuple(ReportAggregate),
             include_cliff_impacts=True,
-            labor_supply_response_active=False,
+            labor_supply_response_active=labor_supply_response_active,
         ),
         entities=(
             EntityOutputPlan(
@@ -382,6 +384,56 @@ def test_a_state_or_unsegmented_cliff_calculation_runs_in_one_worker(
     assert cliff_results.cliff_results[CLIFF_RESULT_ID].status is (RunStatus.SUCCEEDED)
 
 
+def test_a_national_calculation_with_a_labour_supply_response_stays_in_one_worker(
+    monkeypatch,
+) -> None:
+    """It is split exactly when its run's own calculation is, which this one isn't."""
+    monkeypatch.setattr(
+        cliff_results_module,
+        "resolve_cliff_output_plan",
+        lambda simulation: cliff_plan(
+            simulation.geography.country, labor_supply_response_active=True
+        ),
+    )
+    cliff_results = FakeCliffResults()
+    calculator = RecordingCalculator()
+
+    def segmented_calculator(_simulation, _cancellation_requested):
+        msg = "a calculation with a labour-supply response is not split"
+        raise AssertionError(msg)
+
+    _run_cliff_worker(
+        cliff_results,
+        calculator=calculator,
+        segmented_calculator=segmented_calculator,
+    )
+
+    assert len(calculator.simulations) == 1
+    assert cliff_results.cliff_results[CLIFF_RESULT_ID].status is RunStatus.SUCCEEDED
+
+
+def test_a_split_calculation_learns_its_cliff_result_was_taken_from_it() -> None:
+    cliff_results = FakeCliffResults()
+    result = cliff_results.cliff_results[CLIFF_RESULT_ID]
+    checks = []
+
+    def segmented_calculator(_simulation, cancellation_requested):
+        checks.append(cancellation_requested())
+        # The stuck-run sweep fails the cliff result while its groups run.
+        result.status = RunStatus.FAILED
+        result.error_message = "modal_call_ended: the call ended"
+        checks.append(cancellation_requested())
+        return SimulationCalculation(frames=cliff_frames())
+
+    with pytest.raises(
+        RuntimeError, match=r"^Stage 12 cliff calculation was cancelled$"
+    ):
+        _run_cliff_worker(cliff_results, segmented_calculator=segmented_calculator)
+
+    assert checks == [False, True]
+    assert (result.cliff_gap, result.cliff_share) == (None, None)
+
+
 def test_a_dataset_with_no_adults_fails_the_cliff_result() -> None:
     cliff_results = FakeCliffResults()
     frames = cliff_frames()
@@ -436,10 +488,10 @@ def test_the_cliff_gap_and_share_are_pys_own_from_the_same_rows() -> None:
         ),
     )
 
-    impact = cliff_totals_from_frames(frames, cliff_plan())
+    totals = cliff_totals_from_frames(frames, cliff_plan())
 
     expected = calculate_cliff_impact(calculated, calculated).baseline
-    assert (impact.cliff_gap, impact.cliff_share) == (
+    assert (totals.cliff_gap, totals.cliff_share) == (
         pytest.approx(expected.cliff_gap),
         pytest.approx(expected.cliff_share),
     )

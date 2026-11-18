@@ -84,7 +84,7 @@ def test_the_cliff_calculation_model_matches_the_public_api_table(
 ) -> None:
     """A simulation run's cliff calculations match the Public API's ``cliff_impacts``.
 
-    The service's other tables are compared with it above; this names the
+    The comparison of all the service's tables above includes it; this names the
     table alone, so a difference there is reported as the cliff table's.
     """
     models_engine = _engine(disposable_database.superuser_url)
