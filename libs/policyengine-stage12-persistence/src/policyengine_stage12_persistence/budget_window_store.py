@@ -23,36 +23,35 @@ Modal worker role may set the window's start time.
 from __future__ import annotations
 
 import logging
-from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_simulation_persistence.tables import (
-    budget_window_runs,
-    report_runs,
-    simulation_runs,
+    BudgetWindowRun,
+    ReportRun,
+    SimulationRun,
 )
 from sqlalchemy import and_, exists, func, or_, select, update
 
+from policyengine_stage12_persistence.engine import (
+    WITHOUT_OBJECT_SYNC,
+    SessionOpener,
+    StoreSessions,
+    open_session_once,
+)
 from policyengine_stage12_persistence.report_run_store import (
     ACTIVE_STATUSES,
     RunStatus,
     no_active_report_run_names,
 )
-from policyengine_stage12_persistence.store import (
-    ConnectionOpener,
-    create_stage12_engine,
-    open_connection_once,
-)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from datetime import datetime
     from uuid import UUID
 
-    from sqlalchemy import ColumnElement, Engine
-    from sqlalchemy.engine import Connection
+    from sqlalchemy import ColumnElement
+    from sqlalchemy.orm import Session, sessionmaker
 
 logger = logging.getLogger(__name__)
 
@@ -173,42 +172,30 @@ class BudgetWindowStore:
         self,
         database_url: str | None = None,
         *,
-        engine: Engine | None = None,
-        open_connection: ConnectionOpener = open_connection_once,
+        session_factory: sessionmaker[Session] | None = None,
+        open_session: SessionOpener = open_session_once,
     ) -> None:
-        """Use ``engine`` if given, else build one from ``database_url``.
+        """Use ``session_factory`` if given, else build one from ``database_url``.
 
         Raises ValueError when neither is given or the URL is invalid.
         """
-        if engine is None:
-            if database_url is None:
-                msg = "budget window database URL is required"
-                raise ValueError(msg)
-            engine = create_stage12_engine(database_url)
-        self.engine = engine
-        self._open_connection = open_connection
-
-    @contextmanager
-    def _transaction(self, operation_name: str) -> Iterator[Connection]:
-        # The opener only opens the connection; every statement and the
-        # COMMIT run after it returns.
-        connection = self._open_connection(
-            self.engine.connect,
-            operation_name=operation_name,
+        self.sessions = StoreSessions.for_store(
+            database_url,
+            session_factory=session_factory,
+            open_session=open_session,
+            missing_url_message="budget window database URL is required",
         )
-        with connection, connection.begin():
-            yield connection
 
     def window_of_year(self, report_run_id: UUID) -> UUID | None:
         """Return the budget-window run a report run is a year of.
 
         None when the report run is no window's year, or does not exist.
         """
-        statement = select(report_runs.c.budget_window_run_id).where(
-            report_runs.c.id == report_run_id
+        statement = select(ReportRun.budget_window_run_id).where(
+            ReportRun.id == report_run_id
         )
-        with self._transaction("window_of_year") as connection:
-            return connection.execute(statement).scalar_one_or_none()
+        with self.sessions.transaction("window_of_year") as session:
+            return session.execute(statement).scalar_one_or_none()
 
     def start_window(self, report_run_id: UUID, *, started_at: datetime) -> bool:
         """Mark the window a claimed year belongs to running; return whether it changed.
@@ -218,25 +205,28 @@ class BudgetWindowStore:
         nothing.
         """
         window_of_run = (
-            select(report_runs.c.budget_window_run_id)
-            .where(report_runs.c.id == report_run_id)
+            select(ReportRun.budget_window_run_id)
+            .where(ReportRun.id == report_run_id)
             .scalar_subquery()
         )
         statement = (
-            update(budget_window_runs)
+            update(BudgetWindowRun)
             .where(
-                budget_window_runs.c.id == window_of_run,
-                budget_window_runs.c.status == RunStatus.PENDING.value,
+                BudgetWindowRun.id == window_of_run,
+                BudgetWindowRun.status == RunStatus.PENDING.value,
             )
             .values(
                 status=RunStatus.RUNNING.value,
-                started_at=func.coalesce(budget_window_runs.c.started_at, started_at),
+                started_at=func.coalesce(BudgetWindowRun.started_at, started_at),
                 updated_at=started_at,
             )
-            .returning(budget_window_runs.c.id)
+            .returning(BudgetWindowRun.id)
         )
-        with self._transaction("start_window") as connection:
-            return connection.execute(statement).scalar_one_or_none() is not None
+        with self.sessions.transaction("start_window") as session:
+            changed = session.execute(
+                statement, execution_options=WITHOUT_OBJECT_SYNC
+            ).scalar_one_or_none()
+        return changed is not None
 
     def advance_window(
         self,
@@ -259,18 +249,18 @@ class BudgetWindowStore:
         deferred with ``YearStartDeferred`` leaves that year and the later
         ones waiting. Raises LookupError when the window run does not exist.
         """
-        with self._transaction("advance_window") as connection:
-            window = _lock_window(connection, window_run_id)
+        with self.sessions.transaction("advance_window") as session:
+            window = _lock_window(session, window_run_id)
             if window.finished:
                 return WindowAdvance(status=window.status, changed=False)
-            years = _window_years(connection, window_run_id)
-            finished = _finish_ended_window(connection, window_run_id, years, now=now)
+            years = _window_years(session, window_run_id)
+            finished = _finish_ended_window(session, window_run_id, years, now=now)
             if finished is not None:
                 return finished
             if start_year is None:
                 return WindowAdvance(status=window.status, changed=False)
             return _start_waiting_years(
-                connection,
+                session,
                 window_run_id,
                 years,
                 status=window.status,
@@ -287,27 +277,27 @@ class BudgetWindowStore:
         last year ended, or the simulation service created it, without
         anything recording what follows.
         """
-        year_of_window = report_runs.c.budget_window_run_id == budget_window_runs.c.id
+        year_of_window = ReportRun.budget_window_run_id == BudgetWindowRun.id
         last_year_change = (
-            select(func.max(report_runs.c.updated_at))
+            select(func.max(ReportRun.updated_at))
             .where(year_of_window)
             .scalar_subquery()
         )
         statement = (
-            select(budget_window_runs.c.id)
+            select(BudgetWindowRun.id)
             .where(
-                budget_window_runs.c.status.in_(ACTIVE_STATUSES),
+                BudgetWindowRun.status.in_(ACTIVE_STATUSES),
                 ~exists().where(year_of_window, _under_way()),
                 func.greatest(
-                    budget_window_runs.c.updated_at,
-                    func.coalesce(last_year_change, budget_window_runs.c.updated_at),
+                    BudgetWindowRun.updated_at,
+                    func.coalesce(last_year_change, BudgetWindowRun.updated_at),
                 )
                 < idle_since_before,
             )
-            .order_by(budget_window_runs.c.created_at, budget_window_runs.c.id)
+            .order_by(BudgetWindowRun.created_at, BudgetWindowRun.id)
         )
-        with self._transaction("list_idle_windows") as connection:
-            return tuple(connection.execute(statement).scalars())
+        with self.sessions.transaction("list_idle_windows") as session:
+            return tuple(session.execute(statement).scalars())
 
     def settle_idle_window(
         self,
@@ -324,21 +314,21 @@ class BudgetWindowStore:
         ``idle_since_before`` is left as it is. Raises LookupError when the
         window run does not exist.
         """
-        with self._transaction("settle_idle_window") as connection:
-            window = _lock_window(connection, window_run_id)
+        with self.sessions.transaction("settle_idle_window") as session:
+            window = _lock_window(session, window_run_id)
             if window.finished:
                 return WindowAdvance(status=window.status, changed=False)
-            years = _window_years(connection, window_run_id)
+            years = _window_years(session, window_run_id)
             last_change = max([window.updated_at, *(year.updated_at for year in years)])
             if any(year.under_way for year in years) or (
                 last_change >= idle_since_before
             ):
                 return WindowAdvance(status=window.status, changed=False)
-            finished = _finish_ended_window(connection, window_run_id, years, now=now)
+            finished = _finish_ended_window(session, window_run_id, years, now=now)
             if finished is not None:
                 return finished
             _fail_window(
-                connection,
+                session,
                 window_run_id,
                 WINDOW_STALLED_MESSAGE,
                 now=now,
@@ -347,11 +337,11 @@ class BudgetWindowStore:
             return WindowAdvance(status=RunStatus.FAILED, changed=True)
 
 
-def _lock_window(connection: Connection, window_run_id: UUID) -> _LockedWindow:
+def _lock_window(session: Session, window_run_id: UUID) -> _LockedWindow:
     """Lock the window run's row until the transaction ends, and read it."""
-    locked = connection.execute(
-        select(budget_window_runs.c.status, budget_window_runs.c.updated_at)
-        .where(budget_window_runs.c.id == window_run_id)
+    locked = session.execute(
+        select(BudgetWindowRun.status, BudgetWindowRun.updated_at)
+        .where(BudgetWindowRun.id == window_run_id)
         .with_for_update()
     ).one_or_none()
     if locked is None:
@@ -360,20 +350,20 @@ def _lock_window(connection: Connection, window_run_id: UUID) -> _LockedWindow:
     return _LockedWindow(status=RunStatus(locked.status), updated_at=locked.updated_at)
 
 
-def _window_years(connection: Connection, window_run_id: UUID) -> list[_WindowYear]:
+def _window_years(session: Session, window_run_id: UUID) -> list[_WindowYear]:
     """Return the window's years, earliest first."""
     statement = (
         select(
-            report_runs.c.id,
-            report_runs.c.baseline_simulation_run_id,
-            report_runs.c.reform_simulation_run_id,
-            report_runs.c.year,
-            report_runs.c.status,
-            report_runs.c.modal_call_id,
-            report_runs.c.updated_at,
+            ReportRun.id,
+            ReportRun.baseline_simulation_run_id,
+            ReportRun.reform_simulation_run_id,
+            ReportRun.year,
+            ReportRun.status,
+            ReportRun.modal_call_id,
+            ReportRun.updated_at,
         )
-        .where(report_runs.c.budget_window_run_id == window_run_id)
-        .order_by(report_runs.c.year)
+        .where(ReportRun.budget_window_run_id == window_run_id)
+        .order_by(ReportRun.year)
     )
     return [
         _WindowYear(
@@ -387,12 +377,12 @@ def _window_years(connection: Connection, window_run_id: UUID) -> list[_WindowYe
             modal_call_id=row.modal_call_id,
             updated_at=row.updated_at,
         )
-        for row in connection.execute(statement)
+        for row in session.execute(statement)
     ]
 
 
 def _finish_ended_window(
-    connection: Connection,
+    session: Session,
     window_run_id: UUID,
     years: list[_WindowYear],
     *,
@@ -407,32 +397,33 @@ def _finish_ended_window(
     )
     if failed_year is not None:
         _fail_window(
-            connection,
+            session,
             window_run_id,
             YEAR_FAILED_MESSAGE.format(year=failed_year),
             now=now,
         )
         return WindowAdvance(status=RunStatus.FAILED, changed=True)
     if years and all(year.status is RunStatus.SUCCEEDED for year in years):
-        connection.execute(
-            update(budget_window_runs)
+        session.execute(
+            update(BudgetWindowRun)
             .where(
-                budget_window_runs.c.id == window_run_id,
-                budget_window_runs.c.status.in_(ACTIVE_STATUSES),
+                BudgetWindowRun.id == window_run_id,
+                BudgetWindowRun.status.in_(ACTIVE_STATUSES),
             )
             .values(
                 status=RunStatus.SUCCEEDED.value,
                 error_message=None,
                 completed_at=now,
                 updated_at=now,
-            )
+            ),
+            execution_options=WITHOUT_OBJECT_SYNC,
         )
         return WindowAdvance(status=RunStatus.SUCCEEDED, changed=True)
     return None
 
 
 def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the starter and the clock
-    connection: Connection,
+    session: Session,
     window_run_id: UUID,
     years: list[_WindowYear],
     *,
@@ -466,7 +457,7 @@ def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the sta
                 type(error).__name__,
             )
             refused_years = _fail_waiting_years(
-                connection,
+                session,
                 window_run_id,
                 CALL_REFUSED_MESSAGE.format(error_type=type(error).__name__),
                 now=now,
@@ -476,7 +467,7 @@ def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the sta
                 started.append(year.year)
                 continue
             _fail_window(
-                connection,
+                session,
                 window_run_id,
                 YEAR_FAILED_MESSAGE.format(year=year.year),
                 now=now,
@@ -484,17 +475,18 @@ def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the sta
             return WindowAdvance(
                 status=RunStatus.FAILED, changed=True, started_years=tuple(started)
             )
-        connection.execute(
-            update(report_runs)
-            .where(report_runs.c.id == year.report_run_id, _waiting())
-            .values(modal_call_id=modal_call_id, updated_at=now)
+        session.execute(
+            update(ReportRun)
+            .where(ReportRun.id == year.report_run_id, _waiting())
+            .values(modal_call_id=modal_call_id, updated_at=now),
+            execution_options=WITHOUT_OBJECT_SYNC,
         )
         started.append(year.year)
     return WindowAdvance(status=status, changed=False, started_years=tuple(started))
 
 
 def _fail_window(
-    connection: Connection,
+    session: Session,
     window_run_id: UUID,
     error_message: str,
     *,
@@ -506,24 +498,25 @@ def _fail_window(
     The window records ``error_message``, and its waiting years
     ``waiting_years_message``: by default, that another year failed.
     """
-    connection.execute(
-        update(budget_window_runs)
+    session.execute(
+        update(BudgetWindowRun)
         .where(
-            budget_window_runs.c.id == window_run_id,
-            budget_window_runs.c.status.in_(ACTIVE_STATUSES),
+            BudgetWindowRun.id == window_run_id,
+            BudgetWindowRun.status.in_(ACTIVE_STATUSES),
         )
         .values(
             status=RunStatus.FAILED.value,
             error_message=error_message,
             completed_at=now,
             updated_at=now,
-        )
+        ),
+        execution_options=WITHOUT_OBJECT_SYNC,
     )
-    _fail_waiting_years(connection, window_run_id, waiting_years_message, now=now)
+    _fail_waiting_years(session, window_run_id, waiting_years_message, now=now)
 
 
 def _fail_waiting_years(
-    connection: Connection,
+    session: Session,
     window_run_id: UUID,
     error_message: str,
     *,
@@ -539,11 +532,11 @@ def _fail_waiting_years(
     report run names it, so a run another report shares is left to that
     report.
     """
-    conditions = [report_runs.c.budget_window_run_id == window_run_id, _waiting()]
+    conditions = [ReportRun.budget_window_run_id == window_run_id, _waiting()]
     if only is not None:
-        conditions.append(report_runs.c.id == only)
-    failed_years = connection.execute(
-        update(report_runs)
+        conditions.append(ReportRun.id == only)
+    failed_years = session.execute(
+        update(ReportRun)
         .where(*conditions)
         .values(
             status=RunStatus.FAILED.value,
@@ -552,9 +545,10 @@ def _fail_waiting_years(
             updated_at=now,
         )
         .returning(
-            report_runs.c.baseline_simulation_run_id,
-            report_runs.c.reform_simulation_run_id,
-        )
+            ReportRun.baseline_simulation_run_id,
+            ReportRun.reform_simulation_run_id,
+        ),
+        execution_options=WITHOUT_OBJECT_SYNC,
     ).all()
     simulation_run_ids = {
         run_id
@@ -564,20 +558,21 @@ def _fail_waiting_years(
     }
     if not simulation_run_ids:
         return len(failed_years)
-    connection.execute(
-        update(simulation_runs)
+    session.execute(
+        update(SimulationRun)
         .where(
-            simulation_runs.c.id.in_(simulation_run_ids),
-            simulation_runs.c.status == RunStatus.PENDING.value,
-            simulation_runs.c.modal_call_id.is_(None),
-            no_active_report_run_names(simulation_runs),
+            SimulationRun.id.in_(simulation_run_ids),
+            SimulationRun.status == RunStatus.PENDING.value,
+            SimulationRun.modal_call_id.is_(None),
+            no_active_report_run_names(),
         )
         .values(
             status=RunStatus.FAILED.value,
             error_message=error_message,
             completed_at=now,
             updated_at=now,
-        )
+        ),
+        execution_options=WITHOUT_OBJECT_SYNC,
     )
     return len(failed_years)
 
@@ -585,17 +580,17 @@ def _fail_waiting_years(
 def _waiting() -> ColumnElement[bool]:
     """Return the condition that a report run is pending with no call recorded."""
     return and_(
-        report_runs.c.status == RunStatus.PENDING.value,
-        report_runs.c.modal_call_id.is_(None),
+        ReportRun.status == RunStatus.PENDING.value,
+        ReportRun.modal_call_id.is_(None),
     )
 
 
 def _under_way() -> ColumnElement[bool]:
     """Return the condition that a report run is running, or started and pending."""
     return or_(
-        report_runs.c.status == RunStatus.RUNNING.value,
+        ReportRun.status == RunStatus.RUNNING.value,
         and_(
-            report_runs.c.status == RunStatus.PENDING.value,
-            report_runs.c.modal_call_id.is_not(None),
+            ReportRun.status == RunStatus.PENDING.value,
+            ReportRun.modal_call_id.is_not(None),
         ),
     )

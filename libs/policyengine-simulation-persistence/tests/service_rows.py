@@ -13,17 +13,17 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from policyengine_simulation_persistence import (
+    BudgetWindowRun,
+    HouseholdJob,
     HouseholdJobStatus,
+    Report,
+    ReportRun,
     ReportRunStatus,
     ReportRunTrigger,
+    Simulation,
+    SimulationRun,
     SimulationStatus,
     SimulationType,
-    budget_window_runs,
-    household_jobs,
-    report_runs,
-    reports,
-    simulation_runs,
-    simulations,
 )
 from sqlalchemy import insert, text
 
@@ -120,14 +120,14 @@ def insert_economy_simulation(
     connection: Connection, public_api_rows: PublicApiRows
 ) -> UUID:
     return connection.execute(
-        insert(simulations)
+        insert(Simulation)
         .values(
             simulation_type=SimulationType.ECONOMY,
             dataset_id=public_api_rows.dataset_id,
             tax_benefit_model_version_id=public_api_rows.model_version_id,
             year=YEAR,
         )
-        .returning(simulations.c.id)
+        .returning(Simulation.id)
     ).scalar_one()
 
 
@@ -135,7 +135,7 @@ def insert_simulation_run(
     connection: Connection, simulation_id: UUID, public_api_rows: PublicApiRows
 ) -> UUID:
     return connection.execute(
-        insert(simulation_runs)
+        insert(SimulationRun)
         .values(
             simulation_id=simulation_id,
             year=YEAR,
@@ -145,7 +145,7 @@ def insert_simulation_run(
             dataset_id=public_api_rows.dataset_id,
             status=SimulationStatus.PENDING,
         )
-        .returning(simulation_runs.c.id)
+        .returning(SimulationRun.id)
     ).scalar_one()
 
 
@@ -161,7 +161,7 @@ def insert_service_rows(
     baseline_simulation_id = insert_economy_simulation(connection, public_api_rows)
     reform_simulation_id = insert_economy_simulation(connection, public_api_rows)
     report_id = connection.execute(
-        insert(reports)
+        insert(Report)
         .values(
             label="Test report",
             country="us",
@@ -173,7 +173,7 @@ def insert_service_rows(
             budget_window_size=2,
             inputs={},
         )
-        .returning(reports.c.id)
+        .returning(Report.id)
     ).scalar_one()
     baseline_run_id = insert_simulation_run(
         connection, baseline_simulation_id, public_api_rows
@@ -182,7 +182,7 @@ def insert_service_rows(
         connection, reform_simulation_id, public_api_rows
     )
     budget_window_run_id = connection.execute(
-        insert(budget_window_runs)
+        insert(BudgetWindowRun)
         .values(
             report_id=report_id,
             tax_benefit_model_version_id=public_api_rows.model_version_id,
@@ -190,10 +190,10 @@ def insert_service_rows(
             recalculate=False,
             status=ReportRunStatus.PENDING,
         )
-        .returning(budget_window_runs.c.id)
+        .returning(BudgetWindowRun.id)
     ).scalar_one()
     report_run_id = connection.execute(
-        insert(report_runs)
+        insert(ReportRun)
         .values(
             report_id=report_id,
             baseline_simulation_run_id=baseline_run_id,
@@ -205,10 +205,10 @@ def insert_service_rows(
             status=ReportRunStatus.PENDING,
             trigger=ReportRunTrigger.INITIAL,
         )
-        .returning(report_runs.c.id)
+        .returning(ReportRun.id)
     ).scalar_one()
     household_job_id = connection.execute(
-        insert(household_jobs)
+        insert(HouseholdJob)
         .values(
             country="us",
             request_data={},
@@ -219,7 +219,7 @@ def insert_service_rows(
             country_package_version=COUNTRY_PACKAGE_VERSION,
             policyengine_version=POLICYENGINE_VERSION,
         )
-        .returning(household_jobs.c.id)
+        .returning(HouseholdJob.id)
     ).scalar_one()
     return ServiceRows(
         baseline_simulation_id=baseline_simulation_id,

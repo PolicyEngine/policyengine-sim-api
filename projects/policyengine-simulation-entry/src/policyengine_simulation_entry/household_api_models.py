@@ -33,17 +33,21 @@ HouseholdRefusalCode = Literal[
     "missing_reference",
 ]
 # Why a route cannot answer now (503); retry after ``Retry-After`` seconds.
+# A submission answered with one of these created no job that will run.
 HouseholdUnavailableCode = Literal[
     # The service has no database or v2 Modal environment configured.
     "not_configured",
     "manifest_unavailable",
+    # The database could not be read, or the job's insert failed: nothing
+    # was written.
     "database_unavailable",
     # Modal refused the household function's call, or did not accept it in
     # time; the job was failed at once.
     "modal_call_refused",
 ]
-# The service failed unexpectedly, or built a household function request its
-# contract refuses.
+# The service failed unexpectedly, built a household function request its
+# contract refuses, or could not confirm the commit of a job it may have
+# created.
 HouseholdInternalCode = Literal["internal_error"]
 # Every code a household route's error answer carries.
 HouseholdErrorCode = Literal[

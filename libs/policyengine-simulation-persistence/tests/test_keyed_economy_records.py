@@ -12,7 +12,6 @@ two transactions commit their rows under a catalog of their own, which
 from __future__ import annotations
 
 import threading
-from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -23,7 +22,12 @@ from committed_rows import (
     run_together,
     wait_until_another_backend_waits_for,
 )
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import (
+    act_as_the_service,
+    economy_store_on,
+    in_session,
+    rolled_back_transaction,
+)
 from economy_rows import (
     CURRENT_LAW,
     VERSIONS,
@@ -34,29 +38,26 @@ from policyengine_simulation_persistence import (
     KEY_VERSION,
     EconomyRecordReferenceError,
     EconomyReportDefinition,
-    EconomyRunStore,
     EconomySimulationDefinition,
     KeyedEconomyReport,
     KeyedEconomySimulation,
     NewReportRerun,
     ProposedSide,
+    ReportRun,
     ReportRunStatus,
     RerunSide,
     SimulationChoice,
+    SimulationRun,
     SimulationStatus,
     find_or_create_economy_report,
     find_or_create_economy_simulation,
     insert_report_rerun,
     read_report_definition,
-    report_runs,
-    simulation_runs,
 )
 from public_api_rows import insert_policy
 from sqlalchemy import event, func, insert, select, text, update
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from sqlalchemy import Connection
 
 pytestmark = pytest.mark.public_api_schema
@@ -131,7 +132,9 @@ def _set_status(
     connection: Connection, table_name: str, row_id: UUID, status: str
 ) -> None:
     """Set a run's status as the superuser, as a worker or the sweep would."""
-    table = report_runs if table_name == "report_runs" else simulation_runs
+    table = (
+        ReportRun.__table__ if table_name == "report_runs" else SimulationRun.__table__
+    )
     ended = status in {"succeeded", "failed"}
     connection.execute(text("RESET ROLE"))
     connection.execute(
@@ -155,7 +158,7 @@ def test_a_keyed_report_is_created_with_its_simulations_and_first_run(
         )
         act_as_the_service(connection)
 
-        found = find_or_create_economy_report(connection, request)
+        found = in_session(connection, find_or_create_economy_report, request)
         report = _row(connection, "reports", found.report_id)
         run = _row(connection, "report_runs", found.run.id)
         baseline = _row(connection, "simulations", found.baseline.simulation_id)
@@ -233,16 +236,20 @@ def test_an_identical_request_ends_on_the_same_rows_and_inserts_nothing(
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         act_as_the_service(connection)
-        first = find_or_create_economy_report(
-            connection, _keyed_report(economy, spm=NATIONAL_SPM)
+        first = in_session(
+            connection,
+            find_or_create_economy_report,
+            _keyed_report(economy, spm=NATIONAL_SPM),
         )
         counts = [
             _count(connection, name)
             for name in ("simulations", "reports", "simulation_runs", "report_runs")
         ]
 
-        again = find_or_create_economy_report(
-            connection, _keyed_report(economy, spm=NATIONAL_SPM)
+        again = in_session(
+            connection,
+            find_or_create_economy_report,
+            _keyed_report(economy, spm=NATIONAL_SPM),
         )
         counts_after = [
             _count(connection, name)
@@ -269,7 +276,7 @@ def test_the_same_policy_on_both_sides_names_one_simulation_run_twice(
         request = _keyed_report(economy)
         act_as_the_service(connection)
 
-        found = find_or_create_economy_report(connection, request)
+        found = in_session(connection, find_or_create_economy_report, request)
         run = _row(connection, "report_runs", found.run.id)
         simulation_count = _count(connection, "simulations")
 
@@ -289,8 +296,10 @@ def test_a_report_whose_run_failed_gets_a_new_run_joining_its_simulation_runs(
         policy_id = insert_policy(connection, economy.catalog)
         reform = SimulationChoice(policy_id=policy_id, dynamic_id=None)
         act_as_the_service(connection)
-        first = find_or_create_economy_report(
-            connection, _keyed_report(economy, reform=reform)
+        first = in_session(
+            connection,
+            find_or_create_economy_report,
+            _keyed_report(economy, reform=reform),
         )
         _set_status(
             connection, "simulation_runs", first.baseline.simulation_run_id, "succeeded"
@@ -300,8 +309,10 @@ def test_a_report_whose_run_failed_gets_a_new_run_joining_its_simulation_runs(
         )
         _set_status(connection, "report_runs", first.run.id, "failed")
 
-        second = find_or_create_economy_report(
-            connection, _keyed_report(economy, reform=reform)
+        second = in_session(
+            connection,
+            find_or_create_economy_report,
+            _keyed_report(economy, reform=reform),
         )
 
     assert second.report_id == first.report_id
@@ -318,14 +329,16 @@ def test_a_forced_run_is_never_joined_by_a_create(public_api_database_url) -> No
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         act_as_the_service(connection)
-        first = find_or_create_economy_report(connection, _keyed_report(economy))
+        first = in_session(
+            connection, find_or_create_economy_report, _keyed_report(economy)
+        )
         _set_status(
             connection, "simulation_runs", first.baseline.simulation_run_id, "failed"
         )
         _set_status(connection, "report_runs", first.run.id, "failed")
         forced_simulation_run_id = uuid4()
         connection.execute(
-            insert(simulation_runs).values(
+            insert(SimulationRun).values(
                 id=forced_simulation_run_id,
                 simulation_id=first.baseline.simulation_id,
                 year=2026,
@@ -339,7 +352,7 @@ def test_a_forced_run_is_never_joined_by_a_create(public_api_database_url) -> No
             )
         )
         connection.execute(
-            insert(report_runs).values(
+            insert(ReportRun).values(
                 id=uuid4(),
                 report_id=first.report_id,
                 baseline_simulation_run_id=forced_simulation_run_id,
@@ -352,7 +365,9 @@ def test_a_forced_run_is_never_joined_by_a_create(public_api_database_url) -> No
             )
         )
 
-        second = find_or_create_economy_report(connection, _keyed_report(economy))
+        second = in_session(
+            connection, find_or_create_economy_report, _keyed_report(economy)
+        )
 
     assert second.run.inserted is True
     assert second.baseline.run_inserted is True
@@ -370,9 +385,13 @@ def test_another_spm_selection_is_another_report_with_other_simulations(
         economy = insert_economy_catalog(connection)
         act_as_the_service(connection)
 
-        without = find_or_create_economy_report(connection, _keyed_report(economy))
-        national = find_or_create_economy_report(
-            connection, _keyed_report(economy, spm=NATIONAL_SPM)
+        without = in_session(
+            connection, find_or_create_economy_report, _keyed_report(economy)
+        )
+        national = in_session(
+            connection,
+            find_or_create_economy_report,
+            _keyed_report(economy, spm=NATIONAL_SPM),
         )
 
     assert national.report_id != without.report_id
@@ -389,16 +408,18 @@ def test_a_report_sharing_a_side_with_another_names_that_sides_run_under_way(
         first_policy = insert_policy(connection, economy.catalog)
         second_policy = insert_policy(connection, economy.catalog)
         act_as_the_service(connection)
-        first = find_or_create_economy_report(
+        first = in_session(
             connection,
+            find_or_create_economy_report,
             _keyed_report(economy, reform=SimulationChoice(first_policy, None)),
         )
         _set_status(
             connection, "simulation_runs", first.baseline.simulation_run_id, "running"
         )
 
-        second = find_or_create_economy_report(
+        second = in_session(
             connection,
+            find_or_create_economy_report,
             _keyed_report(economy, reform=SimulationChoice(second_policy, None)),
         )
 
@@ -416,17 +437,19 @@ def test_a_keyed_simulation_joins_its_run_or_creates_it(
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         act_as_the_service(connection)
-        report = find_or_create_economy_report(connection, _keyed_report(economy))
+        report = in_session(
+            connection, find_or_create_economy_report, _keyed_report(economy)
+        )
 
         # The report's current-law simulation is this request's simulation.
-        joined = find_or_create_economy_simulation(
-            connection, _keyed_simulation(economy)
+        joined = in_session(
+            connection, find_or_create_economy_simulation, _keyed_simulation(economy)
         )
         _set_status(
             connection, "simulation_runs", report.baseline.simulation_run_id, "failed"
         )
         request = _keyed_simulation(economy)
-        created = find_or_create_economy_simulation(connection, request)
+        created = in_session(connection, find_or_create_economy_simulation, request)
         simulation = _row(connection, "simulations", created.simulation_id)
 
     assert (joined.simulation_id, joined.run.id) == (
@@ -455,7 +478,9 @@ def test_two_identical_requests_at_once_end_on_the_same_rows_and_start_one_call(
 
     def create_and_start(connection: Connection, name: str) -> None:
         act_as_the_service(connection)
-        result = find_or_create_economy_report(connection, _keyed_report(economy))
+        result = in_session(
+            connection, find_or_create_economy_report, _keyed_report(economy)
+        )
         found[name] = result
         if result.run.inserted:
             started_calls.append(result.run.id)
@@ -487,16 +512,18 @@ def test_a_request_losing_the_report_run_to_another_joins_it_and_keeps_nothing(
     economy = committed_catalog
     with committed_engine.begin() as connection:
         act_as_the_service(connection)
-        first = find_or_create_economy_report(connection, _keyed_report(economy))
+        first = in_session(
+            connection, find_or_create_economy_report, _keyed_report(economy)
+        )
     with committed_engine.begin() as connection:
         connection.execute(
-            update(simulation_runs)
-            .where(simulation_runs.c.id == first.baseline.simulation_run_id)
+            update(SimulationRun)
+            .where(SimulationRun.id == first.baseline.simulation_run_id)
             .values(status=SimulationStatus.FAILED, completed_at=func.now())
         )
         connection.execute(
-            update(report_runs)
-            .where(report_runs.c.id == first.run.id)
+            update(ReportRun)
+            .where(ReportRun.id == first.run.id)
             .values(status=ReportRunStatus.FAILED, completed_at=func.now())
         )
     competing: list[UUID] = []
@@ -514,7 +541,7 @@ def test_a_request_losing_the_report_run_to_another_joins_it_and_keeps_nothing(
         run_id = uuid4()
         with committed_engine.begin() as other:
             other.execute(
-                insert(report_runs).values(
+                insert(ReportRun).values(
                     id=run_id,
                     report_id=first.report_id,
                     baseline_simulation_run_id=first.baseline.simulation_run_id,
@@ -531,31 +558,20 @@ def test_a_request_losing_the_report_run_to_another_joins_it_and_keeps_nothing(
         act_as_the_service(connection)
         event.listen(connection, "before_cursor_execute", create_a_competing_run_first)
         try:
-            joined = find_or_create_economy_report(connection, request)
+            joined = in_session(connection, find_or_create_economy_report, request)
         finally:
             event.remove(
                 connection, "before_cursor_execute", create_a_competing_run_first
             )
         kept = connection.execute(
             select(func.count())
-            .select_from(simulation_runs)
-            .where(simulation_runs.c.id == request.baseline.simulation_run_id)
+            .select_from(SimulationRun)
+            .where(SimulationRun.id == request.baseline.simulation_run_id)
         ).scalar_one()
 
     assert (joined.run.id, joined.run.inserted) == (competing[0], False)
     assert joined.baseline.run_inserted is False
     assert kept == 0
-
-
-def _store_on(connection: Connection) -> EconomyRunStore:
-    """Return a store whose transactions are savepoints of ``connection``."""
-
-    @contextmanager
-    def savepoint() -> Iterator[Connection]:
-        with connection.begin_nested():
-            yield connection
-
-    return EconomyRunStore(savepoint)
 
 
 def test_the_store_finds_or_creates_reports_and_simulations_in_a_transaction(
@@ -564,7 +580,7 @@ def test_the_store_finds_or_creates_reports_and_simulations_in_a_transaction(
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         act_as_the_service(connection)
-        store = _store_on(connection)
+        store = economy_store_on(connection)
 
         created = store.find_or_create_report(_keyed_report(economy))
         joined = store.find_or_create_report(_keyed_report(economy))
@@ -586,8 +602,9 @@ def test_a_keyed_reports_rerun_joins_each_sides_run_on_its_versions(
         economy = insert_economy_catalog(connection)
         policy_id = insert_policy(connection, economy.catalog)
         act_as_the_service(connection)
-        created = find_or_create_economy_report(
+        created = in_session(
             connection,
+            find_or_create_economy_report,
             _keyed_report(economy, reform=SimulationChoice(policy_id, None)),
         )
         _set_status(
@@ -597,7 +614,7 @@ def test_a_keyed_reports_rerun_joins_each_sides_run_on_its_versions(
             "succeeded",
         )
         _set_status(connection, "report_runs", created.run.id, "failed")
-        definition = read_report_definition(connection, created.report_id)
+        definition = in_session(connection, read_report_definition, created.report_id)
         rerun = NewReportRerun(
             report_id=created.report_id,
             run_id=uuid4(),
@@ -607,7 +624,7 @@ def test_a_keyed_reports_rerun_joins_each_sides_run_on_its_versions(
             reform=RerunSide(created.reform.simulation_id, uuid4()),
         )
 
-        found = insert_report_rerun(connection, rerun)
+        found = in_session(connection, insert_report_rerun, rerun)
 
     assert definition is not None
     assert definition.keyed is True
@@ -625,7 +642,9 @@ def test_a_keyed_rerun_with_one_simulation_on_both_sides_inserts_one_run(
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         act_as_the_service(connection)
-        created = find_or_create_economy_report(connection, _keyed_report(economy))
+        created = in_session(
+            connection, find_or_create_economy_report, _keyed_report(economy)
+        )
         _set_status(
             connection, "simulation_runs", created.baseline.simulation_run_id, "failed"
         )
@@ -640,11 +659,11 @@ def test_a_keyed_rerun_with_one_simulation_on_both_sides_inserts_one_run(
             reform=RerunSide(simulation_id, uuid4()),
         )
 
-        found = insert_report_rerun(connection, rerun)
+        found = in_session(connection, insert_report_rerun, rerun)
         runs = connection.execute(
             select(func.count())
-            .select_from(simulation_runs)
-            .where(simulation_runs.c.simulation_id == simulation_id)
+            .select_from(SimulationRun)
+            .where(SimulationRun.simulation_id == simulation_id)
         ).scalar_one()
 
     assert found.inserted is True
@@ -686,7 +705,7 @@ def test_a_report_naming_a_missing_row_names_the_column_that_refused_it(
         act_as_the_service(connection)
 
         with pytest.raises(EconomyRecordReferenceError) as refused:
-            find_or_create_economy_report(connection, report)
+            in_session(connection, find_or_create_economy_report, report)
 
     assert (refused.value.table_name, refused.value.column_name) == (
         "simulations",

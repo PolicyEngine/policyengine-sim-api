@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import act_as_the_service, in_session, rolled_back_transaction
 from policyengine_simulation_persistence import (
     MissingPolicyParametersError,
     UnknownPolicyError,
@@ -42,8 +42,9 @@ def _reform_of(public_api_database_url, values: list[StoredValue]) -> dict:
         )
         policy_id = insert_policy(connection, catalog, values)
         act_as_the_service(connection)
-        return read_policy_reform(
+        return in_session(
             connection,
+            read_policy_reform,
             country="us",
             policy_id=policy_id,
             catalog_version_id=catalog.version_id,
@@ -169,8 +170,9 @@ def test_a_policy_is_read_as_its_values_by_parameter_name_and_period(
         )
         act_as_the_service(connection)
 
-        reform = read_policy_reform(
+        reform = in_session(
             connection,
+            read_policy_reform,
             country="us",
             policy_id=policy_id,
             catalog_version_id=run_on.version_id,
@@ -255,8 +257,9 @@ def test_a_policy_that_changes_nothing_is_read_as_no_values(
         policy_id = insert_policy(connection, catalog)
         act_as_the_service(connection)
 
-        reform = read_policy_reform(
+        reform = in_session(
             connection,
+            read_policy_reform,
             country="uk",
             policy_id=policy_id,
             catalog_version_id=catalog.version_id,
@@ -281,8 +284,9 @@ def test_a_policy_of_another_country_or_none_at_all_is_unknown(
 
         for country, unknown_policy_id in (("uk", policy_id), ("us", uuid4())):
             with pytest.raises(UnknownPolicyError) as raised:
-                read_policy_reform(
+                in_session(
                     connection,
+                    read_policy_reform,
                     country=country,
                     policy_id=unknown_policy_id,
                     catalog_version_id=catalog.version_id,
@@ -322,8 +326,9 @@ def test_a_policy_changing_parameters_the_run_lacks_names_each_of_them(
         act_as_the_service(connection)
 
         with pytest.raises(MissingPolicyParametersError) as raised:
-            read_policy_reform(
+            in_session(
                 connection,
+                read_policy_reform,
                 country="us",
                 policy_id=policy_id,
                 catalog_version_id=run_on.version_id,

@@ -2,7 +2,7 @@
 
 Each v2 Modal function opens one telemetry operation. Its attributes reach
 the operation's log records and span, but not its metrics, so an operation
-that Modal interrupted in production leads straight to the Public API row it
+that Modal interrupted in production leads straight to the API v1 row it
 was working on:
 
 - ``database_table``: the table holding that row, ``household_jobs``,

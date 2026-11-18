@@ -67,7 +67,7 @@ REFERENCE_REFUSALS: dict[str, tuple[EconomyRefusalCode, str]] = {
 }
 # What a submission creates, or a re-run calculates again.
 RecordName = Literal["report", "simulation"]
-# The Public API table holding each record, as telemetry names it.
+# The API v1 table holding each record, as telemetry names it.
 RECORD_TABLES: Final[dict[RecordName, DatabaseTable]] = {
     "report": "reports",
     "simulation": "simulations",

@@ -87,11 +87,7 @@ ENDED_MESSAGE = "modal_call_ended: the job's Modal call ended without recording 
 
 @pytest.fixture
 def store():
-    run_store = ReportRunStore(worker_database_url())
-    try:
-        yield run_store
-    finally:
-        run_store.engine.dispose()
+    return ReportRunStore(worker_database_url())
 
 
 def _set_job(seeder, job_id, **values):

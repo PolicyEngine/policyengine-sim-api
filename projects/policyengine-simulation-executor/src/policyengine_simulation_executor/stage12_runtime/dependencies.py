@@ -15,7 +15,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
 )
 
-from .database_retry import open_connection_with_retry
+from .database_retry import open_session_with_retry
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -176,7 +176,7 @@ def runtime_store(
     # refused connection rather than failing the report during a burst.
     return Stage12PersistenceStore(
         os.environ.get("STAGE12_DATABASE_URL", ""),
-        open_connection=partial(open_connection_with_retry, runtime=runtime),
+        open_session=partial(open_session_with_retry, runtime=runtime),
     )
 
 

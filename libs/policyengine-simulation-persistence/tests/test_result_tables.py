@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from policyengine_simulation_persistence import (
-    report_runs,
+    ReportRun,
+    SimulationRun,
     result_metadata,
     service_metadata,
-    simulation_runs,
 )
 from sqlalchemy import Enum
 
@@ -45,14 +45,20 @@ def test_each_result_names_the_service_models_run_it_belongs_to() -> None:
             for constraint in table.foreign_key_constraints
         }
         if table.name in SIMULATION_RUN_RESULT_TABLES:
-            assert referred_tables == {"simulation_run_id": simulation_runs}, table
+            assert referred_tables == {"simulation_run_id": SimulationRun.__table__}, (
+                table
+            )
             continue
-        assert referred_tables["report_run_id"] is report_runs, table
+        assert referred_tables["report_run_id"] is ReportRun.__table__, table
         if table.name.startswith("labor_supply_"):
             assert set(referred_tables) == {"report_run_id"}, table
         else:
-            assert referred_tables["baseline_simulation_run_id"] is simulation_runs
-            assert referred_tables["reform_simulation_run_id"] is simulation_runs
+            assert (
+                referred_tables["baseline_simulation_run_id"] is SimulationRun.__table__
+            )
+            assert (
+                referred_tables["reform_simulation_run_id"] is SimulationRun.__table__
+            )
 
 
 def test_every_result_table_and_enum_type_names_the_public_schema() -> None:

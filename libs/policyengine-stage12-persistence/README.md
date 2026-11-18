@@ -7,9 +7,25 @@ package never changes a schema.
 The models of the Public API's run and result tables are the simulation
 service library's (`libs/policyengine-simulation-persistence`: `tables.py`
 and `result_tables.py`), which CI compares with the tables the Public API's
-chain builds; this package's stores import them, and its engines come from
-that library's `create_unpooled_engine`. Its only models of its own are the
-comparison path's tables, in `tables.py`.
+chain builds; this package's stores import them, and its sessions come from
+that library's `create_unpooled_session_factory`. Its only models of its own are the
+comparison path's tables, the mapped classes `ComparisonReport` and
+`ComparisonSimulation` in `tables.py`, on `ComparisonBase` in `orm_base.py`.
+
+Every store runs each operation on one ORM `Session` from the factory it is
+given, or that `create_stage12_session_factory` builds from its URL (`engine.py`).
+Opening the session sends `SELECT true`, which makes it check out its
+connection. A `SessionOpener` wraps only that step, and the v2 Modal runtime's
+opener repeats it after an `OperationalError`, so a retry can't repeat anything
+the operation wrote: its statements and COMMIT run after the opener returns,
+and their failures are raised without a retry.
+
+The deployment check (`validate_runtime_database`) holds one connection at a
+time and repeats a step after a connection failure, up to five attempts, since
+each step only reads or rolls back what it wrote. The deployment command gives
+it `create_stage12_check_session_factory`, whose one-connection pool lets the
+role check, every schema read and the rolled-back writes share one connection,
+and ends the process with a failure if the check runs for 15 minutes.
 
 - **The Stage 12 comparison tables** (`Stage12PersistenceStore`): temporary
   state of the comparison path, removed with it.

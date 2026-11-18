@@ -16,7 +16,7 @@ Use each identifier for its defined scope:
 | `evaluation_id` | One Stage 12 report | Stage 12 report construction | Yes, as functional report state |
 | `simulation_execution_id` | One Stage 12 baseline or reform simulation | Stage 12 coordinator | Yes, as functional simulation state |
 | `submission_claim_id` | One API v1 attempt to acquire ownership of a simulation submission | API v1 | Only where the simulation request is stored |
-| `database_table` | The Public API table holding the row a v2 Modal function call, or a Simulation Entrypoint log record, is about: `household_jobs`, `report_runs` (a report run or a household report run), `simulation_runs`, `reports` or `simulations` | The code writing the record, as a fixed name | No: telemetry only |
+| `database_table` | The API v1 table holding the row a v2 Modal function call, or a Simulation Entrypoint log record, is about: `household_jobs`, `report_runs` (a report run or a household report run), `simulation_runs`, `reports` or `simulations` | The code writing the record, as a fixed name | No: telemetry only |
 | `database_row_id` | That row's UUID | The simulation service, which creates the row | Yes, as the row's ID |
 | `modal_call_id` | One Modal function call of a v2 Modal function | Modal | Only where the row records the call that claimed it; a segment worker's call is recorded nowhere, and its `database_row_id` names the simulation run its simulation worker's call claimed |
 

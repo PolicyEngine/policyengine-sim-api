@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from policyengine_stage12_persistence import BudgetWindowStore, ReportRunStore
 
-from .database_retry import open_connection_with_retry
+from .database_retry import open_session_with_retry
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -178,7 +178,7 @@ def report_run_store(runtime: ObservabilityRuntime | None = None) -> ReportRunSt
     """
     return ReportRunStore(
         os.environ.get(MODAL_WORKER_DATABASE_URL_ENV, ""),
-        open_connection=partial(open_connection_with_retry, runtime=runtime),
+        open_session=partial(open_session_with_retry, runtime=runtime),
     )
 
 
@@ -192,5 +192,5 @@ def budget_window_store(
     """
     return BudgetWindowStore(
         os.environ.get(MODAL_WORKER_DATABASE_URL_ENV, ""),
-        open_connection=partial(open_connection_with_retry, runtime=runtime),
+        open_session=partial(open_session_with_retry, runtime=runtime),
     )
