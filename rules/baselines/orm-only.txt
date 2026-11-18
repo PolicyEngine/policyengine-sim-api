@@ -1,7 +1,7 @@
 # Tolerated existing violations of sim.persistence.orm-only. This list may only shrink.
 # One entry per finding, as "file: check: source", without line numbers; an
-# entry repeats once for each identical finding in its file. Tasks C1 · 46 to
-# C1 · 50 convert the code and remove its entries; tests/test_orm_only.py in
+# entry repeats once for each identical finding in its file. Tasks C1 · 33a to
+# C1 · 33e convert the code and remove its entries; tests/test_orm_only.py in
 # projects/policyengine-simulation-entry fails on a finding missing from here
 # and on an entry that no longer matches one.
 libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/access.py: Core engine or connection: engine.connect()
