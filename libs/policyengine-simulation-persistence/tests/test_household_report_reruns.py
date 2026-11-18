@@ -10,13 +10,12 @@ as the simulation service's role, in a transaction the test rolls back.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import act_as_the_service, rolled_back_transaction, session_factory_on
 from household_report_rows import insert_household_report_rows
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
@@ -43,7 +42,6 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from uuid import UUID
 
     from household_report_rows import StoredHouseholdReport
@@ -52,6 +50,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.public_api_schema
 
+STATEMENT_TIMEOUT_MILLISECONDS = 5_000
 VERSIONS = RunVersions(country_package_version="1.764.6", policyengine_version="6.17.1")
 # A later release's versions, with a catalog version of its own.
 LATER_VERSIONS = RunVersions(
@@ -76,13 +75,10 @@ CURRENT_LAW = SimulationChoice(policy_id=None, dynamic_id=None)
 
 def _store_on(connection: Connection) -> HouseholdReportStore:
     """Return a store whose transactions are savepoints of ``connection``."""
-
-    @contextmanager
-    def savepoint() -> Iterator[Connection]:
-        with connection.begin_nested():
-            yield connection
-
-    return HouseholdReportStore(savepoint)
+    return HouseholdReportStore.from_session_factory(
+        session_factory_on(connection),
+        statement_timeout_milliseconds=STATEMENT_TIMEOUT_MILLISECONDS,
+    )
 
 
 def _catalogs(connection: Connection) -> tuple[CatalogVersion, CatalogVersion]:
@@ -410,11 +406,11 @@ def test_a_rerun_naming_a_deleted_report_or_simulation_is_refused_by_its_key(
 class _CommitFails:
     """A transaction whose block runs, and whose commit then fails."""
 
-    def __init__(self, connection) -> None:
-        self.connection = connection
+    def __init__(self, session) -> None:
+        self.session = session
 
     def __enter__(self):
-        return self.connection
+        return self.session
 
     def __exit__(self, error_type, error, traceback) -> None:
         if error is None:
@@ -422,11 +418,18 @@ class _CommitFails:
             raise OperationalError(statement, {}, Exception("connection lost"))
 
 
-class _RecordingConnection:
-    """Records each statement it is given, and answers each with no rows."""
+class _RecordingSession:
+    """Keeps what it is given, and answers each statement with no rows."""
 
     def __init__(self) -> None:
+        self.added: list[object] = []
         self.statements: list[object] = []
+
+    def add(self, instance: object) -> None:
+        self.added.append(instance)
+
+    def flush(self) -> None:
+        return None
 
     def execute(self, statement, *arguments):
         self.statements.append(statement)
@@ -439,8 +442,8 @@ class _NoRows:
 
 
 def test_a_rerun_whose_commit_fails_may_have_been_written() -> None:
-    connection = _RecordingConnection()
-    store = HouseholdReportStore(lambda: _CommitFails(connection))
+    session = _RecordingSession()
+    store = HouseholdReportStore(lambda: _CommitFails(session))
 
     with pytest.raises(EconomyRecordOutcomeUnknownError) as raised:
         store.create_report_rerun(
@@ -459,4 +462,5 @@ def test_a_rerun_whose_commit_fails_may_have_been_written() -> None:
         )
 
     assert isinstance(raised.value.__cause__, OperationalError)
-    assert connection.statements
+    assert session.added
+    assert session.statements

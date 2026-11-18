@@ -9,13 +9,17 @@ a transaction rolled back afterwards.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import (
+    act_as_the_service,
+    in_session,
+    rolled_back_transaction,
+    session_factory_on,
+)
 from policyengine_simulation_persistence import (
     KEY_VERSION,
     EconomyRecordReferenceError,
@@ -44,12 +48,11 @@ from public_api_rows import (
 from sqlalchemy import text
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from sqlalchemy import Connection
 
 pytestmark = pytest.mark.public_api_schema
 
+STATEMENT_TIMEOUT_MILLISECONDS = 5_000
 VERSIONS = RunVersions(country_package_version="1.764.6", policyengine_version="6.17.1")
 CURRENT_LAW = SimulationChoice(policy_id=None, dynamic_id=None)
 DOCUMENT = {
@@ -155,7 +158,7 @@ def test_a_keyed_household_report_is_created_with_its_simulations_and_first_run(
         request = _keyed_report(stored, reform=stored.reform)
         act_as_the_service(connection)
 
-        found = find_or_create_household_report(connection, request)
+        found = in_session(connection, find_or_create_household_report, request)
         report = _row(connection, "reports", found.report_id)
         report_run = _row(connection, "report_runs", found.run.id)
         sides = {
@@ -260,16 +263,20 @@ def test_an_identical_household_request_ends_on_the_same_rows_and_inserts_nothin
     with rolled_back_transaction(public_api_database_url) as connection:
         stored = _stored_inputs(connection)
         act_as_the_service(connection)
-        first = find_or_create_household_report(
-            connection, _keyed_report(stored, reform=stored.reform)
+        first = in_session(
+            connection,
+            find_or_create_household_report,
+            _keyed_report(stored, reform=stored.reform),
         )
         counts = [
             _count(connection, name)
             for name in ("simulations", "reports", "simulation_runs", "report_runs")
         ]
 
-        again = find_or_create_household_report(
-            connection, _keyed_report(stored, reform=stored.reform)
+        again = in_session(
+            connection,
+            find_or_create_household_report,
+            _keyed_report(stored, reform=stored.reform),
         )
         counts_again = [
             _count(connection, name)
@@ -292,7 +299,7 @@ def test_a_household_policy_compared_with_itself_names_one_simulation_run_twice(
         request = _keyed_report(stored, reform=CURRENT_LAW)
         act_as_the_service(connection)
 
-        found = find_or_create_household_report(connection, request)
+        found = in_session(connection, find_or_create_household_report, request)
         report_run = _row(connection, "report_runs", found.run.id)
 
     assert found.reform is not None
@@ -313,9 +320,11 @@ def test_a_household_report_of_the_baseline_alone_names_no_reform(
         request = _keyed_report(stored, reform=None)
         act_as_the_service(connection)
 
-        found = find_or_create_household_report(connection, request)
-        again = find_or_create_household_report(
-            connection, _keyed_report(stored, reform=None)
+        found = in_session(connection, find_or_create_household_report, request)
+        again = in_session(
+            connection,
+            find_or_create_household_report,
+            _keyed_report(stored, reform=None),
         )
         report = _row(connection, "reports", found.report_id)
         report_run = _row(connection, "report_runs", found.run.id)
@@ -338,12 +347,16 @@ def test_a_household_report_sharing_a_side_names_that_sides_run_under_way(
     with rolled_back_transaction(public_api_database_url) as connection:
         stored = _stored_inputs(connection)
         act_as_the_service(connection)
-        with_reform = find_or_create_household_report(
-            connection, _keyed_report(stored, reform=stored.reform)
+        with_reform = in_session(
+            connection,
+            find_or_create_household_report,
+            _keyed_report(stored, reform=stored.reform),
         )
 
-        alone = find_or_create_household_report(
-            connection, _keyed_report(stored, reform=None)
+        alone = in_session(
+            connection,
+            find_or_create_household_report,
+            _keyed_report(stored, reform=None),
         )
 
     assert alone.report_id != with_reform.report_id
@@ -358,13 +371,17 @@ def test_a_household_report_whose_run_failed_gets_a_new_run_on_its_simulations(
     with rolled_back_transaction(public_api_database_url) as connection:
         stored = _stored_inputs(connection)
         act_as_the_service(connection)
-        first = find_or_create_household_report(
-            connection, _keyed_report(stored, reform=stored.reform)
+        first = in_session(
+            connection,
+            find_or_create_household_report,
+            _keyed_report(stored, reform=stored.reform),
         )
         _fail_report_run(connection, first.run.id)
 
-        second = find_or_create_household_report(
-            connection, _keyed_report(stored, reform=stored.reform)
+        second = in_session(
+            connection,
+            find_or_create_household_report,
+            _keyed_report(stored, reform=stored.reform),
         )
 
     assert second.report_id == first.report_id
@@ -380,12 +397,10 @@ def test_the_household_store_finds_or_creates_a_report_in_a_transaction(
         stored = _stored_inputs(connection)
         act_as_the_service(connection)
 
-        @contextmanager
-        def savepoint() -> Iterator[Connection]:
-            with connection.begin_nested():
-                yield connection
-
-        store = HouseholdReportStore(savepoint)
+        store = HouseholdReportStore.from_session_factory(
+            session_factory_on(connection),
+            statement_timeout_milliseconds=STATEMENT_TIMEOUT_MILLISECONDS,
+        )
         found = store.find_or_create_report(_keyed_report(stored, reform=None))
         again = store.find_or_create_report(_keyed_report(stored, reform=None))
 
@@ -446,14 +461,18 @@ def test_a_keyed_household_reports_rerun_joins_its_run_on_the_versions(
     with rolled_back_transaction(public_api_database_url) as connection:
         stored = _stored_inputs(connection)
         act_as_the_service(connection)
-        found = find_or_create_household_report(
-            connection, _keyed_report(stored, reform=stored.reform)
+        found = in_session(
+            connection,
+            find_or_create_household_report,
+            _keyed_report(stored, reform=stored.reform),
         )
         counts = [
             _count(connection, name) for name in ("simulation_runs", "report_runs")
         ]
 
-        joined = insert_household_report_rerun(connection, _rerun_of(found, stored))
+        joined = in_session(
+            connection, insert_household_report_rerun, _rerun_of(found, stored)
+        )
         counts_after = [
             _count(connection, name) for name in ("simulation_runs", "report_runs")
         ]
@@ -469,13 +488,15 @@ def test_a_keyed_household_rerun_after_a_failed_run_names_its_simulations_runs(
     with rolled_back_transaction(public_api_database_url) as connection:
         stored = _stored_inputs(connection)
         act_as_the_service(connection)
-        found = find_or_create_household_report(
-            connection, _keyed_report(stored, reform=stored.reform)
+        found = in_session(
+            connection,
+            find_or_create_household_report,
+            _keyed_report(stored, reform=stored.reform),
         )
         _fail_report_run(connection, found.run.id)
         rerun = _rerun_of(found, stored)
 
-        created = insert_household_report_rerun(connection, rerun)
+        created = in_session(connection, insert_household_report_rerun, rerun)
         report_run = _row(connection, "report_runs", created.id)
 
     assert found.reform is not None
@@ -494,12 +515,14 @@ def test_a_forced_keyed_household_rerun_is_an_extra_run_beside_the_one_under_way
     with rolled_back_transaction(public_api_database_url) as connection:
         stored = _stored_inputs(connection)
         act_as_the_service(connection)
-        found = find_or_create_household_report(
-            connection, _keyed_report(stored, reform=stored.reform)
+        found = in_session(
+            connection,
+            find_or_create_household_report,
+            _keyed_report(stored, reform=stored.reform),
         )
         rerun = _rerun_of(found, stored, forced=True)
 
-        created = insert_household_report_rerun(connection, rerun)
+        created = in_session(connection, insert_household_report_rerun, rerun)
         report_run = _row(connection, "report_runs", created.id)
         side_runs = [
             _row(connection, "simulation_runs", run_id)
@@ -523,6 +546,6 @@ def test_a_household_report_naming_a_missing_household_is_refused_by_its_key(
         act_as_the_service(connection)
 
         with pytest.raises(EconomyRecordReferenceError) as refused:
-            find_or_create_household_report(connection, missing_household)
+            in_session(connection, find_or_create_household_report, missing_household)
 
     assert refused.value.column_name == "household_id"
