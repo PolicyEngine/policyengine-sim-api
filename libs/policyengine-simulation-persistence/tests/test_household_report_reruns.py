@@ -361,6 +361,11 @@ def test_a_forced_household_rerun_beside_a_run_under_way_is_an_extra_run(
             report.baseline.simulation_id,
         )
         first_run = _row(connection, "report_runs", report.run_id)
+        extra_run = _row(connection, "report_runs", rerun.run_id)
+        extra_side_runs = [
+            _row(connection, "simulation_runs", run_id)
+            for run_id in rerun.simulation_run_ids
+        ]
 
     assert (created.id, created.inserted, created.status) == (
         rerun.run_id,
@@ -373,6 +378,8 @@ def test_a_forced_household_rerun_beside_a_run_under_way_is_an_extra_run(
     ) == rerun.simulation_run_ids
     assert (report_runs, baseline_runs) == (2, 2)
     assert first_run["status"] == ReportRunStatus.PENDING
+    assert extra_run["forced"] is True
+    assert [run["forced"] for run in extra_side_runs] == [True, True]
 
 
 def test_a_rerun_naming_a_deleted_report_or_simulation_is_refused_by_its_key(

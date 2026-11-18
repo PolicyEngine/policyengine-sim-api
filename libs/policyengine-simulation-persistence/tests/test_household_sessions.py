@@ -636,6 +636,7 @@ def test_a_connection_lost_at_a_reruns_commit_leaves_the_outcome_unknown(
     committed_engine, committed_household, session_factory
 ) -> None:
     rerun = _forced_rerun(committed_engine, committed_household)
+    statements = _statements_sent(committed_engine)
     unflushed_counts = _end_connection_at(
         session_factory, "before_commit", committed_engine
     )
@@ -645,6 +646,12 @@ def test_a_connection_lost_at_a_reruns_commit_leaves_the_outcome_unknown(
 
     assert isinstance(raised.value.__cause__, OperationalError)
     assert unflushed_counts == [0]
+    # A forced re-run inserts its report run directly, joining nothing.
+    assert any(
+        statement.startswith("INSERT INTO public.report_runs")
+        and "ON CONFLICT" not in statement
+        for statement in statements
+    )
 
 
 def test_a_connection_lost_during_a_reruns_flush_is_not_a_lost_commit(
@@ -737,7 +744,7 @@ def test_a_refusal_inside_the_savepoint_takes_back_the_other_sides_run(
     assert kept_runs == 0
 
 
-def test_a_refusal_inside_an_unforced_reruns_savepoint_is_rolled_back_and_named(
+def test_an_unforced_rerun_refused_inside_its_savepoint_names_the_refusal(
     committed_engine, committed_household, session_factory
 ) -> None:
     rerun = _unforced_rerun(committed_engine, committed_household)
