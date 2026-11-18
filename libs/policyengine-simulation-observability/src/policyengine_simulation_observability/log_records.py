@@ -23,7 +23,12 @@ MODAL_CALL_ID_ATTRIBUTE = "modal_call_id"
 
 # The API v1 tables whose rows telemetry names.
 DatabaseTable = Literal[
-    "household_jobs", "report_runs", "reports", "simulation_runs", "simulations"
+    "cliff_impacts",
+    "household_jobs",
+    "report_runs",
+    "reports",
+    "simulation_runs",
+    "simulations",
 ]
 LogFieldValue = str | int | float | bool
 

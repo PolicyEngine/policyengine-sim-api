@@ -427,8 +427,8 @@ def run_single_simulation_us(
             attributes={
                 "runner_name": "stage12",
                 "simulation_role": payload.get("role"),
-                **stage12_runtime.operation_record_attributes(
-                    "simulation_runs", simulation_run_id, modal_call_id
+                **stage12_runtime.simulation_worker_record_attributes(
+                    context, modal_call_id
                 ),
             },
             remote_context=propagated,
@@ -487,10 +487,8 @@ def run_single_simulation_uk(
             attributes={
                 "runner_name": "stage12",
                 "simulation_role": payload.get("role"),
-                **stage12_runtime.operation_record_attributes(
-                    "simulation_runs",
-                    stage12_runtime.simulation_run_named_by(context),
-                    modal_call_id,
+                **stage12_runtime.simulation_worker_record_attributes(
+                    context, modal_call_id
                 ),
             },
             remote_context=propagated,
