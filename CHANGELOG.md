@@ -10,6 +10,18 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.21.0] - 2026-11-18
+
+### Added
+
+- Each v2 Modal function's telemetry operation now names the API v1 row its call works on and its own Modal call, so an operation that Modal interrupted leads straight to its row: `database_table` (`household_jobs`, `report_runs` for a report run or a household report run, or `simulation_runs`), `database_row_id` and `modal_call_id`. A US segment worker names the simulation run of the worker that started it. The IDs go to the operation's log records and span, not to metrics.
+
+### Fixed
+
+- The Stage 12 runtime's log records now carry their fields: the result comparison's three logs and a child simulation's failed state update or cancellation passed them only as standard-library `extra=` keys, which the observability runtime doesn't emit. They now go through `log_extra`. The Stage 12 runtime's logger is also set to INFO, so its INFO records, such as `stage12_result_comparison_completed`, are no longer discarded by the root logger's WARNING level.
+- The Simulation Entrypoint's log records now carry their fields. 31 of its 34 log calls that pass fields passed them only as standard-library `extra=` keys, which the observability runtime doesn't emit, so their records in Cloud Logging named no job, report, run or error type. Every log call now passes its fields through `log_extra` in the shared observability library, and a call about an API v1 row names it with `database_table` (`household_jobs`, `reports`, `report_runs` or `simulations`) and `database_row_id`: a key such as `household_job_id` would be dropped by the runtime's key filter. A budget window's `started_years` are now joined into one string, since the runtime drops lists. The Entrypoint also sets its package logger to INFO, so its INFO records (a deferred budget-window year, a refused bearer token) reach the runtime: the root logger's WARNING level discarded them.
+
+
 ## [0.20.0] - 2026-11-18
 
 ### Added
