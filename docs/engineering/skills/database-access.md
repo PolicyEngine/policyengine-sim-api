@@ -31,9 +31,8 @@ It builds on the Stage 12 rules:
 
 `sim.persistence.orm-only` requires the SQLAlchemy ORM, not Core: code that
 reads or writes database rows declares tables only as mapped classes and runs
-every statement through an ORM `Session` against them. The rule is ratcheted.
-`rules/baselines/orm-only.txt` lists the findings in the Core code the
-libraries had when it was added, and issue #1097 tracks converting them.
+every statement through an ORM `Session` against them. The rule is enforced
+with no baseline, so any finding fails.
 
 What the ORM means here:
 
@@ -41,19 +40,24 @@ What the ORM means here:
   `mapped_column`). Each derives from a `DeclarativeBase` in its library's
   `orm_base.py`, the only module that builds a `MetaData`, with its schema. A
   library has one base per `MetaData` it needs. A `MetaData` holds one table of
-  each name, so `policyengine-simulation-persistence` has four: `ServiceBase`,
+  each name, so `policyengine-simulation-persistence` has `ServiceBase`,
   `ReferencedBase`, `InputBase` and `ResultBase`, because its read-only models
-  and its key targets describe some of the same tables. A key to another
+  and its key targets describe some of the same tables, and `CatalogBase` for
+  the PostgreSQL catalog tables the privilege check reads. A key to another
   base's table names that class's attribute, such as `ReportRun.id`.
   `policyengine-stage12-persistence` has `ComparisonBase`. Constraints and
   indexes go in `__table_args__` under API v1's names. Use SQLAlchemy's own
   ORM, not SQLModel.
 - **Sessions:** only a library's `engine.py` creates or holds an `Engine`, and
-  it hands out a `sessionmaker` (`create_session_factory`, with
-  `expire_on_commit=False`). Everything else receives a `sessionmaker` or a
-  `Session`, and runs a transaction as `with session_factory.begin() as
-  session:`, or as `with bounded_session(session_factory,
-  statement_timeout_milliseconds=...) as session:` to limit its statements.
+  no public function there returns one or a `Connection`. It hands out a
+  `sessionmaker` with `expire_on_commit=False`:
+  `create_simulation_session_factory` for the simulation service's connection
+  pool and `create_unpooled_session_factory` for the v2 Modal calls, both from
+  a database URL. `dispose_session_factory` closes a factory's connections.
+  Everything else receives a `sessionmaker` or a `Session`, and runs a
+  transaction as `with session_factory.begin() as session:`, or as `with
+  bounded_session(session_factory, statement_timeout_milliseconds=...) as
+  session:` to limit its statements.
   The classes declare no relationships, so a flush doesn't order inserts by
   foreign key: flush the referenced row first. An attribute set to a SQL
   expression, such as `func.now()`, must be refreshed before the session closes
@@ -74,14 +78,12 @@ What the ORM means here:
   what it holds, such as `model`, never `table`: every `.table` read in a
   module that imports sqlalchemy is reported, because that is how a column
   reaches its Core table.
-
-- **While code is converted**, a table module keeps each table's old name as
-  `household_jobs = HouseholdJob.__table__`, so unconverted statements keep
-  working. That name is a Core table, so each of its uses stays a finding.
-
+- **PostgreSQL's catalog** is read through mapped classes too: `PgClass`,
+  `PgNamespace` and `PgAttribute` in `catalog_tables.py`.
 - **Schema inspection**, for the deployment check that compares the live
-  schema with the models, reads the live schema as `inspect(engine)` in the
-  library's `engine.py`, which needs no Connection, and the models' columns
+  schema with the models, reads the live schema through
+  `inspect_live_schema(session_factory)` in the Stage 12 library's `engine.py`,
+  which needs no Connection, and the models' columns
   and keys from their mappers (`inspect(Model).columns`, `.primary_key`) and
   `__table_args__`, none of which is reported.
 
@@ -131,25 +133,30 @@ Each finding is one of:
   SQLAlchemy in any module; `Engine`, `create_engine` and the like outside a
   library's `engine.py`, imported or referenced as `sa.Engine`; any
   `.connect()`, `.connection()`, `.raw_connection()` or `.get_bind()` call;
-  and `.begin()` on an engine (a name annotated as `Engine`, bound to
-  `create_engine(...)`, or named `engine` or ending in `_engine`). A
-  library's `engine.py` opens sessions, not connections.
+  `.begin()` on an engine (a name annotated as `Engine`, bound to
+  `create_engine(...)`, or named `engine` or ending in `_engine`); `.execute`,
+  `.scalar`, `.scalars`, `.stream` or `.stream_scalars` on a name that is
+  `connection` or `conn` or ends in `_connection` or `_conn`, annotated or
+  not; a public function of a library's `engine.py` whose return annotation
+  names an `Engine` or `Connection`; and `factory.kw["bind"]`, the engine
+  behind a `sessionmaker`, outside a library's `engine.py`. A library's
+  `engine.py` opens sessions, not connections.
 - **Raw SQL:** `text(...)`, `TextClause(...)` or `literal_column(...)`
   anywhere but a server default, an index's `postgresql_where` or a
   `CheckConstraint`'s condition, or `exec_driver_sql` or `.cursor()`.
 - **sqlmodel import.**
 
-Eight of these go by a method or attribute name alone, so they apply only in
-modules that import sqlalchemy: any `.table` read, and the `.connect()`,
-`.connection()`, `.raw_connection()`, `.get_bind()`, `.begin()`, `.cursor()`
-and `.exec_driver_sql()` calls.
+Those that go by a method or attribute name alone apply only in modules that
+import sqlalchemy: any `.table` read, `kw["bind"]`, a statement on a name like
+`connection`, and the `.connect()`, `.connection()`, `.raw_connection()`,
+`.get_bind()`, `.begin()`, `.cursor()` and `.exec_driver_sql()` calls.
 
 The checks read source, not types, and guard against ordinary Core use, not
 against deliberate evasion. They miss imports through `importlib`; tables,
 engines and connections passed around without a `Table`, `Engine` or
-`Connection` annotation, so a statement on mapped classes run through such a
-connection isn't reported; tables held in a container
-such as a dict, a class or instance attribute read in another module (other
+`Connection` annotation, so a statement run on an unannotated connection under
+a name that doesn't look like one, such as `bind.execute(...)`, isn't reported;
+tables held in a container such as a dict, a class or instance attribute read in another module (other
 than the reads above), a `.table` read in a module that doesn't import
 sqlalchemy, and a Session's `bind` attribute. A name counts as a Core table
 throughout its module once it is assigned an expression rooted at one. Other
@@ -158,21 +165,14 @@ conditional or boolean expression, `Model.id.table`, `metadata.tables[...]` or
 `inspect(Model).selectable`, a `for` or `with` target, and a comprehension
 variable. The table reference they start from is reported, but their later uses
 aren't. `.tables` of a `MetaData` isn't reported when the name holding it
-doesn't end in `metadata` and wasn't assigned `MetaData(...)`. Once a library's
-tables are mapped
-classes and its declarations are gone, the ordinary routes to a Core table,
-such as `__table__` and `.table`, are reported; the routes listed here are the
-exceptions.
+doesn't end in `metadata` and wasn't assigned `MetaData(...)`. The ordinary
+routes to a Core table, such as `__table__` and `.table`, are reported; the
+routes listed here are the exceptions.
 
 `test_every_table_is_mapped_by_a_class` also imports both persistence libraries
-and reports every table they hold that no mapped class maps.
-
-The test fails on a finding the baseline doesn't list, and on a baseline entry
-that no longer matches a finding, so the list only shrinks. Each entry is
-`file: check: source`, without a line number, repeated once for each identical
-finding in its file. A change that converts code removes its entries in the
-same pull request; one that adds a finding fixes it rather than adding an
-entry.
+and reports every table they hold that no mapped class maps, and
+`test_no_project_installs_sqlmodel` fails if any project's `uv.lock` holds
+SQLModel.
 
 ## Who owns the schema
 

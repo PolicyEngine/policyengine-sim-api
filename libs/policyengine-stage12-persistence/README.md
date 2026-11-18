@@ -7,8 +7,8 @@ package never changes a schema.
 The models of the Public API's run and result tables are the simulation
 service library's (`libs/policyengine-simulation-persistence`: `tables.py`
 and `result_tables.py`), which CI compares with the tables the Public API's
-chain builds; this package's stores import them, and its engines come from
-that library's `create_unpooled_engine`. Its only models of its own are the
+chain builds; this package's stores import them, and its sessions come from
+that library's `create_unpooled_session_factory`. Its only models of its own are the
 comparison path's tables, the mapped classes `ComparisonReport` and
 `ComparisonSimulation` in `tables.py`, on `ComparisonBase` in `orm_base.py`.
 

@@ -33,15 +33,18 @@ table is, within one module:
 Every reference to a Core table is a finding, so its statements, methods,
 column collections and joins all count. Each file's module name is its path
 below ``src``; two files with one module name are refused, since imports
-resolve by name. Eight rules go by a method or attribute name alone, so they
-apply only in modules that import sqlalchemy: any ``.table`` read,
-and the ``.connect()``, ``.connection()``, ``.raw_connection()``,
-``.get_bind()``, ``.begin()``, ``.cursor()`` and ``.exec_driver_sql()`` calls.
+resolve by name. A public function of an engine module may not return an Engine
+or Connection, and only an engine module may read ``factory.kw["bind"]``. The
+rules that go by a method or attribute name alone apply only in modules that
+import sqlalchemy: any ``.table`` read, ``kw["bind"]``, a statement run on a
+name such as ``connection``, and the ``.connect()``, ``.connection()``,
+``.raw_connection()``, ``.get_bind()``, ``.begin()``, ``.cursor()`` and
+``.exec_driver_sql()`` calls.
 The checks guard against ordinary Core use, not against deliberate evasion.
 They don't follow imports made through ``importlib`` or ``__import__``, tables,
 engines or connections passed around without a ``Table``, ``Engine`` or
-``Connection`` annotation, so a statement on mapped classes run through such a
-connection isn't reported, a
+``Connection`` annotation, so a statement run on an unannotated connection under
+a name that doesn't look like one isn't reported, a
 ``.table`` read in a module that doesn't import sqlalchemy, tables held in a
 container such as a dict, a class or instance attribute read in another
 module (unless it is a ``.table`` read, or its name matches one of the reading
