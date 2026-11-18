@@ -88,8 +88,6 @@ class KeyedEconomyReport:
     current catalog version's rows with the definition's dataset name and
     region code. ``inputs`` is what ``reports.inputs`` stores: the SPM
     selection when the request gave one, and no other option (answer 4).
-    No label, description, user or trigger is stored on the shared rows
-    (answer 6): each user's saved report and report-run record hold them.
     """
 
     definition: EconomyReportDefinition

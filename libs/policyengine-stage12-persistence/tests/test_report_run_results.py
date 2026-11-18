@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from economy_output import (
@@ -18,6 +18,7 @@ from economy_output import (
     us_output_with_every_part,
 )
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
+from policyengine_simulation_persistence import CliffImpact
 from policyengine_simulation_persistence.result_tables import BudgetSummary
 from policyengine_stage12_persistence import (
     DistrictCodes,
@@ -316,10 +317,21 @@ def test_a_report_runs_result_columns_never_name_its_cliff_columns() -> None:
     assert set(result.report_run_columns) == {"spm_provenance", "data_version"}
 
 
-def test_a_report_run_whose_output_has_a_cliff_impact_completes(
-    store, seeded_run: SeededReportRun
+def _cliff_results_of(seeder, run_ids: ReportRunIds) -> list[UUID]:
+    """Return the IDs of the cliff results of the report run's two simulation runs."""
+    statement = select(CliffImpact.id).where(
+        CliffImpact.simulation_run_id.in_(
+            (run_ids.baseline_simulation_run_id, run_ids.reform_simulation_run_id)
+        )
+    )
+    with seeder.engine.connect() as connection:
+        return list(connection.scalars(statement))
+
+
+def test_completing_a_report_run_with_a_cliff_impact_writes_no_cliff_result(
+    store, seeder, seeded_run: SeededReportRun
 ) -> None:
-    """A cliff impact is each simulation run's own cliff result, not the run's."""
+    """Only a simulation run's own cliff calculation writes its cliff result."""
     output = deepcopy(US_ECONOMY_OUTPUT)
     output["cliff_impact"] = {
         "baseline": {"cliff_gap": 120.5, "cliff_share": 0.04},
@@ -329,6 +341,7 @@ def test_a_report_run_whose_output_has_a_cliff_impact_completes(
     assert _complete(store, seeded_run, output=output) == RunWrite(
         changed=True, status=RunStatus.SUCCEEDED
     )
+    assert _cliff_results_of(seeder, seeded_run.run_ids) == []
 
 
 def test_an_output_without_labour_supply_or_cliff_impact_stores_neither(
@@ -345,6 +358,7 @@ def test_an_output_without_labour_supply_or_cliff_impact_stores_neither(
 
     for table_name in LABOR_SUPPLY_TABLES:
         assert seeder.rows(table_name, report_run_id=report_run_id) == []
+    assert _cliff_results_of(seeder, seeded_run.run_ids) == []
     report_run = seeder.row("report_runs", report_run_id)
     assert report_run["data_version"] == output["data_version"]
     # No receipt is SQL NULL, not JSON null, which reads back as None too.

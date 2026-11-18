@@ -235,7 +235,7 @@ def test_a_household_report_is_read_with_its_household_and_each_sides_policy(
     assert alone_definition.reform is None
 
 
-def test_a_household_reports_rerun_is_a_manual_run_of_its_own_simulations(
+def test_a_household_reports_rerun_is_a_new_run_of_its_own_simulations(
     public_api_database_url,
 ) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:

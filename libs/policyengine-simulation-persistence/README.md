@@ -242,9 +242,7 @@ report and run rows (C1 · 24). These modules do it:
   runs, found or inserted in simulation ID order, and each year's report
   run (`insert_window_years`, which the window re-runs share).
   `EconomyRunStore.find_or_create_budget_window` runs it in a transaction
-  of its own. No keyed create writes a label, description, user or trigger
-  (C1 · 24's answer 6): each user's saved report and report-run record hold
-  them, in the Public API.
+  of its own.
 
 ## Household reports
 

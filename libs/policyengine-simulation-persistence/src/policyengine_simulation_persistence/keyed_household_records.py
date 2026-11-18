@@ -73,8 +73,7 @@ class KeyedHouseholdReport:
 
     ``reform`` is None exactly when the definition has no reform (a report
     of the baseline alone). The runs calculate on the catalog version
-    ``tax_benefit_model_version_id``. No label, description, user or
-    trigger is stored on the shared rows (answer 6).
+    ``tax_benefit_model_version_id``.
     """
 
     definition: HouseholdReportDefinition
