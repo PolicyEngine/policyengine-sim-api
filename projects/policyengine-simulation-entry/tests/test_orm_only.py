@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-import tomllib
 from collections import Counter
 from typing import TYPE_CHECKING
 
+import tomllib
 from orm_access_support import (
     CORE_CONNECTION,
     CORE_TABLE_ACCESS,
