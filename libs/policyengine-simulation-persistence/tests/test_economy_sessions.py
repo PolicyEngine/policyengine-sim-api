@@ -68,6 +68,7 @@ from policyengine_simulation_persistence import (
     RerunRecordDeletedError,
     RerunSide,
     RunVersions,
+    SharedRowNotSettledError,
     Simulation,
     SimulationChoice,
     SimulationRun,
@@ -98,6 +99,15 @@ from policyengine_simulation_persistence import (
     rerun_definitions,
     shared_rows,
 )
+from policyengine_simulation_persistence.economy_run_records import (
+    references_checked,
+)
+from policyengine_simulation_persistence.keyed_window_records import (
+    WindowYearToInsert,
+    insert_window_years,
+    window_run_row,
+)
+from policyengine_simulation_persistence.shared_rows import find_or_insert_window_run
 from public_api_rows import StoredValue, insert_dynamic, insert_policy
 from session_probes import (
     end_connection_at,
@@ -1217,3 +1227,111 @@ def test_a_pending_simulation_run_the_session_inserts_is_a_stored_row(
             ).one()
 
     assert tuple(stored_run) == (SimulationStatus.PENDING, True, None)
+
+
+def test_a_windows_year_runs_are_inserted_with_every_column_they_set(
+    public_api_database_url,
+) -> None:
+    """A year's run sets ``modal_call_id`` to NULL, as a single insert would."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        records = _insert_stored_records(connection, economy)
+        act_as_the_service(connection)
+        statements = statements_sent(connection)
+
+        in_session(connection, insert_window_rerun, _window_rerun(records, forced=True))
+
+    (year_runs_insert,) = {
+        statement
+        for statement in statements
+        if statement.startswith("INSERT INTO public.report_runs")
+    }
+    assert "modal_call_id" in year_runs_insert
+
+
+def test_a_key_refused_among_a_windows_year_runs_is_named(
+    public_api_database_url,
+) -> None:
+    """The multi-row insert's refusal names the key, as a single insert's does."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        records = _insert_stored_records(connection, economy)
+        act_as_the_service(connection)
+        rerun = _window_rerun(records, forced=True)
+        years = tuple(
+            WindowYearToInsert(
+                year=year.year,
+                report_run_id=year.report_run_id,
+                simulation_ids={
+                    "baseline": year.baseline.simulation_id,
+                    "reform": year.reform.simulation_id,
+                },
+                proposed_run_ids={
+                    "baseline": year.baseline.simulation_run_id,
+                    "reform": year.reform.simulation_run_id,
+                },
+            )
+            for year in rerun.years
+        )
+
+        with session_in(connection) as session:
+            window_run = find_or_insert_window_run(
+                session,
+                window_run_row(
+                    run_id=rerun.window_run_id,
+                    report_id=records.window_report_id,
+                    population=rerun.population,
+                    versions=rerun.versions,
+                    recalculate=False,
+                ),
+            )
+            savepoint = session.begin_nested()
+            with (
+                pytest.raises(EconomyRecordReferenceError) as refused,
+                references_checked(),
+            ):
+                insert_window_years(
+                    session,
+                    years,
+                    report_id=uuid4(),
+                    window_run_id=window_run.id,
+                    population=rerun.population,
+                    versions=rerun.versions,
+                    forced=True,
+                )
+            savepoint.rollback()
+
+    assert (refused.value.table_name, refused.value.column_name) == (
+        "report_runs",
+        "report_id",
+    )
+
+
+class _SessionFindingNothing:
+    """A session whose inserts conflict and whose reads then find no row."""
+
+    def __init__(self) -> None:
+        self.statements: list[object] = []
+
+    def execute(self, statement: object) -> _SessionFindingNothing:
+        self.statements.append(statement)
+        return self
+
+    def one_or_none(self) -> None:
+        return None
+
+
+def test_a_lookup_gives_up_on_a_run_that_keeps_failing_before_its_read() -> None:
+    session = _SessionFindingNothing()
+    run = {
+        "simulation_id": uuid4(),
+        "year": 2026,
+        "tax_benefit_model_version_id": uuid4(),
+        "country_package_version": VERSIONS.country_package_version,
+        "policyengine_version": VERSIONS.policyengine_version,
+    }
+
+    with pytest.raises(SharedRowNotSettledError, match="simulation_runs"):
+        shared_rows.find_or_insert_simulation_run(session, run)
+
+    assert len(session.statements) == 2 * shared_rows.INSERT_ATTEMPTS
