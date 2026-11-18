@@ -449,7 +449,7 @@ def _start_waiting_years(  # noqa: PLR0913  # the window's locked state, the sta
         except YearStartDeferred:
             break
         except Exception as error:  # noqa: BLE001  # any refusal to start the call fails the year and so the window
-            # The error's text may hold session details; its type is logged.
+            # The error's text may hold connection details; its type is logged.
             logger.warning(
                 "Could not start budget-window year %s, report run %s (%s)",
                 year.year,

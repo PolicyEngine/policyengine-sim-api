@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import time
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -20,7 +23,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import ENUM, UUID, insert
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from policyengine_stage12_persistence.engine import (
     WITHOUT_OBJECT_SYNC,
@@ -38,11 +41,17 @@ from policyengine_stage12_persistence.tables import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.engine.reflection import Inspector
     from sqlalchemy.orm import Session, sessionmaker
 
 REQUIRED_TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE")
 FORBIDDEN_TABLE_PRIVILEGES = ("TRUNCATE", "REFERENCES", "TRIGGER")
+# The check opens a connection per schema read, through a session pooler that
+# refuses clients while it is full, so each step gets several attempts.
+STEP_ATTEMPTS = 5
+FIRST_RETRY_DELAY_SECONDS = 1.0
 
 
 class Stage12RuntimeAccessError(RuntimeError):
@@ -380,42 +389,81 @@ def _exercise_runtime_dml(session: Session, *, environment: str) -> None:
         raise Stage12RuntimeAccessError(msg)
 
 
+def _retrying_operational_errors[StepResult](
+    step: Callable[[], StepResult],
+) -> StepResult:
+    """Run a step of the check, again after each ``OperationalError``.
+
+    Every step can be repeated: it only reads, or its writes are rolled back.
+    The last attempt's error is raised.
+    """
+    delay = FIRST_RETRY_DELAY_SECONDS
+    for _ in range(STEP_ATTEMPTS - 1):
+        with suppress(OperationalError):
+            return step()
+        time.sleep(delay)
+        delay *= 2
+    return step()
+
+
+def _check_role(session_factory: sessionmaker[Session], expected_role: str) -> None:
+    with session_factory() as session:
+        _validate_permissions(session, expected_role=expected_role)
+
+
+def _check_schema(live_schema: Inspector) -> None:
+    """Compare the live tables with the models."""
+    _validate_table_schema(
+        live_schema,
+        model=ComparisonReport,
+        table_name=REPORT_TABLE_NAME,
+        identity_constraint=REPORT_IDENTITY_CONSTRAINT,
+        check_constraints=REPORT_CHECK_CONSTRAINTS,
+    )
+    _validate_table_schema(
+        live_schema,
+        model=ComparisonSimulation,
+        table_name=SIMULATION_TABLE_NAME,
+        identity_constraint=SIMULATION_IDENTITY_CONSTRAINT,
+        check_constraints=SIMULATION_CHECK_CONSTRAINTS,
+    )
+    _validate_foreign_key(live_schema)
+
+
+def _check_writes(session_factory: sessionmaker[Session], environment: str) -> None:
+    with session_factory() as session:
+        try:
+            _exercise_runtime_dml(session, environment=environment)
+        finally:
+            session.rollback()
+
+
 def validate_runtime_database(
     session_factory: sessionmaker[Session],
     *,
     expected_role: str,
     environment: str,
 ) -> None:
-    """Inspect the live schema and roll back a complete typed DML canary."""
+    """Inspect the live schema and roll back a complete typed DML canary.
+
+    It holds one connection at a time, since a session pooler may have one
+    free, and retries each step a bounded number of times when the database
+    refuses or loses a connection.
+    """
     if environment not in {"staging", "production"}:
         msg = "environment must be staging or production"
         raise Stage12RuntimeAccessError(msg)
     try:
-        with session_factory() as session:
-            _validate_permissions(session, expected_role=expected_role)
-            # Ending the transaction releases the session's connection: the
-            # inspector opens its own, and a session pooler may have one slot.
-            session.rollback()
-            live_schema = inspect_live_schema(session_factory)
-            _validate_table_schema(
-                live_schema,
-                model=ComparisonReport,
-                table_name=REPORT_TABLE_NAME,
-                identity_constraint=REPORT_IDENTITY_CONSTRAINT,
-                check_constraints=REPORT_CHECK_CONSTRAINTS,
-            )
-            _validate_table_schema(
-                live_schema,
-                model=ComparisonSimulation,
-                table_name=SIMULATION_TABLE_NAME,
-                identity_constraint=SIMULATION_IDENTITY_CONSTRAINT,
-                check_constraints=SIMULATION_CHECK_CONSTRAINTS,
-            )
-            _validate_foreign_key(live_schema)
-            try:
-                _exercise_runtime_dml(session, environment=environment)
-            finally:
-                session.rollback()
+        _retrying_operational_errors(
+            partial(_check_role, session_factory, expected_role)
+        )
+        live_schema = _retrying_operational_errors(
+            partial(inspect_live_schema, session_factory)
+        )
+        _retrying_operational_errors(partial(_check_schema, live_schema))
+        _retrying_operational_errors(
+            partial(_check_writes, session_factory, environment)
+        )
     except Stage12RuntimeAccessError:
         raise
     except SQLAlchemyError as error:
