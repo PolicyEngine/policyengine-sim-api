@@ -15,8 +15,8 @@ mapped classes passes. Each file is checked on its own, through its own imports:
 a ``text``, ``Table`` or ``update`` from another package doesn't. A Core table is
 reported where it starts: where it is declared, where it is read from a mapped
 class, mapper or MetaData, and where an annotation names ``Table`` or
-``TableClause``, apart from ``__table__`` in a declarative base module. Its later
-uses aren't reported, because the rule has no
+``TableClause``, apart from a class's bare ``__table__`` annotation in a
+declarative base module. Its later uses aren't reported, because the rule has no
 baseline and the first finding already fails it.
 
 A public function of an engine module may not return an Engine or Connection,
@@ -34,9 +34,10 @@ connections passed around without an ``Engine`` or ``Connection`` annotation, so
 a connection held under a name such as ``session`` isn't reported, a statement
 method passed without being called, a function that returns an engine with no
 return annotation, the engine an ``Inspector`` holds in ``bind`` or ``engine``, a
-``.table`` read in a module that doesn't import sqlalchemy, or a Session's
-``bind`` attribute. ``.tables`` of a MetaData isn't reported when the name holding
-it doesn't end in ``metadata`` and wasn't assigned ``MetaData(...)``.
+type alias of ``Table`` such as ``Jobs = Table``, a ``.table`` read in a module
+that doesn't import sqlalchemy, or a Session's ``bind`` attribute. ``.tables`` of
+a MetaData isn't reported when the name holding it doesn't end in ``metadata`` and
+wasn't assigned ``MetaData(...)``.
 """
 
 from __future__ import annotations
@@ -62,8 +63,9 @@ TABLE_CONSTRUCTORS = frozenset(
     {"Column", "ColumnClause", "MetaData", "Table", "TableClause", "column", "table"}
 )
 TABLE_TYPES = frozenset({"Table", "TableClause"})
-# How a declarative base types what each of its classes maps.
-MAPPED_TABLE_LABEL = "__table__: "
+# A declarative base's classes may annotate what each of them maps.
+MAPPED_TABLE_ATTRIBUTE = "__table__"
+LITERAL_TYPE = "Literal"
 METADATA_CONSTRUCTOR = "MetaData"
 DECLARATIVE_BASE_MODULE_NAME = "orm_base.py"
 # The one module per library that may create and hold an engine, to hand out
@@ -188,20 +190,33 @@ def _sqlalchemy_name(node: ast.expr, imported: Mapping[str, str]) -> str:
 def _annotation_names(
     annotation: ast.expr | None, imported: Mapping[str, str]
 ) -> set[str]:
-    """Return the sqlalchemy names an annotation refers to, unions included."""
-    if annotation is None:
-        return set()
-    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
-        try:
-            annotation = ast.parse(annotation.value, mode="eval").body
-        except SyntaxError:
-            return set()
-    return {
-        name
-        for node in ast.walk(annotation)
-        if isinstance(node, (ast.Name, ast.Attribute))
-        and (name := _sqlalchemy_name(node, imported))
-    }
+    """Return the sqlalchemy names an annotation refers to.
+
+    Quoted names count wherever they appear, as in ``Optional["Table"]``, apart
+    from the values of a ``Literal``.
+    """
+    names: set[str] = set()
+    pending = [] if annotation is None else [annotation]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            try:
+                pending.append(ast.parse(node.value, mode="eval").body)
+            except (SyntaxError, ValueError):
+                continue
+        elif not (isinstance(node, ast.Subscript) and _is_literal(node)):
+            if isinstance(node, (ast.Name, ast.Attribute)):
+                names.add(_sqlalchemy_name(node, imported))
+            pending.extend(
+                child
+                for child in ast.iter_child_nodes(node)
+                if isinstance(child, ast.expr)
+            )
+    return names - {""}
+
+
+def _is_literal(node: ast.Subscript) -> bool:
+    return _last_name(node.value) == LITERAL_TYPE
 
 
 def _bound_targets(target: ast.expr) -> list[str]:
@@ -342,6 +357,7 @@ class _ModuleContext:
     engine_names: set[str]
     schema_details: set[int]
     called: set[int]
+    mapped_table_annotations: set[int]
 
 
 def _forbidden_connection_name(name: str, context: _ModuleContext) -> bool:
@@ -464,16 +480,37 @@ def _annotation_text(annotation: ast.expr) -> str:
 def _table_annotation_findings(
     label: str, annotation: ast.expr | None, context: _ModuleContext
 ) -> list[tuple[str, str]]:
-    """Report an annotation naming a Core table type, as in ``jobs: Table``.
-
-    A declarative base module may annotate its classes' ``__table__``.
-    """
+    """Report an annotation naming a Core table type, as in ``jobs: Table``."""
     names = _annotation_names(annotation, context.module.imported)
     if annotation is None or not names & TABLE_TYPES:
         return []
-    if context.module.is_declarative_base and label == MAPPED_TABLE_LABEL:
-        return []
     return [(CORE_TABLE_ACCESS, f"{label}{_annotation_text(annotation)}")]
+
+
+def _mapped_table_annotations(module: _Module) -> set[int]:
+    """Return each class's bare ``__table__`` annotation in a declarative base."""
+    if not module.is_declarative_base:
+        return set()
+    return {
+        id(statement)
+        for node in ast.walk(module.tree)
+        if isinstance(node, ast.ClassDef)
+        for statement in node.body
+        if isinstance(statement, ast.AnnAssign)
+        and statement.value is None
+        and isinstance(statement.target, ast.Name)
+        and statement.target.id == MAPPED_TABLE_ATTRIBUTE
+    }
+
+
+def _annotated_assignment_findings(
+    node: ast.AnnAssign, context: _ModuleContext
+) -> list[tuple[str, str]]:
+    if id(node) in context.mapped_table_annotations:
+        return []
+    return _table_annotation_findings(
+        f"{ast.unparse(node.target)}: ", node.annotation, context
+    )
 
 
 def _function_findings(
@@ -526,9 +563,7 @@ def _node_findings(node: ast.AST, context: _ModuleContext) -> list[tuple[str, st
                 f"{node.arg}: ", node.annotation, context
             )
         case ast.AnnAssign():
-            findings = _table_annotation_findings(
-                f"{ast.unparse(node.target)}: ", node.annotation, context
-            )
+            findings = _annotated_assignment_findings(node, context)
         case ast.Subscript():
             findings = _subscript_findings(node, context)
     return list(findings)
@@ -548,6 +583,7 @@ def _module_context(module: _Module) -> _ModuleContext:
             for node in ast.walk(module.tree)
             if isinstance(node, ast.Call)
         },
+        mapped_table_annotations=_mapped_table_annotations(module),
     )
 
 

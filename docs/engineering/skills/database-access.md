@@ -104,7 +104,8 @@ Each finding is one of:
   `column(...)`, `TableClause(...)`, `ColumnClause(...)` or `MetaData(...)`
   call, apart from `MetaData` in an `orm_base.py`.
 - **Core table access:** a parameter, variable, attribute or return annotated
-  `Table` or `TableClause`, apart from `__table__` in an `orm_base.py`;
+  `Table` or `TableClause`, quoted or not, apart from a class's bare `__table__`
+  annotation in an `orm_base.py`;
   `__table__`, `local_table`, `persist_selectable` or `sorted_tables` anywhere;
   `tables` or
   `selectable` of a mapper (`__mapper__`, `.mapper`, or `inspect(...)`,
@@ -143,7 +144,8 @@ connections passed around without an `Engine` or `Connection` annotation, so a
 connection held under a name such as `session` isn't reported; a statement method
 passed without being called, such as `run(connection.execute, statement)`; a
 function that returns an engine with no return annotation; the engine an
-`Inspector` holds in `bind` or `engine`; a `.table` read in a module that doesn't
+`Inspector` holds in `bind` or `engine`; a type alias of `Table`, such as
+`Jobs = Table`; a `.table` read in a module that doesn't
 import sqlalchemy; and a Session's `bind` attribute. `.tables` of a `MetaData`
 isn't reported when the name holding it doesn't end in `metadata` and wasn't
 assigned `MetaData(...)`.
