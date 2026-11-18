@@ -89,7 +89,7 @@ def test_every_table_is_mapped_by_a_class() -> None:
 
 
 def test_no_project_installs_sqlmodel() -> None:
-    """The rule's ORM is SQLAlchemy's own, so no project's lock holds SQLModel."""
+    """The rule's ORM is SQLAlchemy's own, so no installable project locks SQLModel."""
     projects_with_sqlmodel = []
     for pattern in PROJECT_PATTERNS:
         for pyproject in sorted(REPOSITORY_ROOT.glob(pattern)):

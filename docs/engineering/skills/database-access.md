@@ -171,8 +171,8 @@ routes listed here are the exceptions.
 
 `test_every_table_is_mapped_by_a_class` also imports both persistence libraries
 and reports every table they hold that no mapped class maps, and
-`test_no_project_installs_sqlmodel` fails if any project's `uv.lock` holds
-SQLModel.
+`test_no_project_installs_sqlmodel` fails if the `uv.lock` of any project with
+a `pyproject.toml` holds SQLModel.
 
 ## Who owns the schema
 
