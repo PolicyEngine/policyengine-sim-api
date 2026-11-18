@@ -68,7 +68,7 @@ SOURCE_DIRECTORY = "src"
 PACKAGE_MODULE = "__init__"
 # Core's table declarations, the lightweight table() and column() included.
 # MetaData may be built only in a declarative base module, as the metadata of
-# the library's DeclarativeBase.
+# one of the library's DeclarativeBase classes.
 TABLE_CONSTRUCTORS = frozenset(
     {"Column", "ColumnClause", "MetaData", "Table", "TableClause", "column", "table"}
 )

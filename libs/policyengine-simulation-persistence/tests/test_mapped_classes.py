@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from policyengine_simulation_persistence import (
+    MODAL_WORKER_TABLE_PRIVILEGES,
     BudgetSummary,
     BudgetWindowRun,
     CongressionalDistrictImpact,
@@ -204,6 +205,17 @@ def test_the_keys_to_api_v1s_tables_name_the_referenced_classes() -> None:
 
     assert named_tables == referenced
     assert len(KEYS_TO_PUBLIC_API_TABLES) == 20
+
+
+def test_the_modal_worker_may_insert_into_every_result_class() -> None:
+    """The privilege list is built from the result classes when it is imported."""
+    insert_only = {
+        table_name
+        for table_name, privileges in MODAL_WORKER_TABLE_PRIVILEGES.items()
+        if privileges == {"INSERT"}
+    }
+
+    assert insert_only == set(RESULT_CLASSES)
 
 
 def test_every_mapper_configures() -> None:

@@ -8,12 +8,14 @@ from typing import TYPE_CHECKING
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from sqlalchemy import Connection, Engine
+    from sqlalchemy import Connection, Engine, Select
+    from sqlalchemy.orm import Session
 
 CONNECT_TIMEOUT_SECONDS = 5
 # Each Cloud Run instance serves up to 80 concurrent requests. Each database
@@ -81,6 +83,27 @@ def create_unpooled_engine(database_url: str) -> Engine:
     )
 
 
+def create_session_factory(engine: Engine) -> sessionmaker[Session]:
+    """Return the factory of ORM sessions on ``engine``.
+
+    Objects stay readable after their transaction commits, so a function can
+    return what it wrote once its session has closed. Run a transaction as
+    ``with session_factory.begin() as session:``.
+    """
+    return sessionmaker(engine, expire_on_commit=False)
+
+
+def _set_statement_timeout(statement_timeout_milliseconds: int) -> Select[tuple[str]]:
+    """Return the statement that bounds the rest of the current transaction."""
+    return select(
+        func.set_config(
+            "statement_timeout",
+            str(statement_timeout_milliseconds),
+            True,  # noqa: FBT003  # set_config's is_local argument
+        )
+    )
+
+
 @contextmanager
 def bounded_transaction(
     engine: Engine, *, statement_timeout_milliseconds: int
@@ -94,13 +117,23 @@ def bounded_transaction(
     database's cancellation as an OperationalError.
     """
     with engine.begin() as connection:
-        connection.execute(
-            select(
-                func.set_config(
-                    "statement_timeout",
-                    str(statement_timeout_milliseconds),
-                    True,  # noqa: FBT003  # set_config's is_local argument
-                )
-            )
-        )
+        connection.execute(_set_statement_timeout(statement_timeout_milliseconds))
         yield connection
+
+
+@contextmanager
+def bounded_session(
+    session_factory: sessionmaker[Session], *, statement_timeout_milliseconds: int
+) -> Iterator[Session]:
+    """Yield a session in a transaction whose statements the database bounds.
+
+    It is ``bounded_transaction`` for code on the ORM: the transaction commits
+    when the block ends, flushing what the session holds under the same limit,
+    and rolls back when it raises. ``statement_timeout`` is local to the
+    transaction, so it works through Supabase's transaction pooler and never
+    stays on the pooled connection; a statement that runs longer raises the
+    database's cancellation as an OperationalError.
+    """
+    with session_factory.begin() as session:
+        session.execute(_set_statement_timeout(statement_timeout_milliseconds))
+        yield session

@@ -164,7 +164,7 @@ project = "projects/policyengine-simulation-entry"
 test = "tests/test_orm_only.py::test_rule_proof_orm_only"
 [rule.baseline]
 file = "rules/baselines/orm-only.txt"
-count = 880
+count = 612
 [rule.downgrade]
 reason = "Every database module used SQLAlchemy Core when the rule was added. A maintainer chose to start it ratcheted: each conversion removes its baseline entries, and the last one makes the rule enforced."
 issue = 1097
@@ -210,6 +210,8 @@ category = "persistence"
 statement = "Sim's one set of models of the Public API's tables, those the simulation service writes and the result tables the v2 Modal calls write, match the tables the Public API's v2 migration chain builds at the pinned Public API commit, which is on the Public API's default branch: every column's type, nullability and default, every constraint and index by name and definition, and every enum's values; every column its read-only models of the Public API's input tables name exists there with the same type and nullability; and, with the privileges the Public API's manifest declares, the simulation service's role writes every table the service writes, and the Modal worker role records its runs and inserts a row in every result table."
 rationale = "libs/policyengine-simulation-persistence/README.md#checking-the-models-against-the-public-api"
 scope = [
+  "libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/orm_base.py",
+  "libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/referenced_tables.py",
   "libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/tables.py",
   "libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/result_tables.py",
   "libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/input_tables.py",

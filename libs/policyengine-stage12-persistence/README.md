@@ -9,7 +9,8 @@ service library's (`libs/policyengine-simulation-persistence`: `tables.py`
 and `result_tables.py`), which CI compares with the tables the Public API's
 chain builds; this package's stores import them, and its engines come from
 that library's `create_unpooled_engine`. Its only models of its own are the
-comparison path's tables, in `tables.py`.
+comparison path's tables, the mapped classes `ComparisonReport` and
+`ComparisonSimulation` in `tables.py`, on `ComparisonBase` in `orm_base.py`.
 
 - **The Stage 12 comparison tables** (`Stage12PersistenceStore`): temporary
   state of the comparison path, removed with it.
