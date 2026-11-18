@@ -2,7 +2,7 @@
 
 Identical household report requests, together or apart, end on the same
 simulation, report and run rows, as economy ones do. These run against a
-database the Public API's own v2 migration chain built
+database API v1's own v2 migration chain built
 (``PUBLIC_API_SCHEMA_DATABASE_URL``), as the simulation service's role, in
 a transaction rolled back afterwards.
 """

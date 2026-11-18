@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from policyengine_simulation_persistence.economy_run_records import RunVersions
 
-# A report's type, as the Public API reads it.
+# A report's type, as API v1 reads it.
 HOUSEHOLD_REPORT_TYPE: Final = "household"
 
 

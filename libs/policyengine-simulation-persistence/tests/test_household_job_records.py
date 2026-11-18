@@ -1,8 +1,8 @@
 """The simulation service's reads and writes for a household calculation.
 
-These run against a database the Public API's own v2 migration chain built
+These run against a database API v1's own v2 migration chain built
 (``PUBLIC_API_SCHEMA_DATABASE_URL``), as the simulation service's role, each
-in a transaction rolled back afterwards. The Public API's rows a job names are
+in a transaction rolled back afterwards. API v1's rows a job names are
 inserted first, as the superuser.
 """
 

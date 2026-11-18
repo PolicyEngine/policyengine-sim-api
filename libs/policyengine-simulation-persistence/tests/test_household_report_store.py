@@ -1,7 +1,7 @@
 """The household report store: each read and write in a transaction of its own.
 
 A household report calculates one stored household under a baseline policy
-and, optionally, a reform. These run against a database the Public API's own
+and, optionally, a reform. These run against a database API v1's own
 v2 migration chain built (``PUBLIC_API_SCHEMA_DATABASE_URL``); each store
 transaction is an ORM session in a savepoint of one connection acting as the
 simulation service's role, which the test rolls back.

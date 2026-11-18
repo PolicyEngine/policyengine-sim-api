@@ -49,7 +49,7 @@ class UnknownCatalogVersionError(LookupError):
 
 
 class UnknownHouseholdError(LookupError):
-    """The Public API has no such household in the country."""
+    """API v1 has no such household in the country."""
 
 
 @dataclass(frozen=True)

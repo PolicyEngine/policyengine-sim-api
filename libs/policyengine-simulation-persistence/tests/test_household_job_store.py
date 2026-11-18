@@ -1,6 +1,6 @@
 """The household calculation store: each read and write in a transaction of its own.
 
-These run against a database the Public API's own v2 migration chain built
+These run against a database API v1's own v2 migration chain built
 (``PUBLIC_API_SCHEMA_DATABASE_URL``). The store opens each transaction as an
 ORM session from the factory it is given; here each session's transaction is
 a savepoint of one connection, acting as the simulation service's role,

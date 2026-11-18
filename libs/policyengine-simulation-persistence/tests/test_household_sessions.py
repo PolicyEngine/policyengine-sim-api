@@ -17,7 +17,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from committed_rows import (
@@ -32,12 +32,7 @@ from conftest import (
     rolled_back_transaction,
     session_in,
 )
-from economy_rows import (
-    LATER_VERSIONS,
-    POLICYENGINE_VERSION,
-    VERSIONS,
-    insert_economy_catalog,
-)
+from economy_rows import POLICYENGINE_VERSION, VERSIONS, insert_economy_catalog
 from household_report_rows import insert_household_report_rows
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
@@ -54,6 +49,7 @@ from policyengine_simulation_persistence import (
     NewHouseholdReportRerun,
     ProposedSide,
     ReportRunStatus,
+    RunVersions,
     SimulationChoice,
     SimulationRun,
     create_session_factory,
@@ -75,11 +71,10 @@ from policyengine_simulation_persistence.keyed_economy_records import (
 )
 from public_api_rows import insert_household
 from sqlalchemy import event, func, select, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from uuid import UUID
 
     from economy_rows import EconomyCatalog
     from public_api_rows import CatalogVersion
@@ -93,6 +88,14 @@ SHORT_STATEMENT_TIMEOUT_MILLISECONDS = 200
 # How long PostgreSQL may take to end a backend it is told to end.
 TERMINATE_TIMEOUT_MILLISECONDS = 5_000
 CURRENT_LAW = SimulationChoice(policy_id=None, dynamic_id=None)
+# The .py version and so the catalog version of ``VERSIONS``, on a newer country
+# package: a re-run on these versions joins no run on ``VERSIONS``.
+NEWER_PACKAGE_VERSIONS = RunVersions(
+    country_package_version="1.770.0", policyengine_version=POLICYENGINE_VERSION
+)
+# No simulation has this ID, and it sorts after every generated one, so the
+# lookups, which go in simulation ID order, reach it last.
+LAST_MISSING_SIMULATION_ID = UUID("ffffffff-ffff-4fff-bfff-ffffffffffff")
 DOCUMENT = {
     "people": [
         {
@@ -191,18 +194,34 @@ def _end_connection_at(
     def end_the_connection(session: Session, *_event_details: object) -> None:
         unflushed_counts.append(len(session.new))
         backend_id = session.execute(select(func.pg_backend_pid())).scalar_one()
-        with engine.connect() as connection:
-            ended = connection.execute(
-                select(
-                    func.pg_terminate_backend(
-                        backend_id, TERMINATE_TIMEOUT_MILLISECONDS
-                    )
-                )
-            ).scalar_one()
-        assert ended
+        _terminate_backend(engine, backend_id)
 
     event.listen(session_factory, session_event, end_the_connection)
     return unflushed_counts
+
+
+def _terminate_backend(engine: Engine, backend_id: int) -> None:
+    """End the backend from another connection, and wait until it has gone."""
+    with engine.connect() as connection:
+        ended = connection.execute(
+            select(
+                func.pg_terminate_backend(backend_id, TERMINATE_TIMEOUT_MILLISECONDS)
+            )
+        ).scalar_one()
+    assert ended
+
+
+def _statements_sent(engine_or_connection: Engine | Connection) -> list[str]:
+    """Return a list that gains each statement sent to the database from now on."""
+    statements: list[str] = []
+
+    def record_statement(
+        _connection, _cursor, statement, _parameters, _context, _executemany
+    ) -> None:
+        statements.append(statement)
+
+    event.listen(engine_or_connection, "before_cursor_execute", record_statement)
+    return statements
 
 
 def _count(engine: Engine, table_name: str, row_id: UUID) -> int:
@@ -267,11 +286,7 @@ def _keyed_report(catalog: CatalogVersion, household_id: UUID) -> KeyedHousehold
 def _forced_rerun(
     committed_engine: Engine, household: _CommittedHousehold
 ) -> NewHouseholdReportRerun:
-    """Commit a stored report of the baseline alone; return its forced re-run.
-
-    It runs on later versions than the report's first run, so an unforced
-    copy of it joins nothing and goes on to its savepoint.
-    """
+    """Commit a stored report of the baseline alone; return its forced re-run."""
     with committed_engine.begin() as connection:
         report = insert_household_report_rows(
             connection,
@@ -286,13 +301,41 @@ def _forced_rerun(
         run_id=uuid4(),
         tax_benefit_model_version_id=household.catalog.version_id,
         year=report.year,
-        versions=LATER_VERSIONS,
+        versions=VERSIONS,
         baseline=HouseholdRerunSide(
             simulation_id=report.baseline.simulation_id, simulation_run_id=uuid4()
         ),
         reform=None,
         forced=True,
     )
+
+
+def _unforced_rerun(
+    committed_engine: Engine, household: _CommittedHousehold
+) -> NewHouseholdReportRerun:
+    """Commit a stored report; return a re-run that joins none of its runs.
+
+    On versions no run of the report has, it goes on to its savepoint.
+    """
+    return replace(
+        _forced_rerun(committed_engine, household),
+        forced=False,
+        versions=NEWER_PACKAGE_VERSIONS,
+    )
+
+
+def _new_report_run_row(report_id: UUID, versions: RunVersions) -> dict[str, Any]:
+    """Return a report's new run as inserted, without its sides' runs."""
+    return {
+        "id": uuid4(),
+        "report_id": report_id,
+        "budget_window_run_id": None,
+        "year": None,
+        "country_package_version": versions.country_package_version,
+        "policyengine_version": versions.policyengine_version,
+        "status": ReportRunStatus.PENDING,
+        "modal_call_id": None,
+    }
 
 
 def test_the_job_functions_run_orm_statements_on_their_session(
@@ -448,16 +491,7 @@ def test_a_report_run_losing_a_race_on_a_session_keeps_nothing_and_goes_on(
         with session_in(connection) as session:
             run, side_runs = find_or_insert_report_run_on_sides(
                 session,
-                {
-                    "id": uuid4(),
-                    "report_id": first.report_id,
-                    "budget_window_run_id": None,
-                    "year": None,
-                    "country_package_version": VERSIONS.country_package_version,
-                    "policyengine_version": VERSIONS.policyengine_version,
-                    "status": ReportRunStatus.PENDING,
-                    "modal_call_id": None,
-                },
+                _new_report_run_row(first.report_id, VERSIONS),
                 {
                     "baseline": household_simulation_run_row(
                         run_id=proposed_run_id,
@@ -645,16 +679,73 @@ def test_a_forced_rerun_naming_a_missing_simulation_writes_nothing(
     assert _count(committed_engine, "report_runs", rerun.run_id) == 0
 
 
-def test_a_refusal_inside_an_unforced_reruns_savepoint_writes_nothing(
+def test_a_refusal_inside_the_savepoint_takes_back_the_other_sides_run(
+    public_api_database_url,
+) -> None:
+    """The session goes on afterwards, without the run this call had inserted."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        economy = insert_economy_catalog(connection)
+        household_id = insert_household(
+            connection, country="us", default_year=2026, document=DOCUMENT
+        )
+        report = insert_household_report_rows(
+            connection,
+            economy.catalog,
+            household_id=household_id,
+            year=2026,
+            versions=VERSIONS,
+            with_reform=False,
+        )
+        act_as_the_service(connection)
+        inserted_run_id = uuid4()
+        statements = _statements_sent(connection)
+
+        with session_in(connection) as session:
+            with pytest.raises(IntegrityError):
+                find_or_insert_report_run_on_sides(
+                    session,
+                    _new_report_run_row(report.id, NEWER_PACKAGE_VERSIONS),
+                    {
+                        "baseline": household_simulation_run_row(
+                            run_id=inserted_run_id,
+                            simulation_id=report.baseline.simulation_id,
+                            year=2026,
+                            tax_benefit_model_version_id=economy.catalog.version_id,
+                            versions=NEWER_PACKAGE_VERSIONS,
+                        ),
+                        "reform": household_simulation_run_row(
+                            run_id=uuid4(),
+                            simulation_id=LAST_MISSING_SIMULATION_ID,
+                            year=2026,
+                            tax_benefit_model_version_id=economy.catalog.version_id,
+                            versions=NEWER_PACKAGE_VERSIONS,
+                        ),
+                    },
+                )
+            kept_runs = session.execute(
+                select(func.count())
+                .select_from(SimulationRun)
+                .where(SimulationRun.id == inserted_run_id)
+            ).scalar_one()
+
+    side_run_inserts = [
+        statement
+        for statement in statements
+        if statement.startswith("INSERT INTO public.simulation_runs")
+    ]
+    assert len(side_run_inserts) == len(("baseline", "reform"))
+    assert kept_runs == 0
+
+
+def test_a_refusal_inside_an_unforced_reruns_savepoint_is_rolled_back_and_named(
     committed_engine, committed_household, session_factory
 ) -> None:
-    """The savepoint is rolled back through the session, and the refusal is named."""
-    rerun = _forced_rerun(committed_engine, committed_household)
+    rerun = _unforced_rerun(committed_engine, committed_household)
     missing_simulation = replace(
         rerun,
-        forced=False,
         baseline=HouseholdRerunSide(simulation_id=uuid4(), simulation_run_id=uuid4()),
     )
+    statements = _statements_sent(committed_engine)
 
     with pytest.raises(EconomyRecordReferenceError) as refused:
         _report_store(session_factory).create_report_rerun(missing_simulation)
@@ -663,31 +754,33 @@ def test_a_refusal_inside_an_unforced_reruns_savepoint_writes_nothing(
         "simulation_runs",
         "simulation_id",
     )
+    assert [
+        statement.split(" sa_savepoint")[0]
+        for statement in statements
+        if "SAVEPOINT" in statement
+    ] == ["SAVEPOINT", "ROLLBACK TO SAVEPOINT"]
     assert _count(committed_engine, "report_runs", rerun.run_id) == 0
 
 
 def test_a_connection_lost_inside_an_unforced_reruns_savepoint_is_not_a_lost_commit(
     committed_engine, committed_household, session_factory
 ) -> None:
-    """The report run's INSERT fails after the side's run was inserted."""
-    rerun = replace(_forced_rerun(committed_engine, committed_household), forced=False)
+    """The find-or-insert of the report run fails after the side's run was inserted."""
+    rerun = _unforced_rerun(committed_engine, committed_household)
+    statements = _statements_sent(committed_engine)
     ended_backends: list[int] = []
 
     def end_the_connection_at_the_report_run(
         _connection, cursor, statement, _parameters, _context, _executemany
     ) -> None:
-        if ended_backends or not statement.startswith("INSERT INTO public.report_runs"):
+        if (
+            ended_backends
+            or not statement.startswith("INSERT INTO public.report_runs")
+            or "ON CONFLICT" not in statement
+        ):
             return
-        backend_id = cursor.connection.info.backend_pid
-        ended_backends.append(backend_id)
-        with committed_engine.connect() as connection:
-            connection.execute(
-                select(
-                    func.pg_terminate_backend(
-                        backend_id, TERMINATE_TIMEOUT_MILLISECONDS
-                    )
-                )
-            )
+        ended_backends.append(cursor.connection.info.backend_pid)
+        _terminate_backend(committed_engine, ended_backends[0])
 
     event.listen(
         committed_engine, "before_cursor_execute", end_the_connection_at_the_report_run
@@ -697,6 +790,7 @@ def test_a_connection_lost_inside_an_unforced_reruns_savepoint_is_not_a_lost_com
         _report_store(session_factory).create_report_rerun(rerun)
 
     assert len(ended_backends) == 1
+    assert any(statement.startswith("SAVEPOINT") for statement in statements)
     assert _count(committed_engine, "report_runs", rerun.run_id) == 0
     assert (
         _count(committed_engine, "simulation_runs", rerun.baseline.simulation_run_id)
