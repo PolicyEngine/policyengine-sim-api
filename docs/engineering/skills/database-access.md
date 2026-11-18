@@ -146,7 +146,9 @@ a container
 such as a dict, a class or instance attribute read in another module (other
 than the reads above), a `.table` read in a module that doesn't import
 sqlalchemy, and a Session's `bind` attribute. A name derived from a Core table
-counts as one throughout its module. Once a library's tables are mapped
+counts as one throughout its module. A name assigned from `Model.id.table`,
+`metadata.tables[...]` or `inspect(Model).selectable` is reported where it is
+assigned, but its later uses aren't. Once a library's tables are mapped
 classes and its declarations are gone, the ordinary routes to a Core table,
 such as `__table__` and `.table`, are reported; the routes listed here are the
 exceptions.

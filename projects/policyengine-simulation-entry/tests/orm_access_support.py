@@ -44,7 +44,10 @@ or engines passed around without a ``Table`` or ``Engine`` annotation, a
 container such as a dict, a class or instance attribute read in another
 module (unless it is a ``.table`` read, or its name matches one of the reading
 module's own table attributes), or a Session's ``bind`` attribute, and a name
-derived from a Core table counts as one throughout its module.
+derived from a Core table counts as one throughout its module. A name assigned
+from ``Model.id.table``, ``metadata.tables[...]`` or
+``inspect(Model).selectable`` is reported where it is assigned, but its later
+uses aren't.
 """
 
 from __future__ import annotations

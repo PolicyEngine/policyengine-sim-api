@@ -59,7 +59,13 @@ class InputBase(_TableModel, DeclarativeBase):
 
 
 class ResultBase(_TableModel, DeclarativeBase):
-    """Base of the result tables the Modal worker role inserts into."""
+    """Base of the result tables the Modal worker role inserts into.
+
+    The role holds only ``INSERT`` on them, so an insert doesn't read the row's
+    server defaults back, which would need ``SELECT``.
+    """
+
+    __mapper_args__: ClassVar = {"eager_defaults": False}
 
     metadata = MetaData(schema=TABLE_SCHEMA)
 
