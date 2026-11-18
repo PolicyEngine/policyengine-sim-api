@@ -11,11 +11,15 @@ import pytest
 from policyengine_simulation_persistence import (
     bounded_transaction,
     create_simulation_engine,
+    create_simulation_session_factory,
     create_unpooled_engine,
+    create_unpooled_session_factory,
+    dispose_session_factory,
     normalized_database_url,
 )
 from policyengine_simulation_persistence import engine as engine_module
 from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool, QueuePool
 
 
@@ -91,6 +95,60 @@ def test_the_unpooled_engine_holds_no_connection_and_selects_psycopg(
     assert captured_options["url"].drivername == "postgresql+psycopg"
     assert captured_options["poolclass"] is NullPool
     assert captured_options["connect_args"] == {"connect_timeout": 10}
+
+
+def _capture_engine_options(monkeypatch) -> tuple[dict, object]:
+    captured_options: dict = {}
+    built_engine = object()
+
+    def capture_engine(url, **options):
+        captured_options.update(options, url=url)
+        return built_engine
+
+    monkeypatch.setattr(engine_module, "create_engine", capture_engine)
+    return captured_options, built_engine
+
+
+def test_the_service_session_factory_uses_the_pooled_engine(monkeypatch) -> None:
+    captured_options, built_engine = _capture_engine_options(monkeypatch)
+
+    session_factory = create_simulation_session_factory(
+        "postgresql://simulation_service:secret@db.example/postgres"
+    )
+
+    assert session_factory.kw["bind"] is built_engine
+    assert session_factory.kw["expire_on_commit"] is False
+    assert captured_options["url"].drivername == "postgresql+psycopg"
+    assert captured_options["connect_args"]["prepare_threshold"] is None
+    assert captured_options["pool_pre_ping"] is True
+    assert captured_options["pool_size"] == engine_module.POOL_SIZE
+
+
+def test_the_unpooled_session_factory_keeps_no_connection(monkeypatch) -> None:
+    captured_options, built_engine = _capture_engine_options(monkeypatch)
+
+    session_factory = create_unpooled_session_factory(
+        "postgresql://modal_worker:secret@db.example/postgres"
+    )
+
+    assert session_factory.kw["bind"] is built_engine
+    assert session_factory.kw["expire_on_commit"] is False
+    assert captured_options["poolclass"] is NullPool
+    assert captured_options["connect_args"] == {"connect_timeout": 10}
+
+
+def test_disposing_a_session_factory_closes_its_pooled_connections() -> None:
+    engine = create_engine("sqlite://", poolclass=QueuePool)
+    session_factory = sessionmaker(engine)
+    with session_factory() as session:
+        session.execute(text("SELECT 1"))
+    pool_before = engine.pool
+    assert pool_before.checkedin() == 1
+
+    dispose_session_factory(session_factory)
+
+    assert engine.pool is not pool_before
+    assert pool_before.checkedin() == 0
 
 
 @pytest.mark.parametrize("fail_transaction", [False, True])
