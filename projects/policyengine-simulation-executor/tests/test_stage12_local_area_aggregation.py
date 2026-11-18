@@ -28,10 +28,8 @@ from policyengine_simulation_executor.stage12_runtime import (
     build_aggregate_report,
     local_area_datasets,
 )
-from policyengine_stage12_persistence.report_run_results import (
-    report_run_result,
-    withheld_area_codes,
-)
+from policyengine_simulation_persistence import WithheldAreaCode
+from policyengine_stage12_persistence.report_run_results import report_run_result
 from stage12_fake_report_runs import REPORT_RUN_IDS
 from stage12_fake_stores import FakeArtifacts
 from stage12_runtime_support import bundle_provenance, report_execution_input
@@ -277,7 +275,7 @@ def test_a_local_area_aggregate_is_stored_with_its_withheld_codes(monkeypatch) -
     # The coordinator validates the aggregate, then stores its result.
     result = AggregateReportArtifactPayload.model_validate(aggregate).result
     stored = report_run_result(result, run_ids=REPORT_RUN_IDS, country="uk")
-    (withheld,) = [rows for rows in stored.rows if rows.table is withheld_area_codes]
+    (withheld,) = [rows for rows in stored.rows if rows.model is WithheldAreaCode]
     assert [(row["area_type"], row["code"]) for row in withheld.rows] == [
         ("constituency", "W07000081"),
         ("local_authority", "E06000064"),
