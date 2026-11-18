@@ -62,7 +62,6 @@ import ast
 import importlib
 import pkgutil
 import re
-from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
@@ -106,6 +105,17 @@ STAR_IMPORT = "*"
 # Calls that open a Connection: on anything, and begin() on an engine.
 CONNECTION_METHODS = frozenset({"connect", "connection", "get_bind", "raw_connection"})
 ENGINE_TRANSACTION_METHOD = "begin"
+# A statement run on a name such as connection, conn or store_connection, which
+# finds a connection passed around without a Connection annotation.
+STATEMENT_METHODS = frozenset(
+    {"execute", "scalar", "scalars", "stream", "stream_scalars"}
+)
+CONNECTION_NAME_PATTERN = re.compile(r"(?:^|_)(?:connection|conn)$", re.IGNORECASE)
+# What an engine module keeps to itself: no public function returns one of
+# these, and only it reads the engine out of a sessionmaker's keywords.
+HELD_DATABASE_TYPES = ENGINE_TYPES | CONNECTION_NAMES
+SESSION_FACTORY_KEYWORDS = "kw"
+SESSION_FACTORY_BIND_KEY = "bind"
 # Attributes that reach a Core table from a mapped class, its mapper or a
 # MetaData, and the ones that do so only on a mapper, inspect() or a MetaData.
 TABLE_ATTRIBUTES = frozenset(
@@ -144,23 +154,9 @@ class Finding:
     check: str
     source: str
 
-    @property
-    def baseline_entry(self) -> str:
-        """The finding as rules/baselines/orm-only.txt lists it, without its line."""
-        return f"{self.file}: {self.check}: {self.source}"
-
     def __str__(self) -> str:
         """Describe the finding as ``file:line: check: source``."""
         return f"{self.file}:{self.line}: {self.check}: {self.source}"
-
-
-def read_baseline(path: Path) -> Counter[str]:
-    """Count each tolerated entry, skipping blank and ``#`` comment lines."""
-    return Counter(
-        line.strip()
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    )
 
 
 def _matches_module(module_name: str, parent_module: str) -> bool:
@@ -734,6 +730,15 @@ def _opens_connection(node: ast.Call, context: _ModuleContext) -> bool:
     )
 
 
+def _runs_on_connection(node: ast.Call, context: _ModuleContext) -> bool:
+    """Whether a statement runs on something named as a connection."""
+    if not context.module.uses_sqlalchemy or not isinstance(node.func, ast.Attribute):
+        return False
+    return node.func.attr in STATEMENT_METHODS and bool(
+        CONNECTION_NAME_PATTERN.search(_last_name(node.func.value))
+    )
+
+
 def _call_findings(
     node: ast.Call, context: _ModuleContext
 ) -> Iterator[tuple[str, str]]:
@@ -746,21 +751,66 @@ def _call_findings(
         yield RAW_SQL, _call_summary(node)
     elif _opens_connection(node, context):
         yield CORE_CONNECTION, _call_summary(node)
+    elif _runs_on_connection(node, context):
+        yield CORE_CONNECTION, f"{ast.unparse(node.func)}(...)"
+
+
+def _handed_out_types(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, context: _ModuleContext
+) -> list[tuple[str, str]]:
+    """Report a public function of an engine module returning an engine."""
+    if not context.module.is_session_factory or node.name.startswith("_"):
+        return []
+    returned = _annotation_names(node.returns, context.module.imported)
+    return [
+        (CORE_CONNECTION, f"{node.name}() -> {type_name}")
+        for type_name in sorted(returned & HELD_DATABASE_TYPES)
+    ]
+
+
+def _reads_session_factory_engine(node: ast.Subscript, context: _ModuleContext) -> bool:
+    """Whether ``node`` is ``factory.kw["bind"]`` outside an engine module."""
+    return (
+        context.module.uses_sqlalchemy
+        and not context.module.is_session_factory
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == SESSION_FACTORY_KEYWORDS
+        and isinstance(node.slice, ast.Constant)
+        and node.slice.value == SESSION_FACTORY_BIND_KEY
+    )
+
+
+def _name_findings(node: ast.Name, context: _ModuleContext) -> list[tuple[str, str]]:
+    loads_table = (
+        isinstance(node.ctx, ast.Load) and node.id in context.module.core_tables
+    )
+    return [(CORE_TABLE_ACCESS, node.id)] if loads_table else []
+
+
+def _subscript_findings(
+    node: ast.Subscript, context: _ModuleContext
+) -> list[tuple[str, str]]:
+    if _reads_session_factory_engine(node, context):
+        return [(CORE_CONNECTION, ast.unparse(node))]
+    return []
 
 
 def _node_findings(node: ast.AST, context: _ModuleContext) -> list[tuple[str, str]]:
-    if isinstance(node, (ast.Import, ast.ImportFrom)):
-        return list(_import_findings(node, context))
-    if isinstance(node, ast.Name):
-        loads_table = (
-            isinstance(node.ctx, ast.Load) and node.id in context.module.core_tables
-        )
-        return [(CORE_TABLE_ACCESS, node.id)] if loads_table else []
-    if isinstance(node, ast.Attribute):
-        return list(_attribute_findings(node, context))
-    if isinstance(node, ast.Call):
-        return list(_call_findings(node, context))
-    return []
+    findings: Iterable[tuple[str, str]] = ()
+    match node:
+        case ast.Import() | ast.ImportFrom():
+            findings = _import_findings(node, context)
+        case ast.Name():
+            findings = _name_findings(node, context)
+        case ast.Attribute():
+            findings = _attribute_findings(node, context)
+        case ast.Call():
+            findings = _call_findings(node, context)
+        case ast.FunctionDef() | ast.AsyncFunctionDef():
+            findings = _handed_out_types(node, context)
+        case ast.Subscript():
+            findings = _subscript_findings(node, context)
+    return list(findings)
 
 
 def orm_access_findings(sources: Mapping[str, str]) -> list[Finding]:

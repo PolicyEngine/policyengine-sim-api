@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 import pytest
 from policyengine_simulation_persistence.engine import (
     create_session_factory,
-    create_unpooled_engine,
+    create_unpooled_session_factory,
+    dispose_session_factory,
 )
 from report_run_database import (
     SEED_URL_ENV,
@@ -61,11 +62,11 @@ def seeded_household_job(seeder: ReportRunSeeder) -> Iterator[SeededHouseholdJob
 @pytest.fixture
 def worker_sessions() -> Iterator[sessionmaker[Session]]:
     """Yield a session factory connecting as the Modal worker role."""
-    engine = create_unpooled_engine(worker_database_url())
+    session_factory = create_unpooled_session_factory(worker_database_url())
     try:
-        yield create_session_factory(engine)
+        yield session_factory
     finally:
-        engine.dispose()
+        dispose_session_factory(session_factory)
 
 
 @pytest.fixture

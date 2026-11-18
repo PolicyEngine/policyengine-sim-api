@@ -25,12 +25,12 @@ from economy_rows import (
     insert_simulation_run,
 )
 from policyengine_simulation_persistence import (
+    ReportRun,
     ReportRunStatus,
+    SimulationRun,
     SimulationStatus,
     read_economy_report,
     read_economy_simulation,
-    report_runs,
-    simulation_runs,
 )
 from sqlalchemy import update
 
@@ -61,7 +61,9 @@ def _report_with_runs(connection, economy: EconomyCatalog) -> tuple[UUID, list[U
         )
     ]
     report_id = (
-        connection.execute(report_runs.select().where(report_runs.c.id == run_ids[0]))
+        connection.execute(
+            ReportRun.__table__.select().where(ReportRun.id == run_ids[0])
+        )
         .one()
         .report_id
     )
@@ -73,7 +75,7 @@ def _report_with_runs(connection, economy: EconomyCatalog) -> tuple[UUID, list[U
             for side in (baseline, reform)
         )
         connection.execute(
-            report_runs.insert().values(
+            ReportRun.__table__.insert().values(
                 id=run_id,
                 report_id=report_id,
                 baseline_simulation_run_id=forced_baseline.simulation_run_id,
@@ -96,14 +98,12 @@ def test_a_report_is_read_with_its_newest_run(public_api_database_url) -> None:
         # The first run is the oldest; the other two share a creation time, so
         # the larger ID is the newer.
         connection.execute(
-            update(report_runs)
-            .where(report_runs.c.id == first)
-            .values(created_at=EARLIER)
+            update(ReportRun).where(ReportRun.id == first).values(created_at=EARLIER)
         )
         shared = EARLIER + timedelta(days=1)
         connection.execute(
-            update(report_runs)
-            .where(report_runs.c.id.in_([second, third]))
+            update(ReportRun)
+            .where(ReportRun.id.in_([second, third]))
             .values(created_at=shared)
         )
         act_as_the_service(connection)
@@ -142,7 +142,9 @@ def test_a_failed_newest_run_is_read_with_its_error(public_api_database_url) -> 
             ),
         )
         report_id = (
-            connection.execute(report_runs.select().where(report_runs.c.id == run_id))
+            connection.execute(
+                ReportRun.__table__.select().where(ReportRun.id == run_id)
+            )
             .one()
             .report_id
         )
@@ -176,7 +178,7 @@ def test_a_simulation_is_read_with_its_newest_run(public_api_database_url) -> No
         stored = insert_simulation_run(connection, economy.population())
         newer_run_id = uuid4()
         connection.execute(
-            simulation_runs.insert().values(
+            SimulationRun.__table__.insert().values(
                 id=newer_run_id,
                 simulation_id=stored.simulation_id,
                 year=2026,
@@ -190,8 +192,8 @@ def test_a_simulation_is_read_with_its_newest_run(public_api_database_url) -> No
             )
         )
         connection.execute(
-            update(simulation_runs)
-            .where(simulation_runs.c.id == stored.simulation_run_id)
+            update(SimulationRun)
+            .where(SimulationRun.id == stored.simulation_run_id)
             .values(created_at=EARLIER)
         )
         act_as_the_service(connection)

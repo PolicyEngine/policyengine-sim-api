@@ -28,7 +28,7 @@ from committed_rows import delete_catalog_rows
 from economy_rows import insert_economy_catalog
 from policyengine_simulation_persistence import (
     EconomyRunStore,
-    create_simulation_engine,
+    create_simulation_session_factory,
 )
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, make_url
@@ -126,10 +126,15 @@ def public_api_database_url() -> str:
     return configured
 
 
+def simulation_engine(database_url: str) -> Engine:
+    """Return the engine of the service's session factory, for test setup."""
+    return create_simulation_session_factory(database_url).kw["bind"]
+
+
 @contextmanager
 def rolled_back_transaction(database_url: str) -> Iterator[Connection]:
     """Yield the superuser's connection in a transaction rolled back afterwards."""
-    engine = create_simulation_engine(database_url)
+    engine = simulation_engine(database_url)
     try:
         with engine.connect() as connection:
             transaction = connection.begin()
@@ -209,7 +214,7 @@ def connection_as_the_service(database_url: str) -> Iterator[Connection]:
 @pytest.fixture
 def committed_engine(public_api_database_url) -> Iterator[Engine]:
     """Return an engine on the Public API's database, disposed afterwards."""
-    engine = create_simulation_engine(public_api_database_url)
+    engine = simulation_engine(public_api_database_url)
     try:
         yield engine
     finally:

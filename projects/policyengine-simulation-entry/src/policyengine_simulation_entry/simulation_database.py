@@ -11,8 +11,8 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from policyengine_simulation_persistence import (
-    create_session_factory,
-    create_simulation_engine,
+    create_simulation_session_factory,
+    dispose_session_factory,
     read_missing_table_privileges,
 )
 
@@ -21,7 +21,7 @@ from policyengine_simulation_entry.schemas import SimulationDatabaseReadiness
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from sqlalchemy import Engine
+    from sqlalchemy.orm import Session, sessionmaker
 
     from policyengine_simulation_entry.entry_runtime import (
         SimulationDatabaseConnection,
@@ -91,10 +91,9 @@ def missing_privilege_log_messages(
 class SimulationDatabase:
     """Run short, blocking database operations off the event loop."""
 
-    def __init__(self, engine: Engine) -> None:
-        """Use ``engine``, which connects as the simulation service's role."""
-        self.engine = engine
-        self.session_factory = create_session_factory(engine)
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        """Use ``session_factory``, which connects as the service's role."""
+        self.session_factory = session_factory
         # One thread of its own: waiting for a pooled connection, connecting
         # and a dead socket aren't bounded by the database's time limit, so a
         # stalled database may hold this thread, but never more than this one,
@@ -105,11 +104,11 @@ class SimulationDatabase:
 
     @classmethod
     def from_url(cls, database_url: str) -> SimulationDatabase:
-        """Build the runtime engine; no connection opens until first use.
+        """Build the runtime sessions; no connection opens until first use.
 
         Raise ValueError, without echoing the URL, when it is malformed.
         """
-        return cls(create_simulation_engine(database_url))
+        return cls(create_simulation_session_factory(database_url))
 
     async def missing_privileges(self) -> list[str]:
         """Return each table and column privilege the service needs and lacks."""
@@ -131,7 +130,7 @@ class SimulationDatabase:
         once, at shutdown.
         """
         self.executor.shutdown(wait=False, cancel_futures=True)
-        self.engine.dispose()
+        dispose_session_factory(self.session_factory)
 
 
 class SimulationDatabaseReadinessCheck:

@@ -1,4 +1,7 @@
-"""Database connections for the simulation service and the v2 Modal calls."""
+"""ORM sessions for the simulation service and the v2 Modal calls.
+
+Each engine stays in this module; everything else receives a ``sessionmaker``.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ from sqlalchemy.pool import NullPool
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from sqlalchemy import Connection, Engine, Select
+    from sqlalchemy import Engine, Select
     from sqlalchemy.orm import Session
 
 CONNECT_TIMEOUT_SECONDS = 5
@@ -52,7 +55,7 @@ def normalized_database_url(database_url: str) -> URL:
     return parsed.set(drivername="postgresql+psycopg")
 
 
-def create_simulation_engine(database_url: str) -> Engine:
+def _create_pooled_engine(database_url: str) -> Engine:
     """Build the engine the simulation service uses; it creates no objects."""
     return create_engine(
         normalized_database_url(database_url),
@@ -68,7 +71,7 @@ def create_simulation_engine(database_url: str) -> Engine:
     )
 
 
-def create_unpooled_engine(database_url: str) -> Engine:
+def _create_unpooled_engine(database_url: str) -> Engine:
     """Build an engine that opens a connection per operation and closes it after.
 
     The v2 Modal coordinators, workers and household functions, and the
@@ -101,7 +104,7 @@ def create_simulation_session_factory(database_url: str) -> sessionmaker[Session
     Raises ValueError, without echoing the URL, when it is malformed. Nothing
     connects until a session runs its first statement.
     """
-    return create_session_factory(create_simulation_engine(database_url))
+    return create_session_factory(_create_pooled_engine(database_url))
 
 
 def create_unpooled_session_factory(database_url: str) -> sessionmaker[Session]:
@@ -110,7 +113,7 @@ def create_unpooled_session_factory(database_url: str) -> sessionmaker[Session]:
     Raises ValueError, without echoing the URL, when it is malformed. Nothing
     connects until a session runs its first statement.
     """
-    return create_session_factory(create_unpooled_engine(database_url))
+    return create_session_factory(_create_unpooled_engine(database_url))
 
 
 def dispose_session_factory(session_factory: sessionmaker[Session]) -> None:
@@ -130,34 +133,17 @@ def _set_statement_timeout(statement_timeout_milliseconds: int) -> Select[tuple[
 
 
 @contextmanager
-def bounded_transaction(
-    engine: Engine, *, statement_timeout_milliseconds: int
-) -> Iterator[Connection]:
-    """Yield a connection in a transaction whose statements the database bounds.
-
-    The transaction commits when the block ends and rolls back when it
-    raises. ``statement_timeout`` is set with ``set_config`` local to the
-    transaction, so it works through Supabase's transaction pooler and never
-    stays on the pooled connection; a statement that runs longer raises the
-    database's cancellation as an OperationalError.
-    """
-    with engine.begin() as connection:
-        connection.execute(_set_statement_timeout(statement_timeout_milliseconds))
-        yield connection
-
-
-@contextmanager
 def bounded_session(
     session_factory: sessionmaker[Session], *, statement_timeout_milliseconds: int
 ) -> Iterator[Session]:
     """Yield a session in a transaction whose statements the database bounds.
 
-    It is ``bounded_transaction`` for code on the ORM: the transaction commits
-    when the block ends, flushing what the session holds under the same limit,
-    and rolls back when it raises. ``statement_timeout`` is local to the
-    transaction, so it works through Supabase's transaction pooler and never
-    stays on the pooled connection; a statement that runs longer raises the
-    database's cancellation as an OperationalError.
+    The transaction commits when the block ends, flushing what the session
+    holds under the same limit, and rolls back when it raises.
+    ``statement_timeout`` is set with ``set_config`` local to the transaction,
+    so it works through Supabase's transaction pooler and never stays on the
+    pooled connection; a statement that runs longer raises the database's
+    cancellation as an OperationalError.
     """
     with session_factory.begin() as session:
         session.execute(_set_statement_timeout(statement_timeout_milliseconds))

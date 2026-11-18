@@ -13,10 +13,9 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
 # Every Stage 12 store connects through the simulation service library's
-# unpooled engine, which checks the URL with that library's one URL check.
+# unpooled sessions, which check the URL with that library's one URL check.
 from policyengine_simulation_persistence.engine import (
-    create_session_factory,
-    create_unpooled_engine,
+    create_unpooled_session_factory,
 )
 from sqlalchemy import inspect, select, true
 
@@ -68,7 +67,7 @@ def create_stage12_session_factory(database_url: str) -> sessionmaker[Session]:
     Raises ValueError when the URL is invalid. Nothing connects until a session
     runs its first statement.
     """
-    return create_session_factory(create_unpooled_engine(database_url))
+    return create_unpooled_session_factory(database_url)
 
 
 def inspect_live_schema(session_factory: sessionmaker[Session]) -> Inspector:

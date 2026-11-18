@@ -55,6 +55,7 @@ from policyengine_simulation_persistence import (
     RerunRecordDeletedError,
     RerunSide,
     SideDefinition,
+    Simulation,
     SimulationChoice,
     SimulationDefinition,
     SimulationStatus,
@@ -66,7 +67,6 @@ from policyengine_simulation_persistence import (
     lock_reruns_of,
     read_report_definition,
     read_simulation_definition,
-    simulations,
 )
 from public_api_rows import (
     StoredValue,
@@ -714,7 +714,7 @@ def test_a_household_or_filtered_simulation_and_another_model_are_read_as_such(
         household_simulation_id = uuid4()
         filtered_simulation_id = uuid4()
         connection.execute(
-            insert(simulations).values(
+            insert(Simulation).values(
                 id=household_simulation_id,
                 simulation_type=SimulationType.HOUSEHOLD,
                 household_id=household_id,
@@ -723,7 +723,7 @@ def test_a_household_or_filtered_simulation_and_another_model_are_read_as_such(
             )
         )
         connection.execute(
-            insert(simulations).values(
+            insert(Simulation).values(
                 id=filtered_simulation_id,
                 simulation_type=SimulationType.ECONOMY,
                 dataset_id=economy.dataset_id,

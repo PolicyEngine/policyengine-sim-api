@@ -32,6 +32,7 @@ from policyengine_simulation_persistence import (
     ReportRunStatus,
     ReportRunTrigger,
     RunVersions,
+    SimulationRun,
     SimulationStatus,
     SimulationType,
     definition_key,
@@ -39,7 +40,6 @@ from policyengine_simulation_persistence import (
     find_or_insert_report_run,
     find_or_insert_simulation,
     find_or_insert_simulation_run,
-    simulation_runs,
 )
 from sqlalchemy import event, insert, text, update
 
@@ -236,7 +236,7 @@ def test_a_forced_run_is_never_joined_and_never_takes_a_runs_place(
             _simulation_values(economy, _key("simulation")),
         )
         forced_values = _simulation_run_values(economy, simulation.id)
-        connection.execute(insert(simulation_runs).values(**forced_values, forced=True))
+        connection.execute(insert(SimulationRun).values(**forced_values, forced=True))
 
         first = in_session(
             connection,
@@ -245,7 +245,7 @@ def test_a_forced_run_is_never_joined_and_never_takes_a_runs_place(
         )
         # Another forced run beside an unforced one conflicts with neither.
         connection.execute(
-            insert(simulation_runs).values(
+            insert(SimulationRun).values(
                 **_simulation_run_values(economy, simulation.id), forced=True
             )
         )
@@ -380,10 +380,10 @@ def test_a_run_that_fails_between_the_insert_and_the_read_is_inserted_again(
         if statement.lstrip().startswith("SELECT") and "simulation_runs" in statement:
             with committed_engine.begin() as other:
                 other.execute(
-                    update(simulation_runs)
+                    update(SimulationRun)
                     .where(
-                        simulation_runs.c.id == earlier.id,
-                        simulation_runs.c.status != SimulationStatus.FAILED,
+                        SimulationRun.id == earlier.id,
+                        SimulationRun.status != SimulationStatus.FAILED,
                     )
                     .values(status=SimulationStatus.FAILED, completed_at=text("now()"))
                 )

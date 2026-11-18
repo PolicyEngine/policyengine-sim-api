@@ -36,6 +36,7 @@ from economy_rows import (
     insert_simulation_run,
 )
 from policyengine_simulation_persistence import (
+    BudgetWindowRun,
     EconomyPopulation,
     EconomyRecordReferenceError,
     EconomyReportDefinition,
@@ -45,6 +46,7 @@ from policyengine_simulation_persistence import (
     KeyedWindowYear,
     NewWindowRerun,
     ProposedSide,
+    ReportRun,
     ReportRunStatus,
     ReportRunTrigger,
     RerunRecordDeletedError,
@@ -52,11 +54,9 @@ from policyengine_simulation_persistence import (
     SimulationStatus,
     WindowRerunYear,
     WindowYearDefinition,
-    budget_window_runs,
     find_or_create_budget_window,
     insert_window_rerun,
     read_report_definition,
-    report_runs,
 )
 from sqlalchemy import insert, text
 
@@ -126,7 +126,7 @@ def _insert_window_rows(
     )
     window_run_id = uuid4()
     connection.execute(
-        insert(budget_window_runs).values(
+        insert(BudgetWindowRun).values(
             id=window_run_id,
             report_id=report_id,
             tax_benefit_model_version_id=economy.catalog.version_id,
@@ -136,7 +136,7 @@ def _insert_window_rows(
         )
     )
     connection.execute(
-        insert(report_runs),
+        insert(ReportRun),
         [
             {
                 "id": window_year.report_run_id,

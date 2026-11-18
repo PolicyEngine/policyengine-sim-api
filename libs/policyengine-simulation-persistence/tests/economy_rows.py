@@ -16,16 +16,16 @@ from uuid import UUID, uuid4
 
 from policyengine_simulation_persistence import (
     EconomyPopulation,
+    Report,
+    ReportRun,
     ReportRunStatus,
     ReportRunTrigger,
     RunVersions,
+    Simulation,
     SimulationChoice,
+    SimulationRun,
     SimulationStatus,
     SimulationType,
-    report_runs,
-    reports,
-    simulation_runs,
-    simulations,
 )
 from public_api_rows import (
     CatalogVersion,
@@ -191,7 +191,7 @@ def insert_simulation_run(
     shape = shape or RunShape()
     simulation_id = uuid4()
     connection.execute(
-        insert(simulations).values(
+        insert(Simulation).values(
             id=simulation_id,
             simulation_type=SimulationType.ECONOMY,
             dataset_id=population.dataset_id,
@@ -220,7 +220,7 @@ def insert_run_of(
     finished = shape.status in {SimulationStatus.SUCCEEDED, SimulationStatus.FAILED}
     succeeded = shape.status is SimulationStatus.SUCCEEDED
     connection.execute(
-        insert(simulation_runs).values(
+        insert(SimulationRun).values(
             id=run_id,
             simulation_id=simulation_id,
             year=population.year,
@@ -285,7 +285,7 @@ def insert_report_of(  # noqa: PLR0913  # the report's sides and what else it ma
     baseline, reform = compared
     report_id = uuid4()
     connection.execute(
-        insert(reports).values(
+        insert(Report).values(
             id=report_id,
             label="An earlier report",
             country=economy.catalog.country,
@@ -319,7 +319,7 @@ def insert_report_run_of(
     run_id = uuid4()
     finished = outcome.status in {ReportRunStatus.SUCCEEDED, ReportRunStatus.FAILED}
     connection.execute(
-        insert(report_runs).values(
+        insert(ReportRun).values(
             id=run_id,
             report_id=report_id,
             baseline_simulation_run_id=baseline.simulation_run_id,

@@ -5,14 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from conftest import SERVICE_TEST_ROLE
+from conftest import SERVICE_TEST_ROLE, simulation_engine
 from policyengine_simulation_persistence import (
     MODAL_WORKER_TABLE_PRIVILEGES,
     MODAL_WORKER_UPDATABLE_COLUMNS,
     SERVICE_TABLE_PRIVILEGES,
     SERVICE_UPDATABLE_COLUMNS,
     create_session_factory,
-    create_simulation_engine,
     missing_table_privileges,
     read_missing_table_privileges,
     result_metadata,
@@ -236,7 +235,7 @@ def _grant_every_required_privilege(database, *, except_for=()):
 
 
 def _missing_privileges_as_the_service(database):
-    engine = create_simulation_engine(database.service_url)
+    engine = simulation_engine(database.service_url)
     try:
         with create_session_factory(engine).begin() as session:
             return missing_table_privileges(session)
@@ -347,7 +346,7 @@ def test_the_check_names_what_a_role_lacks_of_another_roles_lists(
             f"TO {SERVICE_TEST_ROLE}",
         ],
     )
-    engine = create_simulation_engine(disposable_database.service_url)
+    engine = simulation_engine(disposable_database.service_url)
     try:
         with create_session_factory(engine).begin() as session:
             missing = missing_table_privileges(
@@ -419,7 +418,7 @@ def test_a_system_column_isnt_a_column_the_role_can_update(disposable_database):
             f"GRANT UPDATE ON public.report_runs TO {SERVICE_TEST_ROLE}",
         ],
     )
-    engine = create_simulation_engine(disposable_database.service_url)
+    engine = simulation_engine(disposable_database.service_url)
     try:
         with create_session_factory(engine).begin() as session:
             missing = missing_table_privileges(
@@ -435,7 +434,7 @@ def test_a_system_column_isnt_a_column_the_role_can_update(disposable_database):
 
 @pytest.mark.postgres
 def test_an_empty_list_requires_nothing(disposable_database):
-    engine = create_simulation_engine(disposable_database.service_url)
+    engine = simulation_engine(disposable_database.service_url)
     try:
         with create_session_factory(engine).begin() as session:
             missing = missing_table_privileges(
@@ -454,7 +453,7 @@ def test_the_catalog_classes_read_postgresqls_catalog(disposable_database):
         disposable_database,
         ["CREATE TABLE public.reports (id uuid PRIMARY KEY, label text)"],
     )
-    engine = create_simulation_engine(disposable_database.service_url)
+    engine = simulation_engine(disposable_database.service_url)
     try:
         with create_session_factory(engine).begin() as session:
             table_row = session.execute(

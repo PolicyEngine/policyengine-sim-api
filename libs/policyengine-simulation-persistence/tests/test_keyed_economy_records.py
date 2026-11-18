@@ -43,16 +43,16 @@ from policyengine_simulation_persistence import (
     KeyedEconomySimulation,
     NewReportRerun,
     ProposedSide,
+    ReportRun,
     ReportRunStatus,
     RerunSide,
     SimulationChoice,
+    SimulationRun,
     SimulationStatus,
     find_or_create_economy_report,
     find_or_create_economy_simulation,
     insert_report_rerun,
     read_report_definition,
-    report_runs,
-    simulation_runs,
 )
 from public_api_rows import insert_policy
 from sqlalchemy import event, func, insert, select, text, update
@@ -132,7 +132,9 @@ def _set_status(
     connection: Connection, table_name: str, row_id: UUID, status: str
 ) -> None:
     """Set a run's status as the superuser, as a worker or the sweep would."""
-    table = report_runs if table_name == "report_runs" else simulation_runs
+    table = (
+        ReportRun.__table__ if table_name == "report_runs" else SimulationRun.__table__
+    )
     ended = status in {"succeeded", "failed"}
     connection.execute(text("RESET ROLE"))
     connection.execute(
@@ -336,7 +338,7 @@ def test_a_forced_run_is_never_joined_by_a_create(public_api_database_url) -> No
         _set_status(connection, "report_runs", first.run.id, "failed")
         forced_simulation_run_id = uuid4()
         connection.execute(
-            insert(simulation_runs).values(
+            insert(SimulationRun).values(
                 id=forced_simulation_run_id,
                 simulation_id=first.baseline.simulation_id,
                 year=2026,
@@ -350,7 +352,7 @@ def test_a_forced_run_is_never_joined_by_a_create(public_api_database_url) -> No
             )
         )
         connection.execute(
-            insert(report_runs).values(
+            insert(ReportRun).values(
                 id=uuid4(),
                 report_id=first.report_id,
                 baseline_simulation_run_id=forced_simulation_run_id,
@@ -515,13 +517,13 @@ def test_a_request_losing_the_report_run_to_another_joins_it_and_keeps_nothing(
         )
     with committed_engine.begin() as connection:
         connection.execute(
-            update(simulation_runs)
-            .where(simulation_runs.c.id == first.baseline.simulation_run_id)
+            update(SimulationRun)
+            .where(SimulationRun.id == first.baseline.simulation_run_id)
             .values(status=SimulationStatus.FAILED, completed_at=func.now())
         )
         connection.execute(
-            update(report_runs)
-            .where(report_runs.c.id == first.run.id)
+            update(ReportRun)
+            .where(ReportRun.id == first.run.id)
             .values(status=ReportRunStatus.FAILED, completed_at=func.now())
         )
     competing: list[UUID] = []
@@ -539,7 +541,7 @@ def test_a_request_losing_the_report_run_to_another_joins_it_and_keeps_nothing(
         run_id = uuid4()
         with committed_engine.begin() as other:
             other.execute(
-                insert(report_runs).values(
+                insert(ReportRun).values(
                     id=run_id,
                     report_id=first.report_id,
                     baseline_simulation_run_id=first.baseline.simulation_run_id,
@@ -563,8 +565,8 @@ def test_a_request_losing_the_report_run_to_another_joins_it_and_keeps_nothing(
             )
         kept = connection.execute(
             select(func.count())
-            .select_from(simulation_runs)
-            .where(simulation_runs.c.id == request.baseline.simulation_run_id)
+            .select_from(SimulationRun)
+            .where(SimulationRun.id == request.baseline.simulation_run_id)
         ).scalar_one()
 
     assert (joined.run.id, joined.run.inserted) == (competing[0], False)
@@ -660,8 +662,8 @@ def test_a_keyed_rerun_with_one_simulation_on_both_sides_inserts_one_run(
         found = in_session(connection, insert_report_rerun, rerun)
         runs = connection.execute(
             select(func.count())
-            .select_from(simulation_runs)
-            .where(simulation_runs.c.simulation_id == simulation_id)
+            .select_from(SimulationRun)
+            .where(SimulationRun.simulation_id == simulation_id)
         ).scalar_one()
 
     assert found.inserted is True
