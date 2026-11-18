@@ -95,6 +95,29 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(engine, expire_on_commit=False)
 
 
+def create_simulation_session_factory(database_url: str) -> sessionmaker[Session]:
+    """Return the session factory of the simulation service's connection pool.
+
+    Raises ValueError, without echoing the URL, when it is malformed. Nothing
+    connects until a session runs its first statement.
+    """
+    return create_session_factory(create_simulation_engine(database_url))
+
+
+def create_unpooled_session_factory(database_url: str) -> sessionmaker[Session]:
+    """Return a factory of sessions that each open and close their connection.
+
+    Raises ValueError, without echoing the URL, when it is malformed. Nothing
+    connects until a session runs its first statement.
+    """
+    return create_session_factory(create_unpooled_engine(database_url))
+
+
+def dispose_session_factory(session_factory: sessionmaker[Session]) -> None:
+    """Close every pooled connection of the engine ``session_factory`` uses."""
+    session_factory.kw["bind"].dispose()
+
+
 def _set_statement_timeout(statement_timeout_milliseconds: int) -> Select[tuple[str]]:
     """Return the statement that bounds the rest of the current transaction."""
     return select(

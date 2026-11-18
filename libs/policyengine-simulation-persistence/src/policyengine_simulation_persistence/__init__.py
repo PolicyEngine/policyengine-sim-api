@@ -89,7 +89,10 @@ from policyengine_simulation_persistence.engine import (
     bounded_transaction,
     create_session_factory,
     create_simulation_engine,
+    create_simulation_session_factory,
     create_unpooled_engine,
+    create_unpooled_session_factory,
+    dispose_session_factory,
     normalized_database_url,
 )
 from policyengine_simulation_persistence.household_job_records import (
@@ -350,8 +353,11 @@ __all__ = [
     "combine_reforms",
     "create_session_factory",
     "create_simulation_engine",
+    "create_simulation_session_factory",
     "create_unpooled_engine",
+    "create_unpooled_session_factory",
     "definition_key",
+    "dispose_session_factory",
     "fail_unstarted_household_job",
     "fail_unstarted_report_run",
     "fail_unstarted_simulation_run",
