@@ -52,8 +52,10 @@ What the ORM means here:
   no public function there returns one or a `Connection`. It hands out a
   `sessionmaker` with `expire_on_commit=False`:
   `create_simulation_session_factory` for the simulation service's connection
-  pool and `create_unpooled_session_factory` for the v2 Modal calls, both from
-  a database URL. `dispose_session_factory` closes a factory's connections.
+  pool, `create_unpooled_session_factory` for the v2 Modal calls and
+  `create_single_connection_session_factory` for a short task that should take
+  one pooler slot, all from a database URL. `dispose_session_factory` closes a
+  factory's connections.
   Everything else receives a `sessionmaker` or a `Session`, and runs a
   transaction as `with session_factory.begin() as session:`, or as `with
   bounded_session(session_factory, statement_timeout_milliseconds=...) as

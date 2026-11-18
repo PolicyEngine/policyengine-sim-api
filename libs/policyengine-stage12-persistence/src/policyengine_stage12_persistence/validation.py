@@ -48,8 +48,8 @@ if TYPE_CHECKING:
 
 REQUIRED_TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE")
 FORBIDDEN_TABLE_PRIVILEGES = ("TRUNCATE", "REFERENCES", "TRIGGER")
-# The check opens a connection per schema read, through a session pooler that
-# refuses clients while it is full, so each step gets several attempts.
+# The check connects through a session pooler that refuses clients while it is
+# full, and may lose a connection, so each step gets several attempts.
 STEP_ATTEMPTS = 5
 FIRST_RETRY_DELAY_SECONDS = 1.0
 
