@@ -17,8 +17,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sqlalchemy.exc import SQLAlchemyError
-
 from policyengine_simulation_persistence.economy_rerun_records import (
     insert_household_report_rerun,
 )
@@ -27,11 +25,7 @@ from policyengine_simulation_persistence.economy_run_records import (
     read_model_id,
     record_report_run_call,
 )
-from policyengine_simulation_persistence.economy_run_store import (
-    EconomyRecordOutcomeUnknownError,
-    ReportSideError,
-)
-from policyengine_simulation_persistence.engine import bounded_session
+from policyengine_simulation_persistence.economy_run_store import ReportSideError
 from policyengine_simulation_persistence.household_job_records import (
     read_catalog_version_id,
     read_stored_household,
@@ -48,10 +42,14 @@ from policyengine_simulation_persistence.policy_reform import (
     UnknownPolicyError,
     read_policy_reform,
 )
+from policyengine_simulation_persistence.store_transactions import (
+    TransactionFactory,
+    bounded_transactions,
+    create_in_transaction,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
-    from contextlib import AbstractContextManager
     from uuid import UUID
 
     from sqlalchemy.orm import Session, sessionmaker
@@ -70,8 +68,6 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence.policy_reform import PolicyReform
     from policyengine_simulation_persistence.shared_rows import FoundReportRun
     from policyengine_simulation_persistence.tables import ReportRunStatus
-
-type TransactionFactory = Callable[[], AbstractContextManager[Session]]
 
 
 @dataclass(frozen=True)
@@ -127,14 +123,12 @@ class HouseholdReportStore:
         statement_timeout_milliseconds: int,
     ) -> HouseholdReportStore:
         """Use ``session_factory``, bounding each statement to the given time."""
-
-        def transaction() -> AbstractContextManager[Session]:
-            return bounded_session(
+        return cls(
+            bounded_transactions(
                 session_factory,
                 statement_timeout_milliseconds=statement_timeout_milliseconds,
             )
-
-        return cls(transaction)
+        )
 
     def read_inputs(
         self,
@@ -207,22 +201,12 @@ class HouseholdReportStore:
         )
 
     def _create[Created](self, insert_rows: Callable[[Session], Created]) -> Created:
-        """Insert the rows in a transaction; tell a lost commit from a refusal.
-
-        ``insert_rows`` sends every row to the database before it returns, so
-        an error after it is the commit's. Return what it returns.
-        """
-        inserted = False
-        try:
-            with self._transaction() as session:
-                created = insert_rows(session)
-                inserted = True
-        except SQLAlchemyError as error:
-            if not inserted:
-                raise
-            msg = "the create's commit failed after its rows were inserted"
-            raise EconomyRecordOutcomeUnknownError(msg) from error
-        return created
+        """Insert the rows in a transaction; tell a lost commit from a refusal."""
+        return create_in_transaction(
+            self._transaction,
+            insert_rows,
+            commit_failure="the create's commit failed after its rows were inserted",
+        )
 
     def record_report_call(
         self, report_run_id: UUID, modal_call_id: str

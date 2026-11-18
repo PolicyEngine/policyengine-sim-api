@@ -587,8 +587,8 @@ def economy_submissions_for(
         household_reports=household_reports,
         # The service starts a budget window's first years as its own role.
         windows=BudgetWindowStore(engine=database.engine),
-        store=EconomyRunStore.from_engine(
-            database.engine,
+        store=EconomyRunStore.from_session_factory(
+            database.session_factory,
             statement_timeout_milliseconds=ECONOMY_STATEMENT_TIMEOUT_MILLISECONDS,
         ),
         workers=ManifestEconomyWorkers.from_modal(

@@ -35,8 +35,8 @@ Stage 12 library binds it as `create_stage12_engine`.
 Attributes keep their values after the transaction commits, apart from one set
 to a SQL expression such as `func.now()`, which must be refreshed before the
 session closes. `bounded_session` runs one transaction on such a factory with a
-`statement_timeout` local to it, as `bounded_transaction` does for code still
-on connections. The classes declare
+`statement_timeout` local to it. `bounded_transaction` does the same on a Core
+connection; the service's stores no longer use it. The classes declare
 no relationships, so a session doesn't order inserts by foreign key: flush a
 referenced row before adding the row that names it.
 
@@ -157,7 +157,8 @@ runs created for it. `economy_run_reads.py` reads a report, or a simulation,
 with its newest run's state.
 
 `EconomyRunStore` runs them as the Simulation Entrypoint does, each step in
-a transaction of its own: `read_report_inputs` reads the catalog version,
+an ORM session and transaction of its own (`from_session_factory` opens each
+with `bounded_session`): `read_report_inputs` reads the catalog version,
 model, region and dataset, and each side's policy and dynamic values
 together; `read_simulation_inputs` does the same for one simulation, and
 `read_budget_window_inputs` for a budget window's two sides; the writes and

@@ -2,7 +2,7 @@
 
 An economy report compares a baseline and a reform simulation of one
 region's data for one year. The service reads the catalog rows a request
-names from the Public API's tables (``read_model_id``, ``read_region``,
+names from API v1's tables (``read_model_id``, ``read_region``,
 ``read_dataset``), then finds or creates, by definition key, each
 simulation, the report and their runs (``keyed_economy_records``). A run
 it creates is ``pending`` with no Modal call ID; this module builds and
@@ -17,11 +17,14 @@ recorded for. Failing a report run also fails the simulation runs created
 for it, under the same condition. The coordinator and workers write the
 rest: ``running``, the results, and ``succeeded`` or ``failed``.
 
-Every function takes a connection, so the caller chooses the transactions.
-Each update sets only the columns the service's role may update, with
-``updated_at``, whose automatic update the Public API's models make on their
-own side only. ``references_checked`` turns the database's refusal of a row
-naming one that does not exist into ``EconomyRecordReferenceError``.
+Every function takes an ORM session, so the caller chooses the transactions.
+Reads select the mapped classes' attributes, so they return what the database
+holds now, whatever the session has loaded. Each update is one conditional
+statement that leaves the session's objects alone, and sets only the columns
+the service's role may update, with ``updated_at``, whose automatic update
+API v1's models make on their own side only. ``references_checked`` turns the
+database's refusal of a row naming one that does not exist into
+``EconomyRecordReferenceError``.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
 from sqlalchemy import (
+    ForeignKeyConstraint,
     String,
     cast,
     func,
@@ -43,30 +47,33 @@ from sqlalchemy.exc import IntegrityError
 from policyengine_simulation_persistence.input_tables import (
     MODEL_NAME_PREFIX,
     UK_AREA_REGION_TYPES,
-    datasets,
-    regions,
-    tax_benefit_models,
+    Dataset,
+    Region,
+    TaxBenefitModel,
 )
 from policyengine_simulation_persistence.tables import (
+    BudgetWindowRun,
+    Report,
+    ReportRun,
     ReportRunStatus,
+    Simulation,
+    SimulationRun,
     SimulationStatus,
-    budget_window_runs,
-    report_runs,
-    reports,
-    simulation_runs,
-    simulations,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
     from uuid import UUID
 
-    from sqlalchemy import ColumnElement, Connection, Table
+    from sqlalchemy import ColumnElement
     from sqlalchemy.orm import Session
+
+# The two classes whose runs a Modal call calculates.
+type RunModel = type[SimulationRun | ReportRun]
 
 # PostgreSQL's SQLSTATE for a row naming one that does not exist.
 FOREIGN_KEY_VIOLATION: Final = "23503"
-# A report's type, as the Public API reads it.
+# A report's type, as API v1 reads it.
 ECONOMY_REPORT_TYPE: Final = "economy"
 # Both run tables' statuses use these values.
 _PENDING: Final = SimulationStatus.PENDING.value
@@ -74,15 +81,10 @@ _FAILED: Final = SimulationStatus.FAILED.value
 # Each foreign key of the tables the service writes, by name: its table and
 # the first column it constrains.
 _KEY_COLUMNS: Final = {
-    str(constraint.name): (table.name, constraint.column_keys[0])
-    for table in (
-        simulations,
-        simulation_runs,
-        reports,
-        report_runs,
-        budget_window_runs,
-    )
-    for constraint in table.foreign_key_constraints
+    str(constraint.name): (model.__tablename__, constraint.column_keys[0])
+    for model in (Simulation, SimulationRun, Report, ReportRun, BudgetWindowRun)
+    for constraint in model.__table_args__
+    if isinstance(constraint, ForeignKeyConstraint)
 }
 
 
@@ -151,23 +153,23 @@ class EconomyRecordReferenceError(LookupError):
         super().__init__(f"{named} names no stored row")
 
 
-def read_model_id(connection: Connection | Session, *, country: str) -> UUID | None:
+def read_model_id(session: Session, *, country: str) -> UUID | None:
     """Return the id of the country's tax-benefit model, or None."""
-    return connection.execute(
-        select(tax_benefit_models.c.id).where(
-            tax_benefit_models.c.name == f"{MODEL_NAME_PREFIX}{country}"
+    return session.execute(
+        select(TaxBenefitModel.id).where(
+            TaxBenefitModel.name == f"{MODEL_NAME_PREFIX}{country}"
         )
     ).scalar_one_or_none()
 
 
 def read_region(
-    connection: Connection, *, catalog_version_id: UUID, region_code: str
+    session: Session, *, catalog_version_id: UUID, region_code: str
 ) -> CatalogRegion | None:
     """Return the catalog version's region with this code, or None."""
-    row = connection.execute(
-        select(regions.c.id, regions.c.code, regions.c.default_dataset_id).where(
-            regions.c.tax_benefit_model_version_id == catalog_version_id,
-            regions.c.code == region_code,
+    row = session.execute(
+        select(Region.id, Region.code, Region.default_dataset_id).where(
+            Region.tax_benefit_model_version_id == catalog_version_id,
+            Region.code == region_code,
         )
     ).one_or_none()
     if row is None:
@@ -178,26 +180,26 @@ def read_region(
 
 
 def read_dataset(
-    connection: Connection, *, catalog_version_id: UUID, name: str
+    session: Session, *, catalog_version_id: UUID, name: str
 ) -> CatalogDataset | None:
     """Return the catalog version's dataset with this name, or None."""
-    return _dataset(connection, catalog_version_id, datasets.c.name == name)
+    return _dataset(session, catalog_version_id, Dataset.name == name)
 
 
 def read_dataset_by_id(
-    connection: Connection, *, catalog_version_id: UUID, dataset_id: UUID
+    session: Session, *, catalog_version_id: UUID, dataset_id: UUID
 ) -> CatalogDataset | None:
     """Return the catalog version's dataset with this id, or None."""
-    return _dataset(connection, catalog_version_id, datasets.c.id == dataset_id)
+    return _dataset(session, catalog_version_id, Dataset.id == dataset_id)
 
 
 def read_local_area_dataset(
-    connection: Connection, *, catalog_version_id: UUID
+    session: Session, *, catalog_version_id: UUID
 ) -> CatalogDataset | None:
     """Return the catalog version's local-area dataset, or None when it has none.
 
     It is the one default dataset every constituency and local-authority
-    region of the version uses. The Public API's catalog lists those regions
+    region of the version uses. API v1's catalog lists those regions
     only when the .py release routes them to a dataset of their own, and
     gives them that dataset, so a version with no such regions, with only
     one of the two types, or with a dataset for each type has none: its
@@ -207,20 +209,21 @@ def read_local_area_dataset(
     the release routes both types to one dataset
     (``uk_area_breakdowns_omitted``).
     """
-    region_type = cast(regions.c.region_type, String)
-    rows = connection.execute(
-        select(region_type.label("region_type"), datasets.c.id, datasets.c.name)
+    region_type = cast(Region.region_type, String)
+    rows = session.execute(
+        select(region_type.label("region_type"), Dataset.id, Dataset.name)
+        .select_from(Region)
         .distinct()
         .join(
-            datasets,
-            (datasets.c.id == regions.c.default_dataset_id)
+            Dataset,
+            (Dataset.id == Region.default_dataset_id)
             & (
-                datasets.c.tax_benefit_model_version_id
-                == regions.c.tax_benefit_model_version_id
+                Dataset.tax_benefit_model_version_id
+                == Region.tax_benefit_model_version_id
             ),
         )
         .where(
-            regions.c.tax_benefit_model_version_id == catalog_version_id,
+            Region.tax_benefit_model_version_id == catalog_version_id,
             region_type.in_(UK_AREA_REGION_TYPES),
         )
     ).all()
@@ -232,18 +235,18 @@ def read_local_area_dataset(
 
 
 def _dataset(
-    connection: Connection, catalog_version_id: UUID, condition: ColumnElement[bool]
+    session: Session, catalog_version_id: UUID, condition: ColumnElement[bool]
 ) -> CatalogDataset | None:
-    row = connection.execute(
-        select(datasets.c.id, datasets.c.name).where(
-            datasets.c.tax_benefit_model_version_id == catalog_version_id, condition
+    row = session.execute(
+        select(Dataset.id, Dataset.name).where(
+            Dataset.tax_benefit_model_version_id == catalog_version_id, condition
         )
     ).one_or_none()
     return None if row is None else CatalogDataset(id=row.id, name=row.name)
 
 
 def insert_simulation_run(  # noqa: PLR0913  # the run, what it calculates on, and its marker
-    connection: Connection,
+    session: Session,
     *,
     run_id: UUID,
     simulation_id: UUID,
@@ -255,10 +258,11 @@ def insert_simulation_run(  # noqa: PLR0913  # the run, what it calculates on, a
 
     The run records the catalog version, dataset and region it calculates
     on, which a re-run's may differ from its simulation's. ``forced`` marks
-    a forced re-run's run, which nothing joins.
+    a forced re-run's run, which nothing joins. The statement runs at once,
+    so a report run naming the new run finds it.
     """
-    connection.execute(
-        insert(simulation_runs).values(
+    session.execute(
+        insert(SimulationRun).values(
             simulation_run_row(
                 run_id=run_id,
                 simulation_id=simulation_id,
@@ -314,58 +318,59 @@ def references_checked() -> Iterator[None]:
 
 
 def _pending_without_call(
-    table: Table, run_id: UUID
+    model: RunModel, run_id: UUID
 ) -> tuple[ColumnElement[bool], ...]:
     return (
-        table.c.id == run_id,
-        table.c.status == _PENDING,
-        table.c.modal_call_id.is_(None),
+        model.id == run_id,
+        model.status == _PENDING,
+        model.modal_call_id.is_(None),
     )
 
 
 def record_report_run_call(
-    connection: Connection | Session, *, report_run_id: UUID, modal_call_id: str
+    session: Session, *, report_run_id: UUID, modal_call_id: str
 ) -> ReportRunStatus | None:
     """Record the report run's Modal call ID while it is pending with none.
 
     Return the run's status afterwards, or None when there is no such run. A
     run the coordinator has claimed already keeps its claim.
     """
-    status = _record_call(connection, report_runs, report_run_id, modal_call_id)
+    status = _record_call(session, ReportRun, report_run_id, modal_call_id)
     return None if status is None else ReportRunStatus(status)
 
 
 def record_simulation_run_call(
-    connection: Connection, *, simulation_run_id: UUID, modal_call_id: str
+    session: Session, *, simulation_run_id: UUID, modal_call_id: str
 ) -> SimulationStatus | None:
     """Record the simulation run's Modal call ID while it is pending with none.
 
     Return the run's status afterwards, or None when there is no such run. A
     run the worker has claimed already keeps its claim.
     """
-    status = _record_call(connection, simulation_runs, simulation_run_id, modal_call_id)
+    status = _record_call(session, SimulationRun, simulation_run_id, modal_call_id)
     return None if status is None else SimulationStatus(status)
 
 
 def _record_call(
-    connection: Connection | Session, table: Table, run_id: UUID, modal_call_id: str
+    session: Session, model: RunModel, run_id: UUID, modal_call_id: str
 ) -> str | None:
-    recorded = connection.execute(
-        update(table)
-        .where(*_pending_without_call(table, run_id))
+    recorded = session.execute(
+        update(model)
+        .where(*_pending_without_call(model, run_id))
         .values(modal_call_id=modal_call_id, updated_at=func.now())
-        .returning(table.c.status)
+        .returning(model.status)
+        .execution_options(synchronize_session=False)
     ).scalar_one_or_none()
     if recorded is not None:
         return str(recorded)
-    status = connection.execute(
-        select(table.c.status).where(table.c.id == run_id)
+    status = session.execute(
+        select(model.status).where(model.id == run_id)
     ).scalar_one_or_none()
     return None if status is None else str(status)
 
 
 def fail_unstarted_report_run(
-    connection: Connection | Session,
+    session: Session,
     *,
     report_run_id: UUID,
     simulation_run_ids: Sequence[UUID],
@@ -379,38 +384,37 @@ def fail_unstarted_report_run(
     for, or one the coordinator has claimed, is left as it is, and so are
     its simulation runs.
     """
-    if not _fail_unstarted(connection, report_runs, report_run_id, error_message):
+    if not _fail_unstarted(session, ReportRun, report_run_id, error_message):
         return False
     for simulation_run_id in simulation_run_ids:
-        _fail_unstarted(connection, simulation_runs, simulation_run_id, error_message)
+        _fail_unstarted(session, SimulationRun, simulation_run_id, error_message)
     return True
 
 
 def fail_unstarted_simulation_run(
-    connection: Connection, *, simulation_run_id: UUID, error_message: str
+    session: Session, *, simulation_run_id: UUID, error_message: str
 ) -> bool:
     """Fail the simulation run at once while it is pending with no Modal call ID.
 
     Return whether it was failed: a run a call has been recorded for, or one
     a worker has claimed, is left as it is.
     """
-    return _fail_unstarted(
-        connection, simulation_runs, simulation_run_id, error_message
-    )
+    return _fail_unstarted(session, SimulationRun, simulation_run_id, error_message)
 
 
 def _fail_unstarted(
-    connection: Connection | Session, table: Table, run_id: UUID, error_message: str
+    session: Session, model: RunModel, run_id: UUID, error_message: str
 ) -> bool:
-    failed = connection.execute(
-        update(table)
-        .where(*_pending_without_call(table, run_id))
+    failed = session.execute(
+        update(model)
+        .where(*_pending_without_call(model, run_id))
         .values(
             status=_FAILED,
             error_message=error_message,
             completed_at=func.now(),
             updated_at=func.now(),
         )
-        .returning(table.c.id)
+        .returning(model.id)
+        .execution_options(synchronize_session=False)
     ).scalar_one_or_none()
     return failed is not None

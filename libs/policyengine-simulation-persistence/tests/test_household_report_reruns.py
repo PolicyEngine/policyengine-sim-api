@@ -15,7 +15,12 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction, session_factory_on
+from conftest import (
+    act_as_the_service,
+    in_session,
+    rolled_back_transaction,
+    session_factory_on,
+)
 from household_report_rows import insert_household_report_rows
 from policyengine_simulation_persistence import (
     EconomyRecordOutcomeUnknownError,
@@ -122,8 +127,9 @@ def _stored_report(
         with_reform=with_reform,
     )
     if first_run_ended:
-        fail_unstarted_report_run(
+        in_session(
             connection,
+            fail_unstarted_report_run,
             report_run_id=report.run_id,
             simulation_run_ids=report.simulation_run_ids,
             error_message="run_not_started: no call was recorded",
@@ -201,8 +207,10 @@ def test_a_household_report_is_read_with_its_household_and_each_sides_policy(
         baseline_alone = _stored_report(connection, catalog, with_reform=False)
         act_as_the_service(connection)
 
-        definition = read_report_definition(connection, report.id)
-        alone_definition = read_report_definition(connection, baseline_alone.id)
+        definition = in_session(connection, read_report_definition, report.id)
+        alone_definition = in_session(
+            connection, read_report_definition, baseline_alone.id
+        )
 
     assert definition is not None
     assert alone_definition is not None

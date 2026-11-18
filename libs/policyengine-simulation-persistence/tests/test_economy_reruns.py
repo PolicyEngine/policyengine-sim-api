@@ -12,14 +12,18 @@ in a transaction rolled back afterwards.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import (
+    act_as_the_service,
+    economy_store_on,
+    in_session,
+    rolled_back_transaction,
+)
 from economy_rows import (
     CURRENT_LAW,
     LATER_POLICYENGINE_VERSION,
@@ -40,7 +44,6 @@ from economy_rows import (
 from policyengine_simulation_persistence import (
     EconomyRecordReferenceError,
     EconomyRequest,
-    EconomyRunStore,
     FoundReportRun,
     MissingPolicyParametersError,
     NewReportRerun,
@@ -77,8 +80,6 @@ from sqlalchemy import bindparam, event, insert, text
 from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from sqlalchemy import Connection
 
 pytestmark = pytest.mark.public_api_schema
@@ -145,17 +146,6 @@ def _count_runs_of(connection: Connection, simulation_id: UUID) -> int:
     ).scalar_one()
 
 
-def _store_on(connection: Connection) -> EconomyRunStore:
-    """Return a store whose transactions are savepoints of ``connection``."""
-
-    @contextmanager
-    def savepoint() -> Iterator[Connection]:
-        with connection.begin_nested():
-            yield connection
-
-    return EconomyRunStore(savepoint)
-
-
 def test_a_stored_economy_reports_definition_is_read(public_api_database_url) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
@@ -164,7 +154,7 @@ def test_a_stored_economy_reports_definition_is_read(public_api_database_url) ->
         stored = _stored_report(connection, economy, reform_choice=reform_choice)
         act_as_the_service(connection)
 
-        definition = read_report_definition(connection, stored.report_id)
+        definition = in_session(connection, read_report_definition, stored.report_id)
 
     assert definition == ReportDefinition(
         id=stored.report_id,
@@ -202,8 +192,8 @@ def test_a_budget_window_or_household_report_is_read_as_its_kind(
         )
         act_as_the_service(connection)
 
-        window = read_report_definition(connection, window_id)
-        household = read_report_definition(connection, household_report_id)
+        window = in_session(connection, read_report_definition, window_id)
+        household = in_session(connection, read_report_definition, household_report_id)
 
     assert window is not None
     assert household is not None
@@ -216,8 +206,8 @@ def test_an_unknown_report_or_simulation_has_no_definition(
     with rolled_back_transaction(public_api_database_url) as connection:
         act_as_the_service(connection)
 
-        assert read_report_definition(connection, uuid4()) is None
-        assert read_simulation_definition(connection, uuid4()) is None
+        assert in_session(connection, read_report_definition, uuid4()) is None
+        assert in_session(connection, read_simulation_definition, uuid4()) is None
 
 
 def test_a_stored_economy_simulations_definition_is_read(
@@ -232,7 +222,9 @@ def test_a_stored_economy_simulations_definition_is_read(
         )
         act_as_the_service(connection)
 
-        definition = read_simulation_definition(connection, stored.simulation_id)
+        definition = in_session(
+            connection, read_simulation_definition, stored.simulation_id
+        )
 
     assert definition == SimulationDefinition(
         id=stored.simulation_id,
@@ -312,7 +304,7 @@ def test_a_report_rerun_joins_or_creates_runs_of_the_reports_own_simulations(
         rerun = _rerun_of(stored, later)
         act_as_the_service(connection)
 
-        insert_report_rerun(connection, rerun)
+        in_session(connection, insert_report_rerun, rerun)
         report_run = _row(connection, "report_runs", rerun.run_id)
         reform_run = _row(connection, "simulation_runs", rerun.reform.simulation_run_id)
         earlier_run = _row(connection, "report_runs", stored.report_run_id)
@@ -396,7 +388,7 @@ def test_a_report_rerun_joins_the_reports_run_on_its_versions(
         rerun = _unforced_rerun_on_unchanged_versions(stored, economy)
         act_as_the_service(connection)
 
-        joined = insert_report_rerun(connection, rerun)
+        joined = in_session(connection, insert_report_rerun, rerun)
         created_report_runs = connection.execute(
             text("SELECT count(*) FROM public.report_runs WHERE id = :id"),
             {"id": rerun.run_id},
@@ -429,7 +421,7 @@ def test_a_report_rerun_beside_a_run_under_way_on_older_versions_creates_its_own
         rerun = _rerun_of(stored, later)
         act_as_the_service(connection)
 
-        created = insert_report_rerun(connection, rerun)
+        created = in_session(connection, insert_report_rerun, rerun)
         report_run = _row(connection, "report_runs", rerun.run_id)
 
     assert (created.id, created.inserted, created.status) == (
@@ -447,7 +439,7 @@ def test_a_report_whose_runs_have_ended_is_rerun_again(public_api_database_url) 
         stored = _stored_report(connection, economy, run_status=ReportRunStatus.FAILED)
         first = _rerun_of(stored, later)
         act_as_the_service(connection)
-        insert_report_rerun(connection, first)
+        in_session(connection, insert_report_rerun, first)
         # The first re-run's run, and the simulation runs it created, fail
         # before a second re-run.
         connection.execute(text("RESET ROLE"))
@@ -465,7 +457,7 @@ def test_a_report_whose_runs_have_ended_is_rerun_again(public_api_database_url) 
         second = _rerun_of(stored, later)
         act_as_the_service(connection)
 
-        insert_report_rerun(connection, second)
+        in_session(connection, insert_report_rerun, second)
 
         assert _row(connection, "report_runs", second.run_id)["status"] == (
             ReportRunStatus.PENDING
@@ -488,13 +480,14 @@ def test_a_simulation_rerun_joins_its_run_on_the_current_versions_until_it_fails
         )
         act_as_the_service(connection)
 
-        inserted = insert_simulation_rerun(connection, rerun)
+        inserted = in_session(connection, insert_simulation_rerun, rerun)
         created = _row(connection, "simulation_runs", rerun.run_id)
-        joined_under_way = insert_simulation_rerun(
-            connection, replace(rerun, run_id=uuid4())
+        joined_under_way = in_session(
+            connection, insert_simulation_rerun, replace(rerun, run_id=uuid4())
         )
-        joined_succeeded = insert_simulation_rerun(
+        joined_succeeded = in_session(
             connection,
+            insert_simulation_rerun,
             NewSimulationRerun(
                 simulation_id=stored.simulation_id,
                 run_id=uuid4(),
@@ -511,8 +504,8 @@ def test_a_simulation_rerun_joins_its_run_on_the_current_versions_until_it_fails
             {"id": rerun.run_id},
         )
         act_as_the_service(connection)
-        after_failure = insert_simulation_rerun(
-            connection, replace(rerun, run_id=uuid4())
+        after_failure = in_session(
+            connection, insert_simulation_rerun, replace(rerun, run_id=uuid4())
         )
         runs_of_the_simulation = _count_runs_of(connection, stored.simulation_id)
 
@@ -554,14 +547,14 @@ def test_a_rerun_holds_its_records_lock_until_its_transaction_ends(
         later = insert_later_catalog(holder, economy)
         stored = _stored_report(holder, economy, run_status=ReportRunStatus.FAILED)
         act_as_the_service(holder)
-        insert_report_rerun(holder, _rerun_of(stored, later))
+        in_session(holder, insert_report_rerun, _rerun_of(stored, later))
 
         with rolled_back_transaction(public_api_database_url) as waiter:
             act_as_the_service(waiter)
             waiter.execute(text("SET LOCAL lock_timeout = '200ms'"))
-            lock_reruns_of(waiter, uuid4())
+            in_session(waiter, lock_reruns_of, uuid4())
             with pytest.raises(OperationalError, match="lock timeout"):
-                lock_reruns_of(waiter, stored.report_id)
+                in_session(waiter, lock_reruns_of, stored.report_id)
 
 
 def test_a_report_reruns_inputs_are_read_on_the_current_catalog_version(
@@ -577,7 +570,7 @@ def test_a_report_reruns_inputs_are_read_on_the_current_catalog_version(
         stored = _stored_report(connection, economy, reform_choice=reform_choice)
         act_as_the_service(connection)
 
-        inputs = _store_on(connection).read_report_rerun_inputs(
+        inputs = economy_store_on(connection).read_report_rerun_inputs(
             LATER_REQUEST,
             baseline=SideDefinition(stored.baseline.simulation_id, CURRENT_LAW),
             reform=SideDefinition(stored.reform.simulation_id, reform_choice),
@@ -606,7 +599,7 @@ def test_a_rerun_names_the_side_whose_policy_the_current_catalog_cannot_set(
         act_as_the_service(connection)
 
         with pytest.raises(ReportSideError) as refused:
-            _store_on(connection).read_report_rerun_inputs(
+            economy_store_on(connection).read_report_rerun_inputs(
                 LATER_REQUEST,
                 baseline=SideDefinition(stored.baseline.simulation_id, CURRENT_LAW),
                 reform=SideDefinition(stored.reform.simulation_id, reform_choice),
@@ -644,7 +637,7 @@ def test_a_rerun_is_refused_when_the_current_catalog_lacks_its_region_or_dataset
         )
 
         with pytest.raises(expected):
-            _store_on(connection).read_report_rerun_inputs(
+            economy_store_on(connection).read_report_rerun_inputs(
                 request,
                 baseline=SideDefinition(stored.baseline.simulation_id, CURRENT_LAW),
                 reform=SideDefinition(stored.reform.simulation_id, CURRENT_LAW),
@@ -664,7 +657,9 @@ def test_a_simulation_reruns_inputs_are_read_on_the_current_catalog_version(
         act_as_the_service(connection)
 
         # A simulation's re-run reads the current catalog version as a new one's.
-        inputs = _store_on(connection).read_simulation_inputs(LATER_REQUEST, choice)
+        inputs = economy_store_on(connection).read_simulation_inputs(
+            LATER_REQUEST, choice
+        )
 
     assert inputs.catalog.catalog_version_id == later.catalog.version_id
     assert inputs.simulation.choice == choice
@@ -688,7 +683,7 @@ def test_a_rerun_and_its_runs_are_created_through_the_store(
             versions=LATER_VERSIONS,
         )
         act_as_the_service(connection)
-        store = _store_on(connection)
+        store = economy_store_on(connection)
 
         store.create_report_rerun(rerun)
         store.create_simulation_rerun(simulation_rerun)
@@ -750,10 +745,14 @@ def test_a_household_or_filtered_simulation_and_another_model_are_read_as_such(
         other_simulation = insert_simulation_run(connection, other.population())
         act_as_the_service(connection)
 
-        household = read_simulation_definition(connection, household_simulation_id)
-        filtered = read_simulation_definition(connection, filtered_simulation_id)
-        of_another_model = read_simulation_definition(
-            connection, other_simulation.simulation_id
+        household = in_session(
+            connection, read_simulation_definition, household_simulation_id
+        )
+        filtered = in_session(
+            connection, read_simulation_definition, filtered_simulation_id
+        )
+        of_another_model = in_session(
+            connection, read_simulation_definition, other_simulation.simulation_id
         )
 
     assert household is not None
@@ -791,7 +790,7 @@ def test_a_report_of_another_type_is_read_as_unsupported(
         )
         act_as_the_service(connection)
 
-        definition = read_report_definition(connection, stored.report_id)
+        definition = in_session(connection, read_report_definition, stored.report_id)
 
     assert definition is not None
     assert definition.kind == "unsupported"
@@ -808,12 +807,15 @@ def test_a_rerun_of_a_deleted_report_or_simulation_says_the_record_is_gone(
         act_as_the_service(connection)
 
         with pytest.raises(RerunRecordDeletedError), connection.begin_nested():
-            insert_report_rerun(
-                connection, replace(_rerun_of(stored, later), report_id=uuid4())
+            in_session(
+                connection,
+                insert_report_rerun,
+                replace(_rerun_of(stored, later), report_id=uuid4()),
             )
         with pytest.raises(RerunRecordDeletedError), connection.begin_nested():
-            insert_simulation_rerun(
+            in_session(
                 connection,
+                insert_simulation_rerun,
                 NewSimulationRerun(
                     simulation_id=uuid4(),
                     run_id=uuid4(),
@@ -830,7 +832,7 @@ def test_a_rerun_of_a_deleted_report_or_simulation_says_the_record_is_gone(
             pytest.raises(EconomyRecordReferenceError) as refused,
             connection.begin_nested(),
         ):
-            insert_report_rerun(connection, gone_side)
+            in_session(connection, insert_report_rerun, gone_side)
 
     assert (refused.value.table_name, refused.value.column_name) == (
         "simulation_runs",
@@ -871,7 +873,7 @@ def test_a_forced_report_rerun_is_an_extra_run_beside_any_run_on_its_versions(
         rerun = _forced_rerun_of(stored, economy)
         act_as_the_service(connection)
 
-        insert_report_rerun(connection, rerun)
+        in_session(connection, insert_report_rerun, rerun)
         report_run = _row(connection, "report_runs", rerun.run_id)
         simulation_runs = [
             _row(connection, "simulation_runs", run_id)
@@ -931,7 +933,7 @@ def test_a_report_rerun_losing_to_a_run_created_after_its_lookup_joins_it(
         act_as_the_service(connection)
         event.listen(connection, "before_cursor_execute", create_a_competing_run_first)
         try:
-            joined = insert_report_rerun(connection, rerun)
+            joined = in_session(connection, insert_report_rerun, rerun)
         finally:
             event.remove(
                 connection, "before_cursor_execute", create_a_competing_run_first

@@ -13,9 +13,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sqlalchemy.exc import SQLAlchemyError
-
-from policyengine_simulation_persistence.engine import bounded_session
 from policyengine_simulation_persistence.household_job_records import (
     fail_unstarted_household_job,
     insert_household_job,
@@ -25,10 +22,13 @@ from policyengine_simulation_persistence.household_job_records import (
     record_household_call,
 )
 from policyengine_simulation_persistence.policy_reform import read_policy_reform
+from policyengine_simulation_persistence.store_transactions import (
+    TransactionFactory,
+    bounded_transactions,
+    create_in_transaction,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from contextlib import AbstractContextManager
     from uuid import UUID
 
     from sqlalchemy.orm import Session, sessionmaker
@@ -40,8 +40,6 @@ if TYPE_CHECKING:
     )
     from policyengine_simulation_persistence.policy_reform import PolicyReform
     from policyengine_simulation_persistence.tables import HouseholdJobStatus
-
-type TransactionFactory = Callable[[], AbstractContextManager[Session]]
 
 
 class UnknownCatalogVersionError(LookupError):
@@ -81,14 +79,12 @@ class HouseholdJobStore:
         statement_timeout_milliseconds: int,
     ) -> HouseholdJobStore:
         """Use ``session_factory``, bounding each statement to the given time."""
-
-        def transaction() -> AbstractContextManager[Session]:
-            return bounded_session(
+        return cls(
+            bounded_transactions(
                 session_factory,
                 statement_timeout_milliseconds=statement_timeout_milliseconds,
             )
-
-        return cls(transaction)
+        )
 
     def read_inputs(
         self,
@@ -138,20 +134,13 @@ class HouseholdJobStore:
         error once it is flushed is the commit's, after which the job may
         exist: EconomyRecordOutcomeUnknownError, caused by the commit's error.
         """
-        from policyengine_simulation_persistence.economy_run_store import (  # noqa: PLC0415  # economy_run_store imports this module at import time
-            EconomyRecordOutcomeUnknownError,
+        create_in_transaction(
+            self._transaction,
+            lambda session: insert_household_job(session, job),
+            commit_failure=(
+                "the household job's commit failed after its row was inserted"
+            ),
         )
-
-        inserted = False
-        try:
-            with self._transaction() as session:
-                insert_household_job(session, job)
-                inserted = True
-        except SQLAlchemyError as error:
-            if not inserted:
-                raise
-            msg = "the household job's commit failed after its row was inserted"
-            raise EconomyRecordOutcomeUnknownError(msg) from error
 
     def record_call(
         self, job_id: UUID, modal_call_id: str

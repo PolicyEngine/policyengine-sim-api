@@ -11,7 +11,6 @@ a transaction rolled back afterwards.
 from __future__ import annotations
 
 import threading
-from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
@@ -22,7 +21,12 @@ from committed_rows import (
     run_together,
     wait_until_another_backend_waits_for,
 )
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import (
+    act_as_the_service,
+    economy_store_on,
+    in_session,
+    rolled_back_transaction,
+)
 from economy_rows import (
     CURRENT_LAW,
     VERSIONS,
@@ -34,7 +38,6 @@ from policyengine_simulation_persistence import (
     EconomyPopulation,
     EconomyRecordReferenceError,
     EconomyReportDefinition,
-    EconomyRunStore,
     FoundBudgetWindow,
     KeyedBudgetWindow,
     KeyedEconomyReport,
@@ -49,8 +52,6 @@ from public_api_rows import insert_policy
 from sqlalchemy import func, select, text
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from sqlalchemy import Connection
 
 pytestmark = pytest.mark.public_api_schema
@@ -156,7 +157,7 @@ def test_a_keyed_window_is_created_with_each_years_simulations_and_runs(
         request = _keyed_window(economy, _reform(connection, economy))
         act_as_the_service(connection)
 
-        found = find_or_create_budget_window(connection, request)
+        found = in_session(connection, find_or_create_budget_window, request)
         report = _row(connection, "reports", found.report_id)
         window_run = _row(connection, "budget_window_runs", found.window_run.id)
         year_runs = [
@@ -234,10 +235,14 @@ def test_an_identical_window_request_joins_its_window_run_and_inserts_nothing(
         economy = insert_economy_catalog(connection)
         reform = _reform(connection, economy)
         act_as_the_service(connection)
-        first = find_or_create_budget_window(connection, _keyed_window(economy, reform))
+        first = in_session(
+            connection, find_or_create_budget_window, _keyed_window(economy, reform)
+        )
         counts = _counts(connection)
 
-        again = find_or_create_budget_window(connection, _keyed_window(economy, reform))
+        again = in_session(
+            connection, find_or_create_budget_window, _keyed_window(economy, reform)
+        )
         counts_again = _counts(connection)
 
     assert (again.report_id, again.report_inserted) == (first.report_id, False)
@@ -264,8 +269,9 @@ def test_a_window_year_names_a_single_year_reports_simulation_run(
         economy = insert_economy_catalog(connection)
         reform = _reform(connection, economy)
         act_as_the_service(connection)
-        single_year = find_or_create_economy_report(
+        single_year = in_session(
             connection,
+            find_or_create_economy_report,
             KeyedEconomyReport(
                 definition=_definition(
                     reform, country=economy.catalog.country, year=2027, size=None
@@ -281,8 +287,8 @@ def test_a_window_year_names_a_single_year_reports_simulation_run(
             ),
         )
 
-        window = find_or_create_budget_window(
-            connection, _keyed_window(economy, reform)
+        window = in_session(
+            connection, find_or_create_budget_window, _keyed_window(economy, reform)
         )
 
     year_2027 = window.years[1]
@@ -303,11 +309,13 @@ def test_a_window_whose_run_failed_gets_a_new_run_on_its_years_simulation_runs(
         economy = insert_economy_catalog(connection)
         reform = _reform(connection, economy)
         act_as_the_service(connection)
-        first = find_or_create_budget_window(connection, _keyed_window(economy, reform))
+        first = in_session(
+            connection, find_or_create_budget_window, _keyed_window(economy, reform)
+        )
         _fail_window_run(connection, first.window_run.id)
 
-        second = find_or_create_budget_window(
-            connection, _keyed_window(economy, reform)
+        second = in_session(
+            connection, find_or_create_budget_window, _keyed_window(economy, reform)
         )
 
     assert second.report_id == first.report_id
@@ -329,7 +337,7 @@ def test_a_window_comparing_a_policy_with_itself_names_one_run_a_year_twice(
         request = _keyed_window(economy, CURRENT_LAW)
         act_as_the_service(connection)
 
-        found = find_or_create_budget_window(connection, request)
+        found = in_session(connection, find_or_create_budget_window, request)
 
     for proposed, year in zip(request.years, found.years, strict=True):
         assert year.baseline.simulation_id == year.reform.simulation_id
@@ -345,12 +353,7 @@ def test_the_store_finds_or_creates_a_window_in_a_transaction(
         reform = _reform(connection, economy)
         act_as_the_service(connection)
 
-        @contextmanager
-        def savepoint() -> Iterator[Connection]:
-            with connection.begin_nested():
-                yield connection
-
-        store = EconomyRunStore(savepoint)
+        store = economy_store_on(connection)
         found = store.find_or_create_budget_window(_keyed_window(economy, reform))
         again = store.find_or_create_budget_window(_keyed_window(economy, reform))
 
@@ -403,8 +406,10 @@ def test_two_identical_window_requests_at_once_end_on_one_window_run_started_onc
     economy = committed_catalog
     with committed_engine.begin() as connection:
         act_as_the_service(connection)
-        earlier = find_or_create_budget_window(
-            connection, _keyed_window(economy, CURRENT_LAW)
+        earlier = in_session(
+            connection,
+            find_or_create_budget_window,
+            _keyed_window(economy, CURRENT_LAW),
         )
     with committed_engine.begin() as connection:
         _fail_window_run(connection, earlier.window_run.id)
@@ -415,8 +420,10 @@ def test_two_identical_window_requests_at_once_end_on_one_window_run_started_onc
 
     def create_and_start(connection: Connection, name: str) -> None:
         act_as_the_service(connection)
-        result = find_or_create_budget_window(
-            connection, _keyed_window(economy, CURRENT_LAW)
+        result = in_session(
+            connection,
+            find_or_create_budget_window,
+            _keyed_window(economy, CURRENT_LAW),
         )
         found[name] = result
         if result.window_run.inserted:
@@ -467,8 +474,10 @@ def test_a_window_naming_a_missing_policy_is_refused_and_writes_nothing(
             pytest.raises(EconomyRecordReferenceError) as refused,
             connection.begin_nested(),
         ):
-            find_or_create_budget_window(
-                connection, _keyed_window(economy, missing_policy)
+            in_session(
+                connection,
+                find_or_create_budget_window,
+                _keyed_window(economy, missing_policy),
             )
         after = _counts(connection)
 

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import act_as_the_service, in_session, rolled_back_transaction
 from policyengine_simulation_persistence import (
     MissingPolicyParametersError,
     OverlappingReformError,
@@ -55,8 +55,11 @@ def test_a_dynamic_is_read_as_its_values_by_parameter_name_and_period(
         )
         act_as_the_service(connection)
 
-        reform = read_dynamic_reform(
-            connection, dynamic_id=dynamic_id, catalog_version_id=catalog.version_id
+        reform = in_session(
+            connection,
+            read_dynamic_reform,
+            dynamic_id=dynamic_id,
+            catalog_version_id=catalog.version_id,
         )
 
     assert reform == {
@@ -78,8 +81,9 @@ def test_an_unknown_dynamic_is_refused(public_api_database_url) -> None:
         missing_dynamic_id = uuid4()
 
         with pytest.raises(UnknownDynamicError, match=str(missing_dynamic_id)):
-            read_dynamic_reform(
+            in_session(
                 connection,
+                read_dynamic_reform,
                 dynamic_id=missing_dynamic_id,
                 catalog_version_id=catalog.version_id,
             )
@@ -116,8 +120,9 @@ def test_a_dynamic_changing_parameters_the_run_lacks_names_each_of_them(
         act_as_the_service(connection)
 
         with pytest.raises(MissingPolicyParametersError) as refusal:
-            read_dynamic_reform(
+            in_session(
                 connection,
+                read_dynamic_reform,
                 dynamic_id=dynamic_id,
                 catalog_version_id=running.version_id,
             )

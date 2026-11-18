@@ -1,9 +1,9 @@
 """The economy store: each read and write in a transaction of its own.
 
 These run against a database the Public API's own v2 migration chain built
-(``PUBLIC_API_SCHEMA_DATABASE_URL``). The store opens each transaction
-through a function it is given; here each is a savepoint of one connection,
-acting as the simulation service's role, which the test rolls back.
+(``PUBLIC_API_SCHEMA_DATABASE_URL``). The store runs each operation in an ORM
+session of its own; here each session's transaction is a savepoint of one
+connection, acting as the simulation service's role, which the test rolls back.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, get_args
 from uuid import uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import act_as_the_service, economy_store_on, rolled_back_transaction
 from economy_rows import (
     CURRENT_LAW,
     POLICYENGINE_VERSION,
@@ -56,10 +56,9 @@ from policyengine_simulation_persistence.economy_inputs import read_catalog_rows
 from public_api_rows import StoredValue, insert_dataset, insert_dynamic, insert_policy
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
+from transaction_fakes import CommitFailingTransaction, RecordingSession
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from sqlalchemy import Connection
 
 pytestmark = pytest.mark.public_api_schema
@@ -76,17 +75,6 @@ REQUEST = EconomyRequest(
 )
 
 
-def _store_on(connection: Connection) -> EconomyRunStore:
-    """Return a store whose transactions are savepoints of ``connection``."""
-
-    @contextmanager
-    def savepoint() -> Iterator[Connection]:
-        with connection.begin_nested():
-            yield connection
-
-    return EconomyRunStore(savepoint)
-
-
 def test_a_reports_inputs_are_read_together(public_api_database_url) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(
@@ -101,7 +89,7 @@ def test_a_reports_inputs_are_read_together(public_api_database_url) -> None:
         act_as_the_service(connection)
         reform_choice = SimulationChoice(policy_id=policy_id, dynamic_id=dynamic_id)
 
-        inputs = _store_on(connection).read_report_inputs(
+        inputs = economy_store_on(connection).read_report_inputs(
             REQUEST, baseline=CURRENT_LAW, reform=reform_choice
         )
 
@@ -148,7 +136,7 @@ def test_a_report_on_the_local_area_dataset_is_read_on_it(
             local_authority_dataset_id=local_area_id,
         )
         act_as_the_service(connection)
-        store = _store_on(connection)
+        store = economy_store_on(connection)
 
         on_local_areas = store.read_report_inputs(
             UK_REQUEST,
@@ -194,7 +182,7 @@ def test_a_declared_dataset_the_catalog_does_not_give_both_area_types_is_refused
         act_as_the_service(connection)
 
         with pytest.raises(LocalAreaDatasetMismatchError) as mismatch:
-            _store_on(connection).read_report_inputs(
+            economy_store_on(connection).read_report_inputs(
                 UK_REQUEST,
                 baseline=CURRENT_LAW,
                 reform=CURRENT_LAW,
@@ -212,7 +200,7 @@ def test_a_named_dataset_is_read_instead_of_the_regions_default(
         local_id = insert_dataset(connection, economy.catalog, "acs_local_2024")
         act_as_the_service(connection)
 
-        inputs = _store_on(connection).read_simulation_inputs(
+        inputs = economy_store_on(connection).read_simulation_inputs(
             EconomyRequest(**{**vars(REQUEST), "dataset_name": "acs_local_2024"}),
             CURRENT_LAW,
         )
@@ -249,7 +237,7 @@ def test_each_missing_row_a_request_names_is_refused(
     with rolled_back_transaction(public_api_database_url) as connection:
         insert_economy_catalog(connection)
         act_as_the_service(connection)
-        store = _store_on(connection)
+        store = economy_store_on(connection)
         request = EconomyRequest(**{**vars(REQUEST), **request_fields})
 
         # A report names the side whose policy or dynamic is missing.
@@ -285,7 +273,7 @@ def test_values_the_running_version_lacks_or_both_set_are_refused(
             connection, economy.catalog, [StoredValue(ELASTICITY, -0.05, START)]
         )
         act_as_the_service(connection)
-        store = _store_on(connection)
+        store = economy_store_on(connection)
 
         with pytest.raises(MissingPolicyParametersError):
             store.read_simulation_inputs(
@@ -318,7 +306,7 @@ def test_a_reports_call_is_recorded_or_its_run_failed(
             insert_pending_report(connection, economy) for _ in range(2)
         )
         act_as_the_service(connection)
-        store = _store_on(connection)
+        store = economy_store_on(connection)
 
         status = store.record_report_call(recorded.report_run_id, "fc-coordinator")
         failed = store.fail_unstarted_report(
@@ -349,7 +337,7 @@ def test_a_simulations_call_is_recorded_or_its_run_failed(
             for _ in range(2)
         )
         act_as_the_service(connection)
-        store = _store_on(connection)
+        store = economy_store_on(connection)
 
         status = store.record_simulation_call(recorded.simulation_run_id, "fc-worker")
         failed = store.fail_unstarted_simulation(
@@ -373,7 +361,7 @@ def test_a_report_and_a_simulation_are_read_as_they_stand(
     with rolled_back_transaction(public_api_database_url) as connection:
         report = insert_pending_report(connection, insert_economy_catalog(connection))
         act_as_the_service(connection)
-        store = _store_on(connection)
+        store = economy_store_on(connection)
         store.record_report_call(report.report_run_id, "fc-coordinator")
 
         stored_report = store.read_report(report.report_id)
@@ -430,7 +418,7 @@ def test_a_reports_refused_values_name_the_side_they_belong_to(
         choices = {"baseline": CURRENT_LAW, "reform": CURRENT_LAW, side: refused}
 
         with pytest.raises(ReportSideError) as raised:
-            _store_on(connection).read_report_inputs(
+            economy_store_on(connection).read_report_inputs(
                 REQUEST,
                 baseline=choices["baseline"],
                 reform=choices["reform"],
@@ -438,29 +426,6 @@ def test_a_reports_refused_values_name_the_side_they_belong_to(
 
     assert raised.value.side == side
     assert isinstance(raised.value.error, error_type)
-
-
-class _CommitFails:
-    """A transaction whose block runs, and whose commit then fails."""
-
-    def __init__(self, connection) -> None:
-        self.connection = connection
-
-    def __enter__(self):
-        return self.connection
-
-    def __exit__(self, error_type, error, traceback) -> None:
-        if error is None:
-            statement = "COMMIT"
-            raise OperationalError(statement, {}, Exception("connection lost"))
-
-
-class _RecordingConnection:
-    def __init__(self) -> None:
-        self.statements: list[object] = []
-
-    def execute(self, statement, *arguments):
-        self.statements.append(statement)
 
 
 def _forced_rerun() -> NewReportRerun:
@@ -482,14 +447,14 @@ def _forced_rerun() -> NewReportRerun:
 
 
 def test_a_create_whose_commit_fails_may_have_been_written() -> None:
-    connection = _RecordingConnection()
-    store = EconomyRunStore(lambda: _CommitFails(connection))
+    session = RecordingSession()
+    store = EconomyRunStore(lambda: CommitFailingTransaction(session))
 
     with pytest.raises(EconomyRecordOutcomeUnknownError) as raised:
         store.create_report_rerun(_forced_rerun())
 
     assert isinstance(raised.value.__cause__, OperationalError)
-    assert connection.statements
+    assert session.statements
 
 
 class _StatementFails:

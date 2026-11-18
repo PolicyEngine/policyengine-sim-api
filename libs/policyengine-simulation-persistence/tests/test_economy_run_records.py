@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
-from conftest import act_as_the_service, rolled_back_transaction
+from conftest import act_as_the_service, in_session, rolled_back_transaction
 from economy_rows import (
     PendingReport,
     RunShape,
@@ -63,8 +63,11 @@ def test_the_countrys_model_is_found_by_its_name(public_api_database_url) -> Non
         economy = insert_economy_catalog(connection)
         act_as_the_service(connection)
 
-        assert read_model_id(connection, country="us") == economy.catalog.model_id
-        assert read_model_id(connection, country="uk") is None
+        assert (
+            in_session(connection, read_model_id, country="us")
+            == economy.catalog.model_id
+        )
+        assert in_session(connection, read_model_id, country="uk") is None
 
 
 def test_a_region_is_found_by_code_in_its_catalog_version_only(
@@ -82,14 +85,16 @@ def test_a_region_is_found_by_code_in_its_catalog_version_only(
         )
         act_as_the_service(connection)
 
-        region = read_region(
+        region = in_session(
             connection,
+            read_region,
             catalog_version_id=economy.catalog.version_id,
             region_code="state/ca",
         )
         assert (
-            read_region(
+            in_session(
                 connection,
+                read_region,
                 catalog_version_id=other.catalog.version_id,
                 region_code="state/ca",
             )
@@ -114,22 +119,34 @@ def test_a_dataset_is_found_by_name_or_id_in_its_catalog_version_only(
         act_as_the_service(connection)
         version_id = economy.catalog.version_id
 
-        by_name = read_dataset(
-            connection, catalog_version_id=version_id, name="acs_local_2024"
+        by_name = in_session(
+            connection,
+            read_dataset,
+            catalog_version_id=version_id,
+            name="acs_local_2024",
         )
-        by_id = read_dataset_by_id(
-            connection, catalog_version_id=version_id, dataset_id=economy.dataset_id
+        by_id = in_session(
+            connection,
+            read_dataset_by_id,
+            catalog_version_id=version_id,
+            dataset_id=economy.dataset_id,
         )
         other_version = other.catalog.version_id
         assert (
-            read_dataset(
-                connection, catalog_version_id=other_version, name="acs_local_2024"
+            in_session(
+                connection,
+                read_dataset,
+                catalog_version_id=other_version,
+                name="acs_local_2024",
             )
             is None
         )
         assert (
-            read_dataset_by_id(
-                connection, catalog_version_id=other_version, dataset_id=local_id
+            in_session(
+                connection,
+                read_dataset_by_id,
+                catalog_version_id=other_version,
+                dataset_id=local_id,
             )
             is None
         )
@@ -170,8 +187,10 @@ def test_the_local_area_dataset_is_the_one_both_area_types_use(
         )
         act_as_the_service(connection)
 
-        found = read_local_area_dataset(
-            connection, catalog_version_id=economy.catalog.version_id
+        found = in_session(
+            connection,
+            read_local_area_dataset,
+            catalog_version_id=economy.catalog.version_id,
         )
 
     assert found is not None
@@ -209,8 +228,10 @@ def test_a_catalog_version_without_one_dataset_for_both_area_types_has_none(
             )
         act_as_the_service(connection)
 
-        found = read_local_area_dataset(
-            connection, catalog_version_id=economy.catalog.version_id
+        found = in_session(
+            connection,
+            read_local_area_dataset,
+            catalog_version_id=economy.catalog.version_id,
         )
 
     assert found is None
@@ -230,8 +251,10 @@ def test_the_local_area_dataset_may_be_the_national_default(
         )
         act_as_the_service(connection)
 
-        found = read_local_area_dataset(
-            connection, catalog_version_id=economy.catalog.version_id
+        found = in_session(
+            connection,
+            read_local_area_dataset,
+            catalog_version_id=economy.catalog.version_id,
         )
 
     assert found is not None
@@ -251,14 +274,23 @@ def test_a_report_runs_call_is_recorded_once_while_it_is_pending_without_one(
     with rolled_back_transaction(public_api_database_url) as connection:
         report = _created_report(connection)
 
-        first = record_report_run_call(
-            connection, report_run_id=report.report_run_id, modal_call_id="fc-first"
+        first = in_session(
+            connection,
+            record_report_run_call,
+            report_run_id=report.report_run_id,
+            modal_call_id="fc-first",
         )
-        second = record_report_run_call(
-            connection, report_run_id=report.report_run_id, modal_call_id="fc-second"
+        second = in_session(
+            connection,
+            record_report_run_call,
+            report_run_id=report.report_run_id,
+            modal_call_id="fc-second",
         )
-        unknown = record_report_run_call(
-            connection, report_run_id=uuid4(), modal_call_id="fc-other"
+        unknown = in_session(
+            connection,
+            record_report_run_call,
+            report_run_id=uuid4(),
+            modal_call_id="fc-other",
         )
         call_id = _row(connection, "report_runs", report.report_run_id)["modal_call_id"]
 
@@ -281,11 +313,15 @@ def test_a_claimed_report_run_keeps_its_claim(public_api_database_url) -> None:
         )
         act_as_the_service(connection)
 
-        status = record_report_run_call(
-            connection, report_run_id=report.report_run_id, modal_call_id="fc-late"
-        )
-        failed = fail_unstarted_report_run(
+        status = in_session(
             connection,
+            record_report_run_call,
+            report_run_id=report.report_run_id,
+            modal_call_id="fc-late",
+        )
+        failed = in_session(
+            connection,
+            fail_unstarted_report_run,
             report_run_id=report.report_run_id,
             simulation_run_ids=(report.baseline.simulation_run_id,),
             error_message="modal_call_refused: Modal refused the call.",
@@ -308,8 +344,9 @@ def test_an_unstarted_report_run_and_its_new_simulation_runs_fail_at_once(
     with rolled_back_transaction(public_api_database_url) as connection:
         report = _created_report(connection)
 
-        failed = fail_unstarted_report_run(
+        failed = in_session(
             connection,
+            fail_unstarted_report_run,
             report_run_id=report.report_run_id,
             simulation_run_ids=(
                 report.baseline.simulation_run_id,
@@ -317,8 +354,9 @@ def test_an_unstarted_report_run_and_its_new_simulation_runs_fail_at_once(
             ),
             error_message=message,
         )
-        again = fail_unstarted_report_run(
+        again = in_session(
             connection,
+            fail_unstarted_report_run,
             report_run_id=report.report_run_id,
             simulation_run_ids=(),
             error_message="a second failure",
@@ -360,28 +398,35 @@ def test_a_simulation_runs_call_is_recorded_or_the_run_failed_while_unstarted(
         )
         act_as_the_service(connection)
 
-        status = record_simulation_run_call(
+        status = in_session(
             connection,
+            record_simulation_run_call,
             simulation_run_id=recorded.simulation_run_id,
             modal_call_id="fc-worker",
         )
-        not_failed = fail_unstarted_simulation_run(
+        not_failed = in_session(
             connection,
+            fail_unstarted_simulation_run,
             simulation_run_id=recorded.simulation_run_id,
             error_message="modal_call_refused: refused",
         )
-        failed = fail_unstarted_simulation_run(
+        failed = in_session(
             connection,
+            fail_unstarted_simulation_run,
             simulation_run_id=refused.simulation_run_id,
             error_message="modal_call_refused: refused",
         )
-        not_recorded = record_simulation_run_call(
+        not_recorded = in_session(
             connection,
+            record_simulation_run_call,
             simulation_run_id=refused.simulation_run_id,
             modal_call_id="fc-late",
         )
-        unknown = record_simulation_run_call(
-            connection, simulation_run_id=uuid4(), modal_call_id="fc-other"
+        unknown = in_session(
+            connection,
+            record_simulation_run_call,
+            simulation_run_id=uuid4(),
+            modal_call_id="fc-other",
         )
         recorded_run = _row(connection, "simulation_runs", recorded.simulation_run_id)
         refused_run = _row(connection, "simulation_runs", refused.simulation_run_id)
