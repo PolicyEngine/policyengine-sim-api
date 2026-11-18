@@ -15,9 +15,9 @@ one transaction:
 3. the report's window run on the current catalog version and .py version
    that hasn't failed and isn't a recalculation: when there is one, the
    request joins it, with its year runs, and inserts nothing more;
-4. otherwise the window run, recording its .py version, against the Public
-   API's window run index (``find_or_insert_window_run``), so a request
-   inserting one another request has inserted waits for it and joins it;
+4. otherwise the window run, recording its .py version, against API v1's
+   window run index (``find_or_insert_window_run``), so a request inserting
+   one another request has inserted waits for it and joins it;
    then each distinct simulation's run on those versions, catalog version
    and year that hasn't failed and wasn't forced, found or inserted in
    simulation ID order, and each year's report run naming them.

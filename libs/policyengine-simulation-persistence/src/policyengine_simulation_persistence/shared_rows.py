@@ -1,9 +1,9 @@
 """Find a shared simulation, report or run, or insert it: one lookup each.
 
 Identical requests share simulations, reports and runs (C1 · 24). Each
-lookup here is one ``INSERT … ON CONFLICT DO NOTHING`` against the Public
-API's unique index for the row's definition or version set, followed, when
-the insert did nothing, by a read of the row that won:
+lookup here is one ``INSERT … ON CONFLICT DO NOTHING`` against API v1's
+unique index for the row's definition or version set, followed, when the
+insert did nothing, by a read of the row that won:
 
 - a simulation or a report by ``(key_version, definition_key)``;
 - a simulation run by simulation, year, catalog version, country package
