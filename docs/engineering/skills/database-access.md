@@ -82,8 +82,10 @@ A Core table is, in one module:
 - a parameter, variable or attribute annotated as SQLAlchemy's `Table`;
 - a name or attribute it assigns from an expression rooted at a Core table,
   such as `previous = household_jobs.alias()` or
-  `self.jobs = tables.household_jobs`, with a tuple assignment pairing each
-  name with its value, nested tuples included;
+  `self.jobs = tables.household_jobs`, or from one that reads `__table__`,
+  `local_table`, `persist_selectable` or `sorted_tables`, such as
+  `household_jobs = HouseholdJob.__table__`, with a tuple assignment pairing
+  each name with its value, nested tuples included;
 - a class attribute it declares as a table, such as a dataclass field
   `table: Table`, wherever the module reads it. Another module's read of a
   class or instance attribute is reported when the reading module imports

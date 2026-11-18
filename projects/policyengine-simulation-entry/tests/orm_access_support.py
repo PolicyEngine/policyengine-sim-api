@@ -24,8 +24,9 @@ table is, within one module:
 - a parameter, variable or attribute annotated as SQLAlchemy's ``Table``;
 - a name or attribute it assigns from an expression rooted at a Core table,
   such as ``previous = household_jobs.alias()`` or ``self.jobs =
-  tables.household_jobs``, pairing the names and values of a tuple
-  assignment;
+  tables.household_jobs``, or from one that reads a mapped class's table, such
+  as ``household_jobs = HouseholdJob.__table__``, pairing the names and values
+  of a tuple assignment;
 - a class attribute it declares as a table, such as a dataclass field
   ``table: Table``, wherever the module reads it.
 
@@ -509,13 +510,20 @@ def _is_core_expression(
     modules: Mapping[str, _Module],
     tables: tuple[set[str], set[str]],
 ) -> bool:
-    """Whether an expression is rooted at a Core table, through any attributes."""
+    """Whether an expression is rooted at a Core table, through any attributes.
+
+    ``__table__`` and the other attributes in ``TABLE_ATTRIBUTES`` yield a Core
+    table whatever they are read from, so a name assigned from one, such as
+    ``household_jobs = HouseholdJob.__table__``, stays a Core table.
+    """
     names, attributes = tables
     node = value
     while True:
         if isinstance(node, ast.Attribute):
-            if node.attr in attributes or _exported_table_attribute(
-                node, module, modules
+            if (
+                node.attr in TABLE_ATTRIBUTES
+                or node.attr in attributes
+                or _exported_table_attribute(node, module, modules)
             ):
                 return True
             node = node.value
