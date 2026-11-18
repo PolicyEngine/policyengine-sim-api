@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 import tomllib
 from orm_access_support import (
     CORE_CONNECTION,
-    CORE_TABLE_ACCESS,
     CORE_TABLE_DECLARATION,
     RAW_SQL,
     UNMAPPED_TABLE,
@@ -116,12 +115,7 @@ def test_rule_proof_orm_only(monkeypatch: pytest.MonkeyPatch) -> None:
         (27, CORE_TABLE_DECLARATION, "Column('status', ...)"),
         (28, CORE_TABLE_DECLARATION, "Column('modal_call_id', ...)"),
         (39, CORE_CONNECTION, "connection.execute(...)"),
-        (40, CORE_TABLE_ACCESS, "household_jobs"),
         (48, CORE_CONNECTION, "connection.execute(...)"),
-        (49, CORE_TABLE_ACCESS, "household_jobs"),
-        (51, CORE_TABLE_ACCESS, "household_jobs"),
-        (52, CORE_TABLE_ACCESS, "household_jobs"),
-        (55, CORE_TABLE_ACCESS, "household_jobs"),
         (61, CORE_CONNECTION, "engine.connect()"),
         (62, CORE_CONNECTION, "connection.execute(...)"),
         (

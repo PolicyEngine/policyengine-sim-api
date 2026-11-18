@@ -20,31 +20,16 @@ from orm_access_support import (
 )
 
 STORE = "libs/example/src/example/store.py"
-TABLES = "libs/example/src/example/tables.py"
 ENGINE = "libs/example/src/example/engine.py"
 ORM_BASE = "libs/example/src/example/orm_base.py"
 GATEWAY = "projects/gateway/src/gateway/regions.py"
-PACKAGE = "libs/example/src/example/__init__.py"
 MODELS = "libs/example/src/example/models.py"
-
-# Core tables under generic names, as the persistence library declares them.
-CORE_TABLES_MODULE = """
-from sqlalchemy import Column, MetaData, String, Table
-
-metadata = MetaData()
-household_jobs = Table("household_jobs", metadata, Column("id", String))
-regions = Table("regions", metadata, Column("id", String))
-reports = Table("reports", metadata, Column("id", String))
-"""
 
 
 def _checks(sources: dict[str, str], file: str) -> list[tuple[str, str]]:
-    """Return the (check, source) findings in ``file``, with the tables module."""
+    """Return the (check, source) findings in ``file``."""
     findings = orm_access_findings(
-        {
-            TABLES: dedent(CORE_TABLES_MODULE),
-            **{name: dedent(source) for name, source in sources.items()},
-        }
+        {name: dedent(source) for name, source in sources.items()}
     )
     return [
         (finding.check, finding.source) for finding in findings if finding.file == file
@@ -74,6 +59,122 @@ def test_orm_statements_are_accepted(statement):
     """
 
     assert _checks({STORE: store}, STORE) == []
+
+
+@pytest.mark.parametrize(
+    ("declaration", "summary"),
+    [
+        ("def read(jobs: Table): ...", "jobs: Table"),
+        ("def read(jobs: TableClause): ...", "jobs: TableClause"),
+        ("def read(jobs: 'sa.Table | None'): ...", "jobs: sa.Table | None"),
+        ("def read(*tables: Table): ...", "tables: Table"),
+        ("def read(**tables: Table): ...", "tables: Table"),
+        ("def read() -> Table: ...", "read() -> Table"),
+        ("async def read() -> list[Table]: ...", "read() -> list[Table]"),
+        ("selected: Table = choose()", "selected: Table"),
+        ("self.jobs: Table = source", "self.jobs: Table"),
+        ("class Rows:\n    target: Table", "target: Table"),
+    ],
+)
+def test_an_annotation_naming_a_core_table_type_is_reported(declaration, summary):
+    store = f"""
+import sqlalchemy as sa
+from sqlalchemy import Table, TableClause
+
+{declaration}
+"""
+
+    assert _checks({STORE: store}, STORE) == [(CORE_TABLE_ACCESS, summary)]
+
+
+def test_a_declarative_base_module_may_annotate_a_mapped_classs_table():
+    source = """
+    from typing import ClassVar
+
+    from sqlalchemy import Table
+
+    class TableModel:
+        __table__: ClassVar[Table]
+    """
+
+    assert _checks({ORM_BASE: source}, ORM_BASE) == []
+    assert _checks({STORE: source}, STORE) == [
+        (CORE_TABLE_ACCESS, "__table__: ClassVar[Table]")
+    ]
+
+
+def test_a_declarative_base_module_may_not_declare_a_core_table():
+    source = """
+    from sqlalchemy import Table
+
+    jobs = Table("household_jobs", metadata)
+    """
+
+    assert _checks({ORM_BASE: source}, ORM_BASE) == [
+        (CORE_TABLE_DECLARATION, "Table('household_jobs', ...)")
+    ]
+
+
+@pytest.mark.parametrize(
+    "table_expression",
+    [
+        "HouseholdJob.__table__",
+        "inspect(HouseholdJob).local_table",
+        "inspect(HouseholdJob).persist_selectable",
+        "Base.metadata.sorted_tables",
+    ],
+)
+def test_a_table_is_reported_where_it_is_reached_and_not_where_it_is_used(
+    table_expression,
+):
+    models = f"""
+    from example.orm_base import Base, HouseholdJob
+    from sqlalchemy import inspect, select
+
+    jobs = {table_expression}
+    statement = select(jobs)
+    """
+    store = """
+    from example.models import jobs
+    from sqlalchemy import select
+
+    statement = select(jobs)
+    """
+    sources = {MODELS: models, STORE: store}
+
+    assert _checks(sources, MODELS) == [(CORE_TABLE_ACCESS, table_expression)]
+    assert _checks(sources, STORE) == []
+
+
+def test_a_table_declared_in_another_module_is_reported_where_it_is_declared():
+    tables = """
+    from sqlalchemy import MetaData, Table
+
+    metadata = MetaData()
+    household_jobs = Table("household_jobs", metadata)
+    """
+    store = """
+    from example.tables import household_jobs
+    from sqlalchemy import select
+
+    statement = select(household_jobs)
+    """
+    sources = {"libs/example/src/example/tables.py": tables, STORE: store}
+
+    assert _checks(sources, "libs/example/src/example/tables.py") == [
+        (CORE_TABLE_DECLARATION, "MetaData(...)"),
+        (CORE_TABLE_DECLARATION, "Table('household_jobs', ...)"),
+    ]
+    assert _checks(sources, STORE) == []
+
+
+def test_two_files_may_share_a_module_name():
+    sources = {
+        "projects/first/src/modal/app.py": "",
+        "projects/second/src/modal/app.py": "",
+    }
+
+    assert orm_access_findings(sources) == []
 
 
 def test_names_shared_with_core_tables_elsewhere_are_not_core_tables():
@@ -135,49 +236,6 @@ def test_lightweight_tables_and_columns_are_core_declarations():
         (CORE_TABLE_DECLARATION, "sa.table('pg_class', ...)"),
         (CORE_TABLE_DECLARATION, "sa.column('relname')"),
     ]
-
-
-def test_every_reference_to_an_imported_core_table_is_reported():
-    store = """
-    from example.tables import household_jobs as jobs
-
-    statement = jobs.insert()
-    previous = jobs.alias("previous")
-    condition = previous.c.id == job_id
-    rows = session.query(jobs)
-    """
-
-    assert _checks({STORE: store}, STORE) == [
-        (CORE_TABLE_ACCESS, "jobs"),
-        (CORE_TABLE_ACCESS, "jobs"),
-        (CORE_TABLE_ACCESS, "previous"),
-        (CORE_TABLE_ACCESS, "jobs"),
-    ]
-
-
-def test_core_tables_reached_through_relative_imports_and_modules_are_reported():
-    store = """
-    from . import tables
-    from .tables import regions
-
-    condition = regions.c.id == tables.household_jobs.c.id
-    """
-
-    assert _checks({STORE: store}, STORE) == [
-        (CORE_TABLE_ACCESS, "regions"),
-        (CORE_TABLE_ACCESS, "tables.household_jobs"),
-    ]
-
-
-def test_a_parameter_annotated_as_a_sqlalchemy_table_is_a_core_table():
-    store = """
-    from sqlalchemy import Table
-
-    def identifiers(table: Table):
-        return table.c.id
-    """
-
-    assert _checks({STORE: store}, STORE) == [(CORE_TABLE_ACCESS, "table")]
 
 
 @pytest.mark.parametrize(
@@ -384,70 +442,6 @@ def test_sqlmodel_imports_are_reported(statement):
     assert _checks({STORE: statement}, STORE) == [(SQLMODEL_IMPORT, "sqlmodel")]
 
 
-def test_a_package_re_export_and_a_dotted_import_reach_core_tables():
-    package = """
-    from example import tables
-
-    household_jobs = tables.household_jobs
-    """
-    store = """
-    import example
-    import example.tables
-
-    jobs = example.household_jobs
-    statement = jobs.update()
-    condition = example.tables.regions.c.id == job_id
-    """
-
-    sources = {PACKAGE: package, STORE: store}
-    assert _checks(sources, PACKAGE) == [(CORE_TABLE_ACCESS, "tables.household_jobs")]
-    assert _checks(sources, STORE) == [
-        (CORE_TABLE_ACCESS, "example.household_jobs"),
-        (CORE_TABLE_ACCESS, "jobs"),
-        (CORE_TABLE_ACCESS, "example.tables.regions"),
-    ]
-
-
-def test_star_imports_and_attribute_targets_carry_core_tables():
-    store = """
-    from example.tables import *
-
-    class Store:
-        def __init__(self):
-            self.jobs = household_jobs
-
-        def statement(self):
-            return self.jobs.insert(), regions.c.id
-    """
-
-    assert _checks({STORE: store}, STORE) == [
-        (CORE_TABLE_ACCESS, "household_jobs"),
-        (CORE_TABLE_ACCESS, "self.jobs"),
-        (CORE_TABLE_ACCESS, "regions"),
-    ]
-
-
-def test_a_variable_annotated_as_a_sqlalchemy_table_is_a_core_table():
-    store = """
-    from sqlalchemy import Table
-
-    selected: Table = choose_table()
-    condition = selected.c.id == job_id
-    """
-
-    assert _checks({STORE: store}, STORE) == [(CORE_TABLE_ACCESS, "selected")]
-
-
-def test_two_files_with_one_module_name_are_refused():
-    sources = {
-        "projects/first/src/modal/app.py": "",
-        "projects/second/src/modal/app.py": "",
-    }
-
-    with pytest.raises(ValueError, match=r"are both module modal\.app"):
-        orm_access_findings(sources)
-
-
 def test_begin_counts_as_opening_a_connection_only_on_an_engine():
     engine_module = """
     from sqlalchemy import create_engine
@@ -537,40 +531,6 @@ def test_the_runtime_check_accepts_tables_mapped_by_either_declarative_base(
     ]
 
 
-def test_a_table_stored_in_another_module_is_reported_where_it_is_stored():
-    results = """
-    from dataclasses import dataclass
-
-    from sqlalchemy import Table
-
-    from example.tables import household_jobs
-
-    @dataclass
-    class ResultRows:
-        target: Table
-
-    def job_rows(rows: ResultRows):
-        return rows.target
-
-    JOB_ROWS = ResultRows(target=household_jobs)
-    """
-    store = """
-    from sqlalchemy import insert
-
-    from example.results import JOB_ROWS, ResultRows
-
-    def write(result_rows: ResultRows):
-        return insert(result_rows.target)
-    """
-    sources = {"libs/example/src/example/results.py": results, STORE: store}
-
-    assert _checks(sources, "libs/example/src/example/results.py") == [
-        (CORE_TABLE_ACCESS, "rows.target"),
-        (CORE_TABLE_ACCESS, "household_jobs"),
-    ]
-    assert _checks(sources, STORE) == []
-
-
 @pytest.mark.parametrize(
     "expression", ["key.table", "job_id.table", "self.model.id.table", "rows.table"]
 )
@@ -587,51 +547,6 @@ def test_any_table_read_in_a_module_using_sqlalchemy_is_core_table_access(
     assert _checks({STORE: store}, STORE) == [(CORE_TABLE_ACCESS, expression)]
 
 
-def test_nested_tuple_assignments_pair_each_name_with_its_value():
-    store = """
-    from example.tables import household_jobs, regions
-
-    (current, label), area = (household_jobs.alias(), "jobs"), regions
-    condition = current.c.id == area.c.id
-    """
-
-    assert sorted(source for _, source in _checks({STORE: store}, STORE)) == [
-        "area",
-        "current",
-        "household_jobs",
-        "regions",
-    ]
-
-
-def test_modules_importing_each_other_settle_on_their_exports():
-    # first is read before second, so it learns that regions is a table only
-    # on a later pass, once second's exports are known.
-    first = """
-    from example.second import regions
-    from example.tables import household_jobs
-
-    condition = regions.c.id == region_id
-    """
-    second = """
-    from example.first import household_jobs
-    from example.tables import regions
-
-    condition = household_jobs.c.id == regions.c.id
-    """
-    sources = {
-        "libs/example/src/example/first.py": first,
-        "libs/example/src/example/second.py": second,
-    }
-
-    assert _checks(sources, "libs/example/src/example/first.py") == [
-        (CORE_TABLE_ACCESS, "regions")
-    ]
-    assert _checks(sources, "libs/example/src/example/second.py") == [
-        (CORE_TABLE_ACCESS, "household_jobs"),
-        (CORE_TABLE_ACCESS, "regions"),
-    ]
-
-
 def test_a_called_or_assigned_table_attribute_is_not_a_table_read():
     store = """
     import sqlalchemy as sa
@@ -645,55 +560,6 @@ def test_a_called_or_assigned_table_attribute_is_not_a_table_read():
     assert _checks({STORE: store}, STORE) == []
 
 
-def test_a_class_attribute_assigned_a_core_table_is_one_where_read():
-    store = """
-    from example.tables import household_jobs
-
-    class Index:
-        table = household_jobs
-
-    def identifiers(index: Index):
-        return index.table.c.id
-    """
-
-    assert _checks({STORE: store}, STORE) == [
-        (CORE_TABLE_ACCESS, "household_jobs"),
-        (CORE_TABLE_ACCESS, "index.table"),
-    ]
-
-
-def test_a_tuple_assignment_pairs_each_name_with_its_value():
-    store = """
-    from example.tables import household_jobs
-
-    current, previous = household_jobs.alias(), household_jobs.alias()
-    label, count = "jobs", 2
-    condition = previous.c.id == current.c.id
-    """
-
-    assert _checks({STORE: store}, STORE) == [
-        (CORE_TABLE_ACCESS, "household_jobs"),
-        (CORE_TABLE_ACCESS, "household_jobs"),
-        (CORE_TABLE_ACCESS, "previous"),
-        (CORE_TABLE_ACCESS, "current"),
-    ]
-
-
-def test_an_attribute_annotated_as_a_table_leaves_the_plain_name_alone():
-    store = """
-    from sqlalchemy import Table
-
-    class Store:
-        def __init__(self, source):
-            self.jobs: Table = source
-
-    def count(jobs: list[str]) -> int:
-        return len(jobs)
-    """
-
-    assert [source for _, source in _checks({STORE: store}, STORE)] == []
-
-
 def test_name_rules_apply_only_in_modules_that_use_sqlalchemy():
     gateway = """
     def publish(settings, socket, cache_engine, driver):
@@ -704,74 +570,6 @@ def test_name_rules_apply_only_in_modules_that_use_sqlalchemy():
     """
 
     assert _checks({GATEWAY: gateway}, GATEWAY) == []
-
-
-@pytest.mark.parametrize(
-    "table_expression",
-    [
-        "HouseholdJob.__table__",
-        "inspect(HouseholdJob).local_table",
-        "inspect(HouseholdJob).persist_selectable",
-        "Base.metadata.sorted_tables",
-    ],
-)
-def test_a_name_assigned_a_table_attribute_stays_a_core_table(table_expression):
-    models = f"""
-    from example.orm_base import Base, HouseholdJob
-    from sqlalchemy import inspect, select
-
-    jobs = {table_expression}
-    statement = select(jobs)
-    """
-
-    assert _checks({MODELS: models}, MODELS) == [
-        (CORE_TABLE_ACCESS, table_expression),
-        (CORE_TABLE_ACCESS, "jobs"),
-    ]
-
-
-def test_a_mapped_classs_table_stays_a_core_table_through_imports():
-    """A store keeps its findings when its table becomes ``X.__table__``."""
-    models = """
-    from example.orm_base import HouseholdJob
-
-    household_jobs = HouseholdJob.__table__
-    """
-    package = """
-    from example.models import household_jobs
-    """
-    store = """
-    from example import household_jobs as jobs
-    from example import models
-    from sqlalchemy import select
-
-    by_name = select(jobs)
-    by_module = select(models.household_jobs)
-    """
-
-    assert _checks({MODELS: models, PACKAGE: package, STORE: store}, STORE) == [
-        (CORE_TABLE_ACCESS, "jobs"),
-        (CORE_TABLE_ACCESS, "models.household_jobs"),
-    ]
-
-
-def test_an_attribute_assigned_a_mapped_classs_table_is_one_where_read():
-    store = """
-    from example.orm_base import HouseholdJob
-    from sqlalchemy import select
-
-    class Store:
-        def __init__(self):
-            self.jobs = HouseholdJob.__table__
-
-        def statement(self):
-            return select(self.jobs)
-    """
-
-    assert _checks({STORE: store}, STORE) == [
-        (CORE_TABLE_ACCESS, "HouseholdJob.__table__"),
-        (CORE_TABLE_ACCESS, "self.jobs"),
-    ]
 
 
 def test_a_name_assigned_a_mapped_class_or_its_table_name_is_not_a_table():
