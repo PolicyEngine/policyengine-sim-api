@@ -4,7 +4,9 @@
   economy report and its simulations by key, and joins its run on the
   current versions or creates one, starting the coordinator only for a run
   it created, answering 201 with the report's ID, its run's ID and status,
-  and each side's simulation and simulation run. With ``report_type``
+  and each side's simulation and simulation run. With ``include_cliffs``
+  it also finds or creates each side's simulation run's cliff calculation,
+  starting only those it created, and answers each side's. With ``report_type``
   ``budget_window`` it finds or creates a budget-window report by key, each
   year's simulations by their year's keys, and joins its window run on the
   current versions or creates one with a report run per year, starting up
@@ -149,9 +151,7 @@ _UNPROCESSABLE = {
         "be calculated carry a code: missing_parameters, "
         "overlapping_parameters, or household_not_calculable for a household "
         "report's household; no_local_area_dataset refuses data_source on a "
-        "release with no local-area dataset; a report asking for cliffs "
-        "(include_cliffs: true) carries cliffs_not_available until each "
-        "simulation run's own cliff calculation exists"
+        "release with no local-area dataset"
     ),
     "model": EconomyRequestUnprocessable,
 }
@@ -555,7 +555,10 @@ def _submission_routes(
             "run on those versions that hasn't failed and wasn't forced is "
             "joined, with no new call; otherwise each side joins its "
             "simulation's run on those versions or gets a new one, and the new "
-            "report run is started. "
+            "report run is started. With include_cliffs, each simulation run "
+            "the report run names that has no cliff calculation gets one, "
+            "started; one being calculated or calculated is joined, and "
+            "include_cliffs is never stored or keyed. "
             "A budget-window report (report_type budget_window) compares them "
             "in each year of a window of 1 to 75 years, with a report run per "
             "year, at most five running at once, found or created by key as "
@@ -581,7 +584,8 @@ def _submission_routes(
                     "(economy, budget window or household) found or created by "
                     "key, with its run (a window's: its window run) on the "
                     "default worker's versions, joined (no new call) or created "
-                    "and started"
+                    "and started; with include_cliffs, each side's cliff "
+                    "calculation and its status"
                 )
             },
             400: _REFUSED,

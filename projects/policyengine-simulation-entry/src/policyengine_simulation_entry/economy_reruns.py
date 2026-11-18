@@ -7,9 +7,9 @@ default worker, as a new run, and keeps every earlier run. The service:
    dataset name, stored options and each simulation's policy and dynamic.
    A record this service does not re-run, or one missing a row it
    calculates on, is refused (409 ``rerun_not_supported``), as is one that
-   does not exist (404), and a report stored before C1 · 27 asking for
-   cliff impacts (422 ``cliffs_not_available``) until they are calculated
-   per run (C1 · 24's interim answer A);
+   does not exist (404), and a budget window's or household report's
+   re-run asking for cliffs, which neither calculates (422
+   ``cliffs_not_available``);
 2. finds the default worker's economy functions for the country, and reads,
    in one transaction, the country's catalog version for that worker's .py
    version, its region and dataset with the record's code and name, and each
@@ -30,7 +30,13 @@ default worker, as a new run, and keeps every earlier run. The service:
 4. starts and records the call of a run it created as a new record's: the
    report run's coordinator, or the simulation function, by run ID (C1 · 8's
    coordination), failing the new runs when Modal refuses the call. A
-   joined run gets no call: whoever created it started it.
+   joined run gets no call: whoever created it started it;
+5. for an economy report's re-run asking for cliffs, or of a report stored
+   before C1 · 27 asking for them (its stored ``include_cliffs``, only
+   read), finds or creates, in step 3's transaction, the cliff calculation
+   of each simulation run the report run names, joined or created, and
+   starts those it created before step 4's call, as a create does
+   (``cliff_calculation_starts``).
 
 A budget-window report's re-run joins or creates a budget-window run with
 a report run per year, each year on the simulations that year's report
@@ -77,7 +83,10 @@ from policyengine_simulation_entry.economy_calculation_inputs import (
     report_run_calculation,
     simulation_run_calculation,
 )
-from policyengine_simulation_entry.economy_requests import refuse_stored_cliffs
+from policyengine_simulation_entry.economy_requests import (
+    asks_for_cliffs,
+    refuse_cliffs_for,
+)
 from policyengine_simulation_entry.economy_submission_errors import (
     STORED_REPORT,
     STORED_SIMULATION,
@@ -247,6 +256,8 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
         )
         if definition is None:
             raise EconomyRecordNotFoundError(_REPORT)
+        if request.include_cliffs:
+            refuse_cliffs_for(definition.kind)
         if definition.kind == "household":
             return await self._rerun_household_report(
                 definition,
@@ -254,7 +265,6 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
                 observability_context=observability_context,
             )
         stored = rerunnable_report(definition)
-        refuse_stored_cliffs(definition.inputs)
         window_years = (
             complete_window_years(definition)
             if definition.kind == "budget_window"
@@ -302,6 +312,14 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             baseline=self._new_side(stored.baseline.simulation_id),
             reform=self._new_side(stored.reform.simulation_id),
             forced=forced,
+            cliffs=(
+                self._proposed_cliffs()
+                if asks_for_cliffs(
+                    include_cliffs=request.include_cliffs,
+                    stored_inputs=definition.inputs,
+                )
+                else None
+            ),
         )
         scope = rerun_scope(
             stored.country,
@@ -315,32 +333,48 @@ class EconomyRerunService(ReportSubmissionService[EconomyRerunRuns]):
             lambda: self._store.create_report_rerun(rerun),
             source=STORED_REPORT,
         )
-        if not found.inserted:
-            return _joined_report_run(stored, found)
-        answer = _created_report_run(stored, rerun, found)
-        calculation = report_run_calculation(
-            worker,
-            scope,
-            self._origin(request_id),
-            run_ids=ReportRunIds(
-                report_run_id=answer.report_run_id,
-                baseline_simulation_run_id=answer.baseline_simulation_run_id,
-                reform_simulation_run_id=answer.reform_simulation_run_id,
-            ),
-            baseline_policy=inputs.baseline.reform,
-            reform_policy=inputs.reform.reform,
+        answer = (
+            _created_report_run(stored, rerun, found)
+            if found.inserted
+            else _joined_report_run(stored, found)
         )
-        status = await self._start_report_run(
-            worker,
-            calculation,
-            report_id=report_id,
-            run_id=rerun.run_id,
-            # An unforced re-run's simulation runs may be another report run's.
-            new_simulation_run_ids=rerun.new_simulation_run_ids if forced else (),
-            observability_context=observability_context,
-            rerun=True,
-        )
-        return answer.model_copy(update={"status": status})
+        cliffs = None
+        if found.cliffs is not None:
+            # Written with the report run, so started before its coordinator.
+            cliffs = await self._start_cliffs(
+                worker,
+                scope,
+                request_id,
+                found=found.cliffs,
+                baseline_policy=inputs.baseline.reform,
+                reform_policy=inputs.reform.reform,
+                observability_context=observability_context,
+            )
+        if found.inserted:
+            status = await self._start_report_run(
+                worker,
+                report_run_calculation(
+                    worker,
+                    scope,
+                    self._origin(request_id),
+                    run_ids=ReportRunIds(
+                        report_run_id=answer.report_run_id,
+                        baseline_simulation_run_id=answer.baseline_simulation_run_id,
+                        reform_simulation_run_id=answer.reform_simulation_run_id,
+                    ),
+                    baseline_policy=inputs.baseline.reform,
+                    reform_policy=inputs.reform.reform,
+                ),
+                report_id=report_id,
+                run_id=rerun.run_id,
+                # An unforced re-run's simulation runs may be another report
+                # run's.
+                new_simulation_run_ids=rerun.new_simulation_run_ids if forced else (),
+                observability_context=observability_context,
+                rerun=True,
+            )
+            answer = answer.model_copy(update={"status": status})
+        return answer.model_copy(update={"cliffs": cliffs})
 
     async def rerun_simulation(
         self,

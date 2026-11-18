@@ -254,9 +254,12 @@ def rerun_scope(
 ) -> CalculationScope:
     """Return what a re-run calculates on, with the bundle's dataset.
 
-    ``options`` are the stored report's (``reports.inputs``). Raise
-    EconomySubmissionRefusedError (``dataset_not_in_bundle``) when the
-    default worker's bundle lacks the stored dataset.
+    ``options`` are the stored report's (``reports.inputs``), of which only
+    the SPM selection is calculated on: a report stored before C1 · 27 may
+    hold its request's ``include_cliffs``, which never reaches the
+    calculation. Raise EconomySubmissionRefusedError
+    (``dataset_not_in_bundle``) when the default worker's bundle lacks the
+    stored dataset.
     """
     try:
         dataset = bundle_dataset(worker, catalog.dataset.name)
@@ -273,8 +276,5 @@ def rerun_scope(
         region_code=catalog.region.code,
         dataset=dataset,
         year=request.year,
-        options=simulation_options(
-            include_cliffs=bool(options.get("include_cliffs", False)),
-            spm=options.get("spm"),
-        ),
+        options=simulation_options(spm=options.get("spm")),
     )
