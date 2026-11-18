@@ -434,6 +434,20 @@ def test_a_system_column_isnt_a_column_the_role_can_update(disposable_database):
 
 
 @pytest.mark.postgres
+def test_an_empty_list_requires_nothing(disposable_database):
+    engine = create_simulation_engine(disposable_database.service_url)
+    try:
+        with create_session_factory(engine).begin() as session:
+            missing = missing_table_privileges(
+                session, table_privileges={}, updatable_columns={}
+            )
+    finally:
+        engine.dispose()
+
+    assert missing == []
+
+
+@pytest.mark.postgres
 def test_the_catalog_classes_read_postgresqls_catalog(disposable_database):
     """Each mapped column of the catalog classes exists under its own name."""
     _grant(

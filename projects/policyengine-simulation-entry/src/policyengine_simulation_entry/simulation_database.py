@@ -117,7 +117,7 @@ class SimulationDatabase:
             self.executor,
             partial(
                 read_missing_table_privileges,
-                self.engine,
+                self.session_factory,
                 statement_timeout_milliseconds=READINESS_STATEMENT_TIMEOUT_MILLISECONDS,
             ),
         )

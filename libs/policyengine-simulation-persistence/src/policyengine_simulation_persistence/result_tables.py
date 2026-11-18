@@ -552,6 +552,9 @@ class Inequality(ResultBase):
 
 
 result_metadata = ResultBase.metadata
+RESULT_TABLE_NAMES: Final = tuple(
+    sorted(mapper.class_.__tablename__ for mapper in ResultBase.registry.mappers)
+)
 
 # The Core tables the stores' statements use until they name these classes.
 labor_supply_responses = LaborSupplyResponse.__table__
