@@ -21,7 +21,7 @@ the operation wrote: its statements and COMMIT run after the opener returns,
 and their failures are raised without a retry.
 
 The deployment check (`validate_runtime_database`) holds one connection at a
-time and repeats a step after an `OperationalError`, up to five attempts, since
+time and repeats a step after a connection failure, up to five attempts, since
 each step only reads or rolls back what it wrote. The deployment command gives
 it `create_stage12_check_session_factory`, whose one-connection pool lets the
 role check, every schema read and the rolled-back writes share one connection,

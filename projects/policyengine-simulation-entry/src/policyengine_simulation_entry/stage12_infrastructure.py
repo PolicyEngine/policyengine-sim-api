@@ -6,6 +6,7 @@ import argparse
 import os
 import sys
 import threading
+from contextlib import suppress
 from pathlib import Path
 
 from policyengine_simulation_persistence import dispose_session_factory
@@ -15,23 +16,35 @@ from policyengine_stage12_persistence import (
     validate_runtime_database,
 )
 
-# Room for every attempt and wait of the check when the database's host name has
-# up to four addresses, each with its own connect timeout. A connection that
-# goes silent raises no error, so nothing else would end a read blocked on it.
+# Room for every attempt and wait of the check's steps, each attempt connecting
+# once, when the database's host name has up to four addresses with a connect
+# timeout each. A connection that goes silent raises no error, so nothing else
+# would end a read blocked on it.
 CHECK_TIME_LIMIT_SECONDS = 900
+# How long the limit waits to report itself: standard error may be blocked.
+TIME_LIMIT_MESSAGE_WAIT_SECONDS = 5
 
 
-def _end_the_stalled_check() -> None:
-    """Fail the deployment at once: cleaning up could block on the same read."""
-    try:
+def _report_the_time_limit() -> None:
+    with suppress(OSError, ValueError):
         print(
             "Stage 12 runtime database verification did not finish within "
             f"{CHECK_TIME_LIMIT_SECONDS} seconds",
             file=sys.stderr,
             flush=True,
         )
-    finally:
-        os._exit(1)
+
+
+def _end_the_stalled_check() -> None:
+    """Fail the deployment at once: cleaning up could block on the same read.
+
+    The message is written on its own thread, so a blocked standard error can't
+    keep the process alive.
+    """
+    report = threading.Thread(target=_report_the_time_limit, daemon=True)
+    report.start()
+    report.join(TIME_LIMIT_MESSAGE_WAIT_SECONDS)
+    os._exit(1)
 
 
 def _parser() -> argparse.ArgumentParser:

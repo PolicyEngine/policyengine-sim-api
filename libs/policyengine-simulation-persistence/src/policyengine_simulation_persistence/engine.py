@@ -28,6 +28,7 @@ POOL_SIZE = 2
 MAX_OVERFLOW = 3
 # A v2 Modal call connects across the internet to the database's pooler.
 UNPOOLED_CONNECT_TIMEOUT_SECONDS = 10
+SINGLE_CONNECTION_CONNECT_TIMEOUT_SECONDS = 10
 # How long a single-connection engine's user waits for the connection. Its users
 # take turns, so waiting at all means one of them kept it.
 SINGLE_CONNECTION_WAIT_SECONDS = 5
@@ -106,7 +107,7 @@ def _create_single_connection_engine(database_url: str) -> Engine:
         pool_timeout=SINGLE_CONNECTION_WAIT_SECONDS,
         pool_pre_ping=True,
         connect_args={
-            "connect_timeout": UNPOOLED_CONNECT_TIMEOUT_SECONDS,
+            "connect_timeout": SINGLE_CONNECTION_CONNECT_TIMEOUT_SECONDS,
             "prepare_threshold": None,
         },
     )

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import TYPE_CHECKING
@@ -23,7 +22,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import ENUM, UUID, insert
-from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.exc import DBAPIError, OperationalError, SQLAlchemyError
 
 from policyengine_stage12_persistence.engine import (
     WITHOUT_OBJECT_SYNC,
@@ -389,18 +388,31 @@ def _exercise_runtime_dml(session: Session, *, environment: str) -> None:
         raise Stage12RuntimeAccessError(msg)
 
 
-def _retrying_operational_errors[StepResult](
+def _connection_failed(error: DBAPIError) -> bool:
+    """Return whether ``error`` is about the connection rather than the check.
+
+    A pooler ending a connection can report it with any error class, such as
+    ``InternalError``, so SQLAlchemy's finding that the connection is gone counts
+    as well as ``OperationalError``.
+    """
+    return isinstance(error, OperationalError) or error.connection_invalidated
+
+
+def _retrying_connection_failures[StepResult](
     step: Callable[[], StepResult],
 ) -> StepResult:
-    """Run a step of the check, again after each ``OperationalError``.
+    """Run a step of the check, again after each connection failure.
 
     Every step can be repeated: it only reads, or its writes are rolled back.
     The last attempt's error is raised.
     """
     delay = FIRST_RETRY_DELAY_SECONDS
     for _ in range(STEP_ATTEMPTS - 1):
-        with suppress(OperationalError):
+        try:
             return step()
+        except DBAPIError as error:
+            if not _connection_failed(error):
+                raise
         time.sleep(delay)
         delay *= 2
     return step()
@@ -455,14 +467,14 @@ def validate_runtime_database(
         msg = "environment must be staging or production"
         raise Stage12RuntimeAccessError(msg)
     try:
-        _retrying_operational_errors(
+        _retrying_connection_failures(
             partial(_check_role, session_factory, expected_role)
         )
-        live_schema = _retrying_operational_errors(
+        live_schema = _retrying_connection_failures(
             partial(inspect_live_schema, session_factory)
         )
-        _retrying_operational_errors(partial(_check_schema, live_schema))
-        _retrying_operational_errors(
+        _retrying_connection_failures(partial(_check_schema, live_schema))
+        _retrying_connection_failures(
             partial(_check_writes, session_factory, environment)
         )
     except Stage12RuntimeAccessError:
