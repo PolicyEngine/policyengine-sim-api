@@ -13,6 +13,7 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationRole,
 )
 from policyengine_stage12_persistence import Stage12PersistenceStore
+from session_database import RetryingSessionOpener
 from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.sql import ClauseElement
@@ -158,22 +159,6 @@ class FakeSessions:
         self.connection_attempts += 1
         if self.connection_attempts <= self.refused_connections:
             raise _refused_connection_error()
-
-
-class RetryingSessionOpener:
-    """Record each operation's opening and retry one refused connection."""
-
-    def __init__(self):
-        self.operation_names = []
-        self.refusals = []
-
-    def __call__(self, open_session, *, operation_name):
-        self.operation_names.append(operation_name)
-        try:
-            return open_session()
-        except OperationalError as refusal:
-            self.refusals.append(refusal)
-            return open_session()
 
 
 def _sqlalchemy_commit_failure(monkeypatch) -> OperationalError:

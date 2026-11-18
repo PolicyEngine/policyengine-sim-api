@@ -31,7 +31,7 @@ from policyengine_stage12_persistence.tables import (
     ComparisonReport,
 )
 from policyengine_stage12_persistence.validation import _validate_table_schema
-from session_database import RUNTIME_ROLE, StatementLog
+from session_database import RUNTIME_ROLE, StatementLog, limit_open_connections
 from sqlalchemy import delete, func, inspect, select
 from sqlalchemy.orm import Session
 
@@ -300,6 +300,16 @@ def test_the_deployment_check_passes_and_leaves_no_row(
     assert statements.starting_with("DELETE FROM public.stage12_evaluation_reports")
     assert statements.commits == 0
     assert comparison_rows() == before
+
+
+def test_the_deployment_check_needs_one_free_pooler_slot(runtime_sessions) -> None:
+    # The deployment URL names a session pooler with a fixed client limit, so
+    # the check never holds one connection while it opens another.
+    limit_open_connections(runtime_sessions, limit=1)
+
+    validate_runtime_database(
+        runtime_sessions, expected_role=RUNTIME_ROLE, environment="staging"
+    )
 
 
 def test_the_deployment_check_refuses_another_role(runtime_sessions) -> None:

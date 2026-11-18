@@ -62,12 +62,12 @@ class StatementLog:
 class RetryingSessionOpener:
     """Open a session, and open another after one refused connection.
 
-    It records each operation's name, each refusal and what reached the
-    database while the session opened.
+    It records each operation's name, each refusal and, given a log, what
+    reached the database while the session opened.
     """
 
-    def __init__(self, statements: StatementLog) -> None:
-        """Report what ``statements`` records during each opening."""
+    def __init__(self, statements: StatementLog | None = None) -> None:
+        """Report what ``statements``, if given, records during each opening."""
         self.statements = statements
         self.operation_names: list[str] = []
         self.refusals: list[OperationalError] = []
@@ -78,13 +78,14 @@ class RetryingSessionOpener:
     ) -> Session:
         """Return ``open_session``'s session, retrying one refused connection."""
         self.operation_names.append(operation_name)
-        already_sent = len(self.statements.sent)
+        already_sent = len(self.statements.sent) if self.statements else 0
         try:
             session = open_session()
         except OperationalError as refusal:
             self.refusals.append(refusal)
             session = open_session()
-        self.sent_while_opening.append(self.statements.sent[already_sent:])
+        if self.statements:
+            self.sent_while_opening.append(self.statements.sent[already_sent:])
         return session
 
 
@@ -102,6 +103,26 @@ def refuse_connections(session_factory: sessionmaker[Session], count: int) -> li
 
     event.listen(session_factory.kw["bind"], "do_connect", refuse)
     return attempts
+
+
+def limit_open_connections(session_factory: sessionmaker[Session], limit: int) -> None:
+    """Refuse a connection while ``limit`` are open, as a full session pooler does."""
+    engine = session_factory.kw["bind"]
+    open_connections: list[Any] = []
+
+    def refuse_over_the_limit(dialect, _record, _arguments, _keywords) -> None:
+        if len(open_connections) >= limit:
+            raise dialect.loaded_dbapi.OperationalError(CONNECTION_REFUSED_MESSAGE)
+
+    def record_opened(dbapi_connection, _connection_record) -> None:
+        open_connections.append(dbapi_connection)
+
+    def record_closed(dbapi_connection, _connection_record) -> None:
+        open_connections.remove(dbapi_connection)
+
+    event.listen(engine, "do_connect", refuse_over_the_limit)
+    event.listen(engine, "connect", record_opened)
+    event.listen(engine, "close", record_closed)
 
 
 def act_as_role(engine: Any, role: str) -> None:
