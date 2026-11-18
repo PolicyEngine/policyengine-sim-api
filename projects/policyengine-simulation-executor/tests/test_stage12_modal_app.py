@@ -941,6 +941,7 @@ SIMULATION_RUN_ID = "00000000-0000-4000-8000-00000000b001"
 REPORT_RUN_ID = "00000000-0000-4000-8000-00000000b002"
 HOUSEHOLD_JOB_ID = "00000000-0000-4000-8000-00000000a001"
 HOUSEHOLD_REPORT_RUN_ID = "00000000-0000-4000-8000-00000000a002"
+CLIFF_RESULT_ID = "00000000-0000-4000-8000-00000000c001"
 OPERATION_RECORD_KEYS = ("database_table", "database_row_id", "modal_call_id")
 
 
@@ -967,10 +968,14 @@ def _invoke_with_record(
     def succeed(*_arguments, **_keywords) -> dict:
         return {"ok": True}
 
-    if call_name in ("run_single_simulation_us", "run_single_simulation_uk"):
+    function_name = call_name.removesuffix(":cliffs")
+    if function_name in ("run_single_simulation_us", "run_single_simulation_uk"):
         monkeypatch.setattr(stage12_runtime, "run_single_simulation", succeed)
-        context = {"simulation_run_id": SIMULATION_RUN_ID} if names_record else {}
-        return getattr(module, call_name)(
+        if call_name.endswith(":cliffs"):
+            context = {"cliff_result_id": CLIFF_RESULT_ID}
+        else:
+            context = {"simulation_run_id": SIMULATION_RUN_ID} if names_record else {}
+        return getattr(module, function_name)(
             {"role": "baseline"}, context, observability_context=None
         )
     if call_name == "run_single_simulation_segment_us":
@@ -1046,10 +1051,43 @@ def _capture_metric_attributes(monkeypatch) -> list[dict]:
 
 
 @pytest.mark.parametrize(
+    ("context", "expected_row"),
+    [
+        ({"cliff_result_id": CLIFF_RESULT_ID}, ("cliff_impacts", CLIFF_RESULT_ID)),
+        (
+            {"simulation_run_id": SIMULATION_RUN_ID},
+            ("simulation_runs", SIMULATION_RUN_ID),
+        ),
+        ({"cliff_result_id": "not-a-uuid"}, None),
+        ({}, None),
+        ("not-a-context", None),
+    ],
+    ids=["cliff-result", "simulation-run", "malformed-id", "no-row", "malformed"],
+)
+def test_a_simulation_workers_record_is_the_row_its_context_names(
+    context, expected_row
+) -> None:
+    from policyengine_simulation_executor import stage12_runtime
+
+    attributes = stage12_runtime.simulation_worker_record_attributes(
+        context, "fc-operation"
+    )
+
+    assert attributes.pop("modal_call_id") == "fc-operation"
+    assert attributes == (
+        {}
+        if expected_row is None
+        else {"database_table": expected_row[0], "database_row_id": expected_row[1]}
+    )
+
+
+@pytest.mark.parametrize(
     ("call_name", "expected_table", "expected_row_id"),
     [
         ("run_single_simulation_us", "simulation_runs", SIMULATION_RUN_ID),
         ("run_single_simulation_uk", "simulation_runs", SIMULATION_RUN_ID),
+        ("run_single_simulation_us:cliffs", "cliff_impacts", CLIFF_RESULT_ID),
+        ("run_single_simulation_uk:cliffs", "cliff_impacts", CLIFF_RESULT_ID),
         ("run_single_simulation_segment_us", "simulation_runs", SIMULATION_RUN_ID),
         ("coordinate_report", "report_runs", REPORT_RUN_ID),
         ("calculate_household_us:job", "household_jobs", HOUSEHOLD_JOB_ID),
@@ -1074,9 +1112,9 @@ def test_v2_functions_name_their_database_row_and_modal_call_in_the_operation_re
     )
     metric_attributes = _capture_metric_attributes(monkeypatch)
 
-    assert _invoke_with_record(
-        monkeypatch, module, call_name, names_record=True
-    ) == {"ok": True}
+    assert _invoke_with_record(monkeypatch, module, call_name, names_record=True) == {
+        "ok": True
+    }
 
     [completion] = [
         record
