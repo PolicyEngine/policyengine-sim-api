@@ -74,10 +74,11 @@ def test_orm_statements_are_accepted(statement):
         ("selected: Table = choose()", "selected: Table"),
         ("self.jobs: Table = source", "self.jobs: Table"),
         ("class Rows:\n    target: Table", "target: Table"),
-        ("def read(jobs: Optional['Table']): ...", "jobs: Optional['Table']"),
-        ("class Rows:\n    target: ClassVar['Table']", "target: ClassVar['Table']"),
-        ("def read() -> list['TableClause']: ...", "read() -> list['TableClause']"),
-        ("def read(jobs: \"list['Table']\"): ...", "jobs: list['Table']"),
+        (
+            "def read(jobs: Annotated[Any, Marker(kind=Table)]): ...",
+            "jobs: Annotated[Any, Marker(kind=Table)]",
+        ),
+        ("def read(jobs: Literal[Table]): ...", "jobs: Literal[Table]"),
     ],
 )
 def test_an_annotation_naming_a_core_table_type_is_reported(declaration, summary):
@@ -91,16 +92,43 @@ from sqlalchemy import Table, TableClause
     assert _checks({STORE: store}, STORE) == [(CORE_TABLE_ACCESS, summary)]
 
 
-def test_a_quoted_literal_value_is_not_a_table_type():
-    store = """
-    from typing import Literal
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        'Literal["Table"]',
+        'Choice["Table", "View"]',
+        'Annotated[str, "Table"]',
+        'Annotated[str, "' + "x." * 1000 + 'y"]',
+        'Optional["Table"]',
+        "\"list['Table']\"",
+        '"not a type ("',
+    ],
+)
+def test_a_quoted_name_inside_an_annotation_is_not_read(annotation):
+    """Only a wholly quoted annotation is parsed; other strings may be anything."""
+    store = f"""
+from sqlalchemy import Table
 
-    from sqlalchemy import Table
-
-    def read(kind: Literal["Table"]): ...
-    """
+def read(value: {annotation}): ...
+"""
 
     assert _checks({STORE: store}, STORE) == []
+
+
+def test_an_engine_type_in_annotation_metadata_is_followed():
+    source = """
+    from sqlalchemy import Engine
+
+    def hand_out() -> Annotated[Any, Marker(kind=Engine)]: ...
+
+    def run(handle: Annotated[Any, Marker(kind=Engine)]):
+        return handle.begin()
+    """
+
+    assert _checks({ENGINE: source}, ENGINE) == [
+        (CORE_CONNECTION, "hand_out() -> Engine"),
+        (CORE_CONNECTION, "handle.begin()"),
+    ]
 
 
 def test_a_declarative_base_module_may_annotate_a_mapped_classs_table():
@@ -139,6 +167,20 @@ def test_a_declarative_base_module_annotates_only_table_of_its_classes(
     source = f"from sqlalchemy import Table\n\n{declaration}\n"
 
     assert _checks({ORM_BASE: source}, ORM_BASE) == [(CORE_TABLE_ACCESS, summary)]
+
+
+def test_a_guarded_table_annotation_in_a_class_is_accepted():
+    source = """
+    from typing import TYPE_CHECKING, ClassVar
+
+    from sqlalchemy import Table
+
+    class TableModel:
+        if TYPE_CHECKING:
+            __table__: ClassVar[Table]
+    """
+
+    assert _checks({ORM_BASE: source}, ORM_BASE) == []
 
 
 def test_a_declarative_base_module_may_not_declare_a_core_table():
