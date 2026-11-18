@@ -14,7 +14,7 @@ mapped classes passes. Each file is checked on its own, through its own imports:
 ``from sqlalchemy import text`` and ``import sqlalchemy as sa`` both count, and
 a ``text``, ``Table`` or ``update`` from another package doesn't. A Core table is
 reported where it starts: where it is declared, where it is read from a mapped
-class, mapper or MetaData, and where an annotation names ``Table`` or
+class, mapper or MetaData or as the bare name ``__table__``, and where an annotation names ``Table`` or
 ``TableClause``, apart from a class's bare ``__table__`` annotation in a
 declarative base module. Its later uses aren't reported, because the rule has no
 baseline and the first finding already fails it.
@@ -549,11 +549,20 @@ def _subscript_findings(
     return []
 
 
+def _name_findings(node: ast.Name) -> list[tuple[str, str]]:
+    """Report a read of the bare name ``__table__``, as in a class body."""
+    if node.id == MAPPED_TABLE_ATTRIBUTE and isinstance(node.ctx, ast.Load):
+        return [(CORE_TABLE_ACCESS, node.id)]
+    return []
+
+
 def _node_findings(node: ast.AST, context: _ModuleContext) -> list[tuple[str, str]]:
     findings: Iterable[tuple[str, str]] = ()
     match node:
         case ast.Import() | ast.ImportFrom():
             findings = _import_findings(node, context)
+        case ast.Name():
+            findings = _name_findings(node)
         case ast.Attribute():
             findings = _attribute_findings(node, context)
         case ast.Call():

@@ -106,7 +106,8 @@ Each finding is one of:
 - **Core table access:** a parameter, variable, attribute or return annotated
   `Table` or `TableClause`, unquoted or wholly quoted, apart from a class's bare
   `__table__` annotation in an `orm_base.py`;
-  `__table__`, `local_table`, `persist_selectable` or `sorted_tables` anywhere;
+  `__table__`, `local_table`, `persist_selectable` or `sorted_tables` anywhere,
+  and a read of the bare name `__table__`;
   `tables` or
   `selectable` of a mapper (`__mapper__`, `.mapper`, or `inspect(...)`,
   `class_mapper(...)` or `object_mapper(...)`, called or held in a name, or a
