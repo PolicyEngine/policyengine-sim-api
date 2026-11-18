@@ -6,6 +6,7 @@ manifest grants on the two temporary tables.
 
 from __future__ import annotations
 
+import os
 import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self
@@ -20,10 +21,14 @@ from policyengine_simulation_contract.stage12_execution import (
     ResultComparisonStatus,
     SimulationRole,
 )
-from policyengine_simulation_persistence.engine import create_session_factory
+from policyengine_simulation_persistence.engine import (
+    create_session_factory,
+    dispose_session_factory,
+)
 from policyengine_stage12_persistence import (
     Stage12PersistenceStore,
     Stage12RuntimeAccessError,
+    create_stage12_check_session_factory,
     validate_runtime_database,
     validation,
 )
@@ -37,13 +42,16 @@ from policyengine_stage12_persistence.validation import (
     _validate_foreign_key,
     _validate_table_schema,
 )
+from report_run_database import SEED_URL_ENV, worker_database_url
 from session_database import (
     RUNTIME_ROLE,
     StatementLog,
+    act_as_role,
     limit_open_connections,
+    record_opened_connections,
     refuse_connection_numbers,
 )
-from sqlalchemy import delete, func, inspect, select
+from sqlalchemy import delete, event, func, inspect, make_url, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
@@ -123,6 +131,21 @@ def store(
 ) -> Stage12PersistenceStore:
     assert statements.sent == []
     return Stage12PersistenceStore(session_factory=runtime_sessions)
+
+
+@pytest.fixture
+def check_sessions() -> Iterator[sessionmaker[Session]]:
+    """Yield the deployment command's session factory, as the runtime role."""
+    worker_database_url()
+    database_url = make_url(os.environ[SEED_URL_ENV]).set(drivername="postgresql")
+    session_factory = create_stage12_check_session_factory(
+        database_url.render_as_string(hide_password=False)
+    )
+    act_as_role(session_factory.kw["bind"], RUNTIME_ROLE)
+    try:
+        yield session_factory
+    finally:
+        dispose_session_factory(session_factory)
 
 
 @pytest.fixture
@@ -323,6 +346,61 @@ def test_the_deployment_check_passes_and_leaves_no_row(
     assert statements.starting_with("DELETE FROM public.stage12_evaluation_reports")
     assert statements.commits == 0
     assert comparison_rows() == before
+
+
+def _comparison_report_count(seeder: ReportRunSeeder) -> int:
+    with Session(seeder.engine) as session:
+        return session.execute(
+            select(func.count()).select_from(ComparisonReport)
+        ).scalar_one()
+
+
+def test_the_deployment_command_runs_its_check_on_one_real_connection(
+    check_sessions, retry_waits
+) -> None:
+    opened = record_opened_connections(check_sessions)
+
+    validate_runtime_database(
+        check_sessions, expected_role=RUNTIME_ROLE, environment="staging"
+    )
+
+    assert len(opened) == 1
+    assert retry_waits == []
+
+
+def test_the_deployment_command_replaces_a_connection_it_loses(
+    check_sessions, seeder, retry_waits
+) -> None:
+    opened = record_opened_connections(check_sessions)
+    reports_before = _comparison_report_count(seeder)
+    terminated_backends: list[int] = []
+
+    def terminate_during_the_first_insert(
+        connection, _cursor, statement, _parameters, _context, _many
+    ) -> None:
+        if terminated_backends or not statement.startswith(
+            f"INSERT INTO public.{REPORT_TABLE_NAME}"
+        ):
+            return
+        backend = connection.connection.dbapi_connection.info.backend_pid
+        terminated_backends.append(backend)
+        with seeder.engine.begin() as administrator:
+            administrator.execute(select(func.pg_terminate_backend(backend)))
+
+    event.listen(
+        check_sessions.kw["bind"],
+        "before_cursor_execute",
+        terminate_during_the_first_insert,
+    )
+
+    validate_runtime_database(
+        check_sessions, expected_role=RUNTIME_ROLE, environment="staging"
+    )
+
+    assert len(terminated_backends) == 1
+    assert len(opened) == 2
+    assert retry_waits == [1.0]
+    assert _comparison_report_count(seeder) == reports_before
 
 
 def test_the_deployment_check_needs_one_free_pooler_slot(runtime_sessions) -> None:

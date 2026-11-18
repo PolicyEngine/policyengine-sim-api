@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 from policyengine_simulation_persistence import (
     create_simulation_session_factory,
+    create_single_connection_session_factory,
     create_unpooled_session_factory,
     dispose_session_factory,
     normalized_database_url,
@@ -89,6 +90,27 @@ def test_the_unpooled_session_factory_keeps_no_connection(monkeypatch) -> None:
     assert session_factory.kw["expire_on_commit"] is False
     assert captured_options["poolclass"] is NullPool
     assert captured_options["connect_args"] == {"connect_timeout": 10}
+
+
+def test_the_single_connection_session_factory_shares_one_connection(
+    monkeypatch,
+) -> None:
+    captured_options, built_engine = _capture_engine_options(monkeypatch)
+
+    session_factory = create_single_connection_session_factory(
+        "postgresql://runtime:secret@db.example/postgres"
+    )
+
+    assert session_factory.kw["bind"] is built_engine
+    assert session_factory.kw["expire_on_commit"] is False
+    assert captured_options["poolclass"] is QueuePool
+    assert captured_options["pool_size"] == 1
+    assert captured_options["max_overflow"] == 0
+    assert captured_options["pool_pre_ping"] is True
+    assert captured_options["connect_args"] == {
+        "connect_timeout": 10,
+        "prepare_threshold": None,
+    }
 
 
 def test_disposing_a_session_factory_closes_its_pooled_connections() -> None:

@@ -12,6 +12,7 @@ import pytest
 import yaml
 from policyengine_simulation_entry import stage12_infrastructure
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import QueuePool
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / ".github/scripts/stage12-validate-infrastructure.sh"
@@ -415,17 +416,10 @@ def test_both_stage12_deploy_steps_receive_the_simulation_output_bucket() -> Non
         )
 
 
-def test_the_deployment_check_runs_on_a_session_factory_of_the_given_url(
-    tmp_path, monkeypatch, capsys
-) -> None:
+def _run_the_check_command_with_arguments(tmp_path, monkeypatch) -> list[object]:
+    """Prepare the command's arguments; return the factories it disposes of."""
     url_file = tmp_path / "database-url"
     url_file.write_text("postgresql://role@database.example/postgres\n")
-    checked: list[tuple[object, dict[str, str]]] = []
-    monkeypatch.setattr(
-        stage12_infrastructure,
-        "validate_runtime_database",
-        lambda session_factory, **options: checked.append((session_factory, options)),
-    )
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -438,13 +432,49 @@ def test_the_deployment_check_runs_on_a_session_factory_of_the_given_url(
             "staging",
         ],
     )
+    disposed: list[object] = []
+    monkeypatch.setattr(
+        stage12_infrastructure, "dispose_session_factory", disposed.append
+    )
+    return disposed
+
+
+def test_the_deployment_check_shares_one_connection_of_the_given_url(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    disposed = _run_the_check_command_with_arguments(tmp_path, monkeypatch)
+    checked: list[tuple[object, dict[str, str]]] = []
+    monkeypatch.setattr(
+        stage12_infrastructure,
+        "validate_runtime_database",
+        lambda session_factory, **options: checked.append((session_factory, options)),
+    )
 
     stage12_infrastructure.main()
 
     [(session_factory, options)] = checked
     assert isinstance(session_factory, sessionmaker)
+    pool = session_factory.kw["bind"].pool
+    assert isinstance(pool, QueuePool)
+    assert pool.size() == 1
     assert options == {
         "expected_role": "policyengine_v2_runtime",
         "environment": "staging",
     }
+    assert disposed == [session_factory]
     assert "role=policyengine_v2_runtime" in capsys.readouterr().out
+
+
+def test_a_failed_deployment_check_closes_its_connection(tmp_path, monkeypatch) -> None:
+    disposed = _run_the_check_command_with_arguments(tmp_path, monkeypatch)
+
+    def refuse(_session_factory, **_options) -> None:
+        message = "runtime role lacks SELECT"
+        raise stage12_infrastructure.Stage12RuntimeAccessError(message)
+
+    monkeypatch.setattr(stage12_infrastructure, "validate_runtime_database", refuse)
+
+    with pytest.raises(SystemExit, match="runtime role lacks SELECT"):
+        stage12_infrastructure.main()
+
+    assert len(disposed) == 1

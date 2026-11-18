@@ -141,5 +141,19 @@ def act_as_role(engine: Any, role: str) -> None:
     def set_role(dbapi_connection, _connection_record) -> None:
         with dbapi_connection.cursor() as cursor:
             cursor.execute(f"SET ROLE {role}")
+        # A pooled connection outlives its first transaction, and rolling that
+        # back would undo the role.
+        dbapi_connection.commit()
 
     event.listen(engine, "connect", set_role)
+
+
+def record_opened_connections(session_factory: sessionmaker[Session]) -> list[Any]:
+    """Return a list that gains each real connection the factory's engine opens."""
+    opened: list[Any] = []
+
+    def record_opened(dbapi_connection, _connection_record) -> None:
+        opened.append(dbapi_connection)
+
+    event.listen(session_factory.kw["bind"], "connect", record_opened)
+    return opened
