@@ -215,7 +215,18 @@ report and run rows (C1 · 24). These modules do it:
   weren't forced, outside budget windows), then a read of the row that
   won, retried when that run fails in between (`SharedRowNotSettledError`
   after three tries). A forced run is inserted directly and never looked
-  up or joined.
+  up or joined. `find_or_insert_cliff_calculations` does the same for each
+  simulation run's cliff calculation, against `uq_cliff_impacts_unfailed`,
+  in simulation run ID order: a run's calculation that hasn't failed is
+  found, and otherwise one is inserted pending with no Modal call. A
+  keyed report's create, or an economy report's re-run, whose request asks
+  for cliffs (`KeyedEconomyReport.cliffs`, `NewReportRerun.cliffs`, the
+  IDs it proposes) runs it on the two simulation runs of the report run it
+  ended on, in the same transaction (`find_or_insert_report_run_cliffs`), so a
+  refused calculation writes nothing, and returns each side's calculation
+  (`FoundCliffs`). `EconomyRunStore.record_cliff_call` and
+  `fail_unstarted_cliff_calculation` record a calculation's call, or fail
+  it when Modal refused it, each only while it is pending with no call.
 - `keyed_economy_records.py` runs a report's find-or-create in one
   transaction: each side's simulation by key, in key order; the report by
   key; the report's joinable run on the current versions, joined with the
