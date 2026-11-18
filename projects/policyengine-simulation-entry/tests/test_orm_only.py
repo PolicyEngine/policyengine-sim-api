@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import tomllib
 from orm_access_support import (
     CORE_CONNECTION,
+    CORE_TABLE_ACCESS,
     CORE_TABLE_DECLARATION,
     RAW_SQL,
     UNMAPPED_TABLE,
@@ -123,6 +124,7 @@ def test_rule_proof_orm_only(monkeypatch: pytest.MonkeyPatch) -> None:
             RAW_SQL,
             "text(\"SELECT count(*) FROM household_jobs WHERE status = 'pending'\")",
         ),
+        (67, CORE_TABLE_ACCESS, "jobs: Table"),
     ]
     assert _fixture_findings("good_household_job_records.py") == []
     bad_module = _load_fixture("bad_household_job_records.py", monkeypatch)

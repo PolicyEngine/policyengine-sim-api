@@ -74,6 +74,10 @@ def test_orm_statements_are_accepted(statement):
         ("selected: Table = choose()", "selected: Table"),
         ("self.jobs: Table = source", "self.jobs: Table"),
         ("class Rows:\n    target: Table", "target: Table"),
+        ("def read(jobs: Optional['Table']): ...", "jobs: Optional['Table']"),
+        ("class Rows:\n    target: ClassVar['Table']", "target: ClassVar['Table']"),
+        ("def read() -> list['TableClause']: ...", "read() -> list['TableClause']"),
+        ("def read(jobs: \"list['Table']\"): ...", "jobs: list['Table']"),
     ],
 )
 def test_an_annotation_naming_a_core_table_type_is_reported(declaration, summary):
@@ -85,6 +89,18 @@ from sqlalchemy import Table, TableClause
 """
 
     assert _checks({STORE: store}, STORE) == [(CORE_TABLE_ACCESS, summary)]
+
+
+def test_a_quoted_literal_value_is_not_a_table_type():
+    store = """
+    from typing import Literal
+
+    from sqlalchemy import Table
+
+    def read(kind: Literal["Table"]): ...
+    """
+
+    assert _checks({STORE: store}, STORE) == []
 
 
 def test_a_declarative_base_module_may_annotate_a_mapped_classs_table():
@@ -109,6 +125,12 @@ def test_a_declarative_base_module_may_annotate_a_mapped_classs_table():
         ("def read(jobs: Table): ...", "jobs: Table"),
         ("selected: Table = choose()", "selected: Table"),
         ("class Rows:\n    target: Table", "target: Table"),
+        ("def read(__table__: Table): ...", "__table__: Table"),
+        ("__table__: Table = choose()", "__table__: Table"),
+        (
+            "class Rows:\n    def read(self):\n        __table__: Table = choose()",
+            "__table__: Table",
+        ),
     ],
 )
 def test_a_declarative_base_module_annotates_only_table_of_its_classes(
@@ -456,6 +478,63 @@ def test_raw_sql_is_reported(source, summary):
 )
 def test_sqlmodel_imports_are_reported(statement):
     assert _checks({STORE: statement}, STORE) == [(SQLMODEL_IMPORT, "sqlmodel")]
+
+
+@pytest.mark.parametrize(
+    ("binding", "receiver"),
+    [
+        ("first, label = create_engine(url), 'primary'", "first"),
+        ("(first, label), other = (create_engine(url), 'a'), 1", "first"),
+        ("[first, label] = [create_engine(url), 'primary']", "first"),
+        ("self.first = create_engine(url)", "self.first"),
+        ("first: object = create_engine(url)", "first"),
+        ("value = (first := create_engine(url))", "first"),
+    ],
+)
+def test_every_way_of_binding_an_engine_is_followed_to_begin(binding, receiver):
+    source = f"""
+    from sqlalchemy import create_engine
+
+    {binding}
+    transaction = {receiver}.begin()
+    """
+
+    assert _checks({ENGINE: source}, ENGINE) == [
+        (CORE_CONNECTION, f"{receiver}.begin()")
+    ]
+
+
+def test_a_name_annotated_as_an_engine_is_followed_to_begin():
+    source = """
+    from sqlalchemy import Engine
+
+    def open_transaction(primary: "Engine | None", held: Engine):
+        return primary.begin(), held.begin()
+    """
+
+    assert _checks({ENGINE: source}, ENGINE) == [
+        (CORE_CONNECTION, "primary.begin()"),
+        (CORE_CONNECTION, "held.begin()"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("binding", "read"),
+    [
+        ("schema, label = MetaData(), 'public'", "schema.tables"),
+        ("job_mapper, label = inspect(HouseholdJob), 'jobs'", "job_mapper.tables"),
+        ("job_mapper, label = HouseholdJob.__mapper__, 'jobs'", "job_mapper.tables"),
+    ],
+)
+def test_tuple_assignments_bind_metadata_and_mappers(binding, read):
+    source = f"""
+    from sqlalchemy import MetaData, inspect
+
+    {binding}
+    value = {read}
+    """
+
+    assert _checks({ORM_BASE: source}, ORM_BASE) == [(CORE_TABLE_ACCESS, read)]
 
 
 def test_begin_counts_as_opening_a_connection_only_on_an_engine():
