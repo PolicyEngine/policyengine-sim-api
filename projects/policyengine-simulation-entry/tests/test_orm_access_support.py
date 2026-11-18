@@ -270,6 +270,89 @@ def test_opening_a_connection_is_reported_in_every_module_using_sqlalchemy(call)
 
 
 @pytest.mark.parametrize(
+    ("call", "summary"),
+    [
+        ("connection.execute(statement)", "connection.execute(...)"),
+        ("conn.scalar(statement)", "conn.scalar(...)"),
+        ("store_connection.scalars(statement)", "store_connection.scalars(...)"),
+        ("self._connection.execute(statement)", "self._connection.execute(...)"),
+        ("connection.stream(statement)", "connection.stream(...)"),
+        ("connection.stream_scalars(statement)", "connection.stream_scalars(...)"),
+    ],
+)
+def test_a_statement_on_an_unannotated_connection_is_reported(call, summary):
+    """A connection's name shows what the missing annotation would have."""
+    source = f"import sqlalchemy\n\nvalue = {call}"
+
+    assert _checks({STORE: source}, STORE) == [(CORE_CONNECTION, summary)]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "session.execute(statement)",
+        "session.scalar(statement)",
+        "session.scalars(statement)",
+        "self._session.execute(statement)",
+        "store_session.execute(statement)",
+        "connections.execute(statement)",
+        "connection_pool.execute(statement)",
+    ],
+)
+def test_a_statement_on_a_session_is_not_reported(call):
+    source = f"import sqlalchemy\n\nvalue = {call}"
+
+    assert _checks({STORE: source}, STORE) == []
+
+
+def test_a_connection_outside_sqlalchemy_is_not_reported():
+    assert _checks({GATEWAY: "value = connection.execute(statement)"}, GATEWAY) == []
+
+
+def test_an_engine_module_hands_out_no_engine_or_connection():
+    source = """
+    from sqlalchemy import Engine, create_engine
+    from sqlalchemy.orm import Session, sessionmaker
+
+    def _private_engine(url) -> Engine:
+        return create_engine(url)
+
+    def public_engine(url) -> Engine:
+        return create_engine(url)
+
+    def optional_engine(url) -> "Engine | None":
+        return None
+
+    def session_factory(engine: Engine) -> sessionmaker[Session]:
+        return sessionmaker(engine)
+
+    class Sessions:
+        def engine(self) -> Engine:
+            return self._engine
+    """
+
+    assert _checks({ENGINE: source}, ENGINE) == [
+        (CORE_CONNECTION, "public_engine() -> Engine"),
+        (CORE_CONNECTION, "optional_engine() -> Engine"),
+        (CORE_CONNECTION, "engine() -> Engine"),
+    ]
+
+
+def test_only_an_engine_module_reads_a_session_factorys_engine():
+    source = """
+    import sqlalchemy
+
+    engine = session_factory.kw["bind"]
+    autoflush = session_factory.kw["autoflush"]
+    """
+
+    assert _checks({ENGINE: source}, ENGINE) == []
+    assert _checks({STORE: source}, STORE) == [
+        (CORE_CONNECTION, "session_factory.kw['bind']"),
+    ]
+
+
+@pytest.mark.parametrize(
     ("source", "summary"),
     [
         ("sa.text('SELECT 1')", "sa.text('SELECT 1')"),

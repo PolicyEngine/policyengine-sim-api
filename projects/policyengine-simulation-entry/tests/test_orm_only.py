@@ -3,13 +3,8 @@
 Database code declares tables only as SQLAlchemy ORM mapped classes and runs
 every statement through an ORM Session against them;
 docs/engineering/skills/database-access.md#orm explains the rule. The checks
-live in orm_access_support.py.
-
-Until every module is converted, the findings listed in
-rules/baselines/orm-only.txt are tolerated, and only those: a finding missing
-from it fails, and so does an entry that no longer matches a finding, so the
-list only shrinks. The source directories are the ones
-sim.boundaries.sqlalchemy-and-alembic-only scans, whose
+live in orm_access_support.py, and any finding fails. The source directories
+are the ones sim.boundaries.sqlalchemy-and-alembic-only scans, whose
 test_every_source_directory_is_scanned checks that each one contributes files.
 """
 
@@ -17,7 +12,6 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from collections import Counter
 from typing import TYPE_CHECKING
 
 import tomllib
@@ -28,20 +22,16 @@ from orm_access_support import (
     RAW_SQL,
     UNMAPPED_TABLE,
     orm_access_findings,
-    read_baseline,
     unmapped_table_findings,
     unmapped_tables_in_packages,
 )
 from test_database_access_boundaries import REPOSITORY_ROOT, SOURCE_ROOT_PATTERNS
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
     from types import ModuleType
 
     import pytest
-    from orm_access_support import Finding
 
-BASELINE = REPOSITORY_ROOT / "rules" / "baselines" / "orm-only.txt"
 FIXTURES_ROOT = REPOSITORY_ROOT / "rules" / "fixtures" / "sim.persistence.orm-only"
 PROJECT_PATTERNS = ("projects/*/pyproject.toml", "libs/*/pyproject.toml")
 # The libraries that declare tables; every table they hold needs a mapped class.
@@ -60,34 +50,6 @@ def _sources() -> dict[str, str]:
         for source_root in REPOSITORY_ROOT.glob(pattern)
         for source_file in sorted(source_root.rglob("*.py"))
     }
-
-
-def _tolerated(*, unmapped: bool) -> Counter[str]:
-    marker = f": {UNMAPPED_TABLE}: "
-    return Counter(
-        {
-            entry: count
-            for entry, count in read_baseline(BASELINE).items()
-            if (marker in entry) == unmapped
-        }
-    )
-
-
-def _assert_only_tolerated(
-    findings: Iterable[Finding], tolerated: Counter[str]
-) -> None:
-    found = Counter(finding.baseline_entry for finding in findings)
-    new_findings = sorted((found - tolerated).elements())
-    fixed_entries = sorted((tolerated - found).elements())
-    assert new_findings == [], (
-        "Code reaches the database without the ORM; use a mapped class and a "
-        "Session (docs/engineering/skills/database-access.md#orm) instead of "
-        f"adding to {BASELINE.name}. For a .table finding on converted code, name "
-        "the attribute after what it holds, such as model"
-    )
-    assert fixed_entries == [], (
-        f"These {BASELINE.name} entries no longer match a finding; remove them"
-    )
 
 
 def _load_fixture(fixture_name: str, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
@@ -112,13 +74,18 @@ def _fixture_findings(fixture_name: str) -> list[tuple[int, str, str]]:
 def test_database_code_uses_only_the_orm() -> None:
     findings = orm_access_findings(_sources())
 
-    _assert_only_tolerated(findings, _tolerated(unmapped=False))
+    assert [str(finding) for finding in findings] == [], (
+        "Code reaches the database without the ORM; use a mapped class and a "
+        "Session (docs/engineering/skills/database-access.md#orm). For a .table "
+        "finding on converted code, name the attribute after what it holds, such "
+        "as model"
+    )
 
 
 def test_every_table_is_mapped_by_a_class() -> None:
     findings = unmapped_tables_in_packages(TABLE_PACKAGES, REPOSITORY_ROOT)
 
-    _assert_only_tolerated(findings, _tolerated(unmapped=True))
+    assert [str(finding) for finding in findings] == []
 
 
 def test_no_project_installs_sqlmodel() -> None:
@@ -148,12 +115,15 @@ def test_rule_proof_orm_only(monkeypatch: pytest.MonkeyPatch) -> None:
         (26, CORE_TABLE_DECLARATION, "Column('id', ...)"),
         (27, CORE_TABLE_DECLARATION, "Column('status', ...)"),
         (28, CORE_TABLE_DECLARATION, "Column('modal_call_id', ...)"),
+        (39, CORE_CONNECTION, "connection.execute(...)"),
         (40, CORE_TABLE_ACCESS, "household_jobs"),
+        (48, CORE_CONNECTION, "connection.execute(...)"),
         (49, CORE_TABLE_ACCESS, "household_jobs"),
         (51, CORE_TABLE_ACCESS, "household_jobs"),
         (52, CORE_TABLE_ACCESS, "household_jobs"),
         (55, CORE_TABLE_ACCESS, "household_jobs"),
         (61, CORE_CONNECTION, "engine.connect()"),
+        (62, CORE_CONNECTION, "connection.execute(...)"),
         (
             63,
             RAW_SQL,
