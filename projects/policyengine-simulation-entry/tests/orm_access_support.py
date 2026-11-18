@@ -36,15 +36,16 @@ below ``src``; two files with one module name are refused, since imports
 resolve by name. A public function of an engine module may not return an Engine
 or Connection, and only an engine module may read ``factory.kw["bind"]``. The
 rules that go by a method or attribute name alone apply only in modules that
-import sqlalchemy: any ``.table`` read, ``kw["bind"]``, a statement run on a
-name such as ``connection``, and the ``.connect()``, ``.connection()``,
-``.raw_connection()``, ``.get_bind()``, ``.begin()``, ``.cursor()`` and
-``.exec_driver_sql()`` calls.
+import sqlalchemy: any ``.table`` read, ``kw["bind"]``, ``.execute()`` on
+anything not named as a session, ``.scalar()``, ``.scalars()``, ``.stream()`` and
+``.stream_scalars()`` on a name such as ``connection``, and the ``.connect()``,
+``.connection()``, ``.raw_connection()``, ``.get_bind()``, ``.begin()``,
+``.cursor()`` and ``.exec_driver_sql()`` calls.
 The checks guard against ordinary Core use, not against deliberate evasion.
 They don't follow imports made through ``importlib`` or ``__import__``, tables,
 engines or connections passed around without a ``Table``, ``Engine`` or
-``Connection`` annotation, so a statement run on an unannotated connection under
-a name that doesn't look like one isn't reported, a
+``Connection`` annotation, so a connection held under a name such as ``session``
+isn't reported, a
 ``.table`` read in a module that doesn't import sqlalchemy, tables held in a
 container such as a dict, a class or instance attribute read in another
 module (unless it is a ``.table`` read, or its name matches one of the reading
@@ -108,10 +109,13 @@ STAR_IMPORT = "*"
 # Calls that open a Connection: on anything, and begin() on an engine.
 CONNECTION_METHODS = frozenset({"connect", "connection", "get_bind", "raw_connection"})
 ENGINE_TRANSACTION_METHOD = "begin"
-# A statement run on a name such as connection, conn or store_connection, which
-# finds a connection passed around without a Connection annotation.
-STATEMENT_METHODS = frozenset(
-    {"execute", "scalar", "scalars", "stream", "stream_scalars"}
+# execute runs only on a name such as session or store_session, which finds a
+# connection passed around without a Connection annotation. A Result has scalar
+# and scalars too, so the others are reported only on a name such as connection.
+EXECUTE_METHOD = "execute"
+SESSION_NAME_PATTERN = re.compile(r"(?:^|_)session$", re.IGNORECASE)
+CONNECTION_STATEMENT_METHODS = frozenset(
+    {"scalar", "scalars", "stream", "stream_scalars"}
 )
 CONNECTION_NAME_PATTERN = re.compile(r"(?:^|_)(?:connection|conn)$", re.IGNORECASE)
 # What an engine module keeps to itself: no public function returns one of
@@ -733,12 +737,15 @@ def _opens_connection(node: ast.Call, context: _ModuleContext) -> bool:
     )
 
 
-def _runs_on_connection(node: ast.Call, context: _ModuleContext) -> bool:
-    """Whether a statement runs on something named as a connection."""
+def _runs_outside_a_session(node: ast.Call, context: _ModuleContext) -> bool:
+    """Whether a statement runs on something other than a session."""
     if not context.module.uses_sqlalchemy or not isinstance(node.func, ast.Attribute):
         return False
-    return node.func.attr in STATEMENT_METHODS and bool(
-        CONNECTION_NAME_PATTERN.search(_last_name(node.func.value))
+    receiver = _last_name(node.func.value)
+    if node.func.attr == EXECUTE_METHOD:
+        return not SESSION_NAME_PATTERN.search(receiver)
+    return node.func.attr in CONNECTION_STATEMENT_METHODS and bool(
+        CONNECTION_NAME_PATTERN.search(receiver)
     )
 
 
@@ -754,7 +761,7 @@ def _call_findings(
         yield RAW_SQL, _call_summary(node)
     elif _opens_connection(node, context):
         yield CORE_CONNECTION, _call_summary(node)
-    elif _runs_on_connection(node, context):
+    elif _runs_outside_a_session(node, context):
         yield CORE_CONNECTION, f"{ast.unparse(node.func)}(...)"
 
 

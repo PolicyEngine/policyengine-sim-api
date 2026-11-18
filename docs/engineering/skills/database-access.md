@@ -134,10 +134,11 @@ Each finding is one of:
   library's `engine.py`, imported or referenced as `sa.Engine`; any
   `.connect()`, `.connection()`, `.raw_connection()` or `.get_bind()` call;
   `.begin()` on an engine (a name annotated as `Engine`, bound to
-  `create_engine(...)`, or named `engine` or ending in `_engine`); `.execute`,
-  `.scalar`, `.scalars`, `.stream` or `.stream_scalars` on a name that is
-  `connection` or `conn` or ends in `_connection` or `_conn`, annotated or
-  not; a public function of a library's `engine.py` whose return annotation
+  `create_engine(...)`, or named `engine` or ending in `_engine`); `.execute`
+  on anything not named `session` or ending in `_session`; `.scalar`,
+  `.scalars`, `.stream` or `.stream_scalars` on a name that is `connection` or
+  `conn` or ends in `_connection` or `_conn` (a query result has `.scalar` and
+  `.scalars` too); a public function of a library's `engine.py` whose return annotation
   names an `Engine` or `Connection`; and `factory.kw["bind"]`, the engine
   behind a `sessionmaker`, outside a library's `engine.py`. A library's
   `engine.py` opens sessions, not connections.
@@ -147,16 +148,15 @@ Each finding is one of:
 - **sqlmodel import.**
 
 Those that go by a method or attribute name alone apply only in modules that
-import sqlalchemy: any `.table` read, `kw["bind"]`, a statement on a name like
-`connection`, and the `.connect()`, `.connection()`, `.raw_connection()`,
+import sqlalchemy: any `.table` read, `kw["bind"]`, the statement methods above,
+and the `.connect()`, `.connection()`, `.raw_connection()`,
 `.get_bind()`, `.begin()`, `.cursor()` and `.exec_driver_sql()` calls.
 
 The checks read source, not types, and guard against ordinary Core use, not
 against deliberate evasion. They miss imports through `importlib`; tables,
 engines and connections passed around without a `Table`, `Engine` or
-`Connection` annotation, so a statement run on an unannotated connection under
-a name that doesn't look like one, such as `bind.execute(...)`, isn't reported;
-tables held in a container such as a dict, a class or instance attribute read in another module (other
+`Connection` annotation, so a connection held under a name such as `session`
+isn't reported; tables held in a container such as a dict, a class or instance attribute read in another module (other
 than the reads above), a `.table` read in a module that doesn't import
 sqlalchemy, and a Session's `bind` attribute. A name counts as a Core table
 throughout its module once it is assigned an expression rooted at one. Other
