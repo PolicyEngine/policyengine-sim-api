@@ -13,7 +13,7 @@ from typing import Any, Union, get_args, get_origin
 from uuid import UUID, uuid4
 
 import pytest
-from conftest import SERVICE_TEST_ROLE
+from conftest import MODAL_WORKER_ROLE, SERVICE_TEST_ROLE
 from policyengine_simulation_persistence import (
     MODAL_WORKER_TABLE_PRIVILEGES,
     BudgetSummary,
@@ -63,7 +63,7 @@ from policyengine_simulation_persistence import (
 )
 from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
 from schema_comparison import describe_tables
-from sqlalchemy import create_engine, inspect, select, text, update
+from sqlalchemy import create_engine, func, inspect, select, text, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Mapped, configure_mappers
@@ -297,13 +297,6 @@ def test_a_session_writes_and_reads_a_household_job_through_its_class(
     assert result_is_sql_null is True
 
 
-@pytest.mark.parametrize(
-    "mapped_class", RESULT_CLASSES.values(), ids=lambda item: item.__name__
-)
-def test_a_result_class_doesnt_read_its_row_back_on_insert(mapped_class) -> None:
-    assert inspect(mapped_class).eager_defaults is False
-
-
 def _insert_simulation_run(session_factory) -> UUID:
     """Insert a simulation run and the rows its keys name; return its ``id``."""
     household = referenced_tables.ReferencedHousehold(id=uuid4())
@@ -331,10 +324,10 @@ def _insert_simulation_run(session_factory) -> UUID:
 
 
 @pytest.mark.postgres
-def test_a_role_that_may_only_insert_writes_a_result_through_its_class(
+def test_a_written_result_stays_readable_after_its_session_closes(
     disposable_database,
 ) -> None:
-    """The Modal worker role's list gives it ``INSERT`` alone on result tables."""
+    """A role with API v1's grants on a result table reads its defaults back."""
     owner_engine = create_simulation_engine(disposable_database.superuser_url)
     writer_engine = create_simulation_engine(disposable_database.service_url)
     try:
@@ -345,21 +338,45 @@ def test_a_role_that_may_only_insert_writes_a_result_through_its_class(
         run_id = _insert_simulation_run(create_session_factory(owner_engine))
         with owner_engine.begin() as connection:
             connection.execute(
-                text(f"GRANT INSERT ON public.poverty TO {SERVICE_TEST_ROLE}")
+                text(f"GRANT SELECT, INSERT ON public.poverty TO {SERVICE_TEST_ROLE}")
             )
         result = Poverty(simulation_run_id=run_id, poverty_type="spm", entity="person")
 
         with create_session_factory(writer_engine).begin() as session:
             session.add(result)
-
-        with create_session_factory(owner_engine)() as session:
-            stored_result = session.get(Poverty, result.id)
     finally:
         owner_engine.dispose()
         writer_engine.dispose()
 
-    assert stored_result is not None
-    assert stored_result.created_at is not None
+    assert isinstance(result.id, UUID)
+    assert result.created_at is not None
+
+
+@pytest.mark.public_api_schema
+def test_the_modal_worker_role_may_read_back_the_results_it_inserts(
+    public_api_database_url,
+) -> None:
+    """A session's insert of a result class reads its defaults with ``RETURNING``."""
+    engine = create_engine(
+        make_url(public_api_database_url).set(drivername="postgresql+psycopg")
+    )
+    try:
+        with engine.connect() as connection:
+            unreadable = [
+                table_name
+                for table_name in RESULT_CLASSES
+                if not connection.scalar(
+                    select(
+                        func.has_table_privilege(
+                            MODAL_WORKER_ROLE, f"public.{table_name}", "SELECT"
+                        )
+                    )
+                )
+            ]
+    finally:
+        engine.dispose()
+
+    assert unreadable == []
 
 
 @pytest.mark.public_api_schema
