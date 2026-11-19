@@ -615,10 +615,14 @@ def test_a_report_runs_calculation_is_built_from_its_stored_inputs_alone():
         household=_stored_household(),
         year=2027,
         baseline=HouseholdReportSideInputs(
-            simulation_run_id=BASELINE_RUN_ID, policy_values={}
+            simulation_run_id=BASELINE_RUN_ID,
+            policy_values={},
+            dynamic_parameters=frozenset(),
         ),
         reform=HouseholdReportSideInputs(
-            simulation_run_id=REFORM_RUN_ID, policy_values=REFORM
+            simulation_run_id=REFORM_RUN_ID,
+            policy_values=REFORM,
+            dynamic_parameters=frozenset(),
         ),
         worker=manifest_household_worker("us"),
     )
@@ -643,7 +647,9 @@ def test_a_value_the_contract_refuses_is_located_on_the_field_that_sets_it():
             household=_stored_household(),
             year=2026,
             baseline=HouseholdReportSideInputs(
-                simulation_run_id=BASELINE_RUN_ID, policy_values={}
+                simulation_run_id=BASELINE_RUN_ID,
+                policy_values={},
+                dynamic_parameters=frozenset(),
             ),
             reform=HouseholdReportSideInputs(
                 simulation_run_id=REFORM_RUN_ID,
@@ -666,7 +672,9 @@ def test_a_calculation_of_the_baseline_alone_has_no_reform():
         household=_stored_household(),
         year=2026,
         baseline=HouseholdReportSideInputs(
-            simulation_run_id=BASELINE_RUN_ID, policy_values=REFORM
+            simulation_run_id=BASELINE_RUN_ID,
+            policy_values=REFORM,
+            dynamic_parameters=frozenset(),
         ),
         worker=manifest_household_worker("us"),
     )
@@ -682,7 +690,9 @@ def test_a_stored_household_the_builder_cannot_read_is_not_calculable():
             household=_stored_household({"people": "not a list of people"}),
             year=2026,
             baseline=HouseholdReportSideInputs(
-                simulation_run_id=BASELINE_RUN_ID, policy_values={}
+                simulation_run_id=BASELINE_RUN_ID,
+                policy_values={},
+                dynamic_parameters=frozenset(),
             ),
             worker=manifest_household_worker("us"),
         )
@@ -701,10 +711,14 @@ def test_one_simulation_run_on_both_sides_with_two_policies_is_built_wrong():
             household=_stored_household(),
             year=2026,
             baseline=HouseholdReportSideInputs(
-                simulation_run_id=BASELINE_RUN_ID, policy_values={}
+                simulation_run_id=BASELINE_RUN_ID,
+                policy_values={},
+                dynamic_parameters=frozenset(),
             ),
             reform=HouseholdReportSideInputs(
-                simulation_run_id=BASELINE_RUN_ID, policy_values=REFORM
+                simulation_run_id=BASELINE_RUN_ID,
+                policy_values=REFORM,
+                dynamic_parameters=frozenset(),
             ),
             worker=manifest_household_worker("us"),
         )
@@ -721,7 +735,9 @@ def test_a_refusal_of_the_missing_variables_option_is_the_services_fault():
         HouseholdExecutionRequest.model_validate(refused_request)
 
     with pytest.raises(HouseholdReportBuildError, match="add_missing_variables"):
-        household_report_calculations._contract_reasons(refused.value, "baseline")
+        household_report_calculations._contract_reasons(
+            refused.value, "baseline", frozenset()
+        )
 
 
 def test_an_unconfirmed_call_is_logged_naming_its_report(caplog):

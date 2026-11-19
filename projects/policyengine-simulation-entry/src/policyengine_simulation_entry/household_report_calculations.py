@@ -82,7 +82,7 @@ _SIDE_FIELDS = frozenset({"policy_id", "dynamic_id"})
 def _contract_reasons(
     error: ValidationError,
     side: ReportSide,
-    dynamic_parameters: frozenset[str] = frozenset(),
+    dynamic_parameters: frozenset[str],
 ) -> tuple[UnprocessableReason, ...]:
     """Name each field the contract refuses by the request field it traces to.
 
@@ -132,7 +132,7 @@ class HouseholdReportSideInputs:
 
     simulation_run_id: UUID
     policy_values: PolicyReform
-    dynamic_parameters: frozenset[str] = frozenset()
+    dynamic_parameters: frozenset[str]
 
 
 def side_runs_calculation(
@@ -151,7 +151,7 @@ def side_runs_calculation(
         side: HouseholdReportSideInputs(
             simulation_run_id=run_id,
             policy_values=inputs.reforms[side],
-            dynamic_parameters=inputs.dynamic_parameters.get(side, frozenset()),
+            dynamic_parameters=inputs.dynamic_parameters[side],
         )
         for side, run_id in run_ids.items()
     }

@@ -277,8 +277,8 @@ as an economy simulation does, checks each side's household contract
 request, then finds or creates, in one transaction, as an economy report's
 create does (C1 · 24's answer 8): each side's household simulation by a key
 of its country, policy, dynamic, household and year; the report (type
-`household`) by a key of its sides, household and year; and its run on the current
-versions that hasn't failed and wasn't forced, or else a pending report
+`household`) by a key of its sides, household and year; and its run on the
+current versions that hasn't failed and wasn't forced, or else a pending report
 run naming each side's simulation run on those versions, found or
 inserted. A policy compared with itself names one simulation and one run on
 both sides. For a report run it created, it starts one call of the

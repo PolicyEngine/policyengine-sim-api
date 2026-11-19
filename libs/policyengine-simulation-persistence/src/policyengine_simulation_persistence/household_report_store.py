@@ -14,7 +14,7 @@ of its own.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from policyengine_simulation_persistence.economy_inputs import SIDE_ERRORS
@@ -88,7 +88,7 @@ class HouseholdReportInputs:
     tax_benefit_model_id: UUID
     household: StoredHousehold
     reforms: dict[ReportSide, PolicyReform]
-    dynamic_parameters: dict[ReportSide, frozenset[str]] = field(default_factory=dict)
+    dynamic_parameters: dict[ReportSide, frozenset[str]]
 
 
 def _side_reform(

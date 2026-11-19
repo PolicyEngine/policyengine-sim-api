@@ -122,8 +122,8 @@ call (`fail_unstarted_household_job`). Both updates apply only while the job
 is still `pending` with no call ID, and set `updated_at` themselves. A job
 naming a household, policy, dynamic or catalog version that does not exist
 is refused by its foreign key with SQLSTATE `23503`;
-`HouseholdJobReferenceError` names the column. Each function takes an ORM session, so the caller chooses the
-transactions. `HouseholdJobStore` runs them as the Simulation Entrypoint
+`HouseholdJobReferenceError` names the column. Each function takes an ORM
+session, so the caller chooses the transactions. `HouseholdJobStore` runs them as the Simulation Entrypoint
 does, each step in a session and transaction of its own: `read_inputs` reads
 the catalog version, the household, and the policy's and dynamic's values
 combined (`read_simulation_reform`) together,
@@ -261,8 +261,8 @@ model, the stored household and each side's policy and dynamic values,
 combined (`read_simulation_reform`), together, raising
 `UnknownCatalogVersionError`, `UnknownHouseholdError` or `ReportSideError`
 for the side whose policy or dynamic is missing in the country, sets
-parameters the catalog version lacks, or sets one the other also sets; `find_or_create_report` raises
-`EconomyRecordOutcomeUnknownError` when the commit fails after the rows were
+parameters the catalog version lacks, or sets one the other also sets;
+`find_or_create_report` raises `EconomyRecordOutcomeUnknownError` when the commit fails after the rows were
 inserted; and `record_report_call` and `fail_unstarted_report` use the
 economy report run writes.
 

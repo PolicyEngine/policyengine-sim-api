@@ -64,7 +64,7 @@ class HouseholdCalculationInputs:
     catalog_version_id: UUID
     household: StoredHousehold
     reform: PolicyReform
-    dynamic_parameters: frozenset[str] = frozenset()
+    dynamic_parameters: frozenset[str]
 
 
 class HouseholdJobStore:

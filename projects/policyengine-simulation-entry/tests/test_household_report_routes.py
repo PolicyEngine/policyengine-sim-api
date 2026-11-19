@@ -10,7 +10,7 @@ import pytest
 from conftest import FakeBackend, make_settings
 from economy_service_fakes import REPORT_BODY
 from fastapi.testclient import TestClient
-from household_report_fakes import HOUSEHOLD_REPORT_BODY, POLICY_ID
+from household_report_fakes import DYNAMIC_ID, HOUSEHOLD_REPORT_BODY, POLICY_ID
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.economy_submission_errors import (
@@ -120,6 +120,32 @@ def test_a_household_report_answers_201_with_its_records_and_runs(client_for) ->
     assert economy.reports == []
 
 
+def test_each_household_report_sides_dynamic_reaches_the_service(client_for) -> None:
+    household_reports = FakeHouseholdReportSubmissions()
+
+    with client_for(household_reports) as client:
+        result = client.post(
+            "/reports",
+            json={
+                **HOUSEHOLD_REPORT_BODY,
+                "baseline": {"policy_id": None, "dynamic_id": str(DYNAMIC_ID)},
+                "reform": {"policy_id": str(POLICY_ID), "dynamic_id": str(DYNAMIC_ID)},
+            },
+        )
+
+    assert result.status_code == 201
+    ((request, _),) = household_reports.reports
+    assert request.reform is not None
+    assert (request.baseline.policy_id, request.baseline.dynamic_id) == (
+        None,
+        DYNAMIC_ID,
+    )
+    assert (request.reform.policy_id, request.reform.dynamic_id) == (
+        POLICY_ID,
+        DYNAMIC_ID,
+    )
+
+
 def test_an_economy_report_still_reaches_the_economy_service(client_for) -> None:
     household_reports = FakeHouseholdReportSubmissions()
     economy = FakeEconomySubmissions()
@@ -167,12 +193,13 @@ def test_household_reports_answer_503_until_they_are_configured(client_for) -> N
             ["body", "household_id"],
             "missing",
         ),
+        # A side names a policy and a dynamic, nothing else.
         (
             {
                 **HOUSEHOLD_REPORT_BODY,
-                "baseline": {"policy_id": None, "dynamic_id": None},
+                "baseline": {"policy_id": None, "dataset_name": "acs_2024"},
             },
-            ["body", "baseline", "dynamic_id"],
+            ["body", "baseline", "dataset_name"],
             "extra_forbidden",
         ),
         (
@@ -198,7 +225,7 @@ def test_household_reports_answer_503_until_they_are_configured(client_for) -> N
     ],
     ids=[
         "no-household",
-        "dynamic",
+        "side-field",
         "malformed-policy",
         "missing-variables-option",
         "year",

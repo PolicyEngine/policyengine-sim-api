@@ -44,7 +44,7 @@ def request_field_of(
     location: tuple[str | int, ...],
     *,
     spm_from_request: bool,
-    dynamic_parameters: frozenset[str] = frozenset(),
+    dynamic_parameters: frozenset[str],
 ) -> str | None:
     """Return the request field a refused field of the contract's request came from.
 

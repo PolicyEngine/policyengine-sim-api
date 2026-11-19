@@ -68,6 +68,8 @@ def _omit_spm_default(schema: dict[str, Any]) -> None:
 class HouseholdCalculationRequest(BaseModel):
     """A stored household to calculate under one stored policy, or current law.
 
+    It may also name a stored dynamic, whose model assumptions apply too.
+
     ``household_id``, ``policy_id`` (omitted or null for current law) and
     ``dynamic_id`` (omitted or null for none) name API v1's rows of
     ``country``; the dynamic's values are applied with the policy's, and
