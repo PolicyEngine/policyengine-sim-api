@@ -2,7 +2,7 @@
 
 A simulation run has one cliff result, its cliff gap and cliff share, which
 every report naming the run reads: cliffs are a calculation of the run, not
-of any report (C1 · 24's answer 4b, the Public API's ``cliff_impacts``).
+of any report (C1 · 24's answer 4b, API v1's ``cliff_impacts``).
 ``include_cliffs`` is a request option, never stored or keyed. A create or
 re-run asking for cliffs ends on a report run as any other does, and in the
 same transaction finds or creates the cliff calculation of each simulation

@@ -2,8 +2,8 @@
 
 A request asking for cliffs (``include_cliffs``) gets one cliff calculation
 per simulation run it names that has none that hasn't failed (C1 · 24's
-answer 4b, the ``cliff_impacts`` design). These run against a database the
-Public API's own v2 migration chain built, as the simulation service's role.
+answer 4b, the ``cliff_impacts`` design). These run against a database
+API v1's own v2 migration chain built, as the simulation service's role.
 Most run in a transaction rolled back afterwards; the test of two
 transactions commits its rows under a catalog of a country no other test
 uses, and deletes them afterwards.

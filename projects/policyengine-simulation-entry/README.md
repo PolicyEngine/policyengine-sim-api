@@ -156,7 +156,7 @@ whose run this request didn't create.
 
 A report asking for cliffs (`include_cliffs: true`) gets them as each
 simulation run's own calculation (C1 · 24's answer 4b): a run has one
-cliff result, its cliff gap and cliff share, in the Public API's
+cliff result, its cliff gap and cliff share, in API v1's
 `cliff_impacts`, which every report naming the run reads. In the
 transaction that ends on the report run, created or joined, the service
 also finds or creates the cliff calculation of each simulation run that
