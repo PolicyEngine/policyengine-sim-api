@@ -1,6 +1,6 @@
 """A scheduled Modal function that fails the runs nothing will finish.
 
-Every ten minutes it lists the Public API's report runs, simulation runs,
+Every ten minutes it lists API v1's report runs, simulation runs,
 household jobs and simulation runs' cliff results that have been pending or
 running for at least ten minutes, counted from a run's or cliff result's
 first claim or, while it is pending, from its creation (a budget window's

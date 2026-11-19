@@ -1,6 +1,6 @@
 """Conditional writes of a simulation run's cliff calculation, as the Modal worker role.
 
-The Public API's ``cliff_impacts`` holds each cliff calculation of a
+API v1's ``cliff_impacts`` holds each cliff calculation of a
 simulation run, its cliff result. The simulation service inserts it pending
 and may record the Modal call it starts while it is still pending with none.
 A simulation worker's call then claims it under that call, as a run is

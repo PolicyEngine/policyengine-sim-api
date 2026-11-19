@@ -465,8 +465,8 @@ run has no call of its own) and of the results its own row holds: a report
 run's `spm_provenance` and `data_version`, a simulation run's output file and
 `household_result`, a household job's `result`, and a cliff calculation's
 `cliff_gap` and `cliff_share`. It no longer writes a report run's four cliff
-columns, which the Public API is to drop: a report run's cliff impact is its
-two simulation runs' cliff results. The Public API's manifest grants them;
+columns, which API v1 is to drop: a report run's cliff impact is its
+two simulation runs' cliff results. The same privilege manifest grants them;
 `test_modal_worker_writes` checks that in CI.
 
 `missing_table_privileges` returns each one the connected role lacks, ordered

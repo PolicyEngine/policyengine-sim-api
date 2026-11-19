@@ -79,10 +79,10 @@ def test_the_models_match_the_public_api_tables(
 
 
 @pytest.mark.public_api_schema
-def test_the_cliff_calculation_model_matches_the_public_api_table(
+def test_the_cliff_calculation_model_matches_the_api_v1_table(
     disposable_database, public_api_database_url
 ) -> None:
-    """A simulation run's cliff calculations match the Public API's ``cliff_impacts``.
+    """A simulation run's cliff calculations match API v1's ``cliff_impacts``.
 
     The comparison of all the service's tables above includes it; this names the
     table alone, so a difference there is reported as the cliff table's.
@@ -103,7 +103,7 @@ def test_the_cliff_calculation_model_matches_the_public_api_table(
     assert set(real.tables) == {"cliff_impacts"}
     compared_with = os.environ.get(COMMIT_VARIABLE) or "an unrecorded commit"
     assert schema_differences(models, real) == [], (
-        f"compared with the Public API at {compared_with}"
+        f"compared with API v1 at {compared_with}"
     )
 
 

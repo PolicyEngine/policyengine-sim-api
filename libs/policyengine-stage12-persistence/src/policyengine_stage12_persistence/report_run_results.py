@@ -234,7 +234,7 @@ def _report_run_columns(economy: SingleYearMacroOutput) -> dict[str, Any]:
 
     No cliff column: a cliff impact is each simulation run's own cliff
     result, so the report run's four cliff columns stay null, and its
-    completion names none of them, which lets the Public API drop them.
+    completion names none of them, which lets API v1 drop them.
     """
     receipts = economy.spm_provenance
     return {

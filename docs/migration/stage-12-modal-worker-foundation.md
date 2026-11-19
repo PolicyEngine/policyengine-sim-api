@@ -369,7 +369,7 @@ holds, or one that failed, it returns `{"deduplicated": true,
 
 **A simulation run's cliff result** (C1 · 24, answer 4b). Each simulation run
 can have one cliff result, its cliff gap and cliff share, which every report
-naming the run reads: a row of the Public API's `cliff_impacts`, one per
+naming the run reads: a row of API v1's `cliff_impacts`, one per
 calculation. Nothing starts one yet. The simulation service is to insert it
 pending, start the country's simulation worker (`run_single_simulation_us` or
 `run_single_simulation_uk`) with the run's own simulation input, built as a
@@ -398,7 +398,7 @@ it returns its values again when Modal restarts it. A failure fails the row
 with its redacted cause; the stuck-run sweep fails one whose call ended
 without an outcome, and a failed row never counts, so the next request starts
 another calculation. The worker writes nothing to the simulation run, its
-output file or any report run. The Public API's revision that adds
+output file or any report run. API v1's revision that adds
 `cliff_impacts` must be applied in an environment before this release deploys
 there: the stuck-run sweep lists the table on every pass, and the service's
 `/ready` privilege check names it.

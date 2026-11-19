@@ -308,7 +308,7 @@ def test_the_labour_supply_response_is_one_row_and_a_row_per_decile(
 
 
 def test_a_report_runs_result_columns_never_name_its_cliff_columns() -> None:
-    """The completion's update names none of them, so the Public API can drop them."""
+    """The completion's update names none of them, so API v1 can drop them."""
     run_ids = ReportRunIds(
         report_run_id=uuid4(),
         baseline_simulation_run_id=uuid4(),
