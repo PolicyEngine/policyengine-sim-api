@@ -324,7 +324,7 @@ def prepare_household_job(
                     if request.axes is None
                     else {**situation, "axes": request.axes}
                 ),
-                **job_policy_fields(reform=inputs.reform),
+                **job_policy_fields(reform=inputs.reform.values),
                 "add_missing_variables": request.add_missing_variables,
                 "bundle": worker.bundle,
                 **_spm_fields(request, household.document),
@@ -332,7 +332,7 @@ def prepare_household_job(
         )
     except ValidationError as error:
         raise HouseholdCalculationUnprocessableError(
-            _contract_reasons(error, request, inputs.dynamic_parameters)
+            _contract_reasons(error, request, inputs.reform.dynamic_parameters)
         ) from None
     return PreparedHouseholdJob(
         job=NewHouseholdJob(

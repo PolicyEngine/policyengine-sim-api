@@ -33,6 +33,7 @@ from policyengine_simulation_persistence import (
     FoundSide,
     HouseholdReportInputs,
     ReportRunStatus,
+    SimulationReform,
     StoredHousehold,
     combine_reforms,
 )
@@ -43,7 +44,6 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence import (
         KeyedHouseholdReport,
         NewHouseholdReportRerun,
-        PolicyReform,
         SimulationChoice,
     )
 
@@ -99,11 +99,12 @@ HOUSEHOLD_REPORT_BODY: dict[str, Any] = {
 }
 
 
-def _side_values(choice: SimulationChoice) -> PolicyReform:
+def _side_values(choice: SimulationChoice) -> SimulationReform:
     """Return a side's values: REFORM for any policy, DYNAMIC_VALUES for any dynamic."""
-    return combine_reforms(
-        {} if choice.policy_id is None else REFORM,
-        {} if choice.dynamic_id is None else DYNAMIC_VALUES,
+    dynamic = {} if choice.dynamic_id is None else DYNAMIC_VALUES
+    return SimulationReform(
+        values=combine_reforms({} if choice.policy_id is None else REFORM, dynamic),
+        dynamic_parameters=frozenset(dynamic),
     )
 
 
@@ -191,14 +192,6 @@ class FakeHouseholdReportStore:
                 document=self.document,
             ),
             reforms={side: _side_values(choice) for side, choice in choices.items()},
-            dynamic_parameters={
-                side: (
-                    frozenset()
-                    if choice.dynamic_id is None
-                    else frozenset(DYNAMIC_VALUES)
-                )
-                for side, choice in choices.items()
-            },
         )
 
     def find_or_create_report(

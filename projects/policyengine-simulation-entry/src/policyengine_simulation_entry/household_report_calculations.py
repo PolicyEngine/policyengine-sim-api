@@ -42,8 +42,8 @@ if TYPE_CHECKING:
 
     from policyengine_simulation_persistence import (
         HouseholdReportInputs,
-        PolicyReform,
         ReportSide,
+        SimulationReform,
         StoredHousehold,
     )
 
@@ -124,15 +124,13 @@ def _contract_reasons(
 class HouseholdReportSideInputs:
     """One side of a household report run: the simulation run it records.
 
-    ``policy_values`` holds the side's policy and dynamic values together,
-    by parameter name and period, empty for current law with no dynamic, as
-    ``HouseholdReportStore.read_inputs`` reads them into ``reforms``;
-    ``dynamic_parameters`` names those the dynamic sets.
+    ``reform`` holds the side's policy and dynamic values together, with the
+    parameters its dynamic sets, as ``HouseholdReportStore.read_inputs``
+    reads them into ``reforms``.
     """
 
     simulation_run_id: UUID
-    policy_values: PolicyReform
-    dynamic_parameters: frozenset[str]
+    reform: SimulationReform
 
 
 def side_runs_calculation(
@@ -149,9 +147,7 @@ def side_runs_calculation(
     """
     sides = {
         side: HouseholdReportSideInputs(
-            simulation_run_id=run_id,
-            policy_values=inputs.reforms[side],
-            dynamic_parameters=inputs.dynamic_parameters[side],
+            simulation_run_id=run_id, reform=inputs.reforms[side]
         )
         for side, run_id in run_ids.items()
     }
@@ -246,7 +242,7 @@ def _side_request(  # noqa: PLR0913  # the side and what it calculates
                 # The report's year, as a situation's period key.
                 "year": str(year),
                 "household": situation,
-                **job_policy_fields(reform=side_inputs.policy_values),
+                **job_policy_fields(reform=side_inputs.reform.values),
                 # A household report holds every value, as the Public API's
                 # stored-household route gives it.
                 "add_missing_variables": True,
@@ -256,5 +252,5 @@ def _side_request(  # noqa: PLR0913  # the side and what it calculates
         )
     except ValidationError as error:
         raise household_not_calculable(
-            *_contract_reasons(error, side, side_inputs.dynamic_parameters)
+            *_contract_reasons(error, side, side_inputs.reform.dynamic_parameters)
         ) from None

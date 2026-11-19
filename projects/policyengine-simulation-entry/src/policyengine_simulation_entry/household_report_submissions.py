@@ -56,8 +56,6 @@ from policyengine_simulation_persistence import (
     EconomyRecordReferenceError,
     HouseholdReportDefinition,
     KeyedHouseholdReport,
-    MissingPolicyParametersError,
-    OverlappingReformError,
     ProposedSide,
     ReportRunStatus,
     ReportSideError,
@@ -65,9 +63,7 @@ from policyengine_simulation_persistence import (
     SharedRowNotSettledError,
     SimulationChoice,
     UnknownCatalogVersionError,
-    UnknownDynamicError,
     UnknownHouseholdError,
-    UnknownPolicyError,
 )
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -80,6 +76,7 @@ from policyengine_simulation_entry.economy_submission_errors import (
     UnprocessableReason,
     call_refused,
     reference_refusal,
+    simulation_values_refusal,
 )
 from policyengine_simulation_entry.household_report_api_models import (
     HouseholdReportCreated,
@@ -252,71 +249,13 @@ def _read_refusal(
         )
     if not isinstance(error, ReportSideError):
         return None
-    return _side_refusal(
-        error,
+    return simulation_values_refusal(
+        error.error,
         country=country,
         policyengine_version=policyengine_version,
-        source=source,
+        named_by=f"{source.named_by}'s {error.side}",
+        location=(source.location, error.side),
     )
-
-
-def _side_refusal(
-    error: ReportSideError,
-    *,
-    country: str,
-    policyengine_version: str,
-    source: RefusalSource,
-) -> EconomySubmissionRefusedError | EconomySubmissionUnprocessableError | None:
-    """Return the refusal of a side's policy or dynamic, located at that side.
-
-    A dynamic of another country is refused as a missing one; a dynamic
-    setting a parameter the side's policy sets is located at its
-    ``dynamic_id``, as an economy report's is.
-    """
-    side, refused = error.side, error.error
-    if isinstance(refused, UnknownPolicyError):
-        return EconomySubmissionRefusedError(
-            code="unknown_policy",
-            detail=(
-                f"{country} has no stored policy {source.named_by}'s {side} names."
-            ),
-        )
-    if isinstance(refused, UnknownDynamicError):
-        return EconomySubmissionRefusedError(
-            code="unknown_dynamic",
-            detail=(
-                f"{country} has no stored dynamic {source.named_by}'s {side} names."
-            ),
-        )
-    if isinstance(refused, MissingPolicyParametersError):
-        field_name = "policy_id" if refused.source == "policy" else "dynamic_id"
-        return EconomySubmissionUnprocessableError(
-            code="missing_parameters",
-            reasons=tuple(
-                UnprocessableReason(
-                    loc=(source.location, side, field_name, name),
-                    msg=(
-                        f"the catalog version for .py {policyengine_version} has "
-                        "no such parameter"
-                    ),
-                    type="missing_parameter",
-                )
-                for name in refused.parameter_names
-            ),
-        )
-    if isinstance(refused, OverlappingReformError):
-        return EconomySubmissionUnprocessableError(
-            code="overlapping_parameters",
-            reasons=tuple(
-                UnprocessableReason(
-                    loc=(source.location, side, "dynamic_id", name),
-                    msg="the policy and the dynamic both set this parameter",
-                    type="overlapping_parameter",
-                )
-                for name in refused.parameter_names
-            ),
-        )
-    return None
 
 
 def _report_year(household: StoredHousehold) -> int:

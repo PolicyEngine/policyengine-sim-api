@@ -24,6 +24,7 @@ from policyengine_simulation_persistence import (
     ReportSideError,
     RunVersions,
     SimulationChoice,
+    SimulationReform,
     UnknownCatalogVersionError,
     UnknownDynamicError,
     UnknownHouseholdError,
@@ -130,12 +131,11 @@ def test_a_household_reports_inputs_are_read_together(public_api_database_url) -
     assert inputs.household.default_year == 2026
     assert inputs.household.document == DOCUMENT
     assert inputs.reforms == {
-        "baseline": {},
-        "reform": {CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000}},
-    }
-    assert inputs.dynamic_parameters == {
-        "baseline": frozenset(),
-        "reform": frozenset(),
+        "baseline": SimulationReform(values={}, dynamic_parameters=frozenset()),
+        "reform": SimulationReform(
+            values={CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000}},
+            dynamic_parameters=frozenset(),
+        ),
     }
 
 
@@ -163,15 +163,17 @@ def test_each_sides_dynamic_is_applied_with_its_policy(public_api_database_url) 
         )
 
     assert inputs.reforms == {
-        "baseline": {ELASTICITY: {"2026-01-01.2200-12-31": -0.05}},
-        "reform": {
-            CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000},
-            ELASTICITY: {"2026-01-01.2200-12-31": -0.05},
-        },
-    }
-    assert inputs.dynamic_parameters == {
-        "baseline": frozenset({ELASTICITY}),
-        "reform": frozenset({ELASTICITY}),
+        "baseline": SimulationReform(
+            values={ELASTICITY: {"2026-01-01.2200-12-31": -0.05}},
+            dynamic_parameters=frozenset({ELASTICITY}),
+        ),
+        "reform": SimulationReform(
+            values={
+                CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000},
+                ELASTICITY: {"2026-01-01.2200-12-31": -0.05},
+            },
+            dynamic_parameters=frozenset({ELASTICITY}),
+        ),
     }
 
 

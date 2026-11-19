@@ -68,6 +68,7 @@ from policyengine_simulation_persistence import (
     ReportSideError,
     RunVersions,
     SimulationChoice,
+    SimulationReform,
     StoredHousehold,
     UnknownCatalogVersionError,
     UnknownDynamicError,
@@ -616,13 +617,11 @@ def test_a_report_runs_calculation_is_built_from_its_stored_inputs_alone():
         year=2027,
         baseline=HouseholdReportSideInputs(
             simulation_run_id=BASELINE_RUN_ID,
-            policy_values={},
-            dynamic_parameters=frozenset(),
+            reform=SimulationReform(values={}, dynamic_parameters=frozenset()),
         ),
         reform=HouseholdReportSideInputs(
             simulation_run_id=REFORM_RUN_ID,
-            policy_values=REFORM,
-            dynamic_parameters=frozenset(),
+            reform=SimulationReform(values=REFORM, dynamic_parameters=frozenset()),
         ),
         worker=manifest_household_worker("us"),
     )
@@ -648,13 +647,14 @@ def test_a_value_the_contract_refuses_is_located_on_the_field_that_sets_it():
             year=2026,
             baseline=HouseholdReportSideInputs(
                 simulation_run_id=BASELINE_RUN_ID,
-                policy_values={},
-                dynamic_parameters=frozenset(),
+                reform=SimulationReform(values={}, dynamic_parameters=frozenset()),
             ),
             reform=HouseholdReportSideInputs(
                 simulation_run_id=REFORM_RUN_ID,
-                policy_values={CTC_AMOUNT: refused_value, ELASTICITY: refused_value},
-                dynamic_parameters=frozenset({ELASTICITY}),
+                reform=SimulationReform(
+                    values={CTC_AMOUNT: refused_value, ELASTICITY: refused_value},
+                    dynamic_parameters=frozenset({ELASTICITY}),
+                ),
             ),
             worker=manifest_household_worker("us"),
         )
@@ -673,8 +673,7 @@ def test_a_calculation_of_the_baseline_alone_has_no_reform():
         year=2026,
         baseline=HouseholdReportSideInputs(
             simulation_run_id=BASELINE_RUN_ID,
-            policy_values=REFORM,
-            dynamic_parameters=frozenset(),
+            reform=SimulationReform(values=REFORM, dynamic_parameters=frozenset()),
         ),
         worker=manifest_household_worker("us"),
     )
@@ -691,8 +690,7 @@ def test_a_stored_household_the_builder_cannot_read_is_not_calculable():
             year=2026,
             baseline=HouseholdReportSideInputs(
                 simulation_run_id=BASELINE_RUN_ID,
-                policy_values={},
-                dynamic_parameters=frozenset(),
+                reform=SimulationReform(values={}, dynamic_parameters=frozenset()),
             ),
             worker=manifest_household_worker("us"),
         )
@@ -712,13 +710,11 @@ def test_one_simulation_run_on_both_sides_with_two_policies_is_built_wrong():
             year=2026,
             baseline=HouseholdReportSideInputs(
                 simulation_run_id=BASELINE_RUN_ID,
-                policy_values={},
-                dynamic_parameters=frozenset(),
+                reform=SimulationReform(values={}, dynamic_parameters=frozenset()),
             ),
             reform=HouseholdReportSideInputs(
                 simulation_run_id=BASELINE_RUN_ID,
-                policy_values=REFORM,
-                dynamic_parameters=frozenset(),
+                reform=SimulationReform(values=REFORM, dynamic_parameters=frozenset()),
             ),
             worker=manifest_household_worker("us"),
         )

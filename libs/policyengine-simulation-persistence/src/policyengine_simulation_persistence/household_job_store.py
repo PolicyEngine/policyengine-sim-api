@@ -38,7 +38,7 @@ if TYPE_CHECKING:
         NewHouseholdJob,
         StoredHousehold,
     )
-    from policyengine_simulation_persistence.policy_reform import PolicyReform
+    from policyengine_simulation_persistence.policy_reform import SimulationReform
     from policyengine_simulation_persistence.tables import HouseholdJobStatus
 
 
@@ -56,15 +56,12 @@ class HouseholdCalculationInputs:
 
     ``catalog_version_id`` is the country's catalog version for the .py
     version the calculation runs on. ``reform`` holds the policy's and the
-    dynamic's values together, by parameter name and period, empty for
-    current law with no dynamic; ``dynamic_parameters`` names those the
-    dynamic sets.
+    dynamic's values together, and names the parameters the dynamic sets.
     """
 
     catalog_version_id: UUID
     household: StoredHousehold
-    reform: PolicyReform
-    dynamic_parameters: frozenset[str]
+    reform: SimulationReform
 
 
 class HouseholdJobStore:
@@ -128,10 +125,7 @@ class HouseholdJobStore:
                 catalog_version_id=catalog_version_id,
             )
         return HouseholdCalculationInputs(
-            catalog_version_id=catalog_version_id,
-            household=household,
-            reform=reform.values,
-            dynamic_parameters=reform.dynamic_parameters,
+            catalog_version_id=catalog_version_id, household=household, reform=reform
         )
 
     def create_job(self, job: NewHouseholdJob) -> None:

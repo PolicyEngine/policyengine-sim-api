@@ -65,10 +65,7 @@ if TYPE_CHECKING:
         FoundHouseholdReport,
         KeyedHouseholdReport,
     )
-    from policyengine_simulation_persistence.policy_reform import (
-        PolicyReform,
-        SimulationReform,
-    )
+    from policyengine_simulation_persistence.policy_reform import SimulationReform
     from policyengine_simulation_persistence.shared_rows import FoundReportRun
     from policyengine_simulation_persistence.tables import ReportRunStatus
 
@@ -80,15 +77,13 @@ class HouseholdReportInputs:
     ``catalog_version_id`` is the country's catalog version for the .py
     version the report runs on, and ``tax_benefit_model_id`` its model.
     ``reforms`` holds each requested side's policy and dynamic values
-    together, by parameter name and period, empty for current law with no
-    dynamic; ``dynamic_parameters`` names, by side, those its dynamic sets.
+    together, with the parameters its dynamic sets.
     """
 
     catalog_version_id: UUID
     tax_benefit_model_id: UUID
     household: StoredHousehold
-    reforms: dict[ReportSide, PolicyReform]
-    dynamic_parameters: dict[ReportSide, frozenset[str]]
+    reforms: dict[ReportSide, SimulationReform]
 
 
 def _side_reform(
@@ -167,7 +162,7 @@ class HouseholdReportStore:
             if household is None:
                 msg = f"{country} has no household {household_id}"
                 raise UnknownHouseholdError(msg)
-            sides: dict[ReportSide, SimulationReform] = {
+            reforms: dict[ReportSide, SimulationReform] = {
                 side: _side_reform(
                     session,
                     side,
@@ -181,10 +176,7 @@ class HouseholdReportStore:
             catalog_version_id=catalog_version_id,
             tax_benefit_model_id=model_id,
             household=household,
-            reforms={side: reform.values for side, reform in sides.items()},
-            dynamic_parameters={
-                side: reform.dynamic_parameters for side, reform in sides.items()
-            },
+            reforms=reforms,
         )
 
     def find_or_create_report(

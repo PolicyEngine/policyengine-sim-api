@@ -28,6 +28,7 @@ from policyengine_simulation_persistence import (
     MissingPolicyParametersError,
     NewHouseholdJob,
     OverlappingReformError,
+    SimulationReform,
     UnknownCatalogVersionError,
     UnknownDynamicError,
     UnknownHouseholdError,
@@ -121,9 +122,13 @@ def test_the_inputs_are_read_together(public_api_database_url) -> None:
     assert with_policy.household.id == household_id
     assert with_policy.household.default_year == 2026
     assert with_policy.household.document == DOCUMENT
-    assert with_policy.reform == {CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000}}
-    assert with_policy.dynamic_parameters == frozenset()
-    assert current_law.reform == {}
+    assert with_policy.reform == SimulationReform(
+        values={CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000}},
+        dynamic_parameters=frozenset(),
+    )
+    assert current_law.reform == SimulationReform(
+        values={}, dynamic_parameters=frozenset()
+    )
 
 
 def test_a_dynamic_is_applied_with_the_policy(public_api_database_url) -> None:
@@ -162,13 +167,17 @@ def test_a_dynamic_is_applied_with_the_policy(public_api_database_url) -> None:
             policyengine_version=POLICYENGINE_VERSION,
         )
 
-    assert with_both.reform == {
-        CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000},
-        ELASTICITY: {"2026-01-01.2200-12-31": -0.05},
-    }
-    assert with_both.dynamic_parameters == frozenset({ELASTICITY})
-    assert dynamic_alone.reform == {ELASTICITY: {"2026-01-01.2200-12-31": -0.05}}
-    assert dynamic_alone.dynamic_parameters == frozenset({ELASTICITY})
+    assert with_both.reform == SimulationReform(
+        values={
+            CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000},
+            ELASTICITY: {"2026-01-01.2200-12-31": -0.05},
+        },
+        dynamic_parameters=frozenset({ELASTICITY}),
+    )
+    assert dynamic_alone.reform == SimulationReform(
+        values={ELASTICITY: {"2026-01-01.2200-12-31": -0.05}},
+        dynamic_parameters=frozenset({ELASTICITY}),
+    )
 
 
 def test_a_dynamic_that_cannot_be_applied_is_refused(public_api_database_url) -> None:

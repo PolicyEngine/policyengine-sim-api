@@ -381,7 +381,10 @@ can't be calculated on the current catalog version, worded for the stored
 record (a 422 reason's `loc` starts with `report` or `simulation`), with a
 household report's own codes: 400 `unknown_household` and
 `no_household_function`, and 422 `household_not_calculable`, located at the
-report's `household_id` or a side's `policy_id`. Without household reports
+report's `household_id` or a side's `policy_id` or `dynamic_id`; a side's
+dynamic of another country is 400 `unknown_dynamic`, and one setting a
+parameter the side's policy sets 422 `overlapping_parameters`, located at
+that side's `dynamic_id`. Without household reports
 configured, a household report the service could re-run answers 503
 `not_configured`. No re-run is refused while a run is under way, and the
 409 `run_in_progress` is gone. An unforced re-run of a report created by

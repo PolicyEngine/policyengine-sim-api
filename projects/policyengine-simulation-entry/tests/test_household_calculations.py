@@ -47,6 +47,7 @@ from policyengine_simulation_persistence import (
     MissingPolicyParametersError,
     NewHouseholdJob,
     OverlappingReformError,
+    SimulationReform,
     StoredHousehold,
     UnknownCatalogVersionError,
     UnknownDynamicError,
@@ -139,6 +140,7 @@ class FakeStore:
     default_year: int | None = 2026
     document: dict[str, Any] = field(default_factory=lambda: dict(STORED_DOCUMENT))
     reform: dict[str, dict[str, object]] = field(default_factory=dict)
+    # The parameters among ``reform``'s that the dynamic sets.
     dynamic_parameters: frozenset[str] = frozenset()
     read_failure: Exception | None = None
     create_failure: Exception | None = None
@@ -167,8 +169,9 @@ class FakeStore:
                 default_year=self.default_year,
                 document=self.document,
             ),
-            reform=self.reform,
-            dynamic_parameters=self.dynamic_parameters,
+            reform=SimulationReform(
+                values=self.reform, dynamic_parameters=self.dynamic_parameters
+            ),
         )
 
     def create_job(self, job: NewHouseholdJob) -> None:
