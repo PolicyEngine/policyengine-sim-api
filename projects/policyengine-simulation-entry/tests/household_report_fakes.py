@@ -34,6 +34,7 @@ from policyengine_simulation_persistence import (
     HouseholdReportInputs,
     ReportRunStatus,
     StoredHousehold,
+    combine_reforms,
 )
 
 if TYPE_CHECKING:
@@ -42,14 +43,20 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence import (
         KeyedHouseholdReport,
         NewHouseholdReportRerun,
+        PolicyReform,
+        SimulationChoice,
     )
 
 HOUSEHOLD_ID = UUID("00000000-0000-4000-8000-0000000000bb")
 POLICY_ID = UUID("00000000-0000-4000-8000-0000000000cc")
+DYNAMIC_ID = UUID("00000000-0000-4000-8000-0000000000ce")
 CATALOG_VERSION_ID = UUID("00000000-0000-4000-8000-0000000000dd")
 MODEL_ID = UUID("00000000-0000-4000-8000-0000000000de")
 CTC_AMOUNT = "gov.irs.credits.ctc.amount.base[0].amount"
 REFORM = {CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000}}
+ELASTICITY = "gov.simulation.labor_supply_responses.elasticities.income"
+# The values the fake store reads for any dynamic.
+DYNAMIC_VALUES = {ELASTICITY: {"2026-01-01.2200-12-31": -0.05}}
 STORED_DOCUMENT: dict[str, Any] = {
     "people": [
         {
@@ -90,6 +97,14 @@ HOUSEHOLD_REPORT_BODY: dict[str, Any] = {
     "baseline": {"policy_id": None},
     "reform": {"policy_id": str(POLICY_ID)},
 }
+
+
+def _side_values(choice: SimulationChoice) -> PolicyReform:
+    """Return a side's values: REFORM for any policy, DYNAMIC_VALUES for any dynamic."""
+    return combine_reforms(
+        {} if choice.policy_id is None else REFORM,
+        {} if choice.dynamic_id is None else DYNAMIC_VALUES,
+    )
 
 
 def household_report_request(**changes: Any) -> HouseholdReportRequest:
@@ -153,14 +168,14 @@ class FakeHouseholdReportStore:
         *,
         country: str,
         household_id: UUID,
-        policy_ids: Mapping[str, UUID | None],
+        choices: Mapping[str, SimulationChoice],
         policyengine_version: str,
     ) -> HouseholdReportInputs:
         self.reads.append(
             {
                 "country": country,
                 "household_id": household_id,
-                "policy_ids": dict(policy_ids),
+                "choices": dict(choices),
                 "policyengine_version": policyengine_version,
             }
         )
@@ -175,9 +190,14 @@ class FakeHouseholdReportStore:
                 default_year=self.default_year,
                 document=self.document,
             ),
-            reforms={
-                side: ({} if policy_id is None else REFORM)
-                for side, policy_id in policy_ids.items()
+            reforms={side: _side_values(choice) for side, choice in choices.items()},
+            dynamic_parameters={
+                side: (
+                    frozenset()
+                    if choice.dynamic_id is None
+                    else frozenset(DYNAMIC_VALUES)
+                )
+                for side, choice in choices.items()
             },
         )
 

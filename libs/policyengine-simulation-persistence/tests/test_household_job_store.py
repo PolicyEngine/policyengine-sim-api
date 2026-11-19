@@ -25,8 +25,11 @@ from policyengine_simulation_persistence import (
     HouseholdJobReferenceError,
     HouseholdJobStatus,
     HouseholdJobStore,
+    MissingPolicyParametersError,
     NewHouseholdJob,
+    OverlappingReformError,
     UnknownCatalogVersionError,
+    UnknownDynamicError,
     UnknownHouseholdError,
     UnknownPolicyError,
     create_session_factory,
@@ -34,10 +37,12 @@ from policyengine_simulation_persistence import (
 from public_api_rows import (
     StoredValue,
     insert_catalog_version,
+    insert_dynamic,
     insert_household,
     insert_model,
     insert_policy,
 )
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from transaction_fakes import (
     CommitFailingTransaction,
@@ -46,6 +51,8 @@ from transaction_fakes import (
 )
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from sqlalchemy import Connection
 
 pytestmark = pytest.mark.public_api_schema
@@ -53,6 +60,8 @@ pytestmark = pytest.mark.public_api_schema
 STATEMENT_TIMEOUT_MILLISECONDS = 5_000
 POLICYENGINE_VERSION = "6.17.1"
 CTC_AMOUNT = "gov.irs.credits.ctc.amount.base[0].amount"
+ELASTICITY = "gov.simulation.labor_supply_responses.elasticities.income"
+START = datetime(2026, 1, 1, tzinfo=UTC)
 DOCUMENT = {
     "people": [
         {
@@ -97,12 +106,14 @@ def test_the_inputs_are_read_together(public_api_database_url) -> None:
             country="us",
             household_id=household_id,
             policy_id=policy_id,
+            dynamic_id=None,
             policyengine_version=POLICYENGINE_VERSION,
         )
         current_law = store.read_inputs(
             country="us",
             household_id=household_id,
             policy_id=None,
+            dynamic_id=None,
             policyengine_version=POLICYENGINE_VERSION,
         )
 
@@ -111,7 +122,119 @@ def test_the_inputs_are_read_together(public_api_database_url) -> None:
     assert with_policy.household.default_year == 2026
     assert with_policy.household.document == DOCUMENT
     assert with_policy.reform == {CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000}}
+    assert with_policy.dynamic_parameters == frozenset()
     assert current_law.reform == {}
+
+
+def test_a_dynamic_is_applied_with_the_policy(public_api_database_url) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        catalog = insert_catalog_version(
+            connection,
+            country="us",
+            model_id=insert_model(connection, "us"),
+            policyengine_version=POLICYENGINE_VERSION,
+            parameter_names=[CTC_AMOUNT, ELASTICITY],
+        )
+        household_id = insert_household(
+            connection, country="us", default_year=2026, document=DOCUMENT
+        )
+        policy_id = insert_policy(
+            connection, catalog, [StoredValue(CTC_AMOUNT, 3_000, START)]
+        )
+        dynamic_id = insert_dynamic(
+            connection, catalog, [StoredValue(ELASTICITY, -0.05, START)]
+        )
+        act_as_the_service(connection)
+        store = _store_on(connection)
+
+        with_both = store.read_inputs(
+            country="us",
+            household_id=household_id,
+            policy_id=policy_id,
+            dynamic_id=dynamic_id,
+            policyengine_version=POLICYENGINE_VERSION,
+        )
+        dynamic_alone = store.read_inputs(
+            country="us",
+            household_id=household_id,
+            policy_id=None,
+            dynamic_id=dynamic_id,
+            policyengine_version=POLICYENGINE_VERSION,
+        )
+
+    assert with_both.reform == {
+        CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000},
+        ELASTICITY: {"2026-01-01.2200-12-31": -0.05},
+    }
+    assert with_both.dynamic_parameters == frozenset({ELASTICITY})
+    assert dynamic_alone.reform == {ELASTICITY: {"2026-01-01.2200-12-31": -0.05}}
+    assert dynamic_alone.dynamic_parameters == frozenset({ELASTICITY})
+
+
+def test_a_dynamic_that_cannot_be_applied_is_refused(public_api_database_url) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        model_id = insert_model(connection, "us")
+        catalog = insert_catalog_version(
+            connection,
+            country="us",
+            model_id=model_id,
+            policyengine_version=POLICYENGINE_VERSION,
+            parameter_names=[CTC_AMOUNT, ELASTICITY],
+        )
+        older = insert_catalog_version(
+            connection,
+            country="us",
+            model_id=model_id,
+            policyengine_version="6.0.0",
+            parameter_names=["gov.simulation.removed"],
+        )
+        uk_catalog = insert_catalog_version(
+            connection,
+            country="uk",
+            model_id=insert_model(connection, "uk"),
+            policyengine_version=POLICYENGINE_VERSION,
+            parameter_names=[ELASTICITY],
+        )
+        household_id = insert_household(
+            connection, country="us", default_year=2026, document=DOCUMENT
+        )
+        policy_id = insert_policy(
+            connection, catalog, [StoredValue(CTC_AMOUNT, 3_000, START)]
+        )
+        overlapping_dynamic_id = insert_dynamic(
+            connection, catalog, [StoredValue(CTC_AMOUNT, 2_000, START)]
+        )
+        lacking_dynamic_id = insert_dynamic(
+            connection, older, [StoredValue("gov.simulation.removed", 1, START)]
+        )
+        uk_dynamic_id = insert_dynamic(
+            connection, uk_catalog, [StoredValue(ELASTICITY, -0.05, START)]
+        )
+        act_as_the_service(connection)
+        store = _store_on(connection)
+
+        def read(dynamic_id: UUID) -> None:
+            store.read_inputs(
+                country="us",
+                household_id=household_id,
+                policy_id=policy_id,
+                dynamic_id=dynamic_id,
+                policyengine_version=POLICYENGINE_VERSION,
+            )
+
+        with pytest.raises(UnknownDynamicError) as other_country:
+            read(uk_dynamic_id)
+        with pytest.raises(OverlappingReformError) as overlapping:
+            read(overlapping_dynamic_id)
+        with pytest.raises(MissingPolicyParametersError) as lacking:
+            read(lacking_dynamic_id)
+
+    assert str(other_country.value) == f"us has no dynamic {uk_dynamic_id}"
+    assert overlapping.value.parameter_names == (CTC_AMOUNT,)
+    assert (lacking.value.source, lacking.value.parameter_names) == (
+        "dynamic",
+        ("gov.simulation.removed",),
+    )
 
 
 def test_each_missing_input_is_named(public_api_database_url) -> None:
@@ -134,6 +257,7 @@ def test_each_missing_input_is_named(public_api_database_url) -> None:
                 country="us",
                 household_id=household_id,
                 policy_id=None,
+                dynamic_id=None,
                 policyengine_version="6.16.1",
             )
         with pytest.raises(UnknownHouseholdError) as no_household:
@@ -141,6 +265,7 @@ def test_each_missing_input_is_named(public_api_database_url) -> None:
                 country="us",
                 household_id=missing_id,
                 policy_id=None,
+                dynamic_id=None,
                 policyengine_version=POLICYENGINE_VERSION,
             )
         with pytest.raises(UnknownPolicyError) as no_policy:
@@ -148,6 +273,7 @@ def test_each_missing_input_is_named(public_api_database_url) -> None:
                 country="us",
                 household_id=household_id,
                 policy_id=missing_id,
+                dynamic_id=None,
                 policyengine_version=POLICYENGINE_VERSION,
             )
 
@@ -177,6 +303,7 @@ def test_a_job_is_created_recorded_and_read_back(public_api_database_url) -> Non
                 country="uk",
                 household_id=household_id,
                 policy_id=None,
+                dynamic_id=None,
                 year=2027,
                 request_data={"country": "uk"},
                 tax_benefit_model_version_id=catalog.version_id,
@@ -196,6 +323,50 @@ def test_a_job_is_created_recorded_and_read_back(public_api_database_url) -> Non
         2027,
     )
     assert unknown is None
+
+
+def test_a_jobs_dynamic_is_stored_and_read_back(public_api_database_url) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        catalog = insert_catalog_version(
+            connection,
+            country="us",
+            model_id=insert_model(connection, "us"),
+            policyengine_version=POLICYENGINE_VERSION,
+            parameter_names=[ELASTICITY],
+        )
+        household_id = insert_household(
+            connection, country="us", default_year=2026, document=DOCUMENT
+        )
+        dynamic_id = insert_dynamic(
+            connection, catalog, [StoredValue(ELASTICITY, -0.05, START)]
+        )
+        act_as_the_service(connection)
+        store = _store_on(connection)
+        job_id = uuid4()
+
+        store.create_job(
+            NewHouseholdJob(
+                id=job_id,
+                country="us",
+                household_id=household_id,
+                policy_id=None,
+                dynamic_id=dynamic_id,
+                year=2026,
+                request_data={"country": "us", "dynamic_id": str(dynamic_id)},
+                tax_benefit_model_version_id=catalog.version_id,
+                country_package_version="2.2.1",
+                policyengine_version=POLICYENGINE_VERSION,
+            )
+        )
+        job = store.read(job_id)
+        stored_dynamic_id = connection.execute(
+            text("SELECT dynamic_id FROM public.household_jobs WHERE id = :id"),
+            {"id": job_id},
+        ).scalar_one()
+
+    assert job is not None
+    assert (job.policy_id, job.dynamic_id) == (None, dynamic_id)
+    assert stored_dynamic_id == dynamic_id
 
 
 def test_a_refused_call_fails_its_job(public_api_database_url) -> None:
@@ -218,6 +389,7 @@ def test_a_refused_call_fails_its_job(public_api_database_url) -> None:
                 country="us",
                 household_id=household_id,
                 policy_id=None,
+                dynamic_id=None,
                 year=2026,
                 request_data={},
                 tax_benefit_model_version_id=catalog.version_id,
@@ -244,6 +416,7 @@ def _job_naming_no_rows() -> NewHouseholdJob:
         country="us",
         household_id=uuid4(),
         policy_id=None,
+        dynamic_id=None,
         year=2026,
         request_data={"country": "us"},
         tax_benefit_model_version_id=uuid4(),
@@ -291,3 +464,38 @@ def test_a_job_naming_missing_rows_is_refused_before_its_commit(
             store.create_job(_job_naming_no_rows())
     finally:
         engine.dispose()
+
+
+def test_a_job_naming_a_missing_dynamic_names_its_column(
+    public_api_database_url,
+) -> None:
+    """A dynamic deleted after the inputs were read is refused by its key."""
+    with rolled_back_transaction(public_api_database_url) as connection:
+        catalog = insert_catalog_version(
+            connection,
+            country="us",
+            model_id=insert_model(connection, "us"),
+            policyengine_version=POLICYENGINE_VERSION,
+        )
+        household_id = insert_household(
+            connection, country="us", default_year=2026, document=DOCUMENT
+        )
+        act_as_the_service(connection)
+
+        with pytest.raises(HouseholdJobReferenceError) as refused:
+            _store_on(connection).create_job(
+                NewHouseholdJob(
+                    id=uuid4(),
+                    country="us",
+                    household_id=household_id,
+                    policy_id=None,
+                    dynamic_id=uuid4(),
+                    year=2026,
+                    request_data={"country": "us"},
+                    tax_benefit_model_version_id=catalog.version_id,
+                    country_package_version="2.2.1",
+                    policyengine_version=POLICYENGINE_VERSION,
+                )
+            )
+
+    assert refused.value.column_name == "dynamic_id"

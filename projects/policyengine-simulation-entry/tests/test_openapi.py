@@ -302,6 +302,7 @@ def test_household_routes_declare_every_answer():
     ]
     assert "job_state_unknown" not in code["enum"]
     assert "internal_error" in code["enum"]
+    assert {"unknown_policy", "unknown_dynamic"} <= set(code["enum"])
 
 
 def test_a_household_job_read_declares_only_the_answers_a_read_gives():
@@ -346,10 +347,12 @@ def test_a_household_calculation_request_names_its_fields_only():
         "country",
         "household_id",
         "policy_id",
+        "dynamic_id",
         "add_missing_variables",
         "axes",
         "spm",
     }
+    assert "dynamic_id" in schemas["HouseholdCalculationState"]["required"]
     # SPM settings are an object when given; null is refused.
     assert request["properties"]["spm"]["type"] == "object"
     assert set(schemas["HouseholdCalculationAccepted"]["properties"]) == {
@@ -589,8 +592,8 @@ def test_a_report_request_is_an_economy_report_a_budget_window_or_a_household():
 def test_a_household_report_names_its_household_and_each_sides_policy():
     schemas = create_app().openapi()["components"]["schemas"]
 
-    # No year, region, dataset, dynamic, version or record ID, and no option:
-    # a household report always adds the household's missing variables.
+    # No year, region, dataset, version or record ID, and no option: a
+    # household report always adds the household's missing variables.
     household_report = schemas["HouseholdReportRequest"]
     assert set(household_report["properties"]) == {
         "country",
@@ -607,7 +610,11 @@ def test_a_household_report_names_its_household_and_each_sides_policy():
         "household_id",
         "baseline",
     }
-    assert set(schemas["HouseholdPolicyChoice"]["properties"]) == {"policy_id"}
+    # Each side names its stored policy and dynamic (C1 · 35, Q7).
+    assert set(schemas["HouseholdPolicyChoice"]["properties"]) == {
+        "policy_id",
+        "dynamic_id",
+    }
     assert set(schemas["HouseholdReportCreated"]["required"]) == {
         "report_id",
         "report_run_id",
