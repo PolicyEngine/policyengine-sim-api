@@ -75,25 +75,34 @@ def _spm_fields(document: Mapping[str, Any]) -> dict[str, object]:
     return {"spm": saved, "spm_selection_source": "saved_household"}
 
 
+# The request fields a report side names, which a refusal is located under.
+_SIDE_FIELDS = frozenset({"policy_id", "dynamic_id"})
+
+
 def _contract_reasons(
-    error: ValidationError, side: ReportSide
+    error: ValidationError,
+    side: ReportSide,
+    dynamic_parameters: frozenset[str] = frozenset(),
 ) -> tuple[UnprocessableReason, ...]:
     """Name each field the contract refuses by the request field it traces to.
 
-    Raise HouseholdReportBuildError when the contract refuses a field the
-    service builds itself, which is no fault of the caller's.
+    A value of one of ``dynamic_parameters`` traces to the side's
+    ``dynamic_id``. Raise HouseholdReportBuildError when the contract refuses
+    a field the service builds itself, which is no fault of the caller's.
     """
     reasons = []
     built_wrong = []
     for item in error.errors():
         location = tuple(item["loc"])
-        request_field = request_field_of(location, spm_from_request=False)
+        request_field = request_field_of(
+            location, spm_from_request=False, dynamic_parameters=dynamic_parameters
+        )
         # A household report sets add_missing_variables itself.
         if request_field is None or request_field == "add_missing_variables":
             built_wrong.append(".".join(str(part) for part in location) or "request")
             continue
         field_location = (
-            (side, request_field) if request_field == "policy_id" else (request_field,)
+            (side, request_field) if request_field in _SIDE_FIELDS else (request_field,)
         )
         reasons.append(
             UnprocessableReason(
@@ -115,13 +124,15 @@ def _contract_reasons(
 class HouseholdReportSideInputs:
     """One side of a household report run: the simulation run it records.
 
-    ``policy_values`` holds the side's policy values by parameter name and
-    period, empty for current law, as ``HouseholdReportStore.read_inputs``
-    reads them into ``reforms``.
+    ``policy_values`` holds the side's policy and dynamic values together,
+    by parameter name and period, empty for current law with no dynamic, as
+    ``HouseholdReportStore.read_inputs`` reads them into ``reforms``;
+    ``dynamic_parameters`` names those the dynamic sets.
     """
 
     simulation_run_id: UUID
     policy_values: PolicyReform
+    dynamic_parameters: frozenset[str] = frozenset()
 
 
 def side_runs_calculation(
@@ -138,7 +149,9 @@ def side_runs_calculation(
     """
     sides = {
         side: HouseholdReportSideInputs(
-            simulation_run_id=run_id, policy_values=inputs.reforms[side]
+            simulation_run_id=run_id,
+            policy_values=inputs.reforms[side],
+            dynamic_parameters=inputs.dynamic_parameters.get(side, frozenset()),
         )
         for side, run_id in run_ids.items()
     }
@@ -174,10 +187,10 @@ def household_report_calculation(
     when the stored household cannot be read, or the household contract
     refuses what would be calculated, the baseline's checked first. Its
     reasons are located at a report request's fields (``household_id``, a
-    side's ``policy_id``); a caller rebuilding a stored run reads them as
-    its own. Raise HouseholdReportBuildError when the contract refuses a
-    field the service builds, two sides recording one simulation run
-    included.
+    side's ``policy_id`` or ``dynamic_id``); a caller rebuilding a stored
+    run reads them as its own. Raise HouseholdReportBuildError when the
+    contract refuses a field the service builds, two sides recording one
+    simulation run included.
     """
     country = household.country
     try:
@@ -242,4 +255,6 @@ def _side_request(  # noqa: PLR0913  # the side and what it calculates
             }
         )
     except ValidationError as error:
-        raise household_not_calculable(*_contract_reasons(error, side)) from None
+        raise household_not_calculable(
+            *_contract_reasons(error, side, side_inputs.dynamic_parameters)
+        ) from None

@@ -76,9 +76,9 @@ _RETRY_AFTER = {
 }
 _SUBMISSION_UNPROCESSABLE = {
     "description": (
-        "The request's fields, or the stored household or policy it names, "
-        "cannot be calculated: one reason per field, its location starting "
-        "with the request field it traces to"
+        "The request's fields, or the stored household, policy or dynamic it "
+        "names, cannot be calculated: one reason per field, its location "
+        "starting with the request field it traces to"
     ),
     "model": HouseholdRequestUnprocessable,
 }
@@ -274,6 +274,7 @@ def _state(record: HouseholdJobRecord) -> HouseholdCalculationState:
         country=record.country,
         household_id=record.household_id,
         policy_id=record.policy_id,
+        dynamic_id=record.dynamic_id,
         year=record.year,
         policyengine_version=record.policyengine_version,
         country_package_version=record.country_package_version,
@@ -302,9 +303,10 @@ def add_household_calculation_routes(
         summary="Submit a household calculation",
         description=(
             "Create a household job calculating a stored household under one "
-            "stored policy, or current law, for the household's default year, "
-            "on the v2 version manifest's default worker, and start it. Poll "
-            "the returned id until its status is succeeded or failed."
+            "stored policy, or current law, and optionally a stored dynamic, "
+            "for the household's default year, on the v2 version manifest's "
+            "default worker, and start it. Poll the returned id until its "
+            "status is succeeded or failed."
         ),
         operation_id="submit_household_calculation",
         status_code=status.HTTP_202_ACCEPTED,

@@ -78,24 +78,29 @@ setup required before enforcement is described in `DEPLOYMENT.md`.
 ## Household calculations
 
 `POST /household-calculations` names a stored household, and optionally a
-stored policy, of the Public API: `country`, `household_id`, `policy_id`,
-`add_missing_variables`, `axes` (within the household contract's limits)
-and `spm` (SPM settings as an object; omit it to use the household's saved
-selection, since null is refused). The service reads the rows itself,
+stored policy and a stored dynamic, of API v1: `country`, `household_id`,
+`policy_id`, `dynamic_id`, `add_missing_variables`, `axes` (within the
+household contract's limits) and `spm` (SPM settings as an object; omit it
+to use the household's saved selection, since null is refused). The service
+reads the rows itself, applies the dynamic's values with the policy's, as an
+economy simulation does, stores the dynamic in `household_jobs.dynamic_id`,
 calculates the household's `default_year` on the v2 version manifest's
 default worker, creates a `household_jobs` row and starts the household
 function's call with `spawn`, answering 202 with the job's `job_id` and
 `status`. Each submission creates a new job.
 `GET /household-calculations/{household_job_id}` returns the job's status,
-the household function's `result` document once it has one, and its
-`error_message`.
+its `policy_id` and `dynamic_id`, the household function's `result` document
+once it has one, and its `error_message`.
 
 A submission is refused before anything is written: with 400 and a `code`
-when the household, policy or catalog version for the default worker's .py
-version is missing, or the default worker has no household function for the
+when the household, policy, dynamic or catalog version for the default
+worker's .py version is missing (a dynamic of another country is
+`unknown_dynamic`), or the default worker has no household function for the
 country; with 422, one reason per field, when the stored household has no
-default year, the policy sets parameters that catalog version lacks, or the
-household contract refuses the stored data. A job naming a row deleted
+default year, the policy or dynamic sets parameters that catalog version
+lacks (located at `policy_id` or `dynamic_id`), the dynamic sets a parameter
+the policy also sets (located at `dynamic_id`), or the household contract
+refuses the stored data. A job naming a row deleted
 since the reads is refused by the database's foreign keys, also with 400.
 The routes answer 503 with `Retry-After` when the manifest or the database
 can't be read and no job was written. When Modal refuses the call, or doesn't
@@ -258,19 +263,21 @@ Public API reads results from the tables itself.
 one household the Public API stores, for its `default_year`, under a
 baseline and, optionally, a reform. It names the `country`, `label`,
 `description`, `household_id`, `baseline` and `reform` (each a stored
-`policy_id`, null for current law; a null or omitted `reform` makes a report
-of the baseline alone). It names no year, region, dataset, dynamic, .py
-version or record ID, and has no options: each side adds every variable the
+`policy_id`, null for current law, and a stored `dynamic_id`, null for none;
+a null or omitted `reform` makes a report of the baseline alone). It names
+no year, region, dataset, .py version or record ID, and has no options:
+each side adds every variable the
 household lacks, as the Public API's stored-household route does, so the
 report holds every value, and `reports.inputs` is `{}`. A household's saved
 SPM selection is applied to both sides.
 
 The service reads the catalog version for the default worker's .py version,
-the household and each side's policy, checks each side's household contract
+the household and each side's policy and dynamic, whose values it combines
+as an economy simulation does, checks each side's household contract
 request, then finds or creates, in one transaction, as an economy report's
 create does (C1 · 24's answer 8): each side's household simulation by a key
-of its country, policy, household and year; the report (type `household`)
-by a key of its sides, household and year; and its run on the current
+of its country, policy, dynamic, household and year; the report (type
+`household`) by a key of its sides, household and year; and its run on the current
 versions that hasn't failed and wasn't forced, or else a pending report
 run naming each side's simulation run on those versions, found or
 inserted. A policy compared with itself names one simulation and one run on
@@ -294,9 +301,12 @@ worker has no household function for the country), and 422
 `household_not_calculable` when the household has no default year or
 cannot be read, located at `household_id`, or when the household contract
 refuses what the report would calculate, located at the field it traces to:
-`household_id` or a side's `policy_id`.
-A policy setting parameters the catalog version lacks is 422
-`missing_parameters`, located at that side's `policy_id`.
+`household_id` or a side's `policy_id` or `dynamic_id`.
+A policy or dynamic setting parameters the catalog version lacks is 422
+`missing_parameters`, located at that side's `policy_id` or `dynamic_id`; a
+dynamic setting a parameter its side's policy also sets is 422
+`overlapping_parameters`; and a dynamic of another country is 400
+`unknown_dynamic`.
 
 ## Re-running a report or simulation
 
@@ -344,8 +354,8 @@ answers 201 with the budget-window create's fields, naming the window run
 and every year.
 A household report's re-run calculates its stored household again in the
 report's own year (not the household's current `default_year`), under each
-side's stored policy read on the current catalog version, and joins or
-creates its run as an economy report's re-run does: a keyed report's
+side's stored policy and dynamic read on the current catalog version, and
+joins or creates its run as an economy report's re-run does: a keyed report's
 unforced re-run joins its run on the current versions, or each side joins
 its own household simulation's run on them or gets a new one; `force`, and
 every re-run of a household report created before keys, makes an extra run
@@ -363,8 +373,7 @@ fields as the create, naming the run.
 A re-run is refused before anything is written: 404 (`unknown_report`,
 `unknown_simulation`) for a record that doesn't exist; 409
 `rerun_not_supported` for a household simulation (re-run only
-through its report), a household report whose simulation names a dynamic (a
-household calculation applies none), a budget window whose newest window run
+through its report), a budget window whose newest window run
 lacks a year, or a record that names no region, dataset, year, simulation,
 household or country the service calculates (a household report names no
 region or dataset); and the create's 400 and 422 codes when the stored rows

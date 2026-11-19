@@ -256,7 +256,7 @@ def _missing_row_refusal(
     elif isinstance(error, UnknownDynamicError):
         refusal = (
             "unknown_dynamic",
-            f"No stored dynamic matches the one {named_by} names.",
+            f"{request.country} has no stored dynamic {named_by} names.",
         )
     elif isinstance(error, LocalAreaDatasetMismatchError):
         # The dataset is the default worker's declaration, not the request's.

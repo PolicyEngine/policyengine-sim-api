@@ -1,7 +1,7 @@
 """Find or create household reports, and start a new run's household function call.
 
 A household report submission names a stored household, the baseline's
-stored policy and, optionally, the reform's. Identical submissions,
+stored policy and dynamic and, optionally, the reform's. Identical submissions,
 together or apart, end on the same simulations, report and run (C1 · 24's
 answer 8). The service:
 
@@ -9,7 +9,8 @@ answer 8). The service:
    the country, and its bundle;
 2. reads, in one transaction, the country's catalog version for that
    worker's .py version, its model, the stored household and each side's
-   policy values, and checks each side's household contract request for
+   policy and dynamic values, combined as an economy simulation's are, and
+   checks each side's household contract request for
    the household's ``default_year`` (on the run IDs it would propose);
 3. finds or creates, in one transaction, each side's household simulation
    by its key, the report by its key, which has no options, and its run on
@@ -56,6 +57,7 @@ from policyengine_simulation_persistence import (
     HouseholdReportDefinition,
     KeyedHouseholdReport,
     MissingPolicyParametersError,
+    OverlappingReformError,
     ProposedSide,
     ReportRunStatus,
     ReportSideError,
@@ -63,6 +65,7 @@ from policyengine_simulation_persistence import (
     SharedRowNotSettledError,
     SimulationChoice,
     UnknownCatalogVersionError,
+    UnknownDynamicError,
     UnknownHouseholdError,
     UnknownPolicyError,
 )
@@ -111,6 +114,7 @@ if TYPE_CHECKING:
         RefusalSource,
     )
     from policyengine_simulation_entry.household_report_api_models import (
+        HouseholdPolicyChoice,
         HouseholdReportRequest,
     )
     from policyengine_simulation_entry.household_workers import (
@@ -134,10 +138,10 @@ class HouseholdReports(Protocol):
         *,
         country: str,
         household_id: UUID,
-        policy_ids: Mapping[ReportSide, UUID | None],
+        choices: Mapping[ReportSide, SimulationChoice],
         policyengine_version: str,
     ) -> HouseholdReportInputs:
-        """Read the catalog version, household and each side's policy together."""
+        """Read the catalog version, household and each side's values together."""
         ...
 
     def find_or_create_report(
@@ -207,12 +211,17 @@ def _database_unavailable() -> EconomySubmissionUnavailableError:
     )
 
 
-def _policy_ids(request: HouseholdReportRequest) -> dict[ReportSide, UUID | None]:
-    """Return each side the report calculates and its stored policy, if any."""
-    policy_ids: dict[ReportSide, UUID | None] = {"baseline": request.baseline.policy_id}
+def _side_choices(
+    request: HouseholdReportRequest,
+) -> dict[ReportSide, SimulationChoice]:
+    """Return each side the report calculates and its stored policy and dynamic."""
+    sides: dict[ReportSide, HouseholdPolicyChoice] = {"baseline": request.baseline}
     if request.reform is not None:
-        policy_ids["reform"] = request.reform.policy_id
-    return policy_ids
+        sides["reform"] = request.reform
+    return {
+        side: SimulationChoice(policy_id=choice.policy_id, dynamic_id=choice.dynamic_id)
+        for side, choice in sides.items()
+    }
 
 
 def _read_refusal(
@@ -224,9 +233,9 @@ def _read_refusal(
 ) -> EconomySubmissionRefusedError | EconomySubmissionUnprocessableError | None:
     """Return the refusal a store read's error means, or None for another error.
 
-    ``source`` is what names the household and policies: the request, or
-    the stored report a re-run reads. Every detail is written from it,
-    never from the error's text.
+    ``source`` is what names the household, policies and dynamics: the
+    request, or the stored report a re-run reads. Every detail is written
+    from it, never from the error's text.
     """
     if isinstance(error, UnknownCatalogVersionError):
         return EconomySubmissionRefusedError(
@@ -243,6 +252,27 @@ def _read_refusal(
         )
     if not isinstance(error, ReportSideError):
         return None
+    return _side_refusal(
+        error,
+        country=country,
+        policyengine_version=policyengine_version,
+        source=source,
+    )
+
+
+def _side_refusal(
+    error: ReportSideError,
+    *,
+    country: str,
+    policyengine_version: str,
+    source: RefusalSource,
+) -> EconomySubmissionRefusedError | EconomySubmissionUnprocessableError | None:
+    """Return the refusal of a side's policy or dynamic, located at that side.
+
+    A dynamic of another country is refused as a missing one; a dynamic
+    setting a parameter the side's policy sets is located at its
+    ``dynamic_id``, as an economy report's is.
+    """
     side, refused = error.side, error.error
     if isinstance(refused, UnknownPolicyError):
         return EconomySubmissionRefusedError(
@@ -251,17 +281,37 @@ def _read_refusal(
                 f"{country} has no stored policy {source.named_by}'s {side} names."
             ),
         )
+    if isinstance(refused, UnknownDynamicError):
+        return EconomySubmissionRefusedError(
+            code="unknown_dynamic",
+            detail=(
+                f"{country} has no stored dynamic {source.named_by}'s {side} names."
+            ),
+        )
     if isinstance(refused, MissingPolicyParametersError):
+        field_name = "policy_id" if refused.source == "policy" else "dynamic_id"
         return EconomySubmissionUnprocessableError(
             code="missing_parameters",
             reasons=tuple(
                 UnprocessableReason(
-                    loc=(source.location, side, "policy_id", name),
+                    loc=(source.location, side, field_name, name),
                     msg=(
                         f"the catalog version for .py {policyengine_version} has "
                         "no such parameter"
                     ),
                     type="missing_parameter",
+                )
+                for name in refused.parameter_names
+            ),
+        )
+    if isinstance(refused, OverlappingReformError):
+        return EconomySubmissionUnprocessableError(
+            code="overlapping_parameters",
+            reasons=tuple(
+                UnprocessableReason(
+                    loc=(source.location, side, "dynamic_id", name),
+                    msg="the policy and the dynamic both set this parameter",
+                    type="overlapping_parameter",
                 )
                 for name in refused.parameter_names
             ),
@@ -328,7 +378,7 @@ class HouseholdReportSubmissionService[Store: HouseholdReports = HouseholdReport
         inputs = await self._read_inputs(
             country=request.country,
             household_id=request.household_id,
-            policy_ids=_policy_ids(request),
+            choices=_side_choices(request),
             worker=worker,
         )
         report = self._keyed_report(request, worker, inputs)
@@ -396,7 +446,7 @@ class HouseholdReportSubmissionService[Store: HouseholdReports = HouseholdReport
         *,
         country: str,
         household_id: UUID,
-        policy_ids: Mapping[ReportSide, UUID | None],
+        choices: Mapping[ReportSide, SimulationChoice],
         worker: HouseholdWorker,
         source: RefusalSource = REQUEST_BODY,
     ) -> HouseholdReportInputs:
@@ -407,7 +457,7 @@ class HouseholdReportSubmissionService[Store: HouseholdReports = HouseholdReport
                 lambda: self._store.read_inputs(
                     country=country,
                     household_id=household_id,
-                    policy_ids=policy_ids,
+                    choices=choices,
                     policyengine_version=policyengine_version,
                 )
             )
@@ -437,26 +487,22 @@ class HouseholdReportSubmissionService[Store: HouseholdReports = HouseholdReport
         """Return the report the request names, with the IDs it proposes.
 
         The report calculates the household's default year, and has no
-        options (``reports.inputs`` is empty); a household calculation
-        applies no dynamic.
+        options (``reports.inputs`` is empty). Each side's key names its
+        policy and dynamic.
         """
         report_id, run_id = self._new_id(), self._new_id()
+        choices = _side_choices(request)
         proposed = {
             side: ProposedSide(
                 simulation_id=self._new_id(), simulation_run_id=self._new_id()
             )
-            for side in _policy_ids(request)
+            for side in choices
         }
-        reform = request.reform
         return KeyedHouseholdReport(
             definition=HouseholdReportDefinition(
                 country=request.country,
-                baseline=SimulationChoice(
-                    policy_id=request.baseline.policy_id, dynamic_id=None
-                ),
-                reform=None
-                if reform is None
-                else SimulationChoice(policy_id=reform.policy_id, dynamic_id=None),
+                baseline=choices["baseline"],
+                reform=choices.get("reform"),
                 household_id=request.household_id,
                 year=_report_year(inputs.household),
             ),

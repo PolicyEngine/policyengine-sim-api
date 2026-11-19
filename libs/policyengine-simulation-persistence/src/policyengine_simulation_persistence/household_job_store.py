@@ -21,7 +21,7 @@ from policyengine_simulation_persistence.household_job_records import (
     read_stored_household,
     record_household_call,
 )
-from policyengine_simulation_persistence.policy_reform import read_policy_reform
+from policyengine_simulation_persistence.policy_reform import read_simulation_reform
 from policyengine_simulation_persistence.store_transactions import (
     TransactionFactory,
     bounded_transactions,
@@ -55,13 +55,16 @@ class HouseholdCalculationInputs:
     """What a household calculation is read from.
 
     ``catalog_version_id`` is the country's catalog version for the .py
-    version the calculation runs on; ``reform`` holds the policy's values by
-    parameter name and period, empty for current law.
+    version the calculation runs on. ``reform`` holds the policy's and the
+    dynamic's values together, by parameter name and period, empty for
+    current law with no dynamic; ``dynamic_parameters`` names those the
+    dynamic sets.
     """
 
     catalog_version_id: UUID
     household: StoredHousehold
     reform: PolicyReform
+    dynamic_parameters: frozenset[str] = frozenset()
 
 
 class HouseholdJobStore:
@@ -92,12 +95,17 @@ class HouseholdJobStore:
         country: str,
         household_id: UUID,
         policy_id: UUID | None,
+        dynamic_id: UUID | None,
         policyengine_version: str,
     ) -> HouseholdCalculationInputs:
-        """Read the catalog version, household and policy in one transaction.
+        """Read the catalog version, household, policy and dynamic together.
 
-        Raise UnknownCatalogVersionError, UnknownHouseholdError, or the
-        policy reader's UnknownPolicyError or MissingPolicyParametersError.
+        The policy's and the dynamic's values are combined, as an economy
+        simulation's are (``read_simulation_reform``). Raise
+        UnknownCatalogVersionError, UnknownHouseholdError, or the readers'
+        UnknownPolicyError, UnknownDynamicError (a dynamic of another
+        country included), MissingPolicyParametersError or
+        OverlappingReformError.
         """
         with self._transaction() as session:
             catalog_version_id = read_catalog_version_id(
@@ -112,18 +120,18 @@ class HouseholdJobStore:
             if household is None:
                 msg = f"{country} has no household {household_id}"
                 raise UnknownHouseholdError(msg)
-            reform = (
-                {}
-                if policy_id is None
-                else read_policy_reform(
-                    session,
-                    country=country,
-                    policy_id=policy_id,
-                    catalog_version_id=catalog_version_id,
-                )
+            reform = read_simulation_reform(
+                session,
+                country=country,
+                policy_id=policy_id,
+                dynamic_id=dynamic_id,
+                catalog_version_id=catalog_version_id,
             )
         return HouseholdCalculationInputs(
-            catalog_version_id=catalog_version_id, household=household, reform=reform
+            catalog_version_id=catalog_version_id,
+            household=household,
+            reform=reform.values,
+            dynamic_parameters=reform.dynamic_parameters,
         )
 
     def create_job(self, job: NewHouseholdJob) -> None:
