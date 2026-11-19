@@ -1147,24 +1147,31 @@ def test_an_unconfirmed_call_is_logged_naming_its_report_or_simulation(
 
 
 @pytest.mark.parametrize(
-    ("store_changes", "cliff_failure", "event"),
+    ("store_changes", "cliff_failure", "event", "expected_error"),
     [
-        ({}, ConnectionError("refused"), "cliff_calculation_call_unconfirmed"),
+        (
+            {},
+            ConnectionError("refused"),
+            "cliff_calculation_call_unconfirmed",
+            "ConnectionError",
+        ),
         (
             {"fail_failure": DATABASE_ERROR},
             ConnectionError("refused"),
             "cliff_calculation_not_failed",
+            "OperationalError",
         ),
         (
             {"record_failure": DATABASE_ERROR},
             None,
             "cliff_calculation_call_not_recorded",
+            "OperationalError",
         ),
     ],
     ids=["unconfirmed", "not-failed", "not-recorded"],
 )
 def test_a_cliff_calculations_call_problem_is_logged_naming_its_row(
-    caplog, store_changes, cliff_failure, event
+    caplog, store_changes, cliff_failure, event, expected_error
 ) -> None:
     store = FakeStore(**store_changes)
     caller = FakeCaller(cliff_failure=cliff_failure)
@@ -1175,19 +1182,22 @@ def test_a_cliff_calculations_call_problem_is_logged_naming_its_row(
         )
 
     assert created.cliffs is not None
-    logged = {
-        item.policyengine_attributes["database_row_id"]: item.policyengine_attributes
-        for item in caplog.records
-        if item.getMessage() == event
-    }
-    expected_error = "ConnectionError" if cliff_failure else "OperationalError"
-    if event == "cliff_calculation_not_failed":
-        expected_error = "OperationalError"
-    assert logged == {
-        str(side.cliff_result_id): {
-            "error_type": expected_error,
-            "database_table": "cliff_impacts",
-            "database_row_id": str(side.cliff_result_id),
-        }
-        for side in (created.cliffs.baseline, created.cliffs.reform)
-    }
+    logged_rows = sorted(
+        (
+            item.policyengine_attributes
+            for item in caplog.records
+            if item.getMessage() == event
+        ),
+        key=lambda attributes: attributes["database_row_id"],
+    )
+    assert logged_rows == sorted(
+        (
+            {
+                "error_type": expected_error,
+                "database_table": "cliff_impacts",
+                "database_row_id": str(side.cliff_result_id),
+            }
+            for side in (created.cliffs.baseline, created.cliffs.reform)
+        ),
+        key=lambda attributes: attributes["database_row_id"],
+    )
