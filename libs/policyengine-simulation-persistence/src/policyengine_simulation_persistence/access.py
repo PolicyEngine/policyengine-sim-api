@@ -112,8 +112,6 @@ MODAL_WORKER_TABLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProx
 # failure and times.
 MODAL_WORKER_UPDATABLE_COLUMNS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
     {
-        # A report run's cliff impact is its simulation runs' cliff results,
-        # so the role never writes its four cliff columns.
         "report_runs": _RUN_STATE | {"spm_provenance", "data_version"},
         "simulation_runs": _RUN_STATE
         | {"output_uri", "output_sha256", "household_result"},
