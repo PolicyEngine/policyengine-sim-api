@@ -19,6 +19,7 @@ from policyengine_api_simulation_client.models import (
 
 HOUSEHOLD_ID = "00000000-0000-4000-8000-0000000000bb"
 JOB_ID = "00000000-0000-4000-8000-0000000000aa"
+DYNAMIC_ID = "00000000-0000-4000-8000-0000000000ce"
 
 
 def test_omitted_spm_settings_and_axes_stay_omitted():
@@ -38,8 +39,17 @@ def test_omitted_spm_settings_and_axes_stay_omitted():
     assert "spm" not in omitted
     assert "axes" not in omitted
     assert "policy_id" not in omitted
+    assert "dynamic_id" not in omitted
     assert given["spm"] == {"scenario": "zero_real"}
     assert given["axes"] == [[{"name": "age", "count": 3, "min": 20, "max": 60}]]
+
+
+def test_a_submission_sends_its_dynamic():
+    request = HouseholdCalculationRequest.from_dict(
+        {"country": "us", "household_id": HOUSEHOLD_ID, "dynamic_id": DYNAMIC_ID}
+    )
+
+    assert request.to_dict()["dynamic_id"] == DYNAMIC_ID
 
 
 def test_a_submission_answer_and_an_error_are_read():
@@ -71,6 +81,7 @@ def test_a_job_keeps_its_result_document_whole():
         "country": "us",
         "household_id": HOUSEHOLD_ID,
         "policy_id": None,
+        "dynamic_id": DYNAMIC_ID,
         "year": 2026,
         "policyengine_version": "6.17.1",
         "country_package_version": "2.2.1",
@@ -85,6 +96,7 @@ def test_a_job_keeps_its_result_document_whole():
 
     assert parsed.status is HouseholdJobStatus.SUCCEEDED
     assert parsed.to_dict()["result"] == document
+    assert parsed.to_dict()["dynamic_id"] == DYNAMIC_ID
 
 
 # What the service answers to an unexpected failure (test_household_routes.py).

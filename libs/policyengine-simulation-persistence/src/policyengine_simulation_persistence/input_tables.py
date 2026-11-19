@@ -145,14 +145,16 @@ class ParameterValue(InputBase):
 
 
 class Dynamic(InputBase):
-    """Named parameter values a simulation applies beside its policy.
+    """A country's model assumptions, which a simulation applies beside its policy.
 
-    Behavioural responses are an example. A dynamic belongs to no country.
+    Its values are ``ParameterValue`` rows, such as labour-supply
+    elasticities.
     """
 
     __tablename__ = "dynamics"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    country_id: Mapped[str] = mapped_column(String(2))
 
 
 input_metadata = InputBase.metadata

@@ -19,16 +19,21 @@ from household_report_rows import insert_household_report_rows
 from policyengine_simulation_persistence import (
     HouseholdReportStore,
     MissingPolicyParametersError,
+    OverlappingReformError,
     ReportRunStatus,
     ReportSideError,
     RunVersions,
+    SimulationChoice,
+    SimulationReform,
     UnknownCatalogVersionError,
+    UnknownDynamicError,
     UnknownHouseholdError,
     UnknownPolicyError,
 )
 from public_api_rows import (
     StoredValue,
     insert_catalog_version,
+    insert_dynamic,
     insert_household,
     insert_model,
     insert_policy,
@@ -50,6 +55,8 @@ VERSIONS = RunVersions(
 )
 START = datetime(2026, 1, 1, tzinfo=UTC)
 CTC_AMOUNT = "gov.irs.credits.ctc.amount.base[0].amount"
+ELASTICITY = "gov.simulation.labor_supply_responses.elasticities.income"
+CURRENT_LAW = SimulationChoice(policy_id=None, dynamic_id=None)
 DOCUMENT = {
     "people": [
         {
@@ -76,8 +83,13 @@ def _catalog(connection: Connection) -> CatalogVersion:
         country="us",
         model_id=insert_model(connection, "us"),
         policyengine_version=POLICYENGINE_VERSION,
-        parameter_names=(CTC_AMOUNT,),
+        parameter_names=(CTC_AMOUNT, ELASTICITY),
     )
+
+
+def _policy(policy_id: UUID) -> SimulationChoice:
+    """Return a side naming the stored policy and no dynamic."""
+    return SimulationChoice(policy_id=policy_id, dynamic_id=None)
 
 
 def _household(connection: Connection, *, default_year: int | None = 2026) -> UUID:
@@ -109,7 +121,7 @@ def test_a_household_reports_inputs_are_read_together(public_api_database_url) -
         inputs = _store_on(connection).read_inputs(
             country="us",
             household_id=household_id,
-            policy_ids={"baseline": None, "reform": policy_id},
+            choices={"baseline": CURRENT_LAW, "reform": _policy(policy_id)},
             policyengine_version=POLICYENGINE_VERSION,
         )
 
@@ -119,9 +131,104 @@ def test_a_household_reports_inputs_are_read_together(public_api_database_url) -
     assert inputs.household.default_year == 2026
     assert inputs.household.document == DOCUMENT
     assert inputs.reforms == {
-        "baseline": {},
-        "reform": {CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000}},
+        "baseline": SimulationReform(values={}, dynamic_parameters=frozenset()),
+        "reform": SimulationReform(
+            values={CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000}},
+            dynamic_parameters=frozenset(),
+        ),
     }
+
+
+def test_each_sides_dynamic_is_applied_with_its_policy(public_api_database_url) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        catalog = _catalog(connection)
+        household_id = _household(connection)
+        policy_id = insert_policy(
+            connection, catalog, [StoredValue(CTC_AMOUNT, 3_000, START)]
+        )
+        dynamic_id = insert_dynamic(
+            connection, catalog, [StoredValue(ELASTICITY, -0.05, START)]
+        )
+        act_as_the_service(connection)
+
+        # One dynamic on both sides, as a report names it (C1 · 35, Q5).
+        inputs = _store_on(connection).read_inputs(
+            country="us",
+            household_id=household_id,
+            choices={
+                "baseline": SimulationChoice(policy_id=None, dynamic_id=dynamic_id),
+                "reform": SimulationChoice(policy_id=policy_id, dynamic_id=dynamic_id),
+            },
+            policyengine_version=POLICYENGINE_VERSION,
+        )
+
+    assert inputs.reforms == {
+        "baseline": SimulationReform(
+            values={ELASTICITY: {"2026-01-01.2200-12-31": -0.05}},
+            dynamic_parameters=frozenset({ELASTICITY}),
+        ),
+        "reform": SimulationReform(
+            values={
+                CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000},
+                ELASTICITY: {"2026-01-01.2200-12-31": -0.05},
+            },
+            dynamic_parameters=frozenset({ELASTICITY}),
+        ),
+    }
+
+
+def test_a_sides_dynamic_of_another_country_or_overlapping_its_policy_is_refused(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        catalog = _catalog(connection)
+        household_id = _household(connection)
+        uk_catalog = insert_catalog_version(
+            connection,
+            country="uk",
+            model_id=insert_model(connection, "uk"),
+            policyengine_version=POLICYENGINE_VERSION,
+            parameter_names=(ELASTICITY,),
+        )
+        uk_dynamic_id = insert_dynamic(
+            connection, uk_catalog, [StoredValue(ELASTICITY, -0.05, START)]
+        )
+        policy_id = insert_policy(
+            connection, catalog, [StoredValue(ELASTICITY, -0.1, START)]
+        )
+        dynamic_id = insert_dynamic(
+            connection, catalog, [StoredValue(ELASTICITY, -0.05, START)]
+        )
+        act_as_the_service(connection)
+        store = _store_on(connection)
+
+        with pytest.raises(ReportSideError) as other_country:
+            store.read_inputs(
+                country="us",
+                household_id=household_id,
+                choices={
+                    "baseline": SimulationChoice(None, dynamic_id=uk_dynamic_id),
+                    "reform": CURRENT_LAW,
+                },
+                policyengine_version=POLICYENGINE_VERSION,
+            )
+        with pytest.raises(ReportSideError) as overlapping:
+            store.read_inputs(
+                country="us",
+                household_id=household_id,
+                choices={
+                    "baseline": CURRENT_LAW,
+                    "reform": SimulationChoice(policy_id, dynamic_id=dynamic_id),
+                },
+                policyengine_version=POLICYENGINE_VERSION,
+            )
+
+    assert other_country.value.side == "baseline"
+    assert isinstance(other_country.value.error, UnknownDynamicError)
+    assert str(other_country.value.error) == f"us has no dynamic {uk_dynamic_id}"
+    assert overlapping.value.side == "reform"
+    assert isinstance(overlapping.value.error, OverlappingReformError)
+    assert overlapping.value.error.parameter_names == (ELASTICITY,)
 
 
 def test_each_missing_input_is_refused(public_api_database_url) -> None:
@@ -136,21 +243,24 @@ def test_each_missing_input_is_refused(public_api_database_url) -> None:
             store.read_inputs(
                 country="us",
                 household_id=household_id,
-                policy_ids={"baseline": None},
+                choices={"baseline": CURRENT_LAW},
                 policyengine_version="0.0.1",
             )
         with pytest.raises(UnknownHouseholdError):
             store.read_inputs(
                 country="us",
                 household_id=uuid4(),
-                policy_ids={"baseline": None},
+                choices={"baseline": CURRENT_LAW},
                 policyengine_version=POLICYENGINE_VERSION,
             )
         with pytest.raises(ReportSideError) as unknown_policy:
             store.read_inputs(
                 country="us",
                 household_id=household_id,
-                policy_ids={"baseline": None, "reform": missing_policy_id},
+                choices={
+                    "baseline": CURRENT_LAW,
+                    "reform": _policy(missing_policy_id),
+                },
                 policyengine_version=POLICYENGINE_VERSION,
             )
 
@@ -183,7 +293,7 @@ def test_a_policy_setting_a_parameter_the_version_lacks_is_refused_on_its_side(
             _store_on(connection).read_inputs(
                 country="us",
                 household_id=household_id,
-                policy_ids={"baseline": policy_id, "reform": None},
+                choices={"baseline": _policy(policy_id), "reform": CURRENT_LAW},
                 policyengine_version=POLICYENGINE_VERSION,
             )
 

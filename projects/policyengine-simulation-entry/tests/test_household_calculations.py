@@ -46,8 +46,11 @@ from policyengine_simulation_persistence import (
     HouseholdJobStatus,
     MissingPolicyParametersError,
     NewHouseholdJob,
+    OverlappingReformError,
+    SimulationReform,
     StoredHousehold,
     UnknownCatalogVersionError,
+    UnknownDynamicError,
     UnknownHouseholdError,
     UnknownPolicyError,
 )
@@ -60,9 +63,12 @@ if TYPE_CHECKING:
 JOB_ID = UUID("00000000-0000-4000-8000-0000000000aa")
 HOUSEHOLD_ID = UUID("00000000-0000-4000-8000-0000000000bb")
 POLICY_ID = UUID("00000000-0000-4000-8000-0000000000cc")
+DYNAMIC_ID = UUID("00000000-0000-4000-8000-0000000000ce")
 CATALOG_VERSION_ID = UUID("00000000-0000-4000-8000-0000000000dd")
 CTC_AMOUNT = "gov.irs.credits.ctc.amount.base[0].amount"
 REFORM = {CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000}}
+ELASTICITY = "gov.simulation.labor_supply_responses.elasticities.income"
+DYNAMIC_VALUES = {ELASTICITY: {"2026-01-01.2200-12-31": -0.05}}
 STORED_DOCUMENT = {
     "people": [
         {
@@ -134,6 +140,8 @@ class FakeStore:
     default_year: int | None = 2026
     document: dict[str, Any] = field(default_factory=lambda: dict(STORED_DOCUMENT))
     reform: dict[str, dict[str, object]] = field(default_factory=dict)
+    # The parameters among ``reform``'s that the dynamic sets.
+    dynamic_parameters: frozenset[str] = frozenset()
     read_failure: Exception | None = None
     create_failure: Exception | None = None
     record_failure: Exception | None = None
@@ -161,7 +169,9 @@ class FakeStore:
                 default_year=self.default_year,
                 document=self.document,
             ),
-            reform=self.reform,
+            reform=SimulationReform(
+                values=self.reform, dynamic_parameters=self.dynamic_parameters
+            ),
         )
 
     def create_job(self, job: NewHouseholdJob) -> None:
@@ -277,6 +287,7 @@ async def test_a_calculation_creates_its_job_then_starts_and_records_its_call():
             "country": "us",
             "household_id": HOUSEHOLD_ID,
             "policy_id": POLICY_ID,
+            "dynamic_id": None,
             "policyengine_version": "6.17.1",
         }
     ]
@@ -286,6 +297,7 @@ async def test_a_calculation_creates_its_job_then_starts_and_records_its_call():
             country="us",
             household_id=HOUSEHOLD_ID,
             policy_id=POLICY_ID,
+            dynamic_id=None,
             year=2026,
             request_data={
                 "country": "us",
@@ -319,13 +331,41 @@ async def test_a_calculation_creates_its_job_then_starts_and_records_its_call():
 
 
 @pytest.mark.asyncio
+async def test_a_dynamic_is_read_stored_and_applied_with_the_policy():
+    # The store reads the policy's and the dynamic's values as one reform.
+    service, store, _, caller = _service(
+        FakeStore(
+            reform={**REFORM, **DYNAMIC_VALUES},
+            dynamic_parameters=frozenset(DYNAMIC_VALUES),
+        )
+    )
+
+    await service.submit(
+        _request(policy_id=str(POLICY_ID), dynamic_id=str(DYNAMIC_ID)),
+        observability_context=None,
+    )
+
+    assert (store.reads[0]["policy_id"], store.reads[0]["dynamic_id"]) == (
+        POLICY_ID,
+        DYNAMIC_ID,
+    )
+    (job,) = store.created
+    assert (job.policy_id, job.dynamic_id) == (POLICY_ID, DYNAMIC_ID)
+    assert job.request_data["dynamic_id"] == str(DYNAMIC_ID)
+    payload = caller.calls[0]["payload"]
+    assert payload["policy"] == {"parameters": {**REFORM, **DYNAMIC_VALUES}}
+
+
+@pytest.mark.asyncio
 async def test_current_law_is_calculated_as_a_policy_without_parameters():
     service, store, _, caller = _service()
 
     await service.submit(_request(), observability_context=None)
 
     assert store.reads[0]["policy_id"] is None
+    assert store.reads[0]["dynamic_id"] is None
     assert store.created[0].policy_id is None
+    assert store.created[0].dynamic_id is None
     payload = caller.calls[0]["payload"]
     assert {
         name: payload[name] for name in _expected_policy_fields({})
@@ -467,6 +507,13 @@ async def test_without_spm_settings_or_a_saved_selection_none_is_sent():
             "unknown_policy",
             "us has no policy y",
         ),
+        # A dynamic of another country is refused as a missing one.
+        (
+            FakeStore(read_failure=UnknownDynamicError("us has no dynamic z")),
+            FakeWorkers(),
+            "unknown_dynamic",
+            "us has no dynamic z",
+        ),
     ],
 )
 async def test_a_missing_row_or_function_is_refused_before_anything_is_written(
@@ -520,6 +567,30 @@ async def test_a_missing_row_or_function_is_refused_before_anything_is_written(
                 for name in (CTC_AMOUNT, "gov.removed")
             ],
         ),
+        (
+            FakeStore(
+                read_failure=MissingPolicyParametersError(
+                    ["gov.simulation.removed"], source="dynamic"
+                )
+            ),
+            [
+                (
+                    ("body", "dynamic_id", "gov.simulation.removed"),
+                    "the catalog version for .py 6.17.1 has no such parameter",
+                    "missing_parameter",
+                )
+            ],
+        ),
+        (
+            FakeStore(read_failure=OverlappingReformError([ELASTICITY])),
+            [
+                (
+                    ("body", "dynamic_id", ELASTICITY),
+                    "the policy and the dynamic both set this parameter",
+                    "overlapping_parameter",
+                )
+            ],
+        ),
     ],
 )
 async def test_stored_data_that_cannot_be_calculated_is_unprocessable(store, reasons):
@@ -568,6 +639,30 @@ async def test_what_the_household_contract_refuses_is_named_by_its_field():
         location[:3] == ("body", "policy_id", "policy") for location in locations
     )
     assert store.created == []
+    assert caller.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_dynamics_value_the_contract_refuses_is_named_by_its_field():
+    refused_value = {"2026-01-01.2200-12-31": {"not": "a value"}}
+    service, _, _, caller = _service(
+        FakeStore(
+            reform={CTC_AMOUNT: refused_value, ELASTICITY: refused_value},
+            dynamic_parameters=frozenset({ELASTICITY}),
+        )
+    )
+
+    with pytest.raises(HouseholdCalculationUnprocessableError) as raised:
+        await service.submit(
+            _request(policy_id=str(POLICY_ID), dynamic_id=str(DYNAMIC_ID)),
+            observability_context=None,
+        )
+
+    fields = {reason.loc[:5] for reason in raised.value.reasons}
+    assert fields == {
+        ("body", "policy_id", "policy", "parameters", CTC_AMOUNT),
+        ("body", "dynamic_id", "policy", "parameters", ELASTICITY),
+    }
     assert caller.calls == []
 
 
@@ -624,6 +719,24 @@ async def test_a_row_deleted_before_the_job_is_created_is_named(column_name, det
         )
 
     assert (raised.value.code, raised.value.detail) == ("missing_reference", detail)
+    assert caller.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_dynamic_deleted_before_the_job_is_created_is_named():
+    service, _, _, caller = _service(
+        FakeStore(create_failure=HouseholdJobReferenceError("dynamic_id"))
+    )
+
+    with pytest.raises(HouseholdCalculationRefusedError) as raised:
+        await service.submit(
+            _request(dynamic_id=str(DYNAMIC_ID)), observability_context=None
+        )
+
+    assert (raised.value.code, raised.value.detail) == (
+        "missing_reference",
+        f"the dynamic {DYNAMIC_ID} no longer exists",
+    )
     assert caller.calls == []
 
 
@@ -771,6 +884,7 @@ def test_what_the_service_builds_itself_is_an_internal_error_when_refused():
         country="us",
         household_id=HOUSEHOLD_ID,
         policy_id=None,
+        dynamic_id=None,
         policyengine_version="6.17.1",
     )
 
@@ -807,6 +921,7 @@ def _record(job_id: UUID, **changes: Any) -> HouseholdJobRecord:
         "country": "us",
         "household_id": HOUSEHOLD_ID,
         "policy_id": None,
+        "dynamic_id": None,
         "year": 2026,
         "request_data": {},
         "tax_benefit_model_version_id": CATALOG_VERSION_ID,

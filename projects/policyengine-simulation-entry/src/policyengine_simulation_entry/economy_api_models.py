@@ -82,7 +82,8 @@ DESCRIPTION_NOT_STORED = (
 # Why a request is refused (400), naming a row the caller chose that doesn't
 # exist, or the region's dataset: the Public API answers these as its caller's
 # error. On a re-run they name the stored record's own region, dataset or
-# dynamic, which the current catalog version lacks or which was deleted.
+# dynamic, which the current catalog version lacks or which was deleted. A
+# dynamic stored for another country is refused as one that doesn't exist.
 CallerRowRefusalCode = Literal["unknown_region", "unknown_dataset", "unknown_dynamic"]
 # Why a request is refused (400) for the service's own state, or a row the
 # Public API checks before asking. On a report's re-run, ``unknown_policy`` and

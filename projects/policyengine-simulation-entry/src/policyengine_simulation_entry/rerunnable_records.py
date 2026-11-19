@@ -143,10 +143,7 @@ def rerunnable_report(definition: ReportDefinition) -> StoredReportRows:
 def rerunnable_household_report(
     definition: ReportDefinition,
 ) -> StoredHouseholdReport:
-    """Return the stored household report's rows, or refuse one it can't re-run.
-
-    A side naming a dynamic is refused: a household calculation applies none.
-    """
+    """Return the stored household report's rows, or refuse one it can't re-run."""
     country, year = calculated_country(definition.country), definition.year
     household_id, baseline = definition.household_id, definition.baseline
     if country is None or household_id is None or baseline is None or year is None:
@@ -158,17 +155,6 @@ def rerunnable_household_report(
                 ("household", household_id),
                 ("baseline simulation", baseline),
                 ("year", year),
-            ),
-        )
-    if any(
-        side is not None and side.choice.dynamic_id is not None
-        for side in (baseline, definition.reform)
-    ):
-        raise EconomyRerunConflictError(
-            code="rerun_not_supported",
-            detail=(
-                "The report's household simulation names a dynamic, which a "
-                "household calculation does not apply, so it cannot be re-run."
             ),
         )
     return StoredHouseholdReport(

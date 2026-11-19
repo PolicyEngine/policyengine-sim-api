@@ -1,14 +1,15 @@
 """Submit a household calculation as a household job, and read the job back.
 
-A submission names a stored household, and optionally a stored policy. The
-service:
+A submission names a stored household, and optionally a stored policy and
+a stored dynamic. The service:
 
 1. finds the v2 version manifest's default worker's household function for
    the country, and its bundle;
 2. reads, in one transaction, the country's catalog version for that
-   worker's .py version, the stored household and the policy's reform
-   values, and builds the household contract's request for the household's
-   ``default_year``, with the new job's ID as its calculation ID;
+   worker's .py version, the stored household, and the policy's and the
+   dynamic's values together, as an economy simulation reads them, and builds
+   the household contract's request for the household's ``default_year``,
+   with the new job's ID as its calculation ID;
 3. creates the job ``pending`` with no Modal call ID. When the commit fails
    after the job's row was inserted, PostgreSQL may have applied it: the job
    may exist, so no call is started and the submission is answered as one
@@ -47,7 +48,9 @@ from policyengine_simulation_persistence import (
     HouseholdJobStatus,
     MissingPolicyParametersError,
     NewHouseholdJob,
+    OverlappingReformError,
     UnknownCatalogVersionError,
+    UnknownDynamicError,
     UnknownHouseholdError,
     UnknownPolicyError,
 )
@@ -99,6 +102,7 @@ CALL_START_TIMEOUT_SECONDS = 10.0
 _REFERENCED_ROWS = {
     "household_id": "household",
     "policy_id": "policy",
+    "dynamic_id": "dynamic",
     "tax_benefit_model_version_id": "catalog version",
 }
 
@@ -123,7 +127,7 @@ class UnprocessableReason:
 
 
 class HouseholdCalculationUnprocessableError(Exception):
-    """The stored household or policy the submission names cannot be calculated."""
+    """The household, policy or dynamic the submission names cannot be calculated."""
 
     def __init__(self, reasons: tuple[UnprocessableReason, ...]) -> None:
         """Keep every reason, in order."""
@@ -182,9 +186,10 @@ class HouseholdJobs(Protocol):
         country: str,
         household_id: UUID,
         policy_id: UUID | None,
+        dynamic_id: UUID | None,
         policyengine_version: str,
     ) -> HouseholdCalculationInputs:
-        """Read the catalog version, household and policy together."""
+        """Read the catalog version, household, policy and dynamic together."""
         ...
 
     def create_job(self, job: NewHouseholdJob) -> None:
@@ -221,19 +226,24 @@ def _database_unavailable() -> HouseholdCalculationUnavailableError:
 
 
 def _contract_reasons(
-    error: ValidationError, request: HouseholdCalculationRequest
+    error: ValidationError,
+    request: HouseholdCalculationRequest,
+    dynamic_parameters: frozenset[str],
 ) -> tuple[UnprocessableReason, ...]:
     """Name each field the contract refuses by the request field it traces to.
 
-    Raise HouseholdCalculationInternalError when the contract refuses a field
-    the service builds itself, which is no fault of the caller's.
+    A value of one of ``dynamic_parameters`` traces to ``dynamic_id``. Raise
+    HouseholdCalculationInternalError when the contract refuses a field the
+    service builds itself, which is no fault of the caller's.
     """
     reasons = []
     built_wrong = []
     for item in error.errors():
         location = tuple(item["loc"])
         request_field = request_field_of(
-            location, spm_from_request=request.spm_requested
+            location,
+            spm_from_request=request.spm_requested,
+            dynamic_parameters=dynamic_parameters,
         )
         if request_field is None:
             built_wrong.append(".".join(str(part) for part in location) or "request")
@@ -314,7 +324,7 @@ def prepare_household_job(
                     if request.axes is None
                     else {**situation, "axes": request.axes}
                 ),
-                **job_policy_fields(reform=inputs.reform),
+                **job_policy_fields(reform=inputs.reform.values),
                 "add_missing_variables": request.add_missing_variables,
                 "bundle": worker.bundle,
                 **_spm_fields(request, household.document),
@@ -322,7 +332,7 @@ def prepare_household_job(
         )
     except ValidationError as error:
         raise HouseholdCalculationUnprocessableError(
-            _contract_reasons(error, request)
+            _contract_reasons(error, request, inputs.reform.dynamic_parameters)
         ) from None
     return PreparedHouseholdJob(
         job=NewHouseholdJob(
@@ -330,6 +340,7 @@ def prepare_household_job(
             country=request.country,
             household_id=request.household_id,
             policy_id=request.policy_id,
+            dynamic_id=request.dynamic_id,
             year=household.default_year,
             request_data=request.model_dump(mode="json", exclude_unset=True),
             tax_benefit_model_version_id=inputs.catalog_version_id,
@@ -442,6 +453,7 @@ class HouseholdCalculationService:
                 country=request.country,
                 household_id=request.household_id,
                 policy_id=request.policy_id,
+                dynamic_id=request.dynamic_id,
                 policyengine_version=policyengine_version,
             )
         except UnknownCatalogVersionError as error:
@@ -457,16 +469,32 @@ class HouseholdCalculationService:
             raise HouseholdCalculationRefusedError(
                 code="unknown_policy", detail=str(error)
             ) from None
+        except UnknownDynamicError as error:
+            raise HouseholdCalculationRefusedError(
+                code="unknown_dynamic", detail=str(error)
+            ) from None
         except MissingPolicyParametersError as error:
+            field_name = "policy_id" if error.source == "policy" else "dynamic_id"
             raise HouseholdCalculationUnprocessableError(
                 tuple(
                     UnprocessableReason(
-                        loc=("body", "policy_id", name),
+                        loc=("body", field_name, name),
                         msg=(
                             f"the catalog version for .py {policyengine_version} "
                             "has no such parameter"
                         ),
                         type="missing_parameter",
+                    )
+                    for name in error.parameter_names
+                )
+            ) from None
+        except OverlappingReformError as error:
+            raise HouseholdCalculationUnprocessableError(
+                tuple(
+                    UnprocessableReason(
+                        loc=("body", "dynamic_id", name),
+                        msg="the policy and the dynamic both set this parameter",
+                        type="overlapping_parameter",
                     )
                     for name in error.parameter_names
                 )
@@ -486,6 +514,7 @@ class HouseholdCalculationService:
             referenced = {
                 "household_id": job.household_id,
                 "policy_id": job.policy_id,
+                "dynamic_id": job.dynamic_id,
                 "tax_benefit_model_version_id": job.tax_benefit_model_version_id,
             }
             column = error.column_name

@@ -153,15 +153,26 @@ def insert_dynamic(
     catalog: CatalogVersion,
     values: Iterable[StoredValue] = (),
 ) -> UUID:
-    """Insert a dynamic and the values it sets on ``catalog``'s parameters.
+    """Insert a dynamic of ``catalog``'s country, saved on it, and its values.
 
-    A dynamic belongs to no country; each value names a parameter of that
-    catalog version by name.
+    API v1 stores a dynamic as it stores a policy: of one country, saved on
+    a catalog version, with a content hash. Each value names a parameter of
+    that catalog version by name.
     """
     dynamic_id = uuid4()
     connection.execute(
-        text("INSERT INTO public.dynamics (id, name) VALUES (:id, :name)"),
-        {"id": dynamic_id, "name": f"dynamic {dynamic_id}"},
+        text(
+            "INSERT INTO public.dynamics (id, country_id, tax_benefit_model_id, "
+            "tax_benefit_model_version_id, canonicalization_version, content_hash) "
+            "VALUES (:id, :country, :model_id, :version_id, 1, :content_hash)"
+        ),
+        {
+            "id": dynamic_id,
+            "country": catalog.country,
+            "model_id": catalog.model_id,
+            "version_id": catalog.version_id,
+            "content_hash": _content_hash(dynamic_id),
+        },
     )
     parameter_ids = _parameter_ids(connection, catalog.version_id)
     insert_value = text(

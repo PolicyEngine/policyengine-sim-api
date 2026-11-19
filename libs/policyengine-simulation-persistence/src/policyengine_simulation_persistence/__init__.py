@@ -162,11 +162,13 @@ from policyengine_simulation_persistence.policy_reform import (
     MissingPolicyParametersError,
     OverlappingReformError,
     PolicyReform,
+    SimulationReform,
     UnknownDynamicError,
     UnknownPolicyError,
     combine_reforms,
     read_dynamic_reform,
     read_policy_reform,
+    read_simulation_reform,
 )
 from policyengine_simulation_persistence.referenced_tables import referenced_metadata
 from policyengine_simulation_persistence.result_tables import (
@@ -319,6 +321,7 @@ __all__ = [
     "SimulationChoice",
     "SimulationDefinition",
     "SimulationInputs",
+    "SimulationReform",
     "SimulationRun",
     "SimulationRunState",
     "SimulationStatus",
@@ -383,6 +386,7 @@ __all__ = [
     "read_region",
     "read_report_definition",
     "read_simulation_definition",
+    "read_simulation_reform",
     "read_stored_household",
     "record_household_call",
     "record_report_run_call",

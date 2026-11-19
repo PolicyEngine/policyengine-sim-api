@@ -3,7 +3,8 @@
 A household calculation is one ``household_jobs`` row, which the service
 creates and a household function on Modal calculates. The service reads the
 stored household and the catalog version from API v1's tables, creates
-the job ``pending`` with no Modal call ID, starts the call, then records the
+the job ``pending`` with no Modal call ID, naming the stored policy and
+dynamic it applies, starts the call, then records the
 call's ID, or fails the job at once when Modal refuses the call. Both updates
 apply only while the job is still ``pending`` with no call ID: the household
 function may already have claimed it, and the stuck-run sweep fails a pending
@@ -74,13 +75,16 @@ class StoredHousehold:
 class NewHouseholdJob:
     """A household job to create, ``pending`` and with no Modal call yet.
 
-    ``request_data`` holds the request as the service received it.
+    ``policy_id`` and ``dynamic_id`` name the stored policy and dynamic it
+    applies, each None for none. ``request_data`` holds the request as the
+    service received it.
     """
 
     id: UUID
     country: str
     household_id: UUID
     policy_id: UUID | None
+    dynamic_id: UUID | None
     year: int
     request_data: dict[str, Any]
     tax_benefit_model_version_id: UUID
@@ -102,6 +106,7 @@ class HouseholdJobRecord:
     country: str
     household_id: UUID
     policy_id: UUID | None
+    dynamic_id: UUID | None
     year: int
     request_data: dict[str, Any]
     tax_benefit_model_version_id: UUID
@@ -164,7 +169,7 @@ def read_stored_household(
 
 
 def insert_household_job(session: Session, job: NewHouseholdJob) -> None:
-    """Create the job ``pending``, with no Modal call ID and no dynamic.
+    """Create the job ``pending``, with no Modal call ID.
 
     The row is flushed here, so a failure of its INSERT is raised here and
     never at the commit. Raise HouseholdJobReferenceError when the database
@@ -177,7 +182,7 @@ def insert_household_job(session: Session, job: NewHouseholdJob) -> None:
             country=job.country,
             household_id=job.household_id,
             policy_id=job.policy_id,
-            dynamic_id=None,
+            dynamic_id=job.dynamic_id,
             year=job.year,
             request_data=job.request_data,
             tax_benefit_model_version_id=job.tax_benefit_model_version_id,
@@ -264,6 +269,7 @@ def read_household_job(session: Session, job_id: UUID) -> HouseholdJobRecord | N
             HouseholdJob.country,
             HouseholdJob.household_id,
             HouseholdJob.policy_id,
+            HouseholdJob.dynamic_id,
             HouseholdJob.year,
             HouseholdJob.request_data,
             HouseholdJob.tax_benefit_model_version_id,
@@ -285,6 +291,7 @@ def read_household_job(session: Session, job_id: UUID) -> HouseholdJobRecord | N
         country=row.country,
         household_id=row.household_id,
         policy_id=row.policy_id,
+        dynamic_id=row.dynamic_id,
         year=row.year,
         request_data=row.request_data,
         tax_benefit_model_version_id=row.tax_benefit_model_version_id,

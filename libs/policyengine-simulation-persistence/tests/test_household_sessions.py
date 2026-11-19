@@ -157,6 +157,7 @@ def _new_job(catalog: CatalogVersion, household_id: UUID) -> NewHouseholdJob:
         country="us",
         household_id=household_id,
         policy_id=None,
+        dynamic_id=None,
         year=2026,
         request_data={"country": "us"},
         tax_benefit_model_version_id=catalog.version_id,
