@@ -34,6 +34,8 @@ from policyengine_simulation_persistence import (
     EconomyReportState,
     EconomySimulationInputs,
     EconomySimulationState,
+    FoundCliffCalculation,
+    FoundCliffs,
     FoundEconomyReport,
     FoundEconomySimulation,
     FoundReportRun,
@@ -52,6 +54,7 @@ if TYPE_CHECKING:
         EconomyRequest,
         KeyedEconomyReport,
         KeyedEconomySimulation,
+        ProposedCliffs,
         SimulationChoice,
     )
 
@@ -99,11 +102,7 @@ SIMULATION_BODY: dict[str, Any] = {
 
 
 def report_request(**changes: Any) -> EconomyReportRequest:
-    """Return the report body's request, asking for no cliffs unless told to.
-
-    The service refuses ``include_cliffs: true`` until per-run cliff
-    calculations exist (C1 · 24's interim answer A).
-    """
+    """Return the report body's request, asking for no cliffs unless told to."""
     return EconomyReportRequest.model_validate(
         {**REPORT_BODY, "include_cliffs": False, **changes}
     )
@@ -202,6 +201,16 @@ class FakeStore:
     found_simulation: FoundEconomySimulation | None = None
     recorded_calls: list[tuple[UUID, str]] = field(default_factory=list)
     failed_runs: list[tuple[UUID, tuple[UUID, ...], str]] = field(default_factory=list)
+    # Each simulation run's cliff calculation that hasn't failed, by run, as
+    # the store finds it; a request's new ones are added as it creates them,
+    # so an identical request joins them.
+    cliff_calculations: dict[UUID, FoundCliffCalculation] = field(default_factory=dict)
+    # Raised by a create asking for cliffs, which then writes nothing.
+    cliff_failure: Exception | None = None
+    # Each request's proposed cliff calculation IDs, by simulation run.
+    cliff_requests: list[dict[UUID, UUID]] = field(default_factory=list)
+    recorded_cliff_calls: list[tuple[UUID, str]] = field(default_factory=list)
+    failed_cliff_calculations: list[tuple[UUID, str]] = field(default_factory=list)
 
     def read_report_inputs(
         self,
@@ -256,10 +265,20 @@ class FakeStore:
     def find_or_create_report(self, report: KeyedEconomyReport) -> FoundEconomyReport:
         if self.create_failure is not None:
             raise self.create_failure
+        if report.cliffs is not None and self.cliff_failure is not None:
+            raise self.cliff_failure
         self.reports.append(report)
-        if self.found_report is not None:
-            return self.found_report
-        return created_report(report)
+        found = self.found_report or created_report(report)
+        if report.cliffs is None:
+            return found
+        return replace(
+            found,
+            cliffs=self.found_cliffs(
+                report.cliffs,
+                baseline_simulation_run_id=found.baseline.simulation_run_id,
+                reform_simulation_run_id=found.reform.simulation_run_id,
+            ),
+        )
 
     def find_or_create_simulation(
         self, simulation: KeyedEconomySimulation
@@ -320,16 +339,70 @@ class FakeStore:
         self.failed_runs.append((simulation_run_id, (), error_message))
         return True
 
+    def found_cliffs(
+        self,
+        proposed: ProposedCliffs,
+        *,
+        baseline_simulation_run_id: UUID,
+        reform_simulation_run_id: UUID,
+    ) -> FoundCliffs:
+        """Find or create each side's run's cliff calculation, as the store does."""
+        proposed_by_run = {baseline_simulation_run_id: proposed.baseline_id}
+        proposed_by_run.setdefault(reform_simulation_run_id, proposed.reform_id)
+        self.cliff_requests.append(proposed_by_run)
+        found: dict[UUID, FoundCliffCalculation] = {}
+        for simulation_run_id, proposed_id in proposed_by_run.items():
+            existing = self.cliff_calculations.get(simulation_run_id)
+            if existing is not None:
+                found[simulation_run_id] = existing
+                continue
+            found[simulation_run_id] = FoundCliffCalculation(
+                id=proposed_id,
+                simulation_run_id=simulation_run_id,
+                inserted=True,
+                status=SimulationStatus.PENDING,
+            )
+            self.cliff_calculations[simulation_run_id] = replace(
+                found[simulation_run_id], inserted=False
+            )
+        return FoundCliffs(
+            baseline=found[baseline_simulation_run_id],
+            reform=found[reform_simulation_run_id],
+        )
+
+    def record_cliff_call(
+        self, cliff_result_id: UUID, modal_call_id: str
+    ) -> SimulationStatus | None:
+        if self.record_failure is not None:
+            raise self.record_failure
+        self.recorded_cliff_calls.append((cliff_result_id, modal_call_id))
+        return SimulationStatus.RUNNING if self.claimed else SimulationStatus.PENDING
+
+    def fail_unstarted_cliff_calculation(
+        self, cliff_result_id: UUID, error_message: str
+    ) -> bool:
+        if self.fail_failure is not None:
+            raise self.fail_failure
+        if self.claimed:
+            return False
+        self.failed_cliff_calculations.append((cliff_result_id, error_message))
+        return True
+
 
 @dataclass
 class FakeCaller:
     """Starts calls by recording them; ``failure`` is raised instead when set.
 
     ``hang`` makes a start wait until the service stops waiting for it.
+    ``cliff_failure`` is raised by a cliff calculation's start alone.
     """
 
     failure: Exception | None = None
     hang: bool = False
+    cliff_failure: Exception | None = None
+    cliff_calculations: list[tuple[EconomyWorker, dict, dict, Any]] = field(
+        default_factory=list
+    )
     report_runs: list[tuple[EconomyWorker, dict, dict, Any]] = field(
         default_factory=list
     )
@@ -364,6 +437,21 @@ class FakeCaller:
             (worker, simulation_payload, context_payload, observability_context)
         )
         return "fc-worker"
+
+    async def start_cliff_calculation(
+        self,
+        worker: EconomyWorker,
+        simulation_payload: dict[str, Any],
+        context_payload: dict[str, Any],
+        *,
+        observability_context: dict[str, Any] | None,
+    ) -> str:
+        if self.cliff_failure is not None:
+            raise self.cliff_failure
+        self.cliff_calculations.append(
+            (worker, simulation_payload, context_payload, observability_context)
+        )
+        return f"fc-cliffs-{len(self.cliff_calculations)}"
 
     async def _maybe_fail(self) -> None:
         if self.hang:

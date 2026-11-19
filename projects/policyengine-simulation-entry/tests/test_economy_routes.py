@@ -18,10 +18,12 @@ from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.economy_api_models import (
+    CliffCalculationState,
     EconomyReportCreated,
     EconomyReportRequest,
     EconomySimulationCreated,
     EconomySimulationRequest,
+    ReportCliffs,
 )
 from policyengine_simulation_entry.economy_routes import call_request_id_for
 from policyengine_simulation_entry.economy_submission_errors import (
@@ -80,6 +82,7 @@ class FakeEconomySubmissions:
     failure: Exception | None = None
     stored_report: EconomyReportState | None = None
     stored_simulation: EconomySimulationState | None = None
+    report_answer: EconomyReportCreated = CREATED_REPORT
     reports: list[tuple[EconomyReportRequest, str, Any]] = field(default_factory=list)
     simulations: list[tuple[EconomySimulationRequest, str, Any]] = field(
         default_factory=list
@@ -95,7 +98,7 @@ class FakeEconomySubmissions:
         self.reports.append((request, request_id, observability_context))
         if self.failure is not None:
             _raise(self.failure)
-        return CREATED_REPORT
+        return self.report_answer
 
     async def submit_simulation(
         self,
@@ -164,16 +167,42 @@ def test_a_report_answers_201_with_its_records_and_runs(client_for) -> None:
 
     assert result.status_code == 201
     assert result.json() == CREATED_REPORT.model_dump(mode="json")
+    # A request that didn't ask for cliffs is answered without them.
+    assert "cliffs" not in result.json()
     assert result.headers[OBSERVABILITY_ID_HEADER] == OBSERVABILITY_ID
     ((request, request_id, context),) = submissions.reports
     assert request.label == REPORT_BODY["label"]
-    assert request.options() == {
-        "include_cliffs": True,
-        "spm": {"geography_kind": "national"},
-    }
+    # include_cliffs is the request's alone, in no options object (answer 4b).
+    assert request.include_cliffs is True
+    assert request.options() == {"spm": {"geography_kind": "national"}}
     # The call's request ID is the request's own (see the request ID test).
     assert request_id != OBSERVABILITY_ID
     assert context["observability_id"] == OBSERVABILITY_ID
+
+
+def test_a_report_asking_for_cliffs_answers_each_sides_cliff_calculation(
+    client_for,
+) -> None:
+    cliffs = ReportCliffs(
+        baseline=CliffCalculationState(
+            cliff_result_id=UUID(int=70), status=SimulationStatus.SUCCEEDED
+        ),
+        reform=CliffCalculationState(
+            cliff_result_id=UUID(int=71), status=SimulationStatus.PENDING
+        ),
+    )
+    submissions = FakeEconomySubmissions(
+        report_answer=CREATED_REPORT.model_copy(update={"cliffs": cliffs})
+    )
+
+    with client_for(submissions) as client:
+        result = client.post("/reports", json={**REPORT_BODY, "include_cliffs": True})
+
+    assert result.status_code == 201
+    assert result.json()["cliffs"] == {
+        "baseline": {"cliff_result_id": str(UUID(int=70)), "status": "succeeded"},
+        "reform": {"cliff_result_id": str(UUID(int=71)), "status": "pending"},
+    }
 
 
 def test_a_simulation_answers_201_with_its_record_and_run(client_for) -> None:
@@ -393,10 +422,11 @@ def test_a_uk_wide_or_nation_report_may_ask_for_the_local_area_dataset(
     assert result.status_code == 201
     ((request, _, _),) = submissions.reports
     assert request.data_source == "local_area_dataset"
-    # The report still calculates cliffs. The data source is never stored as
-    # an option: the dataset it chooses is stored with the report's
-    # simulations.
-    assert request.options() == {"include_cliffs": True}
+    # The report still asks for cliffs, which are each simulation run's own
+    # calculation. The data source is never stored as an option: the dataset
+    # it chooses is stored with the report's simulations.
+    assert request.include_cliffs is True
+    assert request.options() == {}
 
 
 @pytest.mark.parametrize(("path", "body"), ROUTES)

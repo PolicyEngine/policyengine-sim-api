@@ -209,6 +209,18 @@ def test_a_report_rerun_without_force_reuses_runs(client_for) -> None:
     assert reruns.report_reruns[0][1] == ReportRerunRequest(force=False)
 
 
+def test_a_report_rerun_may_ask_for_cliffs(client_for) -> None:
+    reruns = FakeEconomyReruns()
+
+    with client_for(reruns) as client:
+        result = client.post(REPORT_RUNS, json={"include_cliffs": True})
+
+    assert result.status_code == 201
+    assert reruns.report_reruns[0][1] == ReportRerunRequest(
+        force=False, include_cliffs=True
+    )
+
+
 def test_a_simulation_rerun_answers_201_with_its_new_run(client_for) -> None:
     reruns = FakeEconomyReruns()
 
@@ -231,6 +243,8 @@ def test_a_simulation_rerun_answers_201_with_its_new_run(client_for) -> None:
     [
         (REPORT_RUNS, {"force": "yes"}),
         (REPORT_RUNS, {"force": None}),
+        (REPORT_RUNS, {"include_cliffs": "yes"}),
+        (REPORT_RUNS, {"include_cliffs": None}),
         (REPORT_RUNS, {"policyengine_version": "6.17.1"}),
         ("/reports/not-a-uuid/runs", {}),
         ("/simulations/not-a-uuid/runs", None),

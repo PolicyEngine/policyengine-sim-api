@@ -5,7 +5,8 @@ Modal application deployed for one .py version, which names its report
 coordinator, each country's simulation function, and the bundle they run.
 A report run is calculated by the coordinator, which starts a simulation
 function for each simulation run it doesn't reuse; a standalone simulation
-run is calculated by the simulation function alone. Each is called by name
+run is calculated by the simulation function alone, and so is a simulation
+run's cliff calculation, by the same function in its cliff mode. Each is called by name
 with ``spawn``, so a route waits only for Modal to accept the call, and is
 given the run IDs it claims and records, never a Stage 12 evaluation
 record.
@@ -179,6 +180,17 @@ class EconomyRunCaller(Protocol):
         """Start the standalone simulation run's function; return its call ID."""
         ...
 
+    async def start_cliff_calculation(
+        self,
+        worker: EconomyWorker,
+        simulation_payload: dict[str, Any],
+        context_payload: dict[str, Any],
+        *,
+        observability_context: dict[str, Any] | None,
+    ) -> str:
+        """Start a simulation run's cliff calculation; return its call ID."""
+        ...
+
 
 class ModalEconomyRunCaller:
     """Start economy calls on Modal, by application and function name."""
@@ -218,6 +230,27 @@ class ModalEconomyRunCaller:
         """Start the simulation function with its run's ID; return its call ID.
 
         Raise RuntimeError when Modal returns no call ID.
+        """
+        return await self._spawn(
+            worker,
+            worker.simulation_callable,
+            simulation_payload,
+            context_payload,
+            observability_context=observability_context,
+        )
+
+    async def start_cliff_calculation(
+        self,
+        worker: EconomyWorker,
+        simulation_payload: dict[str, Any],
+        context_payload: dict[str, Any],
+        *,
+        observability_context: dict[str, Any] | None,
+    ) -> str:
+        """Start the simulation function on a run's cliff calculation; return its ID.
+
+        The context names the cliff calculation, which the function claims
+        and records. Raise RuntimeError when Modal returns no call ID.
         """
         return await self._spawn(
             worker,

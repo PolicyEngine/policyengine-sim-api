@@ -28,7 +28,12 @@ end on the same simulation, report and run rows (C1 · 24). The service:
    that does starts them. A run the coordinator claimed meanwhile, because
    Modal accepted the call after all, is left as it is and answered
    ``pending``. A joined report run gets no call and is answered with its
-   status as read.
+   status as read;
+5. for a report asking for cliffs (``include_cliffs``, never stored or
+   keyed), finds or creates, in step 3's transaction, the cliff calculation
+   of each simulation run the report run names, created or joined, and
+   starts only those it created, before step 4's call
+   (``cliff_calculation_starts``).
 
 A standalone simulation is found or created by key and started the same
 way, with one simulation run calculated by the country's simulation
@@ -62,6 +67,7 @@ from policyengine_simulation_persistence import (
     EconomySimulationDefinition,
     KeyedEconomyReport,
     KeyedEconomySimulation,
+    ProposedCliffs,
     ProposedSide,
     ReportRunStatus,
     SharedRowNotSettledError,
@@ -70,6 +76,10 @@ from policyengine_simulation_persistence import (
 )
 from sqlalchemy.exc import SQLAlchemyError
 
+from policyengine_simulation_entry.cliff_calculation_starts import (
+    CliffCalculationRuns,
+    CliffCalculationStarts,
+)
 from policyengine_simulation_entry.economy_api_models import (
     EconomyReportCreated,
     EconomySimulationCreated,
@@ -82,7 +92,6 @@ from policyengine_simulation_entry.economy_calculation_inputs import (
 from policyengine_simulation_entry.economy_requests import (
     calculation_scope,
     economy_request_for,
-    refuse_cliffs,
     report_created,
     stored_options,
 )
@@ -114,6 +123,7 @@ if TYPE_CHECKING:
         EconomyReportState,
         EconomySimulationInputs,
         EconomySimulationState,
+        FoundCliffs,
         FoundEconomyReport,
         FoundEconomySimulation,
     )
@@ -122,8 +132,10 @@ if TYPE_CHECKING:
         EconomyReportRequest,
         EconomySimulationRequest,
         PolicyChoice,
+        ReportCliffs,
     )
     from policyengine_simulation_entry.economy_calculation_inputs import (
+        CalculationScope,
         RunCalculation,
     )
     from policyengine_simulation_entry.economy_workers import (
@@ -139,8 +151,8 @@ logger = logging.getLogger(__name__)
 CALL_START_TIMEOUT_SECONDS = 10.0
 
 
-class EconomyRuns(Protocol):
-    """The economy reads and writes (``EconomyRunStore``)."""
+class EconomyRuns(CliffCalculationRuns, Protocol):
+    """The economy reads and writes (``EconomyRunStore``), cliff calculations' too."""
 
     def read_report_inputs(
         self,
@@ -259,6 +271,11 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         self._call_start_timeout_seconds = call_start_timeout_seconds
         self._new_id = new_id
         self._clock = clock
+        self._cliff_starts = CliffCalculationStarts(
+            store=store,
+            caller=caller,
+            call_start_timeout_seconds=call_start_timeout_seconds,
+        )
 
     async def submit_report(
         self,
@@ -275,9 +292,10 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
         database cannot be read, or, naming the report, when Modal doesn't
         confirm the call and the report run was failed; and
         EconomySubmissionOutcomeUnknownError (500) when the create's commit
-        failed after its rows were inserted.
+        failed after its rows were inserted. A report asking for cliffs
+        writes its runs' cliff calculations with them, and starts the new
+        ones before the coordinator.
         """
-        refuse_cliffs(request)
         worker = await self._default_worker(request.country)
         area_dataset_name = local_area_dataset_name(request, worker)
         options = request.options()
@@ -313,10 +331,22 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
             population=catalog.population(request.year),
             versions=worker.versions,
             inputs=stored_options(options),
+            cliffs=self._proposed_cliffs() if request.include_cliffs else None,
         )
         found = await self._create(
             "report", lambda: self._store.find_or_create_report(keyed)
         )
+        cliffs = None
+        if found.cliffs is not None:
+            cliffs = await self._start_cliffs(
+                worker,
+                scope,
+                request_id,
+                found=found.cliffs,
+                baseline_policy=inputs.baseline.reform,
+                reform_policy=inputs.reform.reform,
+                observability_context=observability_context,
+            )
         status = found.run.status
         if found.run.inserted:
             calculation = report_run_calculation(
@@ -339,7 +369,7 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
                 new_simulation_run_ids=(),
                 observability_context=observability_context,
             )
-        return report_created(found, status)
+        return report_created(found, status).model_copy(update={"cliffs": cliffs})
 
     async def submit_simulation(
         self,
@@ -430,6 +460,35 @@ class EconomySubmissionService[Store: EconomyRuns = EconomyRuns]:
                 extra=log_extra(error_type=type(error).__name__),
             )
             raise _database_unavailable() from None
+
+    async def _start_cliffs(  # noqa: PLR0913  # what the calls calculate, then each side
+        self,
+        worker: EconomyWorker,
+        scope: CalculationScope,
+        request_id: str,
+        *,
+        found: FoundCliffs,
+        baseline_policy: dict[str, Any],
+        reform_policy: dict[str, Any],
+        observability_context: dict[str, Any] | None,
+    ) -> ReportCliffs:
+        """Start the sides' cliff calculations the request inserted; answer each."""
+        return await self._cliff_starts.start(
+            worker,
+            scope,
+            self._origin(request_id),
+            found=found,
+            baseline_policy=baseline_policy,
+            reform_policy=reform_policy,
+            observability_context=observability_context,
+        )
+
+    def _proposed_cliffs(self) -> ProposedCliffs:
+        """Return the IDs the sides' cliff calculations get if a create inserts them.
+
+        One run on both sides gets one calculation, with the baseline's ID.
+        """
+        return ProposedCliffs(baseline_id=self._new_id(), reform_id=self._new_id())
 
     def _proposed_side(self) -> ProposedSide:
         """Return the IDs a side's rows get if this request inserts them."""
@@ -690,7 +749,6 @@ __all__ = [
     "ServiceSettings",
     "calculation_scope",
     "economy_request_for",
-    "refuse_cliffs",
     "report_created",
     "simulation_choice",
     "stored_options",
