@@ -42,6 +42,7 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 )
 
 from .cached_simulation import Stage12CachedSimulation, qualifying_cache_identity
+from .cliff_results import run_named_cliff_result
 from .dataset_download_retry import load_with_download_retry
 from .dependencies import ComparisonStore, artifact_store, runtime_store
 from .failure_causes import (
@@ -91,6 +92,7 @@ if TYPE_CHECKING:
         RegionResolution,
     )
 
+    from .cliff_results import CliffResultWriter
     from .report_run_access import ReportRunWriter
     from .reused_outputs import OutputFileReader
 
@@ -472,7 +474,8 @@ class SimulationWorkerDependencies:
     the standard country-package calculation, the deployed region-group
     segment runner, no telemetry runtime, and, for a call that names a
     simulation run, the run store, the output planning of a simulation on
-    its own, and the Cloud Storage reader of a succeeded run's output file.
+    its own, and the Cloud Storage reader of a succeeded run's output file;
+    for one naming a cliff result, the cliff result store.
     """
 
     store: ComparisonStore | None = None
@@ -494,6 +497,7 @@ class SimulationWorkerDependencies:
         resolve_simulation_output_plan
     )
     output_files: OutputFileReader | None = None
+    cliff_results: CliffResultWriter | None = None
 
 
 def run_single_simulation(
@@ -508,7 +512,8 @@ def run_single_simulation(
 
     A detailed-save call's context names the simulation run it claims, and
     ``run_simulation_run`` records that run alone, under ``modal_call_id``,
-    keeping the output file in the simulation output bucket. A
+    keeping the output file in the simulation output bucket; one naming a
+    cliff result calculates that run's cliffs (``cliff_results``). A
     comparison-path call records its evaluation child record: a child
     already marked succeeded returns its stored descriptor without
     recalculating, and a failure after it is marked running marks it FAILED
@@ -518,6 +523,15 @@ def run_single_simulation(
     dependencies = dependencies or SimulationWorkerDependencies()
     runtime = dependencies.runtime
     context = Stage12InvocationContext.model_validate(context_payload)
+    if context.cliff_result_id is not None:
+        return run_named_cliff_result(
+            payload,
+            context,
+            required_country=required_country,
+            dependencies=dependencies,
+            calculate=_calculate,
+            modal_call_id=modal_call_id,
+        )
     if context.records_runs:
         return _run_named_simulation_run(
             payload,

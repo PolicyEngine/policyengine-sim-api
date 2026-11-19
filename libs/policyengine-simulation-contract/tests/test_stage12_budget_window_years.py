@@ -159,6 +159,21 @@ def test_a_later_year_is_calculated_on_its_own_year_and_runs() -> None:
     assert later_context.retention_expires_at == LATER_CREATED_AT + timedelta(days=30)
 
 
+def test_a_later_years_context_names_no_cliff_result_in_its_json() -> None:
+    """A v2 application deployed before cliff results refuses the field, even null."""
+    report, context = _first_year()
+
+    _, later_context = year_calculation(
+        report,
+        context,
+        year=2029,
+        run_ids=LATER_YEAR_RUNS,
+        created_at=LATER_CREATED_AT,
+    )
+
+    assert "cliff_result_id" not in later_context.model_dump(mode="json")
+
+
 def test_nothing_else_differs_between_the_years() -> None:
     report, context = _first_year()
 

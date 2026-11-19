@@ -24,6 +24,7 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from policyengine_simulation_executor.stage12_runtime.output_planning import (
     apply_output_plan,
+    resolve_cliff_output_plan,
     resolve_report_output_plan,
     resolve_simulation_output_plan,
     validate_output_frames,
@@ -220,6 +221,48 @@ def test_cliff_variables_are_conditional() -> None:
         _additional_variables(with_cliffs, "person")
     )
     assert "cliff_gap" not in _additional_variables(without_cliffs, "person")
+
+
+@pytest.mark.parametrize("country", ["us", "uk"])
+def test_a_cliff_calculation_plans_the_cliff_columns_and_no_others_added(
+    country,
+) -> None:
+    simulation = _simulation(country, SimulationRole.BASELINE)
+
+    plan = resolve_cliff_output_plan(simulation)
+
+    assert plan.country == country
+    assert plan.requirements.include_cliff_impacts is True
+    assert plan.requirements.labor_supply_response_active is False
+    # Only the columns the cliff gap and share read are added to the defaults:
+    # no labour-supply response or US budget columns.
+    assert _additional_variables(plan, "person") == {
+        "cliff_gap",
+        "is_adult",
+        "is_on_cliff",
+    }
+    assert {"person_id", "person_weight"}.issubset(_variables(plan, "person"))
+    assert all(
+        not entity.additional_variables
+        for entity in plan.entities
+        if entity.entity != "person"
+    )
+    assert all(not entity.dataset_variables for entity in plan.entities)
+
+
+def test_a_cliff_plan_records_a_labour_supply_response_without_its_columns() -> None:
+    simulation = _simulation(
+        "us",
+        SimulationRole.REFORM,
+        policy={"gov.simulation.labor_supply_responses.elasticities.income": 0.1},
+    )
+
+    plan = resolve_cliff_output_plan(simulation)
+
+    # The response changes the policy's net incomes, and so its cliffs; its
+    # own columns aren't needed. The flag keeps the run's own split rule.
+    assert plan.requirements.labor_supply_response_active is True
+    assert "income_elasticity_lsr" not in _additional_variables(plan, "person")
 
 
 def test_labor_supply_variables_are_shared_when_either_policy_activates_them() -> None:

@@ -86,8 +86,11 @@ def coordinate_report(
     """
     dependencies = dependencies or CoordinatorDependencies()
     context = Stage12InvocationContext.model_validate(context_payload)
-    if context.simulation_run_id is not None:
-        msg = "a coordinator's call names a report run, not a simulation run"
+    if context.simulation_run_id is not None or context.cliff_result_id is not None:
+        msg = (
+            "a coordinator's call names a report run, not a simulation run or "
+            "a cliff result"
+        )
         raise ValueError(msg)
     if context.report_run is not None:
         if parent_payload is not None:
