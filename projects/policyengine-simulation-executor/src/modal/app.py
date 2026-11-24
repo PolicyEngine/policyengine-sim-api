@@ -12,6 +12,7 @@ versioned apps.
 import contextlib
 import os
 import random
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -52,6 +53,40 @@ import modal
 if TYPE_CHECKING:
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_executor.job_progress import JobProgressReporter
+
+
+# Containers restored from a memory snapshot reload Secret values only from
+# Modal 1.6.4, and each app's containers run the Modal client that deployed it.
+# This project's uv.lock pins such a client; the check refuses a deploy or run
+# from an environment with an older one, such as a global Modal install.
+FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE = (1, 6, 4)
+
+
+def _require_secret_reloading_modal_client(client_version: str) -> None:
+    """Raise unless ``client_version`` is Modal 1.6.4 or newer."""
+    release = re.match(r"(\d+)\.(\d+)\.(\d+)", client_version)
+    release_numbers = (
+        tuple(int(number) for number in release.groups()) if release else None
+    )
+    if (
+        release_numbers is None
+        or release_numbers < FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE
+    ):
+        minimum = ".".join(
+            str(number) for number in FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE
+        )
+        msg = (
+            f"Modal client {client_version} is not {minimum} or newer: containers "
+            "restored from this app's memory snapshots would keep the Secret values "
+            "from when each snapshot was taken. Deploy and run from this project's "
+            "locked environment, for example "
+            "`uv run --frozen modal deploy src/modal/app.py`."
+        )
+        raise RuntimeError(msg)
+
+
+if modal.is_local():
+    _require_secret_reloading_modal_client(modal.__version__)
 
 
 def _version_from_env_or_local_bundle_package(env_var: str, package: str) -> str:
