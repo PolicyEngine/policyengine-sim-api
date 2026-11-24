@@ -4,8 +4,10 @@ The output is the single-year economy result Stage 12's coordinator builds,
 in the format API v1 and v3 read today. Each part with a lossless place in a
 result table becomes rows: per-report parts keyed by the report run, with its
 two simulation runs where the table names them, and poverty and inequality
-keyed by each simulation run. The cliff impact, SPM receipts and data version
-are columns of the report run itself, which its completion sets.
+keyed by each simulation run. The SPM receipts and data version are columns
+of the report run itself, which its completion sets. A cliff impact is not
+stored here: each simulation run has its own cliff result, which the
+worker that calculates it writes.
 
 The result tables' models are the simulation service library's
 (``policyengine_simulation_persistence.result_tables``), which the CI
@@ -87,14 +89,6 @@ INTRA_DECILE_COLUMNS = {
     "Gain less than 5%": "gain_less_than_5pct",
     "Gain more than 5%": "gain_more_than_5pct",
 }
-# The report run's columns for the baseline's and reform's cliff impact; all
-# four are set or all four null.
-CLIFF_COLUMNS = (
-    "baseline_cliff_gap",
-    "baseline_cliff_share",
-    "reform_cliff_gap",
-    "reform_cliff_share",
-)
 DISCLOSURE_FIELDS = (
     "disclosure_tier",
     "average_household_income_change_lower",
@@ -236,24 +230,14 @@ def report_run_result(
 
 
 def _report_run_columns(economy: SingleYearMacroOutput) -> dict[str, Any]:
-    """Return the cliff impact, SPM receipts and data version, as report run columns.
+    """Return the SPM receipts and data version, as report run columns.
 
-    The four cliff columns are all null when the output has no cliff impact.
+    No cliff column: a cliff impact is each simulation run's own cliff
+    result, so the report run's four cliff columns stay null, and its
+    completion names none of them, which lets API v1 drop them.
     """
-    cliffs = economy.cliff_impact
-    cliff_columns: dict[str, float | None]
-    if cliffs is None:
-        cliff_columns = dict.fromkeys(CLIFF_COLUMNS)
-    else:
-        cliff_columns = {
-            "baseline_cliff_gap": cliffs.baseline.cliff_gap,
-            "baseline_cliff_share": cliffs.baseline.cliff_share,
-            "reform_cliff_gap": cliffs.reform.cliff_gap,
-            "reform_cliff_share": cliffs.reform.cliff_share,
-        }
     receipts = economy.spm_provenance
     return {
-        **cliff_columns,
         "spm_provenance": (
             None if receipts is None else receipts.model_dump(mode="json")
         ),

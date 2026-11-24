@@ -1,4 +1,4 @@
-"""The sweep that fails runs and household jobs nothing will finish.
+"""The sweep that fails runs, household jobs and cliff results nothing will finish.
 
 A coordinator or worker records the Modal call running each run it claims,
 and the simulation service is to record the call it starts on a pending
@@ -30,7 +30,11 @@ later year does for the earlier years.
 Household jobs follow the same rule: the simulation service records the
 call it starts on a pending job, and a household function claims the job
 under that call. A household job counts from its creation, while pending or
-running, for both ages.
+running, for both ages. A simulation run's cliff result, which the
+simulation service starts and a worker claims, is judged as a run is, from
+its first claim or, while pending, its creation. No run names it, so it is
+judged last; once failed it never counts, and the next request for its
+run's cliffs starts another calculation.
 
 A budget window's years are report runs naming its budget-window run. A
 year still pending with no call, in a window that hasn't finished, waits
@@ -116,7 +120,7 @@ class StuckRunStore(Protocol):
         active_since_before: datetime,
         regardless_of_report_runs: bool = False,
     ) -> tuple[ActiveRun, ...]:
-        """Return the pending and running runs, or household jobs, older than a time.
+        """Return the pending and running runs of ``kind`` older than a time.
 
         A simulation run an unfinished report run names is left out, unless
         ``regardless_of_report_runs`` and it records a call.
@@ -161,13 +165,18 @@ class BudgetWindowSettler(Protocol):
 
 # The order the sweep judges each kind in: report runs before simulation
 # runs, which are listed only once no unfinished report run names them, then
-# household jobs, which no run names.
-SWEPT_KINDS = (RunKind.REPORT_RUN, RunKind.SIMULATION_RUN, RunKind.HOUSEHOLD_JOB)
+# household jobs and simulation runs' cliff results, which no run names.
+SWEPT_KINDS = (
+    RunKind.REPORT_RUN,
+    RunKind.SIMULATION_RUN,
+    RunKind.HOUSEHOLD_JOB,
+    RunKind.CLIFF_RESULT,
+)
 
 
 @dataclass(frozen=True)
 class SweepSummary:
-    """What the sweep did with the runs and household jobs it listed, together.
+    """What the sweep did with the runs, household jobs and cliff results it listed.
 
     ``checked`` runs were judged after the minimum age: ``failed`` because
     their call ended, ``failed_without_call`` because they stayed pending with
@@ -334,9 +343,10 @@ def sweep_stuck_runs(  # noqa: PLR0913  # the stores, then keyword-only seams an
 ) -> SweepSummary:
     """Fail every listed run whose recorded Modal call has ended or was never started.
 
-    Household jobs are judged as runs are. Runs older than ``maximum_age``
-    are failed first, report runs, then simulation runs, then household
-    jobs, before any Modal lookup can use up the scheduled function's time.
+    Household jobs and cliff results are judged as runs are. Runs older
+    than ``maximum_age`` are failed first, report runs, then simulation
+    runs, then household jobs, then cliff results, before any Modal lookup
+    can use up the scheduled function's time.
     Then, in the same order, so a dead coordinator's simulation runs are
     listed in the same sweep, each run older than ``minimum_age`` is judged:
     a pending run with no call recorded is failed, and each recorded call is

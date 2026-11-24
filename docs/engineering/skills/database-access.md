@@ -170,8 +170,8 @@ and this repository has no migration chain of its own
 - the Stage 12 comparison tables, whose live schema deployment validation
   compares with the Stage 12 library's SQLAlchemy mappings.
 - the tables the simulation service writes (`simulations`, `reports`,
-  `simulation_runs`, `report_runs`, `budget_window_runs` and
-  `household_jobs`), modelled in `libs/policyengine-simulation-persistence`.
+  `simulation_runs`, `report_runs`, `budget_window_runs`, `household_jobs`
+  and `cliff_impacts`), modelled in `libs/policyengine-simulation-persistence`.
   The service connects as its own role, which policyengine-api's privilege
   manifest grants.
 - the policyengine-api tables a calculation is read from (`households`,
@@ -182,8 +182,8 @@ and this repository has no migration chain of its own
   models of the tables it writes.
 - the run tables the v2 Modal coordinator, workers, household functions and
   stuck-run sweep write as the Modal worker role: `report_runs`,
-  `simulation_runs`, `budget_window_runs`, the result tables and
-  `household_jobs`. They use the same models, in
+  `simulation_runs`, `budget_window_runs`, the result tables,
+  `household_jobs` and `cliff_impacts`. They use the same models, in
   `libs/policyengine-simulation-persistence` (`tables.py` and
   `result_tables.py`, which `sim.persistence.models-match-public-api`
   compares with the Public API's tables), through the stores in

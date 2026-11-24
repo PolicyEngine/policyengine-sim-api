@@ -1,6 +1,6 @@
-"""Insert the Public API's own rows a calculation is read from, for tests.
+"""Insert API v1's own rows a calculation is read from, for tests.
 
-The Public API writes households, policies, their parameter values and its
+API v1 writes households, policies, dynamics, their parameter values and its
 model catalog; the tests insert them as the superuser, in a transaction they
 roll back, before acting as the simulation service's role.
 """
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
     from datetime import datetime
 
-    from sqlalchemy import Connection
+    from sqlalchemy import Connection, TextClause
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class CatalogVersion:
 
 @dataclass(frozen=True)
 class StoredValue:
-    """One parameter value a policy sets, as the Public API stores it."""
+    """One parameter value a policy or dynamic sets, as API v1 stores it."""
 
     parameter_name: str
     value: object
@@ -43,12 +43,17 @@ class StoredValue:
     end_date: datetime | None = None
 
 
-def _content_hash(identifier: UUID) -> str:
+def _stand_in_content_hash(identifier: UUID) -> str:
+    """Return a 64-character hash of a new row's ID, in place of its content's.
+
+    API v1 hashes a row's content; hashing the ID instead keeps every row a
+    test inserts distinct, even when two have the same content.
+    """
     return sha256(identifier.bytes).hexdigest()
 
 
 def insert_model(connection: Connection, country: str) -> UUID:
-    """Insert the country's tax-benefit model, named as the Public API names it."""
+    """Insert the country's tax-benefit model, named as API v1 names it."""
     model_id = uuid4()
     connection.execute(
         text("INSERT INTO public.tax_benefit_models (id, name) VALUES (:id, :name)"),
@@ -103,49 +108,89 @@ def _parameter_ids(connection: Connection, version_id: UUID) -> dict[str, UUID]:
     return {row.name: row.id for row in rows}
 
 
-def insert_policy(
+@dataclass(frozen=True)
+class _SavedReformStatements:
+    """The two inserts that save a policy or a dynamic and the values it sets.
+
+    ``values`` binds the saved row's ID as ``saved_id``.
+    """
+
+    row: TextClause
+    values: TextClause
+
+
+_POLICY_STATEMENTS = _SavedReformStatements(
+    row=text(
+        "INSERT INTO public.policies (id, country_id, tax_benefit_model_id, "
+        "tax_benefit_model_version_id, canonicalization_version, content_hash) "
+        "VALUES (:id, :country, :model_id, :version_id, 1, :content_hash)"
+    ),
+    values=text(
+        "INSERT INTO public.parameter_values "
+        "(id, parameter_id, value_json, start_date, end_date, policy_id) "
+        "VALUES (:id, :parameter_id, :value, :start_date, :end_date, :saved_id)"
+    ).bindparams(bindparam("value", type_=JSONB)),
+)
+_DYNAMIC_STATEMENTS = _SavedReformStatements(
+    row=text(
+        "INSERT INTO public.dynamics (id, country_id, tax_benefit_model_id, "
+        "tax_benefit_model_version_id, canonicalization_version, content_hash) "
+        "VALUES (:id, :country, :model_id, :version_id, 1, :content_hash)"
+    ),
+    values=text(
+        "INSERT INTO public.parameter_values "
+        "(id, parameter_id, value_json, start_date, end_date, dynamic_id) "
+        "VALUES (:id, :parameter_id, :value, :start_date, :end_date, :saved_id)"
+    ).bindparams(bindparam("value", type_=JSONB)),
+)
+
+
+def _insert_saved_reform(
     connection: Connection,
     catalog: CatalogVersion,
-    values: Iterable[StoredValue] = (),
+    values: Iterable[StoredValue],
+    statements: _SavedReformStatements,
 ) -> UUID:
-    """Insert a policy saved on ``catalog`` and the values it sets.
+    """Insert a policy or dynamic saved on ``catalog`` and the values it sets.
 
-    Each value names a parameter of that catalog version by name.
+    API v1 stores both alike: on the catalog's country, model and version,
+    with a canonicalization version and a content hash. Each value names a
+    parameter of that catalog version by name.
     """
-    policy_id = uuid4()
+    saved_id = uuid4()
     connection.execute(
-        text(
-            "INSERT INTO public.policies (id, country_id, tax_benefit_model_id, "
-            "tax_benefit_model_version_id, canonicalization_version, content_hash) "
-            "VALUES (:id, :country, :model_id, :version_id, 1, :content_hash)"
-        ),
+        statements.row,
         {
-            "id": policy_id,
+            "id": saved_id,
             "country": catalog.country,
             "model_id": catalog.model_id,
             "version_id": catalog.version_id,
-            "content_hash": _content_hash(policy_id),
+            "content_hash": _stand_in_content_hash(saved_id),
         },
     )
     parameter_ids = _parameter_ids(connection, catalog.version_id)
-    insert_value = text(
-        "INSERT INTO public.parameter_values "
-        "(id, parameter_id, value_json, start_date, end_date, policy_id) "
-        "VALUES (:id, :parameter_id, :value, :start_date, :end_date, :policy_id)"
-    ).bindparams(bindparam("value", type_=JSONB))
     for stored in values:
         connection.execute(
-            insert_value,
+            statements.values,
             {
                 "id": uuid4(),
                 "parameter_id": parameter_ids[stored.parameter_name],
                 "value": stored.value,
                 "start_date": stored.start_date,
                 "end_date": stored.end_date,
-                "policy_id": policy_id,
+                "saved_id": saved_id,
             },
         )
-    return policy_id
+    return saved_id
+
+
+def insert_policy(
+    connection: Connection,
+    catalog: CatalogVersion,
+    values: Iterable[StoredValue] = (),
+) -> UUID:
+    """Insert a policy saved on ``catalog`` and the values it sets."""
+    return _insert_saved_reform(connection, catalog, values, _POLICY_STATEMENTS)
 
 
 def insert_dynamic(
@@ -153,35 +198,8 @@ def insert_dynamic(
     catalog: CatalogVersion,
     values: Iterable[StoredValue] = (),
 ) -> UUID:
-    """Insert a dynamic and the values it sets on ``catalog``'s parameters.
-
-    A dynamic belongs to no country; each value names a parameter of that
-    catalog version by name.
-    """
-    dynamic_id = uuid4()
-    connection.execute(
-        text("INSERT INTO public.dynamics (id, name) VALUES (:id, :name)"),
-        {"id": dynamic_id, "name": f"dynamic {dynamic_id}"},
-    )
-    parameter_ids = _parameter_ids(connection, catalog.version_id)
-    insert_value = text(
-        "INSERT INTO public.parameter_values "
-        "(id, parameter_id, value_json, start_date, end_date, dynamic_id) "
-        "VALUES (:id, :parameter_id, :value, :start_date, :end_date, :dynamic_id)"
-    ).bindparams(bindparam("value", type_=JSONB))
-    for stored in values:
-        connection.execute(
-            insert_value,
-            {
-                "id": uuid4(),
-                "parameter_id": parameter_ids[stored.parameter_name],
-                "value": stored.value,
-                "start_date": stored.start_date,
-                "end_date": stored.end_date,
-                "dynamic_id": dynamic_id,
-            },
-        )
-    return dynamic_id
+    """Insert a dynamic saved on ``catalog`` and the values it sets."""
+    return _insert_saved_reform(connection, catalog, values, _DYNAMIC_STATEMENTS)
 
 
 def insert_dataset(
@@ -253,7 +271,7 @@ def insert_household(
             "document": dict(document),
             "country": country,
             "default_year": default_year,
-            "content_hash": _content_hash(household_id),
+            "content_hash": _stand_in_content_hash(household_id),
         },
     )
     return household_id

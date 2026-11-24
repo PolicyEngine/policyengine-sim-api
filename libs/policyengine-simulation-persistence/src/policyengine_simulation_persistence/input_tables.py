@@ -145,9 +145,10 @@ class ParameterValue(InputBase):
 
 
 class Dynamic(InputBase):
-    """Named parameter values a simulation applies beside its policy.
+    """Parameter values a simulation applies beside its policy.
 
-    Behavioural responses are an example. A dynamic belongs to no country.
+    Behavioural responses are an example. API v1 saves a dynamic as it saves a
+    policy, on a country's catalog version; sim reads only its ID.
     """
 
     __tablename__ = "dynamics"
