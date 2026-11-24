@@ -14,6 +14,7 @@ import tomllib
 from pathlib import Path
 
 from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +27,7 @@ def _modal_requirement() -> Requirement:
     modal_requirements = [
         requirement
         for requirement in map(Requirement, project["project"]["dependencies"])
-        if requirement.name == "modal"
+        if canonicalize_name(requirement.name) == "modal"
     ]
     assert len(modal_requirements) == 1, modal_requirements
     return modal_requirements[0]
@@ -37,7 +38,7 @@ def _locked_modal_versions() -> list[Version]:
     return [
         Version(package["version"])
         for package in lock["package"]
-        if package["name"] == "modal"
+        if canonicalize_name(package["name"]) == "modal"
     ]
 
 

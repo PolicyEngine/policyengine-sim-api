@@ -1,1 +1,1 @@
-The simulation executor's Modal client is now 1.6.4 or newer (it was 1.4.2), so containers of the apps deployed from it that restore from a memory snapshot load the current values of their Modal secrets instead of the values from when the snapshot was taken.
+The simulation executor's Modal client is now 1.6.4 or newer (it was 1.4.2). 1.6.4 is the first Modal release whose containers reload Secret values when they restore from a memory snapshot. No executor function uses memory snapshots yet; this is the client they need.
