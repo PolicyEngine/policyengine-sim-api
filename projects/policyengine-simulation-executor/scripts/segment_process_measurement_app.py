@@ -6,6 +6,8 @@ calculation in each runs in one process. This app runs the same groups both
 ways and records wall time, CPU seconds and memory:
 
 * ``containers``: one fresh container per group, as production does.
+* ``small-containers``: the same, with each container requesting 1 CPU and
+  6 GiB instead of 8 CPUs and 32 GiB.
 * ``fork-N``: the groups split over as few fresh containers as hold at most N
   groups each; each container runs one process per group, forked after the
   container's first process has imported the US model, so the processes
@@ -63,6 +65,9 @@ MEASUREMENT_REFORM = {
 }
 CONTAINER_CPU = 8.0
 CONTAINER_MEMORY_MEBIBYTES = 32768
+# The small-containers arm: one group needs one CPU and under 3 GB.
+SMALL_CONTAINER_CPU = 1.0
+SMALL_CONTAINER_MEMORY_MEBIBYTES = 6144
 SAMPLE_INTERVAL_SECONDS = 1.0
 # Modal's list prices for Functions: per physical core second and per GiB
 # second (modal.com/pricing, read 2026-11-24). Modal bills the larger of the
@@ -70,9 +75,18 @@ SAMPLE_INTERVAL_SECONDS = 1.0
 # within its request.
 CORE_SECOND_DOLLARS = 0.0000131
 GIBIBYTE_SECOND_DOLLARS = 0.00000222
-CONTAINER_SECOND_DOLLARS = (
-    CONTAINER_CPU * CORE_SECOND_DOLLARS
-    + CONTAINER_MEMORY_MEBIBYTES / 1024 * GIBIBYTE_SECOND_DOLLARS
+
+
+def container_second_dollars(cpu: float, memory_mebibytes: int) -> float:
+    """Return the list price of one second of a container with this request."""
+    return cpu * CORE_SECOND_DOLLARS + memory_mebibytes / 1024 * GIBIBYTE_SECOND_DOLLARS
+
+
+CONTAINER_SECOND_DOLLARS = container_second_dollars(
+    CONTAINER_CPU, CONTAINER_MEMORY_MEBIBYTES
+)
+SMALL_CONTAINER_SECOND_DOLLARS = container_second_dollars(
+    SMALL_CONTAINER_CPU, SMALL_CONTAINER_MEMORY_MEBIBYTES
 )
 # Read once, when this module is imported: in a container that is when the
 # container's Python process starts.
@@ -422,6 +436,25 @@ def container_description() -> dict[str, Any]:
 )
 def run_group_in_own_container(group: list[str]) -> dict[str, Any]:
     """Run one group in this container, as a production segment worker does."""
+    return _run_one_group_in_this_container(group)
+
+
+@app.function(
+    image=measurement_image,
+    cpu=SMALL_CONTAINER_CPU,
+    memory=SMALL_CONTAINER_MEMORY_MEBIBYTES,
+    timeout=3600,
+    retries=0,
+    max_containers=MEASURED_GROUP_LIMIT,
+    single_use_containers=True,
+    secrets=[hf_secret],
+)
+def run_group_in_small_container(group: list[str]) -> dict[str, Any]:
+    """Run one group as ``run_group_in_own_container`` does, with 1 CPU and 6 GiB."""
+    return _run_one_group_in_this_container(group)
+
+
+def _run_one_group_in_this_container(group: list[str]) -> dict[str, Any]:
     entered_at = time.time()
     sampler = ContainerSampler().start()
     measurement = run_group_measured(group)
@@ -504,14 +537,21 @@ def run_groups_in_processes(
 def _parse_process_arm(arm: str) -> tuple[str, int]:
     start_method, _, count = arm.partition("-")
     if start_method not in {"fork", "forkserver", "spawn"} or not count.isdigit():
-        msg = f"Unknown arm {arm!r}: use containers, fork-N, forkserver-N or spawn-N"
+        msg = (
+            f"Unknown arm {arm!r}: use containers, small-containers, fork-N, "
+            "forkserver-N or spawn-N"
+        )
         raise ValueError(msg)
     return start_method, int(count)
 
 
-def _run_containers_arm(groups: list[list[str]]) -> dict[str, Any]:
+def _run_containers_arm(groups: list[list[str]], arm: str) -> dict[str, Any]:
+    if arm == "small-containers":
+        function, dollars = run_group_in_small_container, SMALL_CONTAINER_SECOND_DOLLARS
+    else:
+        function, dollars = run_group_in_own_container, CONTAINER_SECOND_DOLLARS
     started_at = time.time()
-    calls = [(time.time(), run_group_in_own_container.spawn(group)) for group in groups]
+    calls = [(time.time(), function.spawn(group)) for group in groups]
     containers = []
     for spawned_at, call in calls:
         container = call.get()
@@ -519,7 +559,8 @@ def _run_containers_arm(groups: list[list[str]]) -> dict[str, Any]:
         container["caller_received_at"] = time.time()
         containers.append(container)
     return {
-        "arm": "containers",
+        "arm": arm,
+        "container_second_dollars": dollars,
         "caller_started_at": started_at,
         "caller_seconds": round(time.time() - started_at, 2),
         "containers": containers,
@@ -547,6 +588,7 @@ def _run_process_arm(arm: str, groups: list[list[str]]) -> dict[str, Any]:
     containers = [call.get() for call in calls]
     return {
         "arm": arm,
+        "container_second_dollars": CONTAINER_SECOND_DOLLARS,
         "caller_started_at": started_at,
         "caller_seconds": round(time.time() - started_at, 2),
         "containers": containers,
@@ -592,7 +634,8 @@ def print_summary(arm_results: list[dict[str, Any]]) -> None:
         print(
             f"{arm_result['arm']} | {len(containers)} | "
             f"{arm_result['caller_seconds']:.0f} | {container_seconds:.0f} | "
-            f"{container_seconds * CONTAINER_SECOND_DOLLARS:.2f} | {median:.0f} | "
+            f"{container_seconds * arm_result['container_second_dollars']:.2f} | "
+            f"{median:.0f} | "
             f"{cpu_seconds:.0f} | {peak_memory:.0f}"
         )
 
@@ -614,8 +657,8 @@ def main(
     arm_results = []
     for arm in arms.split(","):
         print(f"Running arm {arm} on {len(groups)} groups")
-        if arm == "containers":
-            arm_results.append(_run_containers_arm(groups))
+        if arm in {"containers", "small-containers"}:
+            arm_results.append(_run_containers_arm(groups, arm))
         else:
             arm_results.append(_run_process_arm(arm, groups))
         Path(output).write_text(json.dumps(arm_results, indent=2))
