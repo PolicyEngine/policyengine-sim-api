@@ -48,6 +48,7 @@ from economy_rows import (
 )
 from policyengine_simulation_persistence import (
     BudgetWindowRun,
+    CliffImpact,
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
     EconomyReportDefinition,
@@ -498,10 +499,17 @@ def test_each_lookup_names_the_mapped_class_it_inserts_into() -> None:
 
 
 def test_each_refused_key_is_known_by_its_table_and_column() -> None:
-    """Every foreign key of the five classes is found through their arguments."""
+    """Each foreign key of the classes the store writes is known by its arguments."""
     expected = {
         str(constraint.name): (model.__tablename__, constraint.column_keys[0])
-        for model in (Simulation, SimulationRun, Report, ReportRun, BudgetWindowRun)
+        for model in (
+            Simulation,
+            SimulationRun,
+            Report,
+            ReportRun,
+            BudgetWindowRun,
+            CliffImpact,
+        )
         for constraint in model.__table__.constraints
         if isinstance(constraint, ForeignKeyConstraint)
     }

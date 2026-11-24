@@ -370,12 +370,13 @@ holds, or one that failed, it returns `{"deduplicated": true,
 **A simulation run's cliff result** (C1 · 24, answer 4b). Each simulation run
 can have one cliff result, its cliff gap and cliff share, which every report
 naming the run reads: a row of API v1's `cliff_impacts`, one per
-calculation. Nothing starts one yet. The simulation service is to insert it
-pending, start the country's simulation worker (`run_single_simulation_us` or
-`run_single_simulation_uk`) with the run's own simulation input, built as a
-standalone run's, and a context naming the row
+calculation. The simulation service inserts it pending when a report's
+create or re-run asks for cliffs (`include_cliffs`, C1 · 39) and the run has
+none that hasn't failed, starts the country's simulation worker
+(`run_single_simulation_us` or `run_single_simulation_uk`) with the run's own
+simulation input, built as a standalone run's, and a context naming the row
 (`Stage12InvocationContext.cliff_result_id`, left out of a context that names
-none, which older workers refuse), and record the call (C1 · 39). The worker
+none, which older workers refuse), and records the call. The worker
 claims the row as a run is claimed, and refuses, failing it with
 `cliff_result_input_mismatch`, an input that is not the simulation of the
 row's run on that run's year and versions; the calculation then checks those
@@ -412,9 +413,10 @@ policy turns a response on; in the US, the two inputs .py's labour-supply
 output reads from either side (`self_employment_income`,
 `weekly_hours_worked`); and never the cliff columns, so a US national run keeps
 its region-group split. Cliffs are a calculation of each simulation run of
-their own (above). A report run asking for them (`include_cliffs: true`) still
-fails before any worker starts, with `cliff_impacts_unavailable`, and touches
-none of its simulation runs, and its completion never writes `report_runs`'
+their own (above), so the simulation service never asks a coordinator for
+them: a report run asking for them (`include_cliffs: true`) would fail before
+any worker starts, with `cliff_impacts_unavailable`, and touch none of its
+simulation runs, and a report run's completion never writes `report_runs`'
 four cliff columns. The
 coordinator gives each worker its simulation's
 stored plan, and keeps the report's own plan, from its pair, for what the

@@ -7,7 +7,9 @@ side's ``simulation_execution_id``, and a ``Stage12InvocationContext`` whose
 each simulation function the run it claims; no evaluation record is passed.
 A standalone simulation run's function takes that run's
 ``SimulationExecutionInput`` and a context naming the run
-(``simulation_run_id``).
+(``simulation_run_id``). A simulation run's cliff calculation is the same
+function given the run's own input, as a standalone run's, and a context
+naming the cliff calculation (``cliff_result_id``) instead (C1 · 38).
 
 Both sides of a report calculate on the same dataset, region, year,
 options and bundle; only their policies differ. The dataset is the bundle's
@@ -62,8 +64,10 @@ class DatasetNotInBundleError(LookupError):
 class CalculationScope:
     """What every simulation of a request calculates on, as the worker reads it.
 
-    ``options`` are the simulation options both sides share: ``include_cliffs``
-    when true, and the SPM selection when one was given.
+    ``options`` are the simulation options both sides share: the SPM
+    selection, when one was given. Cliffs are never among them: each
+    simulation run's cliffs are a calculation of their own (C1 · 24's
+    answer 4b).
     """
 
     country: CountryId
@@ -109,16 +113,9 @@ def bundle_dataset(worker: EconomyWorker, dataset_name: str) -> Stage12Dataset:
     return dataset
 
 
-def simulation_options(
-    *, include_cliffs: bool, spm: dict[str, Any] | None
-) -> dict[str, Any]:
-    """Return the options both sides of a calculation share."""
-    options: dict[str, Any] = {}
-    if include_cliffs:
-        options["include_cliffs"] = True
-    if spm is not None:
-        options["spm"] = spm
-    return options
+def simulation_options(*, spm: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the options both sides of a calculation share: the SPM selection."""
+    return {} if spm is None else {"spm": spm}
 
 
 def _simulation_input(  # noqa: PLR0913  # the run, its role, its policy and what it calculates
@@ -164,18 +161,25 @@ def _simulation_input(  # noqa: PLR0913  # the run, its role, its policy and wha
 
 
 def _context(
-    worker: EconomyWorker, origin: CallOrigin, *, runs: ReportRunIds | UUID
+    worker: EconomyWorker,
+    origin: CallOrigin,
+    *,
+    runs: ReportRunIds | UUID,
+    cliff_result_id: UUID | None = None,
 ) -> Stage12InvocationContext:
-    """Return the call's context, naming ``runs``.
+    """Return the call's context, naming ``runs``, or the cliff calculation.
 
-    ``runs`` is a report run's IDs, for its coordinator, or a standalone
-    simulation run's ID, for its simulation function. The artifact prefix
-    names that report run or simulation run, so the two can't differ.
+    ``runs`` is a report run's IDs, for its coordinator, or a simulation
+    run's ID, for its simulation function. The artifact prefix names that
+    report run or simulation run, so the two can't differ. With
+    ``cliff_result_id``, the context names that cliff calculation of the
+    simulation run ``runs`` instead of the run, under the run's prefix.
     """
     if isinstance(runs, ReportRunIds):
         report_run, simulation_run_id, run_id = runs, None, runs.report_run_id
     else:
-        report_run, simulation_run_id, run_id = None, runs, runs
+        report_run, run_id = None, runs
+        simulation_run_id = runs if cliff_result_id is None else None
     created_at = origin.created_at
     return Stage12InvocationContext(
         request_id=origin.request_id,
@@ -193,6 +197,7 @@ def _context(
         retention_expires_at=created_at + ARTIFACT_RETENTION,
         report_run=report_run,
         simulation_run_id=simulation_run_id,
+        cliff_result_id=cliff_result_id,
     )
 
 
@@ -255,6 +260,39 @@ def simulation_run_calculation(
         policy=policy,
     )
     context = _context(worker, origin, runs=simulation_run_id)
+    return RunCalculation(
+        payload=simulation.model_dump(mode="json"),
+        context=context.model_dump(mode="json"),
+    )
+
+
+def cliff_calculation(  # noqa: PLR0913  # the run, its cliff calculation and policy
+    worker: EconomyWorker,
+    scope: CalculationScope,
+    origin: CallOrigin,
+    *,
+    simulation_run_id: UUID,
+    cliff_result_id: UUID,
+    policy: dict[str, Any],
+) -> RunCalculation:
+    """Return the simulation function's input and context for a cliff calculation.
+
+    The input is the simulation run's own, as a standalone run's, whichever
+    report named the run: the function recalculates the run's simulation
+    with the cliff variables and writes its cliff gap and share to the cliff
+    calculation the context names.
+    """
+    simulation = _simulation_input(
+        worker,
+        scope,
+        evaluation_id=simulation_run_id,
+        simulation_run_id=simulation_run_id,
+        role=SimulationRole.STANDALONE,
+        policy=policy,
+    )
+    context = _context(
+        worker, origin, runs=simulation_run_id, cliff_result_id=cliff_result_id
+    )
     return RunCalculation(
         payload=simulation.model_dump(mode="json"),
         context=context.model_dump(mode="json"),

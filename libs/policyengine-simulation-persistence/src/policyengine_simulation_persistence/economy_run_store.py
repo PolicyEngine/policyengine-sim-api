@@ -35,6 +35,7 @@ from policyengine_simulation_persistence.economy_inputs import (
 )
 from policyengine_simulation_persistence.economy_rerun_records import (
     insert_report_rerun,
+    insert_report_rerun_with_cliffs,
     insert_simulation_rerun,
     insert_window_rerun,
     read_report_definition,
@@ -46,8 +47,10 @@ from policyengine_simulation_persistence.economy_run_reads import (
 )
 from policyengine_simulation_persistence.economy_run_records import (
     SimulationChoice,
+    fail_unstarted_cliff_calculation,
     fail_unstarted_report_run,
     fail_unstarted_simulation_run,
+    record_cliff_calculation_call,
     record_report_run_call,
     record_simulation_run_call,
 )
@@ -72,6 +75,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
     from policyengine_simulation_persistence.economy_rerun_records import (
+        FoundReportRerun,
         NewReportRerun,
         NewSimulationRerun,
         NewWindowRerun,
@@ -96,6 +100,7 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence.shared_rows import (
         FoundReportRun,
         FoundSimulationRun,
+        ProposedCliffs,
     )
     from policyengine_simulation_persistence.tables import (
         ReportRunStatus,
@@ -239,6 +244,18 @@ class EconomyRunStore:
         """
         return self._create(lambda session: insert_report_rerun(session, rerun))
 
+    def create_report_rerun_with_cliffs(
+        self, rerun: NewReportRerun, cliffs: ProposedCliffs
+    ) -> FoundReportRerun:
+        """Join or create the report's run, with its runs' cliff calculations.
+
+        See ``insert_report_rerun_with_cliffs``; raise as
+        ``create_report_rerun`` does.
+        """
+        return self._create(
+            lambda session: insert_report_rerun_with_cliffs(session, rerun, cliffs)
+        )
+
     def create_simulation_rerun(self, rerun: NewSimulationRerun) -> FoundSimulationRun:
         """Join or create the simulation's run; see ``insert_simulation_rerun``.
 
@@ -349,6 +366,28 @@ class EconomyRunStore:
             return fail_unstarted_simulation_run(
                 session,
                 simulation_run_id=simulation_run_id,
+                error_message=error_message,
+            )
+
+    def record_cliff_call(
+        self, cliff_result_id: UUID, modal_call_id: str
+    ) -> SimulationStatus | None:
+        """Record a cliff calculation's call ID while it is pending with none."""
+        with self._transaction() as session:
+            return record_cliff_calculation_call(
+                session,
+                cliff_result_id=cliff_result_id,
+                modal_call_id=modal_call_id,
+            )
+
+    def fail_unstarted_cliff_calculation(
+        self, cliff_result_id: UUID, error_message: str
+    ) -> bool:
+        """Fail a cliff calculation while it is pending with no call ID."""
+        with self._transaction() as session:
+            return fail_unstarted_cliff_calculation(
+                session,
+                cliff_result_id=cliff_result_id,
                 error_message=error_message,
             )
 
