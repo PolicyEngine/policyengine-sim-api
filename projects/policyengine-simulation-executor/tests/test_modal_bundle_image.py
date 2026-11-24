@@ -108,17 +108,90 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     assert "pip" not in names
 
     runtime_secret_sets = {
-        name: kwargs["secrets"] for name, kwargs in app.app.function_calls
+        name: kwargs["secrets"]
+        for name, kwargs in [*app.app.function_calls, *app.app.cls_calls]
     }
-    for function_name in (
-        "run_simulation",
-        "run_simulation_segment",
+    for worker_name in (
+        "SimulationWorker",
+        "SimulationSegmentWorker",
         "run_budget_window_batch",
     ):
-        assert runtime_secret_sets[function_name] == [
+        assert runtime_secret_sets[worker_name] == [
             app.gcp_secret,
             app.hf_secret,
         ]
+
+
+def test_simulation_workers_are_classes_restored_from_memory_snapshots(monkeypatch):
+    install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    class_options = dict(app.app.cls_calls)
+    function_options = dict(app.app.function_calls)
+    worker_options = {
+        "image": app.simulation_image,
+        "cpu": 8.0,
+        "memory": 32768,
+        "timeout": 3600,
+        "retries": 0,
+        "secrets": [app.gcp_secret, app.hf_secret],
+        "enable_memory_snapshot": True,
+    }
+    # Two classes, so the segment children keep their own container pool: a
+    # blocking segmented parent must never share a bounded pool with the
+    # children it waits on.
+    assert class_options == {
+        "SimulationWorker": {**worker_options, "max_containers": 100},
+        "SimulationSegmentWorker": {**worker_options, "max_containers": 300},
+    }
+    assert "run_simulation" not in function_options
+    assert "run_simulation_segment" not in function_options
+    # The budget-window parent stays a small plain function with no snapshot.
+    assert "enable_memory_snapshot" not in function_options["run_budget_window_batch"]
+
+
+def test_simulation_workers_use_the_contract_names(monkeypatch):
+    from policyengine_simulation_contract import simulation_workers
+
+    install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    # The gateway and the executor's own fan-out look the workers up by
+    # these names in a deployed app.
+    simulation_worker = getattr(app, simulation_workers.SIMULATION_WORKER_CLASS)
+    segment_worker = getattr(app, simulation_workers.SEGMENT_WORKER_CLASS)
+    recorded_methods = app.modal.lifecycle_hooks.methods
+    assert (
+        getattr(simulation_worker, simulation_workers.SIMULATION_WORKER_METHOD)
+        in recorded_methods
+    )
+    assert (
+        getattr(segment_worker, simulation_workers.SEGMENT_WORKER_METHOD)
+        in recorded_methods
+    )
+    # Apps deployed before the class form define run_simulation as a function.
+    assert simulation_workers.FUNCTION_FORM_SIMULATION_WORKER == "run_simulation"
+
+
+def test_both_simulation_workers_load_the_country_models_before_the_snapshot(
+    monkeypatch,
+):
+    install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    enter_hooks = app.modal.lifecycle_hooks.enter_hooks
+    snapshot_hooks = [method for method, snap in enter_hooks if snap]
+    # One hook, run before the snapshot; nothing runs after each restore.
+    assert len(snapshot_hooks) == 1
+    assert [method for method, snap in enter_hooks if not snap] == []
+    for worker_class in (app.SimulationWorker, app.SimulationSegmentWorker):
+        assert worker_class.load_country_models is snapshot_hooks[0]
 
 
 def test_modal_image_refreshes_ca_certificates_before_installing_packages(
@@ -234,7 +307,7 @@ def test_modal_image_fetches_artifacts_between_env_and_local_source(monkeypatch)
     snapshot_index = next(
         index
         for index, call in enumerate(calls)
-        if call[0] == "run_function" and call[1] == "snapshot_models"
+        if call[0] == "run_function" and call[1] == "check_country_models_build"
     )
     static_files_index = next(
         index for index, call in enumerate(calls) if call[0] == "add_local_dir"
