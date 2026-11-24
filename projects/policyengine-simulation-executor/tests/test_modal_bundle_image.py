@@ -211,7 +211,12 @@ def test_both_simulation_workers_load_the_country_models_before_the_snapshot(
         assert worker_class.reseed_random_after_restore is restore_hooks[0]
 
 
-@pytest.mark.parametrize("client_version", ["1.4.2", "1.5.5", "1.6.3"])
+@pytest.mark.parametrize(
+    "client_version",
+    # Development builds and release candidates of 1.6.4 come before 1.6.4,
+    # and may not reload Secret values.
+    ["1.4.2", "1.5.5", "1.6.3", "1.6.4.dev0", "1.6.4rc1", "not-a-version"],
+)
 def test_a_deploy_with_a_modal_client_older_than_1_6_4_is_refused(
     monkeypatch, client_version
 ):
@@ -237,6 +242,35 @@ def test_a_deploy_with_modal_1_6_4_or_newer_is_allowed(monkeypatch, client_versi
     app = importlib.import_module("src.modal.app")
 
     assert app.SimulationWorker is not None
+    sys.modules.pop("src.modal.app", None)
+
+
+def test_the_client_version_is_checked_before_the_artifact_manifest_is_read(
+    monkeypatch,
+):
+    install_fake_modal(monkeypatch)
+    monkeypatch.setattr(sys.modules["modal"], "__version__", "1.6.3")
+    monkeypatch.setenv("POLICYENGINE_MANIFEST_DIGEST", "digest-abc")
+    monkeypatch.setenv("POLICYENGINE_ARTIFACT_BUCKET", "test-bucket")
+    store_reads: list[str] = []
+
+    class RecordingStore:
+        def __init__(self, bucket_name=None, **_kwargs):
+            store_reads.append(bucket_name)
+
+        def read_manifest(self, digest):
+            store_reads.append(digest)
+
+    from policyengine_simulation_executor import artifact_store
+
+    monkeypatch.setattr(artifact_store, "ArtifactStore", RecordingStore)
+    sys.modules.pop("src.modal.app", None)
+
+    with pytest.raises(RuntimeError, match=r"1\.6\.4"):
+        importlib.import_module("src.modal.app")
+
+    # A refused deploy reads nothing from the artifact store.
+    assert store_reads == []
     sys.modules.pop("src.modal.app", None)
 
 
