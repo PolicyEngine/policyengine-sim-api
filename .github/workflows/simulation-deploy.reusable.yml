@@ -1187,8 +1187,8 @@ jobs:
           MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
         run: ../../.github/scripts/stage12-v2-default-verify.sh
 
-      # The scheduled sweep that fails report runs, simulation runs and
-      # household jobs nothing will finish. Its app is unversioned and its
+      # The scheduled sweep that fails report runs, simulation runs, household
+      # jobs and cliff results nothing will finish. Its app is unversioned and its
       # schedule starts when it deploys, so it deploys here, after every
       # check, with the release's Stage 12 default; if it fails, the next
       # step puts the default back.

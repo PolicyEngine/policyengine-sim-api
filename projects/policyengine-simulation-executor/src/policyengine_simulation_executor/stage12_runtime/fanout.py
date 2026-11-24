@@ -81,7 +81,7 @@ class Stage12SegmentRunner:
 
         ``cancellation_requested`` is checked between polls. Each segment's
         call is passed ``simulation_run_id``, the detailed-save simulation run
-        this simulation records, for its telemetry.
+        this simulation records, if it records one, for its telemetry.
         """
         seams = seams or SegmentRunnerSeams()
         self.simulation = simulation
@@ -232,7 +232,7 @@ class Stage12SegmentRunner:
     def _segment_record_keywords(self) -> dict[str, str]:
         """Return the keyword naming the simulation run, when there is one.
 
-        A comparison-path simulation records no simulation run.
+        A comparison-path simulation and a cliff calculation record none.
         """
         if self.simulation_run_id is None:
             return {}

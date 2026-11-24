@@ -38,6 +38,10 @@ it calculates are marked ``forced``, which API v1's one-unfailed-run
 indexes leave out, so it is created beside any run on the same versions,
 even one under way, and nothing ever joins it.
 
+An economy report's re-run asking for cliffs also finds or inserts the cliff
+calculation of each simulation run the report run it ended on names, in the
+same transaction (``find_or_insert_report_run_cliffs``, answer 4b).
+
 The service then starts and records the new run's call as it does a new
 record's (``economy_run_records``).
 """
@@ -64,6 +68,7 @@ from policyengine_simulation_persistence.household_report_records import (
     insert_household_simulation_run,
 )
 from policyengine_simulation_persistence.keyed_economy_records import (
+    find_or_insert_report_run_cliffs,
     find_or_insert_report_run_on_sides,
 )
 from policyengine_simulation_persistence.keyed_window_records import (
@@ -108,7 +113,11 @@ if TYPE_CHECKING:
         RunVersions,
     )
     from policyengine_simulation_persistence.keyed_economy_records import Side
-    from policyengine_simulation_persistence.shared_rows import FoundSimulationRun
+    from policyengine_simulation_persistence.shared_rows import (
+        FoundCliffs,
+        FoundSimulationRun,
+        ProposedCliffs,
+    )
 
 
 @dataclass(frozen=True)
@@ -151,6 +160,14 @@ class NewReportRerun:
         a run the re-run inserts.
         """
         return (self.baseline.simulation_run_id, self.reform.simulation_run_id)
+
+
+@dataclass(frozen=True)
+class FoundReportRerun:
+    """The report run a re-run asking for cliffs ended on, and its runs' cliffs."""
+
+    run: FoundReportRun
+    cliffs: FoundCliffs
 
 
 @dataclass(frozen=True)
@@ -343,6 +360,21 @@ def insert_report_rerun(session: Session, rerun: NewReportRerun) -> FoundReportR
             },
         )
         return found
+
+
+def insert_report_rerun_with_cliffs(
+    session: Session, rerun: NewReportRerun, proposed: ProposedCliffs
+) -> FoundReportRerun:
+    """Join or create the report's run, with its runs' cliff calculations.
+
+    As ``insert_report_rerun``, then, in the same transaction, finds or
+    inserts the cliff calculation of each simulation run that report run
+    names, joined or created (``find_or_insert_report_run_cliffs``).
+    """
+    run = insert_report_rerun(session, rerun)
+    return FoundReportRerun(
+        run=run, cliffs=find_or_insert_report_run_cliffs(session, run, proposed)
+    )
 
 
 def _rerun_report_run_row(
@@ -598,6 +630,7 @@ def _record_checked(*own_keys: InstrumentedAttribute[Any]) -> Iterator[None]:
 
 # The definition reads moved to rerun_definitions; their names stay importable here.
 __all__ = [
+    "FoundReportRerun",
     "HouseholdRerunSide",
     "NewHouseholdReportRerun",
     "NewReportRerun",
@@ -613,6 +646,7 @@ __all__ = [
     "WindowYearDefinition",
     "insert_household_report_rerun",
     "insert_report_rerun",
+    "insert_report_rerun_with_cliffs",
     "insert_simulation_rerun",
     "insert_window_rerun",
     "lock_reruns_of",

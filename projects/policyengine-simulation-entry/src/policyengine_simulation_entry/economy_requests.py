@@ -1,16 +1,16 @@
 """What a report or simulation request becomes before and after its rows exist.
 
 The submission services (``economy_submissions``, ``budget_window_submissions``)
-turn a request into the persistence library's ``EconomyRequest``, refuse what
-can't be calculated yet (as the re-run service does for a stored report),
-choose what a report stores of the request's
-options, the calculation's scope on the default worker's bundle, and the
-answer for the report and run a request ended on.
+turn a request into the persistence library's ``EconomyRequest``, choose
+what a report stores of the request's options, the calculation's scope on
+the default worker's bundle, and the answer for the report and run a
+request ended on. The re-run service refuses cliffs for a report that
+calculates none.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from policyengine_simulation_persistence import EconomyRequest
 
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence import (
         EconomyCatalogRows,
         FoundEconomyReport,
+        RecordKind,
         ReportRunStatus,
     )
 
@@ -46,47 +47,45 @@ if TYPE_CHECKING:
     from policyengine_simulation_entry.economy_workers import EconomyWorker
 
 
-def refuse_cliffs(request: EconomyReportRequest) -> None:
-    """Refuse ``include_cliffs: true`` until per-run cliff calculations exist.
+# The reports whose re-run calculates no cliffs, as their answers name them.
+_REPORTS_WITHOUT_CLIFFS: Final[dict[RecordKind, str]] = {
+    "budget_window": "A budget-window report",
+    "household": "A household report",
+}
 
-    Identical requests share a report and its runs, so a cliff request can't
-    change what they calculate; C1 · 39 calculates each simulation run's
-    cliffs on its own instead (C1 · 24's interim answer A).
+
+def refuse_cliffs_for(kind: RecordKind) -> None:
+    """Refuse a re-run asking for cliffs of a report kind that calculates none.
+
+    A budget window or a household report has no cliff calculation: only an
+    economy report's simulation runs do (C1 · 24's answer 4b).
     """
-    if request.include_cliffs:
-        raise _cliffs_refused(
-            ("body", "include_cliffs"),
-            "Cliff impacts are not calculated yet: they will be calculated "
-            "for each simulation run on its own. Send include_cliffs: false.",
-        )
-
-
-def refuse_stored_cliffs(stored_inputs: Mapping[str, Any]) -> None:
-    """Refuse re-running a report stored asking for cliffs, until they exist.
-
-    A report created before C1 · 27 stored its request's options; one whose
-    ``include_cliffs`` is true is refused as such a request now is (the
-    scope of C1 · 24's interim answer A).
-    """
-    if stored_inputs.get("include_cliffs"):
-        raise _cliffs_refused(
-            ("report", "inputs", "include_cliffs"),
-            "This report was created asking for cliff impacts, which are not "
-            "calculated yet: they will be calculated for each simulation run "
-            "on its own.",
-        )
-
-
-def _cliffs_refused(
-    loc: tuple[str, ...], message: str
-) -> EconomySubmissionUnprocessableError:
-    """Return the 422 refusing a cliff calculation, naming what asked for it."""
-    return EconomySubmissionUnprocessableError(
+    report = _REPORTS_WITHOUT_CLIFFS.get(kind)
+    if report is None:
+        return
+    raise EconomySubmissionUnprocessableError(
         code="cliffs_not_available",
         reasons=(
-            UnprocessableReason(loc=loc, msg=message, type="cliffs_not_available"),
+            UnprocessableReason(
+                loc=("body", "include_cliffs"),
+                msg=(
+                    f"{report} calculates no cliff impacts. Send include_cliffs: false."
+                ),
+                type="cliffs_not_available",
+            ),
         ),
     )
+
+
+def asks_for_cliffs(*, include_cliffs: bool, stored_inputs: Mapping[str, Any]) -> bool:
+    """Return whether a report's re-run asks for its runs' cliffs.
+
+    It does when the request sends ``include_cliffs: true``, or when the
+    report was stored before C1 · 27 asking for cliffs, which its stored
+    options still hold (the user, 2026-11-17). The stored value is only
+    read; nothing writes or keys it.
+    """
+    return include_cliffs or stored_inputs.get("include_cliffs") is True
 
 
 def stored_options(options: dict[str, Any]) -> dict[str, Any]:
@@ -168,7 +167,5 @@ def calculation_scope(
         region_code=catalog.region.code,
         dataset=dataset,
         year=request.year,
-        options=simulation_options(
-            include_cliffs=getattr(request, "include_cliffs", False), spm=spm
-        ),
+        options=simulation_options(spm=spm),
     )

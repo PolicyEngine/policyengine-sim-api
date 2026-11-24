@@ -41,6 +41,8 @@ WRITTEN_TABLES = (
     "report_runs",
     "budget_window_runs",
     "household_jobs",
+    # Each simulation run's cliff calculations, which the service starts.
+    "cliff_impacts",
 )
 READ_TABLES = (
     "policies",
@@ -85,6 +87,7 @@ def test_the_service_updates_only_the_call_state_of_each_run() -> None:
         "report_runs": CALL_START_COLUMNS,
         "household_jobs": CALL_START_COLUMNS,
         "budget_window_runs": WINDOW_FAILURE_COLUMNS,
+        "cliff_impacts": CALL_START_COLUMNS,
     }
 
 
@@ -101,6 +104,7 @@ MODAL_WORKER_RUN_TABLES = (
     "simulation_runs",
     "household_jobs",
     "budget_window_runs",
+    "cliff_impacts",
 )
 # A run's state, which the Modal call holding it records.
 RUN_STATE_COLUMNS = frozenset(
@@ -132,19 +136,14 @@ def test_the_modal_worker_role_updates_its_runs_state_and_results() -> None:
     its status, failure and times.
     """
     assert dict(MODAL_WORKER_UPDATABLE_COLUMNS) == {
-        "report_runs": RUN_STATE_COLUMNS
-        | {
-            "baseline_cliff_gap",
-            "baseline_cliff_share",
-            "reform_cliff_gap",
-            "reform_cliff_share",
-            "spm_provenance",
-            "data_version",
-        },
+        # A report run's cliff impact is its simulation runs' cliff results,
+        # so its own four cliff columns are never written.
+        "report_runs": RUN_STATE_COLUMNS | {"spm_provenance", "data_version"},
         "simulation_runs": RUN_STATE_COLUMNS
         | {"output_uri", "output_sha256", "household_result"},
         "household_jobs": RUN_STATE_COLUMNS | {"result"},
         "budget_window_runs": RUN_STATE_COLUMNS - {"modal_call_id"},
+        "cliff_impacts": RUN_STATE_COLUMNS | {"cliff_gap", "cliff_share"},
     }
 
 

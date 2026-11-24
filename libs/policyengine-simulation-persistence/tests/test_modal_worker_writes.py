@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from conftest import (
@@ -25,6 +25,7 @@ from policyengine_simulation_persistence import (
     MODAL_WORKER_TABLE_PRIVILEGES,
     MODAL_WORKER_UPDATABLE_COLUMNS,
     BudgetWindowRun,
+    CliffImpact,
     HouseholdJob,
     Poverty,
     ReportRun,
@@ -62,11 +63,14 @@ def test_the_modal_worker_role_holds_every_privilege_the_modal_calls_need(
         )
 
 
-def _run_state(service_rows: ServiceRows) -> dict[Table, tuple[Any, dict[str, Any]]]:
+def _run_state(
+    service_rows: ServiceRows, cliff_result_id: UUID
+) -> dict[Table, tuple[Any, dict[str, Any]]]:
     """Return, by run table, a run's ID and a value for every column the role updates.
 
     A Python ``None`` in a JSON result is written as one, so the test can read
-    back that it is stored as SQL NULL.
+    back that it is stored as SQL NULL. ``cliff_result_id`` is a cliff
+    calculation of the baseline's simulation run.
     """
     finished = {
         "modal_call_id": MODAL_CALL_ID,
@@ -81,10 +85,6 @@ def _run_state(service_rows: ServiceRows) -> dict[Table, tuple[Any, dict[str, An
                 **finished,
                 "status": "succeeded",
                 "error_message": None,
-                "baseline_cliff_gap": 1.0,
-                "baseline_cliff_share": 0.1,
-                "reform_cliff_gap": 2.0,
-                "reform_cliff_share": 0.2,
                 "spm_provenance": None,
                 "data_version": "test-data-version",
             },
@@ -107,6 +107,16 @@ def _run_state(service_rows: ServiceRows) -> dict[Table, tuple[Any, dict[str, An
                 "status": "failed",
                 "error_message": "The calculation failed.",
                 "result": None,
+            },
+        ),
+        CliffImpact.__table__: (
+            cliff_result_id,
+            {
+                **finished,
+                "status": "succeeded",
+                "error_message": None,
+                "cliff_gap": 1.0,
+                "cliff_share": 0.1,
             },
         ),
         BudgetWindowRun.__table__: (
@@ -195,9 +205,20 @@ def test_the_modal_worker_role_records_its_runs_and_inserts_every_result(
         public_api_rows = insert_public_api_rows(connection)
         act_as_the_service(connection)
         service_rows = insert_service_rows(connection, public_api_rows)
+        # The simulation service inserts each cliff calculation pending.
+        cliff_result_id = uuid4()
+        connection.execute(
+            insert(CliffImpact.__table__).values(
+                id=cliff_result_id,
+                simulation_run_id=service_rows.baseline_run_id,
+                status="pending",
+            )
+        )
         act_as_the_modal_worker(connection)
 
-        for table, (run_id, values) in _run_state(service_rows).items():
+        for table, (run_id, values) in _run_state(
+            service_rows, cliff_result_id
+        ).items():
             assert set(values) == MODAL_WORKER_UPDATABLE_COLUMNS[table.name], table
             updated = connection.execute(
                 update(table).where(table.c.id == run_id).values(**values)

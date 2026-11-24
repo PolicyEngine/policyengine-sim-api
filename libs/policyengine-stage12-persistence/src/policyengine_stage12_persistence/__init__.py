@@ -1,4 +1,4 @@
-"""Direct DML for Stage 12 comparison state, runs, budget windows and household jobs."""
+"""Direct DML for Stage 12 comparison state, runs, cliffs, windows and households."""
 
 from policyengine_stage12_persistence.budget_window_store import (
     BUDGET_WINDOW_MAX_RUNNING_YEARS,
@@ -7,6 +7,10 @@ from policyengine_stage12_persistence.budget_window_store import (
     YearStartDeferred,
     YearStarter,
     YearToStart,
+)
+from policyengine_stage12_persistence.cliff_result_store import (
+    CliffResultState,
+    CliffResultStore,
 )
 from policyengine_stage12_persistence.engine import (
     SessionOpener,
@@ -39,6 +43,8 @@ __all__ = [
     "BUDGET_WINDOW_MAX_RUNNING_YEARS",
     "ActiveRun",
     "BudgetWindowStore",
+    "CliffResultState",
+    "CliffResultStore",
     "DistrictCodes",
     "HouseholdReportRunStore",
     "ReportRunResult",

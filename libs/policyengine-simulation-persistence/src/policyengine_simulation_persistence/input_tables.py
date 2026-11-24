@@ -145,10 +145,11 @@ class ParameterValue(InputBase):
 
 
 class Dynamic(InputBase):
-    """A country's model assumptions, which a simulation applies beside its policy.
+    """Parameter values a simulation applies beside its policy.
 
-    Its values are ``ParameterValue`` rows, such as labour-supply
-    elasticities.
+    Behavioural responses are an example. API v1 saves a dynamic as it saves a
+    policy, on a country's catalog version; sim reads its ID and its country,
+    so a simulation refuses another country's dynamic.
     """
 
     __tablename__ = "dynamics"

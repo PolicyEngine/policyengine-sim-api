@@ -33,6 +33,7 @@ from .operation_records import (
     report_run_named_by,
     row_id_or_none,
     simulation_run_named_by,
+    simulation_worker_record_attributes,
 )
 from .partition import (
     should_segment_simulation,
@@ -96,6 +97,7 @@ __all__ = [
     "should_segment_simulation",
     "simulation_input_sha256",
     "simulation_run_named_by",
+    "simulation_worker_record_attributes",
     "stage12_region_groups",
     "stage12_region_groups_for_model",
     "validate_policy_periods",

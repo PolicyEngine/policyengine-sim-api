@@ -9,6 +9,8 @@ it.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 from conftest import (
     act_as_the_service,
@@ -18,6 +20,7 @@ from conftest import (
 )
 from policyengine_simulation_persistence import (
     BudgetWindowRun,
+    CliffImpact,
     HouseholdJob,
     Report,
     ReportRun,
@@ -26,7 +29,7 @@ from policyengine_simulation_persistence import (
     missing_table_privileges,
 )
 from service_rows import insert_public_api_rows, insert_service_rows
-from sqlalchemy import func, select
+from sqlalchemy import func, insert, select
 
 pytestmark = pytest.mark.public_api_schema
 
@@ -45,6 +48,14 @@ def test_the_service_role_creates_and_reads_a_row_in_every_table_it_writes(
         public_api_rows = insert_public_api_rows(connection)
         act_as_the_service(connection)
         service_rows = insert_service_rows(connection, public_api_rows)
+        # A cliff calculation of a simulation run, which the service starts.
+        connection.execute(
+            insert(CliffImpact.__table__).values(
+                id=uuid4(),
+                simulation_run_id=service_rows.baseline_run_id,
+                status="pending",
+            )
+        )
 
         compared_runs = connection.execute(
             select(
@@ -65,6 +76,7 @@ def test_the_service_role_creates_and_reads_a_row_in_every_table_it_writes(
             BudgetWindowRun.__table__,
             ReportRun.__table__,
             HouseholdJob.__table__,
+            CliffImpact.__table__,
         ):
             assert (
                 connection.execute(select(func.count()).select_from(table)).scalar_one()

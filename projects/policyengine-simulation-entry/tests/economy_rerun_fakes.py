@@ -26,6 +26,7 @@ from policyengine_simulation_persistence import (
     EconomyReportInputs,
     EconomySimulationInputs,
     FoundBudgetWindow,
+    FoundReportRerun,
     FoundReportRun,
     FoundSide,
     FoundSimulationRun,
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
         NewReportRerun,
         NewSimulationRerun,
         NewWindowRerun,
+        ProposedCliffs,
     )
 
 REPORT_ID = UUID("00000000-0000-4000-8000-0000000000a1")
@@ -60,7 +62,8 @@ SIMULATION_ID = UUID("00000000-0000-4000-8000-0000000000a4")
 CURRENT_LAW = SimulationChoice(policy_id=None, dynamic_id=None)
 REFORM_CHOICE = SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID)
 # A report stored before C1 · 27 kept the request's options; one asking for
-# cliffs is refused until cliffs are calculated per run (interim answer A).
+# cliffs asks for its runs' cliffs when re-run, and its stored option never
+# reaches the coordinator.
 STORED_OPTIONS: dict[str, Any] = {
     "include_cliffs": False,
     "spm": {"geography_kind": "national"},
@@ -248,6 +251,25 @@ class FakeRerunStore(FakeWindowStore):
         if self.rerun_failure is not None:
             raise self.rerun_failure
         self.report_reruns.append(rerun)
+        return self._report_rerun_run(rerun)
+
+    def create_report_rerun_with_cliffs(
+        self, rerun: NewReportRerun, cliffs: ProposedCliffs
+    ) -> FoundReportRerun:
+        if self.cliff_failure is not None:
+            raise self.cliff_failure
+        run = self.create_report_rerun(rerun)
+        assert run.reform_simulation_run_id is not None
+        return FoundReportRerun(
+            run=run,
+            cliffs=self.found_cliffs(
+                cliffs,
+                baseline_simulation_run_id=run.baseline_simulation_run_id,
+                reform_simulation_run_id=run.reform_simulation_run_id,
+            ),
+        )
+
+    def _report_rerun_run(self, rerun: NewReportRerun) -> FoundReportRun:
         # As the store does, a forced re-run joins nothing.
         if self.joined_report_run is not None and not rerun.forced:
             return self.joined_report_run

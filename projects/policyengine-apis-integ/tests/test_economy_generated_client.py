@@ -219,7 +219,7 @@ def test_a_report_rerun_is_sent_with_force_and_read_with_its_new_run():
 
     (request,) = sent
     assert request.url.path == f"/reports/{REPORT_ID}/runs"
-    assert request.read() == b'{"force":true}'
+    assert request.read() == b'{"force":true,"include_cliffs":false}'
     assert isinstance(response.parsed, EconomyReportCreated)
     assert response.parsed.to_dict() == CREATED_REPORT
 

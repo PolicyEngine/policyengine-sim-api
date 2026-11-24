@@ -12,7 +12,8 @@ and chooses every ID.
 Answers the Public API reads:
 
 - 201 with the created record's ID and its first run's ID, or, for a
-  re-run, the record's ID and its new run's ID;
+  re-run, the record's ID and its new run's ID; for a report asking for
+  cliffs, also each side's cliff calculation and its status;
 - 400 with ``code`` and ``detail``: one of ``CallerRowRefusalCode`` when
   the region, dataset or a dynamic the request names (or, for a re-run, the
   stored record names) does not exist, or another code for the service's own
@@ -122,8 +123,8 @@ EconomyUnprocessableCode = Literal[
     # authorities to no dataset of their own, so it has no local-area dataset
     # for ``data_source``: located at ``data_source``.
     "no_local_area_dataset",
-    # A report asks for cliffs (include_cliffs: true), which wait for each
-    # simulation run's own cliff calculation (C1 · 39); located at the field.
+    # A budget window's or household report's re-run asks for cliffs
+    # (include_cliffs: true), which neither calculates; located at the field.
     "cliffs_not_available",
 ]
 # Why a stored record is not re-run now (409).
@@ -188,20 +189,24 @@ class EconomyReportRequest(_Request):
     """An economy report: a baseline and a reform simulation of one region's data.
 
     Both simulations use the report's year and region, and the region's
-    dataset, as ``EconomySimulationRequest`` describes them. ``include_cliffs:
-    true`` is refused (422 ``cliffs_not_available``) until cliffs are
-    calculated per simulation run (C1 · 39). ``spm`` selects the
-    SPM forecast scenario and geography; omit it, rather than sending null,
-    to use the bundle's certified defaults.
+    dataset, as ``EconomySimulationRequest`` describes them.
+    ``include_cliffs: true`` starts a cliff calculation for each side's
+    simulation run that has none, and joins one being calculated: a run's
+    cliffs are a calculation of their own, shared by every report naming
+    the run. It is never stored and in no key, so a request with it ends on
+    the same report and runs as one without. ``spm`` selects the SPM
+    forecast scenario and geography; omit it, rather than sending null, to
+    use the bundle's certified defaults.
 
     ``data_source: "local_area_dataset"`` runs the report on the bundle's
     local-area dataset, the one its .py release routes constituencies and
     local authorities to, in place of the region's own: the report returns
-    its full results, cliffs included when asked, and its constituency and
-    local-authority impacts. Only a UK report whose region is ``uk`` or one
-    of the four ``country/*`` nations may ask; omit it, rather than sending
-    null, to use the region's dataset. It is never stored as an option: the
-    dataset it chooses is stored with the report's simulations.
+    its full results and its constituency and local-authority impacts, and
+    its simulation runs' cliffs when asked. Only a UK report whose region is
+    ``uk`` or one of the four ``country/*`` nations may ask; omit it, rather
+    than sending null, to use the region's dataset. It is never stored as
+    an option: the dataset it chooses is stored with the report's
+    simulations.
     """
 
     country: CountryId
@@ -281,14 +286,14 @@ class EconomyReportRequest(_Request):
 
         ``spm`` holds only the settings the request gave, and is left out
         when it gave none. The report stores the selection alone
-        (``economy_requests.stored_options``). ``data_source`` is never an
-        option: the dataset it chooses is stored with the report's
-        simulations.
+        (``economy_requests.stored_options``). Neither ``include_cliffs``
+        nor ``data_source`` is an option: cliffs are each simulation run's
+        own calculation, and the dataset ``data_source`` chooses is stored
+        with the report's simulations.
         """
-        options: dict[str, Any] = {"include_cliffs": self.include_cliffs}
-        if self.spm is not None:
-            options["spm"] = self.spm.model_dump(mode="json")
-        return options
+        if self.spm is None:
+            return {}
+        return {"spm": self.spm.model_dump(mode="json")}
 
 
 class ReportRerunRequest(_Request):
@@ -302,9 +307,17 @@ class ReportRerunRequest(_Request):
     created before keys (C1 · 24's interim answer B), the report's
     simulations are calculated again, as an extra run marked forced that
     nothing joins.
+
+    ``include_cliffs: true`` starts a cliff calculation for each simulation
+    run the economy report's run names that has none, as a create's does,
+    whether the re-run joined its run or created it. A report stored before
+    C1 · 27 asking for cliffs asks for them on its re-run too. A budget
+    window or household report calculates no cliffs, and its re-run asking
+    for them is refused (422 ``cliffs_not_available``).
     """
 
     force: StrictBool = False
+    include_cliffs: StrictBool = False
 
 
 class _Answer(BaseModel):
@@ -327,6 +340,35 @@ class EconomySimulationCreated(_Answer):
     status: SimulationStatus
 
 
+class CliffCalculationState(_Answer):
+    """A simulation run's cliff calculation a request started or joined.
+
+    ``cliff_result_id`` is the calculation's row; ``status`` is ``pending``
+    or ``running`` while it is calculated, ``succeeded`` once it holds the
+    run's cliff gap and share, and ``failed`` once it failed (the next
+    request asking for cliffs starts another). A calculation the request
+    joined is answered with its status as read, never ``failed``. One it
+    started is answered with its status when its call's ID was recorded:
+    ``pending``, or what the worker had made it by then, ``failed``
+    included; ``failed`` when Modal refused or didn't confirm the call and
+    it was failed; and ``pending`` when that call's ID couldn't be recorded,
+    or the worker claimed it after an unconfirmed call.
+    """
+
+    cliff_result_id: UUID
+    status: SimulationStatus
+
+
+class ReportCliffs(_Answer):
+    """Each side's cliff calculation: of the simulation run that side names.
+
+    One simulation run on both sides names one calculation on both.
+    """
+
+    baseline: CliffCalculationState
+    reform: CliffCalculationState
+
+
 class EconomyReportCreated(_Answer):
     """The report a request ended on, its run and that run's status.
 
@@ -339,6 +381,8 @@ class EconomyReportCreated(_Answer):
     names its simulation and simulation run; ``…_reused`` is true for a side
     whose run this request didn't create: another request's run, in any
     state, that the side joined, or, on a joined report run, that run's own.
+    ``cliffs``, given only when the request asked for them, names each
+    side's cliff calculation.
     """
 
     report_id: UUID
@@ -350,6 +394,10 @@ class EconomyReportCreated(_Answer):
     reform_simulation_id: UUID
     reform_simulation_run_id: UUID
     reform_reused: bool
+    # Left out of the answer when the request didn't ask for cliffs.
+    cliffs: ReportCliffs | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class SimulationRunRead(_Answer):

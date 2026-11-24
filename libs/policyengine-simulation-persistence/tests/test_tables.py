@@ -5,6 +5,7 @@ from __future__ import annotations
 from policyengine_simulation_persistence import (
     SERVICE_TABLE_PRIVILEGES,
     BudgetWindowRun,
+    CliffImpact,
     HouseholdJob,
     Report,
     ReportRun,
@@ -132,7 +133,8 @@ def test_every_enum_type_names_the_public_schema() -> None:
         if isinstance(column.type, Enum)
     ]
 
-    assert len(enum_columns) == 7
+    # Including cliff_impacts.status, which reuses the simulation runs' type.
+    assert len(enum_columns) == 8
     for column in enum_columns:
         assert column.type.schema == "public", f"{column.table.name}.{column.name}"
     # The helper every enum column uses, before any table adopts its type.
@@ -283,6 +285,25 @@ def test_a_definition_and_version_set_has_one_unfailed_unforced_run() -> None:
     assert str(report_run_index.dialect_options["postgresql"]["where"]) == (
         "budget_window_run_id IS NULL AND status <> 'failed' AND NOT forced"
     )
+
+
+def test_a_simulation_run_has_one_unfailed_cliff_calculation() -> None:
+    """A failed calculation stays recorded, and a later start makes a new row."""
+    table = CliffImpact.__table__
+    index = _index(table, "uq_cliff_impacts_unfailed")
+
+    assert index.unique is True
+    assert tuple(column.name for column in index.columns) == ("simulation_run_id",)
+    assert str(index.dialect_options["postgresql"]["where"]) == "status <> 'failed'"
+    # The calculation belongs to its run, and goes with it.
+    assert _foreign_keys(table) == {
+        "fk_cliff_impacts_simulation_run_id_simulation_runs": (
+            ("simulation_run_id",),
+            "simulation_runs(id)",
+            "CASCADE",
+        )
+    }
+    assert table.c.status.type.enums == list(SimulationStatus)
 
 
 def test_a_run_is_unforced_unless_its_insert_marks_it() -> None:
