@@ -10,6 +10,17 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.23.0] - 2026-11-24
+
+### Added
+
+- `POST /reports` and `POST /reports/{report_id}/runs` accept `include_cliffs: true` again: once the request has ended on its report run, created or joined, the Simulation Entrypoint finds or creates the cliff calculation (a row of API v1's `cliff_impacts`) of each simulation run that report run names, and starts the run's simulation function in its cliff mode only for a calculation it created, so identical requests share one calculation per run. The answer names each side's cliff calculation and its status in `cliffs`. `include_cliffs` is never stored, keyed or passed to the coordinator, and a report stored before keys asking for cliffs is re-run with its runs' cliffs instead of a 422. A budget window's or household report's re-run asking for cliffs is refused with 422 `cliffs_not_available`.
+
+### Changed
+
+- The simulation executor's Modal client is now 1.6.4 or newer (it was 1.4.2). 1.6.4 is the first Modal release whose containers reload Secret values when they restore from a memory snapshot. No executor function uses memory snapshots yet; this is the client they need.
+
+
 ## [0.22.0] - 2026-11-24
 
 ### Added
