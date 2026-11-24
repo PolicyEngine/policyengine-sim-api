@@ -1,0 +1,1 @@
+The simulation executor's Modal client is now 1.6.4 or newer (it was 1.4.2), so containers of the apps deployed from it that restore from a memory snapshot load the current values of their Modal secrets instead of the values from when the snapshot was taken.
