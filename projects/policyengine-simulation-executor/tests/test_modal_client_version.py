@@ -4,8 +4,9 @@ Modal 1.6.4 is the first release whose containers reload Secret values when
 they restore from a memory snapshot; on earlier releases a restored container
 keeps the values from when the snapshot was taken. A deployed app's containers
 run the Modal client that deployed it, and every app deployed or run from this
-project uses the client in ``uv.lock``: the deploy and smoke scripts run
-``uv run --frozen modal deploy`` and ``uv run --frozen modal run`` here.
+project uses the client in ``uv.lock``: the deploy workflow runs
+``uv run --frozen modal deploy`` here, and the precompute and smoke scripts run
+``uv run --frozen modal run`` here.
 """
 
 from __future__ import annotations
