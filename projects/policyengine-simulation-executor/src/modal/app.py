@@ -11,6 +11,7 @@ versioned apps.
 
 import contextlib
 import os
+import random
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -335,19 +336,137 @@ def _record_stage_durations(
         )
 
 
+def _run_simulation(
+    params: dict,
+    *,
+    observability_context: dict | None,
+) -> dict:
+    """Execute one annual economic simulation.
+
+    The job behind ``SimulationWorker.run_simulation`` and the plain
+    ``run_simulation`` function. Imports the implementation in the call; in a
+    restored container the snapshot hook has already loaded the country models
+    it uses. Emits redacted operation data through the shared observability
+    runtime. Records the job's stage for status polls (see ``job_progress``).
+    """
+    progress = _job_progress_reporter()
+    progress.start()
+    runtime = _configure_modal_observability(service_role="simulation_worker")
+
+    # We deliberately avoid sending full ``params`` or ``result`` blobs to
+    # observability: they can embed signed URLs, reform
+    # parameter trees with sensitive policy details, or result payloads
+    # large enough to blow attribute budgets. Correlation fields come from
+    # the validated remote context while the heavy payload stays in memory.
+    redacted_params = {
+        **redact_params_for_logging(params),
+        "modal_app_name": APP_NAME,
+        "modal_environment": os.getenv("MODAL_ENVIRONMENT", "local"),
+        "modal_function_name": "run_simulation",
+    }
+    try:
+        propagated = normalize_observability_context(observability_context)
+        with runtime.operation(
+            ANNUAL_IMPACT_STAGES.name(Stage.ANNUAL_EXECUTION),
+            attributes=redacted_params,
+            remote_context=propagated,
+        ):
+            _set_modal_call_attributes(runtime)
+            from src.modal.segmented_national import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+                dispatch_run_simulation,
+            )
+
+            try:
+                # Plain national macro requests fan out across region groups
+                # by default (segmented: false opts out). APP_NAME is this
+                # deployed app; children spawn into its dedicated
+                # SimulationSegmentWorker pool.
+                return dispatch_run_simulation(
+                    params,
+                    app_name=APP_NAME,
+                    runtime=runtime,
+                    progress=progress,
+                )
+            except KeyboardInterrupt:
+                # Modal preempts with SIGINT and runs the call again; the
+                # record stays running for that attempt.
+                progress.interrupt()
+                raise
+            finally:
+                # Close the last stage inside the operation, so its
+                # completion record carries every stage duration.
+                progress.finish()
+                _record_stage_durations(runtime, progress)
+    except KeyboardInterrupt:
+        # Preempted before the calculation started.
+        progress.interrupt()
+        raise
+    finally:
+        # A no-op unless the operation never started.
+        progress.finish()
+        runtime.shutdown()
+
+
+def _run_simulation_segment(
+    params: dict,
+    *,
+    observability_context: dict | None,
+) -> dict:
+    """Run one region-group child of a segmented national run.
+
+    The job behind ``SimulationSegmentWorker.run_simulation_segment`` and the
+    plain ``run_simulation_segment`` function. Calls the monolithic impl
+    directly — children are ``region_group`` requests and never re-segment.
+    """
+    runtime = _configure_modal_observability(service_role="simulation_worker")
+    redacted_params = {
+        **redact_params_for_logging(params),
+        "modal_app_name": APP_NAME,
+        "modal_environment": os.getenv("MODAL_ENVIRONMENT", "local"),
+        "modal_function_name": "run_simulation_segment",
+    }
+    try:
+        propagated = normalize_observability_context(observability_context)
+        with runtime.operation(
+            SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_EXECUTION),
+            attributes=redacted_params,
+            remote_context=propagated,
+        ):
+            _set_modal_call_attributes(runtime)
+            from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+                run_simulation_impl,
+            )
+
+            return run_simulation_impl(params, runtime=runtime)
+    finally:
+        runtime.shutdown()
+
+
 class _CountryModelsLoadedBeforeSnapshot:
     """Base of the simulation workers: loads the models before the snapshot.
 
     Modal runs ``snap=True`` hooks once, in the container that takes the
     memory snapshot; every container restored from it starts with the loaded
-    models in memory. Observability is configured per call instead, after
-    the restore, so each restored container reports its own process identity.
+    models in memory. ``snap=False`` hooks run after each restore.
+    Observability is configured per call instead, after the restore, so each
+    restored container reports its own process identity.
     """
 
     @modal.enter(snap=True)
     def load_country_models(self) -> None:
         """Load both countries' models and the SPM capability into the snapshot."""
         preload_country_models()
+
+    @modal.enter(snap=False)
+    def reseed_random_after_restore(self) -> None:
+        """Give each restored container its own random sequence.
+
+        The snapshot holds the state of Python's ``random`` module, and Python
+        reseeds it only after a fork, so every restored container would draw
+        the same numbers: OpenTelemetry's span IDs, for one, which would then
+        repeat across the segment children of one trace.
+        """
+        random.seed()
 
 
 @app.cls(
@@ -370,69 +489,8 @@ class SimulationWorker(_CountryModelsLoadedBeforeSnapshot):
         *,
         observability_context: dict | None = None,
     ) -> dict:
-        """Execute one annual economic simulation.
-
-        Imports the implementation in the call; the snapshot hook has already
-        loaded the country models it uses. Emits redacted operation data through
-        the shared observability runtime. Records the job's stage for status
-        polls (see ``job_progress``).
-        """
-        progress = _job_progress_reporter()
-        progress.start()
-        runtime = _configure_modal_observability(service_role="simulation_worker")
-
-        # We deliberately avoid sending full ``params`` or ``result`` blobs to
-        # observability: they can embed signed URLs, reform
-        # parameter trees with sensitive policy details, or result payloads
-        # large enough to blow attribute budgets. Correlation fields come from
-        # the validated remote context while the heavy payload stays in memory.
-        redacted_params = {
-            **redact_params_for_logging(params),
-            "modal_app_name": APP_NAME,
-            "modal_environment": os.getenv("MODAL_ENVIRONMENT", "local"),
-            "modal_function_name": "run_simulation",
-        }
-        try:
-            propagated = normalize_observability_context(observability_context)
-            with runtime.operation(
-                ANNUAL_IMPACT_STAGES.name(Stage.ANNUAL_EXECUTION),
-                attributes=redacted_params,
-                remote_context=propagated,
-            ):
-                _set_modal_call_attributes(runtime)
-                from src.modal.segmented_national import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-                    dispatch_run_simulation,
-                )
-
-                try:
-                    # Plain national macro requests fan out across region groups
-                    # by default (segmented: false opts out). APP_NAME is this
-                    # deployed app; children spawn into its dedicated
-                    # SimulationSegmentWorker pool.
-                    return dispatch_run_simulation(
-                        params,
-                        app_name=APP_NAME,
-                        runtime=runtime,
-                        progress=progress,
-                    )
-                except KeyboardInterrupt:
-                    # Modal preempts with SIGINT and runs the call again; the
-                    # record stays running for that attempt.
-                    progress.interrupt()
-                    raise
-                finally:
-                    # Close the last stage inside the operation, so its
-                    # completion record carries every stage duration.
-                    progress.finish()
-                    _record_stage_durations(runtime, progress)
-        except KeyboardInterrupt:
-            # Preempted before the calculation started.
-            progress.interrupt()
-            raise
-        finally:
-            # A no-op unless the operation never started.
-            progress.finish()
-            runtime.shutdown()
+        """Execute one annual economic simulation (see ``_run_simulation``)."""
+        return _run_simulation(params, observability_context=observability_context)
 
 
 @app.cls(
@@ -446,7 +504,12 @@ class SimulationWorker(_CountryModelsLoadedBeforeSnapshot):
     enable_memory_snapshot=True,
 )
 class SimulationSegmentWorker(_CountryModelsLoadedBeforeSnapshot):
-    """Runs the region-group children of segmented national runs."""
+    """Runs the region-group children of segmented national runs.
+
+    A separate class from ``SimulationWorker`` so segment children draw from
+    their own container pool: a blocking segmented parent must never share a
+    bounded pool with the children it waits on.
+    """
 
     @modal.method()
     def run_simulation_segment(
@@ -455,36 +518,52 @@ class SimulationSegmentWorker(_CountryModelsLoadedBeforeSnapshot):
         *,
         observability_context: dict | None = None,
     ) -> dict:
-        """One region-group child of a segmented national run.
+        """Run one region-group child (see ``_run_simulation_segment``)."""
+        return _run_simulation_segment(
+            params, observability_context=observability_context
+        )
 
-        The same worker as ``run_simulation`` but a separate Modal class so
-        segment children draw from their own container pool: a blocking
-        segmented parent must never share a bounded pool with the children it
-        waits on. Calls the monolithic impl directly — children are
-        ``region_group`` requests and never re-segment.
-        """
-        runtime = _configure_modal_observability(service_role="simulation_worker")
-        redacted_params = {
-            **redact_params_for_logging(params),
-            "modal_app_name": APP_NAME,
-            "modal_environment": os.getenv("MODAL_ENVIRONMENT", "local"),
-            "modal_function_name": "run_simulation_segment",
-        }
-        try:
-            propagated = normalize_observability_context(observability_context)
-            with runtime.operation(
-                SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_EXECUTION),
-                attributes=redacted_params,
-                remote_context=propagated,
-            ):
-                _set_modal_call_attributes(runtime)
-                from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-                    run_simulation_impl,
-                )
 
-                return run_simulation_impl(params, runtime=runtime)
-        finally:
-            runtime.shutdown()
+# The workers' plain functions from before the classes, kept without memory
+# snapshots for callers still running that code. The executor deploys before
+# the gateway, and a deploy that keeps the policyengine.py version replaces the
+# routed app in place, so the old gateway spawns run_simulation here until the
+# new one is live. Runs started before a deploy spawn their children by these
+# names too. Remove both once no such caller is left.
+@app.function(
+    image=simulation_image,
+    cpu=8.0,
+    memory=32768,
+    timeout=3600,
+    retries=0,
+    max_containers=100,
+    secrets=[gcp_secret, hf_secret],
+)
+def run_simulation(
+    params: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
+    """Execute one annual simulation, for callers from before the classes."""
+    return _run_simulation(params, observability_context=observability_context)
+
+
+@app.function(
+    image=simulation_image,
+    cpu=8.0,
+    memory=32768,
+    timeout=3600,
+    retries=0,
+    max_containers=300,
+    secrets=[gcp_secret, hf_secret],
+)
+def run_simulation_segment(
+    params: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
+    """Run one region-group child, for callers from before the classes."""
+    return _run_simulation_segment(params, observability_context=observability_context)
 
 
 @app.function(

@@ -26,23 +26,37 @@ from policyengine_simulation_contract.spm import SPMInputError
 
 logger = logging.getLogger(__name__)
 
-COUNTRY_MODEL_MODULES = (
-    "policyengine_us",
-    "policyengine_uk",
-    "policyengine.tax_benefit_models.us",
-    "policyengine.tax_benefit_models.uk",
-)
+COUNTRY_MODEL_MODULES = {
+    "us": ("policyengine_us", "policyengine.tax_benefit_models.us"),
+    "uk": ("policyengine_uk", "policyengine.tax_benefit_models.uk"),
+}
 
 
 def preload_country_models() -> None:
-    """Import both countries' models, then fill the SPM capability cache.
+    """Import each country's models, then fill the SPM capability cache.
 
-    An unusable SPM setup is logged and left in place: ``runtime_spm_capability``
-    caches only a successful result, so each call that needs SPM raises the
-    same error and fails that request, as it would without the preload.
+    Nothing here may stop a container from starting: a failure leaves that
+    work to the calls that need it, as before the preload. A country whose
+    models fail to import is skipped, so the other country's calls keep their
+    preloaded models, and Python discards a failed import, so each call of the
+    skipped country imports its models again and fails as it would have. The
+    SPM check caches only a successful result, so each call that needs SPM
+    repeats a failed check.
     """
-    for module_name in COUNTRY_MODEL_MODULES:
-        import_module(module_name)
+    for country, module_names in COUNTRY_MODEL_MODULES.items():
+        for module_name in module_names:
+            try:
+                import_module(module_name)
+            except Exception:  # noqa: BLE001  # left to the country's own calls
+                logger.warning(
+                    "%s models not preloaded: importing %s failed, so each %s "
+                    "call imports them itself",
+                    country.upper(),
+                    module_name,
+                    country.upper(),
+                    exc_info=True,
+                )
+                break
     from policyengine_simulation_executor import spm
 
     try:
@@ -51,4 +65,9 @@ def preload_country_models() -> None:
         logger.warning(
             "SPM capability not preloaded; each call that needs it raises %s",
             error.code,
+        )
+    except Exception:  # noqa: BLE001  # left to each call that needs SPM
+        logger.warning(
+            "SPM capability not preloaded; each call that needs it checks again",
+            exc_info=True,
         )
