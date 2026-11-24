@@ -1,6 +1,7 @@
 """The routes that submit simulation and budget-window jobs."""
 
 from datetime import UTC, datetime
+from typing import Any
 
 import modal
 from fastapi import Depends, HTTPException, Request, Response
@@ -28,6 +29,11 @@ from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_contract.local_area_breakdown import (
     LOCAL_AREA_BREAKDOWN_CAPABILITY_KEY,
     supported_local_area_breakdown_capability,
+)
+from policyengine_simulation_contract.simulation_workers import (
+    FUNCTION_FORM_SIMULATION_WORKER,
+    SIMULATION_WORKER_CLASS,
+    SIMULATION_WORKER_METHOD,
 )
 from policyengine_simulation_contract.spm import (
     SPMRouteVersions,
@@ -192,6 +198,34 @@ def _build_budget_window_parent_payload(
     return payload
 
 
+def _spawn_annual_simulation(
+    app_name: str,
+    payload: dict[str, Any],
+    *,
+    observability_context: dict[str, str] | None,
+) -> "modal.FunctionCall[Any]":
+    """Spawn one annual simulation on ``app_name``'s simulation worker.
+
+    Apps define the worker as a method of a Modal class, so its containers
+    restore from memory snapshots. Apps deployed before that define it as a
+    plain function, and stay routable for pinned versions and rollbacks, so
+    an app with no worker class gets the function. Only the class lookup
+    falls back: once the class resolves, a failed spawn raises as it is.
+    """
+    worker_class = modal.Cls.from_name(app_name, SIMULATION_WORKER_CLASS)
+    try:
+        worker_class.hydrate()
+    except modal.exception.NotFoundError:
+        worker_function = modal.Function.from_name(
+            app_name, FUNCTION_FORM_SIMULATION_WORKER
+        )
+        return worker_function.spawn(
+            payload, observability_context=observability_context
+        )
+    worker_method = getattr(worker_class(), SIMULATION_WORKER_METHOD)
+    return worker_method.spawn(payload, observability_context=observability_context)
+
+
 @router.post(
     "/simulate/economy/comparison",
     response_model=JobSubmitResponse,
@@ -286,13 +320,12 @@ async def submit_simulation(
         observability_id,
     )
 
-    # Spawn the job (returns immediately). ``Function.from_name`` is a lazy
-    # handle — the control-plane RPC (hydration) happens inside ``spawn`` —
-    # so both live under the spawn segment to time the real network cost.
+    # Spawn the job (returns immediately). The worker lookup's control-plane
+    # RPCs and the spawn live under one span to time the real network cost.
     submitted_at = datetime.now(UTC)
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
-        sim_func = modal.Function.from_name(route.app_name, "run_simulation")
-        call = sim_func.spawn(
+        call = _spawn_annual_simulation(
+            route.app_name,
             payload,
             observability_context=observability_context,
         )
