@@ -950,6 +950,27 @@ class TestModalRunSimulation:
         assert _operation_completions(written_records) == [("WARNING", "interrupted")]
         assert _error_records(written_records) == []
 
+    def test__the_function_kept_for_older_callers_records_the_same_job(
+        self, modal_app, monkeypatch
+    ):
+        # The plain run_simulation function serves callers still running the
+        # code from before the worker classes, such as the gateway during a
+        # deploy. It runs the class method's code.
+        def dispatch(_params, *, app_name, runtime, progress):
+            progress.enter(JobStage.REFORM)
+            return {"ok": True}
+
+        _events, writes = self._wire(modal_app, monkeypatch, dispatch)
+
+        assert modal_app.run_simulation({"country": "us"}) == {"ok": True}
+
+        assert {job_id for job_id, _ in writes} == {"fc-job-1"}
+        assert [record.stage for _, record in writes] == [
+            JobStage.LOADING_DATA,
+            JobStage.REFORM,
+            JobStage.REFORM,
+        ]
+
     def test__store_failure_does_not_change_the_result(self, modal_app, monkeypatch):
         from policyengine_simulation_contract import job_progress_state
 
@@ -1002,6 +1023,25 @@ def test_preempted_segment_is_recorded_at_warning(
 
     assert _operation_completions(written_records) == [("WARNING", "interrupted")]
     assert _error_records(written_records) == []
+
+
+def test_the_segment_function_kept_for_older_callers_runs_the_same_code(
+    modal_app, monkeypatch, recorded_observability_runtime
+):
+    # Segmented parents started before the worker classes spawn their
+    # children through the plain run_simulation_segment function.
+    runtime, written_records = recorded_observability_runtime
+    monkeypatch.setattr(
+        modal_app,
+        "_configure_modal_observability",
+        lambda *, service_role: runtime,
+    )
+    monkeypatch.setattr(
+        sr, "run_simulation_impl", lambda _params, *, runtime: {"segment": "done"}
+    )
+
+    assert modal_app.run_simulation_segment({"country": "us"}) == {"segment": "done"}
+    assert _operation_completions(written_records) == [("INFO", "success")]
 
 
 def _operation_completions(written_records: list[dict]) -> list[tuple[str, str]]:
