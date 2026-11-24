@@ -12,10 +12,10 @@ versioned apps.
 import contextlib
 import os
 import random
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from packaging.version import InvalidVersion, Version
 from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
     HF_RUNTIME_ENV_NAME,
@@ -59,24 +59,25 @@ if TYPE_CHECKING:
 # Modal 1.6.4, and each app's containers run the Modal client that deployed it.
 # This project's uv.lock pins such a client; the check refuses a deploy or run
 # from an environment with an older one, such as a global Modal install.
-FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE = (1, 6, 4)
+FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE = Version("1.6.4")
 
 
 def _require_secret_reloading_modal_client(client_version: str) -> None:
-    """Raise unless ``client_version`` is Modal 1.6.4 or newer."""
-    release = re.match(r"(\d+)\.(\d+)\.(\d+)", client_version)
-    release_numbers = (
-        tuple(int(number) for number in release.groups()) if release else None
-    )
-    if (
-        release_numbers is None
-        or release_numbers < FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE
-    ):
-        minimum = ".".join(
-            str(number) for number in FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE
+    """Raise unless ``client_version`` is Modal 1.6.4 or newer.
+
+    Versions compare as Python packaging defines them, so 1.6.4's development
+    builds and release candidates count as older than 1.6.4.
+    """
+    try:
+        reloads_secrets = (
+            Version(client_version) >= FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE
         )
+    except InvalidVersion:
+        reloads_secrets = False
+    if not reloads_secrets:
         msg = (
-            f"Modal client {client_version} is not {minimum} or newer: containers "
+            f"Modal client {client_version} is not "
+            f"{FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE} or newer: containers "
             "restored from this app's memory snapshots would keep the Secret values "
             "from when each snapshot was taken. Deploy and run from this project's "
             "locked environment, for example "
