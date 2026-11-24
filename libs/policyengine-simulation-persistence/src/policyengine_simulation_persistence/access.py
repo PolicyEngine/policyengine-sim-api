@@ -35,8 +35,8 @@ _CREATE: Final = frozenset({"SELECT", "INSERT"})
 _READ: Final = frozenset({"SELECT"})
 
 # The service creates simulations, reports, their runs, budget windows'
-# calculations and household jobs, and reads the policy, dynamic, household
-# and catalog rows a run needs.
+# calculations, household jobs and simulation runs' cliff calculations, and
+# reads the policy, dynamic, household and catalog rows a run needs.
 SERVICE_TABLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
     {
         "simulations": _CREATE,
@@ -45,6 +45,7 @@ SERVICE_TABLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType
         "report_runs": _CREATE,
         "budget_window_runs": _CREATE,
         "household_jobs": _CREATE,
+        "cliff_impacts": _CREATE,
         "policies": _READ,
         "households": _READ,
         "tax_benefit_models": _READ,
@@ -75,6 +76,7 @@ SERVICE_UPDATABLE_COLUMNS: Final[Mapping[str, frozenset[str]]] = MappingProxyTyp
         "report_runs": _CALL_START,
         "household_jobs": _CALL_START,
         "budget_window_runs": _WINDOW_FAILURE,
+        "cliff_impacts": _CALL_START,
     }
 )
 
@@ -91,35 +93,33 @@ _RUN_STATE: Final = frozenset(
     }
 )
 # The v2 Modal coordinators, workers, household functions and stuck-run sweep
-# read the runs they were given and insert their results, once each. A session's
-# insert of a result also reads the row's server defaults back.
+# read the runs and cliff calculations they were given and insert their results,
+# once each. A session's insert of a result also reads the row's server defaults
+# back. A cliff calculation's result is in its own row.
 MODAL_WORKER_TABLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
     {
         "report_runs": _READ,
         "simulation_runs": _READ,
         "household_jobs": _READ,
         "budget_window_runs": _READ,
+        "cliff_impacts": _READ,
         **dict.fromkeys(RESULT_TABLE_NAMES, _CREATE),
     }
 )
-# The columns the Modal worker role may UPDATE, by table: each run's state and
-# the results its own row holds. A budget-window run has no Modal call of its
-# own; its years' coordinators record its status, failure and times.
+# The columns the Modal worker role may UPDATE, by table: each run's and cliff
+# calculation's state and the results its own row holds. A budget-window run
+# has no Modal call of its own; its years' coordinators record its status,
+# failure and times.
 MODAL_WORKER_UPDATABLE_COLUMNS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
     {
-        "report_runs": _RUN_STATE
-        | {
-            "baseline_cliff_gap",
-            "baseline_cliff_share",
-            "reform_cliff_gap",
-            "reform_cliff_share",
-            "spm_provenance",
-            "data_version",
-        },
+        # A report run's cliff impact is its simulation runs' cliff results,
+        # so the role never writes its four cliff columns.
+        "report_runs": _RUN_STATE | {"spm_provenance", "data_version"},
         "simulation_runs": _RUN_STATE
         | {"output_uri", "output_sha256", "household_result"},
         "household_jobs": _RUN_STATE | {"result"},
         "budget_window_runs": _RUN_STATE - {"modal_call_id"},
+        "cliff_impacts": _RUN_STATE | {"cliff_gap", "cliff_share"},
     }
 )
 

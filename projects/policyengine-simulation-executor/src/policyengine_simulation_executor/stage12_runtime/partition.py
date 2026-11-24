@@ -73,15 +73,28 @@ def stage12_region_groups_for_model(country: str, model: object) -> list[list[st
 
 def should_segment_simulation(simulation: PlannedSimulationExecutionInput) -> bool:
     """Return whether this logical simulation should use the US partition."""
+    if simulation.output_plan.requirements.include_cliff_impacts:
+        return False
+    return should_segment_cliff_calculation(simulation)
+
+
+def should_segment_cliff_calculation(
+    simulation: PlannedSimulationExecutionInput,
+) -> bool:
+    """Return whether a cliff calculation of this simulation uses the US partition.
+
+    It is split exactly when the simulation's own run is: a US national
+    simulation, not marked ``segmented: false``, whose policy turns no
+    labour-supply response on. Its cliff columns don't prevent it, since
+    each person's depend only on their own household's calculation and the
+    cliff share is taken once from the merged rows (``cliff_results``).
+    """
     if simulation.geography.country != "us":
         return False
     if simulation.geography.region.strip().lower() != "us":
         return False
     if simulation.options.get("segmented") is False:
         return False
-    requirements = simulation.output_plan.requirements
-    if requirements.include_cliff_impacts:
-        return False
-    if requirements.labor_supply_response_active:
+    if simulation.output_plan.requirements.labor_supply_response_active:
         return False
     return stage12_region_groups("us") is not None

@@ -368,42 +368,99 @@ def _resolve_output_plan(  # noqa: PLR0913  # the two simulations, then keyword-
             labor_supply_response_active=labor_supply_active,
         )
     with stage_scope(Stage.STAGE12_OUTPUT_VARIABLE_RESOLUTION, stage_attributes):
-        baseline_variables = model.resolve_entity_variables(baseline)
-        reform_variables = model.resolve_entity_variables(reform)
-        dataset_variables = _required_dataset_variables(
-            baseline_input, aggregates=requirements.aggregates
+        entities = _entity_plans(
+            model,
+            (baseline, reform),
+            dataset_variables=_required_dataset_variables(
+                baseline_input, aggregates=requirements.aggregates
+            ),
         )
-        entities = []
-        for entity in sorted(
-            set(baseline_variables) | set(reform_variables) | set(dataset_variables)
-        ):
-            entity_dataset_variables = dataset_variables.get(entity, ())
-            materialized = tuple(
-                sorted(
-                    set(baseline_variables.get(entity, ()))
-                    | set(reform_variables.get(entity, ()))
-                    | set(entity_dataset_variables)
-                )
-            )
-            additional = tuple(
-                sorted(
-                    set((baseline.extra_variables or {}).get(entity, ()))
-                    | set((reform.extra_variables or {}).get(entity, ()))
-                )
-            )
-            entities.append(
-                EntityOutputPlan(
-                    entity=entity,
-                    materialized_variables=materialized,
-                    additional_variables=additional,
-                    dataset_variables=entity_dataset_variables,
-                )
-            )
     return Stage12OutputPlan(
         country=country,
         requirements=requirements,
-        entities=tuple(entities),
+        entities=entities,
     )
+
+
+def resolve_cliff_output_plan(
+    simulation: SimulationExecutionInput,
+    *,
+    stage_scope: StageScope = _unmonitored_stage_scope,
+) -> Stage12OutputPlan:
+    """Resolve the schema of a cliff calculation of ``simulation``'s run.
+
+    The country model's default columns, and the columns .py's cliff impact
+    reads (``cliff_gap``, ``is_on_cliff`` and ``is_adult``), with no
+    labour-supply response, US budget or area columns: a policy's response
+    changes its net incomes, and so its cliffs, whether or not its columns
+    are stored. The requirements record whether the simulation's own policy
+    turns a response on, so ``should_segment_cliff_calculation`` splits the
+    calculation into region groups exactly when the run's own is split.
+    """
+    country = simulation.geography.country
+    stage_attributes = {"country": country}
+    with stage_scope(Stage.STAGE12_COUNTRY_MODEL_LOAD, stage_attributes):
+        model = _country_model(country)
+    with stage_scope(Stage.STAGE12_OUTPUT_CONFIGURATION, stage_attributes):
+        planning = _planning_simulation(simulation, model=model)
+        requirements = ReportOutputRequirements(
+            aggregates=tuple(ReportAggregate),
+            include_cliff_impacts=True,
+            labor_supply_response_active=labor_supply_response_is_active(
+                planning, planning, country_code=country
+            ),
+        )
+        configure_cliff_impact_variables(planning)
+    with stage_scope(Stage.STAGE12_OUTPUT_VARIABLE_RESOLUTION, stage_attributes):
+        entities = _entity_plans(model, (planning,), dataset_variables={})
+    return Stage12OutputPlan(
+        country=country,
+        requirements=requirements,
+        entities=entities,
+    )
+
+
+def _entity_plans(
+    model: OutputVariableModel,
+    simulations: tuple[Simulation, ...],
+    *,
+    dataset_variables: Mapping[str, tuple[str, ...]],
+) -> tuple[EntityOutputPlan, ...]:
+    """Return each entity's columns: every simulation's, and the dataset's copied.
+
+    A column is additional when a simulation adds it to the model's defaults.
+    """
+    variables = [model.resolve_entity_variables(item) for item in simulations]
+    entity_names = set(dataset_variables).union(*variables)
+    entities = []
+    for entity in sorted(entity_names):
+        entity_dataset_variables = dataset_variables.get(entity, ())
+        materialized = tuple(
+            sorted(
+                set(entity_dataset_variables).union(
+                    *(resolved.get(entity, ()) for resolved in variables)
+                )
+            )
+        )
+        additional = tuple(
+            sorted(
+                set().union(
+                    *(
+                        (item.extra_variables or {}).get(entity, ())
+                        for item in simulations
+                    )
+                )
+            )
+        )
+        entities.append(
+            EntityOutputPlan(
+                entity=entity,
+                materialized_variables=materialized,
+                additional_variables=additional,
+                dataset_variables=entity_dataset_variables,
+            )
+        )
+    return tuple(entities)
 
 
 def plan_simulation_input(

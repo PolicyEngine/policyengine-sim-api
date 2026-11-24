@@ -47,10 +47,11 @@ referenced row before adding the row that names it.
 
 ## Tables
 
-`tables.py` models, as SQLAlchemy ORM mapped classes, the six tables the
+`tables.py` models, as SQLAlchemy ORM mapped classes, the seven tables the
 service creates rows in: `Simulation`, `Report`, `SimulationRun`, `ReportRun`,
-`BudgetWindowRun` and `HouseholdJob`, for `simulations`, `reports`,
-`simulation_runs`, `report_runs`, `budget_window_runs` and `household_jobs`.
+`BudgetWindowRun`, `HouseholdJob` and `CliffImpact`, for `simulations`,
+`reports`, `simulation_runs`, `report_runs`, `budget_window_runs`,
+`household_jobs` and `cliff_impacts`.
 They derive from `ServiceBase` in `orm_base.py`, and their tables are in
 `service_metadata`, which names the `public` schema so writes reach those
 tables whatever the role's `search_path`.
@@ -80,6 +81,13 @@ A report run names the two simulation runs it compares
 household report with only a baseline). A report with a `budget_window_size`
 is calculated as a `budget_window_runs` row with one report run per year; each
 year's report run names that row and its year, and belongs to the same report.
+
+`CliffImpact` is one cliff calculation of a simulation run. The service inserts
+a row pending and records the Modal call it starts; the Modal worker role claims
+it and records the run's cliff gap and cliff share, or the failure. A run has at
+most one calculation that hasn't failed (`uq_cliff_impacts_unfailed`), so
+identical requests join it, and a failed one stays recorded. Deleting a run
+deletes its calculations.
 
 ## Result tables
 
@@ -434,10 +442,11 @@ uv run pytest tests/ -m public_api_schema
 `SERVICE_TABLE_PRIVILEGES` lists the table privileges the service's role
 needs: `SELECT` and `INSERT` on the tables it creates rows in
 (`simulations`, `reports`, `simulation_runs`, `report_runs`,
-`budget_window_runs` and `household_jobs`), and `SELECT` on the policy,
-dynamic, household and catalog tables a run reads. `SERVICE_UPDATABLE_COLUMNS`
-lists the columns it may `UPDATE` on `simulation_runs`, `report_runs` and
-`household_jobs`: `status`, `modal_call_id`, `error_message`, `completed_at`
+`budget_window_runs`, `household_jobs` and `cliff_impacts`, a simulation
+run's cliff calculations), and `SELECT` on the policy, dynamic, household and
+catalog tables a run reads. `SERVICE_UPDATABLE_COLUMNS` lists the columns it
+may `UPDATE` on `simulation_runs`, `report_runs`, `household_jobs` and
+`cliff_impacts`: `status`, `modal_call_id`, `error_message`, `completed_at`
 and `updated_at`, to record a Modal call's ID once Modal accepts the call, or
 to fail the run when Modal refuses it. On `budget_window_runs` it lists
 `status`, `error_message`, `completed_at` and `updated_at`, to fail a window
@@ -447,14 +456,17 @@ refuses any other change to a run. The Public API's privilege manifest grants
 them all.
 
 `MODAL_WORKER_TABLE_PRIVILEGES` and `MODAL_WORKER_UPDATABLE_COLUMNS` list what
-the Modal worker role needs: `SELECT` on the four run tables, `SELECT` and
-`INSERT` on every result table, because a session's insert reads the row's
-server defaults back, and `UPDATE` of each run's state (`status`,
-`modal_call_id`, `error_message`, `started_at`, `completed_at` and
-`updated_at`; a budget-window run has no call of its own) and of the results
-its own row holds: a report run's cliff impact, `spm_provenance` and
-`data_version`, a simulation run's output file and `household_result`, and a
-household job's `result`. The Public API's manifest grants them;
+the Modal worker role needs: `SELECT` on the four run tables and
+`cliff_impacts`, `SELECT` and `INSERT` on every result table, because a
+session's insert reads the row's server defaults back, and `UPDATE` of each
+run's and cliff calculation's state (`status`, `modal_call_id`,
+`error_message`, `started_at`, `completed_at` and `updated_at`; a budget-window
+run has no call of its own) and of the results its own row holds: a report
+run's `spm_provenance` and `data_version`, a simulation run's output file and
+`household_result`, a household job's `result`, and a cliff calculation's
+`cliff_gap` and `cliff_share`. It no longer writes a report run's four cliff
+columns, which API v1 is to drop: a report run's cliff impact is its
+two simulation runs' cliff results. The same privilege manifest grants them;
 `test_modal_worker_writes` checks that in CI.
 
 `missing_table_privileges` returns each one the connected role lacks, ordered

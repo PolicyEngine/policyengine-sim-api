@@ -129,6 +129,29 @@ def test_a_report_run_is_named_by_its_run_ids_with_no_evaluation_record() -> Non
     assert context.retention_expires_at - context.created_at == timedelta(days=30)
 
 
+def test_the_contexts_the_service_sends_name_no_cliff_result() -> None:
+    """A v2 application deployed before cliff results refuses the field, even null."""
+    worker = _worker()
+    report = report_run_calculation(
+        worker,
+        _scope(),
+        ORIGIN,
+        run_ids=RUN_IDS,
+        baseline_policy={},
+        reform_policy=REFORM,
+    )
+    standalone = simulation_run_calculation(
+        worker,
+        _scope(options={}),
+        ORIGIN,
+        simulation_run_id=BASELINE_RUN_ID,
+        policy=REFORM,
+    )
+
+    assert "cliff_result_id" not in report.context
+    assert "cliff_result_id" not in standalone.context
+
+
 def test_a_standalone_run_is_named_in_its_functions_context() -> None:
     worker = _worker()
 

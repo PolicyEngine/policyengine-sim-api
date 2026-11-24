@@ -6,7 +6,8 @@ changes nothing that is already final. A report run's completion sets its own
 result columns in the same update, and inserts its result rows in the same
 transaction, only when its update changed the run. A household job is
 written the same way, and its result document is set in the update that
-finishes it.
+finishes it. The stuck-run sweep's reads and failures here also serve cliff
+results, which ``CliffResultStore`` otherwise writes.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from policyengine_simulation_persistence.tables import (
     BudgetWindowRun,
+    CliffImpact,
     HouseholdJob,
     ReportRun,
     SimulationRun,
@@ -44,7 +46,7 @@ if TYPE_CHECKING:
 
 
 class RunStatus(StrEnum):
-    """A report run's, simulation run's or household job's status."""
+    """A report run's, simulation run's, household job's or cliff result's status."""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -56,25 +58,28 @@ ACTIVE_STATUSES = (RunStatus.PENDING.value, RunStatus.RUNNING.value)
 
 
 class RunKind(StrEnum):
-    """Which run table a run, or a household job, is in."""
+    """Which table a run, household job or simulation run's cliff result is in."""
 
     REPORT_RUN = "report_run"
     SIMULATION_RUN = "simulation_run"
     HOUSEHOLD_JOB = "household_job"
+    CLIFF_RESULT = "cliff_result"
 
 
-type RunModel = type[ReportRun | SimulationRun | HouseholdJob]
+type RunModel = type[ReportRun | SimulationRun | HouseholdJob | CliffImpact]
 
 RUN_MODELS: Final[dict[RunKind, RunModel]] = {
     RunKind.REPORT_RUN: ReportRun,
     RunKind.SIMULATION_RUN: SimulationRun,
     RunKind.HOUSEHOLD_JOB: HouseholdJob,
+    RunKind.CLIFF_RESULT: CliffImpact,
 }
 # What a missing row is called.
 _ROW_NOUNS: Final[dict[RunModel, str]] = {
     ReportRun: "report run",
     SimulationRun: "simulation run",
     HouseholdJob: "household job",
+    CliffImpact: "cliff result",
 }
 # A bulk insert otherwise leaves out each column a row sets to None. Every row
 # names the same columns, so the insert stays one statement that sets them NULL.
@@ -83,7 +88,7 @@ _EVERY_NAMED_COLUMN: Final = {"render_nulls": True}
 
 @dataclass(frozen=True)
 class ActiveRun:
-    """A pending or running run or household job, and its recorded Modal call.
+    """A pending or running run, household job or cliff result, and its Modal call.
 
     ``modal_call_id`` is None for a run with no call recorded.
     ``budget_window_run_id`` is the budget-window run a report run is a year
@@ -132,7 +137,8 @@ class ReportRunStore:
     """Status writes to the Public API's run tables and household jobs.
 
     It also reads a simulation run's state, for a report run that names one
-    that already succeeded.
+    that already succeeded. The sweep's listing and failure of stuck rows
+    serve every ``RunKind``, simulation runs' cliff results included.
     """
 
     def __init__(
@@ -559,8 +565,8 @@ class ReportRunStore:
     ) -> tuple[ActiveRun, ...]:
         """Return the pending and running runs of ``kind`` active since before a time.
 
-        A run counts from its first claim, or from its creation while it is
-        pending; a household job counts from its creation, as the table's
+        A run or cliff result counts from its first claim, or from its creation
+        while it is pending; a household job counts from its creation, as the table's
         status and creation index allows. Runs are oldest first, with or
         without a recorded Modal call. A simulation run is listed only while
         no pending or running report run names it as its baseline or reform:
@@ -714,8 +720,8 @@ def _uniform_rows(rows: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
 def running_under_call(model: RunModel, modal_call_id: str) -> ColumnElement[bool]:
     """Return the condition that a row is running under ``modal_call_id``.
 
-    A run or household job is completed or failed by a call only while that
-    call holds it running.
+    A run, household job or cliff result is completed or failed by a call only
+    while that call holds it running.
     """
     return and_(
         model.status == RunStatus.RUNNING.value,
@@ -726,14 +732,16 @@ def running_under_call(model: RunModel, modal_call_id: str) -> ColumnElement[boo
 def _active_since(kind: RunKind) -> SQLColumnExpression[datetime]:
     """Return when a run of ``kind`` became active, for the sweep's ages.
 
-    A household job counts from its creation. A run counts from its first
-    claim or, before it, from its creation, except a budget window's year,
-    which counts from its last change: when its call was recorded.
+    A household job counts from its creation. A run or cliff result counts from
+    its first claim or, before it, from its creation, except a budget window's
+    year, which counts from its last change: when its call was recorded.
     """
     if kind is RunKind.HOUSEHOLD_JOB:
         return HouseholdJob.created_at
     if kind is RunKind.SIMULATION_RUN:
         return func.coalesce(SimulationRun.started_at, SimulationRun.created_at)
+    if kind is RunKind.CLIFF_RESULT:
+        return func.coalesce(CliffImpact.started_at, CliffImpact.created_at)
     unclaimed_since = case(
         (ReportRun.budget_window_run_id.is_not(None), ReportRun.updated_at),
         else_=ReportRun.created_at,

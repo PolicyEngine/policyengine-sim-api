@@ -16,6 +16,7 @@ from conftest import SERVICE_TEST_ROLE, simulation_engine
 from policyengine_simulation_persistence import (
     BudgetSummary,
     BudgetWindowRun,
+    CliffImpact,
     CongressionalDistrictImpact,
     ConstituencyImpact,
     Dataset,
@@ -72,6 +73,7 @@ SERVICE_CLASSES = {
     "budget_window_runs": BudgetWindowRun,
     "report_runs": ReportRun,
     "household_jobs": HouseholdJob,
+    "cliff_impacts": CliffImpact,
 }
 REFERENCED_CLASSES = {
     "datasets": referenced_tables.ReferencedDataset,

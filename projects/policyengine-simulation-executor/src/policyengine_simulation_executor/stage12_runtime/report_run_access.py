@@ -1,12 +1,12 @@
-"""The Modal worker role's database credentials, which runs and household jobs use.
+"""The Modal worker role's database credentials, for runs, cliffs and household jobs.
 
 An operator creates the Modal secret in each Modal environment. The v2 Modal
 application attaches it to the coordinator, which records the report run
 its call names, to the simulation workers, each of which claims and records
-the simulation run its call names, and to the household functions, which
-record the household job their call names. The coordinator also starts a
-budget window's waiting years, and it and the stuck-run sweep record the
-window's outcome. The secret must exist in a Modal environment before the
+the simulation run or cliff result its call names, and to the household
+functions, which record the household job their call names. The coordinator
+also starts a budget window's waiting years, and it and the stuck-run sweep
+record the window's outcome. The secret must exist in a Modal environment before the
 v2 application deploys there: ``modal deploy`` checks its required key and
 fails without it.
 """
@@ -17,7 +17,11 @@ import os
 from functools import partial
 from typing import TYPE_CHECKING, Protocol
 
-from policyengine_stage12_persistence import BudgetWindowStore, ReportRunStore
+from policyengine_stage12_persistence import (
+    BudgetWindowStore,
+    CliffResultStore,
+    ReportRunStore,
+)
 
 from .database_retry import open_session_with_retry
 
@@ -177,6 +181,18 @@ def report_run_store(runtime: ObservabilityRuntime | None = None) -> ReportRunSt
     ``postgresql://`` URL.
     """
     return ReportRunStore(
+        os.environ.get(MODAL_WORKER_DATABASE_URL_ENV, ""),
+        open_session=partial(open_session_with_retry, runtime=runtime),
+    )
+
+
+def cliff_result_store(runtime: ObservabilityRuntime | None = None) -> CliffResultStore:
+    """Build the cliff result store from ``MODAL_WORKER_DATABASE_URL``.
+
+    Raises ``ValueError`` when the variable is unset or not a complete
+    ``postgresql://`` URL.
+    """
+    return CliffResultStore(
         os.environ.get(MODAL_WORKER_DATABASE_URL_ENV, ""),
         open_session=partial(open_session_with_retry, runtime=runtime),
     )
