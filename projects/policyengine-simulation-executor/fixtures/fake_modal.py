@@ -8,6 +8,7 @@ a per-file copy. The fakes record calls; they run nothing.
 from __future__ import annotations
 
 import sys
+from importlib import metadata
 from types import ModuleType
 from typing import TYPE_CHECKING, Self
 
@@ -186,6 +187,8 @@ def install_fake_modal(monkeypatch: pytest.MonkeyPatch) -> None:
     re-imported.
     """
     modal = ModuleType("modal")
+    # The installed client's version, which src/modal/app.py checks on import.
+    modal.__version__ = metadata.version("modal")
     lifecycle_hooks = FakeLifecycleHooks()
     modal.lifecycle_hooks = lifecycle_hooks
     modal.enter = lifecycle_hooks.enter

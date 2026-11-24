@@ -3,6 +3,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
 from fixtures.fake_modal import install_fake_modal
 from policyengine_simulation_executor.release_bundle import (
     get_bundled_package_version,
@@ -208,6 +209,54 @@ def test_both_simulation_workers_load_the_country_models_before_the_snapshot(
     for worker_class in (app.SimulationWorker, app.SimulationSegmentWorker):
         assert worker_class.load_country_models is snapshot_hooks[0]
         assert worker_class.reseed_random_after_restore is restore_hooks[0]
+
+
+@pytest.mark.parametrize("client_version", ["1.4.2", "1.5.5", "1.6.3"])
+def test_a_deploy_with_a_modal_client_older_than_1_6_4_is_refused(
+    monkeypatch, client_version
+):
+    # Containers restored from a memory snapshot reload Secret values only
+    # from Modal 1.6.4, and each app runs the client that deployed it.
+    install_fake_modal(monkeypatch)
+    monkeypatch.setattr(sys.modules["modal"], "__version__", client_version)
+    sys.modules.pop("src.modal.app", None)
+
+    with pytest.raises(RuntimeError, match=r"1\.6\.4") as refused:
+        importlib.import_module("src.modal.app")
+
+    assert client_version in str(refused.value)
+    sys.modules.pop("src.modal.app", None)
+
+
+@pytest.mark.parametrize("client_version", ["1.6.4", "1.10.0", "1.7.0.dev3"])
+def test_a_deploy_with_modal_1_6_4_or_newer_is_allowed(monkeypatch, client_version):
+    install_fake_modal(monkeypatch)
+    monkeypatch.setattr(sys.modules["modal"], "__version__", client_version)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    assert app.SimulationWorker is not None
+    sys.modules.pop("src.modal.app", None)
+
+
+def test_a_container_imports_the_app_whatever_the_client_version(monkeypatch):
+    # Inside a container the client is the one the app was deployed with, so
+    # the check applies only where the app is deployed or run from.
+    install_fake_modal(monkeypatch)
+    monkeypatch.setattr(sys.modules["modal"], "__version__", "1.4.2")
+    monkeypatch.setattr(sys.modules["modal"], "is_local", lambda: False)
+    # A container reads its versions from the image environment.
+    monkeypatch.setenv("POLICYENGINE_VERSION", "4.19.1")
+    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.27.1")
+    monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.700.0")
+    monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.0")
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    assert app.SimulationWorker is not None
+    sys.modules.pop("src.modal.app", None)
 
 
 def test_modal_image_refreshes_ca_certificates_before_installing_packages(
