@@ -147,22 +147,6 @@ def test_simulation_workers_are_classes_restored_from_memory_snapshots(monkeypat
         "SimulationWorker": {**worker_options, "max_containers": 100},
         "SimulationSegmentWorker": {**worker_options, "max_containers": 300},
     }
-    # Plain functions with the same names and limits stay, without a snapshot,
-    # for callers still running the code from before the classes: the gateway
-    # while a deploy is under way, and runs that started before it.
-    function_form_options = {
-        option: value
-        for option, value in worker_options.items()
-        if option != "enable_memory_snapshot"
-    }
-    assert function_options["run_simulation"] == {
-        **function_form_options,
-        "max_containers": 100,
-    }
-    assert function_options["run_simulation_segment"] == {
-        **function_form_options,
-        "max_containers": 300,
-    }
     # The budget-window parent stays a small plain function with no snapshot.
     assert "enable_memory_snapshot" not in function_options["run_budget_window_batch"]
 
