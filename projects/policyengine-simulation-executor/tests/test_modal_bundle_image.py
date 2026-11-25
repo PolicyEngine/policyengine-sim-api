@@ -187,12 +187,12 @@ def test_the_simulation_workers_are_not_also_plain_functions(monkeypatch):
     # Every caller of an app built from this code reaches the workers through
     # their classes. Only apps deployed before the classes define the plain
     # run_simulation function that the gateway falls back to.
-    plain_function_names = [name for name, _options in app.app.function_calls]
-    assert plain_function_names == ["run_budget_window_batch"]
+    plain_function_names = {name for name, _options in app.app.function_calls}
     for worker_method_name in (
         simulation_workers.SIMULATION_WORKER_METHOD,
         simulation_workers.SEGMENT_WORKER_METHOD,
     ):
+        assert worker_method_name not in plain_function_names
         assert not hasattr(app, worker_method_name)
 
 

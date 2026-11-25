@@ -1004,6 +1004,28 @@ def test_preempted_segment_is_recorded_at_warning(
     assert _error_records(written_records) == []
 
 
+def test_a_segment_returns_its_result_and_records_success(
+    modal_app, monkeypatch, recorded_observability_runtime
+):
+    # The segmented parent reduces the results its children return.
+    runtime, written_records = recorded_observability_runtime
+    monkeypatch.setattr(
+        modal_app,
+        "_configure_modal_observability",
+        lambda *, service_role: runtime,
+    )
+    monkeypatch.setattr(
+        sr, "run_simulation_impl", lambda _params, *, runtime: {"segment": "done"}
+    )
+
+    segment_result = modal_app.SimulationSegmentWorker().run_simulation_segment(
+        {"country": "us"}
+    )
+
+    assert segment_result == {"segment": "done"}
+    assert _operation_completions(written_records) == [("INFO", "success")]
+
+
 def _operation_completions(written_records: list[dict]) -> list[tuple[str, str]]:
     """Return the severity and outcome of each operation completion record."""
     return [
