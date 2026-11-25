@@ -330,32 +330,39 @@ class _ContainerCalls:
     """Says how this container started, and numbers the worker calls it serves.
 
     A Modal container serves one worker class or function, so this module's
-    state is the container's. The workers' snapshot hook records the
-    ``MODAL_TASK_ID`` of the container it runs in, before Modal takes the
-    snapshot. A container restored from the snapshot starts with that record
-    in memory, but Modal 1.6.4 sets its ``MODAL_TASK_ID`` to its own task ID,
-    so the two differ. The recorded ID is only compared, never reported: it
-    names the snapshotting container, not the one serving the call.
+    state is the container's. The workers' snapshot hook records whether
+    Modal snapshots the container it runs in, and that container's
+    ``MODAL_TASK_ID``, before Modal takes the snapshot. A container restored
+    from the snapshot starts with that record in memory, but Modal 1.6.4 sets
+    its ``MODAL_TASK_ID`` to its own task ID, so the two IDs differ. The
+    recorded ID is only compared, never reported: it names the snapshotting
+    container, not the one serving the call.
 
     The call counter is in the snapshot too, but no call runs before Modal
     takes it, so every container's first call is number 1.
     """
 
     def __init__(self) -> None:
-        self._snapshot_hook_ran = False
-        self._snapshot_hook_task_id: str | None = None
+        self._snapshot_taken_here = False
+        self._snapshot_task_id: str | None = None
         self._call_numbers = itertools.count(1)
 
     def record_snapshot_hook(self) -> None:
-        """Record that the snapshot hook runs in this container, and its task ID."""
-        self._snapshot_hook_ran = True
-        self._snapshot_hook_task_id = os.environ.get("MODAL_TASK_ID")
+        """Record, from the snapshot hook, whether Modal snapshots this container.
+
+        Modal 1.6.4 runs the hook in every container that doesn't restore, and
+        takes a snapshot only when its worker has set
+        ``MODAL_ENABLE_SNAP_RESTORE`` to ``1`` (``maybe_snapshot`` in
+        ``modal/_runtime/user_code_imports.py``).
+        """
+        self._snapshot_taken_here = os.environ.get("MODAL_ENABLE_SNAP_RESTORE") == "1"
+        self._snapshot_task_id = os.environ.get("MODAL_TASK_ID")
 
     def container_start(self) -> ContainerStart:
-        """Compare this container's task ID with the snapshot hook's, if it ran."""
-        if not self._snapshot_hook_ran:
+        """Compare this container's task ID with the snapshotting container's."""
+        if not self._snapshot_taken_here:
             return ContainerStart.NO_SNAPSHOT
-        if os.environ.get("MODAL_TASK_ID") == self._snapshot_hook_task_id:
+        if os.environ.get("MODAL_TASK_ID") == self._snapshot_task_id:
             return ContainerStart.TOOK_SNAPSHOT
         return ContainerStart.RESTORED_FROM_SNAPSHOT
 
@@ -549,8 +556,8 @@ class _CountryModelsLoadedBeforeSnapshot:
     def load_country_models(self) -> None:
         """Load both countries' models and the SPM capability into the snapshot.
 
-        First records this container's task ID, so each call can report
-        whether its container restored from the snapshot (``_ContainerCalls``).
+        First records whether Modal snapshots this container, and its task ID,
+        so each call can report how its container started (``_ContainerCalls``).
         """
         _CONTAINER_CALLS.record_snapshot_hook()
         preload_country_models()

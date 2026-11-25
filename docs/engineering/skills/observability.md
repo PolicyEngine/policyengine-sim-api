@@ -190,41 +190,52 @@ its running segments.
 Each call of the versioned app's workers (`run_simulation` and
 `run_simulation_segment`, as class methods and as plain functions) and of
 `run_budget_window_batch` sets two attributes on its operation, so on its
-`operation.completed` log record and its span. `_set_modal_call_attributes`
-in `src/modal/app.py` sets them when the operation opens, so a call that
-fails or is preempted carries them too.
+`operation.completed` log record and its span. Only the operation's span
+carries them, not its child spans such as `country_module_load`.
+`_set_modal_call_attributes` in `src/modal/app.py` sets them when the
+operation opens, so a call that fails or is preempted carries them too.
 
 | Attribute | Values |
 |---|---|
-| `container_start` | `restored_from_snapshot`: the container was restored from a memory snapshot, so it started with the country models loaded. `took_snapshot`: the snapshot hook, which loads the models, ran in this container; Modal takes the snapshot from such a container. `no_snapshot`: the function has no snapshot hook: the plain `run_simulation` and `run_simulation_segment` functions, and `run_budget_window_batch`. |
+| `container_start` | `restored_from_snapshot`: the container was restored from a memory snapshot, so it started with the country models loaded. `took_snapshot`: Modal took the snapshot from this container, after the snapshot hook loaded the models in it. `no_snapshot`: the container neither took a snapshot nor was restored from one. That is every container of the plain `run_simulation` and `run_simulation_segment` functions and of `run_budget_window_batch`, which have no snapshot hook, and a worker class container that Modal started without snapshots, whose hook loaded the models before its first call. |
 | `container_call_number` | The call's place among the calls the container has served: 1 for its first call, 2 for its second, and so on. A call counts even when setting its attributes fails. |
 
-The workers' snapshot hook (`load_country_models`) records `MODAL_TASK_ID`,
-Modal's ID for the container, before Modal takes the snapshot, and each call
-compares it with the current `MODAL_TASK_ID`. A restored container starts
-with the recorded ID in memory, but Modal 1.6.4 sets its `MODAL_TASK_ID` to
-its own task ID while restoring it (`memory_restore` in
-`modal/_runtime/task_lifecycle_manager.py`). Modal doesn't document that, so
-check the attribute against Modal's own container records (the
-`snapshot_behavior` field of its `TaskGetInfo` call). A container that starts
-without restoring for another reason, such as one Modal starts again after a
-failed restore, runs the hook itself and reports `took_snapshot`. The
-recorded ID names the snapshotting container, so it is never reported.
+How a call tells them apart, in Modal 1.6.4:
 
-The restore itself happens before any worker code runs, so no span measures
-it; only Modal's container records hold its duration. A restored container's
-setup time shows in its first call's spans (`restored_from_snapshot` and
-`container_call_number` 1), such as the time from the operation's start to its
-`dataset_load` span, which a container that hasn't loaded the models spends
-importing them. Compare those calls with first calls that report
-`took_snapshot` or `no_snapshot`, which load the models themselves, and with
-later calls (`container_call_number` above 1), which reuse what the container
-has loaded.
+- **Before the snapshot:** Modal runs the workers' snapshot hook
+  (`load_country_models`) in every container that isn't restored, and takes a
+  snapshot only when its worker has set `MODAL_ENABLE_SNAP_RESTORE` to `1`
+  (`maybe_snapshot` in `modal/_runtime/user_code_imports.py`). The hook records
+  that flag and the container's `MODAL_TASK_ID`.
+- **On restore:** a restored container starts with that record in memory, but
+  Modal sets its `MODAL_TASK_ID` to its own task ID (`memory_restore` in
+  `modal/_runtime/task_lifecycle_manager.py`). A call reports
+  `restored_from_snapshot` when the two IDs differ, and `took_snapshot` when
+  they match.
+- **Not documented by Modal:** neither variable's behaviour is, so check the
+  attribute against Modal's own container records (the `snapshot_behavior`
+  field of its `TaskGetInfo` call), and again after a Modal upgrade.
+- **Never reported:** the recorded ID names the snapshotting container, not
+  the one serving the call.
 
-Neither attribute reaches metrics: the package's metric attribute keys don't
-include them, and each call number would make another series.
-`container_start` has three values. Records from apps deployed before these
-attributes carry neither.
+Neither the restore nor the snapshot hook runs inside a call, so no span
+measures them; Modal's container records hold the restore's duration. A
+call's spans show the setup still left in it:
+
+- In the first call of a plain function's container, which loads the models
+  itself, most of that setup is in the `country_module_load` span, which
+  imports policyengine.py's country model module, and, for a US run, in the
+  time from the operation's start to that span, which includes the SPM
+  capability check.
+- In a container whose hook loaded the models, the first call's time there
+  should be close to later calls' (`container_call_number` above 1).
+- A container's first `calculation` has also been slower than its later ones;
+  compare that span between first and later calls too.
+
+Neither attribute reaches metrics: the package's operation metrics carry only
+the service's identity and the operation's name, kind and outcome, and each
+call number would make another series. `container_start` has three values.
+Records from apps deployed before these attributes carry neither.
 
 ## Metric resource identity
 
