@@ -349,7 +349,6 @@ def _second_report_run(  # noqa: PLR0913  # the run, then what it names and whos
                     else reform_simulation_run_id
                 ),
                 status=status,
-                trigger="manual",
                 country_package_version=first["country_package_version"],
                 policyengine_version=first["policyengine_version"],
                 **(

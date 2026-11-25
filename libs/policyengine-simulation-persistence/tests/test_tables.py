@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from policyengine_simulation_persistence import (
     SERVICE_TABLE_PRIVILEGES,
     BudgetWindowRun,
@@ -16,9 +17,35 @@ from policyengine_simulation_persistence import (
     referenced_metadata,
     service_metadata,
 )
-from policyengine_simulation_persistence.orm_base import enum_type
+from policyengine_simulation_persistence.orm_base import ServiceBase, enum_type
 from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
-from sqlalchemy import Enum, ForeignKeyConstraint, Index, Table, UniqueConstraint
+from sqlalchemy import (
+    Enum,
+    ForeignKeyConstraint,
+    Index,
+    Table,
+    UniqueConstraint,
+    inspect,
+)
+
+# The columns API v1's revision 4e30076d4b9f drops. The models name none of
+# them, so a release works on a database that has them and on one that doesn't.
+COLUMNS_API_V1_DROPS = {
+    Report: {"label", "description", "user_id"},
+    ReportRun: {
+        "trigger",
+        "baseline_cliff_gap",
+        "baseline_cliff_share",
+        "reform_cliff_gap",
+        "reform_cliff_share",
+    },
+    BudgetWindowRun: {"trigger"},
+}
+# The foreign key, index and check that revision drops with those columns.
+CONSTRAINTS_API_V1_DROPS = {
+    Report: {"fk_reports_user_id_users", "ix_reports_user_id"},
+    ReportRun: {"ck_report_runs_cliff_impact_complete"},
+}
 
 
 def _key(constraint: ForeignKeyConstraint) -> tuple[tuple[str, ...], str, str]:
@@ -51,6 +78,32 @@ def _indexed_columns(table: Table, index_name: str) -> tuple[str, ...]:
     return tuple(column.name for column in index.columns)
 
 
+@pytest.mark.parametrize(
+    ("model", "dropped_columns"),
+    COLUMNS_API_V1_DROPS.items(),
+    ids=lambda value: getattr(value, "__name__", None),
+)
+def test_a_model_maps_none_of_the_columns_api_v1_drops(
+    model: type[ServiceBase], dropped_columns: set[str]
+) -> None:
+    mapped_columns = {column.name for column in inspect(model).columns}
+
+    assert mapped_columns.isdisjoint(dropped_columns)
+
+
+@pytest.mark.parametrize(
+    ("model", "dropped_names"),
+    CONSTRAINTS_API_V1_DROPS.items(),
+    ids=lambda value: getattr(value, "__name__", None),
+)
+def test_a_model_declares_no_constraint_or_index_api_v1_drops(
+    model: type[ServiceBase], dropped_names: set[str]
+) -> None:
+    declared_names = {getattr(item, "name", None) for item in model.__table_args__}
+
+    assert declared_names.isdisjoint(dropped_names)
+
+
 def test_the_models_describe_every_table_the_service_creates_rows_in() -> None:
     created_tables = {
         table_name
@@ -74,7 +127,7 @@ def test_the_models_declare_every_key_to_the_public_apis_own_tables() -> None:
     }
 
     assert keys_to_public_api_tables == KEYS_TO_PUBLIC_API_TABLES
-    assert len(KEYS_TO_PUBLIC_API_TABLES) == 20
+    assert len(KEYS_TO_PUBLIC_API_TABLES) == 19
 
 
 def test_the_public_apis_tables_are_modelled_by_their_id_alone() -> None:
@@ -94,7 +147,6 @@ def test_the_public_apis_tables_are_modelled_by_their_id_alone() -> None:
         "regions",
         "tax_benefit_model_versions",
         "tax_benefit_models",
-        "users",
     }
     assert set(referenced_metadata.tables.values()) == named_tables
     for table in named_tables:
@@ -103,8 +155,7 @@ def test_the_public_apis_tables_are_modelled_by_their_id_alone() -> None:
 
 
 def test_the_columns_the_public_apis_deletes_search_are_indexed() -> None:
-    """Deleting a user or model version searches these columns for its rows."""
-    assert _indexed_columns(Report.__table__, "ix_reports_user_id") == ("user_id",)
+    """Deleting a model version searches these columns for its rows."""
     assert _indexed_columns(
         SimulationRun.__table__, "ix_simulation_runs_tax_benefit_model_version_id"
     ) == ("tax_benefit_model_version_id",)
@@ -134,7 +185,7 @@ def test_every_enum_type_names_the_public_schema() -> None:
     ]
 
     # Including cliff_impacts.status, which reuses the simulation runs' type.
-    assert len(enum_columns) == 8
+    assert len(enum_columns) == 6
     for column in enum_columns:
         assert column.type.schema == "public", f"{column.table.name}.{column.name}"
     # The helper every enum column uses, before any table adopts its type.
@@ -310,15 +361,6 @@ def test_a_run_is_unforced_unless_its_insert_marks_it() -> None:
     for table in (SimulationRun.__table__, ReportRun.__table__):
         assert table.c.forced.nullable is False, table.name
         assert str(table.c.forced.server_default.arg) == "false", table.name
-
-
-def test_the_per_user_columns_are_nullable() -> None:
-    """Answer 6: the service writes no request's label, description or trigger."""
-    assert Report.label.nullable is True
-    assert Report.description.nullable is True
-    assert Report.user_id.nullable is True
-    assert ReportRun.trigger.nullable is True
-    assert BudgetWindowRun.trigger.nullable is True
 
 
 def test_a_window_run_is_one_per_report_and_version_set_unless_recalculated() -> None:

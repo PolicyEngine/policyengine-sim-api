@@ -32,11 +32,18 @@ from policyengine_simulation_persistence import (
     read_economy_report,
     read_economy_simulation,
 )
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 pytestmark = pytest.mark.public_api_schema
 
 EARLIER = datetime(2026, 11, 1, tzinfo=UTC)
+
+
+def _report_id_of(connection, report_run_id: UUID) -> UUID:
+    """Return the ID of the report the stored report run belongs to."""
+    return connection.execute(
+        select(ReportRun.report_id).where(ReportRun.id == report_run_id)
+    ).scalar_one()
 
 
 def _report_with_runs(connection, economy: EconomyCatalog) -> tuple[UUID, list[UUID]]:
@@ -60,13 +67,7 @@ def _report_with_runs(connection, economy: EconomyCatalog) -> tuple[UUID, list[U
             ReportRunOutcome(status=ReportRunStatus.FAILED, error_message="first"),
         )
     ]
-    report_id = (
-        connection.execute(
-            ReportRun.__table__.select().where(ReportRun.id == run_ids[0])
-        )
-        .one()
-        .report_id
-    )
+    report_id = _report_id_of(connection, run_ids[0])
     forced_shape = RunShape(status=SimulationStatus.PENDING, forced=True)
     for _ in range(2):
         run_id = uuid4()
@@ -83,7 +84,6 @@ def _report_with_runs(connection, economy: EconomyCatalog) -> tuple[UUID, list[U
                 country_package_version=COUNTRY_PACKAGE_VERSION,
                 policyengine_version=POLICYENGINE_VERSION,
                 status=ReportRunStatus.PENDING,
-                trigger="manual",
                 forced=True,
             )
         )
@@ -141,13 +141,7 @@ def test_a_failed_newest_run_is_read_with_its_error(public_api_database_url) -> 
                 error_message="simulation_failed: the reform failed",
             ),
         )
-        report_id = (
-            connection.execute(
-                ReportRun.__table__.select().where(ReportRun.id == run_id)
-            )
-            .one()
-            .report_id
-        )
+        report_id = _report_id_of(connection, run_id)
         act_as_the_service(connection)
 
         report = in_session(connection, read_economy_report, report_id)

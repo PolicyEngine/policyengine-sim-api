@@ -59,7 +59,6 @@ from policyengine_simulation_persistence import (
     service_metadata,
     tables,
 )
-from public_api_keys import KEYS_TO_PUBLIC_API_TABLES
 from schema_comparison import describe_tables
 from sqlalchemy import create_engine, inspect, select, text, update
 from sqlalchemy.dialects import postgresql
@@ -83,7 +82,6 @@ REFERENCED_CLASSES = {
     "regions": referenced_tables.ReferencedRegion,
     "tax_benefit_model_versions": referenced_tables.ReferencedTaxBenefitModelVersion,
     "tax_benefit_models": referenced_tables.ReferencedTaxBenefitModel,
-    "users": referenced_tables.ReferencedUser,
 }
 INPUT_CLASSES = {
     "tax_benefit_models": TaxBenefitModel,
@@ -209,7 +207,6 @@ def test_the_keys_to_api_v1s_tables_name_the_referenced_classes() -> None:
     }
 
     assert named_tables == referenced
-    assert len(KEYS_TO_PUBLIC_API_TABLES) == 20
 
 
 def test_every_mapper_configures() -> None:

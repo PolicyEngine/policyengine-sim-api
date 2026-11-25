@@ -189,9 +189,6 @@ def test_a_keyed_report_is_created_with_its_simulations_and_first_run(
             "inputs",
             "type",
             "budget_window_size",
-            "label",
-            "description",
-            "user_id",
         )
     } == {
         "key_version": KEY_VERSION,
@@ -203,22 +200,13 @@ def test_a_keyed_report_is_created_with_its_simulations_and_first_run(
         "inputs": {"spm": NATIONAL_SPM},
         "type": "economy",
         "budget_window_size": None,
-        # Answer 6: a shared report holds no request's label or user.
-        "label": None,
-        "description": None,
-        "user_id": None,
     }
     assert (baseline["key_version"], baseline["definition_key"]) == (
         KEY_VERSION,
         definition.simulation("baseline").definition_key,
     )
     assert reform["definition_key"] == definition.simulation("reform").definition_key
-    # Answer 6: the trigger is each user's record's, not the shared run's.
-    assert (run["status"], run["forced"], run["trigger"]) == (
-        ReportRunStatus.PENDING,
-        False,
-        None,
-    )
+    assert (run["status"], run["forced"]) == (ReportRunStatus.PENDING, False)
     assert (
         reform_run["status"],
         reform_run["forced"],
@@ -360,7 +348,6 @@ def test_a_forced_run_is_never_joined_by_a_create(public_api_database_url) -> No
                 country_package_version=VERSIONS.country_package_version,
                 policyengine_version=VERSIONS.policyengine_version,
                 status=ReportRunStatus.PENDING,
-                trigger="manual",
                 forced=True,
             )
         )
@@ -549,7 +536,6 @@ def test_a_request_losing_the_report_run_to_another_joins_it_and_keeps_nothing(
                     country_package_version=VERSIONS.country_package_version,
                     policyengine_version=VERSIONS.policyengine_version,
                     status=ReportRunStatus.PENDING,
-                    trigger="initial",
                 )
             )
         competing.append(run_id)

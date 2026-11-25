@@ -136,8 +136,6 @@ def test_the_modal_worker_role_updates_its_runs_state_and_results() -> None:
     its status, failure and times.
     """
     assert dict(MODAL_WORKER_UPDATABLE_COLUMNS) == {
-        # A report run's cliff impact is its simulation runs' cliff results,
-        # so its own four cliff columns are never written.
         "report_runs": RUN_STATE_COLUMNS | {"spm_provenance", "data_version"},
         "simulation_runs": RUN_STATE_COLUMNS
         | {"output_uri", "output_sha256", "household_result"},

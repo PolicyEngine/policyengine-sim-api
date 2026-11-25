@@ -88,7 +88,6 @@ class BudgetWindowSeeder:
             connection.execute(
                 insert(table("reports")).values(
                     id=report_id,
-                    label="Budget window test",
                     country="us",
                     tax_benefit_model_id=model_id,
                     baseline_simulation_id=simulation_ids[0],
@@ -103,7 +102,6 @@ class BudgetWindowSeeder:
                     id=window_run_id,
                     report_id=report_id,
                     tax_benefit_model_version_id=version_id,
-                    trigger="initial",
                     recalculate=False,
                     status="pending",
                     **SEEDED_AT,
@@ -135,7 +133,6 @@ class BudgetWindowSeeder:
                         budget_window_run_id=window_run_id,
                         year=seeded.year,
                         status="pending",
-                        trigger="initial",
                         **SEEDED_AT,
                         **VERSIONS,
                     )
@@ -182,7 +179,6 @@ class BudgetWindowSeeder:
                     id=window_run_id,
                     report_id=window.report_id,
                     tax_benefit_model_version_id=first_run.tax_benefit_model_version_id,
-                    trigger="manual",
                     recalculate=True,
                     status="pending",
                     **later,
@@ -219,7 +215,6 @@ class BudgetWindowSeeder:
                         budget_window_run_id=window_run_id,
                         year=seeded.year,
                         status="pending",
-                        trigger="manual",
                         forced=True,
                         **later,
                         **VERSIONS,
