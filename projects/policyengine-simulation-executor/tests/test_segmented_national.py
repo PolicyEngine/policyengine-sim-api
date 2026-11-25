@@ -202,15 +202,22 @@ class FakeModal:
         self.spawned_payloads = []
         self.spawned_observability_contexts = []
         self.from_name_args = None
+        self.worker_method_name = None
         fake = self
 
-        class _Function:
-            @staticmethod
-            def from_name(app_name, function_name):
-                fake.from_name_args = (app_name, function_name)
+        class _SegmentWorker:
+            def __getattr__(self, method_name):
+                fake.worker_method_name = method_name
                 return SimpleNamespace(spawn=fake._spawn)
 
-        self.Function = _Function
+        class _Cls:
+            @staticmethod
+            def from_name(app_name, class_name):
+                fake.from_name_args = (app_name, class_name)
+                return _SegmentWorker
+
+        # Only the class lookup: the segment worker is a Modal class method.
+        self.Cls = _Cls
 
     def _spawn(self, payload, *, observability_context=None):
         if (
@@ -267,8 +274,9 @@ class TestSegmentedNationalRunner:
         # gateway-facing run_simulation pool the parent occupies.
         assert fake.from_name_args == (
             "policyengine-simulation-py-test",
-            sn.SEGMENT_FUNCTION_NAME,
+            "SimulationSegmentWorker",
         )
+        assert fake.worker_method_name == "run_simulation_segment"
         assert len(fake.spawned_payloads) == 20
         groups = [p["region_group"] for p in fake.spawned_payloads]
         assert groups == [list(g) for g in runner.groups]
@@ -820,14 +828,14 @@ class TestSegmentedNationalChildDeadline:
 
     def test__parent_budget_matches_the_modal_function_timeout(self):
         app_source = Path(sn.__file__).with_name("app.py").read_text()
-        run_simulation_definition = next(
+        simulation_worker_definition = next(
             node
             for node in ast.walk(ast.parse(app_source))
-            if isinstance(node, ast.FunctionDef) and node.name == "run_simulation"
+            if isinstance(node, ast.ClassDef) and node.name == "SimulationWorker"
         )
         timeouts = [
             keyword.value.value
-            for decorator in run_simulation_definition.decorator_list
+            for decorator in simulation_worker_definition.decorator_list
             if isinstance(decorator, ast.Call)
             for keyword in decorator.keywords
             if keyword.arg == "timeout"

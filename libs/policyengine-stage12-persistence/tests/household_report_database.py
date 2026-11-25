@@ -79,7 +79,6 @@ def seed_household_report_run(
         connection.execute(
             insert(seeder.table("reports")).values(
                 id=report_id,
-                label="Household report run test",
                 country="us",
                 type="household",
                 tax_benefit_model_id=model_id,
@@ -98,7 +97,6 @@ def seed_household_report_run(
                 baseline_simulation_run_id=simulation_run_ids[0],
                 reform_simulation_run_id=reform_run_id,
                 status="pending",
-                trigger="initial",
                 **VERSIONS,
             )
         )

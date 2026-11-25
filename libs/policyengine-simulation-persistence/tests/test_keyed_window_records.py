@@ -183,9 +183,6 @@ def test_a_keyed_window_is_created_with_each_years_simulations_and_runs(
             "key_version",
             "definition_key",
             "dataset_independent_key",
-            "label",
-            "description",
-            "user_id",
         )
     } == {
         "budget_window_size": 3,
@@ -193,19 +190,15 @@ def test_a_keyed_window_is_created_with_each_years_simulations_and_runs(
         "key_version": KEY_VERSION,
         "definition_key": definition.definition_key,
         "dataset_independent_key": definition.dataset_independent_key,
-        "label": None,
-        "description": None,
-        "user_id": None,
     }
     # The report names its first year's simulations.
     assert report["reform_simulation_id"] == found.years[0].reform.simulation_id
     assert {
         name: window_run[name]
-        for name in ("policyengine_version", "recalculate", "trigger", "status")
+        for name in ("policyengine_version", "recalculate", "status")
     } == {
         "policyengine_version": VERSIONS.policyengine_version,
         "recalculate": False,
-        "trigger": None,
         "status": ReportRunStatus.PENDING,
     }
     assert [year.year for year in found.years] == list(WINDOW_YEARS)
@@ -219,7 +212,7 @@ def test_a_keyed_window_is_created_with_each_years_simulations_and_runs(
             request.window_run_id,
             year.year,
         )
-        assert (year_run["trigger"], year_run["forced"]) == (None, False)
+        assert year_run["forced"] is False
         assert year_run["reform_simulation_run_id"] == year.reform.simulation_run_id
         # Each year's simulations are that year's, keyed by it.
         assert simulation["year"] == year.year

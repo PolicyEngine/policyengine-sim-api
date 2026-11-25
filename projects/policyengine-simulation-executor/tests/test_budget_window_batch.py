@@ -130,9 +130,25 @@ def mock_batch_modal(monkeypatch):
         def from_name(app_name: str, func_name: str):
             return functions[(app_name, func_name)]
 
+    class MockWorkerInstance:
+        """A worker class instance; ``functions[(app, "Class.method")]`` per method."""
+
+        def __init__(self, app_name: str, class_name: str):
+            self.app_name = app_name
+            self.class_name = class_name
+
+        def __getattr__(self, method_name: str):
+            return functions[(self.app_name, f"{self.class_name}.{method_name}")]
+
+    class MockModalCls:
+        @staticmethod
+        def from_name(app_name: str, class_name: str):
+            return lambda: MockWorkerInstance(app_name, class_name)
+
     class MockModal:
         Dict = MockModalDict
         Function = MockModalFunction
+        Cls = MockModalCls
         FunctionCall = MockModalFunctionCall
 
         @staticmethod
@@ -237,7 +253,7 @@ def test_run_budget_window_batch_impl_completes_and_respects_max_parallel(
         call_registry=mock_batch_modal["call_registry"],
     )
     mock_batch_modal["functions"][
-        ("policyengine-simulation-py4-10-0", "run_simulation")
+        ("policyengine-simulation-py4-10-0", "SimulationWorker.run_simulation")
     ] = run_simulation
 
     result = run_budget_window_batch_impl(payload, runtime=observability_runtime)
@@ -294,7 +310,7 @@ def test_run_budget_window_batch_impl_marks_failure(
         call_registry=mock_batch_modal["call_registry"],
     )
     mock_batch_modal["functions"][
-        ("policyengine-simulation-py4-10-0", "run_simulation")
+        ("policyengine-simulation-py4-10-0", "SimulationWorker.run_simulation")
     ] = run_simulation
 
     result = run_budget_window_batch_impl(payload, runtime=observability_runtime)
@@ -328,7 +344,7 @@ def test_a_child_without_a_call_handle_fails_the_batch(
         call_registry=mock_batch_modal["call_registry"],
     )
     mock_batch_modal["functions"][
-        ("policyengine-simulation-py4-10-0", "run_simulation")
+        ("policyengine-simulation-py4-10-0", "SimulationWorker.run_simulation")
     ] = run_simulation
     monkeypatch.setattr(
         scheduler_module.BudgetWindowBatchRunner,
@@ -379,7 +395,7 @@ def test_scheduler_sleep_exponentially_backs_off_then_resets_on_progress(
         call_registry=mock_batch_modal["call_registry"],
     )
     mock_batch_modal["functions"][
-        ("policyengine-simulation-py4-10-0", "run_simulation")
+        ("policyengine-simulation-py4-10-0", "SimulationWorker.run_simulation")
     ] = run_simulation
 
     sleeps: list[float] = []
@@ -437,7 +453,7 @@ def test_scheduler_publishes_bounded_poll_aggregates(
         call_registry=mock_batch_modal["call_registry"],
     )
     mock_batch_modal["functions"][
-        ("policyengine-simulation-py4-10-0", "run_simulation")
+        ("policyengine-simulation-py4-10-0", "SimulationWorker.run_simulation")
     ] = run_simulation
 
     monkeypatch.setattr(scheduler_module.time, "sleep", lambda _: None)
@@ -495,7 +511,7 @@ def test_run_budget_window_batch_impl_fails_on_malformed_child_result(
         call_registry=mock_batch_modal["call_registry"],
     )
     mock_batch_modal["functions"][
-        ("policyengine-simulation-py4-10-0", "run_simulation")
+        ("policyengine-simulation-py4-10-0", "SimulationWorker.run_simulation")
     ] = run_simulation
 
     result = run_budget_window_batch_impl(payload, runtime=observability_runtime)

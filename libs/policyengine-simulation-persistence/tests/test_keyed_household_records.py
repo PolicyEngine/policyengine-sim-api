@@ -211,9 +211,6 @@ def test_a_keyed_household_report_is_created_with_its_simulations_and_first_run(
             "key_version",
             "definition_key",
             "dataset_independent_key",
-            "label",
-            "description",
-            "user_id",
         )
     } == {
         "type": "household",
@@ -228,16 +225,11 @@ def test_a_keyed_household_report_is_created_with_its_simulations_and_first_run(
         "key_version": KEY_VERSION,
         "definition_key": definition.definition_key,
         "dataset_independent_key": definition.dataset_independent_key,
-        # Answer 6: a shared report holds no request's label or user.
-        "label": None,
-        "description": None,
-        "user_id": None,
     }
     assert (report["baseline_simulation_id"], report["reform_simulation_id"]) == (
         request.baseline.simulation_id,
         request.reform.simulation_id,
     )
-    assert report_run["trigger"] is None
     assert report_run["forced"] is False
     assert (
         report_run["baseline_simulation_run_id"],
@@ -547,7 +539,7 @@ def test_a_keyed_household_rerun_after_a_failed_run_names_its_simulations_runs(
         created.baseline_simulation_run_id,
         created.reform_simulation_run_id,
     ) == (found.baseline.simulation_run_id, found.reform.simulation_run_id)
-    assert (report_run["trigger"], report_run["forced"]) == (None, False)
+    assert report_run["forced"] is False
 
 
 def test_a_forced_keyed_household_rerun_is_an_extra_run_beside_the_one_under_way(

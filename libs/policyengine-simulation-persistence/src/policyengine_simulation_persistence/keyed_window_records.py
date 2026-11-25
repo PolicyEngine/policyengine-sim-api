@@ -24,8 +24,7 @@ one transaction:
 
 A year's simulation run may be a single-year report's, or another window's,
 pending, running or succeeded (answers 4 and 5). Rows keep random IDs: the
-IDs a request proposes are used only for the rows it inserts. No per-user
-column is written (answer 6).
+IDs a request proposes are used only for the rows it inserts.
 """
 
 from __future__ import annotations
@@ -247,8 +246,7 @@ def window_run_row(
 ) -> dict[str, Any]:
     """Return a window's new run as inserted, pending, with its .py version.
 
-    ``recalculate`` marks a forced re-run's, which nothing joins. It names
-    no trigger: each user's report-run record holds it (answer 6).
+    ``recalculate`` marks a forced re-run's, which nothing joins.
     """
     return {
         "id": run_id,

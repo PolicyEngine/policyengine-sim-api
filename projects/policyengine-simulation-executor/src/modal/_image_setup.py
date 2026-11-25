@@ -258,23 +258,29 @@ def _download_manifest_artifacts(
         raise RuntimeError(msg)
 
 
-def snapshot_models() -> None:
-    """Pre-load models at image build time for fast cold starts."""
+def check_country_models_build() -> None:
+    """Fail the image build unless both countries' tax-benefit systems build.
+
+    The systems are built and discarded: an image layer keeps files, not a
+    process's memory, so nothing built here reaches a worker. The workers load
+    the models in their memory-snapshot hook instead
+    (``src/modal/country_model_preload.py``).
+    """
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    logger.info("Pre-loading US tax-benefit system...")
+    logger.info("Checking that the US tax-benefit system builds...")
     from policyengine_us import (
         CountryTaxBenefitSystem as USSystem,
     )
 
     USSystem()
 
-    logger.info("Pre-loading UK tax-benefit system...")
+    logger.info("Checking that the UK tax-benefit system builds...")
     from policyengine_uk import (
         CountryTaxBenefitSystem as UKSystem,
     )
 
     UKSystem()
 
-    logger.info("Models pre-loaded into image snapshot")
+    logger.info("Both countries' tax-benefit systems build")

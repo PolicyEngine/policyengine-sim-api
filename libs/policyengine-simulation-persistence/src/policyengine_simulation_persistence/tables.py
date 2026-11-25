@@ -49,7 +49,6 @@ from policyengine_simulation_persistence.referenced_tables import (
     ReferencedRegion,
     ReferencedTaxBenefitModel,
     ReferencedTaxBenefitModelVersion,
-    ReferencedUser,
 )
 
 if TYPE_CHECKING:
@@ -89,14 +88,6 @@ class ReportRunStatus(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
-
-
-class ReportRunTrigger(StrEnum):
-    """What started a report run or a budget window's calculation."""
-
-    INITIAL = "initial"
-    MANUAL = "manual"
-    SYSTEM = "system"
 
 
 class HouseholdJobStatus(StrEnum):
@@ -277,12 +268,6 @@ class Report(ServiceBase):
     __table_args__: ClassVar = (
         PrimaryKeyConstraint("id", name="pk_reports"),
         _api_v1_key(
-            "user_id",
-            ReferencedUser.id,
-            ondelete="SET NULL",
-            name="fk_reports_user_id_users",
-        ),
-        _api_v1_key(
             "tax_benefit_model_id",
             ReferencedTaxBenefitModel.id,
             ondelete="RESTRICT",
@@ -348,20 +333,13 @@ class Report(ServiceBase):
         Index("ix_reports_dataset_independent_key", "dataset_independent_key"),
         Index("ix_reports_country_type_created_at", "country", "type", "created_at"),
         Index("ix_reports_tax_benefit_model_id", "tax_benefit_model_id"),
-        # Deleting a user sets its reports' user_id to null.
-        Index("ix_reports_user_id", "user_id"),
     )
 
     id: Mapped[UUID] = identifier_column()
     created_at: Mapped[datetime] = server_timestamp_column()
     updated_at: Mapped[datetime] = server_timestamp_column()
-    # Per-user columns the service no longer writes (C1 · 24's answer 6): a
-    # report's name and description live on each user's saved report.
-    label: Mapped[str | None] = mapped_column(String(255))
-    description: Mapped[str | None] = mapped_column(String)
     country: Mapped[str] = mapped_column(String(16))
     type: Mapped[str | None] = mapped_column(String(128))
-    user_id: Mapped[UUID | None] = mapped_column(Uuid)
     tax_benefit_model_id: Mapped[UUID] = mapped_column(Uuid)
     policy_id: Mapped[UUID | None] = mapped_column(Uuid)
     baseline_simulation_id: Mapped[UUID | None] = mapped_column(Uuid)
@@ -528,10 +506,6 @@ class BudgetWindowRun(ServiceBase):
     # The .py version the window calculates on, so a window run is found by
     # its report and version set (answer 8); null on runs before C1 · 27.
     policyengine_version: Mapped[str | None] = mapped_column(String(128))
-    # Per-request, so the service no longer writes it (answer 6).
-    trigger: Mapped[ReportRunTrigger | None] = mapped_column(
-        enum_type(ReportRunTrigger, "v2_report_run_trigger")
-    )
     # The window's forced marker: a recalculating run is never joined.
     recalculate: Mapped[bool] = mapped_column(Boolean)
     status: Mapped[ReportRunStatus] = mapped_column(
@@ -591,12 +565,6 @@ class ReportRun(ServiceBase):
             "budget_window_run_id IS NULL OR year IS NOT NULL",
             name="ck_report_runs_budget_window_year",
         ),
-        CheckConstraint(
-            "(baseline_cliff_gap IS NULL) = (baseline_cliff_share IS NULL) AND "
-            "(baseline_cliff_gap IS NULL) = (reform_cliff_gap IS NULL) AND "
-            "(baseline_cliff_gap IS NULL) = (reform_cliff_share IS NULL)",
-            name="ck_report_runs_cliff_impact_complete",
-        ),
         _completion_required("report_runs"),
         _year_between("report_runs", nullable=True),
         Index(
@@ -638,10 +606,6 @@ class ReportRun(ServiceBase):
     status: Mapped[ReportRunStatus] = mapped_column(
         enum_type(ReportRunStatus, "v2_report_run_status")
     )
-    # Per-request, so the service no longer writes it (answer 6).
-    trigger: Mapped[ReportRunTrigger | None] = mapped_column(
-        enum_type(ReportRunTrigger, "v2_report_run_trigger")
-    )
     idempotency_key: Mapped[UUID | None] = mapped_column(Uuid)
     started_at: Mapped[datetime | None] = optional_timestamp_column()
     completed_at: Mapped[datetime | None] = optional_timestamp_column()
@@ -655,11 +619,6 @@ class ReportRun(ServiceBase):
     budget_window_run_id: Mapped[UUID | None] = mapped_column(Uuid)
     year: Mapped[int | None] = mapped_column(Integer)
     modal_call_id: Mapped[str | None] = mapped_column(String(MODAL_CALL_ID_LENGTH))
-    # Cliff impact: all four values or none.
-    baseline_cliff_gap: Mapped[float | None] = mapped_column(Float)
-    baseline_cliff_share: Mapped[float | None] = mapped_column(Float)
-    reform_cliff_gap: Mapped[float | None] = mapped_column(Float)
-    reform_cliff_share: Mapped[float | None] = mapped_column(Float)
     spm_provenance: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB(none_as_null=True)
     )

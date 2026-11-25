@@ -126,7 +126,6 @@ class ReportRunSeeder:
             connection.execute(
                 insert(self.table("reports")).values(
                     id=report_id,
-                    label="Report run test",
                     country="us",
                     tax_benefit_model_id=model_id,
                     baseline_simulation_id=simulation_ids[0],
@@ -157,7 +156,6 @@ class ReportRunSeeder:
                     baseline_simulation_run_id=run_ids.baseline_simulation_run_id,
                     reform_simulation_run_id=run_ids.reform_simulation_run_id,
                     status="pending",
-                    trigger="initial",
                     **VERSIONS,
                 )
             )
