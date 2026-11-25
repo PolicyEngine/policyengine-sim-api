@@ -21,10 +21,11 @@ The national partition is NOT replaced: plans use the real 20 region groups.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
-from google.api_core.exceptions import PreconditionFailed
+from google.api_core.exceptions import NotFound, PreconditionFailed
 from policyengine.core.scoping_strategy import RowFilterStrategy
 from policyengine_simulation_contract.spm import SPMCapability
 from policyengine_simulation_executor import (
@@ -104,11 +105,14 @@ class RecordingGcsClient:
     """A fake GCS client: ``objects`` maps paths to bytes, ``uploads`` records writes.
 
     Each entry of ``uploads`` is ``(bucket, path, data, keyword arguments)``.
-    A write with ``if_generation_match=0`` to an existing path leaves the
-    object unchanged and raises ``PreconditionFailed``, as GCS does.
+    ``object_metadata`` holds each object's custom metadata, as set on the
+    blob before its upload. A write with ``if_generation_match=0`` to an
+    existing path leaves the object unchanged and raises
+    ``PreconditionFailed``, as GCS does.
     """
 
     objects: dict[str, bytes] = field(default_factory=dict)
+    object_metadata: dict[str, dict[str, str]] = field(default_factory=dict)
     uploads: list[tuple[str, str, bytes, dict[str, Any]]] = field(default_factory=list)
 
     def bucket(self, bucket_name: str) -> SimpleNamespace:
@@ -123,12 +127,17 @@ class _RecordingBlob:
     client: RecordingGcsClient
     bucket_name: str
     path: str
+    metadata: dict[str, str] | None = None
 
     def exists(self) -> bool:
         return self.path in self.client.objects
 
-    def upload_from_string(self, data: str | bytes, **keyword_arguments: Any) -> None:  # noqa: ANN401  # mirrors google.cloud.storage.Blob's keyword arguments
-        payload = data.encode() if isinstance(data, str) else data
+    def reload(self) -> None:
+        if self.path not in self.client.objects:
+            raise NotFound(self.path)
+        self.metadata = dict(self.client.object_metadata.get(self.path, {})) or None
+
+    def _write(self, payload: bytes, keyword_arguments: dict[str, Any]) -> None:
         self.client.uploads.append(
             (self.bucket_name, self.path, payload, dict(keyword_arguments))
         )
@@ -139,6 +148,24 @@ class _RecordingBlob:
             msg = f"object exists: {self.path}"
             raise PreconditionFailed(msg)
         self.client.objects[self.path] = payload
+        self.client.object_metadata[self.path] = dict(self.metadata or {})
+
+    def upload_from_string(self, data: str | bytes, **keyword_arguments: Any) -> None:  # noqa: ANN401  # mirrors google.cloud.storage.Blob's keyword arguments
+        payload = data.encode() if isinstance(data, str) else data
+        self._write(payload, keyword_arguments)
+
+    def upload_from_filename(self, filename: str, **keyword_arguments: Any) -> None:  # noqa: ANN401  # mirrors google.cloud.storage.Blob's keyword arguments
+        self._write(Path(filename).read_bytes(), keyword_arguments)
+
+    def download_to_filename(self, filename: str) -> None:
+        if self.path not in self.client.objects:
+            raise NotFound(self.path)
+        Path(filename).write_bytes(self.client.objects[self.path])
+
+    def download_as_bytes(self) -> bytes:
+        if self.path not in self.client.objects:
+            raise NotFound(self.path)
+        return self.client.objects[self.path]
 
 
 def us_state_regions(dataset_uri: str) -> list[SimpleNamespace]:
@@ -179,8 +206,10 @@ def install_us_prebuilt_inputs(
     """Replace every input of the US precompute and lookup with a fixed stand-in.
 
     Returns the identity stub state (``identity``, whose ``spm_capability`` a
-    test may set), the US and UK bundles, the 51 state regions, and the fake
-    GCS client every ``ArtifactStore`` built without a client uses.
+    test may set), the US and UK bundles, the 51 state regions, the stand-in
+    US country module (``us_module``, to which a test may add
+    ``ensure_datasets``), and the fake GCS client every ``ArtifactStore``
+    built without a client uses.
     """
     identity = install_identity_stubs(monkeypatch)
     us_bundle = identity.bundle
@@ -215,6 +244,7 @@ def install_us_prebuilt_inputs(
         us_bundle=us_bundle,
         uk_bundle=uk_bundle,
         regions=regions,
+        us_module=us_module,
         gcs_client=gcs_client,
     )
 
