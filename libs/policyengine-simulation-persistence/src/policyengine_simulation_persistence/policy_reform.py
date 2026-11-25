@@ -197,7 +197,10 @@ def read_dynamic_reform(
         raise UnknownDynamicError(msg)
     values = _read_values(session, owner=ParameterValue.dynamic_id == dynamic_id)
     if not values:
-        msg = f"{country}'s dynamic {dynamic_id} has no parameter values"
+        msg = (
+            f"{country}'s dynamic {dynamic_id} has no parameter values "
+            "the service can read"
+        )
         raise DynamicWithoutValuesError(msg)
     return _reform_from_values(
         session, values, catalog_version_id=catalog_version_id, source="dynamic"

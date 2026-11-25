@@ -324,7 +324,7 @@ def add_household_calculation_routes(
                 "description": (
                     "A row the request names, or the household function it "
                     "needs, is missing, or its dynamic has no parameter values "
-                    "this release reads; code says which"
+                    "this release reads (dynamic_without_values); code says which"
                 ),
                 **_ERROR,
             },
