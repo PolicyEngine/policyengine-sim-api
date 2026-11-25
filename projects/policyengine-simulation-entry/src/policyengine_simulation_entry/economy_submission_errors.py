@@ -94,7 +94,11 @@ STORED_SIMULATION = RefusalSource(named_by="the simulation", location="simulatio
 
 
 class EconomySubmissionRefusedError(Exception):
-    """A row the submission names, or a function it needs, is missing (400)."""
+    """A row or function the submission needs, or a dynamic's values, is missing (400).
+
+    ``dynamic_without_values``: the dynamic exists, but this release reads
+    none of its parameter values.
+    """
 
     def __init__(self, *, code: EconomyRefusalCode, detail: str) -> None:
         """Keep the reason's code and its description."""
@@ -200,8 +204,9 @@ def read_refusal(
     """Return the refusal a store read's error means, or None for any other error.
 
     A missing catalog version, region, dataset, policy or dynamic is refused
-    (400), and so is a catalog whose area regions don't use the dataset the
-    default worker calculates local areas on; a policy or dynamic setting
+    (400), and so are a dynamic with no parameter values this release reads
+    and a catalog whose area regions don't use the dataset the default worker
+    calculates local areas on; a policy or dynamic setting
     parameters the catalog version lacks,
     or both setting one, cannot be calculated (422). A report side's refusal
     (ReportSideError) is located on that side's fields, under ``source``:

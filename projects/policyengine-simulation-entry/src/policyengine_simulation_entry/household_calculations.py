@@ -109,7 +109,11 @@ _REFERENCED_ROWS = {
 
 
 class HouseholdCalculationRefusedError(Exception):
-    """A row the submission names, or the household function it needs, is missing."""
+    """A row the submission names or the function it needs is missing, or its values.
+
+    ``dynamic_without_values``: the dynamic exists, but this release reads
+    none of its parameter values.
+    """
 
     def __init__(self, *, code: HouseholdRefusalCode, detail: str) -> None:
         """Keep the reason's code and its description."""

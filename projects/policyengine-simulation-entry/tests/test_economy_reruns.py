@@ -417,16 +417,37 @@ def test_a_stored_simulations_dynamic_without_values_is_refused() -> None:
     store = FakeRerunStore(
         inputs_failure=DynamicWithoutValuesError("store text: no values")
     )
+    caller = FakeCaller()
 
     with pytest.raises(EconomySubmissionRefusedError) as refused:
-        _rerun_simulation(rerun_service(store))
+        _rerun_simulation(rerun_service(store, caller=caller))
 
     assert (refused.value.code, refused.value.detail) == (
         "dynamic_without_values",
         "us's stored dynamic that the simulation names has no parameter values "
         "the service can read.",
     )
-    assert store.simulation_reruns == []
+    assert (store.simulation_reruns, caller.simulation_runs) == ([], [])
+
+
+def test_a_stored_windows_dynamic_without_values_is_refused_naming_the_side() -> None:
+    store = FakeRerunStore(
+        report_definition=STORED_WINDOW,
+        inputs_failure=ReportSideError(
+            "reform", DynamicWithoutValuesError("store text: no values")
+        ),
+    )
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionRefusedError) as refused:
+        _rerun_report(rerun_service(store, caller=caller, advancer=FakeAdvancer(store)))
+
+    assert (refused.value.code, refused.value.detail) == (
+        "dynamic_without_values",
+        "us's stored dynamic that the report's reform names has no parameter "
+        "values the service can read.",
+    )
+    assert (store.windows, caller.report_runs) == ([], [])
 
 
 def _started_cliff_runs(caller: FakeCaller) -> set[UUID]:

@@ -21,7 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
 # Why a submission is refused (400): a row it names, or the household
-# function it needs, does not exist.
+# function it needs, does not exist, or its dynamic has no values this
+# release reads.
 HouseholdRefusalCode = Literal[
     # The country has no catalog version for the default worker's .py version.
     "unknown_catalog_version",
