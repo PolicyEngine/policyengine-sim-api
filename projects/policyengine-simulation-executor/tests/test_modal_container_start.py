@@ -231,9 +231,16 @@ def test_both_attributes_reach_the_operation_record_and_span_but_no_metric(
 def test_a_failure_to_read_the_container_start_leaves_the_call_unchanged(
     modal_app, monkeypatch, worker_class_name, method_name
 ):
+    from policyengine_simulation_contract import job_progress_state
+
     monkeypatch.setattr(
         modal_app.modal, "current_function_call_id", lambda: "fc-worker-call"
     )
+    # With a call ID, the annual worker records its job stages in a Modal Dict.
+    monkeypatch.setattr(
+        job_progress_state, "put_job_progress", lambda _job_id, _record: None
+    )
+    monkeypatch.setattr(job_progress_state, "get_job_progress", lambda _job_id: None)
     worker = _worker_after_snapshot_hook(modal_app, monkeypatch, worker_class_name)
     attributes_by_call = _record_call_attributes(modal_app, monkeypatch)
 
@@ -249,9 +256,10 @@ def test_a_failure_to_read_the_container_start_leaves_the_call_unchanged(
 
     assert getattr(worker, method_name)(SIMULATION_PARAMS) == WORKER_RESULT
 
-    # The call's other attribute is still set.
+    # The call's Modal call ID is still set.
     [call_attributes] = attributes_by_call
-    assert call_attributes == {"function_call_id": "fc-worker-call"}
+    assert call_attributes["function_call_id"] == "fc-worker-call"
+    assert not CONTAINER_START_KEYS & set(call_attributes)
 
 
 @pytest.mark.parametrize(("worker_class_name", "method_name"), WORKER_METHODS)
