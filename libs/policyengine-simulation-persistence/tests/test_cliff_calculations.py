@@ -465,7 +465,6 @@ def test_a_request_losing_the_report_run_adds_the_winners_runs_calculations(
                     country_package_version=VERSIONS.country_package_version,
                     policyengine_version=VERSIONS.policyengine_version,
                     status=ReportRunStatus.PENDING,
-                    trigger="initial",
                 )
             )
         competing.append(run_id)

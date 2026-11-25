@@ -10,8 +10,7 @@ service runs now, as a new run, and keeps every earlier run. The service:
 - creates, in one transaction, the new run and each report side's run of
   its own simulation, all ``pending`` with no Modal call ID; an unforced
   economy or household report re-run's side joins its simulation's run on
-  the current versions instead, when there is one. No new run names a
-  trigger (answer 6): each user's report-run record holds it. A budget
+  the current versions instead, when there is one. A budget
   window's new run is a ``budget_window_runs``
   row with a report run per year, each year on the simulations its report
   run in the report's newest window run names. A household report's new
@@ -380,10 +379,7 @@ def insert_report_rerun_with_cliffs(
 def _rerun_report_run_row(
     *, run_id: UUID, report_id: UUID, versions: RunVersions
 ) -> dict[str, Any]:
-    """Return a re-run's report run as inserted, without its sides' runs.
-
-    It names no trigger: each user's report-run record holds it (answer 6).
-    """
+    """Return a re-run's report run as inserted, without its sides' runs."""
     return {
         "id": run_id,
         "report_id": report_id,
@@ -436,8 +432,8 @@ def insert_window_rerun(session: Session, rerun: NewWindowRerun) -> FoundBudgetW
     window's create does (C1 · 24's answer 8). A forced re-run
     (``recalculate``) takes no lock, is never refused, and inserts an extra
     window run on new runs of every year, all marked forced. Every new run
-    is pending with no Modal call; the window run records its .py version
-    and no trigger (answer 6). Return the window run and its years, which
+    is pending with no Modal call; the window run records its .py version.
+    Return the window run and its years, which
     only when this call inserted the window run need their first years
     started. Raise as ``insert_report_rerun`` does.
     """
@@ -527,7 +523,7 @@ def insert_household_report_rerun(
 ) -> FoundReportRun:
     """Join the household report's run on the re-run's versions, or create it.
 
-    The report run names no budget-window run and no trigger (answer 6);
+    The report run names no budget-window run;
     each side's run is of the report's own household simulation, with no
     Modal call: the service then starts one household function call for a
     report run it created. Unforced (a keyed report's re-run), take the

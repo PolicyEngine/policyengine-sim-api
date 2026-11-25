@@ -19,6 +19,10 @@ from policyengine_simulation_contract.budget_window_state import (
     put_batch_job_seed,
     put_batch_job_state,
 )
+from policyengine_simulation_contract.simulation_workers import (
+    SIMULATION_WORKER_CLASS,
+    SIMULATION_WORKER_METHOD,
+)
 from policyengine_simulation_contract.spm import spm_error_detail
 from policyengine_simulation_observability.errors import log_and_redact_exception
 from policyengine_simulation_observability.stages import BUDGET_WINDOW_STAGES, Stage
@@ -125,7 +129,7 @@ class BudgetWindowBatchRunner:
     ) -> None:
         """Load or seed the batch state and resolve a lazy child-function handle.
 
-        Children run on the resolved app's ``run_simulation`` function.
+        Children run on the resolved app's ``SimulationWorker.run_simulation``.
         ``modal_module`` replaces the ``modal`` module in tests.
         """
         self.context = context
@@ -142,12 +146,14 @@ class BudgetWindowBatchRunner:
             resolved_version=context.resolved_version,
         )
         self.state = load_or_create_batch_state(context, runtime=runtime)
-        # ``Function.from_name`` is a lazy handle (no RPC); hydration happens
-        # on first spawn, which BUDGET_WINDOW_CHILD_SPAWN already times.
-        self.child_func = self.modal.Function.from_name(
+        # ``Cls.from_name`` is a lazy handle (no RPC); hydration happens on
+        # first spawn, which BUDGET_WINDOW_CHILD_SPAWN already times. The
+        # resolved app is the one this batch runs in, so it defines the class.
+        simulation_worker = self.modal.Cls.from_name(
             context.resolved_app_name,
-            "run_simulation",
-        )
+            SIMULATION_WORKER_CLASS,
+        )()
+        self.child_func = getattr(simulation_worker, SIMULATION_WORKER_METHOD)
         self.child_handles: dict[str, ChildSimulationHandle] = {}
         # Poll/sleep totals are tracked as running aggregates instead of one
         # segment per loop iteration: a segment appends a node to the

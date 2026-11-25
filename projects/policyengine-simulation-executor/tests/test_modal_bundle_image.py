@@ -3,6 +3,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
 from fixtures.fake_modal import install_fake_modal
 from policyengine_simulation_executor.release_bundle import (
     get_bundled_package_version,
@@ -108,17 +109,188 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     assert "pip" not in names
 
     runtime_secret_sets = {
-        name: kwargs["secrets"] for name, kwargs in app.app.function_calls
+        name: kwargs["secrets"]
+        for name, kwargs in [*app.app.function_calls, *app.app.cls_calls]
     }
-    for function_name in (
-        "run_simulation",
-        "run_simulation_segment",
+    for worker_name in (
+        "SimulationWorker",
+        "SimulationSegmentWorker",
         "run_budget_window_batch",
     ):
-        assert runtime_secret_sets[function_name] == [
+        assert runtime_secret_sets[worker_name] == [
             app.gcp_secret,
             app.hf_secret,
         ]
+
+
+def test_simulation_workers_are_classes_restored_from_memory_snapshots(monkeypatch):
+    install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    class_options = dict(app.app.cls_calls)
+    function_options = dict(app.app.function_calls)
+    worker_options = {
+        "image": app.simulation_image,
+        "cpu": 8.0,
+        "memory": 32768,
+        "timeout": 3600,
+        "retries": 0,
+        "secrets": [app.gcp_secret, app.hf_secret],
+        "enable_memory_snapshot": True,
+    }
+    # Two classes, so the segment children keep their own container pool: a
+    # blocking segmented parent must never share a bounded pool with the
+    # children it waits on.
+    assert class_options == {
+        "SimulationWorker": {**worker_options, "max_containers": 100},
+        "SimulationSegmentWorker": {**worker_options, "max_containers": 300},
+    }
+    # Plain functions with the same names and limits stay, without a snapshot,
+    # for callers still running the code from before the classes: the gateway
+    # while a deploy is under way, and runs that started before it.
+    function_form_options = {
+        option: value
+        for option, value in worker_options.items()
+        if option != "enable_memory_snapshot"
+    }
+    assert function_options["run_simulation"] == {
+        **function_form_options,
+        "max_containers": 100,
+    }
+    assert function_options["run_simulation_segment"] == {
+        **function_form_options,
+        "max_containers": 300,
+    }
+    # The budget-window parent stays a small plain function with no snapshot.
+    assert "enable_memory_snapshot" not in function_options["run_budget_window_batch"]
+
+
+def test_simulation_workers_use_the_contract_names(monkeypatch):
+    from policyengine_simulation_contract import simulation_workers
+
+    install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    # The gateway and the executor's own fan-out look the workers up by
+    # these names in a deployed app.
+    simulation_worker = getattr(app, simulation_workers.SIMULATION_WORKER_CLASS)
+    segment_worker = getattr(app, simulation_workers.SEGMENT_WORKER_CLASS)
+    recorded_methods = app.modal.lifecycle_hooks.methods
+    assert (
+        getattr(simulation_worker, simulation_workers.SIMULATION_WORKER_METHOD)
+        in recorded_methods
+    )
+    assert (
+        getattr(segment_worker, simulation_workers.SEGMENT_WORKER_METHOD)
+        in recorded_methods
+    )
+    # Apps deployed before the class form define run_simulation as a function.
+    assert simulation_workers.FUNCTION_FORM_SIMULATION_WORKER == "run_simulation"
+
+
+def test_both_simulation_workers_load_the_country_models_before_the_snapshot(
+    monkeypatch,
+):
+    install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    enter_hooks = app.modal.lifecycle_hooks.enter_hooks
+    snapshot_hooks = [method for method, snap in enter_hooks if snap]
+    restore_hooks = [method for method, snap in enter_hooks if not snap]
+    # One hook runs before the snapshot, and one after each restore.
+    assert len(snapshot_hooks) == 1
+    assert len(restore_hooks) == 1
+    for worker_class in (app.SimulationWorker, app.SimulationSegmentWorker):
+        assert worker_class.load_country_models is snapshot_hooks[0]
+        assert worker_class.reseed_random_after_restore is restore_hooks[0]
+
+
+@pytest.mark.parametrize(
+    "client_version",
+    # Development builds and release candidates of 1.6.4 come before 1.6.4,
+    # and may not reload Secret values.
+    ["1.4.2", "1.5.5", "1.6.3", "1.6.4.dev0", "1.6.4rc1", "not-a-version"],
+)
+def test_a_deploy_with_a_modal_client_older_than_1_6_4_is_refused(
+    monkeypatch, client_version
+):
+    # Containers restored from a memory snapshot reload Secret values only
+    # from Modal 1.6.4, and each app runs the client that deployed it.
+    install_fake_modal(monkeypatch)
+    monkeypatch.setattr(sys.modules["modal"], "__version__", client_version)
+    sys.modules.pop("src.modal.app", None)
+
+    with pytest.raises(RuntimeError, match=r"1\.6\.4") as refused:
+        importlib.import_module("src.modal.app")
+
+    assert client_version in str(refused.value)
+    sys.modules.pop("src.modal.app", None)
+
+
+@pytest.mark.parametrize("client_version", ["1.6.4", "1.10.0", "1.7.0.dev3"])
+def test_a_deploy_with_modal_1_6_4_or_newer_is_allowed(monkeypatch, client_version):
+    install_fake_modal(monkeypatch)
+    monkeypatch.setattr(sys.modules["modal"], "__version__", client_version)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    assert app.SimulationWorker is not None
+    sys.modules.pop("src.modal.app", None)
+
+
+def test_the_client_version_is_checked_before_the_artifact_manifest_is_read(
+    monkeypatch,
+):
+    install_fake_modal(monkeypatch)
+    monkeypatch.setattr(sys.modules["modal"], "__version__", "1.6.3")
+    monkeypatch.setenv("POLICYENGINE_MANIFEST_DIGEST", "digest-abc")
+    monkeypatch.setenv("POLICYENGINE_ARTIFACT_BUCKET", "test-bucket")
+    store_reads: list[str] = []
+
+    class RecordingStore:
+        def __init__(self, bucket_name=None, **_kwargs):
+            store_reads.append(bucket_name)
+
+        def read_manifest(self, digest):
+            store_reads.append(digest)
+
+    from policyengine_simulation_executor import artifact_store
+
+    monkeypatch.setattr(artifact_store, "ArtifactStore", RecordingStore)
+    sys.modules.pop("src.modal.app", None)
+
+    with pytest.raises(RuntimeError, match=r"1\.6\.4"):
+        importlib.import_module("src.modal.app")
+
+    # A refused deploy reads nothing from the artifact store.
+    assert store_reads == []
+    sys.modules.pop("src.modal.app", None)
+
+
+def test_a_container_imports_the_app_whatever_the_client_version(monkeypatch):
+    # Inside a container the client is the one the app was deployed with, so
+    # the check applies only where the app is deployed or run from.
+    install_fake_modal(monkeypatch)
+    monkeypatch.setattr(sys.modules["modal"], "__version__", "1.4.2")
+    monkeypatch.setattr(sys.modules["modal"], "is_local", lambda: False)
+    # A container reads its versions from the image environment.
+    monkeypatch.setenv("POLICYENGINE_VERSION", "4.19.1")
+    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.27.1")
+    monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.700.0")
+    monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.0")
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    assert app.SimulationWorker is not None
+    sys.modules.pop("src.modal.app", None)
 
 
 def test_modal_image_refreshes_ca_certificates_before_installing_packages(
@@ -234,7 +406,7 @@ def test_modal_image_fetches_artifacts_between_env_and_local_source(monkeypatch)
     snapshot_index = next(
         index
         for index, call in enumerate(calls)
-        if call[0] == "run_function" and call[1] == "snapshot_models"
+        if call[0] == "run_function" and call[1] == "check_country_models_build"
     )
     static_files_index = next(
         index for index, call in enumerate(calls) if call[0] == "add_local_dir"

@@ -1,7 +1,7 @@
 """API v1's own tables that the simulation service's rows name, by ``id`` alone.
 
-Some keys of the service's tables name rows API v1 writes: users, policies,
-dynamics, households, datasets, regions and the model catalog. PostgreSQL checks
+Some keys of the service's tables name rows API v1 writes: policies, dynamics,
+households, datasets, regions and the model catalog. PostgreSQL checks
 each of those keys when a row is inserted, as the referenced table's owner, so
 the service's role needs no privilege for it, and a row naming one that doesn't
 exist fails with SQLSTATE 23503. These classes give SQLAlchemy each key's
@@ -82,15 +82,6 @@ class ReferencedTaxBenefitModel(ReferencedBase):
     __table_args__: ClassVar = (
         PrimaryKeyConstraint("id", name="pk_tax_benefit_models"),
     )
-
-    id: Mapped[UUID] = mapped_column(Uuid)
-
-
-class ReferencedUser(ReferencedBase):
-    """The ``id`` of a row of ``users``."""
-
-    __tablename__ = "users"
-    __table_args__: ClassVar = (PrimaryKeyConstraint("id", name="pk_users"),)
 
     id: Mapped[UUID] = mapped_column(Uuid)
 
