@@ -148,12 +148,14 @@ class Dynamic(InputBase):
     """Parameter values a simulation applies beside its policy.
 
     Behavioural responses are an example. API v1 saves a dynamic as it saves a
-    policy, on a country's catalog version; sim reads only its ID.
+    policy, on a country's catalog version; sim reads its ID and its country,
+    so a simulation refuses another country's dynamic.
     """
 
     __tablename__ = "dynamics"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    country_id: Mapped[str] = mapped_column(String(2))
 
 
 input_metadata = InputBase.metadata

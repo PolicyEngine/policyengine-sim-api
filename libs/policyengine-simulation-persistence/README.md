@@ -122,18 +122,20 @@ and they are kept apart from the models of the tables the service writes
 for a household calculation, one `household_jobs` row. The service finds the
 catalog version by country and .py version (`read_catalog_version_id`) and
 the stored household in its country (`read_stored_household`), creates the
-job `pending` with no Modal call ID and no dynamic (`insert_household_job`),
+job `pending` with no Modal call ID, naming its policy and dynamic
+(`insert_household_job`),
 starts the household function's call, then records the call's ID
 (`record_household_call`), or fails the job at once when Modal refuses the
 call (`fail_unstarted_household_job`). Both updates apply only while the job
 is still `pending` with no call ID, and set `updated_at` themselves. A job
-naming a household, policy or catalog version that does not exist is refused
-by its foreign key with SQLSTATE `23503`; `HouseholdJobReferenceError` names
-the column. Each function takes an ORM session, so the caller chooses the
-transactions. `HouseholdJobStore` runs them as the Simulation Entrypoint
-does, each step in a session and transaction of its own: `read_inputs` reads
-the catalog version, the household and the policy's reform values together,
-and `create_job`, `record_call`, `fail_unstarted` and `read` each write or
+naming a household, policy, dynamic or catalog version that does not exist
+is refused by its foreign key with SQLSTATE `23503`;
+`HouseholdJobReferenceError` names the column. Each function takes an ORM
+session, so the caller chooses the transactions. `HouseholdJobStore` runs
+them as the Simulation Entrypoint does, each step in a session and
+transaction of its own: `read_inputs` reads the catalog version, the
+household, and the policy's and dynamic's values combined
+(`read_simulation_reform`) together, and `create_job`, `record_call`, `fail_unstarted` and `read` each write or
 read the job. `insert_household_job` flushes the new row, so its INSERT runs
 before the commit. A `create_job` whose commit fails after that flush raises
 `EconomyRecordOutcomeUnknownError`, as the economy and household report
@@ -260,7 +262,8 @@ report and run rows (C1 · 24). These modules do it:
 A household report calculates one stored household, for one year, under a
 baseline and, optionally, a reform. Its report has type `household`
 (`HOUSEHOLD_REPORT_TYPE`) and names the household, and each side is a
-household simulation (no dataset or region) naming the side's policy.
+household simulation (no dataset or region) naming the side's policy and
+dynamic.
 `keyed_household_records.py` finds or creates the report, its simulations
 and its run by key, as an economy report's are (C1 · 24's answer 8);
 `household_report_records.py` builds each side's run, `pending` with no
@@ -271,12 +274,13 @@ is refused as `EconomyRecordReferenceError`.
 `HouseholdReportStore` runs the steps in ORM sessions and transactions of
 their own, opened by `from_session_factory` with `bounded_session`:
 `read_inputs` reads the catalog version for the .py version, the country's
-model, the stored household and each side's policy values together,
-raising `UnknownCatalogVersionError`, `UnknownHouseholdError` or
-`ReportSideError` for the side whose policy is missing or sets parameters
-the catalog version lacks; `find_or_create_report` raises
-`EconomyRecordOutcomeUnknownError` when the commit fails after the rows were
-inserted; and `record_report_call` and `fail_unstarted_report` use the
+model, the stored household and each side's policy and dynamic values,
+combined (`read_simulation_reform`), together, raising
+`UnknownCatalogVersionError`, `UnknownHouseholdError` or `ReportSideError`
+for the side whose policy or dynamic is missing in the country, sets
+parameters the catalog version lacks, or sets one the other also sets;
+`find_or_create_report` raises `EconomyRecordOutcomeUnknownError` when the
+commit fails after the rows were inserted; and `record_report_call` and `fail_unstarted_report` use the
 economy report run writes.
 
 ## Re-running a report or simulation
@@ -352,9 +356,13 @@ the parameters of the catalog version it was saved on, so a calculation on
 any catalog version applies them by name; a parameter the calculation's
 version lacks raises `MissingPolicyParametersError`, naming each one, and a
 policy the country doesn't have raises `UnknownPolicyError`.
-`read_dynamic_reform` reads a stored dynamic the same way (`UnknownDynamicError`
-for none), and `combine_reforms` joins a simulation's policy and dynamic
-values, refusing a parameter both set (`OverlappingReformError`).
+`read_dynamic_reform` reads a stored dynamic the same way: a dynamic, like a
+policy, belongs to one country, and one the country doesn't have, another
+country's included, raises `UnknownDynamicError`. `combine_reforms` joins a
+simulation's policy and dynamic values, refusing a parameter both set
+(`OverlappingReformError`), and `read_simulation_reform` reads both and
+joins them, as every simulation does: economy (`read_simulation_values`),
+household job and household report side.
 
 Each period is a range, `YYYY-MM-DD.YYYY-MM-DD`, with the stored dates read
 in UTC. A value with no end date follows .py's own rule

@@ -27,6 +27,7 @@ RUN_ID = "00000000-0000-4000-8000-0000000000e2"
 SIDE_IDS = [f"00000000-0000-4000-8000-0000000000f{digit}" for digit in "1234"]
 HOUSEHOLD_ID = "00000000-0000-4000-8000-0000000000bb"
 POLICY_ID = "00000000-0000-4000-8000-0000000000c5"
+DYNAMIC_ID = "00000000-0000-4000-8000-0000000000c6"
 HOUSEHOLD_REPORT_BODY = {
     "country": "us",
     "report_type": "household",
@@ -85,6 +86,18 @@ def test_a_household_report_request_is_sent_as_given():
 
     assert sent == [HOUSEHOLD_REPORT_BODY]
     assert response.status_code == 201
+
+
+def test_each_sides_dynamic_is_sent_as_given():
+    request = {
+        **HOUSEHOLD_REPORT_BODY,
+        "baseline": {"policy_id": None, "dynamic_id": DYNAMIC_ID},
+        "reform": {"policy_id": POLICY_ID, "dynamic_id": DYNAMIC_ID},
+    }
+
+    _, sent = _create(201, CREATED_HOUSEHOLD_REPORT, request)
+
+    assert sent == [request]
 
 
 def test_a_report_of_the_baseline_alone_is_sent_without_a_reform():

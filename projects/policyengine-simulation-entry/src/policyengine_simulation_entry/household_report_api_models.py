@@ -1,9 +1,10 @@
 """Request and answer models of a household report on ``POST /reports``.
 
-A household report calculates one household the Public API stores, for the
+A household report calculates one household API v1 stores, for the
 household's ``default_year``, under a baseline policy and, optionally, a
-reform, each a stored policy or current law. The Simulation Entrypoint reads
-the household and the policies from the Public API's tables itself and
+reform, each a stored policy or current law with, optionally, a stored
+dynamic. The Simulation Entrypoint reads the household, the policies and the
+dynamics from API v1's tables itself and
 calculates on the v2 version manifest's default worker; a request names no
 .py version, no year and no record ID. Its answers and their error codes
 are an economy report's (``economy_api_models``), with the household codes
@@ -33,9 +34,14 @@ class _Request(BaseModel):
 
 
 class HouseholdPolicyChoice(_Request):
-    """A side's stored policy; null or omitted means current law."""
+    """A side's stored policy and dynamic, each null or omitted for none.
+
+    No policy means current law. The dynamic's values are applied with the
+    policy's, and neither may set a parameter the other sets.
+    """
 
     policy_id: UUID | None = None
+    dynamic_id: UUID | None = None
 
 
 class HouseholdReportRequest(_Request):

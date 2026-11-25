@@ -1025,7 +1025,7 @@ ERROR_TEXT = "internal text that must not be passed on"
             ReportSideError("baseline", UnknownDynamicError(ERROR_TEXT)),
             {},
             "unknown_dynamic",
-            "No stored dynamic matches the one the request's baseline names.",
+            "us has no stored dynamic the request's baseline names.",
         ),
     ],
 )
@@ -1065,7 +1065,7 @@ def test_a_standalone_simulations_unknown_rows_name_its_own_fields() -> None:
         (UnknownPolicyError(ERROR_TEXT), "us has no stored policy the request names."),
         (
             UnknownDynamicError(ERROR_TEXT),
-            "No stored dynamic matches the one the request names.",
+            "us has no stored dynamic the request names.",
         ),
     ):
         with pytest.raises(EconomySubmissionRefusedError) as refusal:

@@ -210,22 +210,22 @@ def read_refusal(
     side: ReportSide | None = None
     if isinstance(error, ReportSideError):
         side, error = error.side, error.error
-    return _missing_row_refusal(error, request, side, source) or _unprocessable(
-        error, request, side, source
+    return _missing_row_refusal(error, request, source) or simulation_values_refusal(
+        error,
+        country=request.country,
+        policyengine_version=request.policyengine_version,
+        named_by=source.named_by if side is None else f"{source.named_by}'s {side}",
+        location=(source.location,) if side is None else (source.location, side),
     )
 
 
 def _missing_row_refusal(
-    error: Exception,
-    request: EconomyRequest,
-    side: ReportSide | None,
-    source: RefusalSource,
+    error: Exception, request: EconomyRequest, source: RefusalSource
 ) -> EconomySubmissionRefusedError | None:
-    """Return the 400 a missing row means, or None for another error."""
+    """Return the 400 a missing catalog row means, or None for another error."""
     catalog = (
         f"{request.country}'s catalog version for .py {request.policyengine_version}"
     )
-    named_by = source.named_by if side is None else f"{source.named_by}'s {side}"
     # A stored record's region and dataset are named by the record, not asked
     # for; a request's are the caller's own.
     stored_by = "" if source is REQUEST_BODY else f", which {source.named_by} names"
@@ -248,16 +248,6 @@ def _missing_row_refusal(
             else f"dataset {request.dataset_name}"
         )
         refusal = ("unknown_dataset", f"{catalog} has no {dataset}{stored_by}.")
-    elif isinstance(error, UnknownPolicyError):
-        refusal = (
-            "unknown_policy",
-            f"{request.country} has no stored policy {named_by} names.",
-        )
-    elif isinstance(error, UnknownDynamicError):
-        refusal = (
-            "unknown_dynamic",
-            f"No stored dynamic matches the one {named_by} names.",
-        )
     elif isinstance(error, LocalAreaDatasetMismatchError):
         # The dataset is the default worker's declaration, not the request's.
         refusal = (
@@ -272,20 +262,34 @@ def _missing_row_refusal(
     return EconomySubmissionRefusedError(code=code, detail=detail)
 
 
-def _unprocessable(
+def simulation_values_refusal(
     error: Exception,
-    request: EconomyRequest,
-    side: ReportSide | None,
-    source: RefusalSource,
-) -> EconomySubmissionUnprocessableError | None:
-    """Return the 422 refused values mean, or None for another error.
+    *,
+    country: str,
+    policyengine_version: str,
+    named_by: str,
+    location: tuple[str, ...],
+) -> EconomySubmissionRefusedError | EconomySubmissionUnprocessableError | None:
+    """Return the refusal of a simulation's policy or dynamic, or None for another.
 
-    Each reason is located at the field that names the values: the request's
-    own or the stored record's, or the report side's.
+    Economy and household simulations alike: a policy or dynamic the
+    country doesn't have, a dynamic of another country included, is refused
+    (400), its detail saying what ``named_by``; one setting parameters the
+    catalog version for ``policyengine_version`` lacks, or a dynamic setting
+    one its policy sets, cannot be calculated (422), each reason located
+    under ``location`` at ``policy_id`` or ``dynamic_id``. Every detail is
+    written from the arguments, never from the error's text.
     """
-    location: tuple[str, ...] = (
-        (source.location,) if side is None else (source.location, side)
-    )
+    if isinstance(error, UnknownPolicyError):
+        return EconomySubmissionRefusedError(
+            code="unknown_policy",
+            detail=f"{country} has no stored policy {named_by} names.",
+        )
+    if isinstance(error, UnknownDynamicError):
+        return EconomySubmissionRefusedError(
+            code="unknown_dynamic",
+            detail=f"{country} has no stored dynamic {named_by} names.",
+        )
     if isinstance(error, MissingPolicyParametersError):
         field_name = "policy_id" if error.source == "policy" else "dynamic_id"
         return EconomySubmissionUnprocessableError(
@@ -294,7 +298,7 @@ def _unprocessable(
                 UnprocessableReason(
                     loc=(*location, field_name, name),
                     msg=(
-                        f"the catalog version for .py {request.policyengine_version} "
+                        f"the catalog version for .py {policyengine_version} "
                         "has no such parameter"
                     ),
                     type="missing_parameter",
