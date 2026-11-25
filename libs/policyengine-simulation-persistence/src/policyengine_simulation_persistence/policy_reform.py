@@ -54,7 +54,7 @@ from policyengine_simulation_persistence.input_tables import (
 from policyengine_simulation_persistence.tables import LATEST_YEAR
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from datetime import datetime
     from uuid import UUID
 
@@ -75,13 +75,15 @@ class _ReformModels:
     """The mapped classes one kind of reform's values are read through.
 
     API v1 keeps a policy's parameters and values apart from a dynamic's.
-    ``value_of_parameter`` joins a value to its parameter.
+    ``value_of_parameter`` joins a value to its parameter, and ``owned_by``
+    selects the values one policy or dynamic sets, by its ID.
     """
 
     source: ReformSource
     parameter_model: type[Parameter | DynamicParameter]
     value_model: type[ParameterValue | DynamicParameterValue]
     value_of_parameter: ColumnElement[bool]
+    owned_by: Callable[[UUID], ColumnElement[bool]]
 
 
 _POLICY_MODELS: Final = _ReformModels(
@@ -89,6 +91,7 @@ _POLICY_MODELS: Final = _ReformModels(
     parameter_model=Parameter,
     value_model=ParameterValue,
     value_of_parameter=Parameter.id == ParameterValue.parameter_id,
+    owned_by=lambda policy_id: ParameterValue.policy_id == policy_id,
 )
 _DYNAMIC_MODELS: Final = _ReformModels(
     source="dynamic",
@@ -96,6 +99,7 @@ _DYNAMIC_MODELS: Final = _ReformModels(
     value_model=DynamicParameterValue,
     value_of_parameter=DynamicParameter.id
     == DynamicParameterValue.dynamic_parameter_id,
+    owned_by=lambda dynamic_id: DynamicParameterValue.dynamic_id == dynamic_id,
 )
 
 
@@ -198,9 +202,7 @@ def read_policy_reform(
         raise UnknownPolicyError(msg)
     return _reform_from_values(
         session,
-        _read_values(
-            session, _POLICY_MODELS, owner=ParameterValue.policy_id == policy_id
-        ),
+        _read_values(session, _POLICY_MODELS, owner_id=policy_id),
         _POLICY_MODELS,
         catalog_version_id=catalog_version_id,
     )
@@ -232,9 +234,7 @@ def read_dynamic_reform(
     if found is None:
         msg = f"{country} has no dynamic {dynamic_id}"
         raise UnknownDynamicError(msg)
-    values = _read_values(
-        session, _DYNAMIC_MODELS, owner=DynamicParameterValue.dynamic_id == dynamic_id
-    )
+    values = _read_values(session, _DYNAMIC_MODELS, owner_id=dynamic_id)
     if not values:
         msg = (
             f"{country}'s dynamic {dynamic_id} has no parameter values "
@@ -313,11 +313,11 @@ def combine_reforms(policy: PolicyReform, dynamic: PolicyReform) -> PolicyReform
 
 
 def _read_values(
-    session: Session, models: _ReformModels, *, owner: ColumnElement[bool]
+    session: Session, models: _ReformModels, *, owner_id: UUID
 ) -> Sequence[Row[tuple[str, object, datetime, datetime | None]]]:
-    """Return the values ``owner`` selects, by parameter name, then start date.
+    """Return the values that policy or dynamic sets, by parameter name, then start.
 
-    ``owner`` names one policy's or dynamic's own values, never current law's.
+    Only its own values are read, never current law's.
     """
     parameter = models.parameter_model
     value = models.value_model
@@ -325,7 +325,7 @@ def _read_values(
         select(parameter.name, value.value_json, value.start_date, value.end_date)
         .select_from(value)
         .join(parameter, models.value_of_parameter)
-        .where(owner)
+        .where(models.owned_by(owner_id))
         .order_by(parameter.name, value.start_date)
     ).all()
 
