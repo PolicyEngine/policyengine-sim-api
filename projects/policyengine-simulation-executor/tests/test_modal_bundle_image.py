@@ -192,6 +192,26 @@ def test_simulation_workers_use_the_contract_names(monkeypatch):
     assert simulation_workers.FUNCTION_FORM_SIMULATION_WORKER == "run_simulation"
 
 
+def test_the_simulation_workers_are_not_also_plain_functions(monkeypatch):
+    from policyengine_simulation_contract import simulation_workers
+
+    install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    # Every caller of an app built from this code reaches the workers through
+    # their classes. Only apps deployed before the classes define the plain
+    # run_simulation function that the gateway falls back to.
+    plain_function_names = [name for name, _options in app.app.function_calls]
+    assert plain_function_names == ["run_budget_window_batch"]
+    for worker_method_name in (
+        simulation_workers.SIMULATION_WORKER_METHOD,
+        simulation_workers.SEGMENT_WORKER_METHOD,
+    ):
+        assert not hasattr(app, worker_method_name)
+
+
 def test_both_simulation_workers_load_the_country_models_before_the_snapshot(
     monkeypatch,
 ):
