@@ -215,8 +215,6 @@ def test_each_call_in_a_container_reports_the_next_call_number(modal_app, monkey
 def test_both_attributes_reach_the_operation_record_and_span_but_no_metric(
     modal_app, monkeypatch, recorded_observability_runtime
 ):
-    from policyengine_observability import otel
-
     runtime, written_records = recorded_observability_runtime
     # The runtime sets attributes on the operation's span through this method
     # alone; OpenTelemetry is disabled in the recorded runtime.
@@ -228,15 +226,20 @@ def test_both_attributes_reach_the_operation_record_and_span_but_no_metric(
         set_span_attributes(attributes)
 
     monkeypatch.setattr(runtime._otel, "set_span_attributes", record_span_attributes)
+    # Every attribute the operation hands to its metrics, before the package
+    # filters them.
     metric_attribute_sets: list[dict] = []
-    filter_metric_attributes = otel.metric_attributes
+    for metric_method_name in ("record_operation", "record_error"):
+        record_metric = getattr(runtime._otel, metric_method_name)
 
-    def record_metric_attributes(attributes, config):
-        filtered = filter_metric_attributes(attributes, config)
-        metric_attribute_sets.append(filtered)
-        return filtered
+        def record_metric_attributes(
+            duration_or_attributes, *more, record=record_metric
+        ):
+            attributes = more[0] if more else duration_or_attributes
+            metric_attribute_sets.append(dict(attributes))
+            return record(duration_or_attributes, *more)
 
-    monkeypatch.setattr(otel, "metric_attributes", record_metric_attributes)
+        monkeypatch.setattr(runtime._otel, metric_method_name, record_metric_attributes)
     monkeypatch.setattr(
         modal_app, "_configure_modal_observability", lambda *, service_role: runtime
     )
@@ -259,6 +262,29 @@ def test_both_attributes_reach_the_operation_record_and_span_but_no_metric(
     assert metric_attribute_sets
     for metric_attributes in metric_attribute_sets:
         assert not CONTAINER_START_KEYS & set(metric_attributes)
+
+
+@pytest.mark.parametrize(
+    "function_name",
+    ["run_simulation", "run_simulation_segment", "run_budget_window_batch"],
+)
+def test_a_plain_function_sets_both_attributes_before_its_job_runs(
+    modal_app, monkeypatch, function_name
+):
+    _record_call_attributes(modal_app, monkeypatch)
+    attributes_when_the_job_started: list[dict[str, object]] = []
+
+    def job_reading_its_operation_attributes(_params, *, runtime, **_job_options):
+        attributes_when_the_job_started.append(dict(runtime.attributes))
+        return WORKER_RESULT
+
+    _replace_worker_jobs(monkeypatch, job_reading_its_operation_attributes)
+
+    assert getattr(modal_app, function_name)(SIMULATION_PARAMS) == WORKER_RESULT
+
+    [job_attributes] = attributes_when_the_job_started
+    assert job_attributes["container_start"] == "no_snapshot"
+    assert job_attributes["container_call_number"] == 1
 
 
 @pytest.mark.parametrize(("worker_class_name", "method_name"), WORKER_METHODS)
@@ -382,3 +408,62 @@ def test_a_runtime_refusing_the_attributes_leaves_the_call_result_unchanged(
     [call_attributes] = attributes_by_call
     assert call_attributes["container_start"] == "restored_from_snapshot"
     assert call_attributes["container_call_number"] == 2
+
+
+def test_a_call_whose_container_start_cannot_be_read_still_counts(
+    modal_app, monkeypatch
+):
+    worker = _worker_after_snapshot_hook(
+        modal_app, monkeypatch, "SimulationSegmentWorker"
+    )
+    _restore_into_another_container(monkeypatch)
+    read_container_start = modal_app._CONTAINER_CALLS.container_start
+
+    def fail_to_read_the_container_start():
+        msg = "container start unreadable"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(
+        modal_app._CONTAINER_CALLS, "container_start", fail_to_read_the_container_start
+    )
+    assert worker.run_simulation_segment(SIMULATION_PARAMS) == WORKER_RESULT
+    monkeypatch.setattr(
+        modal_app._CONTAINER_CALLS, "container_start", read_container_start
+    )
+    attributes_by_call = _record_call_attributes(modal_app, monkeypatch)
+
+    assert worker.run_simulation_segment(SIMULATION_PARAMS) == WORKER_RESULT
+
+    # The first call was the container's first, so this is its second.
+    [call_attributes] = attributes_by_call
+    assert call_attributes["container_call_number"] == 2
+
+
+def test_a_failure_to_record_the_snapshot_hook_still_loads_the_models(
+    modal_app, monkeypatch
+):
+    preload_calls: list[str] = []
+    monkeypatch.setattr(
+        modal_app, "preload_country_models", lambda: preload_calls.append("loaded")
+    )
+
+    def fail_to_record_the_snapshot_hook():
+        msg = "environment unreadable"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(
+        modal_app._CONTAINER_CALLS,
+        "record_snapshot_hook",
+        fail_to_record_the_snapshot_hook,
+    )
+    monkeypatch.setenv("MODAL_ENABLE_SNAP_RESTORE", "1")
+
+    worker = modal_app.SimulationWorker()
+    worker.load_country_models()
+
+    # The container starts with its models, and its calls report no_snapshot.
+    assert preload_calls == ["loaded"]
+    attributes_by_call = _record_call_attributes(modal_app, monkeypatch)
+    assert worker.run_simulation(SIMULATION_PARAMS) == WORKER_RESULT
+    [call_attributes] = attributes_by_call
+    assert call_attributes["container_start"] == "no_snapshot"
