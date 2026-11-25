@@ -10,6 +10,17 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.25.0] - 2026-11-25
+
+### Added
+
+- Household calculations (`POST /household-calculations`) take a `dynamic_id`, and each side of a household report takes one, as economy simulations do: the dynamic's values are applied with the policy's, the job stores it in `household_jobs.dynamic_id` and the job's state returns it, each household simulation's key names it, and a stored household report whose side names a dynamic is re-run with it.
+
+### Changed
+
+- Every simulation, economy and household alike, refuses a dynamic stored for another country as `unknown_dynamic`, as it refuses another country's policy, and the refusal's detail names the country. To check, sim reads `dynamics.country_id`, which API v1's migration `9d1d12a7ac58` (PolicyEngine/policyengine-api#4325) added.
+
+
 ## [0.24.0] - 2026-11-25
 
 ### Removed

@@ -1,1 +1,0 @@
-Every simulation, economy and household alike, refuses a dynamic stored for another country as `unknown_dynamic`, as it refuses another country's policy, and the refusal's detail names the country. To check, sim reads `dynamics.country_id`, which API v1's migration `9d1d12a7ac58` (PolicyEngine/policyengine-api#4325) added.
