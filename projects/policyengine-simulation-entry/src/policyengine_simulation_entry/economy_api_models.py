@@ -108,6 +108,10 @@ ServiceStateRefusalCode = Literal[
     # The catalog version's constituency and local-authority regions don't
     # all use the dataset the default worker calculates local areas on.
     "local_area_dataset_mismatch",
+    # A stored dynamic has no parameter values this release reads. API v1
+    # stores no dynamic without values, so they are stored where this release
+    # doesn't read them; the dynamic is not applied as current law.
+    "dynamic_without_values",
 ]
 EconomyRefusalCode = Literal[CallerRowRefusalCode, ServiceStateRefusalCode]
 # Why stored values cannot be calculated (422).

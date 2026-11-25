@@ -43,6 +43,7 @@ from policyengine_simulation_observability.log_records import (
     log_extra,
 )
 from policyengine_simulation_persistence import (
+    DynamicWithoutValuesError,
     EconomyRecordOutcomeUnknownError,
     HouseholdJobReferenceError,
     HouseholdJobStatus,
@@ -472,6 +473,10 @@ class HouseholdCalculationService:
         except UnknownDynamicError as error:
             raise HouseholdCalculationRefusedError(
                 code="unknown_dynamic", detail=str(error)
+            ) from None
+        except DynamicWithoutValuesError as error:
+            raise HouseholdCalculationRefusedError(
+                code="dynamic_without_values", detail=str(error)
             ) from None
         except MissingPolicyParametersError as error:
             field_name = "policy_id" if error.source == "policy" else "dynamic_id"

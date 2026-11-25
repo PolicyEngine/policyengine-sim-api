@@ -95,9 +95,10 @@ once it has one, and its `error_message`.
 A submission is refused before anything is written: with 400 and a `code`
 when the household, policy, dynamic or catalog version for the default
 worker's .py version is missing (a dynamic of another country is
-`unknown_dynamic`), or the default worker has no household function for the
-country; with 422, one reason per field, when the stored household has no
-default year, the policy or dynamic sets parameters that catalog version
+`unknown_dynamic`), the dynamic has no parameter values this release reads
+(`dynamic_without_values`), or the default worker has no household function
+for the country; with 422, one reason per field, when the stored household
+has no default year, the policy or dynamic sets parameters that catalog version
 lacks (located at `policy_id` or `dynamic_id`), the dynamic sets a parameter
 the policy also sets (located at `dynamic_id`), or the household contract
 refuses the stored data. A job naming a row deleted
@@ -163,8 +164,10 @@ A request is refused before anything is written: with 400 and a `code` when
 a row it names is missing (`unknown_region` and `unknown_dynamic` name the
 caller's own choice, and `unknown_dataset` its region's dataset;
 `unknown_catalog_version`, `unknown_policy`, `no_economy_worker`,
-`dataset_not_in_bundle` and `missing_reference` are the service's state,
-such as a catalog version missing while a release deploys), or, for a report
+`dataset_not_in_bundle`, `missing_reference` and `dynamic_without_values`
+are the service's state, such as a catalog version missing while a release
+deploys, or a stored dynamic with no parameter values this release reads,
+which is never applied as current law), or, for a report
 on the local-area dataset, when the default worker or the catalog can't
 serve it (`local_areas_unsupported` and `local_area_dataset_mismatch`, also
 the service's state; see "Local areas"); and with 422 and a `code` when a
@@ -305,8 +308,9 @@ refuses what the report would calculate, located at the field it traces to:
 A policy or dynamic setting parameters the catalog version lacks is 422
 `missing_parameters`, located at that side's `policy_id` or `dynamic_id`; a
 dynamic setting a parameter its side's policy also sets is 422
-`overlapping_parameters`; and a dynamic of another country is 400
-`unknown_dynamic`.
+`overlapping_parameters`; a dynamic of another country is 400
+`unknown_dynamic`; and a dynamic with no parameter values this release reads
+is 400 `dynamic_without_values`.
 
 ## Re-running a report or simulation
 
@@ -382,7 +386,8 @@ record (a 422 reason's `loc` starts with `report` or `simulation`), with a
 household report's own codes: 400 `unknown_household` and
 `no_household_function`, and 422 `household_not_calculable`, located at the
 report's `household_id` or a side's `policy_id` or `dynamic_id`; a side's
-dynamic of another country is 400 `unknown_dynamic`, and one setting a
+dynamic of another country is 400 `unknown_dynamic`, one with no parameter
+values this release reads 400 `dynamic_without_values`, and one setting a
 parameter the side's policy sets 422 `overlapping_parameters`, located at
 that side's `dynamic_id`. Without household reports
 configured, a household report the service could re-run answers 503

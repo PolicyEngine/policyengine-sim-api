@@ -1,0 +1,1 @@
+A simulation naming a stored dynamic with no parameter values, economy or household alike and their re-runs included, is refused with 400 `dynamic_without_values` instead of being calculated and stored as current law. API v1 stores no dynamic without values, so such a dynamic's values are stored where this release doesn't read them.

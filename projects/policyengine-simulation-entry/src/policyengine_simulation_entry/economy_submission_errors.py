@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal
 
 from policyengine_simulation_persistence import (
+    DynamicWithoutValuesError,
     LocalAreaDatasetMismatchError,
     MissingPolicyParametersError,
     OverlappingReformError,
@@ -274,7 +275,9 @@ def simulation_values_refusal(
 
     Economy and household simulations alike: a policy or dynamic the
     country doesn't have, a dynamic of another country included, is refused
-    (400), its detail saying what ``named_by``; one setting parameters the
+    (400), its detail saying what ``named_by``; so is a dynamic with no
+    parameter values stored (``dynamic_without_values``), whose values this
+    release can't read, a state of the service; one setting parameters the
     catalog version for ``policyengine_version`` lacks, or a dynamic setting
     one its policy sets, cannot be calculated (422), each reason located
     under ``location`` at ``policy_id`` or ``dynamic_id``. Every detail is
@@ -289,6 +292,14 @@ def simulation_values_refusal(
         return EconomySubmissionRefusedError(
             code="unknown_dynamic",
             detail=f"{country} has no stored dynamic {named_by} names.",
+        )
+    if isinstance(error, DynamicWithoutValuesError):
+        return EconomySubmissionRefusedError(
+            code="dynamic_without_values",
+            detail=(
+                f"{country}'s stored dynamic that {named_by} names has no parameter "
+                "values the service can read."
+            ),
         )
     if isinstance(error, MissingPolicyParametersError):
         field_name = "policy_id" if error.source == "policy" else "dynamic_id"
