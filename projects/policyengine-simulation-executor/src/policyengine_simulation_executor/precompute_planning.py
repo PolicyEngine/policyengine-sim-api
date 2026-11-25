@@ -1,271 +1,230 @@
-"""Plan the artifact precompute: cohorts, state dataset targets and the work to do."""
+"""Plan one country's precompute through its level handlers.
+
+The country's settings (``stage12_cache.levels.prebuilt_for``) name the years
+and the levels whose year files and baselines are built. Each level's handler
+returns its targets for a year; this module keys each target with the
+run_simulation app's identities and checks the store for it.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from policyengine_simulation_executor.precompute_models import (
     BaselinePlanEntry,
     BundleVersionIdentity,
-    DatasetPlanEntry,
     PrecomputePlan,
-    StateDatasetPlanEntry,
+    SourceFilePlanEntry,
     WorkSelection,
+    YearFilePlanEntry,
 )
-from policyengine_simulation_executor.state_datasets import (
-    state_dataset_relative_folder,
+from policyengine_simulation_executor.stage12_cache.levels import (
+    BaselineTarget,
+    CountryPrebuilt,
+    prebuilt_for,
 )
 
 if TYPE_CHECKING:
-    from types import ModuleType
-
-    from policyengine.core.scoping_strategy import RowFilterStrategy
-
-    from policyengine_simulation_executor.artifact_keys import BaselineArtifactIdentity
-    from policyengine_simulation_executor.simulation_runtime import RegionResolution
-
-PRECOMPUTE_COUNTRY = "us"
-# The user-facing priority order (2026 first); with parallel waves it only
-# orders spawn submission, but keep it intentional.
-PRECOMPUTE_YEARS = [2026, 2027, 2025]
+    from policyengine_simulation_executor.artifact_keys import BaselineIdentity
+    from policyengine_simulation_executor.artifact_store import ArtifactStore
 
 
-def cohort_params(year: int, group: list[str]) -> dict:
-    """Return the synthetic request a segmented-national child would receive."""
-    return {
-        "country": PRECOMPUTE_COUNTRY,
-        "scope": "macro",
-        "region_group": list(group),
-        "time_period": year,
-    }
+def country_prebuilt(country: str) -> CountryPrebuilt:
+    """Return a country's prebuilt-file settings; ``ValueError`` when it has none."""
+    prebuilt = prebuilt_for(country)
+    if prebuilt is None:
+        msg = f"No prebuilt-file settings for country {country!r}"
+        raise ValueError(msg)
+    return prebuilt
 
 
-def cohort_resolution(
-    year: int, group: list[str]
-) -> tuple[dict[str, Any], ModuleType, RegionResolution]:
-    """Cohort request params, country module, and region resolution.
+def baseline_target_identity(target: BaselineTarget) -> BaselineIdentity | None:
+    """Return a baseline target's identity, derived as a run of its request is.
 
-    The planner's identity (``cohort_identity``) and the worker's
-    simulation (``_prepare_cohort_baseline``) must derive from ONE
-    resolution or the in-container id checks abort the run; sharing this
-    prologue removes the drift surface.
+    The request goes through the runtime's own region and dataset resolution
+    and ``qualifying_baseline_identity``, so the writer and the reader cannot
+    disagree by construction.
     """
-    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
-        _country_module,
-        resolve_region,
-    )
-
-    params = cohort_params(year, group)
-    country_module = _country_module(PRECOMPUTE_COUNTRY)
-    resolution = resolve_region(
-        country_module=country_module,
-        country=PRECOMPUTE_COUNTRY,
-        params=params,
-    )
-    return params, country_module, resolution
-
-
-def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
-    """Identity via the executor's own resolution path (writer==reader)."""
     from policyengine_simulation_executor.baseline_artifacts import (
         BaselineIdentityRequest,
         qualifying_baseline_identity,
     )
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
-        _resolve_dataset_selection,
-    )
-
-    params, _, resolution = cohort_resolution(year, group)
-    dataset_selection = _resolve_dataset_selection(params, region_resolution=resolution)
-    identity = qualifying_baseline_identity(
-        BaselineIdentityRequest(
-            params,
-            country=PRECOMPUTE_COUNTRY,
-            dataset_is_default=dataset_selection.is_default,
-            policy=None,
-            region_code=resolution.code,
-            scoping_strategy=resolution.scoping_strategy,
-            year=year,
-        )
-    )
-    if identity is None:
-        msg = (
-            f"Cohort request for year {year} group {group} does not qualify "
-            "for a deterministic baseline id — writer and reader predicates "
-            "have diverged."
-        )
-        raise RuntimeError(msg)
-    return identity
-
-
-@dataclass(frozen=True)
-class StateDatasetTarget:
-    """A US state whose requests load a non-default dataset, and its row filter.
-
-    The precompute bakes this state's rows of ``dataset`` as their own year
-    file: the households whose ``filter_variable`` equals ``state_fips``.
-    ``scoping_strategy`` is the region's own .py strategy, the one a request
-    for the state applies, so a baked file holds exactly the rows the request
-    would keep.
-    """
-
-    region: str
-    state_code: str
-    state_fips: int
-    filter_variable: str
-    dataset: str
-    scoping_strategy: RowFilterStrategy | None = field(
-        default=None, compare=False, repr=False
-    )
-
-
-def state_dataset_targets() -> list[StateDatasetTarget]:
-    """Return every US state region that loads a non-default dataset, by state code.
-
-    Each state is resolved exactly as a request for it is (``resolve_region``
-    then ``_resolve_dataset_selection``), so a bundle that sends states back to
-    the default dataset gets no state files.
-    """
-    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _country_module,
         _resolve_dataset_selection,
         resolve_region,
     )
 
-    country_module = _country_module(PRECOMPUTE_COUNTRY)
-    targets = []
-    for region in country_module.model.region_registry.get_by_type("state"):
-        params = {
-            "country": PRECOMPUTE_COUNTRY,
-            "region": region.code,
-            "time_period": PRECOMPUTE_YEARS[0],
-        }
-        resolution = resolve_region(
-            country_module=country_module, country=PRECOMPUTE_COUNTRY, params=params
+    params = dict(target.request)
+    region = resolve_region(
+        country_module=_country_module(target.country),
+        country=target.country,
+        params=params,
+    )
+    dataset = _resolve_dataset_selection(params, region_resolution=region)
+    return qualifying_baseline_identity(
+        BaselineIdentityRequest(
+            params,
+            country=target.country,
+            dataset=dataset,
+            policy=None,
+            region_code=region.code,
+            scoping_strategy=region.scoping_strategy,
+            year=target.year,
+            state_code=region.state_code,
         )
-        selection = _resolve_dataset_selection(params, region_resolution=resolution)
-        if selection.is_default:
-            continue
-        strategy = resolution.scoping_strategy
-        variable_name = getattr(strategy, "variable_name", None)
-        variable_value = getattr(strategy, "variable_value", None)
-        if not variable_name or variable_value is None or not resolution.state_code:
-            msg = (
-                f"State region {resolution.code} loads {selection.name} but has no "
-                "row filter and state code to build its state file from"
-            )
-            raise RuntimeError(msg)
-        targets.append(
-            StateDatasetTarget(
-                region=resolution.code,
-                state_code=resolution.state_code,
-                state_fips=int(variable_value),
-                filter_variable=variable_name,
-                dataset=selection.name,
-                scoping_strategy=strategy,
-            )
-        )
-    return sorted(targets, key=lambda target: target.state_code)
+    )
 
 
 def select_work(plan: PrecomputePlan, *, force: bool) -> WorkSelection:
     """Which plan entries need computing."""
     return WorkSelection(
-        datasets=[entry for entry in plan.datasets if force or not entry.exists],
+        year_files=[entry for entry in plan.year_files if force or not entry.exists],
         baselines=[entry for entry in plan.baselines if force or not entry.exists],
-        state_datasets=[
-            entry for entry in plan.state_datasets if force or not entry.exists
+        source_files=[
+            entry for entry in plan.source_files if force or not entry.exists
         ],
     )
 
 
-def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
-    """Compute every expected artifact identity and its store presence."""
-    from policyengine_simulation_executor.artifact_keys import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_keys.collect_dataset_identity
-        collect_dataset_identity,
-        collect_state_dataset_identity,
+def _year_file_entries(
+    prebuilt: CountryPrebuilt, year: int, store: ArtifactStore
+) -> list[YearFilePlanEntry]:
+    from policyengine_simulation_executor.artifact_keys import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_keys
+        year_file_identity,
     )
-    from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_store.ArtifactStore
-        ArtifactStore,
+
+    entries = []
+    for level in prebuilt.year_file_levels:
+        for target in prebuilt.handlers[level].year_file_targets(year):
+            identity = year_file_identity(target)
+            entries.append(
+                YearFilePlanEntry(
+                    country=prebuilt.country,
+                    level=target.level,
+                    year=target.year,
+                    dataset=target.dataset,
+                    region=None if target.subset is None else target.subset.region,
+                    subset_code=None if target.subset is None else target.subset.code,
+                    digest=identity.digest,
+                    path=identity.store_path,
+                    filename=identity.filename,
+                    folder=identity.folder,
+                    exists=store.exists(identity.store_path),
+                )
+            )
+    return entries
+
+
+def _baseline_entries(
+    prebuilt: CountryPrebuilt, year: int, store: ArtifactStore
+) -> list[BaselinePlanEntry]:
+    entries = []
+    for level in prebuilt.baseline_levels:
+        for target in prebuilt.handlers[level].baseline_targets(year):
+            identity = baseline_target_identity(target)
+            if identity is None:
+                msg = (
+                    f"The {target.country} {target.level} baseline {target.label} "
+                    f"for {year} gets no fixed ID: the writer and reader rules "
+                    "have diverged."
+                )
+                raise RuntimeError(msg)
+            if identity.year_file.folder != target.year_file.folder:
+                msg = (
+                    f"The {target.label} baseline reads {identity.year_file.folder}, "
+                    f"not its target's {target.year_file.folder}"
+                )
+                raise RuntimeError(msg)
+            entries.append(
+                BaselinePlanEntry(
+                    country=prebuilt.country,
+                    level=target.level,
+                    year=target.year,
+                    region=identity.region,
+                    label=target.label,
+                    request=dict(target.request),
+                    year_file_path=identity.year_file.store_path,
+                    year_file_filename=identity.year_file.filename,
+                    folder=identity.year_file.folder,
+                    digest=identity.digest,
+                    path=identity.store_path,
+                    simulation_id=identity.simulation_id,
+                    storage_id=identity.storage_id,
+                    exists=store.exists(identity.store_path),
+                )
+            )
+    return entries
+
+
+def _source_file_entries(
+    prebuilt: CountryPrebuilt, store: ArtifactStore
+) -> list[SourceFilePlanEntry]:
+    from policyengine_simulation_executor.artifact_keys import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_keys
+        source_file_identity,
     )
-    from policyengine_simulation_executor.national_partition import (  # noqa: PLC0415  # resolved per call so tests can patch national_partition.national_region_groups
-        national_region_groups,
+
+    entries = []
+    levels = dict.fromkeys((*prebuilt.year_file_levels, *prebuilt.baseline_levels))
+    for level in levels:
+        for target in prebuilt.handlers[level].source_file_targets():
+            identity = source_file_identity(target)
+            entries.append(
+                SourceFilePlanEntry(
+                    country=prebuilt.country,
+                    level=target.level,
+                    dataset=target.dataset,
+                    sha256=identity.dataset_sha256,
+                    path=identity.store_path,
+                    filename=identity.filename,
+                    folder=identity.folder,
+                    exists=store.exists(identity.store_path),
+                )
+            )
+    return entries
+
+
+def _receipt(country: str) -> BundleVersionIdentity:
+    from policyengine_simulation_executor import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_keys._installed_package_versions
+        artifact_keys,
     )
     from policyengine_simulation_executor.release_bundle import (  # noqa: PLC0415  # resolved per call so tests can patch release_bundle.get_country_release_bundle
         get_country_release_bundle,
     )
 
-    store = ArtifactStore(bucket)
-    groups = national_region_groups(PRECOMPUTE_COUNTRY)
-    if not groups:
-        msg = f"No national partition for {PRECOMPUTE_COUNTRY!r}"
-        raise RuntimeError(msg)
-
-    targets = state_dataset_targets()
-    datasets: list[DatasetPlanEntry] = []
-    baselines: list[BaselinePlanEntry] = []
-    state_datasets: list[StateDatasetPlanEntry] = []
-    for year in PRECOMPUTE_YEARS:
-        dataset_identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, year)
-        datasets.append(
-            DatasetPlanEntry(
-                year=year,
-                digest=dataset_identity.digest,
-                path=dataset_identity.store_path,
-                filename=dataset_identity.filename,
-                exists=store.exists(dataset_identity.store_path),
-            )
-        )
-        for group in groups:
-            identity = cohort_identity(year, group)
-            baselines.append(
-                BaselinePlanEntry(
-                    year=year,
-                    group=list(group),
-                    region=identity.region,
-                    digest=identity.digest,
-                    path=identity.store_path,
-                    simulation_id=identity.simulation_id,
-                    exists=store.exists(identity.store_path),
-                )
-            )
-        for target in targets:
-            state_identity = collect_state_dataset_identity(
-                PRECOMPUTE_COUNTRY,
-                year,
-                dataset=target.dataset,
-                state_code=target.state_code,
-                state_fips=target.state_fips,
-                filter_variable=target.filter_variable,
-            )
-            state_datasets.append(
-                StateDatasetPlanEntry(
-                    year=year,
-                    state_code=target.state_code,
-                    region=target.region,
-                    dataset=target.dataset,
-                    digest=state_identity.digest,
-                    path=state_identity.store_path,
-                    filename=state_identity.filename,
-                    folder=state_dataset_relative_folder(
-                        target.dataset, target.state_code
-                    ),
-                    exists=store.exists(state_identity.store_path),
-                )
-            )
-
-    bundle = get_country_release_bundle(PRECOMPUTE_COUNTRY)
-    receipt = BundleVersionIdentity(
+    bundle = get_country_release_bundle(country)
+    packages = artifact_keys._installed_package_versions(country)  # noqa: SLF001  # the one installed-package reader, shared with the year-file keys
+    return BundleVersionIdentity(
         policyengine_version=bundle.policyengine_version,
+        policyengine_core_version=packages["policyengine-core"],
         model_version=bundle.model_version,
         data_version=bundle.data_version,
         data_artifact_revision=bundle.data_artifact_revision,
         default_dataset=bundle.default_dataset,
     )
+
+
+def plan_artifacts_impl(bucket: str, country: str = "us") -> PrecomputePlan:
+    """Compute every file one country's precompute builds, and its store presence.
+
+    Year-major: for each year, the year files of each level in the settings'
+    order, then the baselines of each level. Source files follow.
+    """
+    from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_store.ArtifactStore
+        ArtifactStore,
+    )
+
+    prebuilt = country_prebuilt(country)
+    store = ArtifactStore(bucket)
+    year_files: list[YearFilePlanEntry] = []
+    baselines: list[BaselinePlanEntry] = []
+    for year in prebuilt.years:
+        year_files += _year_file_entries(prebuilt, year, store)
+        baselines += _baseline_entries(prebuilt, year, store)
     return PrecomputePlan(
-        datasets=datasets,
+        country=prebuilt.country,
+        year_files=year_files,
         baselines=baselines,
-        receipt=receipt,
-        state_datasets=state_datasets,
+        source_files=_source_file_entries(prebuilt, store),
+        receipt=_receipt(prebuilt.country),
     )

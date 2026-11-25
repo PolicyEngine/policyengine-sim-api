@@ -13,28 +13,14 @@ households each. Rebalance only with a measured partition; group count and
 membership changes alter per-child runtimes, not correctness.
 """
 
-US_NATIONAL_REGION_GROUPS: tuple[tuple[str, ...], ...] = (
-    ("state/hi", "state/ia", "state/wi"),
-    ("state/ak", "state/ga", "state/la"),
-    ("state/al", "state/co", "state/ri"),
-    ("state/mn", "state/mo", "state/nh"),
-    ("state/az", "state/de", "state/me"),
-    ("state/ny", "state/wv"),
-    ("state/in", "state/ky", "state/md"),
-    ("state/mt", "state/sc", "state/wa"),
-    ("state/id", "state/or", "state/tn"),
-    ("state/ar", "state/nc", "state/nd"),
-    ("state/dc", "state/ks", "state/mi"),
-    ("state/ct", "state/oh", "state/vt"),
-    ("state/nv", "state/va", "state/wy"),
-    ("state/pa", "state/ut"),
-    ("state/sd", "state/tx"),
-    ("state/ca",),
-    ("state/il", "state/ms"),
-    ("state/fl", "state/nm"),
-    ("state/ne", "state/nj"),
-    ("state/ma", "state/ok"),
+from policyengine_simulation_executor.stage12_runtime.partition import (
+    US_REGION_GROUPS,
 )
+
+# Stage 12's partition is the one list of the 20 groups: the precomputed
+# group baselines are built from it (``stage12_cache.levels_us``), so the
+# segmented runs that read them must use the same groups.
+US_NATIONAL_REGION_GROUPS: tuple[tuple[str, ...], ...] = US_REGION_GROUPS
 
 
 def national_region_groups(country: str) -> list[list[str]] | None:

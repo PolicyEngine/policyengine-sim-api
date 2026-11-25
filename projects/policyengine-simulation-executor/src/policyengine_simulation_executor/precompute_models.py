@@ -12,21 +12,25 @@ manifest digest — cross as-is), so a shape drift between planner and
 worker fails loudly at the edge instead of surfacing as a KeyError
 mid-computation.
 
-Wire-compatibility constraint: ``ArtifactManifest.canonical_payload()``
-must keep producing the exact key/value shape the store already holds —
-the manifest is content-addressed, so any change here rotates published
-digests. A regression test locks the digest of a fixed payload.
+Plans are not stored, so their shape may change freely. The manifest is:
+``ArtifactManifest.canonical_payload()`` is what gets digested and stored,
+and the digest names the deployed file set, so any change to its shape
+rotates published digests.
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from policyengine_simulation_executor.stage12_cache.levels import DatasetLevel
 
 # Mirrors baseline_artifacts.OUTCOME_*; the artifact outcome a worker
 # observed when ensuring a baseline.
 ArtifactOutcome = Literal["hit", "incomplete", "miss"]
+
+MANIFEST_SCHEMA = "mf2"
 
 
 class _StrictModel(BaseModel):
@@ -36,40 +40,34 @@ class _StrictModel(BaseModel):
 class BundleVersionIdentity(_StrictModel):
     """The version identity of the installed bundle a plan was made for.
 
-    Travels under the frozen wire key ``receipt``, but is deliberately NOT
-    the install receipt file (``.policyengine-bundle-receipt.json``): that
+    Travels under the wire key ``receipt``, but is deliberately NOT the
+    install receipt file (``.policyengine-bundle-receipt.json``): that
     carries per-dataset content hashes, which live inside the artifact
-    digests here, not in this version tuple.
+    digests here, not in this version tuple. The image's download step
+    refuses a manifest whose versions differ from the image's.
     """
 
     policyengine_version: str
+    policyengine_core_version: str
     model_version: str
     data_version: str
     data_artifact_revision: str
     default_dataset: str
 
 
-class DatasetPlanEntry(_StrictModel):
-    """One single-year dataset artifact: identity plus store presence."""
+class YearFilePlanEntry(_StrictModel):
+    """One year file: its level, identity, image folder and store presence.
 
-    year: int
-    digest: str
-    path: str
-    filename: str
-    exists: bool
-
-
-class StateDatasetPlanEntry(_StrictModel):
-    """One state's year file filtered from a regional dataset: identity plus presence.
-
-    ``folder`` is where the image places the file, relative to its data folder;
-    every state's file has the same ``filename``.
+    ``region`` and ``subset_code`` name a per-subset file's rows (``state/ca``,
+    ``CA``); both are None for a whole dataset's year file.
     """
 
+    country: str
+    level: DatasetLevel
     year: int
-    state_code: str
-    region: str
     dataset: str
+    region: str | None
+    subset_code: str | None
     digest: str
     path: str
     filename: str
@@ -78,80 +76,96 @@ class StateDatasetPlanEntry(_StrictModel):
 
 
 class BaselinePlanEntry(_StrictModel):
-    """One cohort baseline artifact: identity plus store presence."""
+    """One current-law baseline: the request it answers and the year file it reads.
 
+    ``request`` is the synthetic request the runtime would receive.
+    ``year_file_path`` and ``year_file_filename`` name the year file it runs on,
+    which the builder downloads into ``folder`` when it is missing; the
+    baseline lands beside it.
+    """
+
+    country: str
+    level: DatasetLevel
     year: int
-    group: list[str]
     region: str
+    label: str
+    request: dict[str, Any]
+    year_file_path: str
+    year_file_filename: str
+    folder: str
     digest: str
     path: str
     simulation_id: str
+    storage_id: str
+    exists: bool
+
+
+class SourceFilePlanEntry(_StrictModel):
+    """A source dataset copied into the image as is, addressed by its certified hash."""
+
+    country: str
+    level: DatasetLevel
+    dataset: str
+    sha256: str
+    path: str
+    filename: str
+    folder: str
     exists: bool
 
 
 class PrecomputePlan(_StrictModel):
-    """Everything the store should contain for the installed bundle."""
+    """Everything the store should contain for one country's installed bundle."""
 
-    datasets: list[DatasetPlanEntry]
+    country: str
+    year_files: list[YearFilePlanEntry]
     baselines: list[BaselinePlanEntry]
+    source_files: list[SourceFilePlanEntry] = Field(default_factory=list)
     receipt: BundleVersionIdentity
-    state_datasets: list[StateDatasetPlanEntry] = Field(default_factory=list)
 
 
 class WorkSelection(_StrictModel):
     """The subset of a plan that actually needs computing."""
 
-    datasets: list[DatasetPlanEntry]
+    year_files: list[YearFilePlanEntry]
     baselines: list[BaselinePlanEntry]
-    state_datasets: list[StateDatasetPlanEntry] = Field(default_factory=list)
+    source_files: list[SourceFilePlanEntry] = Field(default_factory=list)
 
 
-class ManifestArtifact(_StrictModel):
-    """One artifact the deploy image must fetch into its data folder."""
+class ManifestEntry(_StrictModel):
+    """One file the deploy image must fetch into its prebuilt folder.
 
-    type: Literal["dataset", "baseline"]
-    path: str
-    filename: str
-    year: int
-    digest: str
-
-
-class StateDatasetArtifact(_StrictModel):
-    """One state's year file, which the image fetches into the state's ``folder``.
-
-    Its own model, rather than optional fields on ``ManifestArtifact``, so the
-    dataset and baseline entries keep exactly their published wire shape.
+    ``sha256`` and ``size_bytes`` are the stored object's, which the download
+    step checks. ``year`` is None for a source file, and ``region`` for a
+    whole dataset's year file.
     """
 
-    type: Literal["state_dataset"]
+    kind: Literal["year_file", "baseline", "source_file"]
+    level: DatasetLevel
+    region: str | None
     path: str
     filename: str
     folder: str
-    state_code: str
-    year: int
+    year: int | None
     digest: str
-
-
-ManifestEntry = Annotated[
-    ManifestArtifact | StateDatasetArtifact, Field(discriminator="type")
-]
+    sha256: str
+    size_bytes: int
 
 
 class ArtifactManifest(_StrictModel):
-    """The published deploy manifest (content-addressed in the store)."""
+    """One country's published deploy manifest (content-addressed in the store)."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     # "schema" is the wire key; the Python name avoids shadowing
     # BaseModel's deprecated .schema attribute.
-    manifest_schema: str = Field(alias="schema")
+    manifest_schema: Literal["mf2"] = Field(alias="schema")
     country: str
     receipt: BundleVersionIdentity
     artifacts: list[ManifestEntry]
 
     def canonical_payload(self) -> dict[str, Any]:
         """Return the exact dict that gets digested and stored, keyed by wire alias."""
-        return self.model_dump(by_alias=True)
+        return self.model_dump(by_alias=True, mode="json")
 
 
 class DeployedMarker(_StrictModel):
@@ -177,25 +191,14 @@ class DeployedMarker(_StrictModel):
     deployed_at: str
 
 
-class DatasetBuildResult(_StrictModel):
-    """Result of one dataset build; ``uploaded`` is False if the key existed."""
+class YearFileBuildResult(_StrictModel):
+    """Result of one year file's build; ``uploaded`` is False if the key existed.
 
-    year: int
-    path: str
-    uploaded: bool
-    build_seconds: float
-    size_bytes: int
-
-
-class StateDatasetBuildResult(_StrictModel):
-    """Result of one state's dataset build; ``uploaded`` is False if the key existed.
-
-    ``build_seconds`` is how long the year's build had run when this state's
-    file was uploaded, so the last result of a build gives its whole duration.
+    ``build_seconds`` is how long the build had run when this file was
+    uploaded, so the last result of a build gives its whole duration.
     """
 
     year: int
-    state_code: str
     path: str
     uploaded: bool
     size_bytes: int
@@ -210,7 +213,7 @@ class BaselineComputeResult(_StrictModel):
     """
 
     year: int
-    group: list[str]
+    label: str
     simulation_id: str
     outcome: ArtifactOutcome | None
     uploaded: bool

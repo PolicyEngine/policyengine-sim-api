@@ -22,7 +22,6 @@ from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
 from policyengine_simulation_observability.stages import ANNUAL_IMPACT_STAGES, Stage
 from policyengine_simulation_observability.telemetry import split_internal_payload
 
-from policyengine_simulation_executor import state_datasets
 from policyengine_simulation_executor.dataset_download_retry import (
     load_with_download_retry,
 )
@@ -51,6 +50,7 @@ from policyengine_simulation_executor.simulation_output_builder import (
 from policyengine_simulation_executor.simulation_output_local_areas import (
     LocalAreaBreakdownBuilder,
 )
+from policyengine_simulation_executor.stage12_cache import levels
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -224,6 +224,22 @@ def _manifest_dataset_revision(country: str, name: str) -> str | None:
     return revision if isinstance(revision, str) and revision else None
 
 
+def _prebuilt_folder(
+    country: str,
+    region: RegionResolution,
+    selection: DatasetSelection,
+    year: int,
+) -> levels.PrebuiltFolder | None:
+    """Return the image's prebuilt folder holding this run's year file, or None.
+
+    None keeps the folder ``_load_dataset`` would otherwise use.
+    """
+    return levels.prebuilt_dataset_folder(
+        levels.RunScope(country=country, year=year, region=region, dataset=selection),
+        resolve_data_folder(),
+    )
+
+
 def _load_dataset(
     params: dict[str, Any],
     *,
@@ -324,11 +340,12 @@ def _build_simulation(
         BaselineIdentityRequest(
             params,
             country=country,
-            dataset_is_default=dataset_selection.is_default,
+            dataset=dataset_selection,
             policy=runtime_policy,
             region_code=region.code,
             scoping_strategy=scoping_strategy,
             year=parse_year(params),
+            state_code=region.state_code,
         )
     )
     if simulation_id is not None:
@@ -392,8 +409,14 @@ def _uk_area_simulations(
     with runtime.span(
         ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD), attributes=area_role
     ):
+        prebuilt = _prebuilt_folder(
+            params.get("country", "uk").lower(), region, selection, parse_year(params)
+        )
         dataset = _load_dataset_retrying_downloads(
-            params, selection=selection, country_module=country_module
+            params,
+            selection=selection,
+            country_module=country_module,
+            data_folder=None if prebuilt is None else prebuilt.folder,
         )
     local_authority_metadata = detect_uk_area_dataset_metadata(
         dataset, dataset_name=selection.name
@@ -529,26 +552,25 @@ def _run_simulation_impl_core(
             simulation_params, region_resolution=region_resolution
         )
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD)):
-        baked_folder = state_datasets.baked_state_data_folder(
-            country=country,
-            selection=dataset_selection,
-            state_code=region_resolution.state_code,
-            year=parse_year(simulation_params),
-            data_folder=resolve_data_folder(),
+        prebuilt = _prebuilt_folder(
+            country,
+            region_resolution,
+            dataset_selection,
+            parse_year(simulation_params),
         )
         if not dataset_selection.is_default:
             runtime.set_context(
                 dataset_source=(
-                    state_datasets.BAKED_STATE_DATASET_SOURCE
-                    if baked_folder
-                    else state_datasets.ON_DEMAND_DATASET_SOURCE
+                    prebuilt.dataset_source
+                    if prebuilt is not None and prebuilt.dataset_source
+                    else levels.ON_DEMAND_DATASET_SOURCE
                 )
             )
         dataset = _load_dataset_retrying_downloads(
             simulation_params,
             selection=dataset_selection,
             country_module=country_module,
-            data_folder=baked_folder,
+            data_folder=None if prebuilt is None else prebuilt.folder,
         )
     from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
         detect_uk_run_dataset_metadata,

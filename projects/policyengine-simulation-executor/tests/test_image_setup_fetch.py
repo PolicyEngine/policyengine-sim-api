@@ -555,11 +555,11 @@ class TestCharacterization:
             blob=lambda path: SilentBlob(fake_client, path)
         )
 
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(RuntimeError, match="wrote no file"):
             fetch_artifacts("test-bucket", _manifest(), client=fake_client)
 
         assert fake_client.downloads == [
-            ("datasets/us/d1/populace_year_2026.h5", "populace_year_2026.h5")
+            ("year-files/us/d1/populace_year_2026.h5", "populace_year_2026.h5.partial")
         ]
 
     def test_files_missing_after_every_download_fail_the_build(
@@ -567,7 +567,7 @@ class TestCharacterization:
     ):
         class ReplacingBlob(FakeBlob):
             def download_to_filename(self, filename):
-                for existing in data_folder.iterdir():
+                for existing in Path(filename).parent.iterdir():
                     existing.unlink()
                 super().download_to_filename(filename)
 
@@ -578,7 +578,7 @@ class TestCharacterization:
         with pytest.raises(RuntimeError) as error:
             fetch_artifacts("test-bucket", _manifest(), client=fake_client)
 
-        missing = str(data_folder / "populace_year_2026.h5")
+        missing = str(data_folder / NATIONAL_FOLDER / "populace_year_2026.h5")
         assert str(error.value) == (
             f"Artifact fetch did not produce expected files: [{missing!r}]"
         )
@@ -597,4 +597,4 @@ class TestCharacterization:
         ]
         assert len(fetched) == 2
         assert fetched[0].endswith("populace_year_2026.h5 (0.0 MB)")
-        assert fetched[1].endswith("bl1-aaaa.h5 (0.0 MB)")
+        assert fetched[1].endswith("bl3-aaaa.h5 (0.0 MB)")

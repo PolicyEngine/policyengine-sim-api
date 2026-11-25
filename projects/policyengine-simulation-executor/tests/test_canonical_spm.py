@@ -460,33 +460,37 @@ class TestResolutionIsNotRepeatedWork:
     def test_collecting_a_baseline_identity_prevalidates_once(self, monkeypatch):
         """The repeat the review counted, through the real collectors.
 
-        ``collect_baseline_identity`` normalizes the request's selection and
-        then ``collect_dataset_identity`` normalizes the bundle's default for
-        the same year. When both resolve to the same selection that is one
-        prevalidation for the pair, and repeating the collection -- as a
-        request does -- adds none.
+        ``year_file_identity`` normalizes the bundle's default selection for
+        the year and ``baseline_identity`` the request's. When both resolve
+        to the same selection that is one prevalidation for the pair, and
+        repeating the collection -- as a request does -- adds none.
         """
         from fixtures.identity_stubs import install_identity_stubs
+        from policyengine_simulation_executor.stage12_cache.levels import (
+            BaselineScope,
+        )
+        from policyengine_simulation_executor.stage12_cache.levels_us import (
+            national_year_file,
+        )
 
         install_identity_stubs(monkeypatch)
         stubs = self._stub_provider(monkeypatch)
+        national = BaselineScope(region="national", scope_key=None)
 
-        first = artifact_keys.collect_baseline_identity(
-            "us", 2026, region="us", scope_key=None, spm={"geography_kind": "national"}
-        )
+        def collect(spm):
+            year_file = artifact_keys.year_file_identity(national_year_file(2026))
+            return artifact_keys.baseline_identity(year_file, national, spm)
+
+        first = collect({"geography_kind": "national"})
         assert first.spm == SELECTION
         assert stubs.constructions.call_count == 1
 
-        second = artifact_keys.collect_baseline_identity(
-            "us", 2026, region="us", scope_key=None, spm={"geography_kind": "national"}
-        )
+        second = collect({"geography_kind": "national"})
         assert second.storage_id == first.storage_id
         assert stubs.constructions.call_count == 1
 
         # A request that differs from the bundle default still resolves both.
-        county = artifact_keys.collect_baseline_identity(
-            "us", 2026, region="us", scope_key=None, spm={"geography_kind": "county"}
-        )
+        county = collect({"geography_kind": "county"})
         assert county.storage_id != first.storage_id
         assert stubs.constructions.call_count == 2
 
@@ -658,6 +662,7 @@ def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
 
 def test_identity_errors_do_not_degrade_to_an_unidentified_baseline(monkeypatch):
     from policyengine_simulation_executor import baseline_artifacts
+    from policyengine_simulation_executor.simulation_runtime import DatasetSelection
 
     monkeypatch.setattr(
         baseline_artifacts,
@@ -669,7 +674,9 @@ def test_identity_errors_do_not_degrade_to_an_unidentified_baseline(monkeypatch)
             baseline_artifacts.BaselineIdentityRequest(
                 {},
                 country="us",
-                dataset_is_default=True,
+                dataset=DatasetSelection(
+                    "populace_cps", "hf://default", is_default=True
+                ),
                 policy=None,
                 region_code="us",
                 scoping_strategy=None,

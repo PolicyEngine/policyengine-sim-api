@@ -1,4 +1,4 @@
-"""Compute the precompute's cohort baselines, and check that they are deterministic."""
+"""Compute the precompute's current-law baselines and check they are deterministic."""
 
 from __future__ import annotations
 
@@ -6,16 +6,17 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from policyengine_simulation_executor.artifact_keys import baseline_artifact_filename
 from policyengine_simulation_executor.output_frames import EntityFrames
 from policyengine_simulation_executor.precompute_models import (
     BaselineComputeResult,
     BaselinePlanEntry,
     DeterminismVerdict,
 )
-from policyengine_simulation_executor.precompute_planning import (
-    PRECOMPUTE_COUNTRY,
-    cohort_resolution,
+from policyengine_simulation_executor.precompute_planning import country_prebuilt
+from policyengine_simulation_executor.request_policy import parse_year
+from policyengine_simulation_executor.stage12_cache.levels import (
+    RunScope,
+    prebuilt_dataset_folder,
 )
 
 if TYPE_CHECKING:
@@ -24,37 +25,63 @@ if TYPE_CHECKING:
     from policyengine_simulation_executor.artifact_store import ArtifactStore
 
 
-def _prepare_cohort_baseline(
+def _prepare_baseline(
     bucket: str, expected: BaselinePlanEntry
 ) -> tuple[ArtifactStore, Path, Simulation]:
-    """Shared by compute and verify: dataset download + simulation build."""
-    from policyengine_simulation_executor.artifact_keys import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_keys.collect_dataset_identity
-        collect_dataset_identity,
-    )
+    """Shared by compute and verify: year-file download and simulation build.
+
+    Downloads the entry's year file into its prebuilt folder when it is
+    missing, then resolves the entry's request exactly as the runtime
+    resolves a request and loads the year file through the level's prebuilt
+    lookup, so the baseline is computed on, and saved beside, the file the
+    image holds. Returns the store, the folder the baseline lands in and the
+    simulation.
+    """
     from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_store.ArtifactStore
         ArtifactStore,
     )
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _build_simulation,
+        _country_module,
         _load_dataset,
         _resolve_dataset_selection,
         resolve_data_folder,
+        resolve_region,
     )
 
     store = ArtifactStore(bucket)
-    data_folder = Path(resolve_data_folder())
+    data_folder = resolve_data_folder()
+    folder = Path(data_folder) / expected.folder
+    local_year_file = folder / expected.year_file_filename
+    if not local_year_file.exists():
+        store.download_file(expected.year_file_path, local_year_file)
 
-    dataset_identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, expected.year)
-    local_dataset = data_folder / dataset_identity.filename
-    if not local_dataset.exists():
-        store.download_file(dataset_identity.store_path, local_dataset)
-
-    params, country_module, resolution = cohort_resolution(
-        expected.year, expected.group
+    params = dict(expected.request)
+    country_module = _country_module(expected.country)
+    resolution = resolve_region(
+        country_module=country_module, country=expected.country, params=params
     )
     dataset_selection = _resolve_dataset_selection(params, region_resolution=resolution)
+    prebuilt = prebuilt_dataset_folder(
+        RunScope(
+            country=expected.country,
+            year=parse_year(params),
+            region=resolution,
+            dataset=dataset_selection,
+        ),
+        data_folder,
+    )
+    if prebuilt is None or Path(prebuilt.folder) != folder:
+        msg = (
+            f"The {expected.label} baseline's year file {local_year_file} is not "
+            "one its run would read; refusing to compute it elsewhere."
+        )
+        raise RuntimeError(msg)
     dataset = _load_dataset(
-        params, country_module=country_module, selection=dataset_selection
+        params,
+        country_module=country_module,
+        selection=dataset_selection,
+        data_folder=prebuilt.folder,
     )
     baseline = _build_simulation(
         params,
@@ -70,40 +97,32 @@ def _prepare_cohort_baseline(
             "under a mismatched key."
         )
         raise RuntimeError(msg)
-    planned_storage_id = Path(expected.path).stem
     storage_id = getattr(baseline, "storage_id", baseline.id)
-    if storage_id != planned_storage_id:
+    if storage_id != expected.storage_id:
         msg = (
             "Planned and in-container baseline storage ids disagree "
-            f"({planned_storage_id} != {storage_id}); refusing to act "
+            f"({expected.storage_id} != {storage_id}); refusing to act "
             "under a mismatched key."
         )
         raise RuntimeError(msg)
 
-    # The extras economic_impact_analysis applies unconditionally before
-    # ensure(); the artifact must carry them or every request would fail
-    # the column guard and recompute.
-    from policyengine.tax_benefit_models.us.analysis import (
-        configure_budgetary_impact_variables,
-    )
-
-    configure_budgetary_impact_variables(baseline, baseline)
-    return store, data_folder, baseline
+    country_prebuilt(expected.country).prepare_baseline_outputs(baseline)
+    return store, folder, baseline
 
 
 def compute_baseline_impl(
     bucket: str, expected: BaselinePlanEntry
 ) -> BaselineComputeResult:
-    """Wave 2: compute one cohort baseline and upload its output."""
+    """Compute one current-law baseline and upload its output."""
     from policyengine_simulation_executor.baseline_artifacts import (
         ArtifactBaselineSimulation,
     )
 
-    store, data_folder, baseline = _prepare_cohort_baseline(bucket, expected)
+    store, folder, baseline = _prepare_baseline(bucket, expected)
     if not isinstance(baseline, ArtifactBaselineSimulation):
         msg = (
             "Precompute built a plain Simulation — the qualifying predicate "
-            "rejected the cohort request shape."
+            "rejected the baseline request."
         )
         raise RuntimeError(msg)  # noqa: TRY004  # a precompute invariant failure, not a bad argument; raised across the compute_baseline Modal boundary and asserted by test_precompute
 
@@ -111,16 +130,14 @@ def compute_baseline_impl(
     baseline.ensure()
     compute_seconds = time.monotonic() - started
 
-    artifact_file = data_folder / baseline_artifact_filename(
-        getattr(baseline, "storage_id", baseline.id)
-    )
+    artifact_file = folder / f"{expected.storage_id}.h5"
     if not artifact_file.exists():
         msg = f"ensure() left no artifact at {artifact_file}"
         raise RuntimeError(msg)
     uploaded = store.upload_file(expected.path, artifact_file)
     return BaselineComputeResult(
         year=expected.year,
-        group=list(expected.group),
+        label=expected.label,
         simulation_id=baseline.id,
         outcome=baseline.artifact_outcome,
         uploaded=uploaded,
@@ -149,14 +166,12 @@ def verify_determinism_impl(
         OUTCOME_HIT,
     )
 
-    store, data_folder, baseline = _prepare_cohort_baseline(bucket, expected)
-    artifact_file = data_folder / baseline_artifact_filename(
-        getattr(baseline, "storage_id", baseline.id)
-    )
+    store, folder, baseline = _prepare_baseline(bucket, expected)
+    artifact_file = folder / f"{expected.storage_id}.h5"
     if not artifact_file.exists():
         store.download_file(expected.path, artifact_file)
     baseline.ensure()
-    # A cohort baseline is an ArtifactBaselineSimulation, which records the
+    # A planned baseline is an ArtifactBaselineSimulation, which records the
     # outcome; the attribute isn't on the Simulation type it is declared as.
     outcome = getattr(baseline, "artifact_outcome", None)
     if outcome != OUTCOME_HIT:
