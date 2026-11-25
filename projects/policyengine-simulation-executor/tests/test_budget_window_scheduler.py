@@ -275,7 +275,22 @@ def budget_window_semi_integration_client(
     class MockModalFunction:
         @staticmethod
         def from_name(app_name: str, func_name: str):
+            # The gateway spawns the batch parent as a function; its children
+            # run on the SimulationWorker class.
+            assert func_name == "run_budget_window_batch"
             return MockFunction(runtime, app_name=app_name, func_name=func_name)
+
+    class MockSimulationWorker:
+        def __init__(self, app_name: str):
+            self.run_simulation = MockFunction(
+                runtime, app_name=app_name, func_name="run_simulation"
+            )
+
+    class MockModalCls:
+        @staticmethod
+        def from_name(app_name: str, class_name: str):
+            assert class_name == "SimulationWorker"
+            return lambda: MockSimulationWorker(app_name)
 
     class MockModalFunctionCall:
         @classmethod
@@ -285,6 +300,7 @@ def budget_window_semi_integration_client(
     class MockModal:
         Dict = MockModalDict
         Function = MockModalFunction
+        Cls = MockModalCls
         FunctionCall = MockModalFunctionCall
 
         @staticmethod

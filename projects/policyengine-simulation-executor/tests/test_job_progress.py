@@ -647,11 +647,14 @@ def _segmented_runner(calls, progress, monkeypatch):
         ),
     )
     remaining = iter(calls)
+    segment_worker = SimpleNamespace(
+        run_simulation_segment=SimpleNamespace(
+            spawn=lambda _payload, *, observability_context=None: next(remaining)
+        )
+    )
     fake_modal = SimpleNamespace(
-        Function=SimpleNamespace(
-            from_name=lambda _app_name, _function_name: SimpleNamespace(
-                spawn=lambda _payload, *, observability_context=None: next(remaining)
-            )
+        Cls=SimpleNamespace(
+            from_name=lambda _app_name, _class_name: lambda: segment_worker
         )
     )
     return sn.SegmentedNationalRunner(
@@ -823,7 +826,9 @@ class TestModalRunSimulation:
 
         events, writes = self._wire(modal_app, monkeypatch, dispatch)
 
-        assert modal_app.run_simulation({"country": "us"}) == {"ok": True}
+        assert modal_app.SimulationWorker().run_simulation({"country": "us"}) == {
+            "ok": True
+        }
 
         assert {job_id for job_id, _ in writes} == {"fc-job-1"}
         assert [record.stage for _, record in writes] == [
@@ -852,7 +857,9 @@ class TestModalRunSimulation:
             modal_app, monkeypatch, dispatch, earlier=_earlier_attempt()
         )
 
-        assert modal_app.run_simulation({"country": "us"}) == {"ok": True}
+        assert modal_app.SimulationWorker().run_simulation({"country": "us"}) == {
+            "ok": True
+        }
 
         assert writes[0][1].stage is JobStage.REFORM
         assert writes[0][1].attempts == 2
@@ -868,7 +875,7 @@ class TestModalRunSimulation:
         events, writes = self._wire(modal_app, monkeypatch, dispatch)
 
         with pytest.raises(RuntimeError, match="model failed"):
-            modal_app.run_simulation({"country": "us"})
+            modal_app.SimulationWorker().run_simulation({"country": "us"})
 
         assert writes[-1][1].stage is JobStage.BASELINE
         assert writes[-1][1].finished_at is not None
@@ -886,7 +893,7 @@ class TestModalRunSimulation:
         events, writes = self._wire(modal_app, monkeypatch, dispatch)
 
         with pytest.raises(KeyboardInterrupt):
-            modal_app.run_simulation({"country": "us"})
+            modal_app.SimulationWorker().run_simulation({"country": "us"})
 
         assert writes[-1][1].stage is JobStage.BASELINE
         assert writes[-1][1].finished_at is None
@@ -913,7 +920,7 @@ class TestModalRunSimulation:
         monkeypatch.setattr(modal_app, "_set_modal_call_attributes", preempted)
 
         with pytest.raises(KeyboardInterrupt):
-            modal_app.run_simulation({"country": "us"})
+            modal_app.SimulationWorker().run_simulation({"country": "us"})
 
         assert writes[-1][1].finished_at is None
         assert writes[-1][1].stage is JobStage.REFORM
@@ -938,10 +945,31 @@ class TestModalRunSimulation:
         )
 
         with pytest.raises(KeyboardInterrupt):
-            modal_app.run_simulation({"country": "us"})
+            modal_app.SimulationWorker().run_simulation({"country": "us"})
 
         assert _operation_completions(written_records) == [("WARNING", "interrupted")]
         assert _error_records(written_records) == []
+
+    def test__the_function_kept_for_older_callers_records_the_same_job(
+        self, modal_app, monkeypatch
+    ):
+        # The plain run_simulation function serves callers still running the
+        # code from before the worker classes, such as the gateway during a
+        # deploy. It runs the class method's code.
+        def dispatch(_params, *, app_name, runtime, progress):
+            progress.enter(JobStage.REFORM)
+            return {"ok": True}
+
+        _events, writes = self._wire(modal_app, monkeypatch, dispatch)
+
+        assert modal_app.run_simulation({"country": "us"}) == {"ok": True}
+
+        assert {job_id for job_id, _ in writes} == {"fc-job-1"}
+        assert [record.stage for _, record in writes] == [
+            JobStage.LOADING_DATA,
+            JobStage.REFORM,
+            JobStage.REFORM,
+        ]
 
     def test__store_failure_does_not_change_the_result(self, modal_app, monkeypatch):
         from policyengine_simulation_contract import job_progress_state
@@ -958,7 +986,9 @@ class TestModalRunSimulation:
 
         monkeypatch.setattr(job_progress_state, "put_job_progress", failing_write)
 
-        assert modal_app.run_simulation({"country": "us"}) == {"ok": True}
+        assert modal_app.SimulationWorker().run_simulation({"country": "us"}) == {
+            "ok": True
+        }
 
     def test__no_call_id_means_no_reporting(self, modal_app, monkeypatch):
         def missing_call_id():
@@ -989,10 +1019,29 @@ def test_preempted_segment_is_recorded_at_warning(
     monkeypatch.setattr(sr, "run_simulation_impl", preempted)
 
     with pytest.raises(KeyboardInterrupt):
-        modal_app.run_simulation_segment({"country": "us"})
+        modal_app.SimulationSegmentWorker().run_simulation_segment({"country": "us"})
 
     assert _operation_completions(written_records) == [("WARNING", "interrupted")]
     assert _error_records(written_records) == []
+
+
+def test_the_segment_function_kept_for_older_callers_runs_the_same_code(
+    modal_app, monkeypatch, recorded_observability_runtime
+):
+    # Segmented parents started before the worker classes spawn their
+    # children through the plain run_simulation_segment function.
+    runtime, written_records = recorded_observability_runtime
+    monkeypatch.setattr(
+        modal_app,
+        "_configure_modal_observability",
+        lambda *, service_role: runtime,
+    )
+    monkeypatch.setattr(
+        sr, "run_simulation_impl", lambda _params, *, runtime: {"segment": "done"}
+    )
+
+    assert modal_app.run_simulation_segment({"country": "us"}) == {"segment": "done"}
+    assert _operation_completions(written_records) == [("INFO", "success")]
 
 
 def _operation_completions(written_records: list[dict]) -> list[tuple[str, str]]:
