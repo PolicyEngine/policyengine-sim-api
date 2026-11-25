@@ -185,7 +185,7 @@ def test_the_simulation_workers_are_not_also_plain_functions(monkeypatch):
     app = importlib.import_module("src.modal.app")
 
     # Every caller of an app built from this code reaches the workers through
-    # their classes. Only apps deployed before the classes define the plain
+    # their classes. Only apps deployed from earlier code define the plain
     # run_simulation function that the gateway falls back to.
     plain_function_names = {name for name, _options in app.app.function_calls}
     for worker_method_name in (
