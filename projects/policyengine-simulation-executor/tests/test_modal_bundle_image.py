@@ -139,7 +139,7 @@ def test_simulation_workers_are_classes_restored_from_memory_snapshots(monkeypat
         "enable_memory_snapshot": True,
     }
     simulation_worker_resources = {"cpu": 8.0, "memory": 32768, "max_containers": 100}
-    # A segment child calculates one household group in one process, so it
+    # A segment child calculates one region group in one process, so it
     # keeps one CPU busy, and it peaks at about 3.4 GiB with both countries'
     # models loaded. 1 CPU and 6 GiB fit it.
     segment_worker_resources = {"cpu": 1.0, "memory": 6144, "max_containers": 300}

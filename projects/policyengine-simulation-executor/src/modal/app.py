@@ -531,7 +531,7 @@ class SimulationWorker(_CountryModelsLoadedBeforeSnapshot):
 
 @app.cls(
     image=simulation_image,
-    # A segment child calculates one household group in one process, so it
+    # A segment child calculates one region group in one process, so it
     # keeps one CPU busy. Measured on Modal, it peaks at about 3.4 GiB with
     # both countries' models loaded. The memory is a request, not a limit.
     cpu=1.0,
