@@ -249,7 +249,8 @@ def test_a_dynamic_that_cannot_be_applied_is_refused(public_api_database_url) ->
         ("gov.simulation.removed",),
     )
     assert str(without_values.value) == (
-        f"us's dynamic {dynamic_without_values_id} has no parameter values"
+        f"us's dynamic {dynamic_without_values_id} has no parameter values "
+        "the service can read"
     )
 
 

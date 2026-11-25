@@ -187,7 +187,8 @@ def test_a_dynamic_without_values_is_refused_instead_of_read_as_current_law(
             )
 
     assert str(alone.value) == (
-        f"us's dynamic {dynamic_without_values_id} has no parameter values"
+        f"us's dynamic {dynamic_without_values_id} has no parameter values "
+        "the service can read"
     )
     assert str(with_policy.value) == str(alone.value)
     # It is not a missing dynamic: the dynamic exists.

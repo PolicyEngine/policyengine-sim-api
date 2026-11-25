@@ -413,6 +413,27 @@ def test_a_stored_dynamic_without_values_is_refused_naming_the_report_side() -> 
     assert (store.report_reruns, caller.report_runs) == ([], [])
 
 
+def test_a_rerun_asking_for_cliffs_with_a_dynamic_without_values_starts_nothing() -> (
+    None
+):
+    store = FakeRerunStore(
+        report_definition=replace(STORED_REPORT, keyed=True),
+        inputs_failure=ReportSideError(
+            "reform", DynamicWithoutValuesError("store text: no values")
+        ),
+    )
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionRefusedError) as refused:
+        _rerun_report(
+            rerun_service(store, caller=caller), ReportRerunRequest(include_cliffs=True)
+        )
+
+    assert refused.value.code == "dynamic_without_values"
+    assert (store.report_reruns, store.cliff_requests) == ([], [])
+    assert (caller.report_runs, caller.cliff_calculations) == ([], [])
+
+
 def test_a_stored_simulations_dynamic_without_values_is_refused() -> None:
     store = FakeRerunStore(
         inputs_failure=DynamicWithoutValuesError("store text: no values")

@@ -631,22 +631,40 @@ def test_a_missing_row_is_refused_before_anything_is_written(error, code) -> Non
 
 
 def test_a_dynamic_without_values_is_refused_before_anything_is_written() -> None:
-    """A dynamic whose values this release can't read is never run as current law."""
-    store = FakeStore(read_failure=DynamicWithoutValuesError("store text: no values"))
+    """A dynamic whose values this release can't read is never run as current law.
+
+    A report asking for cliffs writes and starts no cliff calculation either.
+    """
+    report_store = FakeStore(
+        read_failure=ReportSideError(
+            "reform", DynamicWithoutValuesError("store text: no values")
+        )
+    )
+    simulation_store = FakeStore(
+        read_failure=DynamicWithoutValuesError("store text: no values")
+    )
     caller = FakeCaller()
 
     with pytest.raises(EconomySubmissionRefusedError) as report_refusal:
-        _submit_report(service(store, caller=caller))
+        _submit_report(
+            service(report_store, caller=caller), report_request(include_cliffs=True)
+        )
     with pytest.raises(EconomySubmissionRefusedError) as simulation_refusal:
-        _submit_simulation(service(store, caller=caller))
+        _submit_simulation(service(simulation_store, caller=caller))
 
-    assert report_refusal.value.code == simulation_refusal.value.code
-    assert simulation_refusal.value.code == "dynamic_without_values"
-    assert simulation_refusal.value.detail == (
-        "us's stored dynamic that the request names has no parameter values the "
-        "service can read."
+    assert (report_refusal.value.code, report_refusal.value.detail) == (
+        "dynamic_without_values",
+        "us's stored dynamic that the request's reform names has no parameter "
+        "values the service can read.",
     )
-    assert (store.reports, store.simulations, caller.report_runs) == ([], [], [])
+    assert (simulation_refusal.value.code, simulation_refusal.value.detail) == (
+        "dynamic_without_values",
+        "us's stored dynamic that the request names has no parameter values the "
+        "service can read.",
+    )
+    assert (report_store.reports, report_store.cliff_requests) == ([], [])
+    assert simulation_store.simulations == []
+    assert (caller.report_runs, caller.cliff_calculations) == ([], [])
 
 
 def test_values_the_catalog_version_lacks_cannot_be_calculated() -> None:

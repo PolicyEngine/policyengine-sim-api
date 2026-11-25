@@ -304,6 +304,7 @@ def test_household_routes_declare_every_answer():
     ]
     assert "job_state_unknown" not in code["enum"]
     assert "internal_error" in code["enum"]
+    assert "dynamic_without_values" in submit["400"]["description"]
     assert {"unknown_policy", "unknown_dynamic", "dynamic_without_values"} <= set(
         code["enum"]
     )
@@ -401,6 +402,7 @@ def test_economy_routes_declare_every_answer():
         record = path.removeprefix("/").removesuffix("s")
         assert f"{record}_id" in responses["503"]["description"]
         assert "nothing was written" in responses["400"]["description"]
+        assert "dynamic_without_values" in responses["400"]["description"]
         # A create answers the record and run it ended on, joined or created.
         assert "joined" in responses["201"]["description"]
         assert "found or created" in responses["503"]["description"]
@@ -470,6 +472,7 @@ def test_rerun_routes_declare_every_answer():
             assert _response_schema(responses[status_code]) == error
         assert _response_schema(responses["422"]) == unprocessable
         assert "run_id" in responses["503"]["description"]
+        assert "dynamic_without_values" in responses["400"]["description"]
         # Both answer the run they ended on, created or joined.
         assert "joined" in responses["201"]["description"]
     # No re-run is refused while a run is under way: an unforced one joins

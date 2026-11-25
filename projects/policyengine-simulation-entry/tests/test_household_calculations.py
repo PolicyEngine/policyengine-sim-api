@@ -519,12 +519,12 @@ async def test_without_spm_settings_or_a_saved_selection_none_is_sent():
         (
             FakeStore(
                 read_failure=DynamicWithoutValuesError(
-                    "us's dynamic z has no parameter values"
+                    "us's dynamic z has no parameter values the service can read"
                 )
             ),
             FakeWorkers(),
             "dynamic_without_values",
-            "us's dynamic z has no parameter values",
+            "us's dynamic z has no parameter values the service can read",
         ),
     ],
 )
