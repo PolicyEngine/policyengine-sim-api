@@ -46,6 +46,7 @@ from policyengine_simulation_entry.household_workers import (
 )
 from policyengine_simulation_persistence import (
     CatalogDataset,
+    DynamicWithoutValuesError,
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
     EconomyReportDefinition,
@@ -328,6 +329,25 @@ def test_a_missing_row_is_refused_before_anything_is_written(error, code) -> Non
 
     assert report_refusal.value.code == simulation_refusal.value.code == code
     assert str(error) not in report_refusal.value.detail
+    assert (store.reports, store.simulations, caller.report_runs) == ([], [], [])
+
+
+def test_a_dynamic_without_values_is_refused_before_anything_is_written() -> None:
+    """A dynamic whose values this release can't read is never run as current law."""
+    store = FakeStore(read_failure=DynamicWithoutValuesError("store text: no values"))
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionRefusedError) as report_refusal:
+        _submit_report(service(store, caller=caller))
+    with pytest.raises(EconomySubmissionRefusedError) as simulation_refusal:
+        _submit_simulation(service(store, caller=caller))
+
+    assert report_refusal.value.code == simulation_refusal.value.code
+    assert simulation_refusal.value.code == "dynamic_without_values"
+    assert simulation_refusal.value.detail == (
+        "us's stored dynamic that the request names has no parameter values the "
+        "service can read."
+    )
     assert (store.reports, store.simulations, caller.report_runs) == ([], [], [])
 
 
@@ -728,6 +748,13 @@ ERROR_TEXT = "internal text that must not be passed on"
             {},
             "unknown_dynamic",
             "us has no stored dynamic the request's baseline names.",
+        ),
+        (
+            ReportSideError("reform", DynamicWithoutValuesError(ERROR_TEXT)),
+            {},
+            "dynamic_without_values",
+            "us's stored dynamic that the request's reform names has no parameter "
+            "values the service can read.",
         ),
     ],
 )

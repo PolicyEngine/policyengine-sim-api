@@ -302,7 +302,9 @@ def test_household_routes_declare_every_answer():
     ]
     assert "job_state_unknown" not in code["enum"]
     assert "internal_error" in code["enum"]
-    assert {"unknown_policy", "unknown_dynamic"} <= set(code["enum"])
+    assert {"unknown_policy", "unknown_dynamic", "dynamic_without_values"} <= set(
+        code["enum"]
+    )
 
 
 def test_a_household_job_read_declares_only_the_answers_a_read_gives():
@@ -409,6 +411,7 @@ def test_economy_routes_declare_every_answer():
         "unknown_region",
         "unknown_dataset",
         "unknown_dynamic",
+        "dynamic_without_values",
         "unknown_catalog_version",
         "unknown_household",
         "no_household_function",

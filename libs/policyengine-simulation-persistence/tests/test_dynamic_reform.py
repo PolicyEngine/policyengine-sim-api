@@ -14,6 +14,7 @@ from uuid import uuid4
 import pytest
 from conftest import act_as_the_service, in_session, rolled_back_transaction
 from policyengine_simulation_persistence import (
+    DynamicWithoutValuesError,
     MissingPolicyParametersError,
     OverlappingReformError,
     SimulationReform,
@@ -142,6 +143,90 @@ def test_a_dynamic_of_another_country_is_refused(public_api_database_url) -> Non
 
     assert str(refusal.value) == f"us has no dynamic {uk_dynamic_id}"
     assert uk_reform == {ELASTICITY: {"2026-01-01.2200-12-31": -0.05}}
+
+
+@pytest.mark.public_api_schema
+def test_a_dynamic_without_values_is_refused_instead_of_read_as_current_law(
+    public_api_database_url,
+) -> None:
+    """API v1 stores no dynamic without values, so none read means values sim can't see.
+
+    Applying such a dynamic as current law would store that result under a
+    key naming the dynamic, so the read refuses it, alone or with a policy.
+    """
+    with rolled_back_transaction(public_api_database_url) as connection:
+        catalog = insert_catalog_version(
+            connection,
+            country="us",
+            model_id=insert_model(connection, "us"),
+            policyengine_version="6.17.1",
+            parameter_names=[ELASTICITY, CTC_AMOUNT],
+        )
+        policy_id = insert_policy(
+            connection, catalog, [StoredValue(CTC_AMOUNT, 3_000, START)]
+        )
+        dynamic_without_values_id = insert_dynamic(connection, catalog)
+        act_as_the_service(connection)
+
+        with pytest.raises(DynamicWithoutValuesError) as alone:
+            in_session(
+                connection,
+                read_dynamic_reform,
+                country="us",
+                dynamic_id=dynamic_without_values_id,
+                catalog_version_id=catalog.version_id,
+            )
+        with pytest.raises(DynamicWithoutValuesError) as with_policy:
+            in_session(
+                connection,
+                read_simulation_reform,
+                country="us",
+                policy_id=policy_id,
+                dynamic_id=dynamic_without_values_id,
+                catalog_version_id=catalog.version_id,
+            )
+
+    assert str(alone.value) == (
+        f"us's dynamic {dynamic_without_values_id} has no parameter values"
+    )
+    assert str(with_policy.value) == str(alone.value)
+    # It is not a missing dynamic: the dynamic exists.
+    assert not isinstance(alone.value, UnknownDynamicError)
+
+
+@pytest.mark.public_api_schema
+def test_a_dynamic_whose_values_all_start_after_2200_is_read_and_applies_nothing(
+    public_api_database_url,
+) -> None:
+    """Its values are read, but no year a calculation can be for is in their periods.
+
+    Only a dynamic with no stored values is refused: this one's current-law
+    result is its own correct result.
+    """
+    with rolled_back_transaction(public_api_database_url) as connection:
+        catalog = insert_catalog_version(
+            connection,
+            country="us",
+            model_id=insert_model(connection, "us"),
+            policyengine_version="6.17.1",
+            parameter_names=[ELASTICITY],
+        )
+        dynamic_id = insert_dynamic(
+            connection,
+            catalog,
+            [StoredValue(ELASTICITY, -0.05, datetime(2201, 1, 1, tzinfo=UTC))],
+        )
+        act_as_the_service(connection)
+
+        reform = in_session(
+            connection,
+            read_dynamic_reform,
+            country="us",
+            dynamic_id=dynamic_id,
+            catalog_version_id=catalog.version_id,
+        )
+
+    assert reform == {}
 
 
 @pytest.mark.public_api_schema

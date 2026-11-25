@@ -39,6 +39,7 @@ from policyengine_simulation_entry.household_workers import (
     default_household_worker,
 )
 from policyengine_simulation_persistence import (
+    DynamicWithoutValuesError,
     EconomyRecordOutcomeUnknownError,
     HouseholdCalculationInputs,
     HouseholdJobRecord,
@@ -513,6 +514,17 @@ async def test_without_spm_settings_or_a_saved_selection_none_is_sent():
             FakeWorkers(),
             "unknown_dynamic",
             "us has no dynamic z",
+        ),
+        # A dynamic whose values this release can't read is the service's state.
+        (
+            FakeStore(
+                read_failure=DynamicWithoutValuesError(
+                    "us's dynamic z has no parameter values"
+                )
+            ),
+            FakeWorkers(),
+            "dynamic_without_values",
+            "us's dynamic z has no parameter values",
         ),
     ],
 )

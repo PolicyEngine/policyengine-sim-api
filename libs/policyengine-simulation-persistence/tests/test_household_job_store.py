@@ -21,6 +21,7 @@ from conftest import (
     simulation_engine,
 )
 from policyengine_simulation_persistence import (
+    DynamicWithoutValuesError,
     EconomyRecordOutcomeUnknownError,
     HouseholdJobReferenceError,
     HouseholdJobStatus,
@@ -219,6 +220,7 @@ def test_a_dynamic_that_cannot_be_applied_is_refused(public_api_database_url) ->
         uk_dynamic_id = insert_dynamic(
             connection, uk_catalog, [StoredValue(ELASTICITY, -0.05, START)]
         )
+        dynamic_without_values_id = insert_dynamic(connection, catalog)
         act_as_the_service(connection)
         store = _store_on(connection)
 
@@ -237,12 +239,17 @@ def test_a_dynamic_that_cannot_be_applied_is_refused(public_api_database_url) ->
             read(overlapping_dynamic_id)
         with pytest.raises(MissingPolicyParametersError) as lacking:
             read(lacking_dynamic_id)
+        with pytest.raises(DynamicWithoutValuesError) as without_values:
+            read(dynamic_without_values_id)
 
     assert str(other_country.value) == f"us has no dynamic {uk_dynamic_id}"
     assert overlapping.value.parameter_names == (CTC_AMOUNT,)
     assert (lacking.value.source, lacking.value.parameter_names) == (
         "dynamic",
         ("gov.simulation.removed",),
+    )
+    assert str(without_values.value) == (
+        f"us's dynamic {dynamic_without_values_id} has no parameter values"
     )
 
 
