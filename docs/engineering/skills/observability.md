@@ -214,8 +214,17 @@ How a call tells them apart, in Modal 1.6.4:
   `restored_from_snapshot` when the two IDs differ, and `took_snapshot` when
   they match.
 - **Not documented by Modal:** neither variable's behaviour is, so check the
-  attribute against Modal's own container records (the `snapshot_behavior`
-  field of its `TaskGetInfo` call), and again after a Modal upgrade.
+  attribute against Modal's container logs, and again after a Modal upgrade.
+  A restored container logs "Restoring Function from memory snapshot." and a
+  snapshotting one "Creating CPU memory snapshot for Function.";
+  `modal app logs <app name> --env <environment> --search "memory snapshot"
+  --show-container-id` lists both. Match a log's container ID with the task
+  ID at the start of a record's `service.instance.id`. Modal's `TaskGetInfo`
+  call doesn't tell them apart: on 2026-11-25 its `snapshot_behavior` field
+  was `UNSPECIFIED` for every production container, restored ones included.
+- **Checked on Modal:** on 2026-11-25, in a measurement on Modal `testing`
+  with Modal 1.6.4, every restored container reported a `MODAL_TASK_ID`
+  different from the one its snapshot hook had recorded.
 - **Never reported:** the recorded ID names the snapshotting container, not
   the one serving the call.
 
