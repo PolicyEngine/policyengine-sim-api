@@ -198,7 +198,7 @@ operation opens, so a call that fails or is preempted carries them too.
 | Attribute | Values |
 |---|---|
 | `container_start` | `restored_from_snapshot`: the container was restored from a memory snapshot, so it started with the country models loaded. `took_snapshot`: Modal took the snapshot from this container, after the snapshot hook loaded the models in it. `no_snapshot`: the container neither took a snapshot nor was restored from one. That is every container of the plain `run_simulation` and `run_simulation_segment` functions and of `run_budget_window_batch`, which have no snapshot hook, and a worker class container that Modal started without snapshots, whose hook loaded the models before its first call. |
-| `container_call_number` | The call's place among the calls the container has served: 1 for its first call, 2 for its second, and so on. A call counts even when reading or setting these attributes fails. |
+| `container_call_number` | The call's place among the container's calls that opened their operation: 1 for the first, 2 for the second, and so on. A call counts even when reading or setting these attributes fails. |
 
 How a call tells them apart, in Modal 1.6.4:
 
@@ -220,9 +220,9 @@ How a call tells them apart, in Modal 1.6.4:
   the one serving the call.
 
 Neither the restore nor the snapshot hook runs inside a call, so no span
-measures them. Modal's container records give only the times each container
-was queued and became ready (`enqueued_at` and `started_at`), which include
-scheduling as well as the restore. A call's spans show the setup still left
+measures them. Modal's container records (its `TaskGetInfo` call) give the
+times each container was queued and became ready (`enqueued_at` and
+`started_at`), which include scheduling as well as the restore. A call's spans show the setup still left
 in it:
 
 - In the first call of a container of the plain `run_simulation` or
@@ -230,7 +230,8 @@ in it:
   that setup is in the `country_module_load` span, which
   imports policyengine.py's country model module, and, for a US run, in the
   time from the operation's start to that span, which includes the SPM
-  capability check.
+  capability check. A segmented national run's `run_simulation` call opens no
+  `country_module_load` span: its segment workers' calls do.
 - In a container whose hook loaded the models, the first call's time there
   should be close to later calls' (`container_call_number` above 1).
 - A container's first `calculation` has also been slower than its later ones;

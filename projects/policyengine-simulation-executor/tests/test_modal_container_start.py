@@ -121,13 +121,14 @@ def _worker_after_snapshot_hook(
     return worker
 
 
-def _restore_into_another_container(monkeypatch) -> None:
+def _restore_into_another_container(monkeypatch, worker) -> None:
     """Act as a restore: the memory stays, and MODAL_TASK_ID names the new container.
 
     Modal 1.6.4's ``memory_restore`` sets ``MODAL_TASK_ID`` to the task ID of
-    the restored container.
+    the restored container, then Modal runs the ``snap=False`` hooks.
     """
     monkeypatch.setenv("MODAL_TASK_ID", RESTORED_TASK_ID)
+    worker.reseed_random_after_restore()
 
 
 @pytest.mark.parametrize(
@@ -183,7 +184,7 @@ def test_a_call_in_a_restored_container_reports_restored_from_snapshot(
     modal_app, monkeypatch, worker_class_name, method_name
 ):
     worker = _worker_after_snapshot_hook(modal_app, monkeypatch, worker_class_name)
-    _restore_into_another_container(monkeypatch)
+    _restore_into_another_container(monkeypatch, worker)
     attributes_by_call = _record_call_attributes(modal_app, monkeypatch)
 
     assert getattr(worker, method_name)(SIMULATION_PARAMS) == WORKER_RESULT
@@ -197,7 +198,7 @@ def test_each_call_in_a_container_reports_the_next_call_number(modal_app, monkey
     worker = _worker_after_snapshot_hook(
         modal_app, monkeypatch, "SimulationSegmentWorker"
     )
-    _restore_into_another_container(monkeypatch)
+    _restore_into_another_container(monkeypatch, worker)
     attributes_by_call = _record_call_attributes(modal_app, monkeypatch)
 
     for _call in range(3):
@@ -244,7 +245,7 @@ def test_both_attributes_reach_the_operation_record_and_span_but_no_metric(
         modal_app, "_configure_modal_observability", lambda *, service_role: runtime
     )
     worker = _worker_after_snapshot_hook(modal_app, monkeypatch, "SimulationWorker")
-    _restore_into_another_container(monkeypatch)
+    _restore_into_another_container(monkeypatch, worker)
 
     assert worker.run_simulation(SIMULATION_PARAMS) == WORKER_RESULT
 
@@ -292,7 +293,7 @@ def test_both_attributes_are_set_before_the_job_runs(
     modal_app, monkeypatch, worker_class_name, method_name
 ):
     worker = _worker_after_snapshot_hook(modal_app, monkeypatch, worker_class_name)
-    _restore_into_another_container(monkeypatch)
+    _restore_into_another_container(monkeypatch, worker)
     _record_call_attributes(modal_app, monkeypatch)
     attributes_when_the_job_started: list[dict[str, object]] = []
 
@@ -332,7 +333,7 @@ def test_a_failed_or_preempted_call_still_reports_both_attributes(
         modal_app, "_configure_modal_observability", lambda *, service_role: runtime
     )
     worker = _worker_after_snapshot_hook(modal_app, monkeypatch, worker_class_name)
-    _restore_into_another_container(monkeypatch)
+    _restore_into_another_container(monkeypatch, worker)
 
     def failing_job(_params, **_job_options):
         raise job_failure
@@ -392,7 +393,7 @@ def test_a_runtime_refusing_the_attributes_leaves_the_call_result_unchanged(
     modal_app, monkeypatch, worker_class_name, method_name
 ):
     worker = _worker_after_snapshot_hook(modal_app, monkeypatch, worker_class_name)
-    _restore_into_another_container(monkeypatch)
+    _restore_into_another_container(monkeypatch, worker)
 
     def configure_refusing_runtime(*, service_role: str) -> NoOpObservabilityRuntime:
         return _AttributeRefusingRuntime()
@@ -416,7 +417,7 @@ def test_a_call_whose_container_start_cannot_be_read_still_counts(
     worker = _worker_after_snapshot_hook(
         modal_app, monkeypatch, "SimulationSegmentWorker"
     )
-    _restore_into_another_container(monkeypatch)
+    _restore_into_another_container(monkeypatch, worker)
     read_container_start = modal_app._CONTAINER_CALLS.container_start
 
     def fail_to_read_the_container_start():
