@@ -333,7 +333,7 @@ class TestSubmitSimulationEndpoint:
         )
         assert response_bundle["data_version"] == ("policyengine-uk-data-1.56.16")
 
-    def test__given_uk_without_data_and_manifest_commit__then_uses_populace_default(
+    def test__given_uk_without_data_and_manifest_commit__then_uses_microcosm_default(
         self,
         mock_modal,
         client: TestClient,

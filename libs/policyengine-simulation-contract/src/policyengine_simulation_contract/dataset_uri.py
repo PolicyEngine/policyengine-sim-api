@@ -136,7 +136,7 @@ def runtime_dataset_uri(
     """Convert PolicyEngine HF data artifacts to their runtime URI.
 
     PolicyEngine ``*-data`` HF repositories have corresponding GCS buckets
-    used by the runtime. Other HF repositories, including certified Populace
+    used by the runtime. Other HF repositories, including certified Microcosm
     bundle datasets, should remain HF URIs. Callers that trust bundle metadata
     can disable live HF validation to avoid requiring private Hub credentials
     in request-routing code.
