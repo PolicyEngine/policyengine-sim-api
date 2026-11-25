@@ -1,1 +1,1 @@
-Every simulation, economy and household alike, refuses a dynamic stored for another country as `unknown_dynamic`, as it refuses another country's policy, and the refusal's detail names the country. The persistence models compare with API v1's tables at its commit `003ee4996`, where `dynamics` has a country.
+Every simulation, economy and household alike, refuses a dynamic stored for another country as `unknown_dynamic`, as it refuses another country's policy, and the refusal's detail names the country.
