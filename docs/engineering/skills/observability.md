@@ -185,6 +185,47 @@ calls in turn. Each of those calls that was running writes an ERROR record,
 so one coordinator preemption can write one for each simulation and each of
 its running segments.
 
+### Container start and call number
+
+Each call of the versioned app's workers (`run_simulation` and
+`run_simulation_segment`, as class methods and as plain functions) and of
+`run_budget_window_batch` sets two attributes on its operation, so on its
+`operation.completed` log record and its span. `_set_modal_call_attributes`
+in `src/modal/app.py` sets them when the operation opens, so a call that
+fails or is preempted carries them too.
+
+| Attribute | Values |
+|---|---|
+| `container_start` | `restored_from_snapshot`: the container was restored from a memory snapshot, so it started with the country models loaded. `took_snapshot`: the snapshot hook, which loads the models, ran in this container; Modal takes the snapshot from such a container. `no_snapshot`: the function has no snapshot hook: the plain `run_simulation` and `run_simulation_segment` functions, and `run_budget_window_batch`. |
+| `container_call_number` | The call's place among the calls the container has served: 1 for its first call, 2 for its second, and so on. A call counts even when setting its attributes fails. |
+
+The workers' snapshot hook (`load_country_models`) records `MODAL_TASK_ID`,
+Modal's ID for the container, before Modal takes the snapshot, and each call
+compares it with the current `MODAL_TASK_ID`. A restored container starts
+with the recorded ID in memory, but Modal 1.6.4 sets its `MODAL_TASK_ID` to
+its own task ID while restoring it (`memory_restore` in
+`modal/_runtime/task_lifecycle_manager.py`). Modal doesn't document that, so
+check the attribute against Modal's own container records (the
+`snapshot_behavior` field of its `TaskGetInfo` call). A container that starts
+without restoring for another reason, such as one Modal starts again after a
+failed restore, runs the hook itself and reports `took_snapshot`. The
+recorded ID names the snapshotting container, so it is never reported.
+
+The restore itself happens before any worker code runs, so no span measures
+it; only Modal's container records hold its duration. A restored container's
+setup time shows in its first call's spans (`restored_from_snapshot` and
+`container_call_number` 1), such as the time from the operation's start to its
+`dataset_load` span, which a container that hasn't loaded the models spends
+importing them. Compare those calls with first calls that report
+`took_snapshot` or `no_snapshot`, which load the models themselves, and with
+later calls (`container_call_number` above 1), which reuse what the container
+has loaded.
+
+Neither attribute reaches metrics: the package's metric attribute keys don't
+include them, and each call number would make another series.
+`container_start` has three values. Records from apps deployed before these
+attributes carry neither.
+
 ## Metric resource identity
 
 Every process that emits OpenTelemetry metrics must have a unique
