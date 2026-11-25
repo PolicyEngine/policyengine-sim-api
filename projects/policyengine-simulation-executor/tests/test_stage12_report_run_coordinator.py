@@ -24,6 +24,7 @@ from policyengine_simulation_executor.stage12_runtime import (
 )
 from policyengine_stage12_persistence import RunStatus
 from stage12_child_call_support import ConcurrentInvoker
+from stage12_fake_cliff_results import CLIFF_RESULT_ID
 from stage12_fake_report_runs import (
     BASELINE_RUN_ID,
     REFORM_RUN_ID,
@@ -78,6 +79,29 @@ def _run_through_workers(report_runs=None, **invoker_options):
     artifacts = FakeArtifacts()
     invoker = RunWorkerInvoker(report_runs, artifacts, **invoker_options)
     return report_runs, artifacts, invoker
+
+
+@pytest.mark.parametrize(
+    "worker_record",
+    [
+        {"simulation_run_id": BASELINE_RUN_ID},
+        {"cliff_result_id": CLIFF_RESULT_ID},
+    ],
+    ids=["simulation-run", "cliff-result"],
+)
+def test_a_coordinator_call_naming_a_workers_record_is_refused_unwritten(
+    worker_record,
+) -> None:
+    report_runs, artifacts, invoker = _run_through_workers()
+    context = invocation_context().model_copy(
+        update={**worker_record, "artifact_prefix": REPORT_RUN_PREFIX}
+    )
+
+    with pytest.raises(ValueError, match="names a report run, not a simulation run"):
+        _coordinate(report_runs, invoker, artifacts, context=context)
+
+    assert report_runs.events == []
+    assert invoker.simulations == []
 
 
 def test_the_coordinator_claims_its_report_run_and_each_worker_its_simulation_run() -> (

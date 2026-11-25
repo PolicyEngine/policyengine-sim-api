@@ -29,10 +29,12 @@ exist, and 409 for a record this service does not re-run
 while a run is under way. Without ``force``, a keyed economy or household
 report's re-run joins the report's run on the current versions that
 hasn't failed and wasn't forced, pending, running or succeeded, and
-answers it with no new call. A report stored asking for
-cliff impacts answers 422 ``cliffs_not_available`` until they are
-calculated per run. The other
-answers are the creates': 400 or 422 when the stored record cannot be
+answers it with no new call. With ``include_cliffs``, an economy report's
+re-run starts the cliff calculation of each simulation run its run names
+that has none, as a create does; a report stored before C1 · 27 asking for
+cliffs asks for them on its re-run too. A budget window's or household
+report's re-run asking for cliffs answers 422 ``cliffs_not_available``.
+The other answers are the creates': 400 or 422 when the stored record cannot be
 calculated on the current catalog version, 503 with ``Retry-After`` before
 any write or when Modal refused the new run's call (then the run was failed,
 and the answer names the record and the run), and the JSON 500.
@@ -146,12 +148,13 @@ _HOUSEHOLD_ANSWERS: dict[RecordName, dict[int, str]] = {
     },
     "simulation": {503: "Economy runs are not configured"},
 }
-# A report stored before C1 · 27 asking for cliff impacts is refused until
-# they are calculated per run (C1 · 24's interim answer A).
-_STORED_CLIFFS: dict[RecordName, str] = {
+# A budget window or household report calculates no cliffs, so its re-run
+# asking for them is refused.
+_CLIFFS_REFUSED: dict[RecordName, str] = {
     "report": (
-        "; or the stored report asks for cliff impacts, which are not "
-        "calculated yet (cliffs_not_available, located under report)"
+        "; or a budget window's or household report's re-run asks for "
+        "cliffs, which neither calculates (cliffs_not_available, located at "
+        "include_cliffs)"
     ),
     "simulation": "",
 }
@@ -195,7 +198,7 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
                 "dynamics cannot be calculated on the current catalog version "
                 "(missing_parameters or overlapping_parameters, located under "
                 f"{record}){_HOUSEHOLD_ANSWERS[record].get(422, '')}"
-                f"{_STORED_CLIFFS[record]}; nothing was written"
+                f"{_CLIFFS_REFUSED[record]}; nothing was written"
             ),
             "model": EconomyRequestUnprocessable,
         },
@@ -295,9 +298,12 @@ def add_economy_rerun_routes(
             "call; otherwise each side joins its simulation's run on those "
             "versions or gets a new one. With force, and always for a report "
             "created before keys, the report's simulations are calculated "
-            "again, as an extra run marked forced that nothing joins. A report "
-            "stored asking for cliff impacts is refused (422 "
-            "cliffs_not_available). A budget-window report's run is a "
+            "again, as an extra run marked forced that nothing joins. With "
+            "include_cliffs, an economy report's re-run starts each of its "
+            "run's simulation runs' cliff calculation that has none, as a "
+            "create does; a budget window's or household report's re-run "
+            "asking for cliffs is refused (422 cliffs_not_available). A "
+            "budget-window report's run is a "
             "budget-window run with a report run per year, a new one's first "
             "five started at once, each year on its own year's simulations. "
             "A household report's run calculates its stored household in the "

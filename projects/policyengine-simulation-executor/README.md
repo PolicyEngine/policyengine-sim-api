@@ -154,7 +154,8 @@ with its own mechanism, separate from the v1 routing jobs above:
    while the stored manifest is still what it wrote (`--restore-plan`).
    In a deployment from `main`, the same job then deploys the unversioned
    stuck-run sweep (`src/modal/run_sweep_app.py`), which fails the report
-   runs, simulation runs and household jobs nothing will finish, and whose
+   runs, simulation runs, household jobs and simulation runs' cliff results
+   nothing will finish, and whose
    schedule starts as soon as it deploys; a failed sweep deploy, including a failed build of its
    image, fails the job and so puts the previous default back. A deployment
    from another branch leaves the sweep as it is.
@@ -375,7 +376,10 @@ dtype-preserving entity tables. This produces 40 region-group calculation
 invocations per report while retaining two simulation records and two private
 simulation artifacts. `segmented=false`, US subnational requests, UK requests,
 cliff analysis, and labor-supply-response calculations use the
-single-container Stage 12 path.
+single-container Stage 12 path. A simulation run's own cliff calculation (a
+worker call whose context names its cliff result) is split into the same 20
+region groups whenever the run's own calculation is: its cliff gap and share
+are weighted sums of the merged person rows.
 
 A comparison run keeps both simulation output files in the Stage 12 artifact
 bucket (`STAGE12_ARTIFACT_BUCKET`), which deletes every object 30 days after it

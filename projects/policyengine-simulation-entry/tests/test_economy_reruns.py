@@ -29,6 +29,7 @@ from household_fixtures import POLICYENGINE_VERSION
 from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
     ReportRunIds,
+    SimulationExecutionInput,
     Stage12InvocationContext,
 )
 from policyengine_simulation_entry.economy_api_models import ReportRerunRequest
@@ -428,27 +429,138 @@ def test_a_stored_simulations_dynamic_without_values_is_refused() -> None:
     assert store.simulation_reruns == []
 
 
-@pytest.mark.parametrize("stored", [STORED_REPORT, STORED_WINDOW])
-def test_a_stored_report_asking_for_cliffs_is_not_rerun_until_cliffs_exist(
-    stored,
-) -> None:
-    """Interim answer A: created before C1 · 27 with ``include_cliffs: true``."""
+def _started_cliff_runs(caller: FakeCaller) -> set[UUID]:
+    """Return the simulation runs whose cliff calculations the service started."""
+    return {
+        SimulationExecutionInput.model_validate(payload).simulation_execution_id
+        for _, payload, _, _ in caller.cliff_calculations
+    }
+
+
+def test_a_rerun_asking_for_cliffs_joins_the_run_and_starts_its_cliffs() -> None:
+    """Answer 4b: a re-run on the current versions joins and adds its cliffs."""
+    joined = FoundReportRun(
+        id=UUID(int=90),
+        inserted=False,
+        status=ReportRunStatus.SUCCEEDED,
+        baseline_simulation_run_id=UUID(int=91),
+        reform_simulation_run_id=UUID(int=92),
+    )
+    store = FakeRerunStore(
+        report_definition=replace(STORED_REPORT, keyed=True),
+        joined_report_run=joined,
+    )
+    caller = FakeCaller()
+
+    rerun = _rerun_report(
+        rerun_service(store, caller=caller), ReportRerunRequest(include_cliffs=True)
+    )
+
+    assert caller.report_runs == []
+    assert _started_cliff_runs(caller) == {UUID(int=91), UUID(int=92)}
+    (proposed,) = store.cliff_requests
+    assert (rerun.report_run_id, rerun.status) == (
+        UUID(int=90),
+        ReportRunStatus.SUCCEEDED,
+    )
+    assert rerun.cliffs is not None
+    assert rerun.cliffs.baseline.cliff_result_id == proposed[UUID(int=91)]
+    assert rerun.cliffs.reform.cliff_result_id == proposed[UUID(int=92)]
+    assert rerun.cliffs.reform.status is SimulationStatus.PENDING
+
+
+def test_a_created_rerun_asking_for_cliffs_starts_its_runs_cliffs() -> None:
+    store = FakeRerunStore(report_definition=replace(STORED_REPORT, keyed=True))
+    caller = FakeCaller()
+
+    rerun = _rerun_report(
+        rerun_service(store, caller=caller), ReportRerunRequest(include_cliffs=True)
+    )
+
+    assert len(caller.report_runs) == 1
+    assert _started_cliff_runs(caller) == {
+        rerun.baseline_simulation_run_id,
+        rerun.reform_simulation_run_id,
+    }
+    report = ReportExecutionInput.model_validate(caller.report_runs[0][1])
+    assert report.reform.options == {"spm": STORED_OPTIONS["spm"]}
+
+
+def test_a_forced_rerun_whose_cliff_calculations_cannot_be_written_starts_nothing() -> (
+    None
+):
+    """Review round 1: a 503 after a forced run's start would leave extra runs."""
+    store = FakeRerunStore(
+        report_definition=replace(STORED_REPORT, keyed=True),
+        cliff_failure=DATABASE_ERROR,
+    )
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionUnavailableError) as unavailable:
+        _rerun_report(
+            rerun_service(store, caller=caller),
+            ReportRerunRequest(force=True, include_cliffs=True),
+        )
+
+    assert unavailable.value.code == "database_unavailable"
+    assert store.report_reruns == []
+    assert (caller.report_runs, caller.cliff_calculations) == ([], [])
+
+
+def test_a_rerun_whose_coordinator_modal_refuses_still_starts_its_cliffs() -> None:
+    """Review round 2: written with the report run, so started before its call."""
+    store = FakeRerunStore(report_definition=replace(STORED_REPORT, keyed=True))
+    caller = FakeCaller(failure=RuntimeError("refused"))
+
+    with pytest.raises(EconomySubmissionUnavailableError) as unavailable:
+        _rerun_report(
+            rerun_service(store, caller=caller),
+            ReportRerunRequest(include_cliffs=True),
+        )
+
+    assert unavailable.value.code == "modal_call_refused"
+    (created,) = store.report_reruns
+    assert _started_cliff_runs(caller) == {
+        created.baseline.simulation_run_id,
+        created.reform.simulation_run_id,
+    }
+
+
+def test_a_rerun_not_asking_for_cliffs_touches_no_cliff_calculation() -> None:
+    store = FakeRerunStore(report_definition=replace(STORED_REPORT, keyed=True))
+    caller = FakeCaller()
+
+    rerun = _rerun_report(rerun_service(store, caller=caller))
+
+    assert (store.cliff_requests, caller.cliff_calculations) == ([], [])
+    assert rerun.cliffs is None
+
+
+def test_a_stored_report_asking_for_cliffs_is_rerun_with_its_cliffs() -> None:
+    """Interim answer B is lifted: created before C1 · 27 with ``include_cliffs``.
+
+    Its runs are forced (interim answer B), its stored option never reaches
+    the coordinator, and it asks for each new run's cliffs (the user,
+    2026-11-17).
+    """
     store = FakeRerunStore(
         report_definition=replace(
-            stored, inputs={**STORED_OPTIONS, "include_cliffs": True}
+            STORED_REPORT, inputs={**STORED_OPTIONS, "include_cliffs": True}
         )
     )
     caller = FakeCaller()
 
-    with pytest.raises(EconomySubmissionUnprocessableError) as refused:
-        _rerun_report(rerun_service(store, caller=caller))
+    rerun = _rerun_report(rerun_service(store, caller=caller))
 
-    assert refused.value.code == "cliffs_not_available"
-    ((reason,),) = (refused.value.reasons,)
-    assert reason.loc == ("report", "inputs", "include_cliffs")
-    assert "cliff impacts" in reason.msg
-    assert (store.rerun_reads, store.report_reruns, store.windows) == ([], [], [])
-    assert caller.report_runs == []
+    (created,) = store.report_reruns
+    assert created.forced is True
+    report = ReportExecutionInput.model_validate(caller.report_runs[0][1])
+    assert report.baseline.options == {"spm": STORED_OPTIONS["spm"]}
+    assert _started_cliff_runs(caller) == {
+        created.baseline.simulation_run_id,
+        created.reform.simulation_run_id,
+    }
+    assert rerun.cliffs is not None
 
 
 def test_a_stored_report_whose_cliffs_were_not_asked_for_is_rerun() -> None:
@@ -457,10 +569,59 @@ def test_a_stored_report_whose_cliffs_were_not_asked_for_is_rerun() -> None:
             STORED_REPORT, inputs={**STORED_OPTIONS, "include_cliffs": False}
         )
     )
+    caller = FakeCaller()
 
-    _rerun_report(rerun_service(store))
+    rerun = _rerun_report(rerun_service(store, caller=caller))
 
     assert len(store.report_reruns) == 1
+    assert caller.cliff_calculations == []
+    assert rerun.cliffs is None
+
+
+def test_a_stored_windows_cliff_option_never_reaches_its_years() -> None:
+    store = FakeRerunStore(
+        report_definition=replace(
+            STORED_WINDOW, inputs={**STORED_OPTIONS, "include_cliffs": True}
+        )
+    )
+    caller = FakeCaller()
+    advancer = FakeAdvancer(store)
+
+    _rerun_report(rerun_service(store, caller=caller, advancer=advancer))
+
+    assert len(caller.report_runs) == 3
+    for _, payload, _, _ in caller.report_runs:
+        report = ReportExecutionInput.model_validate(payload)
+        assert report.reform.options == {"spm": STORED_OPTIONS["spm"]}
+    assert (store.cliff_requests, caller.cliff_calculations) == ([], [])
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [STORED_WINDOW, replace(STORED_REPORT, kind="household")],
+    ids=["budget-window", "household"],
+)
+def test_a_rerun_of_a_report_without_cliffs_asking_for_them_is_refused(
+    stored,
+) -> None:
+    """Budget windows and household reports calculate no cliffs."""
+    store = FakeRerunStore(report_definition=stored)
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionUnprocessableError) as refused:
+        _rerun_report(
+            rerun_service(store, caller=caller),
+            ReportRerunRequest(include_cliffs=True),
+        )
+
+    assert refused.value.code == "cliffs_not_available"
+    ((reason,),) = (refused.value.reasons,)
+    assert (reason.loc, reason.type) == (
+        ("body", "include_cliffs"),
+        "cliffs_not_available",
+    )
+    assert (store.rerun_reads, store.report_reruns, store.windows) == ([], [], [])
+    assert (caller.report_runs, caller.cliff_calculations) == ([], [])
 
 
 def test_a_stored_region_the_current_catalog_lacks_is_refused_naming_the_report() -> (

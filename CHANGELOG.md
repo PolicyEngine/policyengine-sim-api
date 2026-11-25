@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.22.0] - 2026-11-24
+
+### Added
+
+- A v2 simulation worker can now calculate a simulation run's own cliff result: a call whose context names a row of API v1's `cliff_impacts` calculates that run's simulation again with .py's cliff columns and records its weighted cliff gap and cliff share, once, on that row, and the stuck-run sweep fails one whose call ended. The worker's operation record names `cliff_impacts` and the row in telemetry. A report run's completion no longer writes `report_runs`' four cliff columns. Nothing starts a cliff calculation yet, and a report asking for cliffs is still refused.
+
+
 ## [0.21.0] - 2026-11-18
 
 ### Added

@@ -17,6 +17,7 @@ from economy_output import (
     uk_output_with_withheld_codes,
     us_output_with_every_part,
 )
+from policyengine_simulation_contract.stage12_execution import ReportRunIds
 from policyengine_simulation_persistence.result_tables import BudgetSummary
 from policyengine_stage12_persistence import (
     DistrictCodes,
@@ -159,19 +160,6 @@ def _rebuilt_poverty(seeder, run_ids, poverty_types):
     return {name: parts.get(name) for name in POVERTY_PART_NAMES}
 
 
-def _rebuilt_cliff_impact(report_run):
-    """Rebuild today's cliff impact from the report run's four columns."""
-    if report_run["baseline_cliff_gap"] is None:
-        return None
-    return {
-        side: {
-            "cliff_gap": report_run[f"{side}_cliff_gap"],
-            "cliff_share": report_run[f"{side}_cliff_share"],
-        }
-        for side in ("baseline", "reform")
-    }
-
-
 def _rebuilt_labor_supply(seeder, report_run_id):
     """Rebuild today's labour supply response from its two tables' rows.
 
@@ -283,9 +271,11 @@ def test_a_report_run_stores_its_economy_output_as_rows(
             output["inequality"]["top_10_pct_share"][side],
             output["inequality"]["top_1_pct_share"][side],
         )
-    # The cliff impact is four of the report run's own columns.
+    # A cliff impact is each simulation run's own cliff result, which the
+    # report run's completion never writes.
     report_run = seeder.row("report_runs", run_ids.report_run_id)
-    assert _rebuilt_cliff_impact(report_run) == output["cliff_impact"]
+    assert output["cliff_impact"] is not None
+    assert {report_run[column] for column in CLIFF_COLUMNS} == {None}
     assert report_run["data_version"] == output["data_version"]
     assert (
         _rebuilt_labor_supply(seeder, run_ids.report_run_id)
@@ -315,6 +305,42 @@ def test_the_labour_supply_response_is_one_row_and_a_row_per_decile(
         deciles[0]["relative_income_effect"],
         deciles[0]["relative_substitution_effect"],
     ) == (-0.05, 0.1, None, None)
+
+
+def test_a_report_runs_result_columns_never_name_its_cliff_columns() -> None:
+    """The completion's update names none of them, so API v1 can drop them."""
+    run_ids = ReportRunIds(
+        report_run_id=uuid4(),
+        baseline_simulation_run_id=uuid4(),
+        reform_simulation_run_id=uuid4(),
+    )
+
+    result = report_run_result(
+        US_ECONOMY_OUTPUT,
+        run_ids=run_ids,
+        country="us",
+        district_codes=DISTRICT_CODES,
+    )
+
+    assert US_ECONOMY_OUTPUT["cliff_impact"] is not None
+    assert set(result.report_run_columns) == {"spm_provenance", "data_version"}
+
+
+def test_a_completed_report_run_leaves_its_cliff_columns_null(
+    store, seeder, seeded_run: SeededReportRun
+) -> None:
+    output = deepcopy(US_ECONOMY_OUTPUT)
+    output["cliff_impact"] = {
+        "baseline": {"cliff_gap": 120.5, "cliff_share": 0.04},
+        "reform": {"cliff_gap": 98.25, "cliff_share": 0.03},
+    }
+
+    assert _complete(store, seeded_run, output=output) == RunWrite(
+        changed=True, status=RunStatus.SUCCEEDED
+    )
+
+    report_run = seeder.row("report_runs", seeded_run.run_ids.report_run_id)
+    assert {report_run[column] for column in CLIFF_COLUMNS} == {None}
 
 
 def test_an_output_without_labour_supply_or_cliff_impact_stores_neither(

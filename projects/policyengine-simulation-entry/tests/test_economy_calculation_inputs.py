@@ -7,6 +7,7 @@ from uuid import UUID
 
 import pytest
 from economy_fixtures import STATE_DATASET, economy_manifest
+from economy_service_fakes import CATALOG, report_request
 from household_fixtures import POLICYENGINE_VERSION
 from policyengine_simulation_contract.stage12_execution import (
     ReportAggregate,
@@ -21,15 +22,20 @@ from policyengine_simulation_entry.economy_calculation_inputs import (
     CallOrigin,
     DatasetNotInBundleError,
     bundle_dataset,
+    cliff_calculation,
     report_run_calculation,
     simulation_options,
     simulation_run_calculation,
 )
+from policyengine_simulation_entry.economy_requests import calculation_scope
 from policyengine_simulation_entry.economy_workers import default_economy_worker
+from policyengine_simulation_entry.rerunnable_records import rerun_scope
+from policyengine_simulation_persistence import EconomyRequest
 
 REPORT_RUN_ID = UUID("00000000-0000-4000-8000-000000000001")
 BASELINE_RUN_ID = UUID("00000000-0000-4000-8000-000000000002")
 REFORM_RUN_ID = UUID("00000000-0000-4000-8000-000000000003")
+CLIFF_RESULT_ID = UUID("00000000-0000-4000-8000-000000000004")
 CREATED_AT = datetime(2026, 11, 12, 15, tzinfo=UTC)
 CTC_AMOUNT = "gov.irs.credits.ctc.amount.base[0].amount"
 REFORM = {CTC_AMOUNT: {"2026-01-01.2200-12-31": 3_000}}
@@ -56,7 +62,7 @@ def _scope(**changes) -> CalculationScope:
         "region_code": "state/ca",
         "dataset": STATE_DATASET,
         "year": 2026,
-        "options": {"include_cliffs": True},
+        "options": {"spm": {"geography_kind": "national"}},
     }
     return CalculationScope(**{**values, **changes})
 
@@ -69,11 +75,45 @@ def test_the_bundle_dataset_is_the_one_the_catalog_dataset_names() -> None:
         bundle_dataset(worker, "enhanced_cps_2024")
 
 
-def test_the_options_hold_cliffs_only_when_asked_and_the_spm_selection_given() -> None:
-    assert simulation_options(include_cliffs=False, spm=None) == {}
-    assert simulation_options(
-        include_cliffs=True, spm={"geography_kind": "national"}
-    ) == {"include_cliffs": True, "spm": {"geography_kind": "national"}}
+def test_the_options_hold_only_the_spm_selection_given() -> None:
+    # Cliffs are each simulation run's own calculation (C1 · 24's answer
+    # 4b), so the coordinator and simulation functions never plan them.
+    assert simulation_options(spm=None) == {}
+    assert simulation_options(spm={"geography_kind": "national"}) == {
+        "spm": {"geography_kind": "national"}
+    }
+
+
+def test_a_report_asking_for_cliffs_calculates_with_its_spm_selection_alone() -> None:
+    request = report_request(include_cliffs=True)
+
+    scope = calculation_scope(
+        request, _worker(), CATALOG, spm=request.options().get("spm")
+    )
+
+    assert scope.options == {"spm": {"geography_kind": "national"}}
+
+
+def test_a_stored_reports_cliff_option_never_reaches_the_calculation() -> None:
+    """A report stored before C1 · 27 kept its request's ``include_cliffs``."""
+    worker = _worker()
+    stored_request = EconomyRequest(
+        country="us",
+        policyengine_version=worker.policyengine_version,
+        region_code=CATALOG.region.code,
+        dataset_name=CATALOG.dataset.name,
+        year=2026,
+    )
+
+    scope = rerun_scope(
+        "us",
+        stored_request,
+        worker,
+        CATALOG,
+        options={"include_cliffs": True, "spm": {"geography_kind": "national"}},
+    )
+
+    assert scope.options == {"spm": {"geography_kind": "national"}}
 
 
 def test_a_report_run_is_named_by_its_run_ids_with_no_evaluation_record() -> None:
@@ -103,7 +143,7 @@ def test_a_report_run_is_named_by_its_run_ids_with_no_evaluation_record() -> Non
         assert side.evaluation_id == REPORT_RUN_ID
         assert side.year == 2026
         assert (side.geography.country, side.geography.region) == ("us", "state/ca")
-        assert side.options == {"include_cliffs": True}
+        assert side.options == {"spm": {"geography_kind": "national"}}
         assert side.population.artifact.uri == STATE_DATASET.uri
         assert side.population.artifact.content_sha256 == STATE_DATASET.sha256
         assert side.bundle.policyengine_version == POLICYENGINE_VERSION
@@ -129,6 +169,29 @@ def test_a_report_run_is_named_by_its_run_ids_with_no_evaluation_record() -> Non
     assert context.retention_expires_at - context.created_at == timedelta(days=30)
 
 
+def test_the_contexts_the_service_sends_name_no_cliff_result() -> None:
+    """A v2 application deployed before cliff results refuses the field, even null."""
+    worker = _worker()
+    report = report_run_calculation(
+        worker,
+        _scope(),
+        ORIGIN,
+        run_ids=RUN_IDS,
+        baseline_policy={},
+        reform_policy=REFORM,
+    )
+    standalone = simulation_run_calculation(
+        worker,
+        _scope(options={}),
+        ORIGIN,
+        simulation_run_id=BASELINE_RUN_ID,
+        policy=REFORM,
+    )
+
+    assert "cliff_result_id" not in report.context
+    assert "cliff_result_id" not in standalone.context
+
+
 def test_a_standalone_run_is_named_in_its_functions_context() -> None:
     worker = _worker()
 
@@ -152,3 +215,38 @@ def test_a_standalone_run_is_named_in_its_functions_context() -> None:
     assert calculation.context["artifact_prefix"] == (
         f"stage-12-runs/staging/2026/11/{BASELINE_RUN_ID}"
     )
+
+
+def test_a_cliff_calculation_names_its_cliff_result_and_its_runs_own_input() -> None:
+    """C1 · 38's entry point: the simulation function, in its cliff mode.
+
+    The payload is the simulation run's own, as a standalone run's, whichever
+    report named it; the context names the cliff result alone, under the
+    run's artifact prefix.
+    """
+    worker = _worker()
+
+    calculation = cliff_calculation(
+        worker,
+        _scope(options={"spm": {"geography_kind": "national"}}),
+        ORIGIN,
+        simulation_run_id=REFORM_RUN_ID,
+        cliff_result_id=CLIFF_RESULT_ID,
+        policy=REFORM,
+    )
+
+    simulation = SimulationExecutionInput.model_validate(calculation.payload)
+    assert simulation.role is SimulationRole.STANDALONE
+    assert simulation.simulation_execution_id == REFORM_RUN_ID
+    assert simulation.evaluation_id == REFORM_RUN_ID
+    assert simulation.policy == REFORM
+    assert simulation.options == {"spm": {"geography_kind": "national"}}
+    assert (simulation.geography.country, simulation.geography.region) == (
+        "us",
+        "state/ca",
+    )
+    context = Stage12InvocationContext.model_validate(calculation.context)
+    assert context.cliff_result_id == CLIFF_RESULT_ID
+    assert (context.simulation_run_id, context.report_run) == (None, None)
+    assert context.simulation_callable == "run_single_simulation_us"
+    assert context.artifact_prefix == f"stage-12-runs/staging/2026/11/{REFORM_RUN_ID}"

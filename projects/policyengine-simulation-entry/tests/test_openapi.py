@@ -97,6 +97,7 @@ ECONOMY_SCHEMAS = (
     "BudgetWindowReportCreated",
     "BudgetWindowReportRequest",
     "BudgetWindowYearCreated",
+    "CliffCalculationState",
     "EconomyError",
     "EconomyReportCreated",
     "EconomyReportRequest",
@@ -110,6 +111,7 @@ ECONOMY_SCHEMAS = (
     "HouseholdReportCreated",
     "HouseholdReportRequest",
     "PolicyChoice",
+    "ReportCliffs",
     "ReportRerunRequest",
     "ReportRunRead",
     "ReportRunStatus",
@@ -485,12 +487,13 @@ def test_rerun_routes_declare_every_answer():
     report_answers = _responses(spec, "post", "/reports/{report_id}/runs")
     assert "unknown_household" in report_answers["400"]["description"]
     assert "household_not_calculable" in report_answers["422"]["description"]
-    # A report stored asking for cliffs is refused until they exist.
+    # A budget window's or household report's re-run asking for cliffs is
+    # refused: neither calculates them.
     assert "cliffs_not_available" in report_answers["422"]["description"]
     simulation_answers = _responses(spec, "post", "/simulations/{simulation_id}/runs")
     assert "cliffs_not_available" not in simulation_answers["422"]["description"]
     report_rerun = spec["components"]["schemas"]["ReportRerunRequest"]
-    assert set(report_rerun["properties"]) == {"force"}
+    assert set(report_rerun["properties"]) == {"force", "include_cliffs"}
     assert (
         "requestBody" not in spec["paths"]["/simulations/{simulation_id}/runs"]["post"]
     )
@@ -662,3 +665,21 @@ def test_the_local_area_refusals_are_in_the_error_codes():
 
     assert {"local_areas_unsupported", "local_area_dataset_mismatch"} <= error_codes
     assert "no_local_area_dataset" in unprocessable_codes
+
+
+def test_a_report_create_takes_include_cliffs_and_answers_each_sides_cliffs():
+    """C1 · 39: ``include_cliffs`` starts each side's cliff calculation."""
+    spec = create_app().openapi()
+    schemas = spec["components"]["schemas"]
+
+    created = schemas["EconomyReportCreated"]
+    assert "cliffs" in created["properties"]
+    assert "cliffs" not in created.get("required", [])
+    assert set(schemas["ReportCliffs"]["properties"]) == {"baseline", "reform"}
+    assert set(schemas["CliffCalculationState"]["properties"]) == {
+        "cliff_result_id",
+        "status",
+    }
+    # A create no longer refuses cliffs.
+    create_answers = _responses(spec, "post", "/reports")
+    assert "cliffs_not_available" not in create_answers["422"]["description"]

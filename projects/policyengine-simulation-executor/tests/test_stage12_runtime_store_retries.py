@@ -16,6 +16,7 @@ from policyengine_simulation_executor.stage12_runtime.dependencies import runtim
 from policyengine_simulation_executor.stage12_runtime.report_run_access import (
     MODAL_WORKER_DATABASE_URL_ENV,
     budget_window_store,
+    cliff_result_store,
     report_run_store,
 )
 from policyengine_stage12_persistence import engine as persistence_engine_module
@@ -29,6 +30,7 @@ from stage12_runtime_support import (
 )
 
 REPORT_RUN_ID = UUID("00000000-0000-0000-0000-00000000000a")
+CLIFF_RESULT_ID = UUID("00000000-0000-0000-0000-00000000000c")
 CLAIMED_AT = datetime(2026, 11, 4, tzinfo=UTC)
 
 
@@ -176,10 +178,17 @@ def _claim_a_report_run(store) -> Any:
     )
 
 
+def _claim_a_cliff_result(store) -> Any:
+    return store.claim_cliff_result(
+        CLIFF_RESULT_ID, modal_call_id="fc-call", claimed_at=CLAIMED_AT
+    )
+
+
 @pytest.mark.parametrize(
     ("build_store", "write"),
     [
         pytest.param(report_run_store, _claim_a_report_run, id="report-runs"),
+        pytest.param(cliff_result_store, _claim_a_cliff_result, id="cliff-results"),
         pytest.param(
             household_report_recording.household_report_run_store,
             _claim_a_report_run,
