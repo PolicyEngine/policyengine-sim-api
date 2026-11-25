@@ -268,6 +268,8 @@ def test_the_input_models_are_tables_the_service_reads() -> None:
         "dynamics",
         "parameters",
         "parameter_values",
+        "dynamic_parameters",
+        "dynamic_parameter_values",
         "regions",
         "datasets",
         "tax_benefit_models",

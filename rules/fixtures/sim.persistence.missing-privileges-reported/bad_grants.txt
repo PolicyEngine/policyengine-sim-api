@@ -23,6 +23,8 @@ SELECT datasets
 SELECT parameters
 SELECT parameter_values
 SELECT dynamics
+SELECT dynamic_parameters
+SELECT dynamic_parameter_values
 UPDATE simulation_runs completed_at
 UPDATE simulation_runs error_message
 UPDATE simulation_runs modal_call_id

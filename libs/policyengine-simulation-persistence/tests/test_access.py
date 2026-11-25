@@ -54,6 +54,8 @@ READ_TABLES = (
     "parameters",
     "parameter_values",
     "dynamics",
+    "dynamic_parameters",
+    "dynamic_parameter_values",
 )
 # The run state the service records for a run whose Modal call it starts.
 CALL_START_COLUMNS = frozenset(

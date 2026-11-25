@@ -54,7 +54,13 @@ from policyengine_simulation_persistence import (
     economy_run_store,
 )
 from policyengine_simulation_persistence.economy_inputs import read_catalog_rows
-from public_api_rows import StoredValue, insert_dataset, insert_dynamic, insert_policy
+from public_api_rows import (
+    StoredValue,
+    insert_dataset,
+    insert_dynamic,
+    insert_parameter,
+    insert_policy,
+)
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from transaction_fakes import CommitFailingTransaction, RecordingSession
@@ -299,6 +305,9 @@ def test_values_the_running_version_lacks_or_both_set_are_refused(
             replace(saved_on.catalog, country="us"),
             [StoredValue(CTC_AMOUNT, 3_000, START)],
         )
+        # API v1 stores each name in one kind's table; a policy setting the
+        # dynamic's parameter needs the name in both.
+        insert_parameter(connection, economy.catalog, ELASTICITY, kind="policy")
         overlapping_policy_id = insert_policy(
             connection, economy.catalog, [StoredValue(ELASTICITY, -0.1, START)]
         )
@@ -436,6 +445,9 @@ def test_a_reports_refused_values_name_the_side_they_belong_to(
             replace(saved_on.catalog, country="us"),
             [StoredValue(CTC_AMOUNT, 3_000, START)],
         )
+        # API v1 stores each name in one kind's table; a policy setting the
+        # dynamic's parameter needs the name in both.
+        insert_parameter(connection, economy.catalog, ELASTICITY, kind="policy")
         overlapping_policy_id = insert_policy(
             connection, economy.catalog, [StoredValue(ELASTICITY, -0.1, START)]
         )

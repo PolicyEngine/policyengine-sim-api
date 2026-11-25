@@ -22,6 +22,8 @@ from policyengine_simulation_persistence import (
     Dataset,
     DecileImpact,
     Dynamic,
+    DynamicParameter,
+    DynamicParameterValue,
     Household,
     HouseholdJob,
     HouseholdJobStatus,
@@ -93,6 +95,8 @@ INPUT_CLASSES = {
     "parameters": Parameter,
     "parameter_values": ParameterValue,
     "dynamics": Dynamic,
+    "dynamic_parameters": DynamicParameter,
+    "dynamic_parameter_values": DynamicParameterValue,
 }
 RESULT_CLASSES = {
     "labor_supply_responses": LaborSupplyResponse,
@@ -207,6 +211,38 @@ def test_the_keys_to_api_v1s_tables_name_the_referenced_classes() -> None:
     }
 
     assert named_tables == referenced
+
+
+def test_policy_values_and_dynamic_values_are_mapped_apart() -> None:
+    """API v1 keeps a dynamic's parameters and values in their own tables (C1 · 50).
+
+    So ``ParameterValue`` maps no ``dynamic_id``, which C1 · 53 drops from
+    API v1's table, and a dynamic's values name its own parameters.
+    """
+    column_names = {
+        mapped_class: [column.name for column in mapped_class.__table__.columns]
+        for mapped_class in (ParameterValue, DynamicParameter, DynamicParameterValue)
+    }
+
+    assert column_names == {
+        ParameterValue: [
+            "id",
+            "parameter_id",
+            "value_json",
+            "start_date",
+            "end_date",
+            "policy_id",
+        ],
+        DynamicParameter: ["id", "name", "tax_benefit_model_version_id"],
+        DynamicParameterValue: [
+            "id",
+            "dynamic_parameter_id",
+            "value_json",
+            "start_date",
+            "end_date",
+            "dynamic_id",
+        ],
+    }
 
 
 def test_every_mapper_configures() -> None:
