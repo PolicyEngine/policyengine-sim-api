@@ -4,10 +4,16 @@ Three lookups decide whether a request reads a prebuilt file: which requests
 get a fixed baseline ID (``qualifying_baseline_identity`` and
 ``deterministic_baseline_id``), which outcome ``ArtifactBaselineSimulation``
 records when it loads one (``hit``, ``incomplete`` or ``miss``, reported as
-the run's ``baseline_artifact`` attribute), and which folder a state or
-district request reads its year file from (``baked_state_data_folder``).
-Every expected value below is what ``main`` produced on 2026-11-25 (commit
-544ff628) for the fixed inputs in ``fixtures.us_prebuilt_inputs``.
+the run's ``baseline_artifact`` attribute), and which folder a run reads its
+year file from (``prebuilt_dataset_folder``, which replaced
+``baked_state_data_folder``).
+
+Which requests get a fixed ID, the outcomes and the rule a prebuilt file must
+pass are what ``main`` did on 2026-11-25 (commit 544ff628), for the fixed
+inputs in ``fixtures.us_prebuilt_inputs``, and must not change. The approved
+1.6 · 1 design (section 2) replaced the ``bl1`` IDs with ``bl3`` ones and moved
+image files to ``prebuilt/``, so the IDs, store paths and folders were
+recorded from the new code.
 """
 
 from __future__ import annotations
@@ -23,16 +29,25 @@ from fixtures.us_prebuilt_inputs import (
 )
 from policyengine.core.scoping_strategy import RowFilterStrategy
 from policyengine_simulation_contract.spm import SPMInputError
-from policyengine_simulation_executor import (
-    baseline_artifacts,
-    precompute,
-    state_datasets,
-)
+from policyengine_simulation_executor import baseline_artifacts, precompute
 from policyengine_simulation_executor import simulation_runtime as runtime
+from policyengine_simulation_executor.region_resolution import RegionResolution
 from policyengine_simulation_executor.simulation_runtime import DatasetSelection
+from policyengine_simulation_executor.stage12_cache import levels, levels_us
 
-US_NATIONAL_2026_ID = "bl1-e0209a1fc395839e"
-US_CALIFORNIA_GROUP_2026_ID = "bl1-66d6a4e4bc5e029c"
+US_NATIONAL_2026_ID = "bl3-48380a609a4e26de"
+US_CALIFORNIA_GROUP_2026_ID = "bl3-ef3ab6b4dce1d62a"
+DEFAULT_DATASET = DatasetSelection(
+    "populace_cps", "hf://org/repo/populace_cps.h5@rev-abc", is_default=True
+)
+STATE_LEVEL_DATASET = DatasetSelection(
+    "populace_cps_local",
+    "hf://org/repo/populace_cps_local.h5@rev-local",
+    is_default=False,
+)
+UK_DEFAULT_DATASET = DatasetSelection(
+    "enhanced_frs", "hf://org/uk-repo/enhanced_frs.h5@rev-uk", is_default=True
+)
 
 
 @pytest.fixture
@@ -44,7 +59,7 @@ def _identity_request(**overrides):
     request_facts = {
         "params": {"country": "us", "scope": "macro", "time_period": 2026},
         "country": "us",
-        "dataset_is_default": True,
+        "dataset": DEFAULT_DATASET,
         "policy": None,
         "region_code": "us",
         "scoping_strategy": None,
@@ -55,7 +70,12 @@ def _identity_request(**overrides):
 
 
 def _region_group_request(group, year=2026):
-    params = precompute.cohort_params(year, group)
+    params = {
+        "country": "us",
+        "scope": "macro",
+        "region_group": list(group),
+        "time_period": year,
+    }
     resolution = runtime.resolve_region(
         country_module=runtime._country_module("us"), country="us", params=params
     )
@@ -75,17 +95,17 @@ class TestRequestsWithAFixedBaselineId:
             (
                 2026,
                 US_NATIONAL_2026_ID,
-                "baselines/us/e0209a1fc395839ed4baa03cc9663cfd4eaf151baa0569c4cd0912a2c75bdc2f/bl1-e0209a1fc395839e.h5",
+                "baselines/us/48380a609a4e26de1ed026e587f1feb69797c06f35de82e024d3c8d10f9bac1e/bl3-48380a609a4e26de.h5",
             ),
             (
                 2027,
-                "bl1-8aefa29a14d95e41",
-                "baselines/us/8aefa29a14d95e411304f5f9d39a81f09676dcf64b4157970bb1c643d2b04ea5/bl1-8aefa29a14d95e41.h5",
+                "bl3-9f55154c42502ec9",
+                "baselines/us/9f55154c42502ec96b358b6ae0a0a5b44d3bc66a84c3bc151dad17dd764993d9/bl3-9f55154c42502ec9.h5",
             ),
             (
                 2025,
-                "bl1-659d2da0dfda76af",
-                "baselines/us/659d2da0dfda76afe565b7e46924ade0c2bd1d124e11490b4f32dc0aca2498a8/bl1-659d2da0dfda76af.h5",
+                "bl3-81070e29653b2b5e",
+                "baselines/us/81070e29653b2b5e8ef8c6f2f3c1b09b085e5df12fddfc60d7c4adf73744a572/bl3-81070e29653b2b5e.h5",
             ),
         ],
         ids=["2026", "2027", "2025"],
@@ -110,7 +130,10 @@ class TestRequestsWithAFixedBaselineId:
         assert identity.region == "region_group/state/ca"
         assert identity.scope_key == "region_group:row_filter:state_fips=6"
         assert identity.simulation_id == US_CALIFORNIA_GROUP_2026_ID
-        planned = precompute.cohort_identity(2026, ["state/ca"])
+        california = levels.handler_for(
+            "us", levels.DatasetLevel.STATE_GROUP
+        ).baseline_targets(2026)[15]
+        planned = precompute.baseline_target_identity(california)
         assert planned.simulation_id == US_CALIFORNIA_GROUP_2026_ID
         assert planned.store_path == identity.store_path
 
@@ -119,16 +142,17 @@ class TestRequestsWithAFixedBaselineId:
             params={"country": "uk", "scope": "macro"},
             country="uk",
             region_code="uk",
+            dataset=UK_DEFAULT_DATASET,
         )
 
         identity = baseline_artifacts.qualifying_baseline_identity(request)
 
-        assert identity.simulation_id == "bl1-84927e4e7a177875"
+        assert identity.simulation_id == "bl3-83544ee09deea7e0"
         assert identity.store_path == (
-            "baselines/uk/84927e4e7a17787511e79b2f4e2a6eb3e7539ae0d8a02c4655727c83b76bb6fa/bl1-84927e4e7a177875.h5"
+            "baselines/uk/83544ee09deea7e005e67260e709d95791ae00eff91e1ac4297205b675f1a98b/bl3-83544ee09deea7e0.h5"
         )
-        assert identity.dataset.store_path == (
-            "datasets/uk/ca3007b887c42984284342d99230272f504c88463901c7f0209392b19ac8fd82/enhanced_frs_year_2026.h5"
+        assert identity.year_file.store_path == (
+            "year-files/uk/a911bc00e6d82eb65c2e72c65c3a01732f4b7b79d84ada654700445ff5c3cd0e/enhanced_frs_year_2026.h5"
         )
 
     def test_us_national_with_the_spm_capability(self, monkeypatch, us_inputs):
@@ -136,13 +160,13 @@ class TestRequestsWithAFixedBaselineId:
 
         identity = baseline_artifacts.qualifying_baseline_identity(_identity_request())
 
-        assert identity.simulation_id == "bl1-b137948476b155a5"
+        assert identity.simulation_id == "bl3-a19ba492ccb50823"
         assert identity.storage_id == (
-            "bl1-b137948476b155a5-spm-7396bf5f4876c42bb6cba0f9533478098edc0861cc3657bd0d60f88dbb26ac39"
+            "bl3-a19ba492ccb50823-spm-7396bf5f4876c42bb6cba0f9533478098edc0861cc3657bd0d60f88dbb26ac39"
         )
         assert identity.store_path == (
-            "baselines/us/b137948476b155a5767675b16bd1d938f82773afb16ccb081c4fbcb1c4080505/"
-            "bl1-b137948476b155a5-spm-7396bf5f4876c42bb6cba0f9533478098edc0861cc3657bd0d60f88dbb26ac39.h5"
+            "baselines/us/a19ba492ccb50823fe231bc62a5da265a82a53bc3907de616f3334eb82ca20e8/"
+            "bl3-a19ba492ccb50823-spm-7396bf5f4876c42bb6cba0f9533478098edc0861cc3657bd0d60f88dbb26ac39.h5"
         )
 
     @pytest.mark.parametrize(
@@ -153,7 +177,7 @@ class TestRequestsWithAFixedBaselineId:
                 {"params": {"country": "us", "scope": "household"}}, id="household"
             ),
             pytest.param({"params": {"country": "us"}}, id="no-scope"),
-            pytest.param({"dataset_is_default": False}, id="state-level-dataset"),
+            pytest.param({"dataset": STATE_LEVEL_DATASET}, id="state-level-dataset"),
             pytest.param({"region_code": None}, id="unresolved-region"),
             pytest.param({"region_code": "state/ca"}, id="unscoped-state"),
             pytest.param(
@@ -166,7 +190,13 @@ class TestRequestsWithAFixedBaselineId:
                 id="single-state",
             ),
             pytest.param(
-                {"country": "uk", "region_code": "uk", "dataset_is_default": False},
+                {
+                    "country": "uk",
+                    "region_code": "uk",
+                    "dataset": DatasetSelection(
+                        "dense", "hf://dense", is_default=False
+                    ),
+                },
                 id="uk-local-area",
             ),
         ],
@@ -184,9 +214,7 @@ class TestRequestsWithAFixedBaselineId:
             msg = "release manifest unavailable"
             raise RuntimeError(msg)
 
-        monkeypatch.setattr(
-            artifact_keys, "collect_baseline_identity", failing_collection
-        )
+        monkeypatch.setattr(artifact_keys, "year_file_identity", failing_collection)
 
         with pytest.raises(RuntimeError, match="release manifest unavailable"):
             baseline_artifacts.qualifying_baseline_identity(_identity_request())
@@ -300,7 +328,7 @@ def baked_utah_folder(us_inputs, tmp_path, monkeypatch):
 
     The file passes the reuse checks until a test sets ``reuse_checks.problem``.
     """
-    folder = tmp_path / "state-datasets" / "populace_cps_local" / "UT"
+    folder = tmp_path / "prebuilt" / "us" / "populace_cps_local" / "UT"
     folder.mkdir(parents=True)
     (folder / "populace_cps_local_year_2026.h5").write_bytes(b"year file")
     reuse_checks = SimpleNamespace(problem=None, checked=[])
@@ -311,23 +339,13 @@ def baked_utah_folder(us_inputs, tmp_path, monkeypatch):
             raise reuse_checks.problem
         return reuse_checks.problem
 
-    monkeypatch.setattr(
-        state_datasets, "year_file_reuse_problem", year_file_reuse_problem
-    )
+    monkeypatch.setattr(levels_us, "year_file_reuse_problem", year_file_reuse_problem)
     return SimpleNamespace(
         data_folder=str(tmp_path),
         folder=folder,
         reuse_checks=reuse_checks,
-        state_level=DatasetSelection(
-            name="populace_cps_local",
-            uri=us_inputs.us_bundle.dataset_uris["populace_cps_local"],
-            is_default=False,
-        ),
-        default=DatasetSelection(
-            name="populace_cps",
-            uri=us_inputs.us_bundle.dataset_uris["populace_cps"],
-            is_default=True,
-        ),
+        state_level=STATE_LEVEL_DATASET,
+        default=DEFAULT_DATASET,
     )
 
 
@@ -337,10 +355,27 @@ def _baked_folder(baked, **overrides):
         "selection": baked.state_level,
         "state_code": "UT",
         "year": 2026,
-        "data_folder": baked.data_folder,
     }
     lookup.update(overrides)
-    return state_datasets.baked_state_data_folder(**lookup)
+    state_code = lookup["state_code"]
+    region = RegionResolution(
+        code=f"state/{(state_code or 'xx').lower()}",
+        scoping_strategy=RowFilterStrategy(
+            variable_name="state_fips",
+            variable_value={"UT": 49, "ut": 49, "WY": 56}.get(state_code, 0),
+        ),
+        state_code=state_code,
+    )
+    found = levels.prebuilt_dataset_folder(
+        levels.RunScope(
+            country=lookup["country"],
+            year=lookup["year"],
+            region=region,
+            dataset=lookup["selection"],
+        ),
+        baked.data_folder,
+    )
+    return None if found is None else found.folder
 
 
 class TestBakedStateDataFolder:

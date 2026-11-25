@@ -3,10 +3,13 @@
 The manifest is content-addressed: its digest names the store object
 ``manifests/<digest>.json`` and reaches the deploy as
 ``POLICYENGINE_MANIFEST_DIGEST``, so the same plan must keep giving
-byte-identical manifest JSON. Every expected value below is what ``main``
-produced on 2026-11-25 (commit 544ff628) for the fixed inputs in
-``fixtures.us_prebuilt_inputs``. A deliberate change updates its pinned value
-in a commit of its own that says why.
+byte-identical manifest JSON. The approved 1.6 · 1 design (section 4)
+replaced the ``mf1`` manifest with one ``mf2`` manifest per country, whose
+entries share one shape and record each file's SHA-256 and size, so the
+order, bytes and digests below were recorded from the new code for the fixed
+inputs in ``fixtures.us_prebuilt_inputs``. Write-once publishing, the
+``MANIFEST_DIGEST=`` output line and the deployed marker are unchanged from
+``main`` before the handlers (commit 544ff628).
 """
 
 from __future__ import annotations
@@ -20,113 +23,30 @@ from fixtures.us_prebuilt_inputs import (
 )
 from policyengine_simulation_executor import artifact_keys, precompute
 from policyengine_simulation_executor.artifact_store import ArtifactStore
-from policyengine_simulation_executor.precompute_models import (
-    BaselinePlanEntry,
-    BundleVersionIdentity,
-    DatasetPlanEntry,
-    PrecomputePlan,
-    StateDatasetPlanEntry,
-)
 
 BUCKET = "bucket-pins"
 
-US_MANIFEST_DIGEST = "ae669c63d76697819a43aa1dc428f9de2a22bafb780afe09687c2dc3147cabae"
+US_MANIFEST_DIGEST = "1461437612f03df403013e98fa10dfd65609ae828f31a79bf7adc899513a6d57"
 US_MANIFEST_BYTES_SHA256 = (
-    "05d8804f861b83170a232321ed4eabd28b11e3eb9f2e9fd36037b0edbff42e9c"
+    "0713954874042dfa47bc7a9cd717f0e174c78128e57d5b13c3c83afb37cca8e9"
 )
 US_SPM_MANIFEST_DIGEST = (
-    "b5371811937dba2ac6bbb0cef81e33d34b5658be4165318a0b48a4ee7037d71a"
+    "fced66e5754bd8bfae462e806d5215234eedc1ad69cfb78eba1e774c92b9d0b0"
 )
 US_SPM_MANIFEST_BYTES_SHA256 = (
-    "21231b2ecfd18b27b8010d1d6246341b8a7cc695bbee6292395cf4e823485828"
-)
-
-ONE_OF_EACH_MANIFEST_JSON = """\
-{
-  "artifacts": [
-    {
-      "digest": "dataset-digest",
-      "filename": "populace_cps_year_2026.h5",
-      "path": "datasets/us/dataset-digest/populace_cps_year_2026.h5",
-      "type": "dataset",
-      "year": 2026
-    },
-    {
-      "digest": "baseline-digest",
-      "filename": "bl1-0123456789abcdef.h5",
-      "path": "baselines/us/baseline-digest/bl1-0123456789abcdef.h5",
-      "type": "baseline",
-      "year": 2026
-    },
-    {
-      "digest": "state-digest",
-      "filename": "populace_cps_local_year_2026.h5",
-      "folder": "state-datasets/populace_cps_local/UT",
-      "path": "state-datasets/us/state-digest/populace_cps_local_year_2026.h5",
-      "state_code": "UT",
-      "type": "state_dataset",
-      "year": 2026
-    }
-  ],
-  "country": "us",
-  "receipt": {
-    "data_artifact_revision": "rev-abc",
-    "data_version": "1.2.3",
-    "default_dataset": "populace_cps",
-    "model_version": "9.9.9",
-    "policyengine_version": "4.22.0"
-  },
-  "schema": "mf1"
-}"""
-ONE_OF_EACH_MANIFEST_DIGEST = (
-    "695a0e1780d5034131c0d1b09e09d193335284e1eeaa17fc970bdea6665bfff1"
+    "dce59ab37a9b46a91cea3fee94980efba2f865ce3c3b634a95ad7d63480affb2"
 )
 
 
-def _one_of_each_plan() -> PrecomputePlan:
-    """Return a plan with one dataset, one baseline and one state-level year file."""
-    return PrecomputePlan(
-        datasets=[
-            DatasetPlanEntry(
-                year=2026,
-                digest="dataset-digest",
-                path="datasets/us/dataset-digest/populace_cps_year_2026.h5",
-                filename="populace_cps_year_2026.h5",
-                exists=True,
-            )
-        ],
-        baselines=[
-            BaselinePlanEntry(
-                year=2026,
-                group=["state/ca"],
-                region="region_group/state/ca",
-                digest="baseline-digest",
-                path="baselines/us/baseline-digest/bl1-0123456789abcdef.h5",
-                simulation_id="bl1-0123456789abcdef",
-                exists=False,
-            )
-        ],
-        receipt=BundleVersionIdentity(
-            policyengine_version="4.22.0",
-            model_version="9.9.9",
-            data_version="1.2.3",
-            data_artifact_revision="rev-abc",
-            default_dataset="populace_cps",
-        ),
-        state_datasets=[
-            StateDatasetPlanEntry(
-                year=2026,
-                state_code="UT",
-                region="state/ut",
-                dataset="populace_cps_local",
-                digest="state-digest",
-                path="state-datasets/us/state-digest/populace_cps_local_year_2026.h5",
-                filename="populace_cps_local_year_2026.h5",
-                folder="state-datasets/populace_cps_local/UT",
-                exists=False,
-            )
-        ],
-    )
+def _store_every_planned_file(inputs, plan):
+    """Store each planned file, its path as its bytes, with its hash and size."""
+    for entry in [*plan.year_files, *plan.baselines]:
+        content = entry.path.encode()
+        inputs.gcs_client.objects[entry.path] = content
+        inputs.gcs_client.object_metadata[entry.path] = {
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size_bytes": str(len(content)),
+        }
 
 
 @pytest.fixture
@@ -136,36 +56,58 @@ def us_inputs(monkeypatch):
 
 @pytest.fixture
 def us_plan(us_inputs):
-    return precompute.plan_artifacts_impl(BUCKET)
+    plan = precompute.plan_artifacts_impl(BUCKET, "us")
+    _store_every_planned_file(us_inputs, plan)
+    return plan
 
 
 @pytest.fixture
 def us_spm_plan(monkeypatch, us_inputs):
     enable_fixed_spm_capability(monkeypatch, us_inputs)
-    return precompute.plan_artifacts_impl(BUCKET)
+    plan = precompute.plan_artifacts_impl(BUCKET, "us")
+    _store_every_planned_file(us_inputs, plan)
+    return plan
+
+
+def _stored(inputs, plan):
+    store = ArtifactStore(BUCKET)
+    return {
+        entry.path: store.describe(entry.path)
+        for entry in [*plan.year_files, *plan.baselines]
+    }
 
 
 class TestManifestOfTheUsPlan:
-    def test_lists_datasets_then_baselines_then_state_level_year_files(self, us_plan):
-        manifest = precompute.build_manifest(us_plan)
+    def test_lists_each_years_files_then_the_baselines(self, us_inputs, us_plan):
+        manifest = precompute.build_manifest(us_plan, _stored(us_inputs, us_plan))
 
-        assert manifest.manifest_schema == "mf1"
+        assert manifest.manifest_schema == "mf2"
         assert manifest.country == "us"
         assert manifest.receipt == us_plan.receipt
-        assert [artifact.type for artifact in manifest.artifacts] == (
-            ["dataset"] * 3 + ["baseline"] * 60 + ["state_dataset"] * 153
-        )
+        assert [
+            (artifact.kind, artifact.level, artifact.year)
+            for artifact in manifest.artifacts
+        ] == [
+            *[
+                (kind, level, year)
+                for year in (2026, 2027, 2025)
+                for kind, level in [("year_file", "national")]
+                + [("year_file", "state")] * 51
+            ],
+            *[
+                ("baseline", "state_group", year)
+                for year in (2026, 2027, 2025)
+                for _group in range(20)
+            ],
+        ]
         assert [artifact.path for artifact in manifest.artifacts] == [
-            entry.path
-            for entry in [
-                *us_plan.datasets,
-                *us_plan.baselines,
-                *us_plan.state_datasets,
-            ]
+            entry.path for entry in [*us_plan.year_files, *us_plan.baselines]
         ]
 
-    def test_manifest_digest(self, us_plan):
-        payload = precompute.build_manifest(us_plan).canonical_payload()
+    def test_manifest_digest(self, us_inputs, us_plan):
+        payload = precompute.build_manifest(
+            us_plan, _stored(us_inputs, us_plan)
+        ).canonical_payload()
 
         assert artifact_keys.canonical_digest(payload) == US_MANIFEST_DIGEST
 
@@ -198,23 +140,12 @@ class TestManifestOfTheUsPlan:
         assert us_inputs.gcs_client.objects == stored
 
 
-class TestManifestBytes:
-    """The exact text of a small manifest, one entry of each type."""
-
-    def test_published_text(self, us_inputs):
-        digest = precompute.publish_manifest_impl(BUCKET, _one_of_each_plan())
-
-        _bucket, path, data, _keyword_arguments = us_inputs.gcs_client.uploads[-1]
-        assert data.decode() == ONE_OF_EACH_MANIFEST_JSON
-        assert digest == ONE_OF_EACH_MANIFEST_DIGEST
-        assert path == f"manifests/{ONE_OF_EACH_MANIFEST_DIGEST}.json"
-
-    def test_digest_output_line(self):
-        assert precompute.MANIFEST_DIGEST_PREFIX == "MANIFEST_DIGEST="
-        assert (
-            precompute.manifest_digest_line(US_MANIFEST_DIGEST)
-            == f"MANIFEST_DIGEST={US_MANIFEST_DIGEST}"
-        )
+def test_digest_output_line():
+    assert precompute.MANIFEST_DIGEST_PREFIX == "MANIFEST_DIGEST="
+    assert (
+        precompute.manifest_digest_line(US_MANIFEST_DIGEST)
+        == f"MANIFEST_DIGEST={US_MANIFEST_DIGEST}"
+    )
 
 
 class TestDeployedMarker:

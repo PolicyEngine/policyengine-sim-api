@@ -1,10 +1,16 @@
-"""Pins of the US precompute plan, and of the artifact keys and store paths it uses.
+"""Pins of the US precompute plan, and of the keys and store paths it uses.
 
-Every expected value below is what ``main`` produced on 2026-11-25 (commit
-544ff628) for the fixed inputs in ``fixtures.us_prebuilt_inputs``. Moving the
-US precompute onto handlers that take a country and a dataset level must leave
-each value unchanged. A deliberate change to a key, path or digest updates its
-pinned value in a commit of its own that says why.
+Two kinds of pin, for the fixed inputs in ``fixtures.us_prebuilt_inputs``:
+
+* **What is built**, recorded from ``main`` on 2026-11-25 (commit 544ff628)
+  before the level handlers: the years, the 20 groups of states in order, the
+  51 states sorted by code, each file's dataset, year, state and region, and
+  which entries ``select_work`` picks. These must not change.
+* **How it is named** — every digest, store path, simulation ID and image
+  folder. The approved 1.6 · 1 design (section 2) replaced the ``ds1``,
+  ``sds1`` and ``bl1`` keys with ``yf1`` and ``bl3`` and moved image files to
+  ``prebuilt/``, so these values were recorded from the new code, and pin
+  that layout from here on.
 
 Long lists are pinned by the SHA-256 of their canonical JSON (``_digest_of``)
 plus their first entries in full, so a failure names the section that moved.
@@ -52,38 +58,128 @@ US_REGION_GROUPS = [
     ["state/ne", "state/nj"],
     ["state/ma", "state/ok"],
 ]
+STATE_CODES = sorted(state_code for state_code, _fips in US_STATE_FIPS)
+
+# Recorded from the new code on 2026-11-26 for the fixed inputs.
+RECORDED_NATIONAL_ROWS = [
+    [
+        2026,
+        "56982f3075d99409fc40edca6e1b9265feef6442a2c881fe2962d865db806f55",
+        "year-files/us/56982f3075d99409fc40edca6e1b9265feef6442a2c881fe2962d865db806f55/populace_cps_year_2026.h5",
+        "populace_cps_year_2026.h5",
+        "prebuilt/us/populace_cps/all",
+    ],
+    [
+        2027,
+        "a220e74587d1eecb46e395d6a6a71423f5494f6eee298b8c5658eadaa28cd786",
+        "year-files/us/a220e74587d1eecb46e395d6a6a71423f5494f6eee298b8c5658eadaa28cd786/populace_cps_year_2027.h5",
+        "populace_cps_year_2027.h5",
+        "prebuilt/us/populace_cps/all",
+    ],
+    [
+        2025,
+        "c7de61261d1ddd0fffe81153bb7604a1690aad7b9041b5a7aaa6be740b21eefa",
+        "year-files/us/c7de61261d1ddd0fffe81153bb7604a1690aad7b9041b5a7aaa6be740b21eefa/populace_cps_year_2025.h5",
+        "populace_cps_year_2025.h5",
+        "prebuilt/us/populace_cps/all",
+    ],
+]
+RECORDED_FIRST_STATE = [
+    2026,
+    "AK",
+    "state/ak",
+    "populace_cps_local",
+    "305094a4f28987777a645186f82d63e241ac509df152bd91b4eb45c2cdbf8e2f",
+    "year-files/us/305094a4f28987777a645186f82d63e241ac509df152bd91b4eb45c2cdbf8e2f/populace_cps_local_year_2026.h5",
+    "populace_cps_local_year_2026.h5",
+    "prebuilt/us/populace_cps_local/AK",
+]
+RECORDED_STATES_DIGEST = (
+    "831e5d6d2d23002da88592cc25d6fa5b25c0e4e3530864ead465cd3726d80afe"
+)
+RECORDED_FIRST_BASELINE = [
+    2026,
+    ["state/hi", "state/ia", "state/wi"],
+    "region_group/state/hi+state/ia+state/wi",
+    "a58482ed86d0ff70024ed01b7a3d35ab0c4feef23d4dd01d1d5d2ff1b67aa9f5",
+    "baselines/us/a58482ed86d0ff70024ed01b7a3d35ab0c4feef23d4dd01d1d5d2ff1b67aa9f5/bl3-a58482ed86d0ff70.h5",
+    "bl3-a58482ed86d0ff70",
+    "bl3-a58482ed86d0ff70",
+    "year-files/us/56982f3075d99409fc40edca6e1b9265feef6442a2c881fe2962d865db806f55/populace_cps_year_2026.h5",
+    "prebuilt/us/populace_cps/all",
+]
+RECORDED_BASELINES_DIGEST = (
+    "39d0efc104687538bc8373996a33cbb8ff7da7beb44efc54326c93119687ccd4"
+)
+RECORDED_SPM_NATIONAL_ROWS = [
+    [
+        2026,
+        "8370022a270fea66460788e1f282dbabc281a82fb1864ae9eed57ecb8be96186",
+        "year-files/us/8370022a270fea66460788e1f282dbabc281a82fb1864ae9eed57ecb8be96186/populace_cps_year_2026.h5",
+        "populace_cps_year_2026.h5",
+        "prebuilt/us/populace_cps/all",
+    ],
+    [
+        2027,
+        "7a4fd448280a04398768d1f3860902847a17048ae65fb2f25997094f1f2841dd",
+        "year-files/us/7a4fd448280a04398768d1f3860902847a17048ae65fb2f25997094f1f2841dd/populace_cps_year_2027.h5",
+        "populace_cps_year_2027.h5",
+        "prebuilt/us/populace_cps/all",
+    ],
+    [
+        2025,
+        "f15bd311ac06202000ca60537dcc5403f67793da52d364b45271c5a8a7744561",
+        "year-files/us/f15bd311ac06202000ca60537dcc5403f67793da52d364b45271c5a8a7744561/populace_cps_year_2025.h5",
+        "populace_cps_year_2025.h5",
+        "prebuilt/us/populace_cps/all",
+    ],
+]
+RECORDED_SPM_FIRST_STATE = [
+    2026,
+    "AK",
+    "state/ak",
+    "populace_cps_local",
+    "52fa02df9d44edafdd94bf984bb1e44d9c03522f0d928252e0465220e06adfbe",
+    "year-files/us/52fa02df9d44edafdd94bf984bb1e44d9c03522f0d928252e0465220e06adfbe/populace_cps_local_year_2026.h5",
+    "populace_cps_local_year_2026.h5",
+    "prebuilt/us/populace_cps_local/AK",
+]
+RECORDED_SPM_STATES_DIGEST = (
+    "0f0ad34015581add61ba29f23bd9b1c5931ddebcc55719d7306870e5dc10ca4b"
+)
+RECORDED_SPM_FIRST_BASELINE = [
+    2026,
+    ["state/hi", "state/ia", "state/wi"],
+    "region_group/state/hi+state/ia+state/wi",
+    "dca23ffa8f9b5872e827326f17d1844f01a7c423a651b4fb12fce0b293874648",
+    "baselines/us/dca23ffa8f9b5872e827326f17d1844f01a7c423a651b4fb12fce0b293874648/bl3-dca23ffa8f9b5872-spm-7396bf5f4876c42bb6cba0f9533478098edc0861cc3657bd0d60f88dbb26ac39.h5",
+    "bl3-dca23ffa8f9b5872",
+    "bl3-dca23ffa8f9b5872-spm-7396bf5f4876c42bb6cba0f9533478098edc0861cc3657bd0d60f88dbb26ac39",
+    "year-files/us/8370022a270fea66460788e1f282dbabc281a82fb1864ae9eed57ecb8be96186/populace_cps_year_2026.h5",
+    "prebuilt/us/populace_cps/all",
+]
+RECORDED_SPM_BASELINES_DIGEST = (
+    "92ed00e683059d0d81c8b6678f83046fbd5bfd8f48414fe4c39f01d67bb97d53"
+)
 
 
 def _digest_of(entries: list) -> str:
     return artifact_keys.canonical_digest({"entries": entries})
 
 
-def _dataset_rows(plan: PrecomputePlan) -> list[list]:
+def _national_rows(plan: PrecomputePlan) -> list[list]:
     return [
-        [entry.year, entry.digest, entry.path, entry.filename]
-        for entry in plan.datasets
+        [entry.year, entry.digest, entry.path, entry.filename, entry.folder]
+        for entry in plan.year_files
+        if entry.subset_code is None
     ]
 
 
-def _baseline_rows(plan: PrecomputePlan) -> list[list]:
+def _state_rows(plan: PrecomputePlan) -> list[list]:
     return [
         [
             entry.year,
-            entry.group,
-            entry.region,
-            entry.digest,
-            entry.path,
-            entry.simulation_id,
-        ]
-        for entry in plan.baselines
-    ]
-
-
-def _state_dataset_rows(plan: PrecomputePlan) -> list[list]:
-    return [
-        [
-            entry.year,
-            entry.state_code,
+            entry.subset_code,
             entry.region,
             entry.dataset,
             entry.digest,
@@ -91,7 +187,25 @@ def _state_dataset_rows(plan: PrecomputePlan) -> list[list]:
             entry.filename,
             entry.folder,
         ]
-        for entry in plan.state_datasets
+        for entry in plan.year_files
+        if entry.subset_code is not None
+    ]
+
+
+def _baseline_rows(plan: PrecomputePlan) -> list[list]:
+    return [
+        [
+            entry.year,
+            entry.request["region_group"],
+            entry.region,
+            entry.digest,
+            entry.path,
+            entry.simulation_id,
+            entry.storage_id,
+            entry.year_file_path,
+            entry.folder,
+        ]
+        for entry in plan.baselines
     ]
 
 
@@ -102,96 +216,53 @@ def us_inputs(monkeypatch):
 
 @pytest.fixture
 def us_plan(us_inputs):
-    return precompute.plan_artifacts_impl(BUCKET)
+    return precompute.plan_artifacts_impl(BUCKET, "us")
 
 
 @pytest.fixture
 def us_spm_plan(monkeypatch, us_inputs):
     enable_fixed_spm_capability(monkeypatch, us_inputs)
-    return precompute.plan_artifacts_impl(BUCKET)
+    return precompute.plan_artifacts_impl(BUCKET, "us")
 
 
-class TestUsPlanWithoutSpm:
-    """The plan for a bundle without an SPM capability: ``ds1``, ``sds1``, ``bl1``."""
+class TestWhatTheUsPlanBuilds:
+    """Unchanged from ``main`` before the handlers."""
 
-    def test_plans_the_default_dataset_year_file_for_each_year(self, us_plan):
-        assert _dataset_rows(us_plan) == [
-            [
-                2026,
-                "183ffe49d74669b653fb408b0b7298128ba7c6e990f4479487712a5d79553be3",
-                "datasets/us/183ffe49d74669b653fb408b0b7298128ba7c6e990f4479487712a5d79553be3/populace_cps_year_2026.h5",
-                "populace_cps_year_2026.h5",
-            ],
-            [
-                2027,
-                "64a0c6a3a3b389dcad8b7033b6cfe1e7c8fbe9dfc742f09d0fc48950cfb002b6",
-                "datasets/us/64a0c6a3a3b389dcad8b7033b6cfe1e7c8fbe9dfc742f09d0fc48950cfb002b6/populace_cps_year_2027.h5",
-                "populace_cps_year_2027.h5",
-            ],
-            [
-                2025,
-                "bfcf4b0f6e5481542d78cd49419e18de88afa84c0acb265446457f7e73179f6a",
-                "datasets/us/bfcf4b0f6e5481542d78cd49419e18de88afa84c0acb265446457f7e73179f6a/populace_cps_year_2025.h5",
-                "populace_cps_year_2025.h5",
-            ],
+    def test_the_default_dataset_year_file_for_each_year(self, us_plan):
+        national = [entry for entry in us_plan.year_files if entry.subset_code is None]
+
+        assert [(entry.year, entry.dataset) for entry in national] == [
+            (year, "populace_cps") for year in PLANNED_YEARS
+        ]
+        assert [entry.filename for entry in national] == [
+            f"populace_cps_year_{year}.h5" for year in PLANNED_YEARS
         ]
 
-    def test_plans_one_baseline_per_year_and_region_group_in_order(self, us_plan):
-        assert [[entry.year, entry.group] for entry in us_plan.baselines] == [
-            [year, group] for year in PLANNED_YEARS for group in US_REGION_GROUPS
-        ]
+    def test_one_baseline_per_year_and_region_group_in_order(self, us_plan):
+        assert [
+            [entry.year, entry.request["region_group"]] for entry in us_plan.baselines
+        ] == [[year, group] for year in PLANNED_YEARS for group in US_REGION_GROUPS]
         assert [entry.region for entry in us_plan.baselines] == [
             "region_group/" + "+".join(sorted(group))
             for _year in PLANNED_YEARS
             for group in US_REGION_GROUPS
         ]
 
-    def test_pins_every_baseline_identity(self, us_plan):
-        rows = _baseline_rows(us_plan)
-        assert rows[0] == [
-            2026,
-            ["state/hi", "state/ia", "state/wi"],
-            "region_group/state/hi+state/ia+state/wi",
-            "10aba908c2d8c18bc763f689f7603a6f364064c54b3ee4fb2081905d6e702c86",
-            "baselines/us/10aba908c2d8c18bc763f689f7603a6f364064c54b3ee4fb2081905d6e702c86/bl1-10aba908c2d8c18b.h5",
-            "bl1-10aba908c2d8c18b",
-        ]
-        assert _digest_of(rows) == (
-            "0b510eba0f56fdd108c73ae6545be4b14ba28753b5623f23e502d9c8a10edd5c"
-        )
+    def test_a_state_level_year_file_per_year_and_state(self, us_plan):
+        states = [entry for entry in us_plan.year_files if entry.subset_code]
 
-    def test_plans_a_state_level_year_file_per_year_and_state(self, us_plan):
-        state_codes = sorted(state_code for state_code, _fips in US_STATE_FIPS)
-        assert [[entry.year, entry.state_code] for entry in us_plan.state_datasets] == [
-            [year, state_code] for year in PLANNED_YEARS for state_code in state_codes
+        assert [[entry.year, entry.subset_code] for entry in states] == [
+            [year, state_code] for year in PLANNED_YEARS for state_code in STATE_CODES
         ]
-        for entry in us_plan.state_datasets:
-            assert entry.region == f"state/{entry.state_code.lower()}"
+        for entry in states:
+            assert entry.region == f"state/{entry.subset_code.lower()}"
             assert entry.dataset == "populace_cps_local"
             assert entry.filename == f"populace_cps_local_year_{entry.year}.h5"
-            assert (
-                entry.folder == f"state-datasets/populace_cps_local/{entry.state_code}"
-            )
-
-    def test_pins_every_state_level_year_file_identity(self, us_plan):
-        rows = _state_dataset_rows(us_plan)
-        assert rows[0] == [
-            2026,
-            "AK",
-            "state/ak",
-            "populace_cps_local",
-            "246bd136a125bea87374f88fd02b16a346e1dbae88d673685c79d68e16f7347c",
-            "state-datasets/us/246bd136a125bea87374f88fd02b16a346e1dbae88d673685c79d68e16f7347c/populace_cps_local_year_2026.h5",
-            "populace_cps_local_year_2026.h5",
-            "state-datasets/populace_cps_local/AK",
-        ]
-        assert _digest_of(rows) == (
-            "e0642f25d7cc258caf163096fea9b3e0f2a44a1aaee0acf30d435793e7fe0cd8"
-        )
 
     def test_records_the_bundle_version_identity(self, us_plan):
         assert us_plan.receipt == BundleVersionIdentity(
             policyengine_version="4.22.0",
+            policyengine_core_version="3.33.3",
             model_version="9.9.9",
             data_version="1.2.3",
             data_artifact_revision="rev-abc",
@@ -199,65 +270,45 @@ class TestUsPlanWithoutSpm:
         )
 
 
-class TestUsPlanWithSpm:
-    """The plan when the bundle offers an SPM capability, as production's does.
+class TestUsPlanNamesWithoutSpm:
+    """``yf1`` and ``bl3`` names for a bundle without an SPM capability."""
 
-    Dataset and baseline keys become ``ds2-spm`` and ``bl2-spm`` digests, and
-    each baseline file is named by its simulation ID plus the SPM digest.
+    def test_national_year_files(self, us_plan):
+        assert _national_rows(us_plan) == RECORDED_NATIONAL_ROWS
+
+    def test_every_baseline_identity(self, us_plan):
+        rows = _baseline_rows(us_plan)
+
+        assert rows[0] == RECORDED_FIRST_BASELINE
+        assert _digest_of(rows) == RECORDED_BASELINES_DIGEST
+
+    def test_every_state_level_year_file_identity(self, us_plan):
+        rows = _state_rows(us_plan)
+
+        assert rows[0] == RECORDED_FIRST_STATE
+        assert _digest_of(rows) == RECORDED_STATES_DIGEST
+
+
+class TestUsPlanNamesWithSpm:
+    """With an SPM capability, as production's bundle has, every key carries it.
+
+    Each baseline file is named by its simulation ID plus the SPM digest.
     """
 
-    def test_plans_the_default_dataset_year_file_for_each_year(self, us_spm_plan):
-        assert _dataset_rows(us_spm_plan) == [
-            [
-                2026,
-                "5e8ac31209649187b505f4996f3507a3ca26f57bce0ef958b9b2246c6c64eceb",
-                "datasets/us/5e8ac31209649187b505f4996f3507a3ca26f57bce0ef958b9b2246c6c64eceb/populace_cps_year_2026.h5",
-                "populace_cps_year_2026.h5",
-            ],
-            [
-                2027,
-                "9f693cffbfd2fa982ed8234f25727c0356c472484922f53c19c628ce939404fc",
-                "datasets/us/9f693cffbfd2fa982ed8234f25727c0356c472484922f53c19c628ce939404fc/populace_cps_year_2027.h5",
-                "populace_cps_year_2027.h5",
-            ],
-            [
-                2025,
-                "361a8966964a290d9ed2a0155d2d800a75e4f11794797ca2751425e487a08f84",
-                "datasets/us/361a8966964a290d9ed2a0155d2d800a75e4f11794797ca2751425e487a08f84/populace_cps_year_2025.h5",
-                "populace_cps_year_2025.h5",
-            ],
-        ]
+    def test_national_year_files(self, us_spm_plan):
+        assert _national_rows(us_spm_plan) == RECORDED_SPM_NATIONAL_ROWS
 
-    def test_pins_every_baseline_identity(self, us_spm_plan):
+    def test_every_baseline_identity(self, us_spm_plan):
         rows = _baseline_rows(us_spm_plan)
-        assert rows[0] == [
-            2026,
-            ["state/hi", "state/ia", "state/wi"],
-            "region_group/state/hi+state/ia+state/wi",
-            "04d4a3a1079cb94018d7c6553d4ba30f7264dc9715e34d2554b55d9269140e13",
-            "baselines/us/04d4a3a1079cb94018d7c6553d4ba30f7264dc9715e34d2554b55d9269140e13/"
-            "bl1-04d4a3a1079cb940-spm-7396bf5f4876c42bb6cba0f9533478098edc0861cc3657bd0d60f88dbb26ac39.h5",
-            "bl1-04d4a3a1079cb940",
-        ]
-        assert _digest_of(rows) == (
-            "cb46ba36c198f162a4b954e115a18ba5b7ff1ce9bc83168fcdcadf1a48762243"
-        )
 
-    def test_pins_every_state_level_year_file_identity(self, us_spm_plan):
-        rows = _state_dataset_rows(us_spm_plan)
-        assert rows[0] == [
-            2026,
-            "AK",
-            "state/ak",
-            "populace_cps_local",
-            "2917c5320f62e864add4b61b9e810c5e0b7fb9477f412b2211ac25c5963452d4",
-            "state-datasets/us/2917c5320f62e864add4b61b9e810c5e0b7fb9477f412b2211ac25c5963452d4/populace_cps_local_year_2026.h5",
-            "populace_cps_local_year_2026.h5",
-            "state-datasets/populace_cps_local/AK",
-        ]
-        assert _digest_of(rows) == (
-            "ee8a4eea06e4ac5fb57829945eb2400c00975b99237cc8ade9c2343c887f3686"
-        )
+        assert rows[0] == RECORDED_SPM_FIRST_BASELINE
+        assert _digest_of(rows) == RECORDED_SPM_BASELINES_DIGEST
+
+    def test_every_state_level_year_file_identity(self, us_spm_plan):
+        rows = _state_rows(us_spm_plan)
+
+        assert rows[0] == RECORDED_SPM_FIRST_STATE
+        assert _digest_of(rows) == RECORDED_SPM_STATES_DIGEST
 
 
 class TestUsWorkSelection:
@@ -265,61 +316,71 @@ class TestUsWorkSelection:
 
     @pytest.fixture
     def plan_with_some_objects_stored(self, us_inputs):
+        first_plan = precompute.plan_artifacts_impl(BUCKET, "us")
+        first_state = next(
+            entry for entry in first_plan.year_files if entry.subset_code
+        )
         stored_paths = [
-            "datasets/us/183ffe49d74669b653fb408b0b7298128ba7c6e990f4479487712a5d79553be3/populace_cps_year_2026.h5",
-            "baselines/us/10aba908c2d8c18bc763f689f7603a6f364064c54b3ee4fb2081905d6e702c86/bl1-10aba908c2d8c18b.h5",
-            "state-datasets/us/246bd136a125bea87374f88fd02b16a346e1dbae88d673685c79d68e16f7347c/populace_cps_local_year_2026.h5",
+            first_plan.year_files[0].path,
+            first_plan.baselines[0].path,
+            first_state.path,
         ]
         us_inputs.gcs_client.objects.update(dict.fromkeys(stored_paths, b"stored"))
-        return precompute.plan_artifacts_impl(BUCKET)
+        return precompute.plan_artifacts_impl(BUCKET, "us")
 
     def test_an_empty_store_selects_every_entry(self, us_plan):
         work = precompute.select_work(us_plan, force=False)
 
-        assert len(work.datasets) == 3
+        assert len([entry for entry in work.year_files if not entry.subset_code]) == 3
         assert len(work.baselines) == 60
-        assert len(work.state_datasets) == 153
+        assert len([entry for entry in work.year_files if entry.subset_code]) == 153
 
     def test_stored_objects_are_not_selected(self, plan_with_some_objects_stored):
         plan = plan_with_some_objects_stored
         work = precompute.select_work(plan, force=False)
+        stored = [entry for entry in plan.year_files if entry.exists]
 
-        assert [entry.year for entry in work.datasets] == [2027, 2025]
+        assert [(entry.year, entry.subset_code) for entry in stored] == [
+            (2026, None),
+            (2026, "AK"),
+        ]
+        assert [
+            entry.year for entry in work.year_files if entry.subset_code is None
+        ] == [2027, 2025]
         assert work.baselines == plan.baselines[1:]
-        assert work.state_datasets == plan.state_datasets[1:]
+        assert len([entry for entry in work.year_files if entry.subset_code]) == 152
 
     def test_force_selects_stored_objects_too(self, plan_with_some_objects_stored):
         plan = plan_with_some_objects_stored
         work = precompute.select_work(plan, force=True)
 
-        assert work.datasets == plan.datasets
+        assert work.year_files == plan.year_files
         assert work.baselines == plan.baselines
-        assert work.state_datasets == plan.state_datasets
 
 
 class TestKeysAndStorePaths:
-    """Key schema labels and the store layout every artifact path follows."""
+    """Key schema labels and the store layout every path follows."""
 
     def test_key_schema_labels(self):
-        assert artifact_keys.DATASET_KEY_SCHEMA == "ds1"
-        assert artifact_keys.STATE_DATASET_KEY_SCHEMA == "sds1"
-        assert artifact_keys.BASELINE_KEY_SCHEMA == "bl1"
-        assert precompute.MANIFEST_SCHEMA == "mf1"
+        assert artifact_keys.YEAR_FILE_KEY_SCHEMA == "yf1"
+        assert artifact_keys.BASELINE_KEY_SCHEMA == "bl3"
+        assert artifact_keys.SOURCE_FILE_KEY_SCHEMA == "sf1"
+        assert precompute.MANIFEST_SCHEMA == "mf2"
 
     def test_artifact_store_paths(self):
         assert (
-            artifact_keys.dataset_artifact_path("US", "d" * 64, "populace_cps", 2026)
-            == f"datasets/us/{'d' * 64}/populace_cps_year_2026.h5"
-        )
-        assert (
-            artifact_keys.state_dataset_artifact_path(
-                "US", "s" * 64, "populace_cps_local", 2026
+            artifact_keys.year_file_artifact_path(
+                "US", "y" * 64, "populace_cps_year_2026.h5"
             )
-            == f"state-datasets/us/{'s' * 64}/populace_cps_local_year_2026.h5"
+            == f"year-files/us/{'y' * 64}/populace_cps_year_2026.h5"
         )
         assert (
-            artifact_keys.baseline_artifact_path("US", "b" * 64, "bl1-0123456789abcdef")
-            == f"baselines/us/{'b' * 64}/bl1-0123456789abcdef.h5"
+            artifact_keys.baseline_artifact_path("US", "b" * 64, "bl3-0123456789abcdef")
+            == f"baselines/us/{'b' * 64}/bl3-0123456789abcdef.h5"
+        )
+        assert (
+            artifact_keys.source_file_artifact_path("UK", "s" * 64, "dense.h5")
+            == f"sources/uk/{'s' * 64}/dense.h5"
         )
 
     def test_manifest_and_deployed_marker_paths(self):
