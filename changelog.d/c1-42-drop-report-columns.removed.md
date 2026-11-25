@@ -1,1 +1,0 @@
-The simulation service and the v2 Modal runtime no longer map `reports.label`, `description` and `user_id`, `report_runs.trigger` and its four cliff columns, or `budget_window_runs.trigger`, which API v1 drops. They work on a database with or without those columns.
