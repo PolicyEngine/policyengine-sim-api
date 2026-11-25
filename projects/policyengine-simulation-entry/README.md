@@ -144,8 +144,8 @@ versions, catalog version and year (any that hasn't failed and wasn't
 forced, whichever report first calculated it) and creates a report run
 naming them, `pending` with no Modal call ID. Current law against current
 law names one simulation and run on both sides. A report stores only the
-request's SPM selection in `inputs`; `include_cliffs` is passed to the
-calculation but never stored or keyed. Only for a run its own transaction
+request's SPM selection in `inputs`; `include_cliffs` is never stored,
+keyed or passed to the coordinator. Only for a run its own transaction
 created does the service start a Modal call by name: the report run's
 coordinator, given the report and its run IDs and no Stage 12 evaluation
 record, or a standalone run's simulation function, given its run's ID. It
@@ -153,6 +153,30 @@ records the call's ID, and answers 201 with the record's ID, the run's ID
 and status (as read, for a run it joined), and, for a report, each side's
 simulation and run and whether it was reused, which is true for a side
 whose run this request didn't create.
+
+A report asking for cliffs (`include_cliffs: true`) gets them as each
+simulation run's own calculation (C1 · 24's answer 4b): a run has one
+cliff result, its cliff gap and cliff share, in API v1's
+`cliff_impacts`, which every report naming the run reads. In the
+transaction that ends on the report run, created or joined, the service
+also finds or creates the cliff calculation of each simulation run that
+report run names: a calculation that hasn't failed, pending, running or
+succeeded, is joined, and a failed one never counts, so two identical
+requests end on one calculation per run, and a request the database
+refuses wrote neither. Only for a calculation it created does the service
+start the run's simulation function, given the run's own input, as a
+standalone run's, and a context naming the calculation (`cliff_result_id`),
+and record the call's ID, before the report run's coordinator is started,
+so they start even when Modal then refuses the coordinator. The
+calculation runs beside its simulation run, whatever that run's state: it
+recalculates the simulation from its dataset and policy. The 201 answer
+then also has `cliffs`, each side's `cliff_result_id` and `status`
+(`pending` or `running` while it is calculated, `succeeded` once it holds
+the result; one run on both sides names one calculation twice); without
+`include_cliffs` the field is left out. When Modal refuses a calculation's
+call, or doesn't confirm it within ten seconds, the service fails that
+calculation, answers its side `failed` and the report as usual, and the
+next request asking for cliffs starts another.
 
 A request is refused before anything is written: with 400 and a `code` when
 a row it names is missing (`unknown_region` and `unknown_dynamic` name the
@@ -166,9 +190,7 @@ the service's state; see "Local areas"); and with 422 and a `code` when a
 policy or dynamic sets parameters the catalog version lacks
 (`missing_parameters`), both set one (`overlapping_parameters`), or the
 release has no local-area dataset for `data_source`
-(`no_local_area_dataset`), and a report with `include_cliffs: true` with 422
-`cliffs_not_available`, located at the field, until each simulation run's
-own cliff calculation exists (C1 · 39). The routes answer 503 with
+(`no_local_area_dataset`). The routes answer 503 with
 `Retry-After` when the manifest or the database can't be read. When Modal
 refuses the call, or doesn't confirm it within ten seconds, the run is
 failed at once (a report run alone: its simulation runs may already be
@@ -184,9 +206,9 @@ exception's text.
 An economy report created with `data_source: "local_area_dataset"` runs on
 the bundle's local-area dataset, the one the .py release routes
 constituencies and local authorities to, in place of its region's dataset.
-It is an ordinary report: it returns its full results, cliffs included when
-asked, and its constituency and local-authority impacts, and is re-run on
-the same dataset. `data_source` is left out unless given (null and any other
+It is an ordinary report: it returns its full results and its constituency
+and local-authority impacts, its simulation runs' cliffs are calculated when
+asked, and it is re-run on the same dataset. `data_source` is left out unless given (null and any other
 value are refused with 422), and is never stored as an option: the dataset
 is stored with the report's simulations. Only a UK report whose region is
 `uk` or one of the four `country/*` nations may ask; any other country or
@@ -317,12 +339,17 @@ them and the Public API's one-unfailed-run indexes leave them out, and a
 forced re-run is never refused while a run is under way. A report created
 before keys (C1 · 27), whose simulations have none, is always re-run that
 way, forced or not: its runs may have been calculated with plans that
-depended on that report (C1 · 24's interim answer B). Such a
-report stored asking for cliff impacts
-(`include_cliffs: true` in its options) is refused with 422
-`cliffs_not_available`, located at `report.inputs.include_cliffs`, until
-cliffs are calculated for each simulation run (C1 · 39; interim answer A).
-The service reads the
+depended on that report (C1 · 24's interim answer B). The body may also
+send `include_cliffs`: an economy report's
+re-run, joined or created, forced or not, then starts the cliff
+calculation of each simulation run its run names that has none, as a
+create does (see "Economy reports and simulations"), and answers them in
+`cliffs`. A report stored before C1 · 27 asking for cliffs
+(`include_cliffs: true` in its options) asks for them on every re-run too;
+its stored option is only read, and never reaches the coordinator. A
+budget-window or household report's re-run asking for cliffs is refused
+with 422 `cliffs_not_available`, located at `include_cliffs`: neither
+calculates them. The service reads the
 report's region code and dataset name, finds the rows with that code and
 name in the catalog version of the default worker's .py version, and reads
 each simulation's stored policy and dynamic on it.

@@ -8,6 +8,7 @@ a per-file copy. The fakes record calls; they run nothing.
 from __future__ import annotations
 
 import sys
+from importlib import metadata
 from types import ModuleType
 from typing import TYPE_CHECKING, Self
 
@@ -103,12 +104,13 @@ class FakeSecret:
 
 
 class FakeApp:
-    """Stand-in for ``modal.App`` that records ``function`` decorator options."""
+    """Stand-in for ``modal.App`` that records ``function`` and ``cls`` options."""
 
     def __init__(self, name: str) -> None:
-        """Name the app and start with no recorded function declarations."""
+        """Name the app and start with no recorded function or class declarations."""
         self.name = name
         self.function_calls: list[tuple[str, dict[str, object]]] = []
+        self.cls_calls: list[tuple[str, dict[str, object]]] = []
 
     def function[F: Callable[..., object]](self, **kwargs: object) -> Callable[[F], F]:
         """Return a decorator recording ``(name, kwargs)`` that returns the function."""
@@ -116,6 +118,19 @@ class FakeApp:
         def decorator(function: F) -> F:
             self.function_calls.append((function.__name__, kwargs))
             return function
+
+        return decorator
+
+    def cls[C: type](self, **kwargs: object) -> Callable[[C], C]:
+        """Return a decorator recording ``(class name, kwargs)`` that returns the class.
+
+        The class stays a plain Python class, so tests can instantiate it and
+        call its methods directly.
+        """
+
+        def decorator(user_class: C) -> C:
+            self.cls_calls.append((user_class.__name__, kwargs))
+            return user_class
 
         return decorator
 
@@ -130,13 +145,54 @@ class FakeApp:
         return decorator
 
 
+class FakeLifecycleHooks:
+    """Stand-ins for ``modal.enter`` and ``modal.method`` that record what they mark.
+
+    Both return the method unchanged. ``enter_hooks`` lists each method marked
+    with ``enter`` and its ``snap`` flag, in declaration order.
+    """
+
+    def __init__(self) -> None:
+        """Start with no recorded hooks or methods."""
+        self.enter_hooks: list[tuple[Callable[..., object], bool]] = []
+        self.methods: list[Callable[..., object]] = []
+
+    def enter[F: Callable[..., object]](
+        self, *, snap: bool = False
+    ) -> Callable[[F], F]:
+        """Return a decorator recording ``(method, snap)`` that returns the method."""
+
+        def decorator(method: F) -> F:
+            self.enter_hooks.append((method, snap))
+            return method
+
+        return decorator
+
+    def method[F: Callable[..., object]](self, **_kwargs: object) -> Callable[[F], F]:
+        """Return a decorator recording the method that returns it unchanged."""
+
+        def decorator(method: F) -> F:
+            self.methods.append(method)
+            return method
+
+        return decorator
+
+
 def install_fake_modal(monkeypatch: pytest.MonkeyPatch) -> None:
     """Install the recording fakes as ``sys.modules["modal"]`` for one test.
 
     ``is_local()`` reports True and ``asgi_app`` is a pass-through decorator.
-    Modules that already imported the real ``modal`` must be re-imported.
+    ``modal.lifecycle_hooks`` holds what ``modal.enter`` and ``modal.method``
+    marked. Modules that already imported the real ``modal`` must be
+    re-imported.
     """
     modal = ModuleType("modal")
+    # The installed client's version, which src/modal/app.py checks on import.
+    modal.__version__ = metadata.version("modal")
+    lifecycle_hooks = FakeLifecycleHooks()
+    modal.lifecycle_hooks = lifecycle_hooks
+    modal.enter = lifecycle_hooks.enter
+    modal.method = lifecycle_hooks.method
     modal.Image = FakeImage
     modal.Secret = FakeSecret
     modal.App = FakeApp

@@ -94,16 +94,16 @@ class BudgetWindowReportRequest(BaseModel):
         return tuple(range(self.year, self.year + self.budget_window_size))
 
     def options(self) -> dict[str, Any]:
-        """Return the window's calculation options: no cliffs, and its SPM selection.
+        """Return the window's calculation options: its SPM selection alone.
 
-        ``spm`` holds only the settings the request gave. The report stores
-        the selection alone (``economy_requests.stored_options``), and its
-        years share runs with single-year reports by key.
+        ``spm`` holds only the settings the request gave, and is left out
+        when it gave none. The report stores the selection alone
+        (``economy_requests.stored_options``), and its years share runs with
+        single-year reports by key. A window takes no cliffs.
         """
-        options: dict[str, Any] = {"include_cliffs": False}
-        if self.spm is not None:
-            options["spm"] = self.spm.model_dump(mode="json")
-        return options
+        if self.spm is None:
+            return {}
+        return {"spm": self.spm.model_dump(mode="json")}
 
 
 class _Answer(BaseModel):

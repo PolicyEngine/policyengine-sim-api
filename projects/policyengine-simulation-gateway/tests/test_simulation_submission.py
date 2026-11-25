@@ -57,12 +57,71 @@ class TestSubmitSimulationEndpoint:
 
         # Then
         assert response.status_code == 200
+        assert mock_modal["func"].last_cls_from_name_call == (
+            "policyengine-simulation-py4-10-0",
+            "SimulationWorker",
+        )
+        assert mock_modal["func"].calls[-1][:2] == (
+            "policyengine-simulation-py4-10-0",
+            "run_simulation",
+        )
+        # No function lookup: the app defines the worker class.
+        assert mock_modal["func"].last_from_name_call is None
+        assert "time_period" not in mock_modal["func"].last_payload
+        assert "data_version" not in mock_modal["func"].last_payload
+
+    def test__given_an_app_deployed_before_the_worker_class__then_spawns_its_function(
+        self, mock_modal, client: TestClient
+    ):
+        """Given an app with no worker class, then spawn its run_simulation function."""
+        # Given: a pinned or rolled-back version whose app predates the class.
+        mock_modal["dicts"]["simulation-api-us-versions"] = {
+            "latest": "1.500.0",
+            "1.500.0": "policyengine-simulation-py4-10-0",
+        }
+        mock_modal["function_form_apps"].add("policyengine-simulation-py4-10-0")
+
+        # When
+        response = client.post(
+            "/simulate/economy/comparison",
+            json={"country": "us", "scope": "macro", "reform": {}},
+        )
+
+        # Then
+        assert response.status_code == 200
+        assert response.json()["job_id"] == "mock-job-id-123"
+        assert mock_modal["func"].last_cls_from_name_call == (
+            "policyengine-simulation-py4-10-0",
+            "SimulationWorker",
+        )
         assert mock_modal["func"].last_from_name_call == (
             "policyengine-simulation-py4-10-0",
             "run_simulation",
         )
-        assert "time_period" not in mock_modal["func"].last_payload
-        assert "data_version" not in mock_modal["func"].last_payload
+        assert len(mock_modal["func"].calls) == 1
+
+    def test__given_a_failed_spawn_on_the_worker_class__then_no_function_is_tried(
+        self, mock_modal, client: TestClient
+    ):
+        """Given the class exists but its spawn fails, then don't fall back."""
+        # Given
+        mock_modal["dicts"]["simulation-api-us-versions"] = {
+            "latest": "1.500.0",
+            "1.500.0": "policyengine-simulation-py4-10-0",
+        }
+        spawn_failure = mock_modal["exception"].NotFoundError("spawn failed")
+        mock_modal["func"].spawn_error = spawn_failure
+
+        # When
+        with pytest.raises(mock_modal["exception"].NotFoundError) as raised:
+            client.post(
+                "/simulate/economy/comparison",
+                json={"country": "us", "scope": "macro", "reform": {}},
+            )
+
+        # Then: the class lookup succeeded, so its spawn error is the answer.
+        assert raised.value is spawn_failure
+        assert mock_modal["func"].last_from_name_call is None
 
     def test__given_submission__then_returns_job_id_and_poll_url(
         self, mock_modal, client: TestClient

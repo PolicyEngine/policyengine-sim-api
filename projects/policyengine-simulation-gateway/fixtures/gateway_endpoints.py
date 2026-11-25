@@ -291,12 +291,17 @@ class MockFunction:
     """Mock for Modal Function."""
 
     def __init__(self) -> None:
-        """Start with no recorded spawns or lookups."""
+        """Start with no recorded spawns or lookups.
+
+        Set ``spawn_error`` to make every spawn raise it.
+        """
         self.last_payload = None
         self.last_observability_context = None
         self.last_from_name_call = None
+        self.last_cls_from_name_call = None
         self.last_call = None
         self.calls = []
+        self.spawn_error: Exception | None = None
 
     def bind(self, app_name: str, func_name: str) -> "BoundMockFunction":
         """Return a handle for one app function that records into this mock."""
@@ -329,6 +334,8 @@ class BoundMockFunction:
         A ``run_budget_window_batch`` spawn gets the batch ID and stays running;
         any other spawn completes immediately.
         """
+        if self.recorder.spawn_error is not None:
+            raise self.recorder.spawn_error
         self.recorder.last_payload = payload
         self.recorder.last_observability_context = observability_context
         is_batch = self.func_name == "run_budget_window_batch"
@@ -352,10 +359,60 @@ class MockModalException:
     """Stand-in for ``modal.exception`` with the error types the gateway catches."""
 
     class NotFoundError(Exception):
-        """Raised for a function call Modal has never heard of."""
+        """Raised for an object Modal has never heard of, such as a function call."""
 
     class OutputExpiredError(Exception):
         """Raised for a function call whose result Modal no longer keeps."""
+
+
+class MockWorkerClass:
+    """Class handle returned by Modal.Cls.from_name.
+
+    ``hydrate`` raises ``NotFoundError`` for an app in ``function_form_apps``,
+    as Modal does for an app deployed before it defined its workers as
+    classes. Calling the handle returns an instance whose methods record
+    their spawns into ``recorder``.
+    """
+
+    def __init__(
+        self,
+        recorder: MockFunction,
+        app_name: str,
+        class_name: str,
+        function_form_apps: set[str],
+    ) -> None:
+        """Bind the app and class looked up."""
+        self.recorder = recorder
+        self.app_name = app_name
+        self.class_name = class_name
+        self.function_form_apps = function_form_apps
+
+    def hydrate(self) -> Self:
+        """Resolve the class, or raise ``NotFoundError`` if the app has none."""
+        if self.app_name in self.function_form_apps:
+            msg = (
+                f"Lookup failed for Cls '{self.class_name}' "
+                f"from the '{self.app_name}' app"
+            )
+            raise MockModalException.NotFoundError(msg)
+        return self
+
+    def __call__(self) -> "MockWorkerInstance":
+        """Return an instance of the worker class."""
+        return MockWorkerInstance(self.recorder, self.app_name)
+
+
+class MockWorkerInstance:
+    """Instance of a worker class: each method spawns under its method name."""
+
+    def __init__(self, recorder: MockFunction, app_name: str) -> None:
+        """Bind the app whose class this is an instance of."""
+        self.recorder = recorder
+        self.app_name = app_name
+
+    def __getattr__(self, method_name: str) -> BoundMockFunction:
+        """Return a handle for one method that records into the recorder."""
+        return self.recorder.bind(self.app_name, method_name)
 
 
 @pytest.fixture
@@ -397,9 +454,19 @@ def mock_modal(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
             mock_func.last_from_name_call = (app_name, func_name)
             return mock_func.bind(app_name, func_name)
 
+    # Apps deployed before the workers became classes: no class lookup works.
+    function_form_apps: set[str] = set()
+
+    class MockModalCls:
+        @staticmethod
+        def from_name(app_name: str, class_name: str) -> MockWorkerClass:
+            mock_func.last_cls_from_name_call = (app_name, class_name)
+            return MockWorkerClass(mock_func, app_name, class_name, function_form_apps)
+
     class MockModal:
         Dict = MockModalDict
         Function = MockModalFunction
+        Cls = MockModalCls
         FunctionCall = MockFunctionCall
         exception = MockModalException
 
@@ -430,4 +497,5 @@ def mock_modal(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         "dicts": mock_dicts,
         "function_call": MockFunctionCall,
         "exception": MockModalException,
+        "function_form_apps": function_form_apps,
     }

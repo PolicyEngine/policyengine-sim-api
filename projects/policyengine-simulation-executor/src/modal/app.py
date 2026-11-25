@@ -1,6 +1,8 @@
 """PolicyEngine Simulation versioned Modal app.
 
-This app contains the heavy simulation workload with snapshotted models.
+This app contains the heavy simulation workload. Its two simulation workers
+are Modal classes whose containers restore from memory snapshots with the
+country models already loaded (see ``src/modal/country_model_preload.py``).
 Each deployment creates a versioned app (e.g., policyengine-simulation-py4-10-0).
 
 The gateway app (policyengine-simulation-gateway) routes requests to these
@@ -9,9 +11,11 @@ versioned apps.
 
 import contextlib
 import os
+import random
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from packaging.version import InvalidVersion, Version
 from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
     HF_RUNTIME_ENV_NAME,
@@ -37,9 +41,10 @@ from policyengine_simulation_observability.stages import (
 from policyengine_simulation_observability.telemetry import (
     normalize_observability_context,
 )
-from src.modal._image_setup import fetch_artifacts, snapshot_models
+from src.modal._image_setup import check_country_models_build, fetch_artifacts
 from src.modal.bundle_data import bundle_data_install_command
 from src.modal.ca_certificates import GRPC_CA_BUNDLE_ENV, OPERATING_SYSTEM_CA_PACKAGE
+from src.modal.country_model_preload import preload_country_models
 from src.modal.logging_redaction import redact_params_for_logging
 from src.modal.static_runtime_files import add_static_runtime_files
 
@@ -48,6 +53,41 @@ import modal
 if TYPE_CHECKING:
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_executor.job_progress import JobProgressReporter
+
+
+# Containers restored from a memory snapshot reload Secret values only from
+# Modal 1.6.4, and each app's containers run the Modal client that deployed it.
+# This project's uv.lock pins such a client; the check refuses a deploy or run
+# from an environment with an older one, such as a global Modal install.
+FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE = Version("1.6.4")
+
+
+def _require_secret_reloading_modal_client(client_version: str) -> None:
+    """Raise unless ``client_version`` is Modal 1.6.4 or newer.
+
+    Versions compare as Python packaging defines them, so 1.6.4's development
+    builds and release candidates count as older than 1.6.4.
+    """
+    try:
+        reloads_secrets = (
+            Version(client_version) >= FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE
+        )
+    except InvalidVersion:
+        reloads_secrets = False
+    if not reloads_secrets:
+        msg = (
+            f"Modal client {client_version} is not "
+            f"{FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE} or newer: containers "
+            "restored from this app's memory snapshots would keep the Secret values "
+            "from when each snapshot was taken. Deploy and run from this project's "
+            "locked environment, for example "
+            "`uv run --frozen modal deploy src/modal/app.py`."
+        )
+        raise RuntimeError(msg)
+
+
+if modal.is_local():
+    _require_secret_reloading_modal_client(modal.__version__)
 
 
 def _version_from_env_or_local_bundle_package(env_var: str, package: str) -> str:
@@ -249,7 +289,8 @@ def build_base_simulation_image() -> modal.Image:
     )
 
 
-# Heavy image with model snapshot for simulation
+# Heavy image for the simulation workers. Its last layer checks that both
+# countries' models build; the workers load them in their snapshot hook.
 simulation_image = add_static_runtime_files(
     build_base_simulation_image().add_local_python_source(
         "src.modal",
@@ -259,7 +300,7 @@ simulation_image = add_static_runtime_files(
         copy=True,
     ),
     uv_project_dir=_UV_PROJECT_DIR,
-).run_function(snapshot_models)
+).run_function(check_country_models_build)
 
 
 def _configure_modal_observability(
@@ -331,25 +372,18 @@ def _record_stage_durations(
         )
 
 
-@app.function(
-    image=simulation_image,
-    cpu=8.0,
-    memory=32768,
-    timeout=3600,
-    retries=0,
-    max_containers=100,
-    secrets=[gcp_secret, hf_secret],
-)
-def run_simulation(
+def _run_simulation(
     params: dict,
     *,
-    observability_context: dict | None = None,
+    observability_context: dict | None,
 ) -> dict:
-    """Execute economic simulation.
+    """Execute one annual economic simulation.
 
-    Imports the snapshotted implementation at runtime.
-    Emits redacted operation data through the shared observability runtime.
-    Records the job's stage for status polls (see ``job_progress``).
+    The job behind ``SimulationWorker.run_simulation`` and the plain
+    ``run_simulation`` function. Imports the implementation in the call; in a
+    restored container the snapshot hook has already loaded the country models
+    it uses. Emits redacted operation data through the shared observability
+    runtime. Records the job's stage for status polls (see ``job_progress``).
     """
     progress = _job_progress_reporter()
     progress.start()
@@ -382,7 +416,7 @@ def run_simulation(
                 # Plain national macro requests fan out across region groups
                 # by default (segmented: false opts out). APP_NAME is this
                 # deployed app; children spawn into its dedicated
-                # run_simulation_segment pool.
+                # SimulationSegmentWorker pool.
                 return dispatch_run_simulation(
                     params,
                     app_name=APP_NAME,
@@ -409,27 +443,16 @@ def run_simulation(
         runtime.shutdown()
 
 
-@app.function(
-    image=simulation_image,
-    cpu=8.0,
-    memory=32768,
-    timeout=3600,
-    retries=0,
-    max_containers=300,
-    secrets=[gcp_secret, hf_secret],
-)
-def run_simulation_segment(
+def _run_simulation_segment(
     params: dict,
     *,
-    observability_context: dict | None = None,
+    observability_context: dict | None,
 ) -> dict:
-    """One region-group child of a segmented national run.
+    """Run one region-group child of a segmented national run.
 
-    The same worker as ``run_simulation`` but a separate Modal function so
-    segment children draw from their own container pool: a blocking
-    segmented parent must never share a bounded pool with the children it
-    waits on. Calls the monolithic impl directly — children are
-    ``region_group`` requests and never re-segment.
+    The job behind ``SimulationSegmentWorker.run_simulation_segment`` and the
+    plain ``run_simulation_segment`` function. Calls the monolithic impl
+    directly — children are ``region_group`` requests and never re-segment.
     """
     runtime = _configure_modal_observability(service_role="simulation_worker")
     redacted_params = {
@@ -453,6 +476,130 @@ def run_simulation_segment(
             return run_simulation_impl(params, runtime=runtime)
     finally:
         runtime.shutdown()
+
+
+class _CountryModelsLoadedBeforeSnapshot:
+    """Base of the simulation workers: loads the models before the snapshot.
+
+    Modal runs ``snap=True`` hooks once, in the container that takes the
+    memory snapshot; every container restored from it starts with the loaded
+    models in memory. ``snap=False`` hooks run after each restore.
+    Observability is configured per call instead, after the restore, so each
+    restored container reports its own process identity.
+    """
+
+    @modal.enter(snap=True)
+    def load_country_models(self) -> None:
+        """Load both countries' models and the SPM capability into the snapshot."""
+        preload_country_models()
+
+    @modal.enter(snap=False)
+    def reseed_random_after_restore(self) -> None:
+        """Give each restored container its own random sequence.
+
+        The snapshot holds the state of Python's ``random`` module, and Python
+        reseeds it only after a fork, so every restored container would draw
+        the same numbers: OpenTelemetry's span IDs, for one, which would then
+        repeat across the segment children of one trace.
+        """
+        random.seed()
+
+
+@app.cls(
+    image=simulation_image,
+    cpu=8.0,
+    memory=32768,
+    timeout=3600,
+    retries=0,
+    max_containers=100,
+    secrets=[gcp_secret, hf_secret],
+    enable_memory_snapshot=True,
+)
+class SimulationWorker(_CountryModelsLoadedBeforeSnapshot):
+    """Runs annual simulations for the gateway and budget-window batches."""
+
+    @modal.method()
+    def run_simulation(
+        self,
+        params: dict,
+        *,
+        observability_context: dict | None = None,
+    ) -> dict:
+        """Execute one annual economic simulation (see ``_run_simulation``)."""
+        return _run_simulation(params, observability_context=observability_context)
+
+
+@app.cls(
+    image=simulation_image,
+    cpu=8.0,
+    memory=32768,
+    timeout=3600,
+    retries=0,
+    max_containers=300,
+    secrets=[gcp_secret, hf_secret],
+    enable_memory_snapshot=True,
+)
+class SimulationSegmentWorker(_CountryModelsLoadedBeforeSnapshot):
+    """Runs the region-group children of segmented national runs.
+
+    A separate class from ``SimulationWorker`` so segment children draw from
+    their own container pool: a blocking segmented parent must never share a
+    bounded pool with the children it waits on.
+    """
+
+    @modal.method()
+    def run_simulation_segment(
+        self,
+        params: dict,
+        *,
+        observability_context: dict | None = None,
+    ) -> dict:
+        """Run one region-group child (see ``_run_simulation_segment``)."""
+        return _run_simulation_segment(
+            params, observability_context=observability_context
+        )
+
+
+# The workers' plain functions from before the classes, kept without memory
+# snapshots for callers still running that code. The executor deploys before
+# the gateway, and a deploy that keeps the policyengine.py version replaces the
+# routed app in place, so the old gateway spawns run_simulation here until the
+# new one is live. Runs started before a deploy spawn their children by these
+# names too. Remove both once no such caller is left.
+@app.function(
+    image=simulation_image,
+    cpu=8.0,
+    memory=32768,
+    timeout=3600,
+    retries=0,
+    max_containers=100,
+    secrets=[gcp_secret, hf_secret],
+)
+def run_simulation(
+    params: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
+    """Execute one annual simulation, for callers from before the classes."""
+    return _run_simulation(params, observability_context=observability_context)
+
+
+@app.function(
+    image=simulation_image,
+    cpu=8.0,
+    memory=32768,
+    timeout=3600,
+    retries=0,
+    max_containers=300,
+    secrets=[gcp_secret, hf_secret],
+)
+def run_simulation_segment(
+    params: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
+    """Run one region-group child, for callers from before the classes."""
+    return _run_simulation_segment(params, observability_context=observability_context)
 
 
 @app.function(

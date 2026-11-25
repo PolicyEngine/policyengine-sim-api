@@ -39,9 +39,9 @@ def test_a_declaring_worker_gets_the_breakdown(breakdown_worker, client: TestCli
     response = client.post("/simulate/economy/comparison", json=BREAKDOWN_REQUEST)
 
     assert response.status_code == 200
-    assert breakdown_worker["func"].last_from_name_call == (
+    assert breakdown_worker["func"].last_cls_from_name_call == (
         "policyengine-simulation-py4-10-0",
-        "run_simulation",
+        "SimulationWorker",
     )
     assert breakdown_worker["func"].last_payload["breakdown"] == "local_areas"
 
@@ -94,9 +94,9 @@ def test_a_worker_pinned_by_uk_model_version_without_it_is_refused(
     assert client.post("/simulate/economy/comparison", json=national).status_code == (
         200
     )
-    assert breakdown_worker["func"].last_from_name_call == (
+    assert breakdown_worker["func"].last_cls_from_name_call == (
         "policyengine-simulation-py3-9-0",
-        "run_simulation",
+        "SimulationWorker",
     )
 
 

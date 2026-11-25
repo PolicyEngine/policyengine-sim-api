@@ -2,7 +2,7 @@
 
 A US national macro request runs segmented BY DEFAULT: one ``region_group``
 child per partition group (spawned into the dedicated
-``run_simulation_segment`` worker pool), then the children's computed
+``SimulationSegmentWorker`` pool), then the children's computed
 microdata reduces into the national output via the existing builder
 (``segmented_national_reduce``). The request and response shapes are
 identical to the monolithic path — the gateway and its clients see nothing
@@ -10,7 +10,7 @@ but a faster job. ``segmented: false`` opts out.
 
 Children get their own container pool because a blocking parent must never
 share a bounded pool with the work it waits on: parents live in
-``run_simulation`` (gateway-facing), children in ``run_simulation_segment``.
+``SimulationWorker`` (gateway-facing), children in ``SimulationSegmentWorker``.
 
 There is no batch state store: the plain job-poll path needs no partial
 status, so a parent failure propagates to the gateway as a failed job. A
@@ -30,6 +30,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_contract.job_progress import JobExecution, JobStage
+from policyengine_simulation_contract.simulation_workers import (
+    SEGMENT_WORKER_CLASS,
+    SEGMENT_WORKER_METHOD,
+)
 from policyengine_simulation_contract.spm import (
     SPMInputError,
     combine_spm_results,
@@ -75,9 +79,6 @@ DEFAULT_POLL_BACKOFF = PollBackoff(
 # A child's poll may fail this many times in a row before the job fails:
 # one transient poll-RPC blip is retried, a real child failure repeats.
 CONSECUTIVE_POLL_ERROR_LIMIT = 2
-
-# The dedicated children pool (see module docstring).
-SEGMENT_FUNCTION_NAME = "run_simulation_segment"
 
 # Seconds from dispatch before a child with no result is cancelled and
 # respawned. Successful children took 124 s at the median and at most 302 s
@@ -264,8 +265,10 @@ class SegmentedNationalRunner:
             msg = f"No national partition for country {self.country!r}"
             raise ValueError(msg)
         self.groups = groups
-        # Lazy handle, no RPC until first spawn (budget-window precedent).
-        self.child_func = self.modal.Function.from_name(app_name, SEGMENT_FUNCTION_NAME)
+        # Children run on the dedicated segment worker class (see the module
+        # docstring). Lazy handle, no RPC until the first spawn.
+        segment_worker = self.modal.Cls.from_name(app_name, SEGMENT_WORKER_CLASS)()
+        self.child_func = getattr(segment_worker, SEGMENT_WORKER_METHOD)
         self.runtime.set_context(
             national_execution="segmented",
             segmented_group_count=len(self.groups),

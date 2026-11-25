@@ -15,7 +15,11 @@ Modal call. A report's create runs, in one transaction:
    versions, catalog version and year that hasn't failed and wasn't forced,
    found or inserted in simulation ID order, then the report run naming
    them. A report run another request inserted after step 3 is joined, and
-   the savepoint takes back this request's simulation runs.
+   the savepoint takes back this request's simulation runs;
+5. for a request asking for cliffs, the cliff calculation of each
+   simulation run the report run it ended on names, found or inserted
+   (``find_or_insert_report_run_cliffs``, which a re-run uses too), so they
+   are written with the report run or not at all.
 
 Every simulation run counts whatever report first calculated it, pending,
 running or succeeded: its stored plan no longer depends on the report
@@ -28,7 +32,7 @@ for the rows it inserts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 from policyengine_simulation_persistence.definition_keys import KEY_VERSION
@@ -43,6 +47,7 @@ from policyengine_simulation_persistence.shared_rows import (
     find_joinable_report_run,
     find_or_insert_report,
     find_or_insert_report_run,
+    find_or_insert_side_cliffs,
     find_or_insert_simulation,
     find_or_insert_simulation_run,
     find_or_insert_simulation_runs,
@@ -66,6 +71,10 @@ if TYPE_CHECKING:
         EconomyPopulation,
         RunVersions,
     )
+    from policyengine_simulation_persistence.shared_rows import (
+        FoundCliffs,
+        ProposedCliffs,
+    )
 
 # A report's two sides, the baseline first.
 type Side = Literal["baseline", "reform"]
@@ -88,6 +97,8 @@ class KeyedEconomyReport:
     current catalog version's rows with the definition's dataset name and
     region code. ``inputs`` is what ``reports.inputs`` stores: the SPM
     selection when the request gave one, and no other option (answer 4).
+    ``cliffs``, set when the request asks for cliffs, proposes its sides'
+    cliff calculations' IDs; it is never stored (answer 4b).
     """
 
     definition: EconomyReportDefinition
@@ -99,6 +110,7 @@ class KeyedEconomyReport:
     population: EconomyPopulation
     versions: RunVersions
     inputs: dict[str, Any]
+    cliffs: ProposedCliffs | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +136,8 @@ class FoundEconomyReport:
     run: FoundReportRun
     baseline: FoundSide
     reform: FoundSide
+    # Each side's run's cliff calculation, when the request asked for cliffs.
+    cliffs: FoundCliffs | None = None
 
 
 @dataclass(frozen=True)
@@ -177,7 +191,11 @@ def find_or_create_economy_report(
             policyengine_version=versions.policyengine_version,
         )
         if joined is not None:
-            return _found(report.id, report.inserted, joined, simulation_ids, set())
+            return _with_cliffs(
+                session,
+                _found(report.id, report.inserted, joined, simulation_ids, set()),
+                request.cliffs,
+            )
         proposed = {"baseline": request.baseline, "reform": request.reform}
         run, runs = find_or_insert_report_run_on_sides(
             session,
@@ -193,7 +211,45 @@ def find_or_create_economy_report(
             },
         )
         inserted = {found.id for found in runs.values() if found.inserted}
-        return _found(report.id, report.inserted, run, simulation_ids, inserted)
+        return _with_cliffs(
+            session,
+            _found(report.id, report.inserted, run, simulation_ids, inserted),
+            request.cliffs,
+        )
+
+
+def _with_cliffs(
+    session: Session, found: FoundEconomyReport, cliffs: ProposedCliffs | None
+) -> FoundEconomyReport:
+    """Return ``found`` with its sides' runs' cliff calculations, when asked."""
+    if cliffs is None:
+        return found
+    return replace(
+        found, cliffs=find_or_insert_report_run_cliffs(session, found.run, cliffs)
+    )
+
+
+def find_or_insert_report_run_cliffs(
+    session: Session, run: FoundReportRun, proposed: ProposedCliffs
+) -> FoundCliffs:
+    """Return the cliff calculation of each simulation run ``run`` names.
+
+    A request asking for cliffs calls it, for a create or a re-run, in the
+    transaction that settled ``run``, joined or created, so the calculations
+    are written with it or not at all. Raise EconomyRecordReferenceError
+    when the database refuses a run a calculation names, and ValueError for
+    a report run with no reform run, which no economy report has.
+    """
+    if run.reform_simulation_run_id is None:
+        msg = f"report run {run.id} of an economy report names no reform run"
+        raise ValueError(msg)
+    with references_checked():
+        return find_or_insert_side_cliffs(
+            session,
+            proposed,
+            baseline_simulation_run_id=run.baseline_simulation_run_id,
+            reform_simulation_run_id=run.reform_simulation_run_id,
+        )
 
 
 def find_or_create_economy_simulation(

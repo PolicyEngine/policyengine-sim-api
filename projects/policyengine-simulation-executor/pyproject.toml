@@ -26,7 +26,10 @@ dependencies = [
     # models, and the SPM calculator. Do not duplicate those versions here.
     "policyengine[models]==6.20.0",
     "tables>=3.10.2",
-    "modal>=0.73.0",
+    # 1.6.4 is the first release whose containers reload Secret values when
+    # they restore from a memory snapshot. Every app deployed or run from this
+    # project uses the client locked here (uv run --frozen modal deploy/run).
+    "modal>=1.6.4,<2",
     "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.7,<4",
     # Imported directly by the artifact store client; do not rely on the
     # transitive pin via policyengine.
