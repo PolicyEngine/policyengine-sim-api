@@ -13,7 +13,7 @@ households each. Rebalance only with a measured partition; group count and
 membership changes alter per-child runtimes, not correctness.
 """
 
-from policyengine_simulation_executor.stage12_runtime.partition import (
+from policyengine_simulation_executor.stage12_cache.partition import (
     US_REGION_GROUPS,
 )
 

@@ -29,11 +29,11 @@ from policyengine_simulation_executor.stage12_cache.levels import (
     prebuilt_folder,
     year_file_name,
 )
+from policyengine_simulation_executor.stage12_cache.partition import (
+    US_REGION_GROUPS,
+)
 from policyengine_simulation_executor.stage12_cache.state_datasets import (
     year_file_reuse_problem,
-)
-from policyengine_simulation_executor.stage12_runtime.partition import (
-    US_REGION_GROUPS,
 )
 
 if TYPE_CHECKING:

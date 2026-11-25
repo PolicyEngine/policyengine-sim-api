@@ -19,7 +19,12 @@ from policyengine.core.scoping_strategy import RegionGroupStrategy, RowFilterStr
 from policyengine_simulation_executor import national_partition
 from policyengine_simulation_executor.region_resolution import RegionResolution
 from policyengine_simulation_executor.simulation_runtime import DatasetSelection
-from policyengine_simulation_executor.stage12_cache import levels, levels_uk, levels_us
+from policyengine_simulation_executor.stage12_cache import (
+    levels,
+    levels_uk,
+    levels_us,
+    partition,
+)
 from policyengine_simulation_executor.stage12_cache.levels import (
     BaselineScope,
     DatasetLevel,
@@ -591,7 +596,7 @@ def test_year_file_name(inputs):
 
 
 def test_handler_modules_import_no_run_simulation_feature_module():
-    for module in (levels, levels_us, levels_uk):
+    for module in (levels, levels_us, levels_uk, partition):
         tree = ast.parse(Path(module.__file__).read_text())
         imported = set()
         for node in ast.walk(tree):
