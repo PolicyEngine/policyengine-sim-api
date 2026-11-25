@@ -198,15 +198,16 @@ operation opens, so a call that fails or is preempted carries them too.
 | Attribute | Values |
 |---|---|
 | `container_start` | `restored_from_snapshot`: the container was restored from a memory snapshot, so it started with the country models loaded. `took_snapshot`: Modal took the snapshot from this container, after the snapshot hook loaded the models in it. `no_snapshot`: the container neither took a snapshot nor was restored from one. That is every container of the plain `run_simulation` and `run_simulation_segment` functions and of `run_budget_window_batch`, which have no snapshot hook, and a worker class container that Modal started without snapshots, whose hook loaded the models before its first call. |
-| `container_call_number` | The call's place among the calls the container has served: 1 for its first call, 2 for its second, and so on. A call counts even when setting its attributes fails. |
+| `container_call_number` | The call's place among the calls the container has served: 1 for its first call, 2 for its second, and so on. A call counts even when reading or setting these attributes fails. |
 
 How a call tells them apart, in Modal 1.6.4:
 
 - **Before the snapshot:** Modal runs the workers' snapshot hook
-  (`load_country_models`) in every container that isn't restored, and takes a
-  snapshot only when its worker has set `MODAL_ENABLE_SNAP_RESTORE` to `1`
-  (`maybe_snapshot` in `modal/_runtime/user_code_imports.py`). The hook records
-  that flag and the container's `MODAL_TASK_ID`.
+  (`load_country_models`) in every container that isn't restored. It takes a
+  snapshot only when the Modal process that starts the container has set
+  `MODAL_ENABLE_SNAP_RESTORE` to `1`, for a class with memory snapshots
+  enabled (`maybe_snapshot` in `modal/_runtime/user_code_imports.py`). The
+  hook records that flag and the container's `MODAL_TASK_ID`.
 - **On restore:** a restored container starts with that record in memory, but
   Modal sets its `MODAL_TASK_ID` to its own task ID (`memory_restore` in
   `modal/_runtime/task_lifecycle_manager.py`). A call reports
@@ -219,11 +220,14 @@ How a call tells them apart, in Modal 1.6.4:
   the one serving the call.
 
 Neither the restore nor the snapshot hook runs inside a call, so no span
-measures them; Modal's container records hold the restore's duration. A
-call's spans show the setup still left in it:
+measures them. Modal's container records give only the times each container
+was queued and became ready (`enqueued_at` and `started_at`), which include
+scheduling as well as the restore. A call's spans show the setup still left
+in it:
 
-- In the first call of a plain function's container, which loads the models
-  itself, most of that setup is in the `country_module_load` span, which
+- In the first call of a container of the plain `run_simulation` or
+  `run_simulation_segment` function, which loads the models itself, most of
+  that setup is in the `country_module_load` span, which
   imports policyengine.py's country model module, and, for a US run, in the
   time from the operation's start to that span, which includes the SPM
   capability check.

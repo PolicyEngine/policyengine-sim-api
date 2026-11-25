@@ -350,13 +350,14 @@ class _ContainerCalls:
     def record_snapshot_hook(self) -> None:
         """Record, from the snapshot hook, whether Modal snapshots this container.
 
-        Modal 1.6.4 runs the hook in every container that doesn't restore, and
-        takes a snapshot only when its worker has set
-        ``MODAL_ENABLE_SNAP_RESTORE`` to ``1`` (``maybe_snapshot`` in
-        ``modal/_runtime/user_code_imports.py``).
+        Modal 1.6.4 runs the hook in every container that isn't restored, and
+        takes a snapshot only when the Modal process that starts the container
+        has set ``MODAL_ENABLE_SNAP_RESTORE`` to ``1`` (``maybe_snapshot`` in
+        ``modal/_runtime/user_code_imports.py``). The flag is set last, so a
+        failure partway leaves the container reporting ``no_snapshot``.
         """
-        self._snapshot_taken_here = os.environ.get("MODAL_ENABLE_SNAP_RESTORE") == "1"
         self._snapshot_task_id = os.environ.get("MODAL_TASK_ID")
+        self._snapshot_taken_here = os.environ.get("MODAL_ENABLE_SNAP_RESTORE") == "1"
 
     def container_start(self) -> ContainerStart:
         """Compare this container's task ID with the snapshotting container's."""
@@ -367,10 +368,15 @@ class _ContainerCalls:
         return ContainerStart.RESTORED_FROM_SNAPSHOT
 
     def next_call_attributes(self) -> dict[str, str | int]:
-        """Return the next call's two container attributes, numbering the call."""
+        """Return the next call's two container attributes, numbering the call.
+
+        The call takes its number first, so it counts even if reading the
+        container start fails.
+        """
+        call_number = next(self._call_numbers)
         return {
             "container_start": self.container_start().value,
-            "container_call_number": next(self._call_numbers),
+            "container_call_number": call_number,
         }
 
 
@@ -545,9 +551,10 @@ def _run_simulation_segment(
 class _CountryModelsLoadedBeforeSnapshot:
     """Base of the simulation workers: loads the models before the snapshot.
 
-    Modal runs ``snap=True`` hooks once, in the container that takes the
-    memory snapshot; every container restored from it starts with the loaded
-    models in memory. ``snap=False`` hooks run after each restore.
+    Modal runs ``snap=True`` hooks in every container that isn't restored, and
+    takes the memory snapshot from such a container when it starts it with
+    snapshots enabled; every container restored from the snapshot starts with
+    the loaded models in memory. ``snap=False`` hooks run after each restore.
     Observability is configured per call instead, after the restore, so each
     restored container reports its own process identity.
     """
@@ -558,8 +565,10 @@ class _CountryModelsLoadedBeforeSnapshot:
 
         First records whether Modal snapshots this container, and its task ID,
         so each call can report how its container started (``_ContainerCalls``).
+        Telemetry is non-fatal: a failed record must never stop the preload.
         """
-        _CONTAINER_CALLS.record_snapshot_hook()
+        with contextlib.suppress(Exception):
+            _CONTAINER_CALLS.record_snapshot_hook()
         preload_country_models()
 
     @modal.enter(snap=False)
