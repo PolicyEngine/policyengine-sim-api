@@ -25,6 +25,12 @@ SNAPSHOT_TASK_ID = "ta-01SNAPSHOTTING"
 RESTORED_TASK_ID = "ta-01RESTORED"
 PLAIN_FUNCTION_TASK_ID = "ta-01PLAINFUNCTION"
 CONTAINER_START_KEYS = {"container_start", "container_call_number"}
+# The function each worker call hands its job to, by module.
+WORKER_JOBS = [
+    (segmented_national, "dispatch_run_simulation"),
+    (simulation_runtime, "run_simulation_impl"),
+    (budget_window_batch, "run_budget_window_batch_impl"),
+]
 
 # Each worker class with the method that serves its calls.
 WORKER_METHODS = [
@@ -62,20 +68,20 @@ def modal_app(monkeypatch):
     """Import the app afresh, as a new container does, with stubbed worker jobs."""
     install_fake_modal(monkeypatch)
     monkeypatch.delenv("MODAL_TASK_ID", raising=False)
+    monkeypatch.delenv("MODAL_ENABLE_SNAP_RESTORE", raising=False)
     sys.modules.pop("src.modal.app", None)
     app = importlib.import_module("src.modal.app")
     # The real preload imports both countries' models.
     monkeypatch.setattr(app, "preload_country_models", lambda: None)
-    for job_module, job_name in (
-        (segmented_national, "dispatch_run_simulation"),
-        (simulation_runtime, "run_simulation_impl"),
-        (budget_window_batch, "run_budget_window_batch_impl"),
-    ):
-        monkeypatch.setattr(
-            job_module, job_name, lambda _params, **_job_options: WORKER_RESULT
-        )
+    _replace_worker_jobs(monkeypatch, lambda _params, **_job_options: WORKER_RESULT)
     yield app
     sys.modules.pop("src.modal.app", None)
+
+
+def _replace_worker_jobs(monkeypatch, job) -> None:
+    """Make every worker call hand its parameters to ``job`` instead."""
+    for job_module, job_name in WORKER_JOBS:
+        monkeypatch.setattr(job_module, job_name, job)
 
 
 def _record_call_attributes(app, monkeypatch) -> list[dict[str, object]]:
@@ -96,9 +102,20 @@ def _record_call_attributes(app, monkeypatch) -> list[dict[str, object]]:
     return attributes_by_call
 
 
-def _worker_after_snapshot_hook(app, monkeypatch, worker_class_name: str):
-    """Create a worker and run its snapshot hook in the snapshotting container."""
+def _worker_after_snapshot_hook(
+    app, monkeypatch, worker_class_name: str, *, snapshots_enabled: bool = True
+):
+    """Create a worker and run its snapshot hook, as Modal does in a new container.
+
+    Modal's worker sets ``MODAL_ENABLE_SNAP_RESTORE`` to ``1`` in containers
+    it takes snapshots from or restores, and leaves it unset in a container of
+    the same class that starts without snapshots. Modal runs the snapshot hook
+    in every container that doesn't restore, but takes a snapshot only when
+    the variable is ``1``.
+    """
     monkeypatch.setenv("MODAL_TASK_ID", SNAPSHOT_TASK_ID)
+    if snapshots_enabled:
+        monkeypatch.setenv("MODAL_ENABLE_SNAP_RESTORE", "1")
     worker = getattr(app, worker_class_name)()
     worker.load_country_models()
     return worker
@@ -141,6 +158,23 @@ def test_a_call_in_the_container_that_ran_the_snapshot_hook_reports_took_snapsho
 
     [call_attributes] = attributes_by_call
     assert call_attributes["container_start"] == "took_snapshot"
+    assert call_attributes["container_call_number"] == 1
+
+
+@pytest.mark.parametrize(("worker_class_name", "method_name"), WORKER_METHODS)
+def test_a_worker_container_started_without_snapshots_reports_no_snapshot(
+    modal_app, monkeypatch, worker_class_name, method_name
+):
+    worker = _worker_after_snapshot_hook(
+        modal_app, monkeypatch, worker_class_name, snapshots_enabled=False
+    )
+    attributes_by_call = _record_call_attributes(modal_app, monkeypatch)
+
+    assert getattr(worker, method_name)(SIMULATION_PARAMS) == WORKER_RESULT
+
+    # The hook loaded the models, but Modal took no snapshot from this container.
+    [call_attributes] = attributes_by_call
+    assert call_attributes["container_start"] == "no_snapshot"
     assert call_attributes["container_call_number"] == 1
 
 
@@ -225,6 +259,71 @@ def test_both_attributes_reach_the_operation_record_and_span_but_no_metric(
     assert metric_attribute_sets
     for metric_attributes in metric_attribute_sets:
         assert not CONTAINER_START_KEYS & set(metric_attributes)
+
+
+@pytest.mark.parametrize(("worker_class_name", "method_name"), WORKER_METHODS)
+def test_both_attributes_are_set_before_the_job_runs(
+    modal_app, monkeypatch, worker_class_name, method_name
+):
+    worker = _worker_after_snapshot_hook(modal_app, monkeypatch, worker_class_name)
+    _restore_into_another_container(monkeypatch)
+    _record_call_attributes(modal_app, monkeypatch)
+    attributes_when_the_job_started: list[dict[str, object]] = []
+
+    def job_reading_its_operation_attributes(_params, *, runtime, **_job_options):
+        attributes_when_the_job_started.append(dict(runtime.attributes))
+        return WORKER_RESULT
+
+    _replace_worker_jobs(monkeypatch, job_reading_its_operation_attributes)
+
+    assert getattr(worker, method_name)(SIMULATION_PARAMS) == WORKER_RESULT
+
+    [job_attributes] = attributes_when_the_job_started
+    assert job_attributes["container_start"] == "restored_from_snapshot"
+    assert job_attributes["container_call_number"] == 1
+
+
+# Each job failure with the outcome its operation record reports.
+JOB_FAILURES = [
+    (RuntimeError("model failed"), "error"),
+    (KeyboardInterrupt(), "interrupted"),
+]
+
+
+@pytest.mark.parametrize("job_failure_and_outcome", JOB_FAILURES)
+@pytest.mark.parametrize("worker_method", WORKER_METHODS)
+def test_a_failed_or_preempted_call_still_reports_both_attributes(
+    modal_app,
+    monkeypatch,
+    recorded_observability_runtime,
+    worker_method,
+    job_failure_and_outcome,
+):
+    worker_class_name, method_name = worker_method
+    job_failure, expected_outcome = job_failure_and_outcome
+    runtime, written_records = recorded_observability_runtime
+    monkeypatch.setattr(
+        modal_app, "_configure_modal_observability", lambda *, service_role: runtime
+    )
+    worker = _worker_after_snapshot_hook(modal_app, monkeypatch, worker_class_name)
+    _restore_into_another_container(monkeypatch)
+
+    def failing_job(_params, **_job_options):
+        raise job_failure
+
+    _replace_worker_jobs(monkeypatch, failing_job)
+
+    with pytest.raises(type(job_failure)):
+        getattr(worker, method_name)(SIMULATION_PARAMS)
+
+    [completion] = [
+        record
+        for record in written_records
+        if record.get("event.name") == "operation.completed"
+    ]
+    assert completion["outcome"] == expected_outcome
+    assert completion["attributes"]["container_start"] == "restored_from_snapshot"
+    assert completion["attributes"]["container_call_number"] == 1
 
 
 @pytest.mark.parametrize(("worker_class_name", "method_name"), WORKER_METHODS)
