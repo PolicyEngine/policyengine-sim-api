@@ -1,0 +1,1 @@
+The simulation service reads a stored dynamic's values from API v1's `dynamic_parameter_values` and their names from `dynamic_parameters`, where API v1 keeps dynamic parameters apart from policy parameters, and its readiness check requires `SELECT` on both tables. It no longer reads `parameter_values.dynamic_id`.

@@ -55,6 +55,8 @@ SERVICE_TABLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType
         "parameters": _READ,
         "parameter_values": _READ,
         "dynamics": _READ,
+        "dynamic_parameters": _READ,
+        "dynamic_parameter_values": _READ,
     }
 )
 # The run state the service records for a run whose Modal call it starts: the
