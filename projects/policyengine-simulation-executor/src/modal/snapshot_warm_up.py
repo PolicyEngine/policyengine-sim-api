@@ -23,10 +23,11 @@ warm-up of another region group under another reform made restored
 containers' first calculation 11 to 16 s faster, with identical results, and
 the containers Modal took snapshots from started about 70 to 100 s later.
 
-The warm-up calculates one segmented national run's child request: a region
-group whose dataset and current-law baseline the precompute bakes into the
-image, for the first precompute year, under a small reform. It runs only
-where it is safe before a snapshot, and only where Modal takes one:
+The warm-up calculates one segmented national run's child request: group 1
+of the US group-of-states handler, whose year file and current-law baseline
+the precompute builds into the image, for the first prebuilt year, under a
+small reform. It runs only where it is safe before a snapshot, and only where
+Modal takes one:
 
 - **Only in a container Modal snapshots.** Modal runs the hook in every
   container that isn't restored, and takes a snapshot only where its worker
@@ -35,19 +36,20 @@ where it is safe before a snapshot, and only where Modal takes one:
   save that call about 15 s.
 - **No connection.** It runs only when the US models were preloaded, since
   importing them again could fetch the data release manifest again, and
-  when the group's year file and baseline are in the image's data folder
-  and the year file passes .py's reuse checks, so nothing is downloaded or
-  built from source. It skips the Google Cloud credential setup of
-  ``run_simulation_impl``, which reads a Modal Secret, and reads no Secret
-  itself. (The preload before it already reads the Hugging Face token and
-  fetches the data release manifest, as ``country_model_preload`` says.)
+  when the image's prebuilt folder holds the group's year file, in a form
+  .py reuses, and its baseline. Both are looked up as a run looks them up,
+  so nothing is downloaded or built from source. It skips the Google Cloud
+  credential setup of ``run_simulation_impl``, which reads a Modal Secret,
+  and reads no Secret itself. (The preload before it already reads the
+  Hugging Face token and fetches the data release manifest, as
+  ``country_model_preload`` says.)
 - **No telemetry.** It configures no observability and gives the
   calculation a runtime that records and sends nothing, so it writes no
   operation record or span and no call number (``_ContainerCalls``).
 - **Nothing left for a request.** It removes the simulations it added to
-  .py's in-process cache and the output files it saved in the data folder,
-  so a later call loads its baseline from the image as it would without the
-  warm-up. What stays is what the packages keep for the whole process, as
+  .py's in-process cache and the output files it saved in the prebuilt
+  folder, so a later call loads its baseline from the image as it would
+  without the warm-up. What stays is what the packages keep for the whole process, as
   above. One case differs: when the baked baseline is incomplete, out of
   date or unreadable, the calculation runs it again and saves it over the
   image's file, as a call would. The warm-up keeps that copy, which holds
@@ -55,7 +57,9 @@ where it is safe before a snapshot, and only where Modal takes one:
   restored containers load it; it logs a warning naming the file, since
   those containers' calls then don't report the baked file's problem.
 - **Never fatal.** A failure or skip logs a warning, and the container
-  starts as it would without the warm-up.
+  starts as it would without the warm-up. The executor modules it uses are
+  imported when it runs, not when ``app.py`` imports this module, so a move
+  or rename in them costs only the warm-up.
 """
 
 from __future__ import annotations
@@ -70,20 +74,13 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from policyengine_simulation_executor.national_partition import (
-    US_NATIONAL_REGION_GROUPS,
-)
-from policyengine_simulation_executor.precompute_planning import (
-    PRECOMPUTE_COUNTRY,
-    PRECOMPUTE_YEARS,
-    cohort_params,
-)
 from src.modal.country_model_preload import COUNTRY_MODEL_MODULES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_executor.stage12_cache.levels import BaselineTarget
 
 logger = logging.getLogger(__name__)
 
@@ -91,13 +88,15 @@ logger = logging.getLogger(__name__)
 # or restores (``run_function`` in modal/_container_entrypoint.py, Modal
 # 1.6.4). Restored containers don't run the snapshot hook.
 SNAPSHOT_FLAG_ENV_NAME = "MODAL_ENABLE_SNAP_RESTORE"
-WARM_UP_YEAR = PRECOMPUTE_YEARS[0]
-# The group the measurement on Modal ``testing`` warmed up with.
-WARM_UP_REGION_GROUP = US_NATIONAL_REGION_GROUPS[0]
+WARM_UP_COUNTRY = "us"
 # The reform makes the warm-up calculate a reform simulation, as a request
 # does: the Child Tax Credit's base amount, raised to $2,500.
 WARM_UP_REFORM_PARAMETER = "gov.irs.credits.ctc.amount.base[0].amount"
 WARM_UP_REFORM_VALUE = 2500
+
+
+class _WarmUpUnsafeError(Exception):
+    """The warm-up can't run safely before the snapshot; the message says why."""
 
 
 class _RecordNothingRuntime:
@@ -130,12 +129,35 @@ class _RecordNothingRuntime:
         return {}
 
 
-def warm_up_request() -> dict[str, Any]:
-    """Return the warm-up's request: one region group's child of a national run."""
-    request = cohort_params(WARM_UP_YEAR, list(WARM_UP_REGION_GROUP))
+def warm_up_target() -> BaselineTarget:
+    """Return group 1's precomputed current-law baseline, for the first prebuilt year.
+
+    The US settings' group-of-states handler names the groups and years the
+    precompute bakes a current-law baseline for. Group 1 is the group the
+    measurements on Modal ``testing`` warmed up with.
+    """
+    from policyengine_simulation_executor.precompute_planning import (  # noqa: PLC0415  # imported here so a move of the precompute code costs only the warm-up, never the app's import
+        country_prebuilt,
+    )
+    from policyengine_simulation_executor.stage12_cache.levels import (  # noqa: PLC0415  # as above
+        DatasetLevel,
+    )
+
+    prebuilt = country_prebuilt(WARM_UP_COUNTRY)
+    group_handler = prebuilt.handlers[DatasetLevel.STATE_GROUP]
+    return group_handler.baseline_targets(prebuilt.years[0])[0]
+
+
+def warm_up_request(target: BaselineTarget) -> dict[str, Any]:
+    """Return the warm-up's request: ``target``'s request, with a reform added.
+
+    ``target.request`` is the request a segmented national run's child for the
+    group receives under current law.
+    """
+    request = dict(target.request)
     request["reform"] = {
         WARM_UP_REFORM_PARAMETER: {
-            f"{WARM_UP_YEAR}-01-01.2100-12-31": WARM_UP_REFORM_VALUE
+            f"{target.year}-01-01.2100-12-31": WARM_UP_REFORM_VALUE
         }
     }
     request["_emit_microdata"] = True
@@ -147,100 +169,117 @@ def warm_up_first_calculation() -> None:
 
     Does nothing in any other container. Nothing here may stop a container
     from starting: a failure or skip logs a warning, and each container's
-    first calculation then builds its year's values itself, as before.
+    first calculation then does its one-time work itself, as before.
     """
     if os.environ.get(SNAPSHOT_FLAG_ENV_NAME) != "1":
         return
-    started = time.monotonic()
     try:
-        skip_reason = _calculate_unless_unsafe()
+        _calculate_unless_unsafe()
+    except _WarmUpUnsafeError as unsafe:
+        logger.warning(
+            "Warm-up calculation skipped, so each restored container's first "
+            "calculation does its one-time work itself: %s",
+            unsafe,
+        )
     except Exception:  # noqa: BLE001  # the warm-up only makes first calls faster
         logger.warning(
             "Warm-up calculation failed; each restored container's first "
-            "calculation builds its year's values itself",
+            "calculation does its one-time work itself",
             exc_info=True,
         )
-        return
-    if skip_reason is not None:
-        logger.warning(
-            "Warm-up calculation skipped, so each restored container's first "
-            "calculation builds its year's values itself: %s",
-            skip_reason,
+
+
+def _calculate_unless_unsafe() -> None:
+    """Run the warm-up calculation; raise ``_WarmUpUnsafeError`` when it isn't safe."""
+    not_preloaded = [
+        module_name
+        for module_name in COUNTRY_MODEL_MODULES[WARM_UP_COUNTRY]
+        if module_name not in sys.modules
+    ]
+    if not_preloaded:
+        msg = f"the preload didn't import {', '.join(not_preloaded)}"
+        raise _WarmUpUnsafeError(msg)
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime; loaded in the worker container, not at deploy time
+        _run_simulation_impl_core,
+    )
+
+    target = warm_up_target()
+    request = warm_up_request(target)
+    prebuilt_folder = _prebuilt_folder_with_baked_inputs(target, request)
+    started = time.monotonic()
+    with _removing_what_the_calculation_leaves(prebuilt_folder):
+        _run_simulation_impl_core(
+            request, runtime=cast("ObservabilityRuntime", _RecordNothingRuntime())
         )
-        return
     logger.info(
-        "Warm-up calculation of %s for %s finished in %.1fs",
-        "+".join(WARM_UP_REGION_GROUP),
-        WARM_UP_YEAR,
+        "Warm-up calculation of the %s for %s finished in %.1fs",
+        target.label,
+        target.year,
         time.monotonic() - started,
     )
 
 
-def _calculate_unless_unsafe() -> str | None:
-    """Run the warm-up calculation, or return why it would be unsafe to."""
-    not_preloaded = [
-        module_name
-        for module_name in COUNTRY_MODEL_MODULES[PRECOMPUTE_COUNTRY]
-        if module_name not in sys.modules
-    ]
-    if not_preloaded:
-        return f"the preload didn't import {', '.join(not_preloaded)}"
-    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime; loaded in the worker container, not at deploy time
-        _run_simulation_impl_core,
-        resolve_data_folder,
-    )
+def _prebuilt_folder_with_baked_inputs(
+    target: BaselineTarget, request: dict[str, Any]
+) -> Path:
+    """Return the prebuilt folder holding the warm-up's year file and baseline.
 
-    data_folder = Path(resolve_data_folder())
-    baked_inputs_problem = _baked_inputs_problem(data_folder)
-    if baked_inputs_problem is not None:
-        return baked_inputs_problem
-    with _removing_what_the_calculation_leaves(data_folder):
-        _run_simulation_impl_core(
-            warm_up_request(),
-            runtime=cast("ObservabilityRuntime", _RecordNothingRuntime()),
-        )
-    return None
-
-
-def _baked_inputs_problem(data_folder: Path) -> str | None:
-    """Return why the warm-up can't use the image's baked inputs, or None.
-
-    The year file and the current-law baseline are named as the precompute
-    names them, and as the calculation looks for them. The year file must
-    also pass .py's reuse checks: otherwise ``ensure_datasets`` would build it
-    again from the dataset's source, which it may download.
+    Both are looked up as a run of ``request`` looks them up: the region and
+    dataset resolution, then the image's prebuilt-folder lookup, which finds
+    no folder for a year file the image lacks or .py wouldn't reuse; and the
+    precompute's identity for the group's baseline, which the image keeps
+    beside the year file as ``<storage ID>.h5``. Raises ``_WarmUpUnsafeError``
+    when either is missing: the calculation would then build the year file
+    from its source, which it may download, or calculate the baseline.
     """
-    from policyengine_simulation_executor.artifact_keys import (  # noqa: PLC0415  # loaded in the worker container, not at deploy time
-        baseline_artifact_filename,
+    from policyengine_simulation_executor.precompute_planning import (  # noqa: PLC0415  # resolved per call so tests can patch precompute_planning; and see warm_up_target
+        baseline_target_identity,
     )
-    from policyengine_simulation_executor.precompute_planning import (  # noqa: PLC0415  # resolved per call so tests can patch precompute_planning.cohort_identity
-        cohort_identity,
-    )
-    from policyengine_simulation_executor.state_datasets import (  # noqa: PLC0415  # resolved per call so tests can patch state_datasets.year_file_reuse_problem
-        year_file_reuse_problem,
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime
+        _country_module,
+        _prebuilt_folder,
+        _resolve_dataset_selection,
+        resolve_region,
     )
 
-    identity = cohort_identity(WARM_UP_YEAR, list(WARM_UP_REGION_GROUP))
-    year_file = data_folder / identity.dataset.filename
-    baseline_file = data_folder / baseline_artifact_filename(identity.storage_id)
-    missing = [path.name for path in (year_file, baseline_file) if not path.is_file()]
-    if missing:
-        return f"the image's data folder lacks {', '.join(missing)}"
-    reuse_problem = year_file_reuse_problem(year_file, identity.dataset.dataset)
-    if reuse_problem is not None:
-        return f"its year file {year_file.name} would be built again: {reuse_problem}"
-    return None
+    region = resolve_region(
+        country_module=_country_module(target.country),
+        country=target.country,
+        params=request,
+    )
+    dataset = _resolve_dataset_selection(request, region_resolution=region)
+    prebuilt = _prebuilt_folder(target.country, region, dataset, target.year)
+    if prebuilt is None:
+        msg = (
+            f"the image holds no prebuilt year file .py would reuse for the "
+            f"{target.label} in {target.year}"
+        )
+        raise _WarmUpUnsafeError(msg)
+    identity = baseline_target_identity(target)
+    if identity is None:
+        msg = f"the {target.label} baseline for {target.year} gets no fixed ID"
+        raise _WarmUpUnsafeError(msg)
+    folder = Path(prebuilt.folder)
+    baseline_filename = f"{identity.storage_id}.h5"
+    if not (folder / baseline_filename).is_file():
+        msg = (
+            f"the prebuilt folder {folder} lacks the {target.label} baseline "
+            f"{baseline_filename}"
+        )
+        raise _WarmUpUnsafeError(msg)
+    return folder
 
 
 @contextlib.contextmanager
-def _removing_what_the_calculation_leaves(data_folder: Path) -> Iterator[None]:
+def _removing_what_the_calculation_leaves(output_folder: Path) -> Iterator[None]:
     """Remove the simulations and output files a calculation adds, even if it fails.
 
     .py's ``Simulation.ensure()`` caches each simulation in the process (its
     baseline under the baked baseline's storage ID, its reform under a new
-    random ID) and saves an output it calculated beside the dataset, as
-    ``<storage ID>.h5``. Left there, they would go into the snapshot, and a
-    later call for the warm-up's group would use the cached baseline instead
+    random ID) and saves an output it calculated beside the year file it
+    loaded, in ``output_folder``, as ``<storage ID>.h5``. Left there, they
+    would go into the snapshot, and a later call for the warm-up's group
+    would use the cached baseline instead
     of loading the baked one. An output saved over a file the image already
     held, when the baked baseline was incomplete, out of date or unreadable,
     is kept, and logged as a warning.
@@ -252,7 +291,7 @@ def _removing_what_the_calculation_leaves(data_folder: Path) -> Iterator[None]:
     cached_before = set(simulation_cache._cache)  # noqa: SLF001  # policyengine's LRUCache has no public listing or remove
     outputs_before = {
         output: _size_and_modification_time(output)
-        for output in data_folder.glob("*.h5")
+        for output in output_folder.glob("*.h5")
     }
     try:
         yield
@@ -263,7 +302,7 @@ def _removing_what_the_calculation_leaves(data_folder: Path) -> Iterator[None]:
             if storage_id not in cached_before
         ]:
             simulation_cache._cache.pop(storage_id, None)  # noqa: SLF001  # as above
-        for output in set(data_folder.glob("*.h5")) - outputs_before.keys():
+        for output in set(output_folder.glob("*.h5")) - outputs_before.keys():
             output.unlink(missing_ok=True)
         gc.collect()
         saved_over = sorted(
@@ -273,11 +312,11 @@ def _removing_what_the_calculation_leaves(data_folder: Path) -> Iterator[None]:
         )
         if saved_over:
             logger.warning(
-                "The warm-up calculation saved over %s in the image's data "
-                "folder, because the baked file was incomplete, out of date or "
-                "unreadable; containers restored from this snapshot load the "
-                "warm-up's copy",
+                "The warm-up calculation saved over %s in %s, because the baked "
+                "file was incomplete, out of date or unreadable; containers "
+                "restored from this snapshot load the warm-up's copy",
                 ", ".join(saved_over),
+                output_folder,
             )
 
 
