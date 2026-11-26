@@ -10,6 +10,7 @@ from registry_test_support import (
     install_routing_store,
     publication_plan,
     published_routing_state,
+    versioned_app_name,
 )
 from src.modal.routing_publisher import publication as routing_publication
 from src.modal.utils import update_version_registry as registry
@@ -354,6 +355,34 @@ def test_operator_restores_any_valid_pending_plan_in_the_selected_store(
     assert saved["publication"]["status"] == "pending"
     assert store.get("active") is None
     assert store.get("publication") == {"status": "restored", "plan": pending}
+
+
+def test_operator_recovery_puts_back_what_the_publication_replaced_without_the_class(
+    monkeypatch, patched_modal, worker_class_lookups
+):
+    """Refusing would leave the publication pending, which blocks every write."""
+    before = published_routing_state(monkeypatch, None, "6.17.1", "1.1.0", "2.1.0")
+    store = install_routing_store(patched_modal, before)
+    pending = publication_plan(
+        monkeypatch,
+        before,
+        ("6.20.0", "1.1.0", "2.2.0"),
+        publication_id="74401-1-beta",
+    )
+    registry.record_routing_plan(environment="staging", plan=pending)
+    registry.apply_routing_plan(environment="staging", plan=pending)
+    worker_class_lookups.apps_without_worker_class.add(versioned_app_name("6.17.1"))
+
+    assert (
+        registry.finalize_routing_publication(
+            environment="staging", release_environment="beta", gates_passed=False
+        )
+        == "restored"
+    )
+
+    assert store.get("active") == before
+    assert store.get("publication") == {"status": "restored", "plan": pending}
+    assert worker_class_lookups.lookups == []
 
 
 @pytest.mark.parametrize("status", ["pending", "completed", "restored"])

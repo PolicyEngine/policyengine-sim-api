@@ -179,8 +179,14 @@ OBSERVABILITY_ENV = modal_image_environment()
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
 
 
-def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
-    """Resolve the artifact bucket and deploy manifest on the deploying machine.
+# The deploy-time variable naming each country's precomputed manifest. Only
+# the US has prebuilt files today; a country is added here when its
+# precompute publishes a manifest.
+MANIFEST_DIGEST_VARIABLES = {"us": "POLICYENGINE_MANIFEST_DIGEST"}
+
+
+def _deploy_time_artifact_inputs(country: str = "us") -> tuple[str, dict | None]:
+    """Resolve the bucket and a country's deploy manifest on the deploying machine.
 
     The manifest content rides into the fetch layer's args, so Modal's
     layer cache busts exactly when the deployed artifact set changes.
@@ -198,7 +204,7 @@ def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
     """
     if not modal.is_local():
         return "", None
-    digest = os.environ.get("POLICYENGINE_MANIFEST_DIGEST")
+    digest = os.environ.get(MANIFEST_DIGEST_VARIABLES[country])
     bucket = os.environ.get("POLICYENGINE_ARTIFACT_BUCKET", "")
     if not digest:
         return bucket, None
@@ -220,10 +226,19 @@ def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
     # Validate on the runner so a corrupt or foreign manifest fails the
     # deploy here, not mid-image-build.
     manifest = ArtifactManifest.model_validate(payload)
+    if manifest.country != country:
+        msg = (
+            f"{MANIFEST_DIGEST_VARIABLES[country]} names a {manifest.country} "
+            f"manifest, not a {country} one."
+        )
+        raise RuntimeError(msg)
     return store.bucket_name, manifest.canonical_payload()
 
 
-_ARTIFACT_BUCKET, _DEPLOY_MANIFEST = _deploy_time_artifact_inputs()
+_ARTIFACT_INPUTS = {
+    country: _deploy_time_artifact_inputs(country)
+    for country in MANIFEST_DIGEST_VARIABLES
+}
 
 
 def build_runtime_simulation_image() -> modal.Image:
@@ -269,27 +284,29 @@ def build_runtime_simulation_image() -> modal.Image:
 
 
 def build_base_simulation_image() -> modal.Image:
-    """Runtime image layers plus the artifact fetch."""
-    return (
-        build_runtime_simulation_image()
-        # Bake the precomputed store artifacts (single-year US datasets
-        # and cohort baselines) into the image. This layer MUST stay
-        # before add_local_python_source — that layer is keyed on source
-        # file hashes, so anything after it rebuilds on every code
-        # change. Its args carry the content-addressed manifest, so the
-        # cache busts exactly when the artifact set changes and never
-        # otherwise. UK requests still build datasets at request time.
-        .run_function(
+    """Runtime image layers plus one artifact download step per country, US first."""
+    image = build_runtime_simulation_image()
+    # Bake each country's precomputed files (year files and current-law
+    # baselines) into the image's prebuilt folders. These layers MUST stay
+    # before add_local_python_source — that layer is keyed on source file
+    # hashes, so anything after it rebuilds on every code change. Each
+    # layer's args carry its country's content-addressed manifest, so its
+    # cache busts exactly when that country's file set changes, and a later
+    # country's change rebuilds only its own step and the ones after it. UK
+    # requests still build datasets at request time.
+    for country in MANIFEST_DIGEST_VARIABLES:
+        bucket, manifest = _ARTIFACT_INPUTS[country]
+        image = image.run_function(
             fetch_artifacts,
-            args=(_ARTIFACT_BUCKET, _DEPLOY_MANIFEST),
+            args=(bucket, manifest),
             secrets=[gcp_secret],
             cpu=2.0,
             memory=4096,
-            # The national files and baselines are about 430 MB; the
-            # per-state datasets (51 states for each year) add several GB.
+            # The US national files and baselines are about 430 MB; the
+            # per-state year files (51 states for each year) add several GB.
             timeout=3600,
         )
-    )
+    return image
 
 
 # Heavy image for the simulation workers. Its last layer checks that both
@@ -450,11 +467,11 @@ def _run_simulation(
 ) -> dict:
     """Execute one annual economic simulation.
 
-    The job behind ``SimulationWorker.run_simulation`` and the plain
-    ``run_simulation`` function. Imports the implementation in the call; in a
-    restored container the snapshot hook has already loaded the country models
-    it uses. Emits redacted operation data through the shared observability
-    runtime. Records the job's stage for status polls (see ``job_progress``).
+    The job behind ``SimulationWorker.run_simulation``. Imports the
+    implementation in the call; in a restored container the snapshot hook has
+    already loaded the country models it uses. Emits redacted operation data
+    through the shared observability runtime. Records the job's stage for
+    status polls (see ``job_progress``).
     """
     progress = _job_progress_reporter()
     progress.start()
@@ -521,9 +538,9 @@ def _run_simulation_segment(
 ) -> dict:
     """Run one region-group child of a segmented national run.
 
-    The job behind ``SimulationSegmentWorker.run_simulation_segment`` and the
-    plain ``run_simulation_segment`` function. Calls the monolithic impl
-    directly — children are ``region_group`` requests and never re-segment.
+    The job behind ``SimulationSegmentWorker.run_simulation_segment``. Calls
+    the monolithic impl directly — children are ``region_group`` requests and
+    never re-segment.
     """
     runtime = _configure_modal_observability(service_role="simulation_worker")
     redacted_params = {
@@ -614,8 +631,14 @@ class SimulationWorker(_CountryModelsLoadedBeforeSnapshot):
 
 @app.cls(
     image=simulation_image,
-    cpu=8.0,
-    memory=32768,
+    # A segment child calculates one region group in one process, so it
+    # keeps one CPU busy. Measured on Modal with both countries' models
+    # loaded, it peaks at about 3.4 GiB for a year whose dataset and
+    # baseline are baked into the image, and at about 6.9 GiB for a year
+    # whose dataset and baseline it builds itself. The memory is a request,
+    # not a limit.
+    cpu=1.0,
+    memory=10240,
     timeout=3600,
     retries=0,
     max_containers=300,
@@ -641,48 +664,6 @@ class SimulationSegmentWorker(_CountryModelsLoadedBeforeSnapshot):
         return _run_simulation_segment(
             params, observability_context=observability_context
         )
-
-
-# The workers' plain functions from before the classes, kept without memory
-# snapshots for callers still running that code. The executor deploys before
-# the gateway, and a deploy that keeps the policyengine.py version replaces the
-# routed app in place, so the old gateway spawns run_simulation here until the
-# new one is live. Runs started before a deploy spawn their children by these
-# names too. Remove both once no such caller is left.
-@app.function(
-    image=simulation_image,
-    cpu=8.0,
-    memory=32768,
-    timeout=3600,
-    retries=0,
-    max_containers=100,
-    secrets=[gcp_secret, hf_secret],
-)
-def run_simulation(
-    params: dict,
-    *,
-    observability_context: dict | None = None,
-) -> dict:
-    """Execute one annual simulation, for callers from before the classes."""
-    return _run_simulation(params, observability_context=observability_context)
-
-
-@app.function(
-    image=simulation_image,
-    cpu=8.0,
-    memory=32768,
-    timeout=3600,
-    retries=0,
-    max_containers=300,
-    secrets=[gcp_secret, hf_secret],
-)
-def run_simulation_segment(
-    params: dict,
-    *,
-    observability_context: dict | None = None,
-) -> dict:
-    """Run one region-group child, for callers from before the classes."""
-    return _run_simulation_segment(params, observability_context=observability_context)
 
 
 @app.function(

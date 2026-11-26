@@ -14,7 +14,10 @@ from src.modal.routing_publisher.state import (
     ROUTING_PUBLICATION_KEY,
     ROUTING_STATE_ACTIVE_KEY,
 )
-from src.modal.routing_publisher.stores import routing_store
+from src.modal.routing_publisher.stores import (
+    require_latest_app_defines_worker_class,
+    routing_store,
+)
 from src.modal.routing_publisher.writers import require_serialized_routing_workflow
 
 if TYPE_CHECKING:
@@ -106,6 +109,13 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
     live. ``unchanged`` means the live state is a
     starting state no plan replaced (nothing was applied, or it was already
     undone). Any other live state is a conflict and nothing is changed.
+
+    A restore that would move ``latest`` to an app without the worker class
+    raises ``LatestAppWithoutWorkerClassError`` and changes nothing
+    (:func:`require_latest_app_defines_worker_class`), with one exception:
+    undoing the pending publication's own plan always puts back what it
+    replaced. Every other routing change refuses while a publication is
+    pending, so refusing to undo it would leave nothing that could.
     """
     require_serialized_routing_workflow()
     for plan in plans:
@@ -121,40 +131,85 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
             return "unchanged"
         msg = "there is no routing state to restore into"
         raise RoutingConflictError(msg)
-    outcome = _restore_live_plans(store, plans)
+    outcome = _restore_live_plans(
+        store,
+        plans,
+        environment=environment,
+        unfinished_plan=pending,
+    )
     if pending is not None:
         write_publication_record(store, plan=pending, status="restored")
     return outcome
 
 
-def _restore_live_plans(store: "modal.Dict", plans: list[dict]) -> str:
+def _is_same_plan(plan: dict, other: dict) -> bool:
+    """Whether two plans are one publication: same ID and the same two states."""
+    return all(
+        plan.get(key) == other.get(key)
+        for key in ("publication_id", "before_sha256", "after_sha256")
+    )
+
+
+def _restore_live_plans(
+    store: "modal.Dict",
+    plans: list[dict],
+    *,
+    environment: str,
+    unfinished_plan: dict | None,
+) -> str:
     """Restore each live plan's starting state, the one given last first.
 
-    Returns ``restored``, or ``unchanged`` when the live state is a starting
-    state no plan replaced; any other live state is a conflict.
+    Every plan's undo is checked first, except that of ``unfinished_plan``
+    (the pending publication): each plan is live when it is undone, so its
+    undo writes its starting state over its published state. If any undo
+    moves ``latest`` to another app without the worker class, nothing is
+    written (:func:`require_latest_app_defines_worker_class`). Returns ``restored``,
+    or ``unchanged`` when the live state is a starting state no plan
+    replaced; any other live state is a conflict.
+    """
+    digest = routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
+    plans_to_undo = _plans_to_undo(plans, live_digest=digest)
+    if not plans_to_undo:
+        if not any(plan["before_sha256"] == digest for plan in plans):
+            msg = (
+                "the routing state is neither what this release replaced nor "
+                "what it published; another change was made, so nothing was "
+                "restored"
+            )
+            raise RoutingConflictError(msg)
+        return "unchanged"
+    for plan in plans_to_undo:
+        if unfinished_plan is not None and _is_same_plan(plan, unfinished_plan):
+            continue
+        require_latest_app_defines_worker_class(
+            plan["before"], replaced_state=plan["after"], environment=environment
+        )
+    for plan in plans_to_undo:
+        _write_starting_state(store, plan)
+    return "restored"
+
+
+def _plans_to_undo(plans: list[dict], *, live_digest: str) -> list[dict]:
+    """Return the plans to undo from the live state, in the order to undo them.
+
+    A plan is undone when the state it published is live, which makes its
+    starting state live; that may be another plan's published state, which is
+    undone next. Plans that changed nothing are skipped, and when several
+    plans published the live state, the one given last is undone.
     """
     remaining = [
         plan for plan in plans if plan["before_sha256"] != plan["after_sha256"]
     ]
-    outcome = "unchanged"
+    plans_to_undo = []
+    digest = live_digest
     while True:
-        digest = routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
         live = [plan for plan in remaining if plan["after_sha256"] == digest]
         if not live:
-            break
+            return plans_to_undo
         plan = live[-1]
         remaining.remove(plan)
-        _write_starting_state(store, plan)
-        outcome = "restored"
-    if outcome == "unchanged" and not any(
-        plan["before_sha256"] == digest for plan in plans
-    ):
-        msg = (
-            "the routing state is neither what this release replaced nor what "
-            "it published; another change was made, so nothing was restored"
-        )
-        raise RoutingConflictError(msg)
-    return outcome
+        plans_to_undo.append(plan)
+        digest = plan["before_sha256"]
 
 
 def _write_starting_state(store: "modal.Dict", plan: dict) -> None:

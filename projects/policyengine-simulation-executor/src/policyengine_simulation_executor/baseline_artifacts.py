@@ -1,11 +1,12 @@
 """Deterministic baseline simulation ids and the validate-on-load guard.
 
-The runtime read path of the artifact pipeline. A baseline simulation whose
-identity is fully determined by the installed version-set (current-law
-policy, default data, national or region-group scope) gets a deterministic
-``Simulation.id`` from ``artifact_keys``; ``Simulation.ensure()`` then finds
-``{id}.h5`` beside the dataset when a precomputed artifact was baked into
-the image, and loads in seconds instead of running the model.
+The runtime read path of the artifact pipeline. A current-law baseline whose
+identity is fully determined by the installed version-set gets a
+deterministic ``Simulation.id`` from ``artifact_keys``: its level handler
+(``stage12_cache.levels``) decides which runs qualify. ``Simulation.ensure()``
+then finds ``{storage id}.h5`` beside the year file when a precomputed
+baseline was baked into the image's prebuilt folder, and loads in seconds
+instead of running the model.
 
 Safety inversion: a load is trusted only after validation. Requests can
 demand output columns beyond what an artifact was built with (cliff
@@ -24,12 +25,13 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Protocol, runtime_checkable
 
-from policyengine.core.scoping_strategy import RegionGroupStrategy
 from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
 from pydantic import PrivateAttr
 
 from policyengine_simulation_executor import artifact_keys
 from policyengine_simulation_executor.precompute_models import ArtifactOutcome
+from policyengine_simulation_executor.region_resolution import RegionResolution
+from policyengine_simulation_executor.stage12_cache import levels
 from policyengine_simulation_executor.stage_reporting_simulation import (
     StageReportingSimulation,
 )
@@ -37,6 +39,8 @@ from policyengine_simulation_executor.stage_reporting_simulation import (
 if TYPE_CHECKING:
     from policyengine.core import Simulation
     from policyengine.core.scoping_strategy import ScopingStrategy
+
+    from policyengine_simulation_executor.simulation_runtime import DatasetSelection
 
 logger = logging.getLogger(__name__)
 
@@ -68,53 +72,49 @@ class EntityVariableResolver(Protocol):
 class BaselineIdentityRequest:
     """The request facts that decide whether a baseline has a deterministic id.
 
-    ``region_code`` is the normalized region (None when unresolved) and
+    ``region_code`` is the normalized region (None when unresolved),
     ``scoping_strategy`` narrows the simulation to it (None for a whole
-    dataset, as a national run is).
+    dataset, as a national run is), ``state_code`` is the US state a state or
+    district region lies in, and ``dataset`` is the selected dataset.
     """
 
     params: dict[str, Any]
     country: str
-    dataset_is_default: bool
+    dataset: DatasetSelection
     policy: object
     region_code: str | None
     scoping_strategy: ScopingStrategy | None
     year: int
+    state_code: str | None = None
 
-
-def _artifact_scope(
-    request: BaselineIdentityRequest,
-) -> tuple[str, str | None] | None:
-    """Return the artifact's region label and scope key, or None if unsupported.
-
-    Supported scopes are an unscoped national run and a region group.
-    """
-    if request.region_code is None:
-        return None
-    if request.scoping_strategy is None:
-        if request.region_code != request.country.lower():
+    def run_scope(self) -> levels.RunScope | None:
+        """Return the run the level handlers look at; None for an unresolved region."""
+        if self.region_code is None:
             return None
-        return artifact_keys.NATIONAL_REGION, None
-    if isinstance(request.scoping_strategy, RegionGroupStrategy):
-        return request.region_code, request.scoping_strategy.cache_key
-    return None
+        return levels.RunScope(
+            country=self.country.lower(),
+            year=self.year,
+            region=RegionResolution(
+                code=self.region_code,
+                scoping_strategy=self.scoping_strategy,
+                state_code=self.state_code,
+            ),
+            dataset=self.dataset,
+        )
 
 
 def qualifying_baseline_identity(
     request: BaselineIdentityRequest,
-) -> artifact_keys.BaselineArtifactIdentity | None:
+) -> artifact_keys.BaselineIdentity | None:
     """Full artifact identity for a qualifying baseline, else None.
 
     Qualifying means the simulation's bytes are a pure function of the
-    installed version-set: current-law policy, macro scope, the resolved
-    default dataset, and a scope the pipeline produces
-    artifacts for — unscoped national or a region group. Single states stay
-    on random ids in v1.
-
-    Deliberately broader than what the store contains: UK national and
-    off-precompute years qualify too, get deterministic ids, miss, and
-    compute — a free in-process-cache win for warm containers, and their
-    artifacts appear automatically if the precompute ever produces them.
+    installed version-set: current-law policy, macro scope, and a run whose
+    level handler gives a baseline scope (today the unscoped US and UK
+    national runs and the US groups of states). The handler decides by the
+    run alone, never by the precomputed years: a qualifying run in a year that
+    is not precomputed still gets a fixed ID, misses, and computes — a free
+    in-process-cache win for warm containers.
 
     Both the runtime reader (via ``deterministic_baseline_id``) and the
     precompute writer derive identity through THIS function, so writer and
@@ -122,23 +122,19 @@ def qualifying_baseline_identity(
     propagate: the writer must fail loudly on them.
     """
     params = request.params
-    if request.policy is not None:
+    if request.policy is not None or str(params.get("scope") or "").lower() != "macro":
         return None
-    if str(params.get("scope") or "").lower() != "macro":
+    run = request.run_scope()
+    prebuilt = None if run is None else levels.prebuilt_for(run.country)
+    handler = None if run is None or prebuilt is None else prebuilt.handler_for_run(run)
+    if run is None or handler is None:
         return None
-    if not request.dataset_is_default:
+    scope = handler.baseline_scope(run)
+    year_file = None if scope is None else handler.year_file_for(run)
+    if scope is None or year_file is None:
         return None
-    scope = _artifact_scope(request)
-    if scope is None:
-        return None
-    region, scope_key = scope
-
-    return artifact_keys.collect_baseline_identity(
-        request.country.lower(),
-        request.year,
-        region=region,
-        scope_key=scope_key,
-        **({"spm": params["spm"]} if params.get("spm") is not None else {}),
+    return artifact_keys.baseline_identity(
+        artifact_keys.year_file_identity(year_file), scope, params.get("spm")
     )
 
 

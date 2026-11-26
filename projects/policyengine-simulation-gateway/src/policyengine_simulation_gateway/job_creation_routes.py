@@ -31,7 +31,6 @@ from policyengine_simulation_contract.local_area_breakdown import (
     supported_local_area_breakdown_capability,
 )
 from policyengine_simulation_contract.simulation_workers import (
-    FUNCTION_FORM_SIMULATION_WORKER,
     SIMULATION_WORKER_CLASS,
     SIMULATION_WORKER_METHOD,
 )
@@ -207,21 +206,11 @@ def _spawn_annual_simulation(
     """Spawn one annual simulation on ``app_name``'s simulation worker.
 
     Apps define the worker as a method of a Modal class, so its containers
-    restore from memory snapshots. Apps deployed before that define it as a
-    plain function, and stay routable for pinned versions and rollbacks, so
-    an app with no worker class gets the function. Only the class lookup
-    falls back: once the class resolves, a failed spawn raises as it is.
+    restore from memory snapshots. Apps deployed before that define a plain
+    function instead, and have no such class: Modal raises ``NotFoundError``
+    when the spawn resolves the lazy class handle.
     """
     worker_class = modal.Cls.from_name(app_name, SIMULATION_WORKER_CLASS)
-    try:
-        worker_class.hydrate()
-    except modal.exception.NotFoundError:
-        worker_function = modal.Function.from_name(
-            app_name, FUNCTION_FORM_SIMULATION_WORKER
-        )
-        return worker_function.spawn(
-            payload, observability_context=observability_context
-        )
     worker_method = getattr(worker_class(), SIMULATION_WORKER_METHOD)
     return worker_method.spawn(payload, observability_context=observability_context)
 

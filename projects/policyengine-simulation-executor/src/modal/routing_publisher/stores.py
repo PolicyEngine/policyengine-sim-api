@@ -1,5 +1,6 @@
 """Open the routing Modal Dicts, and write whole routing states to them."""
 
+from policyengine_simulation_contract.simulation_workers import SIMULATION_WORKER_CLASS
 from src.modal.routing_publisher.legacy import (
     build_legacy_seed_routing_state,
     merge_legacy_seed_into_current,
@@ -45,6 +46,61 @@ def routing_store(environment: str, *, create_if_missing: bool) -> "modal.Dict |
             return None
         raise
     return store
+
+
+class LatestAppWithoutWorkerClassError(ValueError):
+    """A routing change would route ``latest`` to an app without the worker class."""
+
+
+def _latest_route(state: object) -> tuple[str | None, str | None]:
+    """Return the ``latest.policyengine`` version and the app it routes to."""
+    routing = coerce_routing_state(state)
+    version = routing["latest"].get("policyengine")
+    app_name = routing["routes"]["policyengine"].get(version) if version else None
+    return version, app_name
+
+
+def require_latest_app_defines_worker_class(
+    state: object, *, replaced_state: object, environment: str
+) -> None:
+    """Refuse a routing state that moves ``latest`` to an app without the worker class.
+
+    The gateway spawns comparison requests only through an app's
+    ``SimulationWorker`` class, which apps deployed before policyengine.py
+    6.20.0 don't define, so moving ``latest`` to one of them would fail every
+    unpinned comparison request. Raises ``LatestAppWithoutWorkerClassError``
+    when Modal finds no such class in the app, or no such app; any other
+    Modal error is raised as it is.
+
+    Only a move is checked. If ``state`` routes ``latest.policyengine`` to
+    the same app as ``replaced_state``, the state it is written over,
+    requests without a pin keep going to the same app. A state with no
+    routed ``latest.policyengine`` release isn't checked either: the gateway
+    then routes requests without a pin by the latest country model, or,
+    with no routing state at all, by the per-country Dicts from before it.
+    """
+    version, app_name = _latest_route(state)
+    if not app_name or app_name == _latest_route(replaced_state)[1]:
+        return
+    worker_class = modal.Cls.from_name(
+        app_name, SIMULATION_WORKER_CLASS, environment_name=environment
+    )
+    try:
+        worker_class.hydrate()
+    except Exception as exc:
+        if exc.__class__.__name__ != "NotFoundError":
+            raise
+        msg = (
+            f"policyengine {version} routes to {app_name}, which defines no "
+            f"{SIMULATION_WORKER_CLASS} class in Modal environment {environment}. "
+            "The gateway runs comparison requests only through that class, which "
+            "apps deployed before policyengine.py 6.20.0 don't define, so moving "
+            "latest there would fail every unpinned comparison request. Routing "
+            "is unchanged. Roll back to a release from policyengine.py 6.20.0 on "
+            "instead; if a routing publication is pending, undo it first with "
+            "resolve_pending_publication"
+        )
+        raise LatestAppWithoutWorkerClassError(msg) from exc
 
 
 def modal_dict_snapshot(
@@ -151,7 +207,11 @@ def restore_routing_state(
     policyengine_version: str,
     expected_latest: str | None = None,
 ) -> RoutingState:
-    """Point ``latest`` back at a published policyengine.py version and store it."""
+    """Point ``latest`` back at a published policyengine.py version and store it.
+
+    Refuses, writing nothing, to move ``latest`` to an app that defines no
+    worker class (:func:`require_latest_app_defines_worker_class`).
+    """
     require_serialized_routing_workflow()
     store = modal.Dict.from_name(
         ROUTING_STATE_DICT_NAME,
@@ -159,10 +219,14 @@ def restore_routing_state(
         create_if_missing=False,
     )
     require_finished_publication(store)
+    live_state = store.get(ROUTING_STATE_ACTIVE_KEY)
     next_state = build_restored_routing_state(
-        current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
+        current_state=live_state,
         policyengine_version=policyengine_version,
         expected_latest=expected_latest,
+    )
+    require_latest_app_defines_worker_class(
+        next_state, replaced_state=live_state, environment=environment
     )
     store[ROUTING_STATE_ACTIVE_KEY] = next_state
     return next_state

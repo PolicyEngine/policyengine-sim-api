@@ -1,29 +1,26 @@
-"""The main path's baked per-state datasets: their folders and the runtime lookup."""
+"""A state or district run reads its state's prebuilt year file, as .py would reuse it.
+
+These use the installed bundle's state-level dataset and real year files
+written with .py's own ``save()`` and year-file stamp, so .py's real reuse
+checks decide.
+"""
 
 import contextlib
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from policyengine_simulation_executor import state_datasets
+from policyengine.core.scoping_strategy import RowFilterStrategy
+from policyengine_simulation_executor.region_resolution import RegionResolution
 from policyengine_simulation_executor.release_bundle import get_country_release_bundle
 from policyengine_simulation_executor.simulation_runtime import DatasetSelection
+from policyengine_simulation_executor.stage12_cache import levels
+
+STATE_FIPS = {"UT": 49, "WY": 56}
 
 
-def test_state_dataset_relative_folder_names_the_dataset_and_the_state():
-    assert (
-        state_datasets.state_dataset_relative_folder("populace_us_2024_acs_local", "ut")
-        == "state-datasets/populace_us_2024_acs_local/UT"
-    )
-
-
-def test_state_dataset_folder_sits_under_the_data_folder():
-    assert (
-        state_datasets.state_dataset_folder(
-            "/opt/policyengine/data", "populace_us_2024_acs_local", "UT"
-        )
-        == "/opt/policyengine/data/state-datasets/populace_us_2024_acs_local/UT"
-    )
+def _state_folder(data_folder, dataset, state_code):
+    return Path(data_folder) / levels.prebuilt_folder("us", dataset, state_code)
 
 
 @pytest.fixture
@@ -42,9 +39,7 @@ def regional_selection():
 def baked_utah(tmp_path):
     from fixtures.state_dataset_sources import REGIONAL_DATASET, write_year_file
 
-    folder = Path(
-        state_datasets.state_dataset_folder(str(tmp_path), REGIONAL_DATASET, "UT")
-    )
+    folder = _state_folder(tmp_path, REGIONAL_DATASET, "UT")
     folder.mkdir(parents=True)
     return SimpleNamespace(
         data_folder=str(tmp_path),
@@ -54,53 +49,49 @@ def baked_utah(tmp_path):
 
 
 def _lookup(baked, selection, *, state_code="UT", year=2026, country="us"):
-    return state_datasets.baked_state_data_folder(
-        country=country,
-        selection=selection,
+    region = RegionResolution(
+        code=f"state/{(state_code or 'xx').lower()}",
+        scoping_strategy=RowFilterStrategy(
+            variable_name="state_fips", variable_value=STATE_FIPS.get(state_code, 0)
+        ),
         state_code=state_code,
-        year=year,
-        data_folder=baked.data_folder,
     )
+    found = levels.prebuilt_dataset_folder(
+        levels.RunScope(country=country, year=year, region=region, dataset=selection),
+        baked.data_folder,
+    )
+    return None if found is None else found.folder
 
 
-def test_a_state_reads_its_baked_folder(baked_utah, regional_selection):
+def test_a_state_reads_its_prebuilt_folder(baked_utah, regional_selection):
     assert _lookup(baked_utah, regional_selection) == str(baked_utah.folder)
 
 
-def test_a_year_without_a_baked_file_reads_nothing_baked(
+def test_a_year_without_a_prebuilt_file_reads_nothing_prebuilt(
     baked_utah, regional_selection
 ):
     assert _lookup(baked_utah, regional_selection, year=2028) is None
 
 
-def test_a_state_without_a_baked_folder_reads_nothing_baked(
+def test_a_state_without_a_prebuilt_folder_reads_nothing_prebuilt(
     baked_utah, regional_selection
 ):
     assert _lookup(baked_utah, regional_selection, state_code="WY") is None
 
 
-def test_an_unstamped_file_reads_nothing_baked(tmp_path, regional_selection):
+def test_an_unstamped_file_reads_nothing_prebuilt(tmp_path, regional_selection):
     from fixtures.state_dataset_sources import REGIONAL_DATASET, write_year_file
 
-    folder = Path(
-        state_datasets.state_dataset_folder(str(tmp_path), REGIONAL_DATASET, "UT")
-    )
+    folder = _state_folder(tmp_path, REGIONAL_DATASET, "UT")
     folder.mkdir(parents=True)
     write_year_file(folder, year=2026, stamp=False)
 
     assert (
-        state_datasets.baked_state_data_folder(
-            country="us",
-            selection=regional_selection,
-            state_code="UT",
-            year=2026,
-            data_folder=str(tmp_path),
-        )
-        is None
+        _lookup(SimpleNamespace(data_folder=str(tmp_path)), regional_selection) is None
     )
 
 
-def test_a_file_with_another_spm_profile_reads_nothing_baked(
+def test_a_file_with_another_spm_profile_reads_nothing_prebuilt(
     baked_utah, regional_selection
 ):
     from policyengine.tax_benefit_models.us.legacy_spm.record import (
@@ -124,7 +115,7 @@ def test_a_file_with_another_spm_profile_reads_nothing_baked(
     assert _lookup(baked_utah, regional_selection) is None
 
 
-def test_the_default_dataset_reads_nothing_baked(baked_utah):
+def test_the_default_dataset_reads_nothing_prebuilt(baked_utah):
     bundle = get_country_release_bundle("us")
     default = DatasetSelection(
         name=bundle.default_dataset, uri=bundle.default_dataset_uri, is_default=True
@@ -133,16 +124,17 @@ def test_the_default_dataset_reads_nothing_baked(baked_utah):
     assert _lookup(baked_utah, default) is None
 
 
-def test_a_region_without_a_state_reads_nothing_baked(baked_utah, regional_selection):
+def test_a_region_without_a_state_reads_nothing_prebuilt(
+    baked_utah, regional_selection
+):
     assert _lookup(baked_utah, regional_selection, state_code=None) is None
     assert _lookup(baked_utah, regional_selection, country="uk") is None
 
 
-def test_a_district_request_loads_its_states_baked_file(
+def test_a_district_request_loads_its_states_prebuilt_file(
     monkeypatch, baked_utah, regional_selection
 ):
     """A district resolves to its state's code and reads the state's file."""
-    from policyengine.core.scoping_strategy import RowFilterStrategy
     from policyengine_simulation_executor import simulation_runtime
 
     district = SimpleNamespace(
@@ -153,10 +145,18 @@ def test_a_district_request_loads_its_states_baked_file(
         parent_code="state/ut",
         state_code="UT",
     )
+    utah = SimpleNamespace(
+        scoping_strategy=RowFilterStrategy(
+            variable_name="state_fips", variable_value=49
+        )
+    )
     country_module = SimpleNamespace(
         model=SimpleNamespace(
             version="2.2.1",
-            get_region={"congressional_district/UT-01": district}.get,
+            get_region={
+                "congressional_district/UT-01": district,
+                "state/ut": utah,
+            }.get,
         )
     )
     loads = []

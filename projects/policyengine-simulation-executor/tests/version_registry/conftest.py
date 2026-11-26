@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from registry_test_support import FakeDict
+from registry_test_support import FakeDict, FakeWorkerClassLookups
 from src.modal.routing_publisher import bundles as routing_bundles
 from src.modal.routing_publisher import stores as routing_stores
 
@@ -25,7 +25,13 @@ def serialized_workflow(monkeypatch):
 
 
 @pytest.fixture
-def patched_modal(monkeypatch, serialized_workflow):
+def worker_class_lookups() -> FakeWorkerClassLookups:
+    """Record the versioned apps' class lookups; every app defines the class."""
+    return FakeWorkerClassLookups()
+
+
+@pytest.fixture
+def patched_modal(monkeypatch, serialized_workflow, worker_class_lookups):
     stores: dict[str, FakeDict] = {}
 
     class _Dict:
@@ -45,6 +51,7 @@ def patched_modal(monkeypatch, serialized_workflow):
 
     class _Modal:
         Dict = _Dict
+        Cls = worker_class_lookups
 
     monkeypatch.setattr(routing_stores, "modal", _Modal)
     return stores

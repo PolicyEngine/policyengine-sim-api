@@ -4,40 +4,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+# The 20 groups live in stage12_cache, whose package imports no database
+# code, so the run_simulation app's images can load them too.
+from policyengine_simulation_executor.stage12_cache.partition import (
+    US_REGION_GROUPS,
+)
+
 if TYPE_CHECKING:
     from policyengine_simulation_contract.stage12_execution import (
         PlannedSimulationExecutionInput,
     )
 
-# This is an independent snapshot of the measured 20-way partition used by
-# the v1 runner when Stage 12 segmentation was introduced. Stage 12 must not
-# import the v1 partition: either execution path can now evolve without
-# changing the other one implicitly.
 # Every national partition has this many region groups.
 NATIONAL_PARTITION_GROUP_COUNT = 20
-
-US_REGION_GROUPS: tuple[tuple[str, ...], ...] = (
-    ("state/hi", "state/ia", "state/wi"),
-    ("state/ak", "state/ga", "state/la"),
-    ("state/al", "state/co", "state/ri"),
-    ("state/mn", "state/mo", "state/nh"),
-    ("state/az", "state/de", "state/me"),
-    ("state/ny", "state/wv"),
-    ("state/in", "state/ky", "state/md"),
-    ("state/mt", "state/sc", "state/wa"),
-    ("state/id", "state/or", "state/tn"),
-    ("state/ar", "state/nc", "state/nd"),
-    ("state/dc", "state/ks", "state/mi"),
-    ("state/ct", "state/oh", "state/vt"),
-    ("state/nv", "state/va", "state/wy"),
-    ("state/pa", "state/ut"),
-    ("state/sd", "state/tx"),
-    ("state/ca",),
-    ("state/il", "state/ms"),
-    ("state/fl", "state/nm"),
-    ("state/ne", "state/nj"),
-    ("state/ma", "state/ok"),
-)
 
 
 def stage12_region_groups(country: str) -> list[list[str]] | None:

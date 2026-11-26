@@ -7,14 +7,14 @@ thin decorated wrappers, library implementations). Run as a `modal run`
 
     uv run modal run --env=staging src/modal/precompute_app.py
     uv run modal run --env=staging src/modal/precompute_app.py --force
+    uv run modal run --env=staging src/modal/precompute_app.py --country uk
 
-Wave 1 builds the single-year US datasets (one container per year), wave 2
-computes the 20 per-cohort national baselines per year (one container per
-cohort, sized like the production ``run_simulation_segment`` workers).
-Alongside both waves, one container per year and dataset filters the
-regional dataset that state regions load into one year file per state. See
-the library module for the idempotency, ``--force``, and determinism-gate
-semantics.
+``--country`` (default ``us``) picks the country whose level handlers plan
+the run. Each whole dataset's year file is built in one container, and each
+year's subset year files of one dataset (for the US, the 51 state files) in
+another; each current-law baseline is computed in its own container,
+requesting 8 CPUs and 32 GiB. See the library module for the idempotency,
+``--force``, and determinism-check semantics.
 """
 
 from __future__ import annotations
@@ -59,13 +59,13 @@ _worker_secrets = [gcp_secret, hf_secret]
     timeout=1800,
     secrets=_worker_secrets,
 )
-def plan_artifacts(bucket: str) -> dict:
-    """Return the dumped ``PrecomputePlan``: expected artifacts and store presence."""
+def plan_artifacts(bucket: str, country: str) -> dict:
+    """Return a country's dumped ``PrecomputePlan``: its files and their presence."""
     from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
         plan_artifacts_impl,
     )
 
-    return plan_artifacts_impl(bucket).model_dump()
+    return plan_artifacts_impl(bucket, country).model_dump()
 
 
 @app.function(
@@ -76,21 +76,21 @@ def plan_artifacts(bucket: str) -> dict:
     secrets=_worker_secrets,
 )
 def build_dataset(bucket: str, expected: dict) -> dict:
-    """Build and upload one single-year US dataset (wave 1).
+    """Build and upload one whole dataset's year file.
 
-    Raises if the dataset identity resolved in this container differs from the
-    planned one, so planner/worker drift cannot upload under the wrong key.
+    Raises if the year file's identity resolved in this container differs from
+    the planned one, so planner/worker drift cannot upload under the wrong key.
     """
     from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
-        build_dataset_impl,
+        build_year_files_impl,
     )
     from policyengine_simulation_executor.precompute_models import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
-        DatasetPlanEntry,
+        YearFilePlanEntry,
     )
 
-    return build_dataset_impl(
-        bucket, DatasetPlanEntry.model_validate(expected)
-    ).model_dump()
+    entry = YearFilePlanEntry.model_validate(expected)
+    (result,) = build_year_files_impl(bucket, entry.year, [entry])
+    return result.model_dump()
 
 
 @app.function(
@@ -103,22 +103,21 @@ def build_dataset(bucket: str, expected: dict) -> dict:
     secrets=_worker_secrets,
 )
 def build_state_datasets(bucket: str, year: int, expected: list[dict]) -> list[dict]:
-    """Build and upload one year's per-state datasets.
+    """Build and upload a year's subset year files of one dataset, such as the states'.
 
-    Raises if a state's key resolved in this container differs from the
+    Raises if a file's key resolved in this container differs from the
     planned one, so planner/worker drift cannot upload under the wrong key.
     """
     from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
-        build_state_datasets_impl,
+        build_year_files_impl,
     )
     from policyengine_simulation_executor.precompute_models import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
-        StateDatasetPlanEntry,
+        YearFilePlanEntry,
     )
 
-    entries = [StateDatasetPlanEntry.model_validate(entry) for entry in expected]
+    entries = [YearFilePlanEntry.model_validate(entry) for entry in expected]
     return [
-        result.model_dump()
-        for result in build_state_datasets_impl(bucket, year, entries)
+        result.model_dump() for result in build_year_files_impl(bucket, year, entries)
     ]
 
 
@@ -130,7 +129,7 @@ def build_state_datasets(bucket: str, year: int, expected: list[dict]) -> list[d
     secrets=_worker_secrets,
 )
 def compute_baseline(bucket: str, expected: dict) -> dict:
-    """Compute and upload one cohort's national baseline output (wave 2)."""
+    """Compute and upload one current-law baseline's output."""
     from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
         compute_baseline_impl,
     )
@@ -151,7 +150,7 @@ def compute_baseline(bucket: str, expected: dict) -> dict:
     secrets=_worker_secrets,
 )
 def verify_determinism(bucket: str, expected: dict) -> dict:
-    """Recompute one stored cohort baseline afresh and report columns that differ."""
+    """Recompute one stored baseline afresh and report columns that differ."""
     from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
         verify_determinism_impl,
     )
@@ -184,8 +183,8 @@ def publish_manifest(bucket: str, plan: dict) -> str:
 
 
 @app.local_entrypoint()
-def main(*, force: bool = False) -> None:
-    """Fill the store for the installed bundle; ``--force`` recomputes stored ones."""
+def main(*, force: bool = False, country: str = "us") -> None:
+    """Fill the store for a country's bundle; ``--force`` recomputes stored files."""
     from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # local entrypoint: loaded only when the precompute runs
         resolve_bucket_name,
     )
@@ -196,6 +195,7 @@ def main(*, force: bool = False) -> None:
 
     run_precompute(
         resolve_bucket_name(),
+        country=country,
         force=force,
         # Pyright types each decorated function as a modal.Function whose
         # `remote` and `spawn` take that function's own parameters, which it

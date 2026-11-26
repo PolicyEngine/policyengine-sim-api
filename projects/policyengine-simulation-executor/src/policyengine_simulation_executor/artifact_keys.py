@@ -1,52 +1,51 @@
-"""Content-addressed identity for precomputed simulation artifacts.
+"""Content-addressed identity of the run_simulation app's prebuilt files.
 
-The artifact pipeline caches three artifact types in a shared store: single-year
-dataset files, per-state single-year dataset files (a regional dataset's
-year file filtered to one state's households) and precomputed baseline
-simulation outputs. An artifact's key is
-a sha256 digest over the FULL closure of inputs that determine its bytes, so
-"is it cached?" and "is it stale?" are the same question, answered by key
-equality: same key implies a byte-identical artifact; any input change rotates
-the key and the old object simply stops being referenced (garbage collection
-deletes by key with no correctness risk — a wrongly deleted artifact costs a
-recompute, never a wrong answer).
+The precompute stores three kinds of file: year files (a dataset's single-year
+file, or one subset's rows of it), current-law baselines computed on a year
+file, and source files copied as they are. Each file's key is a SHA-256 digest
+over every input that determines its bytes, so "is it stored?" and "is it
+stale?" are the same question, answered by key equality: the same key means a
+byte-identical file, and any input change rotates the key, so the old object
+simply stops being referenced.
 
-Key discipline: every field that can change an artifact's bytes must appear in
-its payload. Version labels alone are not enough — a data re-release under an
-unchanged version label is a known event — so the payloads also carry the
-receipt's content sha256 and the certification data-build fingerprint when
-available. ``None`` fields are serialized as explicit nulls, so presence and
-absence are distinct identities. Bump the schema constants when the payload
-shape or the artifact format itself changes.
+There is one identity per kind for every dataset level: ``yf1`` year files,
+``bl3`` baselines and ``sf1`` source files. A ``None`` input is written as an
+explicit null, so presence and absence are distinct keys. The baseline key
+nests its year file's digest, so anything that rotates a year file rotates
+every baseline on it. Bump a schema label when its payload or the file
+format changes.
 
-The baseline payload nests the dataset digest, so anything that rotates a
-dataset key transitively rotates every baseline built on it. ``country`` and
-``region`` are partially redundant with ``scope_key`` and the nested dataset
-key; the redundancy is deliberate — for a cache key, explicitness only ever
-makes identity more specific, and it means UK or single-state baselines need
-no schema change later.
-
-This module is the single source of truth for keys, ids, and store paths: the
-precompute writer, the runtime reader, and the GC planner all import it, so a
-drift between writer and reader is a code-review diff here, not a silent
-cache miss in production.
+The level handlers (``stage12_cache.levels``) say which files to build;
+this module turns their targets into keys and store paths. The precompute
+writer, the runtime reader and the download step all take keys and paths from
+here, so a drift between writer and reader is a review diff here, not a
+silent miss in production.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from importlib.metadata import version
+from typing import TYPE_CHECKING, Any
 
-DATASET_KEY_SCHEMA = "ds1"
-STATE_DATASET_KEY_SCHEMA = "sds1"
-BASELINE_KEY_SCHEMA = "bl1"
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
-# Length of the digest prefix used in simulation ids and store paths. 16 hex
-# chars (64 bits) is far beyond collision range for this population while
-# keeping filenames readable in logs.
+    from policyengine_simulation_executor.stage12_cache.levels import (
+        BaselineScope,
+        SourceFileTarget,
+        YearFileTarget,
+    )
+
+YEAR_FILE_KEY_SCHEMA = "yf1"
+BASELINE_KEY_SCHEMA = "bl3"
+SOURCE_FILE_KEY_SCHEMA = "sf1"
+
+# Length of the digest prefix in simulation IDs: 16 hex characters (64 bits)
+# is far beyond collision range for this population while keeping file names
+# readable in logs.
 _ID_DIGEST_CHARS = 16
 
 CURRENT_LAW_POLICY = "current-law"
@@ -54,7 +53,7 @@ NATIONAL_REGION = "national"
 
 
 def canonical_digest(payload: Mapping[str, Any]) -> str:
-    """sha256 over the canonical JSON encoding of ``payload``.
+    """Return the SHA-256 of the canonical JSON encoding of ``payload``.
 
     Canonical means: keys sorted, no whitespace, ASCII-only escapes. Any
     nested structure must itself be JSON-serializable with deterministic
@@ -66,199 +65,31 @@ def canonical_digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-@dataclass(frozen=True)
-class DatasetKeyInputs:
-    """Every input that can change one single-year dataset artifact's bytes.
-
-    ``model_version`` and ``policyengine_version`` belong here because the
-    single-year build runs a full Microsimulation pass — its output depends
-    on model code, not just source data. ``source_sha256`` is the installed
-    multi-year source's content hash from the bundle receipt (byte identity;
-    closes the same-version re-release hole), ``data_build_fingerprint`` the
-    certification fingerprint; both may be None when unavailable.
-    """
-
-    country: str
-    dataset: str
-    year: int
-    data_version: str
-    data_artifact_revision: str
-    source_sha256: str | None
-    data_build_fingerprint: str | None
-    model_version: str
-    policyengine_version: str
-    spm: dict | None = None
-
-
-def dataset_key(inputs: DatasetKeyInputs) -> str:
-    """Digest identifying one single-year dataset artifact."""
-    return canonical_digest(
-        {
-            "schema": DATASET_KEY_SCHEMA if inputs.spm is None else "ds2-spm",
-            **({"spm": inputs.spm} if inputs.spm is not None else {}),
-            "country": inputs.country.lower(),
-            "dataset": inputs.dataset,
-            "year": int(inputs.year),
-            "data_version": inputs.data_version,
-            "data_artifact_revision": inputs.data_artifact_revision,
-            "source_sha256": inputs.source_sha256,
-            "data_build_fingerprint": inputs.data_build_fingerprint,
-            "model_version": inputs.model_version,
-            "policyengine_version": inputs.policyengine_version,
-        }
-    )
-
-
-@dataclass(frozen=True)
-class StateDatasetKeyInputs:
-    """Every input that can change one per-state single-year dataset's bytes.
-
-    The file is the regional dataset's year file (built by a full
-    Microsimulation pass, so model and .py versions matter) filtered to the
-    households whose ``filter_variable`` equals ``state_fips``.
-    ``dataset_uri`` pins the source to its Hugging Face revision and
-    ``source_sha256`` is the bundle's certified hash of that source, which may
-    be None when the bundle has none.
-    """
-
-    country: str
-    dataset: str
-    dataset_uri: str
-    source_sha256: str | None
-    year: int
-    state_code: str
-    state_fips: int
-    filter_variable: str
-    model_version: str
-    policyengine_version: str
-    spm: dict | None = None
-
-
-def state_dataset_key(inputs: StateDatasetKeyInputs) -> str:
-    """Digest identifying one per-state single-year dataset artifact."""
-    return canonical_digest(
-        {
-            "schema": STATE_DATASET_KEY_SCHEMA,
-            "spm": inputs.spm,
-            "country": inputs.country.lower(),
-            "dataset": inputs.dataset,
-            "dataset_uri": inputs.dataset_uri,
-            "source_sha256": inputs.source_sha256,
-            "year": int(inputs.year),
-            "state_code": inputs.state_code.upper(),
-            "state_fips": int(inputs.state_fips),
-            "filter_variable": inputs.filter_variable,
-            "model_version": inputs.model_version,
-            "policyengine_version": inputs.policyengine_version,
-        }
-    )
-
-
-@dataclass(frozen=True)
-class BaselineKeyInputs:
-    """Every input that can change one precomputed baseline artifact's bytes.
-
-    ``scope_key`` is the ``ScopingStrategy.cache_key`` string (None for an
-    unscoped national run); ``region`` is the human-readable label
-    ("national", "state/ca", ...). The simulation year rides in via
-    ``dataset_digest``.
-    """
-
-    country: str
-    region: str
-    scope_key: str | None
-    dataset_digest: str
-    model_version: str
-    policyengine_version: str
-    spm: dict | None = None
-    policy: str = CURRENT_LAW_POLICY
-
-
-def baseline_key(inputs: BaselineKeyInputs) -> str:
-    """Digest identifying one precomputed baseline simulation artifact."""
-    return canonical_digest(
-        {
-            "schema": BASELINE_KEY_SCHEMA if inputs.spm is None else "bl2-spm",
-            **({"spm": inputs.spm} if inputs.spm is not None else {}),
-            "country": inputs.country.lower(),
-            "region": inputs.region,
-            "scope_key": inputs.scope_key,
-            "dataset_key": inputs.dataset_digest,
-            "policy": inputs.policy,
-            "model_version": inputs.model_version,
-            "policyengine_version": inputs.policyengine_version,
-        }
-    )
-
-
-def baseline_simulation_id(baseline_digest: str) -> str:
-    """Return the deterministic ``Simulation.id`` for a baseline artifact.
-
-    The id doubles as the artifact filename stem (``{id}.h5`` beside the
-    dataset — the path ``Simulation.ensure()`` already loads from), so it
-    must be filename-safe and must not collide with the dataset filename
-    pattern ``{stem}_year_{year}.h5``.
-    """
-    return f"{BASELINE_KEY_SCHEMA}-{baseline_digest[:_ID_DIGEST_CHARS]}"
-
-
 # --- Store layout ---------------------------------------------------------
 #
-# datasets/<country>/<digest>/<stem>_year_<year>.h5
-# state-datasets/<country>/<digest>/<stem>_year_<year>.h5
-# baselines/<country>/<digest>/<id>.h5
+# year-files/<country>/<digest>/<stem>_year_<year>.h5
+# baselines/<country>/<digest>/<storage id>.h5
+# sources/<country>/<sha256>/<file name>
 # manifests/<digest>.json
 # deployed/<environment>.json
 #
-# The filename inside a dataset object's path is EXACTLY the name the
-# runtime's ensure_datasets existence check resolves — the fetch layer
-# downloads each object under its basename, into POLICYENGINE_DATA_FOLDER or,
-# for a per-state dataset, into its state's folder there, so the object
-# basename IS the runtime filename contract.
+# A file's basename is the name the runtime resolves: the download step puts
+# each object under its basename in its prebuilt folder.
 
 
-def dataset_artifact_filename(stem: str, year: int) -> str:
-    """Return the single-year dataset basename the runtime's existence check expects."""
-    return f"{stem}_year_{year}.h5"
+def year_file_artifact_path(country: str, digest: str, filename: str) -> str:
+    """Return the store key ``year-files/<country>/<digest>/<filename>``."""
+    return f"year-files/{country.lower()}/{digest}/{filename}"
 
 
-def baseline_artifact_filename(simulation_id: str) -> str:
-    """Return the ``{id}.h5`` basename ``Simulation.ensure()`` loads a baseline from."""
-    return f"{simulation_id}.h5"
+def baseline_artifact_path(country: str, digest: str, storage_id: str) -> str:
+    """Return the store key ``baselines/<country>/<digest>/<storage id>.h5``."""
+    return f"baselines/{country.lower()}/{digest}/{storage_id}.h5"
 
 
-def dataset_artifact_path(
-    country: str, dataset_digest: str, stem: str, year: int
-) -> str:
-    """Return the store key ``datasets/<country>/<digest>/<stem>_year_<year>.h5``."""
-    return (
-        f"datasets/{country.lower()}/{dataset_digest}/"
-        f"{dataset_artifact_filename(stem, year)}"
-    )
-
-
-def state_dataset_artifact_path(
-    country: str, state_dataset_digest: str, stem: str, year: int
-) -> str:
-    """Return the store key ``state-datasets/<country>/<digest>/<stem>_year_<year>.h5``.
-
-    Every state's file has the same basename, the one the runtime's
-    ``ensure_datasets`` resolves; the image keeps them apart by folder.
-    """
-    return (
-        f"state-datasets/{country.lower()}/{state_dataset_digest}/"
-        f"{dataset_artifact_filename(stem, year)}"
-    )
-
-
-def baseline_artifact_path(
-    country: str, baseline_digest: str, simulation_id: str
-) -> str:
-    """Return the store key ``baselines/<country>/<digest>/<id>.h5``."""
-    return (
-        f"baselines/{country.lower()}/{baseline_digest}/"
-        f"{baseline_artifact_filename(simulation_id)}"
-    )
+def source_file_artifact_path(country: str, sha256: str, filename: str) -> str:
+    """Return the store key ``sources/<country>/<sha256>/<filename>``."""
+    return f"sources/{country.lower()}/{sha256}/{filename}"
 
 
 def manifest_path(manifest_digest: str) -> str:
@@ -271,138 +102,111 @@ def deployed_marker_path(environment: str) -> str:
     return f"deployed/{environment}.json"
 
 
-# --- Version-identity collection ------------------------------------------
+# --- Identities -----------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class DatasetArtifactIdentity:
-    """Everything needed to key and name one single-year dataset artifact."""
+class YearFileIdentity:
+    """Everything that can change one year file's bytes, and where it is kept.
+
+    ``subset`` names the rows a per-subset file keeps (``region``,
+    ``variable``, ``value``), or is None for a whole dataset. ``packages`` maps
+    each installed package that builds the file to its version. ``stem`` and
+    ``folder`` name the file and its image folder; they follow from the
+    dataset and subset, so they are not in the key.
+    """
 
     country: str
     dataset: str
-    stem: str
-    year: int
+    dataset_sha256: str | None
     data_version: str
     data_artifact_revision: str
-    source_sha256: str | None
-    data_build_fingerprint: str | None
-    model_version: str
-    policyengine_version: str
-    spm: dict | None = None
-
-    @property
-    def digest(self) -> str:
-        """Content key over every input that can change this dataset's bytes."""
-        return dataset_key(
-            DatasetKeyInputs(
-                country=self.country,
-                spm=self.spm,
-                dataset=self.dataset,
-                year=self.year,
-                data_version=self.data_version,
-                data_artifact_revision=self.data_artifact_revision,
-                source_sha256=self.source_sha256,
-                data_build_fingerprint=self.data_build_fingerprint,
-                model_version=self.model_version,
-                policyengine_version=self.policyengine_version,
-            )
-        )
-
-    @property
-    def filename(self) -> str:
-        """Basename the runtime resolves under ``POLICYENGINE_DATA_FOLDER``."""
-        return dataset_artifact_filename(self.stem, self.year)
-
-    @property
-    def store_path(self) -> str:
-        """Store key of this dataset artifact."""
-        return dataset_artifact_path(self.country, self.digest, self.stem, self.year)
-
-
-@dataclass(frozen=True)
-class StateDatasetArtifactIdentity:
-    """Everything needed to key and name one per-state single-year dataset."""
-
-    country: str
-    dataset: str
-    dataset_uri: str
-    source_sha256: str | None
-    stem: str
+    certification_fingerprint: str | None
     year: int
-    state_code: str
-    state_fips: int
-    filter_variable: str
-    model_version: str
-    policyengine_version: str
-    spm: dict | None = None
+    subset: Mapping[str, Any] | None = field(hash=False)
+    packages: Mapping[str, str] = field(hash=False)
+    spm: Mapping[str, Any] | None = field(hash=False)
+    stem: str
+    folder: str
+
+    def payload(self) -> dict[str, Any]:
+        """Return the ``yf1`` payload the digest is computed from."""
+        return {
+            "schema": YEAR_FILE_KEY_SCHEMA,
+            "country": self.country.lower(),
+            "dataset": self.dataset,
+            "dataset_sha256": self.dataset_sha256,
+            "data_version": self.data_version,
+            "data_artifact_revision": self.data_artifact_revision,
+            "certification_fingerprint": self.certification_fingerprint,
+            "year": int(self.year),
+            "subset": None if self.subset is None else dict(self.subset),
+            "packages": dict(self.packages),
+            "spm": None if self.spm is None else dict(self.spm),
+        }
 
     @property
     def digest(self) -> str:
         """Content key over every input that can change this file's bytes."""
-        return state_dataset_key(
-            StateDatasetKeyInputs(
-                country=self.country,
-                dataset=self.dataset,
-                dataset_uri=self.dataset_uri,
-                source_sha256=self.source_sha256,
-                year=self.year,
-                state_code=self.state_code,
-                state_fips=self.state_fips,
-                filter_variable=self.filter_variable,
-                model_version=self.model_version,
-                policyengine_version=self.policyengine_version,
-                spm=self.spm,
-            )
-        )
+        return canonical_digest(self.payload())
 
     @property
     def filename(self) -> str:
-        """Basename the runtime resolves inside the state's folder."""
-        return dataset_artifact_filename(self.stem, self.year)
+        """Basename .py's ``ensure_datasets`` resolves in the file's folder."""
+        return f"{self.stem}_year_{self.year}.h5"
 
     @property
     def store_path(self) -> str:
-        """Store key of this per-state dataset artifact."""
-        return state_dataset_artifact_path(
-            self.country, self.digest, self.stem, self.year
-        )
+        """Store key of this year file."""
+        return year_file_artifact_path(self.country, self.digest, self.filename)
 
 
 @dataclass(frozen=True)
-class BaselineArtifactIdentity:
-    """Everything needed to key, id, and name one baseline artifact."""
+class BaselineIdentity:
+    """Everything that can change one current-law baseline's bytes.
 
-    country: str
+    ``scope_key`` is the scoping strategy's ``cache_key`` (None for a run of
+    the whole dataset) and ``region`` its readable label (``national``,
+    ``region_group/…``). ``spm`` is the request's normalised SPM selection.
+    """
+
+    year_file: YearFileIdentity
     region: str
     scope_key: str | None
-    dataset: DatasetArtifactIdentity
-    spm: dict | None = None
+    spm: Mapping[str, Any] | None = field(default=None, hash=False)
+    policy: str = CURRENT_LAW_POLICY
+
+    def payload(self) -> dict[str, Any]:
+        """Return the ``bl3`` payload the digest is computed from."""
+        return {
+            "schema": BASELINE_KEY_SCHEMA,
+            "year_file": self.year_file.digest,
+            "region": self.region,
+            "scope_key": self.scope_key,
+            "policy": self.policy,
+            "spm": None if self.spm is None else dict(self.spm),
+        }
+
+    @property
+    def country(self) -> str:
+        """The year file's country."""
+        return self.year_file.country.lower()
 
     @property
     def digest(self) -> str:
-        """Content key; nests the dataset digest, so a dataset change rotates it."""
-        return baseline_key(
-            BaselineKeyInputs(
-                country=self.country,
-                region=self.region,
-                spm=self.spm,
-                scope_key=self.scope_key,
-                dataset_digest=self.dataset.digest,
-                model_version=self.dataset.model_version,
-                policyengine_version=self.dataset.policyengine_version,
-            )
-        )
+        """Content key; nests the year file's digest."""
+        return canonical_digest(self.payload())
 
     @property
     def simulation_id(self) -> str:
         """``Simulation.id`` the runtime assigns to this baseline."""
-        return baseline_simulation_id(self.digest)
+        return f"{BASELINE_KEY_SCHEMA}-{self.digest[:_ID_DIGEST_CHARS]}"
 
     @property
     def storage_id(self) -> str:
-        """Artifact filename stem: the simulation id, plus the SPM digest when set.
+        """File stem .py's ``Simulation.storage_id`` gives: the ID, plus the SPM digest.
 
-        The suffix keeps SPM and non-SPM baselines that share a simulation id
+        The suffix keeps SPM and non-SPM baselines that share a simulation ID
         from overwriting each other.
         """
         if self.spm is None:
@@ -411,31 +215,64 @@ class BaselineArtifactIdentity:
 
     @property
     def store_path(self) -> str:
-        """Store key of this baseline artifact, named by ``storage_id``."""
+        """Store key of this baseline, named by ``storage_id``."""
         return baseline_artifact_path(self.country, self.digest, self.storage_id)
 
 
-def _receipt_source_sha256(country: str, data_version: str) -> str | None:
-    """Content hash of the installed multi-year source, when certifiable.
+@dataclass(frozen=True)
+class SourceFileIdentity:
+    """A certified source dataset copied into the image byte for byte."""
 
-    Only trusted when the receipt entry's version matches the bundle's data
-    version (mirroring ``resolve_local_bundle_dataset_path``) — a receipt
-    left over from a different install must not leak into the key.
+    country: str
+    dataset: str
+    dataset_sha256: str
+    filename: str
+    folder: str
+
+    def payload(self) -> dict[str, Any]:
+        """Return the ``sf1`` payload the digest is computed from."""
+        return {
+            "schema": SOURCE_FILE_KEY_SCHEMA,
+            "country": self.country.lower(),
+            "dataset": self.dataset,
+            "dataset_sha256": self.dataset_sha256,
+        }
+
+    @property
+    def digest(self) -> str:
+        """Content key of the copied file."""
+        return canonical_digest(self.payload())
+
+    @property
+    def store_path(self) -> str:
+        """Store key of the copy, addressed by the certified SHA-256."""
+        return source_file_artifact_path(
+            self.country, self.dataset_sha256, self.filename
+        )
+
+
+# --- Collecting identities in the container --------------------------------
+
+
+def _installed_package_versions(country: str) -> dict[str, str]:
+    """Return the installed versions of .py, policyengine-core and the country package.
+
+    Read where the identity is collected, inside the image, so they are the
+    versions that build the file.
     """
-    from policyengine_simulation_executor.release_bundle import (  # noqa: PLC0415  # identity seam: resolved per call so tests can patch release_bundle._receipt_dataset
-        _receipt_dataset,
+    names = ("policyengine", "policyengine-core", f"policyengine-{country.lower()}")
+    return {name: version(name) for name in names}
+
+
+def _release_dataset_sha256(country: str, dataset: str) -> str | None:
+    """Return a bundle dataset's certified SHA-256 from the .py release manifest."""
+    from policyengine.provenance.manifest import (
+        get_release_manifest,
     )
 
-    entry = _receipt_dataset(country)
-    if not isinstance(entry, Mapping):
-        return None
-    if entry.get("version") != data_version:
-        return None
-    for field in ("installed_sha256", "expected_sha256"):
-        value = entry.get(field)
-        if isinstance(value, str) and value:
-            return value
-    return None
+    reference = getattr(get_release_manifest(country), "datasets", {}).get(dataset)
+    digest = getattr(reference, "sha256", None)
+    return digest.lower() if isinstance(digest, str) and digest else None
 
 
 def _certification_fingerprint(country: str) -> str | None:
@@ -448,132 +285,110 @@ def _certification_fingerprint(country: str) -> str | None:
     return fingerprint if isinstance(fingerprint, str) and fingerprint else None
 
 
-def collect_dataset_identity(country: str, year: int) -> DatasetArtifactIdentity:
-    """Identity of the default single-year dataset for this installed bundle.
-
-    Reads the same sources the runtime trusts: the release bundle (versions),
-    the bundle receipt (content sha), and the manifest certification
-    (fingerprint). The stem comes through the same manifest helpers the
-    runtime lookup uses, so filename coupling is inherited, not
-    re-derived.
-    """
+def _dataset_stem(country: str, dataset: str) -> str:
     from policyengine.provenance.manifest import (
         dataset_logical_name,
         resolve_dataset_reference,
     )
 
+    return dataset_logical_name(resolve_dataset_reference(country, dataset))
+
+
+def year_file_identity(target: YearFileTarget) -> YearFileIdentity:
+    """Return the ``yf1`` identity of a handler's year-file target.
+
+    Versions come from the release bundle, the source's certified hash and
+    the certification fingerprint from the .py release manifest, the package
+    versions from the installed packages, and the SPM selection from the
+    image's capability for the year.
+    """
     from policyengine_simulation_executor.release_bundle import (  # noqa: PLC0415  # identity seam: resolved per call so tests can patch release_bundle
         get_country_release_bundle,
-    )
-
-    bundle = get_country_release_bundle(country)
-    stem = dataset_logical_name(
-        resolve_dataset_reference(bundle.country, bundle.default_dataset)
     )
     from policyengine_simulation_executor.spm import (
         normalize_runtime_spm,
     )
 
-    selection = normalize_runtime_spm({"country": country, "time_period": year})
-    return DatasetArtifactIdentity(
-        spm=selection,
-        country=bundle.country,
-        dataset=bundle.default_dataset,
-        stem=stem,
-        year=int(year),
+    country = target.country.lower()
+    bundle = get_country_release_bundle(country)
+    subset = target.subset
+    return YearFileIdentity(
+        country=country,
+        dataset=target.dataset,
+        dataset_sha256=_release_dataset_sha256(country, target.dataset),
         data_version=bundle.data_version,
         data_artifact_revision=bundle.data_artifact_revision,
-        source_sha256=_receipt_source_sha256(bundle.country, bundle.data_version),
-        data_build_fingerprint=_certification_fingerprint(bundle.country),
-        model_version=bundle.model_version,
-        policyengine_version=bundle.policyengine_version,
+        certification_fingerprint=_certification_fingerprint(country),
+        year=int(target.year),
+        subset=(
+            None
+            if subset is None
+            else {
+                "region": subset.region,
+                "variable": subset.variable,
+                "value": subset.value,
+            }
+        ),
+        packages=_installed_package_versions(country),
+        spm=normalize_runtime_spm({"country": country, "time_period": target.year}),
+        stem=_dataset_stem(country, target.dataset),
+        folder=target.folder,
     )
 
 
-def _release_dataset_sha256(country: str, dataset: str) -> str | None:
-    """Certified SHA-256 of a bundle dataset, from the .py release manifest."""
-    from policyengine.provenance.manifest import (
-        get_release_manifest,
-    )
+def baseline_identity(
+    year_file: YearFileIdentity,
+    scope: BaselineScope,
+    spm: Mapping[str, Any] | None = None,
+) -> BaselineIdentity:
+    """Return the ``bl3`` identity of a current-law baseline on ``year_file``.
 
-    reference = getattr(get_release_manifest(country), "datasets", {}).get(dataset)
-    digest = getattr(reference, "sha256", None)
-    return digest.lower() if isinstance(digest, str) and digest else None
-
-
-def collect_state_dataset_identity(  # noqa: PLR0913  # one keyword per input of the per-state key
-    country: str,
-    year: int,
-    *,
-    dataset: str,
-    state_code: str,
-    state_fips: int,
-    filter_variable: str,
-) -> StateDatasetArtifactIdentity:
-    """Identity of one state's year file filtered from a bundle dataset.
-
-    ``dataset`` names a non-default bundle dataset, such as the regional
-    dataset state regions load. Versions and the revision-pinned URI come from
-    the release bundle, the source hash from the .py release manifest, and the
-    stem through the same manifest helpers the runtime lookup uses.
-    """
-    from policyengine.provenance.manifest import (
-        dataset_logical_name,
-        resolve_dataset_reference,
-    )
-
-    from policyengine_simulation_executor.release_bundle import (  # noqa: PLC0415  # identity seam: resolved per call so tests can patch release_bundle
-        get_country_release_bundle,
-    )
-    from policyengine_simulation_executor.spm import (
-        normalize_runtime_spm,
-    )
-
-    bundle = get_country_release_bundle(country)
-    dataset_uri = bundle.dataset_uris.get(dataset)
-    if dataset_uri is None:
-        msg = f"Dataset {dataset!r} is not in the {country} release bundle"
-        raise ValueError(msg)
-    return StateDatasetArtifactIdentity(
-        country=bundle.country,
-        dataset=dataset,
-        dataset_uri=dataset_uri,
-        source_sha256=_release_dataset_sha256(bundle.country, dataset),
-        stem=dataset_logical_name(resolve_dataset_reference(bundle.country, dataset)),
-        year=int(year),
-        state_code=state_code.upper(),
-        state_fips=int(state_fips),
-        filter_variable=filter_variable,
-        model_version=bundle.model_version,
-        policyengine_version=bundle.policyengine_version,
-        spm=normalize_runtime_spm({"country": country, "time_period": year}),
-    )
-
-
-def collect_baseline_identity(
-    country: str,
-    year: int,
-    *,
-    region: str,
-    scope_key: str | None,
-    spm: dict | None = None,
-) -> BaselineArtifactIdentity:
-    """Return the identity of this bundle's baseline for one region and year.
-
-    ``spm`` is normalized against the installed image's capability first, so
-    a request that omits it still keys to the image's default SPM selection.
+    ``spm`` is normalised against the image's capability first, so a request
+    that omits it still keys to the image's default SPM selection.
     """
     from policyengine_simulation_executor.spm import (
         normalize_runtime_spm,
     )
 
     selection = normalize_runtime_spm(
-        {"country": country, "time_period": year, "spm": spm}
+        {
+            "country": year_file.country,
+            "time_period": year_file.year,
+            "spm": None if spm is None else dict(spm),
+        }
     )
-    return BaselineArtifactIdentity(
+    return BaselineIdentity(
+        year_file=year_file,
+        region=scope.region,
+        scope_key=scope.scope_key,
         spm=selection,
-        country=country.lower(),
-        region=region,
-        scope_key=scope_key,
-        dataset=collect_dataset_identity(country, year),
+    )
+
+
+def source_file_identity(target: SourceFileTarget) -> SourceFileIdentity:
+    """Return the ``sf1`` identity of a source dataset copied into the image.
+
+    Raises ``ValueError`` when the release manifest certifies no SHA-256 for
+    it: a copy is addressed by that hash.
+    """
+    from policyengine.provenance.manifest import (
+        resolve_dataset_reference,
+    )
+
+    country = target.country.lower()
+    sha256 = _release_dataset_sha256(country, target.dataset)
+    if sha256 is None:
+        msg = (
+            f"The {country} release manifest has no certified SHA-256 for "
+            f"{target.dataset}"
+        )
+        raise ValueError(msg)
+    reference = resolve_dataset_reference(country, target.dataset)
+    filename = reference.split("@", 1)[0].rsplit("/", 1)[-1]
+    return SourceFileIdentity(
+        country=country,
+        dataset=target.dataset,
+        dataset_sha256=sha256,
+        filename=filename,
+        folder=target.folder,
     )
