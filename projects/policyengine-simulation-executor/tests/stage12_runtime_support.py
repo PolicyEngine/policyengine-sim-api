@@ -294,7 +294,7 @@ def run_until_dataset_loaded(
 ):
     """Run a Stage 12 calculation up to its dataset load; return what it did."""
     from policyengine_simulation_executor import simulation_runtime
-    from policyengine_simulation_executor.stage12_cache import state_datasets
+    from policyengine_simulation_executor.stage12_cache import levels
     from policyengine_simulation_executor.stage12_runtime import simulation as worker
 
     loads = []
@@ -304,9 +304,20 @@ def run_until_dataset_loaded(
         loads.append({"selection": selection, "data_folder": data_folder})
         return object()
 
-    def lookup(**kwargs):
-        lookups.append(kwargs)
-        return baked_folder
+    def lookup(run, data_folder):
+        # The run's facts a prebuilt-folder lookup decides by.
+        lookups.append(
+            {
+                "country": run.country,
+                "selection": run.dataset,
+                "state_code": run.region.state_code,
+                "year": run.year,
+                "data_folder": data_folder,
+            }
+        )
+        if baked_folder is None:
+            return None
+        return levels.PrebuiltFolder(folder=baked_folder, dataset_source=None)
 
     def stop_after_loading(*_args, **_kwargs):
         raise _StoppedAfterLoadingError
@@ -323,7 +334,7 @@ def run_until_dataset_loaded(
         lambda _params, *, region_resolution: selection,
     )
     monkeypatch.setattr(simulation_runtime, "_load_dataset", load_dataset)
-    monkeypatch.setattr(state_datasets, "baked_state_data_folder", lookup)
+    monkeypatch.setattr(levels, "prebuilt_dataset_folder", lookup)
     monkeypatch.setattr(
         worker, "detect_uk_run_dataset_metadata", lambda *_a, **_k: None
     )

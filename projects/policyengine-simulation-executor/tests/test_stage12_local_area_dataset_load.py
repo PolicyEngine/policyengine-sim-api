@@ -252,7 +252,7 @@ def _run_until_built(
 ) -> _Calculation:
     """Run a UK calculation of Wales up to its simulation build."""
     from policyengine_simulation_executor import simulation_runtime
-    from policyengine_simulation_executor.stage12_cache import state_datasets
+    from policyengine_simulation_executor.stage12_cache import levels
 
     calculation = _Calculation()
     dataset = SimpleNamespace(
@@ -292,7 +292,7 @@ def _run_until_built(
         simulation_runtime, "_load_dataset", lambda *_args, **_kwargs: dataset
     )
     monkeypatch.setattr(
-        state_datasets, "baked_state_data_folder", lambda **_kwargs: None
+        levels, "prebuilt_dataset_folder", lambda _run, _data_folder: None
     )
     monkeypatch.setattr(
         worker, "detect_uk_run_dataset_metadata", detect_on_the_national_dataset

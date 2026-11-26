@@ -348,6 +348,39 @@ class TestDownloadStep:
 
         assert len(_files_under(image.data_folder / NATIONAL_FOLDER)) == 21
 
+    @pytest.mark.parametrize(
+        "expected_contents",
+        [
+            pytest.param(None, id="none"),
+            pytest.param({}, id="empty"),
+            pytest.param({"years": [2026, 2027, 2025]}, id="no-counts"),
+            pytest.param(
+                {"years": [], "artifact_counts": {"dataset": 3, "baseline": 60}},
+                id="no-years",
+            ),
+            pytest.param(
+                {
+                    "years": [2026, 2027, 2025],
+                    "artifact_counts": {"dataset": "3", "baseline": 60},
+                },
+                id="count-not-an-integer",
+            ),
+            pytest.param(
+                {"years": [2026, 2027, 2025], "artifact_counts": {"dataset": 3}},
+                id="a-kind-missing",
+            ),
+        ],
+    )
+    def test_refuses_a_deployment_without_usable_expected_contents(
+        self, published, image, expected_contents
+    ):
+        with pytest.raises(
+            RuntimeError, match=r"^Stage 12 cache deployment has no expected contents$"
+        ):
+            image.fetch(published.manifest, expected_contents)
+
+        assert not image.data_folder.exists() or _files_under(image.data_folder) == []
+
     def test_refuses_counts_other_than_the_ones_it_is_given(self, published, image):
         fewer_baselines = {
             "years": [2026, 2027, 2025],

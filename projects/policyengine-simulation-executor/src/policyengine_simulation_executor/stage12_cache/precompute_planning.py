@@ -1,11 +1,17 @@
-"""Plan the Stage 12 cache: baseline identities, state dataset targets and work."""
+"""Plan the Stage 12 cache through the level handlers: targets, identities and work.
+
+The level handlers (``levels``) say which year files and baselines a country
+builds for each year and where the image keeps them; ``cache_levels`` says
+which of those levels this cache covers. This module turns each target into
+the cache's own ``stage12-*`` identity and records whether the bucket holds it.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import NAMESPACE_URL, uuid5
 
+from policyengine_simulation_contract.stage12_bundle import SUPPORTED_COUNTRIES
 from policyengine_simulation_contract.stage12_execution import (
     BundleProvenance,
     DatasetArtifactMediaType,
@@ -25,6 +31,9 @@ from policyengine_simulation_executor.simulation_runtime import (
     resolve_region,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+from policyengine_simulation_executor.stage12_runtime.cached_simulation import (
+    qualifying_cache_identity,
+)
 from policyengine_simulation_executor.stage12_runtime.output_planning import (
     plan_simulation_input,
     resolve_simulation_output_plan,
@@ -34,12 +43,20 @@ from policyengine_simulation_executor.stage12_runtime.worker_inputs import (
     simulation_runtime_params,
 )
 
+from .cache_levels import cache_baseline_levels, cache_year_file_levels
 from .keys import (
     Stage12BaselineCacheIdentity,
     canonical_digest,
-    collect_baseline_identity,
     collect_dataset_identity,
     collect_state_dataset_identity,
+)
+from .levels import (
+    CountryPrebuilt,
+    DatasetLevel,
+    RunScope,
+    YearFileTarget,
+    prebuilt_for,
+    year_file_name,
 )
 from .models import (
     BaselinePlanEntry,
@@ -49,51 +66,74 @@ from .models import (
     StateDatasetPlanEntry,
     WorkSelection,
 )
-from .state_datasets import state_dataset_relative_folder
 from .store import Stage12CacheStore
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from policyengine.core.scoping_strategy import RowFilterStrategy
-
-PRECOMPUTE_YEARS = (2026, 2027, 2025)
+    from policyengine_simulation_contract.stage12_bundle import (
+        CountryId,
+        ResolvedStage12Bundle,
+    )
 
 DETERMINISM_SCHEMA = "stage12-dv1"
 
 
-def _bundle_identity() -> CacheBundleIdentity:
+def bundle_country(country: str) -> CountryId:
+    """Return ``country`` as a Stage 12 bundle country; ``ValueError`` otherwise."""
+    if country not in SUPPORTED_COUNTRIES:
+        msg = f"{country!r} is not a Stage 12 bundle country"
+        raise ValueError(msg)
+    return cast("CountryId", country)
+
+
+def country_prebuilt(country: str) -> CountryPrebuilt:
+    """Return ``country``'s handler settings; ``RuntimeError`` for a country without."""
+    prebuilt = prebuilt_for(country)
+    if prebuilt is None:
+        msg = f"No prebuilt-file handlers exist for {country}"
+        raise RuntimeError(msg)
+    return prebuilt
+
+
+def _bundle_identity(country: CountryId) -> CacheBundleIdentity:
     resolved = load_stage12_bundle()
-    country = next(item for item in resolved.bundle.countries if item.country == "us")
+    country_bundle = next(
+        item for item in resolved.bundle.countries if item.country == country
+    )
     return CacheBundleIdentity(
         bundle_manifest_sha256=resolved.bundle_manifest_sha256,
         policyengine_version=resolved.bundle.policyengine_version,
         core_package_version=resolved.bundle.core_package_version,
-        country_package_version=country.country_package_version,
-        data_package_version=country.data_package_version,
-        data_artifact_revision=country.data_artifact_revision,
-        default_dataset=country.default_dataset,
+        country_package_version=country_bundle.country_package_version,
+        data_package_version=country_bundle.data_package_version,
+        data_artifact_revision=country_bundle.data_artifact_revision,
+        default_dataset=country_bundle.default_dataset,
     )
 
 
 def _planned_pair(
-    year: int,
+    year: int, country: CountryId = "us"
 ) -> tuple[PlannedSimulationExecutionInput, PlannedSimulationExecutionInput]:
     resolved = load_stage12_bundle()
-    country = next(item for item in resolved.bundle.countries if item.country == "us")
+    country_bundle = next(
+        item for item in resolved.bundle.countries if item.country == country
+    )
     dataset = next(
-        item for item in country.datasets if item.identity == country.default_dataset
+        item
+        for item in country_bundle.datasets
+        if item.identity == country_bundle.default_dataset
     )
     provenance = BundleProvenance(
         policyengine_version=resolved.bundle.policyengine_version,
-        country_package_name=country.country_package_name,
-        country_package_version=country.country_package_version,
+        country_package_name=country_bundle.country_package_name,
+        country_package_version=country_bundle.country_package_version,
         dataset=DatasetProvenance(
             identity=dataset.identity,
             uri=dataset.uri,
             artifact_revision=dataset.artifact_revision,
-            data_package_name=country.data_package_name,
-            data_package_version=country.data_package_version,
+            data_package_name=country_bundle.data_package_name,
+            data_package_version=country_bundle.data_package_version,
         ),
         bundle_manifest_sha256=resolved.bundle_manifest_sha256,
     )
@@ -114,7 +154,7 @@ def _planned_pair(
             policy={},
             population=population,
             year=year,
-            geography=GeographySelection(country="us", region="us"),
+            geography=GeographySelection(country=country, region=country),
             bundle=provenance,
         )
 
@@ -131,50 +171,51 @@ def _planned_pair(
 
 
 def scoped_planned_simulation(
-    year: int, group: tuple[str, ...], *, reform: bool = False
+    year: int,
+    group: tuple[str, ...],
+    *,
+    reform: bool = False,
+    country: CountryId = "us",
 ) -> PlannedSimulationExecutionInput:
     """Return the year's planned baseline, or reform, scoped to one region group."""
-    baseline, reform_input = _planned_pair(year)
+    baseline, reform_input = _planned_pair(year, country)
     selected = reform_input if reform else baseline
     return selected.model_copy(update={"options": {"region_group": list(group)}})
 
 
-def _scope_key(year: int, group: tuple[str, ...]) -> str:
-
-    params = {
-        "country": "us",
-        "scope": "macro",
-        "time_period": str(year),
-        "region_group": list(group),
-    }
-    resolution = resolve_region(
-        country_module=_country_module("us"),
-        country="us",
-        params=params,
-    )
-    value = getattr(resolution.scoping_strategy, "cache_key", None)
-    if not isinstance(value, str) or not value:
-        msg = "Stage 12 region group produced no cache identity"
-        raise RuntimeError(msg)
-    return value
-
-
 def baseline_identity(
-    year: int, group: tuple[str, ...]
+    year: int, group: tuple[str, ...], *, country: CountryId = "us"
 ) -> tuple[PlannedSimulationExecutionInput, Stage12BaselineCacheIdentity]:
-    """Return a planned baseline and the identity its worker reads it under."""
+    """Return a planned baseline and the identity its worker reads it under.
+
+    The identity comes from ``qualifying_cache_identity``, the rule the worker
+    applies to the same request, so the precompute writes each baseline
+    under the name the worker looks it up by. Raises ``RuntimeError`` when
+    that rule gives the planned baseline no identity.
+    """
     from policyengine_simulation_executor.spm import normalize_runtime_spm
 
-    simulation = scoped_planned_simulation(year, group)
-    identity = collect_baseline_identity(
+    simulation = scoped_planned_simulation(year, group, country=country)
+    params = simulation_runtime_params(simulation)
+    country_module = _country_module(country)
+    region = resolve_region(
+        country_module=country_module, country=country, params=params
+    )
+    selection = _resolve_dataset_selection(params, region_resolution=region)
+    identity = qualifying_cache_identity(
         simulation,
         resolved=load_stage12_bundle(),
-        region_codes=group,
-        scope_key=_scope_key(year, group),
+        run=RunScope(country=country, year=year, region=region, dataset=selection),
         # The selection the worker builds the simulation with, which names
         # the file .py saves and loads.
-        spm=normalize_runtime_spm(simulation_runtime_params(simulation)),
+        spm=normalize_runtime_spm(params),
     )
+    if identity is None:
+        msg = (
+            f"The planned {country} {year} baseline for {list(group)} gets no "
+            "cache identity: the precompute's and the worker's rules differ"
+        )
+        raise RuntimeError(msg)
     return simulation, identity
 
 
@@ -186,111 +227,122 @@ def determinism_record(baselines: Sequence[BaselinePlanEntry]) -> dict[str, Any]
     }
 
 
-def determinism_record_path(baselines: Sequence[BaselinePlanEntry]) -> str:
+def determinism_record_path(
+    baselines: Sequence[BaselinePlanEntry], country: str | None = None
+) -> str:
     """Return the bucket path of the determinism record for these baselines.
 
     The path is named by the record's digest, so any change to the planned
-    baselines needs a new passing check.
+    baselines needs a new passing check. ``country`` defaults to the one the
+    baselines share; ``ValueError`` when there is none to take.
     """
-    return f"determinism/us/{canonical_digest(determinism_record(baselines))}.json"
-
-
-@dataclass(frozen=True)
-class StateDatasetTarget:
-    """A US state whose requests load a non-default dataset, and its row filter.
-
-    Stage 12 bakes this state's rows of ``dataset`` as their own year file:
-    the households whose ``filter_variable`` equals ``state_fips``.
-    ``scoping_strategy`` is the region's own .py strategy, the one a request
-    for the state applies.
-    """
-
-    region: str
-    state_code: str
-    state_fips: int
-    filter_variable: str
-    dataset: str
-    scoping_strategy: RowFilterStrategy | None = field(
-        default=None, compare=False, repr=False
+    countries = {entry.country for entry in baselines}
+    if country is None:
+        if len(countries) != 1:
+            msg = "A determinism record covers one country's baselines"
+            raise ValueError(msg)
+        (country,) = countries
+    return (
+        f"determinism/{country}/{canonical_digest(determinism_record(baselines))}.json"
     )
 
 
-def state_dataset_targets() -> tuple[StateDatasetTarget, ...]:
-    """Return every US state region that loads a non-default dataset, by state code.
-
-    Each state is resolved as a Stage 12 worker resolves a request for it
-    (``resolve_region`` then ``_resolve_dataset_selection``), so a bundle
-    that sends states back to the default dataset gets no state files.
-    """
-    country_module = _country_module("us")
-    targets = []
-    for region in country_module.model.region_registry.get_by_type("state"):
-        params = {
-            "country": "us",
-            "region": region.code,
-            "time_period": PRECOMPUTE_YEARS[0],
-        }
-        resolution = resolve_region(
-            country_module=country_module, country="us", params=params
+def _key_free_target_problem(
+    resolved: ResolvedStage12Bundle, target: YearFileTarget
+) -> str | None:
+    """Return why the cache has no key for ``target``, or None when it has one."""
+    if target.level is DatasetLevel.NATIONAL and target.subset is None:
+        country_bundle = next(
+            item for item in resolved.bundle.countries if item.country == target.country
         )
-        selection = _resolve_dataset_selection(params, region_resolution=resolution)
-        if selection.is_default:
-            continue
-        strategy = resolution.scoping_strategy
-        variable_name = getattr(strategy, "variable_name", None)
-        variable_value = getattr(strategy, "variable_value", None)
-        if not variable_name or variable_value is None or not resolution.state_code:
+        if target.dataset != country_bundle.default_dataset:
+            return f"a whole year file of {target.dataset}, not the default dataset"
+        return None
+    if target.level is DatasetLevel.STATE and target.subset is not None:
+        return None
+    return f"a {target.level} year file of {target.dataset}"
+
+
+def _year_file_entry(
+    resolved: ResolvedStage12Bundle,
+    target: YearFileTarget,
+    store: Stage12CacheStore,
+) -> DatasetPlanEntry | StateDatasetPlanEntry:
+    """Turn one handler year-file target into the cache's plan entry for it."""
+    problem = _key_free_target_problem(resolved, target)
+    if problem is not None:
+        msg = f"The {target.country} cache has no v2 cache key for {problem}"
+        raise RuntimeError(msg)
+    country = bundle_country(target.country)
+    if target.subset is None:
+        identity = collect_dataset_identity(resolved, country=country, year=target.year)
+    else:
+        identity = collect_state_dataset_identity(
+            resolved,
+            country=country,
+            year=target.year,
+            dataset=target.dataset,
+            state_code=target.subset.code,
+            state_fips=target.subset.value,
+            filter_variable=target.subset.variable,
+        )
+    if identity.filename != year_file_name(target):
+        msg = (
+            f"The cache would store {identity.filename} where the handlers look "
+            f"for {year_file_name(target)}"
+        )
+        raise RuntimeError(msg)
+    exists = store.exists(identity.store_path)
+    if target.subset is None:
+        return DatasetPlanEntry(
+            country=target.country,
+            year=target.year,
+            digest=identity.digest,
+            path=identity.store_path,
+            filename=identity.filename,
+            folder=target.folder,
+            exists=exists,
+        )
+    return StateDatasetPlanEntry(
+        country=target.country,
+        year=target.year,
+        state_code=target.subset.code,
+        region=target.subset.region,
+        dataset=target.dataset,
+        digest=identity.digest,
+        path=identity.store_path,
+        filename=identity.filename,
+        folder=target.folder,
+        exists=exists,
+    )
+
+
+def _baseline_entries(
+    prebuilt: CountryPrebuilt, year: int, store: Stage12CacheStore
+) -> list[BaselinePlanEntry]:
+    """Plan each baseline the cache precomputes for ``year``, in handler order."""
+    entries = []
+    country = bundle_country(prebuilt.country)
+    for level in cache_baseline_levels(prebuilt.country):
+        if level is not DatasetLevel.STATE_GROUP:
             msg = (
-                f"State region {resolution.code} loads {selection.name} but has no "
-                "row filter and state code to build its state file from"
+                f"The {prebuilt.country} cache has no v2 cache key for {level} "
+                "baselines"
             )
             raise RuntimeError(msg)
-        targets.append(
-            StateDatasetTarget(
-                region=resolution.code,
-                state_code=resolution.state_code,
-                state_fips=int(variable_value),
-                filter_variable=variable_name,
-                dataset=selection.name,
-                scoping_strategy=strategy,
-            )
-        )
-    return tuple(sorted(targets, key=lambda target: target.state_code))
-
-
-def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
-    """Plan every dataset and baseline file and record which the bucket holds.
-
-    The plan covers each precompute year and US region group, and records
-    whether a passing determinism check exists for these baselines.
-    """
-    resolved = load_stage12_bundle()
-    store = Stage12CacheStore(bucket)
-    targets = state_dataset_targets()
-    datasets = []
-    baselines = []
-    state_datasets = []
-    for year in PRECOMPUTE_YEARS:
-        dataset = collect_dataset_identity(resolved, country="us", year=year)
-        datasets.append(
-            DatasetPlanEntry(
-                year=year,
-                digest=dataset.digest,
-                path=dataset.store_path,
-                filename=dataset.filename,
-                exists=store.exists(dataset.store_path),
-            )
-        )
-        for index, group in enumerate(US_REGION_GROUPS):
-            simulation, identity = baseline_identity(year, group)
-            baselines.append(
+        for index, target in enumerate(prebuilt.handlers[level].baseline_targets(year)):
+            group = tuple(target.request["region_group"])
+            simulation, identity = baseline_identity(year, group, country=country)
+            entries.append(
                 BaselinePlanEntry(
+                    country=prebuilt.country,
                     year=year,
                     segment_index=index,
                     region_codes=group,
                     digest=identity.digest,
                     path=identity.store_path,
                     filename=identity.filename,
+                    folder=target.year_file.folder,
                     simulation_id=identity.simulation_id,
                     output_plan_sha256=stage12_output_plan_sha256(
                         simulation.output_plan
@@ -298,42 +350,69 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
                     exists=store.exists(identity.store_path),
                 )
             )
-        for target in targets:
-            state_identity = collect_state_dataset_identity(
-                resolved,
-                country="us",
-                year=year,
-                dataset=target.dataset,
-                state_code=target.state_code,
-                state_fips=target.state_fips,
-                filter_variable=target.filter_variable,
-            )
-            state_datasets.append(
-                StateDatasetPlanEntry(
-                    year=year,
-                    state_code=target.state_code,
-                    region=target.region,
-                    dataset=target.dataset,
-                    digest=state_identity.digest,
-                    path=state_identity.store_path,
-                    filename=state_identity.filename,
-                    folder=state_dataset_relative_folder(
-                        target.dataset, target.state_code
-                    ),
-                    exists=store.exists(state_identity.store_path),
-                )
-            )
+    return entries
+
+
+def plan_artifacts_impl(bucket: str, country: str = "us") -> PrecomputePlan:
+    """Plan every year file and baseline the cache holds, and which the bucket has.
+
+    The years come from the country's handler settings, the files from the
+    handlers of the levels the cache covers (``cache_levels``). The plan also
+    records whether a passing determinism check exists for these baselines.
+    The v2 cache covers only the US until task 2.2 · 6, hence the default.
+    """
+    prebuilt = country_prebuilt(country)
+    resolved = load_stage12_bundle()
+    store = Stage12CacheStore(bucket)
+    datasets: list[DatasetPlanEntry] = []
+    baselines: list[BaselinePlanEntry] = []
+    state_datasets: list[StateDatasetPlanEntry] = []
+    for year in prebuilt.years:
+        for level in cache_year_file_levels(country):
+            for target in prebuilt.handlers[level].year_file_targets(year):
+                entry = _year_file_entry(resolved, target, store)
+                if isinstance(entry, DatasetPlanEntry):
+                    datasets.append(entry)
+                else:
+                    state_datasets.append(entry)
+        baselines.extend(_baseline_entries(prebuilt, year, store))
     return PrecomputePlan(
-        years=PRECOMPUTE_YEARS,
+        years=prebuilt.years,
         datasets=tuple(datasets),
         baselines=tuple(baselines),
         state_datasets=tuple(state_datasets),
-        bundle=_bundle_identity(),
+        bundle=_bundle_identity(bundle_country(country)),
         partition_sha256=canonical_digest(
             {"groups": [list(group) for group in US_REGION_GROUPS]}
         ),
-        determinism_verified=store.exists(determinism_record_path(baselines)),
+        determinism_verified=store.exists(determinism_record_path(baselines, country)),
     )
+
+
+def expected_cache_contents(country: str) -> dict[str, Any]:
+    """Return the years, year-file count and baseline count the cache holds.
+
+    The image download step and the deployed worker's check require exactly
+    these. They come from the handler settings and the cache's levels, and
+    never load the country model: the deploying machine computes them.
+    Year files here are whole-dataset ones (the manifest's ``dataset``
+    entries); state files are counted per state by the worker check.
+    """
+    prebuilt = country_prebuilt(country)
+    years = list(prebuilt.years)
+    year_file_count = 0
+    if DatasetLevel.NATIONAL in cache_year_file_levels(country):
+        national = prebuilt.handlers[DatasetLevel.NATIONAL]
+        year_file_count = sum(len(national.year_file_targets(year)) for year in years)
+    baseline_count = sum(
+        len(prebuilt.handlers[level].baseline_targets(year))
+        for year in years
+        for level in cache_baseline_levels(country)
+    )
+    return {
+        "years": years,
+        "artifact_counts": {"dataset": year_file_count, "baseline": baseline_count},
+    }
 
 
 def select_work(plan: PrecomputePlan) -> WorkSelection:

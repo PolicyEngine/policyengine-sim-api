@@ -768,12 +768,20 @@ filter, and stores each state's file under the year file's own name. It
 refuses data in which a household's district code names another state's
 district, because district runs read their state's file.
 
-Precompute publishes a canonical manifest containing the 63 national files and
-the state datasets. The deployment passes that manifest's SHA-256 digest into
-the US image build. The image build downloads and verifies every listed file,
-placing each state dataset in `state-datasets/<dataset>/<state>/` under the
-data folder, then records the exact cache release in worker-validation
-metadata and the v2 version manifest. A state or district calculation reads
+Precompute plans these files through the level handlers in
+`stage12_cache/levels*.py`, which the run_simulation app also uses: the years
+come from the US handler settings, the files from the handlers of the levels
+`stage12_cache/cache_levels.py` lists for this cache (US national and state
+year files, and the state-group baselines). It publishes a canonical manifest
+containing the 63 national files and the state datasets, each entry naming the
+prebuilt folder its file lands in. The deployment passes that manifest's
+SHA-256 digest, and the years and counts the cache must hold
+(`expected_cache_contents`), into the US image build. The image build
+downloads and verifies every listed file into its folder under the data
+folder: the national year files and the baselines computed on them in
+`prebuilt/us/<default dataset>/all/`, and each state dataset in
+`prebuilt/us/<dataset>/<state>/`. It then records the exact cache release in
+worker-validation metadata and the v2 version manifest. A state or district calculation reads
 its state's file when the image holds it for the requested year and .py would
 reuse it, and prepares the dataset during the calculation otherwise. The UK
 and coordinator images do not contain these files. Deployment validation runs

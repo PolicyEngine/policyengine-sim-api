@@ -72,6 +72,28 @@ def _resolved() -> ResolvedStage12Bundle:
     )
 
 
+def _run(strategy, *, is_default: bool = True):
+    """Return the resolved run a region-group request gives, with ``strategy``."""
+    from policyengine_simulation_executor.simulation_runtime import (
+        DatasetSelection,
+        RegionResolution,
+    )
+    from policyengine_simulation_executor.stage12_cache.levels import RunScope
+
+    return RunScope(
+        country="us",
+        year=2026,
+        region=RegionResolution(
+            code="region_group/state/ca", scoping_strategy=strategy
+        ),
+        dataset=DatasetSelection(
+            name="populace_us_2024",
+            uri="hf://policyengine/data/populace_us_2024.h5@revision",
+            is_default=is_default,
+        ),
+    )
+
+
 def _strategy():
     from policyengine.core.scoping_strategy import (
         RegionGroupStrategy,
@@ -93,8 +115,7 @@ def test_cache_writer_and_reader_share_full_identity() -> None:
     reader = qualifying_cache_identity(
         simulation,
         resolved=resolved,
-        dataset_is_default=True,
-        scoping_strategy=strategy,
+        run=_run(strategy),
         spm=SPM_SELECTION,
     )
     writer = collect_baseline_identity(
@@ -182,8 +203,7 @@ def test_only_current_law_default_dataset_baseline_qualifies() -> None:
     )
     kwargs = {
         "resolved": _resolved(),
-        "dataset_is_default": True,
-        "scoping_strategy": _strategy(),
+        "run": _run(_strategy()),
         "spm": SPM_SELECTION,
     }
     assert qualifying_cache_identity(baseline, **kwargs) is not None
@@ -201,7 +221,9 @@ def test_only_current_law_default_dataset_baseline_qualifies() -> None:
         is None
     )
     assert (
-        qualifying_cache_identity(baseline, **{**kwargs, "dataset_is_default": False})
+        qualifying_cache_identity(
+            baseline, **{**kwargs, "run": _run(_strategy(), is_default=False)}
+        )
         is None
     )
 
@@ -264,8 +286,7 @@ def test_only_a_state_region_group_with_a_scope_cache_key_qualifies(
         qualifying_cache_identity(
             baseline,
             resolved=_resolved(),
-            dataset_is_default=True,
-            scoping_strategy=_scoping_strategy(strategy_name),
+            run=_run(_scoping_strategy(strategy_name)),
             spm=SPM_SELECTION,
         )
         is None

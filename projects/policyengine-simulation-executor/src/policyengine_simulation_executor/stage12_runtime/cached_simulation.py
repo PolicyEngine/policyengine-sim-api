@@ -6,7 +6,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from policyengine.core import Simulation
-from policyengine.core.scoping_strategy import RegionGroupStrategy
 from policyengine.core.simulation import _cache
 from policyengine_simulation_contract.stage12_execution import (
     PlannedSimulationExecutionInput,
@@ -15,18 +14,23 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from pydantic import PrivateAttr
 
+from policyengine_simulation_executor.stage12_cache.cache_levels import (
+    cache_baseline_levels,
+)
 from policyengine_simulation_executor.stage12_cache.keys import (
     Stage12BaselineCacheIdentity,
     collect_baseline_identity,
 )
+from policyengine_simulation_executor.stage12_cache.levels import prebuilt_for
 
 from .output_planning import validate_output_frames
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from policyengine.core.scoping_strategy import ScopingStrategy
     from policyengine_simulation_contract.stage12_bundle import ResolvedStage12Bundle
+
+    from policyengine_simulation_executor.stage12_cache.levels import RunScope
 
 logger = logging.getLogger(__name__)
 
@@ -39,18 +43,25 @@ def qualifying_cache_identity(
     simulation: PlannedSimulationExecutionInput,
     *,
     resolved: ResolvedStage12Bundle,
-    dataset_is_default: bool,
-    scoping_strategy: ScopingStrategy | None,
+    run: RunScope,
     spm: Mapping[str, Any] | None,
 ) -> Stage12BaselineCacheIdentity | None:
-    """Return a safe cache identity, or None for an ineligible simulation."""
-    if not _is_current_law_default_baseline(
-        simulation, dataset_is_default=dataset_is_default
-    ):
+    """Return a safe cache identity, or None for an ineligible simulation.
+
+    A simulation qualifies when it is a current-law baseline whose region
+    group lists only states, its level (from the level handlers) is one the
+    cache precomputes baselines for (``cache_levels``), and the level's handler
+    gives it a baseline scope. The scope's cache key enters the identity. A
+    scope lookup that fails gives no identity, so the run computes its
+    baseline instead of failing.
+    """
+    if not _is_current_law_baseline(simulation):
         return None
     region_codes = _state_region_group(simulation)
-    scope_key = _region_group_cache_key(scoping_strategy)
-    if region_codes is None or scope_key is None:
+    if region_codes is None:
+        return None
+    scope_key = _cached_level_scope_key(run)
+    if scope_key is None:
         return None
     return collect_baseline_identity(
         simulation,
@@ -61,15 +72,9 @@ def qualifying_cache_identity(
     )
 
 
-def _is_current_law_default_baseline(
-    simulation: PlannedSimulationExecutionInput, *, dataset_is_default: bool
-) -> bool:
-    """Whether a simulation is a baseline with no reform on the default dataset."""
-    return (
-        simulation.role is SimulationRole.BASELINE
-        and not simulation.policy
-        and dataset_is_default
-    )
+def _is_current_law_baseline(simulation: PlannedSimulationExecutionInput) -> bool:
+    """Whether a simulation is a baseline with no reform."""
+    return simulation.role is SimulationRole.BASELINE and not simulation.policy
 
 
 def _state_region_group(
@@ -86,11 +91,32 @@ def _state_region_group(
     return tuple(code for code in raw_group if isinstance(code, str))
 
 
-def _region_group_cache_key(scoping_strategy: ScopingStrategy | None) -> str | None:
-    """Return a region-group scope's cache key, or None when it has none."""
-    if not isinstance(scoping_strategy, RegionGroupStrategy):
+def _cached_level_scope_key(run: RunScope) -> str | None:
+    """Return the scope key of a run whose level the cache precomputes, or None.
+
+    The level's handler decides the scope, including that the run reads the
+    default dataset. None when the run's country has no handlers, its level
+    is not one the cache covers, the handler gives no scope or no key, or the
+    lookup fails.
+    """
+    prebuilt = prebuilt_for(run.country)
+    level = None if prebuilt is None else prebuilt.level_of(run)
+    if prebuilt is None or level is None:
         return None
-    scope_key = getattr(scoping_strategy, "cache_key", None)
+    if level not in cache_baseline_levels(run.country):
+        return None
+    try:
+        scope = prebuilt.handlers[level].baseline_scope(run)
+    except Exception:  # noqa: BLE001  # a lookup failure costs a computed baseline, never the request; it is logged
+        logger.warning(
+            "Could not look up the baseline scope of %s region %s; computing "
+            "its baseline under a random ID",
+            run.country,
+            run.region.code,
+            exc_info=True,
+        )
+        return None
+    scope_key = None if scope is None else scope.scope_key
     if not isinstance(scope_key, str) or not scope_key:
         return None
     return scope_key

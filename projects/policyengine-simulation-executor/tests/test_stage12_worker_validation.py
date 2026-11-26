@@ -433,28 +433,31 @@ def test_digest_mismatch_is_checked_before_any_dataset_access() -> None:
 
 def _installed_manifest(*, state_codes=("UT", "WY")):
     from policyengine_simulation_executor.stage12_cache.models import CacheManifest
-    from policyengine_simulation_executor.stage12_cache.precompute import (
-        PRECOMPUTE_YEARS,
+    from policyengine_simulation_executor.stage12_cache.precompute_planning import (
+        country_prebuilt,
     )
     from policyengine_simulation_executor.stage12_runtime.partition import (
         US_REGION_GROUPS,
     )
+
+    years = country_prebuilt("us").years
 
     def entry(kind, year, index):
         return {
             "type": kind,
             "path": f"{kind}s/us/{year}-{index}/{kind}-{year}-{index}.h5",
             "filename": f"{kind}-{year}-{index}.h5",
+            "folder": "prebuilt/us/populace_us_2024/all",
             "year": year,
             "identity_digest": f"{kind}-{year}-{index}",
             "content_sha256": "f" * 64,
             "size_bytes": 1,
         }
 
-    artifacts = [entry("dataset", year, 0) for year in PRECOMPUTE_YEARS]
+    artifacts = [entry("dataset", year, 0) for year in years]
     artifacts += [
         entry("baseline", year, index)
-        for year in PRECOMPUTE_YEARS
+        for year in years
         for index in range(len(US_REGION_GROUPS))
     ]
     artifacts += [
@@ -462,21 +465,21 @@ def _installed_manifest(*, state_codes=("UT", "WY")):
             "type": "state_dataset",
             "path": f"state-datasets/us/{year}-{state}/acs_year_{year}.h5",
             "filename": f"acs_year_{year}.h5",
-            "folder": f"state-datasets/acs/{state}",
+            "folder": f"prebuilt/us/acs/{state}",
             "state_code": state,
             "year": year,
             "identity_digest": f"state-{year}-{state}",
             "content_sha256": "f" * 64,
             "size_bytes": 1,
         }
-        for year in PRECOMPUTE_YEARS
+        for year in years
         for state in state_codes
     ]
     return CacheManifest.model_validate(
         {
             "schema": "stage12-mf1",
             "country": "us",
-            "years": list(PRECOMPUTE_YEARS),
+            "years": list(years),
             "partition_sha256": "d" * 64,
             "bundle": {
                 "bundle_manifest_sha256": "b" * 64,
@@ -532,11 +535,20 @@ def test_installed_cache_refuses_a_missing_state_file(tmp_path) -> None:
 
 def test_expected_state_file_count_follows_the_installed_bundle(monkeypatch) -> None:
     from policyengine_simulation_executor import stage12_worker_validation as module
-    from policyengine_simulation_executor.stage12_cache import precompute
+    from policyengine_simulation_executor.stage12_cache import levels_us
+    from policyengine_simulation_executor.stage12_cache.precompute_planning import (
+        country_prebuilt,
+    )
 
-    monkeypatch.setattr(precompute, "state_dataset_targets", lambda: ("UT", "WY"))
+    monkeypatch.setattr(
+        levels_us.UsStateHandler,
+        "year_file_targets",
+        lambda _handler, _year: ("UT", "WY"),
+    )
 
-    assert module.expected_state_dataset_count() == 2 * len(precompute.PRECOMPUTE_YEARS)
+    assert module.expected_state_dataset_count() == 2 * len(
+        country_prebuilt("us").years
+    )
 
 
 def test_the_reported_cache_release_still_matches_its_contract_with_state_files(
