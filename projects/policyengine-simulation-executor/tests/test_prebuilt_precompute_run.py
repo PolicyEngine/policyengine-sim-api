@@ -279,3 +279,35 @@ def test_a_failed_determinism_check_stops_before_publishing():
             BUCKET, country="us", force=False, functions=functions, echo=lambda _: None
         )
     assert ("remote", "publish_manifest") not in events
+
+
+def test_a_plan_with_source_files_to_copy_stops_before_any_build():
+    """Nothing copies source files yet, so a plan that needs one fails first.
+
+    Otherwise the run would build every file and then fail to publish a
+    manifest listing a source file that was never stored.
+    """
+    from policyengine_simulation_executor.precompute_models import SourceFilePlanEntry
+
+    national = _year_file(2026)
+    source = SourceFilePlanEntry(
+        country="us",
+        level=DatasetLevel.NATIONAL,
+        dataset="populace_cps_local",
+        digest="sf1-digest",
+        sha256="ab" * 32,
+        path=f"sources/us/{'ab' * 32}/populace_cps_local.h5",
+        filename="populace_cps_local.h5",
+        folder="prebuilt/us/populace_cps_local/all",
+        exists=False,
+    )
+    plan = _plan([national], [_baseline(national)]).model_copy(
+        update={"source_files": [source]}
+    )
+    functions, events = _functions(plan)
+
+    with pytest.raises(SystemExit, match="source file"):
+        precompute.run_precompute(
+            BUCKET, country="us", force=False, functions=functions, echo=lambda _: None
+        )
+    assert events == [("remote", "plan_artifacts")]

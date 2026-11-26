@@ -396,5 +396,70 @@ class TestManifest:
             "size_bytes": str(len(b"year file bytes")),
         }
 
+    def test_a_source_file_entry_carries_its_sf1_digest(self, inputs):
+        from policyengine_simulation_executor.precompute_models import (
+            SourceFilePlanEntry,
+        )
+
+        plan = _small_plan().model_copy(
+            update={
+                "source_files": [
+                    SourceFilePlanEntry(
+                        country="us",
+                        level=DatasetLevel.NATIONAL,
+                        dataset="populace_cps_local",
+                        digest="sf1-digest",
+                        sha256="ab" * 32,
+                        path=f"sources/us/{'ab' * 32}/populace_cps_local.h5",
+                        filename="populace_cps_local.h5",
+                        folder="prebuilt/us/populace_cps_local/all",
+                        exists=True,
+                    )
+                ]
+            }
+        )
+        for entry in [*plan.year_files, *plan.baselines, *plan.source_files]:
+            _store_with_metadata(inputs, entry.path, "4" * 64, 400)
+
+        digest = precompute.publish_manifest_impl(BUCKET, plan)
+
+        manifest = json.loads(inputs.gcs_client.objects[f"manifests/{digest}.json"])
+        source = manifest["artifacts"][-1]
+        assert (source["kind"], source["digest"], source["sha256"], source["year"]) == (
+            "source_file",
+            "sf1-digest",
+            "4" * 64,
+            None,
+        )
+
+    def test_planned_source_files_are_keyed_by_their_sf1_identity(
+        self, inputs, monkeypatch
+    ):
+        from policyengine_simulation_executor.stage12_cache import levels_us
+        from policyengine_simulation_executor.stage12_cache.levels import (
+            SourceFileTarget,
+        )
+
+        target = SourceFileTarget(
+            country="us",
+            level=DatasetLevel.NATIONAL,
+            dataset="populace_cps_local",
+            folder="prebuilt/us/populace_cps_local/all",
+        )
+        monkeypatch.setattr(
+            levels_us.UsNationalHandler,
+            "source_file_targets",
+            lambda _handler: [target],
+        )
+
+        (entry,) = precompute.plan_artifacts_impl(BUCKET, "us").source_files
+
+        identity = artifact_keys.source_file_identity(target)
+        assert (entry.digest, entry.sha256, entry.path) == (
+            identity.digest,
+            identity.dataset_sha256,
+            identity.store_path,
+        )
+
     def test_the_digest_output_line(self):
         assert precompute.manifest_digest_line("abc") == "MANIFEST_DIGEST=abc"
