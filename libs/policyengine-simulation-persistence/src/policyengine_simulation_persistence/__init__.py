@@ -162,6 +162,7 @@ from policyengine_simulation_persistence.orm_base import (
     ServiceBase,
 )
 from policyengine_simulation_persistence.policy_reform import (
+    DynamicWithoutValuesError,
     MissingPolicyParametersError,
     OverlappingReformError,
     PolicyReform,
@@ -246,6 +247,7 @@ __all__ = [
     "DecileImpact",
     "DecileType",
     "Dynamic",
+    "DynamicWithoutValuesError",
     "EconomyCatalogRows",
     "EconomyPopulation",
     "EconomyRecordOutcomeUnknownError",

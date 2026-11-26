@@ -2,9 +2,10 @@
 
 ``SimulationWorker`` and ``SimulationSegmentWorker`` in ``src/modal/app.py``
 run :func:`preload_country_models` in their ``@modal.enter(snap=True)`` hook.
-Modal runs that hook once, in the container that takes the snapshot, and
-every container restored from the snapshot starts with its results already in
-memory:
+Modal runs that hook in every container that isn't restored, and takes the
+memory snapshot from such a container when it starts it with snapshots
+enabled. Every container restored from the snapshot starts with the hook's
+results already in memory:
 
 - the country packages, whose import builds each country's tax-benefit
   system;

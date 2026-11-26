@@ -137,8 +137,8 @@ class EconomyRunStore:
 
         Raise UnknownCatalogVersionError, UnknownRegionError or
         UnknownDatasetError, or the policy reader's UnknownPolicyError,
-        UnknownDynamicError or MissingPolicyParametersError, or
-        OverlappingReformError.
+        UnknownDynamicError, DynamicWithoutValuesError or
+        MissingPolicyParametersError, or OverlappingReformError.
         """
         with self._transaction() as session:
             catalog = read_catalog_rows(session, request)

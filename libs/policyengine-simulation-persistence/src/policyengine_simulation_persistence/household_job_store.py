@@ -101,8 +101,8 @@ class HouseholdJobStore:
         simulation's are (``read_simulation_reform``). Raise
         UnknownCatalogVersionError, UnknownHouseholdError, or the readers'
         UnknownPolicyError, UnknownDynamicError (a dynamic of another
-        country included), MissingPolicyParametersError or
-        OverlappingReformError.
+        country included), DynamicWithoutValuesError,
+        MissingPolicyParametersError or OverlappingReformError.
         """
         with self._transaction() as session:
             catalog_version_id = read_catalog_version_id(

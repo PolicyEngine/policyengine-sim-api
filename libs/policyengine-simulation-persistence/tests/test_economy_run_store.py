@@ -29,6 +29,7 @@ from economy_rows import (
 from policyengine_simulation_persistence import (
     CatalogDataset,
     CatalogRegion,
+    DynamicWithoutValuesError,
     EconomyCatalogRows,
     EconomyPopulation,
     EconomyRecordOutcomeUnknownError,
@@ -419,6 +420,7 @@ def test_a_report_and_a_simulation_are_read_as_they_stand(
         ("reform", UnknownPolicyError),
         ("reform", MissingPolicyParametersError),
         ("baseline", OverlappingReformError),
+        ("reform", DynamicWithoutValuesError),
     ],
 )
 def test_a_reports_refused_values_name_the_side_they_belong_to(
@@ -440,12 +442,16 @@ def test_a_reports_refused_values_name_the_side_they_belong_to(
         dynamic_id = insert_dynamic(
             connection, economy.catalog, [StoredValue(ELASTICITY, -0.05, START)]
         )
+        dynamic_without_values_id = insert_dynamic(connection, economy.catalog)
         act_as_the_service(connection)
         refused = {
             UnknownDynamicError: SimulationChoice(None, uuid4()),
             UnknownPolicyError: SimulationChoice(uuid4(), None),
             MissingPolicyParametersError: SimulationChoice(lacking_policy_id, None),
             OverlappingReformError: SimulationChoice(overlapping_policy_id, dynamic_id),
+            DynamicWithoutValuesError: SimulationChoice(
+                None, dynamic_without_values_id
+            ),
         }[error_type]
         choices = {"baseline": CURRENT_LAW, "reform": CURRENT_LAW, side: refused}
 
@@ -525,6 +531,7 @@ def test_every_side_refusal_is_raised_with_its_side(monkeypatch) -> None:
         UnknownDynamicError: UnknownDynamicError("no dynamic"),
         MissingPolicyParametersError: MissingPolicyParametersError(["gov.a"]),
         OverlappingReformError: OverlappingReformError(["gov.a"]),
+        DynamicWithoutValuesError: DynamicWithoutValuesError("no values"),
     }
     assert set(get_args(SideRefusal.__value__)) == set(refusals)
 

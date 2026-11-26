@@ -41,17 +41,20 @@ from policyengine_simulation_entry.budget_window_submissions import (
     ReportSubmissionService,
 )
 from policyengine_simulation_entry.economy_submission_errors import (
+    EconomySubmissionRefusedError,
     EconomySubmissionUnavailableError,
 )
 from policyengine_simulation_entry.economy_submissions import ServiceSettings
 from policyengine_simulation_persistence import (
     BudgetWindowInputs,
+    DynamicWithoutValuesError,
     EconomyReportDefinition,
     FoundBudgetWindow,
     FoundSide,
     FoundWindowRun,
     FoundWindowYear,
     ReportRunStatus,
+    ReportSideError,
     SimulationInputs,
 )
 from policyengine_stage12_persistence import (
@@ -274,6 +277,26 @@ def test_a_window_is_created_with_a_run_per_year_and_its_first_five_started() ->
             for window_year in report.years
         ],
     }
+
+
+def test_a_window_whose_side_has_a_dynamic_without_values_is_refused() -> None:
+    """No window, year or call is created for values this release can't read."""
+    store = FakeWindowStore(
+        read_failure=ReportSideError(
+            "reform", DynamicWithoutValuesError("store text: no values")
+        )
+    )
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionRefusedError) as refused:
+        _submit(_service(store, caller=caller))
+
+    assert (refused.value.code, refused.value.detail) == (
+        "dynamic_without_values",
+        "us's stored dynamic that the request's reform names has no parameter "
+        "values the service can read.",
+    )
+    assert (store.windows, caller.report_runs) == ([], [])
 
 
 def test_each_later_year_is_derived_from_the_first() -> None:

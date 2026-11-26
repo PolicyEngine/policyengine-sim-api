@@ -74,7 +74,7 @@ def test_every_worker_function_carries_gcp_secret(precompute_module, name):
     )
 
 
-def test_compute_baseline_matches_segment_worker_shape(precompute_module):
+def test_compute_baseline_requests_8_cpus_and_32_gib(precompute_module):
     kwargs = _function_kwargs(precompute_module, "compute_baseline")
     assert kwargs["cpu"] == 8.0
     assert kwargs["memory"] == 32768

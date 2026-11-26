@@ -57,6 +57,7 @@ from policyengine_simulation_entry.household_workers import (
     VersionManifestUnavailableError,
 )
 from policyengine_simulation_persistence import (
+    DynamicWithoutValuesError,
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
     FoundReportRun,
@@ -374,13 +375,27 @@ def test_a_policy_compared_with_itself_is_calculated_on_one_run():
             "us has no stored dynamic the request's baseline names.",
         ),
         (
+            ReportSideError("reform", DynamicWithoutValuesError("no values")),
+            EconomySubmissionRefusedError,
+            "dynamic_without_values",
+            "us's stored dynamic that the request's reform names has no parameter "
+            "values the service can read.",
+        ),
+        (
             DATABASE_ERROR,
             EconomySubmissionUnavailableError,
             "database_unavailable",
             "The simulation database could not be read.",
         ),
     ],
-    ids=["catalog-version", "household", "policy", "dynamic", "database"],
+    ids=[
+        "catalog-version",
+        "household",
+        "policy",
+        "dynamic",
+        "dynamic-without-values",
+        "database",
+    ],
 )
 def test_each_missing_input_is_refused_before_anything_is_written(
     failure, expected_type, code, detail

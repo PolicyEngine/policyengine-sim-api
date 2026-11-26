@@ -185,6 +185,72 @@ calls in turn. Each of those calls that was running writes an ERROR record,
 so one coordinator preemption can write one for each simulation and each of
 its running segments.
 
+### Container start and call number
+
+Each call of the versioned app's workers (`run_simulation` and
+`run_simulation_segment`, as class methods and as plain functions) and of
+`run_budget_window_batch` sets two attributes on its operation, so on its
+`operation.completed` log record and its span. Only the operation's span
+carries them, not its child spans such as `country_module_load`.
+`_set_modal_call_attributes` in `src/modal/app.py` sets them when the
+operation opens, so a call that fails or is preempted carries them too.
+
+| Attribute | Values |
+|---|---|
+| `container_start` | `restored_from_snapshot`: the container was restored from a memory snapshot, so it started with the country models loaded. `took_snapshot`: Modal took the snapshot from this container, after the snapshot hook loaded the models in it. `no_snapshot`: the container neither took a snapshot nor was restored from one. That is every container of the plain `run_simulation` and `run_simulation_segment` functions and of `run_budget_window_batch`, which have no snapshot hook, and a worker class container that Modal started without snapshots, whose hook loaded the models before its first call. |
+| `container_call_number` | The call's place among the container's calls that opened their operation: 1 for the first, 2 for the second, and so on. A call counts even when reading or setting these attributes fails. |
+
+How a call tells them apart, in Modal 1.6.4:
+
+- **Before the snapshot:** Modal runs the workers' snapshot hook
+  (`load_country_models`) in every container that isn't restored. It takes a
+  snapshot only when the Modal process that starts the container has set
+  `MODAL_ENABLE_SNAP_RESTORE` to `1`, for a class with memory snapshots
+  enabled (`maybe_snapshot` in `modal/_runtime/user_code_imports.py`). The
+  hook records that flag and the container's `MODAL_TASK_ID`.
+- **On restore:** a restored container starts with that record in memory, but
+  Modal sets its `MODAL_TASK_ID` to its own task ID (`memory_restore` in
+  `modal/_runtime/task_lifecycle_manager.py`). A call reports
+  `restored_from_snapshot` when the two IDs differ, and `took_snapshot` when
+  they match.
+- **Not documented by Modal:** neither variable's behaviour is, so check the
+  attribute against Modal's container logs, and again after a Modal upgrade.
+  A restored container logs "Restoring Function from memory snapshot." and a
+  snapshotting one "Creating CPU memory snapshot for Function.";
+  `modal app logs <app name> --env <environment> --search "memory snapshot"
+  --show-container-id` lists both. Match a log's container ID with the task
+  ID at the start of a record's `service.instance.id`. Modal's `TaskGetInfo`
+  call doesn't tell them apart: on 2026-11-25 its `snapshot_behavior` field
+  was `UNSPECIFIED` for every production container, restored ones included.
+- **Checked on Modal:** on 2026-11-25, in a measurement on Modal `testing`
+  with Modal 1.6.4, every restored container reported a `MODAL_TASK_ID`
+  different from the one its snapshot hook had recorded.
+- **Never reported:** the recorded ID names the snapshotting container, not
+  the one serving the call.
+
+Neither the restore nor the snapshot hook runs inside a call, so no span
+measures them. Modal's container records (its `TaskGetInfo` call) give the
+times each container was queued and became ready (`enqueued_at` and
+`started_at`), which include scheduling as well as the restore. A call's spans show the setup still left
+in it:
+
+- In the first call of a container of the plain `run_simulation` or
+  `run_simulation_segment` function, which loads the models itself, most of
+  that setup is in the `country_module_load` span, which
+  imports policyengine.py's country model module, and, for a US run, in the
+  time from the operation's start to that span, which includes the SPM
+  capability check. A segmented national run's `run_simulation` call opens no
+  `country_module_load` span: its segment workers' calls do.
+- In a container whose hook loaded the models, the first call's time there
+  should be close to later calls' (`container_call_number` above 1).
+- A container's first `calculation` has also been slower than its later ones;
+  compare that span between first and later calls too.
+
+Neither attribute reaches metrics: the package's operation metrics carry only
+the service's identity and the operation's name, kind and outcome, and each
+call number would make another series. `container_start` has three values.
+Records from apps deployed before these attributes carry neither.
+
 ## Metric resource identity
 
 Every process that emits OpenTelemetry metrics must have a unique

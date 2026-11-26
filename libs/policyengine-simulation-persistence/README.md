@@ -277,8 +277,9 @@ their own, opened by `from_session_factory` with `bounded_session`:
 model, the stored household and each side's policy and dynamic values,
 combined (`read_simulation_reform`), together, raising
 `UnknownCatalogVersionError`, `UnknownHouseholdError` or `ReportSideError`
-for the side whose policy or dynamic is missing in the country, sets
-parameters the catalog version lacks, or sets one the other also sets;
+for the side whose policy or dynamic is missing in the country, is a
+dynamic with no values stored, sets parameters the catalog version lacks, or
+sets one the other also sets;
 `find_or_create_report` raises `EconomyRecordOutcomeUnknownError` when the
 commit fails after the rows were inserted; and `record_report_call` and `fail_unstarted_report` use the
 economy report run writes.
@@ -358,7 +359,11 @@ version lacks raises `MissingPolicyParametersError`, naming each one, and a
 policy the country doesn't have raises `UnknownPolicyError`.
 `read_dynamic_reform` reads a stored dynamic the same way: a dynamic, like a
 policy, belongs to one country, and one the country doesn't have, another
-country's included, raises `UnknownDynamicError`. `combine_reforms` joins a
+country's included, raises `UnknownDynamicError`. A dynamic with no
+parameter values stored raises `DynamicWithoutValuesError` rather than being
+applied as current law: API v1 stores no dynamic without values, so its
+values are where this release doesn't read them, and a current-law result
+would be stored under a key naming the dynamic. `combine_reforms` joins a
 simulation's policy and dynamic values, refusing a parameter both set
 (`OverlappingReformError`), and `read_simulation_reform` reads both and
 joins them, as every simulation does: economy (`read_simulation_values`),

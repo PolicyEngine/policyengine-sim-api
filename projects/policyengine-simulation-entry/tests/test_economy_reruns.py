@@ -43,6 +43,7 @@ from policyengine_simulation_entry.economy_submission_errors import (
 )
 from policyengine_simulation_persistence import (
     CatalogDataset,
+    DynamicWithoutValuesError,
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
     FoundBudgetWindow,
@@ -391,6 +392,83 @@ def test_a_stored_policy_the_current_catalog_cannot_set_is_located_on_its_side()
     assert reason.loc == ("report", "reform", "policy_id", "gov.old.parameter")
     assert POLICYENGINE_VERSION in reason.msg
     assert store.report_reruns == []
+
+
+def test_a_stored_dynamic_without_values_is_refused_naming_the_report_side() -> None:
+    store = FakeRerunStore(
+        inputs_failure=ReportSideError(
+            "baseline", DynamicWithoutValuesError("store text: no values")
+        )
+    )
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionRefusedError) as refused:
+        _rerun_report(rerun_service(store, caller=caller))
+
+    assert (refused.value.code, refused.value.detail) == (
+        "dynamic_without_values",
+        "us's stored dynamic that the report's baseline names has no parameter "
+        "values the service can read.",
+    )
+    assert (store.report_reruns, caller.report_runs) == ([], [])
+
+
+def test_a_rerun_asking_for_cliffs_with_a_dynamic_without_values_starts_nothing() -> (
+    None
+):
+    store = FakeRerunStore(
+        report_definition=replace(STORED_REPORT, keyed=True),
+        inputs_failure=ReportSideError(
+            "reform", DynamicWithoutValuesError("store text: no values")
+        ),
+    )
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionRefusedError) as refused:
+        _rerun_report(
+            rerun_service(store, caller=caller), ReportRerunRequest(include_cliffs=True)
+        )
+
+    assert refused.value.code == "dynamic_without_values"
+    assert (store.report_reruns, store.cliff_requests) == ([], [])
+    assert (caller.report_runs, caller.cliff_calculations) == ([], [])
+
+
+def test_a_stored_simulations_dynamic_without_values_is_refused() -> None:
+    store = FakeRerunStore(
+        inputs_failure=DynamicWithoutValuesError("store text: no values")
+    )
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionRefusedError) as refused:
+        _rerun_simulation(rerun_service(store, caller=caller))
+
+    assert (refused.value.code, refused.value.detail) == (
+        "dynamic_without_values",
+        "us's stored dynamic that the simulation names has no parameter values "
+        "the service can read.",
+    )
+    assert (store.simulation_reruns, caller.simulation_runs) == ([], [])
+
+
+def test_a_stored_windows_dynamic_without_values_is_refused_naming_the_side() -> None:
+    store = FakeRerunStore(
+        report_definition=STORED_WINDOW,
+        inputs_failure=ReportSideError(
+            "reform", DynamicWithoutValuesError("store text: no values")
+        ),
+    )
+    caller = FakeCaller()
+
+    with pytest.raises(EconomySubmissionRefusedError) as refused:
+        _rerun_report(rerun_service(store, caller=caller, advancer=FakeAdvancer(store)))
+
+    assert (refused.value.code, refused.value.detail) == (
+        "dynamic_without_values",
+        "us's stored dynamic that the report's reform names has no parameter "
+        "values the service can read.",
+    )
+    assert (store.windows, caller.report_runs) == ([], [])
 
 
 def _started_cliff_runs(caller: FakeCaller) -> set[UUID]:
