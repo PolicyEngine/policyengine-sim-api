@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 from collections.abc import Iterator, MutableMapping
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -24,7 +25,11 @@ import pytest
 from conftest import NoOpObservabilityRuntime
 from fixtures.fake_modal import install_fake_modal
 from policyengine_observability.runtime import ObservabilityRuntime
-from policyengine_simulation_executor import precompute_planning, simulation_runtime
+from policyengine_simulation_executor import (
+    precompute_planning,
+    simulation_runtime,
+    state_datasets,
+)
 from policyengine_simulation_executor.national_partition import national_region_groups
 from src.modal import segmented_national
 
@@ -33,6 +38,7 @@ if TYPE_CHECKING:
 
 # The image's baked year file for the warm-up year, and the baked baseline's
 # storage ID, as the precompute names them.
+BAKED_DATASET_NAME = "enhanced_cps_2024"
 BAKED_DATASET_FILENAME = "enhanced_cps_2024_year_2026.h5"
 BAKED_BASELINE_STORAGE_ID = "bl1-warmupgroupbaseline"
 SNAPSHOT_TASK_ID = "ta-01SNAPSHOTTING"
@@ -151,7 +157,9 @@ def requested_identities(monkeypatch):
     def baked_identity(year, group):
         requested.append((year, list(group)))
         return SimpleNamespace(
-            dataset=SimpleNamespace(filename=BAKED_DATASET_FILENAME),
+            dataset=SimpleNamespace(
+                dataset=BAKED_DATASET_NAME, filename=BAKED_DATASET_FILENAME
+            ),
             storage_id=BAKED_BASELINE_STORAGE_ID,
         )
 
@@ -167,6 +175,10 @@ def image_data_folder(tmp_path, monkeypatch, requested_identities):
     (data_folder / BAKED_DATASET_FILENAME).write_bytes(b"baked year file")
     (data_folder / f"{BAKED_BASELINE_STORAGE_ID}.h5").write_bytes(b"baked baseline")
     monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(data_folder))
+    # .py's own checks would read the files' stamps, which these stand-ins lack.
+    monkeypatch.setattr(
+        state_datasets, "year_file_reuse_problem", lambda _path, _dataset: None
+    )
     return data_folder
 
 
@@ -284,15 +296,42 @@ def test_the_warm_up_skips_with_a_warning_unless_the_image_holds_its_inputs(
 
 
 @pytest.mark.usefixtures("snapshotted_container")
-def test_the_warm_up_reads_no_secret_and_sets_up_no_credentials(
-    warm_up_module, calculation, monkeypatch
+def test_the_warm_up_skips_with_a_warning_when_the_baked_year_file_would_be_rebuilt(
+    warm_up_module, calculation, monkeypatch, caplog
 ):
+    # .py's ensure_datasets rebuilds a year file that fails its reuse checks
+    # from the dataset's source, which it may download from Hugging Face.
+    checked_year_files: list[tuple[str, str]] = []
+
+    def out_of_date(path, dataset):
+        checked_year_files.append((Path(path).name, dataset))
+        return "the year file records another register of renamed inputs"
+
+    monkeypatch.setattr(state_datasets, "year_file_reuse_problem", out_of_date)
+
+    with caplog.at_level(logging.WARNING, logger=warm_up_module.__name__):
+        warm_up_module.warm_up_first_calculation()
+
+    assert calculation.requests == []
+    assert checked_year_files == [(BAKED_DATASET_FILENAME, BAKED_DATASET_NAME)]
+    assert "another register of renamed inputs" in caplog.text
+
+
+@pytest.mark.usefixtures("snapshotted_container")
+def test_the_warm_up_reads_no_secret_and_sets_up_no_credentials(
+    warm_up_module, calculation, monkeypatch, caplog
+):
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
     monkeypatch.setenv(
         "GOOGLE_APPLICATION_CREDENTIALS_JSON", '{"type": "service_account"}'
     )
     monkeypatch.setenv("HUGGING_FACE_TOKEN", "hf_secret_value")
+    # Recorded as well as raised: the warm-up turns an exception into a
+    # warning, so a raise alone could go unnoticed.
+    refusals: list[str] = []
 
     def refuse(*_args, **_kwargs):
+        refusals.append("credential setup")
         msg = "the warm-up must not set up credentials before the snapshot"
         raise AssertionError(msg)
 
@@ -301,8 +340,11 @@ def test_the_warm_up_reads_no_secret_and_sets_up_no_credentials(
     environment = _EnvironmentReadRecorder(os.environ)
     monkeypatch.setattr(os, "environ", environment)
 
-    warm_up_module.warm_up_first_calculation()
+    with caplog.at_level(logging.WARNING, logger=warm_up_module.__name__):
+        warm_up_module.warm_up_first_calculation()
 
+    assert refusals == []
+    assert caplog.records == []
     assert len(calculation.requests) == 1
     # Only the snapshot flag Modal sets and the image's data folder.
     assert environment.names_read <= {
@@ -314,11 +356,16 @@ def test_the_warm_up_reads_no_secret_and_sets_up_no_credentials(
 
 @pytest.mark.usefixtures("snapshotted_container")
 def test_the_warm_up_sends_no_telemetry_and_the_first_call_is_still_number_1(
-    modal_app, calculation, monkeypatch
+    modal_app, calculation, monkeypatch, caplog
 ):
+    # Recorded as well as raised, since the warm-up turns an exception into
+    # a warning.
+    refusals: list[str] = []
+
     def refuse_observability(*_args, **_kwargs):
         # A runtime configured before the snapshot would be shared by every
         # restored container, and would export the warm-up's records.
+        refusals.append("observability configured")
         msg = "the warm-up must not configure observability"
         raise AssertionError(msg)
 
@@ -329,8 +376,11 @@ def test_the_warm_up_sends_no_telemetry_and_the_first_call_is_still_number_1(
     monkeypatch.setattr(ObservabilityRuntime, "__init__", refuse_observability)
 
     worker = modal_app.SimulationSegmentWorker()
-    worker.load_country_models()
+    with caplog.at_level(logging.WARNING, logger="src.modal.snapshot_warm_up"):
+        worker.load_country_models()
 
+    assert refusals == []
+    assert caplog.records == []
     [warm_up_runtime] = calculation.runtimes
     assert not isinstance(warm_up_runtime, ObservabilityRuntime)
 
@@ -482,3 +532,21 @@ def test_the_warm_up_skips_with_a_warning_when_the_us_models_were_not_preloaded(
 
     assert calculation.requests == []
     assert "policyengine" in caplog.text
+
+
+def test_the_warm_up_reform_changes_a_parameter_of_the_installed_us_model(
+    warm_up_module,
+):
+    # policyengine-us's own parameter tree, about 12 s to load; .py's US model
+    # would also read the data release manifest from Hugging Face.
+    from policyengine_us.system import system
+
+    [(parameter_name, values_by_period)] = warm_up_module.warm_up_request()[
+        "reform"
+    ].items()
+    [(period, reform_value)] = values_by_period.items()
+    period_start, _, _period_end = period.partition(".")
+
+    assert period_start == f"{precompute_planning.PRECOMPUTE_YEARS[0]}-01-01"
+    # A reform equal to current law would leave nothing to calculate.
+    assert system.parameters.get_child(parameter_name)(period_start) != reform_value
