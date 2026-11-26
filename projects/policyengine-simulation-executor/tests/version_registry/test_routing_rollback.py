@@ -406,7 +406,7 @@ def test_restoring_latest_refuses_an_app_without_the_worker_class(
     assert store.get("active") == json.loads(json.dumps(state))
 
 
-def test_undoing_plans_checks_the_app_each_restored_state_routes_latest_to(
+def test_undoing_a_plan_checks_the_app_its_starting_state_routes_latest_to(
     monkeypatch, patched_modal, worker_class_lookups
 ):
     original = published_routing_state(monkeypatch, None, "6.20.0", "1.1.0", "2.1.0")
@@ -507,6 +507,57 @@ def test_undoing_an_unfinished_publication_puts_back_what_it_replaced(
     assert store.get("active") == json.loads(json.dumps(original))
     assert store.get("publication") == {"status": "restored", "plan": pending}
     assert worker_class_lookups.lookups == []
+
+
+def test_only_the_unfinished_publication_among_kept_plans_skips_the_check(
+    monkeypatch, patched_modal, worker_class_lookups
+):
+    """A run's earlier attempt finished; its rerun's publication is pending."""
+    original = published_routing_state(monkeypatch, None, "6.17.1", "1.1.0", "2.1.0")
+    store = install_routing_store(patched_modal, original)
+    finished = publication_plan(monkeypatch, original, ("6.20.0", "1.1.0", "2.2.0"))
+    registry.apply_routing_plan(environment="staging", plan=finished)
+    pending = publication_plan(
+        monkeypatch,
+        finished["after"],
+        ("6.20.3", "1.2.0", "2.2.0"),
+        publication_id="74401-2-beta",
+    )
+    registry.record_routing_plan(environment="staging", plan=pending)
+    registry.apply_routing_plan(environment="staging", plan=pending)
+    worker_class_lookups.apps_without_worker_class.add(versioned_app_name("6.17.1"))
+
+    # Undoing the finished plan too would move latest to 6.17.1.
+    with pytest.raises(ValueError, match="defines no SimulationWorker class"):
+        registry.restore_routing_plans(environment="staging", plans=[finished, pending])
+
+    assert store.get("active") == pending["after"]
+    assert store.get("publication") == {"status": "pending", "plan": pending}
+    # Recovery still undoes the pending publication alone.
+    assert (
+        registry.finalize_routing_publication(
+            environment="staging", release_environment="beta", gates_passed=False
+        )
+        == "restored"
+    )
+    assert store.get("active") == finished["after"]
+
+
+def test_a_failed_worker_class_lookup_stops_undoing_plans_and_writes_nothing(
+    monkeypatch, patched_modal, worker_class_lookups
+):
+    original = published_routing_state(monkeypatch, None, "6.20.0", "1.1.0", "2.1.0")
+    store = install_routing_store(patched_modal, original)
+    release = publication_plan(monkeypatch, original, ("6.20.3", "1.2.0", "2.2.0"))
+    registry.apply_routing_plan(environment="staging", plan=release)
+    lookup_failure = ConnectionError("Modal is unreachable")
+    worker_class_lookups.lookup_errors[versioned_app_name("6.20.0")] = lookup_failure
+
+    with pytest.raises(ConnectionError) as raised:
+        registry.restore_routing_plans(environment="staging", plans=[release])
+
+    assert raised.value is lookup_failure
+    assert store.get("active") == release["after"]
 
 
 def test_a_failed_worker_class_lookup_stops_the_rollback_and_writes_nothing(
