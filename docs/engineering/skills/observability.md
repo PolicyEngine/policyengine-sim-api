@@ -235,10 +235,12 @@ times each container was queued and became ready (`enqueued_at` and
 in it:
 
 - In apps deployed before the worker classes, whose workers load the models
-  in their first call, most of that setup is in the `country_module_load` span, which
-  imports policyengine.py's country model module, and, for a US run, in the
-  time from the operation's start to that span, which includes the SPM
-  capability check. A segmented national run's `run_simulation` call opens no
+  in each container's first call, most of that setup is in the
+  `country_module_load` span, which imports policyengine.py's country model
+  module, and, for a US run, in the time from the operation's start to that
+  span, which includes the SPM capability check. Those apps' records carry
+  neither attribute, so `container_call_number` can't pick out a container's
+  first call. A segmented national run's `run_simulation` call opens no
   `country_module_load` span: its segment workers' calls do.
 - In a container whose hook loaded the models, the first call's time there
   should be close to later calls' (`container_call_number` above 1).
