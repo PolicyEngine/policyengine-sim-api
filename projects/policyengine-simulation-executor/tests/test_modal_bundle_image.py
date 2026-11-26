@@ -140,9 +140,11 @@ def test_simulation_workers_are_classes_restored_from_memory_snapshots(monkeypat
     }
     simulation_worker_resources = {"cpu": 8.0, "memory": 32768, "max_containers": 100}
     # A segment child calculates one region group in one process, so it
-    # keeps one CPU busy, and it peaks at about 3.4 GiB with both countries'
-    # models loaded. 1 CPU and 6 GiB fit it.
-    segment_worker_resources = {"cpu": 1.0, "memory": 6144, "max_containers": 300}
+    # keeps one CPU busy. With both countries' models loaded it peaks at about
+    # 3.4 GiB for a year whose dataset and baseline are baked into the image,
+    # and at about 6.9 GiB for a year whose dataset and baseline it builds
+    # itself. 1 CPU and 10 GiB fit both.
+    segment_worker_resources = {"cpu": 1.0, "memory": 10240, "max_containers": 300}
     # Two classes, so the segment children keep their own container pool: a
     # blocking segmented parent must never share a bounded pool with the
     # children it waits on.
