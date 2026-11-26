@@ -9,6 +9,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from registry_test_support import (
     FakeDict,
+    FakeWorkerClassLookups,
     install_bundle_manifests,
     install_routing_store,
     publication_plan,
@@ -71,7 +72,10 @@ def test_publish_then_restore_returns_exactly_the_previous_state(releases, legac
                     stores[key] = FakeDict()
                 return stores[key]
 
-        monkeypatch.setattr(routing_stores, "modal", type("M", (), {"Dict": _Dict}))
+        modal_with_worker_classes = type(
+            "M", (), {"Dict": _Dict, "Cls": FakeWorkerClassLookups()}
+        )
+        monkeypatch.setattr(routing_stores, "modal", modal_with_worker_classes)
         state = None
         if legacy:
             # A route seeded from the legacy dicts, with no manifest.
@@ -355,6 +359,86 @@ def test_a_chain_of_attempts_is_undone_in_order(monkeypatch, patched_modal):
         registry.restore_routing_plans(environment="staging", plans=[first, second])
         == "unchanged"
     )
+
+
+# --- Rollback never routes latest to an app without the worker class ----------
+#
+# The gateway spawns comparison requests only through an app's
+# SimulationWorker class, which apps deployed before policyengine.py 6.20.0
+# don't define. A rollback that routed latest to one would fail every unpinned
+# comparison request, so it is refused and routing is left as it was.
+
+
+def test_restoring_latest_checks_that_its_app_defines_the_worker_class(
+    monkeypatch, patched_modal, worker_class_lookups
+):
+    state = published_routing_state(monkeypatch, None, "6.20.0", "1.1.0", "2.1.0")
+    state = published_routing_state(monkeypatch, state, "6.20.3", "1.1.0", "2.2.0")
+    store = install_routing_store(patched_modal, state)
+
+    restored = registry.restore_routing_state(
+        environment="staging", policyengine_version="6.20.0"
+    )
+
+    assert restored["latest"]["policyengine"] == "6.20.0"
+    assert store.get("active") == restored
+    assert worker_class_lookups.lookups == [
+        ("staging", versioned_app_name("6.20.0"), "SimulationWorker")
+    ]
+
+
+def test_restoring_latest_refuses_an_app_without_the_worker_class(
+    monkeypatch, patched_modal, worker_class_lookups
+):
+    state = published_routing_state(monkeypatch, None, "6.17.1", "1.1.0", "2.1.0")
+    state = published_routing_state(monkeypatch, state, "6.20.0", "1.1.0", "2.2.0")
+    store = install_routing_store(patched_modal, state)
+    worker_class_lookups.apps_without_worker_class.add(versioned_app_name("6.17.1"))
+
+    with pytest.raises(ValueError, match="defines no SimulationWorker class"):
+        registry.restore_routing_state(
+            environment="staging", policyengine_version="6.17.1"
+        )
+
+    assert store.get("active") == json.loads(json.dumps(state))
+
+
+def test_undoing_plans_checks_the_app_each_restored_state_routes_latest_to(
+    monkeypatch, patched_modal, worker_class_lookups
+):
+    original = published_routing_state(monkeypatch, None, "6.20.0", "1.1.0", "2.1.0")
+    store = install_routing_store(patched_modal, original)
+    release = publication_plan(monkeypatch, original, ("6.20.3", "1.2.0", "2.2.0"))
+    registry.apply_routing_plan(environment="staging", plan=release)
+
+    assert (
+        registry.restore_routing_plans(environment="staging", plans=[release])
+        == "restored"
+    )
+
+    assert store.get("active") == json.loads(json.dumps(original))
+    assert worker_class_lookups.lookups == [
+        ("staging", versioned_app_name("6.20.0"), "SimulationWorker")
+    ]
+
+
+def test_undoing_plans_writes_nothing_if_any_restored_state_has_no_worker_class(
+    monkeypatch, patched_modal, worker_class_lookups
+):
+    original = published_routing_state(monkeypatch, None, "6.17.1", "1.1.0", "2.1.0")
+    store = install_routing_store(patched_modal, original)
+    first = publication_plan(monkeypatch, original, ("6.20.0", "1.1.0", "2.2.0"))
+    registry.apply_routing_plan(environment="staging", plan=first)
+    second = publication_plan(monkeypatch, first["after"], ("6.20.3", "1.2.0", "2.2.0"))
+    registry.apply_routing_plan(environment="staging", plan=second)
+    worker_class_lookups.apps_without_worker_class.add(versioned_app_name("6.17.1"))
+
+    # Undoing the second plan alone would route latest to 6.20.0, which has
+    # the class; undoing the first as well would route it to 6.17.1.
+    with pytest.raises(ValueError, match="defines no SimulationWorker class"):
+        registry.restore_routing_plans(environment="staging", plans=[first, second])
+
+    assert store.get("active") == second["after"]
 
 
 @pytest.mark.usefixtures("serialized_workflow")

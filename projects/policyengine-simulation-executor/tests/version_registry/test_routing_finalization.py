@@ -10,6 +10,7 @@ from registry_test_support import (
     install_routing_store,
     publication_plan,
     published_routing_state,
+    versioned_app_name,
 )
 from src.modal.routing_publisher import publication as routing_publication
 from src.modal.utils import update_version_registry as registry
@@ -354,6 +355,31 @@ def test_operator_restores_any_valid_pending_plan_in_the_selected_store(
     assert saved["publication"]["status"] == "pending"
     assert store.get("active") is None
     assert store.get("publication") == {"status": "restored", "plan": pending}
+
+
+def test_operator_recovery_never_routes_latest_to_an_app_without_the_worker_class(
+    monkeypatch, patched_modal, worker_class_lookups
+):
+    """The gateway can't run comparisons on apps from before .py 6.20.0."""
+    before = published_routing_state(monkeypatch, None, "6.17.1", "1.1.0", "2.1.0")
+    store = install_routing_store(patched_modal, before)
+    pending = publication_plan(
+        monkeypatch,
+        before,
+        ("6.20.0", "1.1.0", "2.2.0"),
+        publication_id="74401-1-beta",
+    )
+    registry.record_routing_plan(environment="staging", plan=pending)
+    registry.apply_routing_plan(environment="staging", plan=pending)
+    worker_class_lookups.apps_without_worker_class.add(versioned_app_name("6.17.1"))
+
+    with pytest.raises(ValueError, match="defines no SimulationWorker class"):
+        registry.finalize_routing_publication(
+            environment="staging", release_environment="beta", gates_passed=False
+        )
+
+    assert store.get("active") == pending["after"]
+    assert store.get("publication") == {"status": "pending", "plan": pending}
 
 
 @pytest.mark.parametrize("status", ["pending", "completed", "restored"])

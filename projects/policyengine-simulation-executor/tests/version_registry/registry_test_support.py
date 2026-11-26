@@ -35,6 +35,51 @@ class FakeDict:
         return self
 
 
+class NotFoundError(Exception):
+    """Named like modal.exception.NotFoundError: the routing code matches the name."""
+
+
+class FakeWorkerClassLookups:
+    """``modal.Cls`` for the routing tests: records each class lookup.
+
+    Every app defines the ``SimulationWorker`` class except the ones in
+    ``apps_without_worker_class``, such as apps deployed before the workers
+    were classes: resolving their class handle raises ``NotFoundError``.
+    """
+
+    def __init__(self) -> None:
+        self.apps_without_worker_class: set[str] = set()
+        self.lookups: list[tuple[str, str, str]] = []
+
+    def from_name(
+        self, app_name: str, class_name: str, *, environment_name: str
+    ) -> FakeWorkerClassHandle:
+        self.lookups.append((environment_name, app_name, class_name))
+        return FakeWorkerClassHandle(
+            app_name,
+            class_name,
+            defined=app_name not in self.apps_without_worker_class,
+        )
+
+
+class FakeWorkerClassHandle:
+    """A lazy class handle: resolving it raises if the app has no such class."""
+
+    def __init__(self, app_name: str, class_name: str, *, defined: bool) -> None:
+        self.app_name = app_name
+        self.class_name = class_name
+        self.defined = defined
+
+    def hydrate(self) -> FakeWorkerClassHandle:
+        if not self.defined:
+            msg = (
+                f"Lookup failed for Cls '{self.class_name}' "
+                f"from the '{self.app_name}' app"
+            )
+            raise NotFoundError(msg)
+        return self
+
+
 def _country(country: str, model_version: str) -> registry.CountryBundleMetadata:
     return {
         "country": country,
