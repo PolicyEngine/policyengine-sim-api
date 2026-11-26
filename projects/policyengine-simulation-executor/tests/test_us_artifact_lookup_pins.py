@@ -27,7 +27,7 @@ from fixtures.us_prebuilt_inputs import (
     enable_fixed_spm_capability,
     install_us_prebuilt_inputs,
 )
-from policyengine.core.scoping_strategy import RowFilterStrategy
+from policyengine.core.scoping_strategy import RegionGroupStrategy, RowFilterStrategy
 from policyengine_simulation_contract.spm import SPMInputError
 from policyengine_simulation_executor import baseline_artifacts, precompute
 from policyengine_simulation_executor import simulation_runtime as runtime
@@ -153,6 +153,35 @@ class TestRequestsWithAFixedBaselineId:
         )
         assert identity.year_file.store_path == (
             "year-files/uk/a911bc00e6d82eb65c2e72c65c3a01732f4b7b79d84ada654700445ff5c3cd0e/enhanced_frs_year_2026.h5"
+        )
+
+    def test_uk_group_of_nations_current_law(self):
+        """As on main: a UK region group on the default dataset keeps a fixed ID.
+
+        It reads the UK national year file, keyed by the group's scope.
+        """
+        group = RegionGroupStrategy(
+            members=[
+                RowFilterStrategy(variable_name="region", variable_value="ENGLAND"),
+                RowFilterStrategy(variable_name="region", variable_value="WALES"),
+            ]
+        )
+        request = _identity_request(
+            params={"country": "uk", "scope": "macro"},
+            country="uk",
+            region_code="region_group/country/england+country/wales",
+            scoping_strategy=group,
+            dataset=UK_DEFAULT_DATASET,
+        )
+
+        identity = baseline_artifacts.qualifying_baseline_identity(request)
+
+        assert identity.region == "region_group/country/england+country/wales"
+        assert identity.scope_key == group.cache_key
+        assert identity.year_file.store_path.endswith("/enhanced_frs_year_2026.h5")
+        assert identity.year_file.subset is None
+        assert baseline_artifacts.deterministic_baseline_id(request) == (
+            identity.simulation_id
         )
 
     def test_us_national_with_the_spm_capability(self, monkeypatch, us_inputs):

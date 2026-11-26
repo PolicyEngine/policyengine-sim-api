@@ -224,6 +224,26 @@ class TestLevelOfARun:
             is None
         )
 
+    def test_a_uk_group_of_nations_is_a_national_run(self):
+        uk_default = DatasetSelection("enhanced_frs", "hf://uk", is_default=True)
+        group = RegionResolution(
+            code="region_group/country/england+country/wales",
+            scoping_strategy=RegionGroupStrategy(
+                members=[
+                    RowFilterStrategy(variable_name="region", variable_value="ENGLAND"),
+                    RowFilterStrategy(variable_name="region", variable_value="WALES"),
+                ]
+            ),
+        )
+        run = _run(UK, group, uk_default)
+        handler = levels.handler_for("uk", DatasetLevel.NATIONAL)
+
+        assert levels.prebuilt_for("uk").level_of(run) == DatasetLevel.NATIONAL
+        assert handler.baseline_scope(run) == BaselineScope(
+            region=group.code, scope_key=group.scoping_strategy.cache_key
+        )
+        assert handler.year_file_for(run).subset is None
+
     def test_an_unrouted_uk_dataset_has_no_level(self, monkeypatch):
         from policyengine_simulation_executor import uk_local_authority_metadata
 
@@ -531,6 +551,22 @@ class TestPrebuiltDatasetFolder:
                 DatasetSelection("enhanced_frs", "hf://uk", is_default=True),
                 prebuilt_data_folder.root,
                 country=UK,
+            )
+            is None
+        )
+
+    def test_settings_that_fail_to_load_read_nothing_prebuilt(
+        self, prebuilt_data_folder, default_dataset, monkeypatch
+    ):
+        def failing_settings():
+            msg = "No module named 'policyengine_stage12_persistence'"
+            raise ModuleNotFoundError(msg)
+
+        monkeypatch.setattr(levels_us, "us_prebuilt", failing_settings)
+
+        assert (
+            self._lookup(
+                RegionResolution(code="us"), default_dataset, prebuilt_data_folder.root
             )
             is None
         )

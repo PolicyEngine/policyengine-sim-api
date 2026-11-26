@@ -562,34 +562,35 @@ def test_actual_http_formula_error_contract(monkeypatch, code, observability_run
     ],
 )
 def test_each_setting_rotates_artifact_identity(key, value):
-    common = {
-        "country": "us",
-        "region": "national",
-        "scope_key": None,
-        "dataset_digest": "d" * 64,
-        "model_version": "test",
-        "policyengine_version": "test",
-    }
     changed = {**SELECTION, key: value}
-    assert artifact_keys.baseline_key(
-        artifact_keys.BaselineKeyInputs(**common, spm=SELECTION)
-    ) != artifact_keys.baseline_key(
-        artifact_keys.BaselineKeyInputs(**common, spm=changed)
-    )
-    ds = {
-        "country": "us",
-        "dataset": "test",
-        "year": 2026,
-        "data_version": "test",
-        "data_artifact_revision": "test",
-        "source_sha256": None,
-        "data_build_fingerprint": None,
-        "model_version": "test",
-        "policyengine_version": "test",
-    }
-    assert artifact_keys.dataset_key(
-        artifact_keys.DatasetKeyInputs(**ds, spm=SELECTION)
-    ) != artifact_keys.dataset_key(artifact_keys.DatasetKeyInputs(**ds, spm=changed))
+
+    def year_file(spm):
+        return artifact_keys.YearFileIdentity(
+            country="us",
+            dataset="test",
+            dataset_sha256=None,
+            data_version="test",
+            data_artifact_revision="test",
+            certification_fingerprint=None,
+            year=2026,
+            subset=None,
+            packages={"policyengine": "test"},
+            spm=spm,
+            stem="test",
+            folder="prebuilt/us/test/all",
+        )
+
+    def baseline(spm):
+        return artifact_keys.BaselineIdentity(
+            year_file=year_file(SELECTION),
+            region="national",
+            scope_key=None,
+            spm=spm,
+        )
+
+    assert year_file(SELECTION).digest != year_file(changed).digest
+    assert baseline(SELECTION).digest != baseline(changed).digest
+    assert baseline(SELECTION).storage_id != baseline(changed).storage_id
 
 
 def test_fanout_and_budget_window_preserve_settings_and_receipts():
