@@ -337,6 +337,8 @@ def test_the_warm_up_reads_no_secret_and_sets_up_no_credentials(
 
     monkeypatch.setattr(simulation_runtime, "setup_gcp_credentials", refuse)
     monkeypatch.setattr(simulation_runtime, "run_simulation_impl", refuse)
+    # Records the warm-up's own reads. The calculation is replaced here, so
+    # what the simulation path reads is checked by reading its code instead.
     environment = _EnvironmentReadRecorder(os.environ)
     monkeypatch.setattr(os, "environ", environment)
 
@@ -480,7 +482,7 @@ def test_a_failed_warm_up_never_stops_the_container_starting(
 
 
 @pytest.mark.usefixtures("snapshotted_container")
-def test_a_call_after_the_warm_up_gets_the_result_it_gets_without_one(
+def test_a_call_after_the_warm_up_finds_no_simulation_or_file_the_warm_up_added(
     warm_up_module, calculation, simulation_cache, image_data_folder
 ):
     files_before = {path.name for path in image_data_folder.iterdir()}
@@ -496,6 +498,32 @@ def test_a_call_after_the_warm_up_gets_the_result_it_gets_without_one(
     # so it loads the baked baseline from the image as it would without one.
     assert len(calculation.requests) == 3
     assert after_warm_up == without_warm_up
+
+
+@pytest.mark.usefixtures("snapshotted_container")
+def test_the_warm_up_warns_when_it_saved_over_a_baked_file(
+    warm_up_module, calculation, image_data_folder, monkeypatch, caplog
+):
+    # .py calculates a baked baseline again and saves it over the image's
+    # file when it finds it incomplete or out of date. The rewritten file goes
+    # into the snapshot, so restored containers load it and report a hit.
+    baked_baseline = image_data_folder / f"{BAKED_BASELINE_STORAGE_ID}.h5"
+
+    def recalculating_calculation(params, **options):
+        result = calculation(params, **options)
+        baked_baseline.write_bytes(b"baseline calculated again by the warm-up")
+        return result
+
+    monkeypatch.setattr(
+        simulation_runtime, "_run_simulation_impl_core", recalculating_calculation
+    )
+
+    with caplog.at_level(logging.WARNING, logger=warm_up_module.__name__):
+        warm_up_module.warm_up_first_calculation()
+
+    assert len(calculation.requests) == 1
+    [warning] = caplog.records
+    assert baked_baseline.name in warning.getMessage()
 
 
 @pytest.mark.usefixtures("image_data_folder")
@@ -531,7 +559,8 @@ def test_the_warm_up_skips_with_a_warning_when_the_us_models_were_not_preloaded(
         warm_up_module.warm_up_first_calculation()
 
     assert calculation.requests == []
-    assert "policyengine" in caplog.text
+    assert "Warm-up calculation skipped" in caplog.text
+    assert "policyengine.tax_benefit_models.us" in caplog.text
 
 
 def test_the_warm_up_reform_changes_a_parameter_of_the_installed_us_model(
