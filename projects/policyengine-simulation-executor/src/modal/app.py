@@ -466,11 +466,11 @@ def _run_simulation(
 ) -> dict:
     """Execute one annual economic simulation.
 
-    The job behind ``SimulationWorker.run_simulation`` and the plain
-    ``run_simulation`` function. Imports the implementation in the call; in a
-    restored container the snapshot hook has already loaded the country models
-    it uses. Emits redacted operation data through the shared observability
-    runtime. Records the job's stage for status polls (see ``job_progress``).
+    The job behind ``SimulationWorker.run_simulation``. Imports the
+    implementation in the call; in a restored container the snapshot hook has
+    already loaded the country models it uses. Emits redacted operation data
+    through the shared observability runtime. Records the job's stage for
+    status polls (see ``job_progress``).
     """
     progress = _job_progress_reporter()
     progress.start()
@@ -537,9 +537,9 @@ def _run_simulation_segment(
 ) -> dict:
     """Run one region-group child of a segmented national run.
 
-    The job behind ``SimulationSegmentWorker.run_simulation_segment`` and the
-    plain ``run_simulation_segment`` function. Calls the monolithic impl
-    directly — children are ``region_group`` requests and never re-segment.
+    The job behind ``SimulationSegmentWorker.run_simulation_segment``. Calls
+    the monolithic impl directly — children are ``region_group`` requests and
+    never re-segment.
     """
     runtime = _configure_modal_observability(service_role="simulation_worker")
     redacted_params = {
@@ -659,49 +659,6 @@ class SimulationSegmentWorker(_CountryModelsLoadedBeforeSnapshot):
         return _run_simulation_segment(
             params, observability_context=observability_context
         )
-
-
-# The workers' plain functions from before the classes, kept without memory
-# snapshots for callers still running that code. The executor deploys before
-# the gateway, and a deploy that keeps the policyengine.py version replaces the
-# routed app in place, so the old gateway spawns run_simulation here until the
-# new one is live. Runs started before a deploy spawn their children by these
-# names too. Remove both once no such caller is left.
-@app.function(
-    image=simulation_image,
-    cpu=8.0,
-    memory=32768,
-    timeout=3600,
-    retries=0,
-    max_containers=100,
-    secrets=[gcp_secret, hf_secret],
-)
-def run_simulation(
-    params: dict,
-    *,
-    observability_context: dict | None = None,
-) -> dict:
-    """Execute one annual simulation, for callers from before the classes."""
-    return _run_simulation(params, observability_context=observability_context)
-
-
-@app.function(
-    image=simulation_image,
-    # The same resources as SimulationSegmentWorker.
-    cpu=1.0,
-    memory=10240,
-    timeout=3600,
-    retries=0,
-    max_containers=300,
-    secrets=[gcp_secret, hf_secret],
-)
-def run_simulation_segment(
-    params: dict,
-    *,
-    observability_context: dict | None = None,
-) -> dict:
-    """Run one region-group child, for callers from before the classes."""
-    return _run_simulation_segment(params, observability_context=observability_context)
 
 
 @app.function(

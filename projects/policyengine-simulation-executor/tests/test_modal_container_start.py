@@ -131,17 +131,14 @@ def _restore_into_another_container(monkeypatch, worker) -> None:
     worker.reseed_random_after_restore()
 
 
-@pytest.mark.parametrize(
-    "function_name",
-    ["run_simulation", "run_simulation_segment", "run_budget_window_batch"],
-)
 def test_a_plain_function_call_reports_a_container_started_without_a_snapshot(
-    modal_app, monkeypatch, function_name
+    modal_app, monkeypatch
 ):
+    # The budget-window parent is the app's only plain function.
     monkeypatch.setenv("MODAL_TASK_ID", PLAIN_FUNCTION_TASK_ID)
     attributes_by_call = _record_call_attributes(modal_app, monkeypatch)
 
-    assert getattr(modal_app, function_name)(SIMULATION_PARAMS) == WORKER_RESULT
+    assert modal_app.run_budget_window_batch(SIMULATION_PARAMS) == WORKER_RESULT
 
     [call_attributes] = attributes_by_call
     assert call_attributes["container_start"] == "no_snapshot"
@@ -265,12 +262,8 @@ def test_both_attributes_reach_the_operation_record_and_span_but_no_metric(
         assert not CONTAINER_START_KEYS & set(metric_attributes)
 
 
-@pytest.mark.parametrize(
-    "function_name",
-    ["run_simulation", "run_simulation_segment", "run_budget_window_batch"],
-)
 def test_a_plain_function_sets_both_attributes_before_its_job_runs(
-    modal_app, monkeypatch, function_name
+    modal_app, monkeypatch
 ):
     _record_call_attributes(modal_app, monkeypatch)
     attributes_when_the_job_started: list[dict[str, object]] = []
@@ -281,7 +274,7 @@ def test_a_plain_function_sets_both_attributes_before_its_job_runs(
 
     _replace_worker_jobs(monkeypatch, job_reading_its_operation_attributes)
 
-    assert getattr(modal_app, function_name)(SIMULATION_PARAMS) == WORKER_RESULT
+    assert modal_app.run_budget_window_batch(SIMULATION_PARAMS) == WORKER_RESULT
 
     [job_attributes] = attributes_when_the_job_started
     assert job_attributes["container_start"] == "no_snapshot"
