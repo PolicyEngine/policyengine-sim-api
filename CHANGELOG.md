@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.26.1] - 2026-11-26
+
+### Changed
+
+- A simulation naming a stored dynamic with no parameter values, economy or household alike and their re-runs included, is refused with 400 `dynamic_without_values` instead of being calculated and stored as current law. API v1 stores no dynamic without values, so such a dynamic's values are stored where this release doesn't read them.
+
+
 ## [0.26.0] - 2026-11-26
 
 ### Added
