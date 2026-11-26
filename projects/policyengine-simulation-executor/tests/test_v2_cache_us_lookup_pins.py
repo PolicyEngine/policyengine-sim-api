@@ -13,8 +13,8 @@ pins hold however the lookup is implemented:
   UK-wide run get no v2 cache identity, though the run_simulation app gives
   some of them one;
 * which folder ``calculate_simulation_frames`` loads each run's dataset from
-  (``TestDatasetFoldersOnMain``). The handler design moves the baked folders
-  to ``prebuilt/…``, so those pins change in a commit of their own.
+  (``TestDatasetFolders``). The baked folders moved to the handlers'
+  ``prebuilt/…`` folders on 2026-11-27, in a commit of their own.
 """
 
 from __future__ import annotations
@@ -261,34 +261,57 @@ def recorded_load(us_inputs, monkeypatch, tmp_path):
 
 
 def _bake_state_file(data_folder: Path, state_code: str, year: int, *, stamp=True):
-    """Put a state's year file where ``main``'s worker image holds it."""
+    """Put a state's year file where the worker image holds it."""
     from fixtures.state_dataset_sources import write_year_file
 
-    folder = data_folder / "state-datasets" / STATE_LEVEL_DATASET / state_code
+    folder = data_folder / "prebuilt" / "us" / STATE_LEVEL_DATASET / state_code
     folder.mkdir(parents=True, exist_ok=True)
     write_year_file(folder, year=year, stamp=stamp)
     return folder
 
 
-class TestDatasetFoldersOnMain:
-    """Which folder ``main``'s worker loads each run's dataset from.
+def _bake_national_file(data_folder: Path, year: int) -> Path:
+    """Put the default dataset's year file where the worker image holds it."""
+    from fixtures.state_dataset_sources import write_year_file
+
+    folder = data_folder / "prebuilt" / "us" / DEFAULT_DATASET / "all"
+    folder.mkdir(parents=True, exist_ok=True)
+    write_year_file(folder, year=year, dataset=DEFAULT_DATASET)
+    return folder
+
+
+class TestDatasetFolders:
+    """Which folder the worker loads each run's dataset from.
 
     None means the loader's own default: the image data folder for the
-    default dataset, where ``main`` bakes the national year files and
-    baselines, and a temporary folder for any other. The handler design
-    moves the baked folders to ``prebuilt/…``; these pins change in that
-    commit, and only there.
+    default dataset and a temporary folder for any other. Until 2026-11-27
+    (``main`` at 6865dc2c) a state's file sat in ``state-datasets/<dataset>/
+    <state>``, and national and group runs always loaded the default dataset
+    from the data folder itself, where the national year files and baselines
+    sat. Each baked file now sits in its handler's ``prebuilt/…`` folder, and
+    national and group runs read the national one when the image holds it.
     """
 
-    def test_national_and_group_runs_load_the_default_dataset_unbaked(
+    def test_national_and_group_runs_load_the_national_folder_when_baked(
         self, recorded_load
     ):
+        group_run = scoped_planned_simulation(2026, tuple(US_REGION_GROUPS[0]))
         _bake_state_file(recorded_load.data_folder, "CA", 2026)
 
         assert recorded_load.load(_baseline_for("us")) == (DEFAULT_DATASET, None)
-        assert recorded_load.load(
-            scoped_planned_simulation(2026, tuple(US_REGION_GROUPS[0]))
-        ) == (DEFAULT_DATASET, None)
+        assert recorded_load.load(group_run) == (DEFAULT_DATASET, None)
+
+        national = _bake_national_file(recorded_load.data_folder, 2026)
+
+        assert recorded_load.load(_baseline_for("us")) == (
+            DEFAULT_DATASET,
+            str(national),
+        )
+        assert recorded_load.load(group_run) == (DEFAULT_DATASET, str(national))
+        assert recorded_load.load(_baseline_for("us", year=2028)) == (
+            DEFAULT_DATASET,
+            None,
+        )
 
     def test_a_state_with_a_baked_file_loads_its_state_folder(self, recorded_load):
         folder = _bake_state_file(recorded_load.data_folder, "CA", 2026)
@@ -299,7 +322,8 @@ class TestDatasetFoldersOnMain:
         )
         assert folder == (
             recorded_load.data_folder
-            / "state-datasets"
+            / "prebuilt"
+            / "us"
             / "populace_us_2024_acs_local"
             / "CA"
         )

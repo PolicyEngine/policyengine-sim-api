@@ -6,12 +6,13 @@ planned file stored in a fake bucket as the bytes ``v2-cache-pin:<path>``.
 Moving the v2 cache onto the level handlers keeps its manifest (schema
 ``stage12-mf1``), so each value must stay unchanged.
 
-The manifest records each state file's image folder. The handler design
-moves those folders to ``prebuilt/…``, which changes the manifest's digest
-through that field alone, so the digest is pinned twice: without the folder
-fields (``test_digest_without_the_image_folders``), which must not change,
-and in full (``TestImageFoldersOnMain``), which changes in the commit that
-moves the folders.
+The manifest records each file's image folder. On 2026-11-27 the folders
+moved to the handlers' ``prebuilt/…`` folders, and year files and baselines
+began to record theirs too (before, only state files did). That changed the
+manifest's digest through the ``folder`` fields alone, so the digest is
+pinned twice: without the folder fields
+(``test_digest_without_the_image_folders``), unchanged since ``main``, and in
+full (``TestImageFolders``), with the value of the new layout.
 """
 
 from __future__ import annotations
@@ -140,6 +141,7 @@ def test_the_exact_payload_of_a_one_entry_per_kind_plan(stored_plan):
             "type": "dataset",
             "path": f"datasets/us/{YEAR_FILE_2026}/populace_us_2024_year_2026.h5",
             "filename": "populace_us_2024_year_2026.h5",
+            "folder": "prebuilt/us/populace_us_2024/all",
             "year": 2026,
             "identity_digest": YEAR_FILE_2026,
             "content_sha256": (
@@ -154,6 +156,7 @@ def test_the_exact_payload_of_a_one_entry_per_kind_plan(stored_plan):
                 f"stage12-bl1-88acdd57481da784{SPM_SUFFIX}.h5"
             ),
             "filename": f"stage12-bl1-88acdd57481da784{SPM_SUFFIX}.h5",
+            "folder": "prebuilt/us/populace_us_2024/all",
             "year": 2026,
             "identity_digest": FIRST_BASELINE,
             "content_sha256": (
@@ -167,7 +170,7 @@ def test_the_exact_payload_of_a_one_entry_per_kind_plan(stored_plan):
                 f"state-datasets/us/{ALASKA_2026}/{STATE_LEVEL_DATASET}_year_2026.h5"
             ),
             "filename": f"{STATE_LEVEL_DATASET}_year_2026.h5",
-            "folder": f"state-datasets/{STATE_LEVEL_DATASET}/AK",
+            "folder": f"prebuilt/us/{STATE_LEVEL_DATASET}/AK",
             "state_code": "AK",
             "year": 2026,
             "identity_digest": ALASKA_2026,
@@ -217,14 +220,15 @@ def test_the_line_the_precompute_prints_for_the_deploy_job():
     )
 
 
-class TestImageFoldersOnMain:
-    """The full digest, which covers each state file's image folder.
+class TestImageFolders:
+    """The full digest, which covers each file's image folder.
 
-    The handler design moves the folders to ``prebuilt/…``; this pin changes
-    in that commit, and only there.
+    It was 0e2b95a1…bce3fe on ``main`` (6865dc2c), with state files in
+    ``state-datasets/…`` and no folder for year files and baselines. This is
+    the same manifest with every file in its ``prebuilt/…`` folder.
     """
 
     def test_full_digest(self, manifest_payload):
         assert keys.canonical_digest(manifest_payload) == (
-            "0e2b95a143a4c9bfd4d1d9ee785156a1cc817e5569fb1c2580b9a1a202bce3fe"
+            "eeaaf3bab1c0eeaaa23499129cd59af0d24896e89ad24d167443e37ab01a477e"
         )

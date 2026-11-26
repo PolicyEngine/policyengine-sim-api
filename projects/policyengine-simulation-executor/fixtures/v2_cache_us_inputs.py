@@ -335,7 +335,10 @@ def install_v2_cache_us_inputs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespa
         precompute_baselines,
         stage12_simulation,
     ):
-        monkeypatch.setattr(module, "load_stage12_bundle", lambda: stage12_bundle)
+        # Only the modules that read the bundle themselves; the others take it
+        # from these.
+        if hasattr(module, "load_stage12_bundle"):
+            monkeypatch.setattr(module, "load_stage12_bundle", lambda: stage12_bundle)
 
     release = fixed_release_bundle()
     for module in (release_bundle, simulation_runtime, region_resolution):
@@ -368,8 +371,13 @@ def install_v2_cache_us_inputs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespa
             ),
         )
     )
+    # The level handlers resolve the country model through simulation_runtime;
+    # the cache's own modules that import it by name are covered too.
     for module in (precompute_planning, precompute_datasets, simulation_runtime):
-        monkeypatch.setattr(module, "_country_module", lambda _country: country_module)
+        if hasattr(module, "_country_module"):
+            monkeypatch.setattr(
+                module, "_country_module", lambda _country: country_module
+            )
 
     spm_state = SimpleNamespace(spm_capability=None)
     monkeypatch.setattr(

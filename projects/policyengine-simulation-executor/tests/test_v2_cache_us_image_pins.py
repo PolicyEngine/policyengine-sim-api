@@ -11,9 +11,11 @@ end to end.
 What the download step accepts and refuses must stay unchanged when the v2
 cache moves onto the level handlers: exactly 3 year files and 60 baselines,
 the years 2026, 2027 and 2025 in that order, and each file's SHA-256 and
-size. Where it places the files is pinned apart, in ``TestImageFoldersOnMain``:
-the handler design moves them to ``prebuilt/…``, so those pins change in a
-commit of their own.
+size. Since 2026-11-27 the step receives those years and counts from the
+deploying machine (``EXPECTED_CONTENTS`` here) instead of holding them as
+constants; what it accepts and refuses is unchanged. Where it places the
+files is pinned apart, in ``TestImageFolders``: they moved to the handlers'
+``prebuilt/…`` folders that day, in a commit of their own.
 """
 
 from __future__ import annotations
@@ -39,7 +41,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 BUCKET = "bucket-pins"
+# What the deploying machine passes the download step for the US cache: the
+# years and the year-file and baseline counts ``main`` held as constants.
+EXPECTED_CONTENTS = {
+    "years": [2026, 2027, 2025],
+    "artifact_counts": {"dataset": 3, "baseline": 60},
+}
 MANIFEST_COPY = ".stage12-cache-manifest.json"
+NATIONAL_FOLDER = "prebuilt/us/populace_us_2024/all"
 
 
 def _stored_bytes(path: str) -> bytes:
@@ -82,7 +91,12 @@ def image(published, monkeypatch, tmp_path):
         monkeypatch.setenv(
             "STAGE12_CACHE_MANIFEST_DIGEST", keys.canonical_digest(manifest)
         )
-        fetch_stage12_cache(BUCKET, manifest, client=published.inputs.cache_bucket)
+        fetch_stage12_cache(
+            BUCKET,
+            manifest,
+            EXPECTED_CONTENTS,
+            client=published.inputs.cache_bucket,
+        )
 
     return SimpleNamespace(data_folder=data_folder, fetch=fetch)
 
@@ -186,9 +200,13 @@ class TestDeployTimeCheck:
 
     def test_expects_the_planned_counts_and_years(self, published):
         from policyengine_simulation_executor import stage12_worker_validation
+        from policyengine_simulation_executor.stage12_cache import (
+            precompute_planning,
+        )
 
-        assert stage12_worker_validation.STAGE12_CACHE_ARTIFACT_COUNT == 63
-        assert stage12_worker_validation.STAGE12_CACHE_PROBE_YEAR == 2026
+        # main held these as STAGE12_CACHE_ARTIFACT_COUNT (63) and
+        # STAGE12_CACHE_PROBE_YEAR (2026).
+        assert precompute_planning.expected_cache_contents("us") == (EXPECTED_CONTENTS)
         assert stage12_worker_validation.expected_state_dataset_count() == 153
 
     def test_accepts_the_downloaded_cache_and_reports_its_release(
@@ -225,22 +243,23 @@ class TestDeployTimeCheck:
         assert probe.options == {"region_group": list(US_REGION_GROUPS[0])}
 
 
-class TestImageFoldersOnMain:
-    """Where ``main``'s download step and deploy-time check find each file.
+class TestImageFolders:
+    """Where the download step and the deploy-time check find each file.
 
-    The handler design moves these folders to ``prebuilt/…``; these pins
-    change in that commit, and only there.
+    Until 2026-11-27 (``main`` at 6865dc2c) year files and baselines landed in
+    the data folder itself and state files in ``state-datasets/<dataset>/
+    <state>``. Every file now lands in its handler's ``prebuilt/…`` folder.
     """
 
-    def test_year_files_and_baselines_land_in_the_data_folder_itself(
+    def test_year_files_and_baselines_land_in_the_national_folder(
         self, published, image
     ):
         image.fetch(published.manifest)
 
         for entry in (*published.plan.datasets, *published.plan.baselines):
-            assert (image.data_folder / entry.filename).read_bytes() == (
-                _stored_bytes(entry.path)
-            )
+            destination = image.data_folder / NATIONAL_FOLDER / entry.filename
+            assert destination.read_bytes() == _stored_bytes(entry.path)
+        assert not list(image.data_folder.glob("*.h5"))
 
     def test_state_files_land_in_their_state_folders(self, published, image):
         image.fetch(published.manifest)
@@ -248,14 +267,15 @@ class TestImageFoldersOnMain:
         for entry in published.plan.state_datasets:
             destination = (
                 image.data_folder
-                / "state-datasets"
+                / "prebuilt"
+                / "us"
                 / STATE_LEVEL_DATASET
                 / entry.state_code
                 / entry.filename
             )
             assert destination.read_bytes() == _stored_bytes(entry.path)
 
-    def test_the_deploy_check_reads_its_probe_baseline_from_the_data_folder(
+    def test_the_deploy_check_reads_its_probe_baseline_from_the_national_folder(
         self, published, image, monkeypatch
     ):
         from policyengine_simulation_executor import stage12_worker_validation
@@ -282,5 +302,9 @@ class TestImageFoldersOnMain:
         )
 
         assert checked == [
-            str(image.data_folder / published.plan.baselines[0].filename)
+            str(
+                image.data_folder
+                / NATIONAL_FOLDER
+                / published.plan.baselines[0].filename
+            )
         ]

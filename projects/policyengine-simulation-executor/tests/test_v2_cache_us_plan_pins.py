@@ -7,11 +7,13 @@ unchanged: the same years, year files, state files and region-group
 baselines in the same order, with the same ``stage12-ds1``, ``stage12-sds1``
 and ``stage12-bl1`` keys and store paths.
 
-The image folders a plan entry names are pinned apart, in
-``TestImageFoldersOnMain``: the handler design moves them to ``prebuilt/…``,
-so those pins change in a commit of their own. Any other deliberate change to
-a key, path or digest updates its pinned value in a commit of its own that
-says why.
+The image folders a plan entry names are pinned apart, in ``TestImageFolders``:
+they moved to the handlers' ``prebuilt/…`` folders on 2026-11-27, in a commit
+of their own. On that date the years and the state targets also began to be
+read through the handlers, as ``main``'s ``PRECOMPUTE_YEARS`` and
+``state_dataset_targets`` were deleted; their values are unchanged. Any other
+deliberate change to a key, path or digest updates its pinned value in a
+commit of its own that says why.
 
 Long lists are pinned by the SHA-256 of their canonical JSON (``_digest_of``)
 plus their first entries in full, so a failure names the section that moved.
@@ -136,8 +138,12 @@ class TestUsPlan:
     """The plan ``plan_artifacts_impl`` makes for a bundle with an SPM capability."""
 
     def test_plans_the_three_years_in_submission_order(self, us_plan):
+        from policyengine_simulation_executor.stage12_cache.levels import (
+            prebuilt_for,
+        )
+
         assert list(us_plan.years) == PLANNED_YEARS
-        assert list(precompute.PRECOMPUTE_YEARS) == PLANNED_YEARS
+        assert list(prebuilt_for("us").years) == PLANNED_YEARS
 
     def test_plans_the_default_dataset_year_file_for_each_year(self, us_plan):
         assert _dataset_rows(us_plan) == [
@@ -270,14 +276,20 @@ class TestStateTargets:
     """The US states whose requests load a non-default dataset."""
 
     def test_targets_every_state_by_code_with_its_row_filter(self, us_inputs):
-        targets = precompute.state_dataset_targets()
+        from policyengine_simulation_executor.stage12_cache.levels import (
+            DatasetLevel,
+            prebuilt_for,
+        )
+
+        handler = prebuilt_for("us").handlers[DatasetLevel.STATE]
+        targets = handler.year_file_targets(2026)
 
         assert [
             [
-                target.region,
-                target.state_code,
-                target.state_fips,
-                target.filter_variable,
+                target.subset.region,
+                target.subset.code,
+                target.subset.value,
+                target.subset.variable,
                 target.dataset,
             ]
             for target in targets
@@ -291,7 +303,7 @@ class TestStateTargets:
             ]
             for state_code, state_fips in sorted(US_STATE_FIPS)
         ]
-        assert all(target.scoping_strategy is not None for target in targets)
+        assert all(target.subset.scoping_strategy is not None for target in targets)
 
 
 def test_a_plan_marks_what_the_bucket_already_holds(monkeypatch):
@@ -419,22 +431,23 @@ class TestKeys:
         )
 
 
-class TestImageFoldersOnMain:
-    """Where ``main`` places each planned file in the worker image.
+class TestImageFolders:
+    """Where each planned file sits in the worker image.
 
-    The handler design moves these folders to ``prebuilt/…``; these pins
-    change in that commit, and only there.
+    Until 2026-11-27 (``main`` at 6865dc2c) a state file sat in
+    ``state-datasets/<dataset>/<state>`` and year files and baselines named no
+    folder: they sat in the image data folder itself. Every file now sits in
+    its handler's ``prebuilt/<country>/<dataset>/<state or "all">`` folder,
+    and a baseline beside the year file it was computed on.
     """
 
     def test_state_files_land_in_their_state_folders(self, us_plan):
         assert [entry.folder for entry in us_plan.state_datasets] == [
-            f"state-datasets/{STATE_LEVEL_DATASET}/{entry.state_code}"
+            f"prebuilt/us/{STATE_LEVEL_DATASET}/{entry.state_code}"
             for entry in us_plan.state_datasets
         ]
 
-    def test_year_files_and_baselines_name_no_folder(self, us_plan):
-        # They land in the image data folder itself (see the download pins).
-        assert all(
-            "folder" not in type(entry).model_fields
-            for entry in (*us_plan.datasets, *us_plan.baselines)
-        )
+    def test_year_files_and_baselines_land_in_the_national_folder(self, us_plan):
+        assert {entry.folder for entry in (*us_plan.datasets, *us_plan.baselines)} == {
+            "prebuilt/us/populace_us_2024/all"
+        }
