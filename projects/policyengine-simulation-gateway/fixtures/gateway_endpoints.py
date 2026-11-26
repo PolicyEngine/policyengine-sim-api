@@ -2,7 +2,7 @@
 
 from collections.abc import ItemsView, KeysView
 from copy import deepcopy
-from typing import ClassVar, Self
+from typing import ClassVar, NoReturn, Self
 
 import pytest
 from policyengine_simulation_contract.macro_output import (
@@ -368,10 +368,11 @@ class MockModalException:
 class MockWorkerClass:
     """Class handle returned by Modal.Cls.from_name.
 
-    ``hydrate`` raises ``NotFoundError`` for an app in ``function_form_apps``,
-    as Modal does for an app deployed before it defined its workers as
-    classes. Calling the handle returns an instance whose methods record
-    their spawns into ``recorder``.
+    For an app in ``apps_without_worker_class``, such as one deployed before
+    the workers were classes, Modal can't resolve the class: ``hydrate`` and
+    a method's spawn raise ``NotFoundError``, as Modal does when it resolves
+    the lazy handle. Otherwise, calling the handle returns an instance whose
+    methods record their spawns into ``recorder``.
     """
 
     def __init__(
@@ -379,40 +380,62 @@ class MockWorkerClass:
         recorder: MockFunction,
         app_name: str,
         class_name: str,
-        function_form_apps: set[str],
+        apps_without_worker_class: set[str],
     ) -> None:
         """Bind the app and class looked up."""
         self.recorder = recorder
         self.app_name = app_name
         self.class_name = class_name
-        self.function_form_apps = function_form_apps
+        self.apps_without_worker_class = apps_without_worker_class
+
+    def lookup_error(self) -> Exception | None:
+        """Return the error that resolving the class raises, or None if it exists."""
+        if self.app_name not in self.apps_without_worker_class:
+            return None
+        msg = (
+            f"Lookup failed for Cls '{self.class_name}' from the '{self.app_name}' app"
+        )
+        return MockModalException.NotFoundError(msg)
 
     def hydrate(self) -> Self:
         """Resolve the class, or raise ``NotFoundError`` if the app has none."""
-        if self.app_name in self.function_form_apps:
-            msg = (
-                f"Lookup failed for Cls '{self.class_name}' "
-                f"from the '{self.app_name}' app"
-            )
-            raise MockModalException.NotFoundError(msg)
+        error = self.lookup_error()
+        if error is not None:
+            raise error
         return self
 
     def __call__(self) -> "MockWorkerInstance":
         """Return an instance of the worker class."""
-        return MockWorkerInstance(self.recorder, self.app_name)
+        return MockWorkerInstance(self)
 
 
 class MockWorkerInstance:
     """Instance of a worker class: each method spawns under its method name."""
 
-    def __init__(self, recorder: MockFunction, app_name: str) -> None:
-        """Bind the app whose class this is an instance of."""
-        self.recorder = recorder
-        self.app_name = app_name
+    def __init__(self, worker_class: MockWorkerClass) -> None:
+        """Bind the class handle this is an instance of."""
+        self.worker_class = worker_class
 
-    def __getattr__(self, method_name: str) -> BoundMockFunction:
+    def __getattr__(
+        self, method_name: str
+    ) -> "BoundMockFunction | MissingWorkerMethod":
         """Return a handle for one method that records into the recorder."""
-        return self.recorder.bind(self.app_name, method_name)
+        error = self.worker_class.lookup_error()
+        if error is not None:
+            return MissingWorkerMethod(error)
+        return self.worker_class.recorder.bind(self.worker_class.app_name, method_name)
+
+
+class MissingWorkerMethod:
+    """A method of a class the app doesn't define: spawning it raises."""
+
+    def __init__(self, lookup_error: Exception) -> None:
+        """Keep the error that resolving the class raises."""
+        self.lookup_error = lookup_error
+
+    def spawn(self, *_arguments: object, **_keywords: object) -> NoReturn:
+        """Raise the class lookup error, as Modal does on the first spawn."""
+        raise self.lookup_error
 
 
 @pytest.fixture
@@ -454,14 +477,17 @@ def mock_modal(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
             mock_func.last_from_name_call = (app_name, func_name)
             return mock_func.bind(app_name, func_name)
 
-    # Apps deployed before the workers became classes: no class lookup works.
-    function_form_apps: set[str] = set()
+    # Apps that define no worker class, such as ones deployed before the
+    # workers became classes: no class lookup works.
+    apps_without_worker_class: set[str] = set()
 
     class MockModalCls:
         @staticmethod
         def from_name(app_name: str, class_name: str) -> MockWorkerClass:
             mock_func.last_cls_from_name_call = (app_name, class_name)
-            return MockWorkerClass(mock_func, app_name, class_name, function_form_apps)
+            return MockWorkerClass(
+                mock_func, app_name, class_name, apps_without_worker_class
+            )
 
     class MockModal:
         Dict = MockModalDict
@@ -497,5 +523,5 @@ def mock_modal(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         "dicts": mock_dicts,
         "function_call": MockFunctionCall,
         "exception": MockModalException,
-        "function_form_apps": function_form_apps,
+        "apps_without_worker_class": apps_without_worker_class,
     }

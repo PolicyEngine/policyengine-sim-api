@@ -70,35 +70,32 @@ class TestSubmitSimulationEndpoint:
         assert "time_period" not in mock_modal["func"].last_payload
         assert "data_version" not in mock_modal["func"].last_payload
 
-    def test__given_an_app_deployed_before_the_worker_class__then_spawns_its_function(
+    def test__given_an_app_with_no_worker_class__then_no_function_is_spawned(
         self, mock_modal, client: TestClient
     ):
-        """Given an app with no worker class, then spawn its run_simulation function."""
-        # Given: a pinned or rolled-back version whose app predates the class.
+        """Given an app with no worker class, then fail without spawning a function."""
+        # Given: a pinned or rolled-back version whose app predates the class
+        # and defines run_simulation as a plain function.
         mock_modal["dicts"]["simulation-api-us-versions"] = {
             "latest": "1.500.0",
             "1.500.0": "policyengine-simulation-py4-10-0",
         }
-        mock_modal["function_form_apps"].add("policyengine-simulation-py4-10-0")
+        mock_modal["apps_without_worker_class"].add("policyengine-simulation-py4-10-0")
 
         # When
-        response = client.post(
-            "/simulate/economy/comparison",
-            json={"country": "us", "scope": "macro", "reform": {}},
-        )
+        with pytest.raises(mock_modal["exception"].NotFoundError):
+            client.post(
+                "/simulate/economy/comparison",
+                json={"country": "us", "scope": "macro", "reform": {}},
+            )
 
-        # Then
-        assert response.status_code == 200
-        assert response.json()["job_id"] == "mock-job-id-123"
+        # Then: the gateway spawns only through the worker class.
         assert mock_modal["func"].last_cls_from_name_call == (
             "policyengine-simulation-py4-10-0",
             "SimulationWorker",
         )
-        assert mock_modal["func"].last_from_name_call == (
-            "policyengine-simulation-py4-10-0",
-            "run_simulation",
-        )
-        assert len(mock_modal["func"].calls) == 1
+        assert mock_modal["func"].last_from_name_call is None
+        assert mock_modal["func"].calls == []
 
     def test__given_a_failed_spawn_on_the_worker_class__then_no_function_is_tried(
         self, mock_modal, client: TestClient
