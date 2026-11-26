@@ -97,15 +97,15 @@ def _cached_level_scope_key(run: RunScope) -> str | None:
     The level's handler decides the scope, including that the run reads the
     default dataset. None when the run's country has no handlers, its level
     is not one the cache covers, the handler gives no scope or no key, or the
-    lookup fails.
+    lookup fails, loading the handler settings included.
     """
-    prebuilt = prebuilt_for(run.country)
-    level = None if prebuilt is None else prebuilt.level_of(run)
-    if prebuilt is None or level is None:
-        return None
-    if level not in cache_baseline_levels(run.country):
-        return None
     try:
+        prebuilt = prebuilt_for(run.country)
+        level = None if prebuilt is None else prebuilt.level_of(run)
+        if prebuilt is None or level is None:
+            return None
+        if level not in cache_baseline_levels(run.country):
+            return None
         scope = prebuilt.handlers[level].baseline_scope(run)
     except Exception:  # noqa: BLE001  # a lookup failure costs a computed baseline, never the request; it is logged
         logger.warning(

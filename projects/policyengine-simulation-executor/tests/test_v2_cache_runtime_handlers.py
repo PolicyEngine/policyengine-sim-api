@@ -433,6 +433,33 @@ class TestBuildersThroughTheHandlers:
         assert us_inputs.cache_bucket.objects[baseline.path] == b"baseline output"
         assert not list(us_inputs.data_folder.glob("*.h5"))
 
+    def test_the_baseline_calculation_reads_the_downloaded_prebuilt_year_file(
+        self, us_inputs, monkeypatch, tmp_path
+    ):
+        """The real prebuilt-folder lookup, during the precompute, finds the file."""
+        from contextlib import nullcontext
+
+        from fixtures.state_dataset_sources import write_year_file
+
+        plan = precompute.plan_artifacts_impl(BUCKET)
+        year_file = plan.datasets[0]
+        baseline = plan.baselines[0]
+        stamped = write_year_file(tmp_path, year=2026, dataset=DEFAULT_DATASET)
+        us_inputs.cache_bucket.store(year_file.path, stamped.read_bytes())
+        loads = []
+
+        def load_dataset(_params, *, selection, country_module, data_folder=None):
+            loads.append(data_folder)
+            raise _StoppedAfterLoadingError
+
+        monkeypatch.setattr(simulation_runtime, "setup_gcp_credentials", nullcontext)
+        monkeypatch.setattr(simulation_runtime, "_load_dataset", load_dataset)
+
+        with pytest.raises(_StoppedAfterLoadingError):
+            precompute.compute_baseline_impl(BUCKET, baseline)
+
+        assert loads == [str(us_inputs.data_folder / baseline.folder)]
+
     def test_the_state_folder_of_a_plan_entry_is_the_handlers(self, us_inputs):
         plan = precompute.plan_artifacts_impl(BUCKET)
         utah = next(

@@ -61,14 +61,13 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
         )
         raise RuntimeError(msg)
     started = time.monotonic()
-    written = handler.write_year_files(
-        expected.year,
-        targets,
-        Path(tempfile.mkdtemp(prefix="policyengine-stage12-datasets-")),
-    )
-    uploaded, stored = Stage12CacheStore(bucket).upload_file(
-        expected.path, written[targets[0]]
-    )
+    with tempfile.TemporaryDirectory(
+        prefix="policyengine-stage12-datasets-"
+    ) as work_folder:
+        written = handler.write_year_files(expected.year, targets, Path(work_folder))
+        uploaded, stored = Stage12CacheStore(bucket).upload_file(
+            expected.path, written[targets[0]]
+        )
     return DatasetBuildResult(
         **stored.model_dump(),
         year=expected.year,

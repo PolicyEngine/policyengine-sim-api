@@ -79,6 +79,23 @@ if TYPE_CHECKING:
 DETERMINISM_SCHEMA = "stage12-dv1"
 
 
+def required_baseline_levels(country: str) -> tuple[DatasetLevel, ...]:
+    """Return the cache's baseline levels for ``country``; ``RuntimeError`` if none.
+
+    The precompute's determinism check, the manifest's publication and the
+    deployed worker's check each probe a precomputed baseline, so a cache
+    without one is refused before anything is built.
+    """
+    baseline_levels = cache_baseline_levels(country)
+    if not baseline_levels:
+        msg = (
+            f"The {country} v2 cache needs at least one baseline level: its "
+            "precompute, manifest and deploy check each probe a baseline"
+        )
+        raise RuntimeError(msg)
+    return baseline_levels
+
+
 def bundle_country(country: str) -> CountryId:
     """Return ``country`` as a Stage 12 bundle country; ``ValueError`` otherwise."""
     if country not in SUPPORTED_COUNTRIES:
@@ -323,7 +340,7 @@ def _baseline_entries(
     """Plan each baseline the cache precomputes for ``year``, in handler order."""
     entries = []
     country = bundle_country(prebuilt.country)
-    for level in cache_baseline_levels(prebuilt.country):
+    for level in required_baseline_levels(prebuilt.country):
         if level is not DatasetLevel.STATE_GROUP:
             msg = (
                 f"The {prebuilt.country} cache has no v2 cache key for {level} "
@@ -362,6 +379,7 @@ def plan_artifacts_impl(bucket: str, country: str = "us") -> PrecomputePlan:
     The v2 cache covers only the US until task 2.2 · 6, hence the default.
     """
     prebuilt = country_prebuilt(country)
+    required_baseline_levels(country)
     resolved = load_stage12_bundle()
     store = Stage12CacheStore(bucket)
     datasets: list[DatasetPlanEntry] = []
@@ -407,7 +425,7 @@ def expected_cache_contents(country: str) -> dict[str, Any]:
     baseline_count = sum(
         len(prebuilt.handlers[level].baseline_targets(year))
         for year in years
-        for level in cache_baseline_levels(country)
+        for level in required_baseline_levels(country)
     )
     return {
         "years": years,
