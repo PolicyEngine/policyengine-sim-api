@@ -10,6 +10,38 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.26.1] - 2026-11-26
+
+### Changed
+
+- A simulation naming a stored dynamic with no parameter values, economy or household alike and their re-runs included, is refused with 400 `dynamic_without_values` instead of being calculated and stored as current law. API v1 stores no dynamic without values, so such a dynamic's values are stored where this release doesn't read them.
+
+
+## [0.26.0] - 2026-11-26
+
+### Added
+
+- Each `run_simulation`, `run_simulation_segment` and `run_budget_window_batch` call's operation log record and span now carry `container_start` (`restored_from_snapshot`, `took_snapshot` or `no_snapshot`) and `container_call_number`, the call's number in its container. Cloud Logging and Cloud Trace can then tell calls in containers restored from a memory snapshot apart from others, and the spans of those containers' first calls show the setup time left after a restore.
+
+
+## [0.25.0] - 2026-11-25
+
+### Added
+
+- Household calculations (`POST /household-calculations`) take a `dynamic_id`, and each side of a household report takes one, as economy simulations do: the dynamic's values are applied with the policy's, the job stores it in `household_jobs.dynamic_id` and the job's state returns it, each household simulation's key names it, and a stored household report whose side names a dynamic is re-run with it.
+
+### Changed
+
+- Every simulation, economy and household alike, refuses a dynamic stored for another country as `unknown_dynamic`, as it refuses another country's policy, and the refusal's detail names the country. To check, sim reads `dynamics.country_id`, which API v1's migration `9d1d12a7ac58` (PolicyEngine/policyengine-api#4325) added.
+
+
+## [0.24.0] - 2026-11-25
+
+### Removed
+
+- The simulation service and the v2 Modal runtime no longer map `reports.label`, `description` and `user_id`, `report_runs.trigger` and its four cliff columns, or `budget_window_runs.trigger`, which API v1 drops. They work on a database with or without those columns.
+
+
 ## [0.23.1] - 2026-11-25
 
 ### Changed

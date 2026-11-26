@@ -201,7 +201,8 @@ SESSION_FUNCTIONS = (
     (rerun_definitions, "read_simulation_definition"),
     (policy_reform, "read_policy_reform"),
     (policy_reform, "read_dynamic_reform"),
-    (policy_reform, "_read_reform"),
+    (policy_reform, "_read_values"),
+    (policy_reform, "_reform_from_values"),
 )
 
 

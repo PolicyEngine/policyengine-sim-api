@@ -14,6 +14,10 @@ from uuid import UUID
 import pytest
 from household_report_fakes import (
     CATALOG_VERSION_ID,
+    CTC_AMOUNT,
+    DYNAMIC_ID,
+    DYNAMIC_VALUES,
+    ELASTICITY,
     HOUSEHOLD_ID,
     MODEL_ID,
     POLICY_ID,
@@ -53,18 +57,22 @@ from policyengine_simulation_entry.household_workers import (
     VersionManifestUnavailableError,
 )
 from policyengine_simulation_persistence import (
+    DynamicWithoutValuesError,
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
     FoundReportRun,
     HouseholdReportDefinition,
     MissingPolicyParametersError,
+    OverlappingReformError,
     ProposedSide,
     ReportRunStatus,
     ReportSideError,
     RunVersions,
     SimulationChoice,
+    SimulationReform,
     StoredHousehold,
     UnknownCatalogVersionError,
+    UnknownDynamicError,
     UnknownHouseholdError,
     UnknownPolicyError,
 )
@@ -125,7 +133,10 @@ def test_a_household_report_is_created_and_its_household_function_started():
         {
             "country": "us",
             "household_id": HOUSEHOLD_ID,
-            "policy_ids": {"baseline": None, "reform": POLICY_ID},
+            "choices": {
+                "baseline": SimulationChoice(policy_id=None, dynamic_id=None),
+                "reform": SimulationChoice(policy_id=POLICY_ID, dynamic_id=None),
+            },
             "policyengine_version": worker.bundle.policyengine_version,
         }
     ]
@@ -179,13 +190,61 @@ def test_a_report_of_the_baseline_alone_creates_and_calculates_one_side():
         None,
         None,
     )
-    assert store.reads[0]["policy_ids"] == {"baseline": POLICY_ID}
+    assert store.reads[0]["choices"] == {
+        "baseline": SimulationChoice(policy_id=POLICY_ID, dynamic_id=None)
+    }
     (report,) = store.keyed_reports
     assert (report.reform, report.definition.reform) == (None, None)
     assert report.definition.baseline.policy_id == POLICY_ID
     ((_, payload, _, _),) = caller.calls
     assert payload["reform"] is None
     assert payload["baseline"]["policy"] == {"parameters": REFORM}
+
+
+def test_each_sides_dynamic_is_read_keyed_and_applied_with_its_policy():
+    store = FakeHouseholdReportStore()
+    caller = FakeHouseholdReportCaller()
+    # One dynamic on both sides, as a report names it (C1 · 35, Q5).
+    request = household_report_request(
+        baseline={"dynamic_id": str(DYNAMIC_ID)},
+        reform={"policy_id": str(POLICY_ID), "dynamic_id": str(DYNAMIC_ID)},
+    )
+
+    _submit(household_report_service(store, caller=caller), request)
+
+    baseline = SimulationChoice(policy_id=None, dynamic_id=DYNAMIC_ID)
+    reform = SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID)
+    assert store.reads[0]["choices"] == {"baseline": baseline, "reform": reform}
+    (report,) = store.keyed_reports
+    assert (report.definition.baseline, report.definition.reform) == (
+        baseline,
+        reform,
+    )
+    ((_, payload, _, _),) = caller.calls
+    assert payload["baseline"] == _side_request(BASELINE_RUN_ID, DYNAMIC_VALUES)
+    assert payload["reform"] == _side_request(
+        REFORM_RUN_ID, {**REFORM, **DYNAMIC_VALUES}
+    )
+
+
+def test_a_report_with_a_dynamic_keys_apart_from_one_without():
+    store = FakeHouseholdReportStore()
+    service = household_report_service(store)
+    _submit(service)
+    _submit(
+        household_report_service(store),
+        household_report_request(
+            baseline={"dynamic_id": str(DYNAMIC_ID)},
+            reform={"policy_id": str(POLICY_ID), "dynamic_id": str(DYNAMIC_ID)},
+        ),
+    )
+
+    static, dynamic = (report.definition for report in store.keyed_reports)
+    assert static.definition_key != dynamic.definition_key
+    assert (
+        static.simulation("reform").definition_key
+        != dynamic.simulation("reform").definition_key
+    )
 
 
 def test_a_saved_spm_selection_is_applied_to_both_sides():
@@ -308,6 +367,20 @@ def test_a_policy_compared_with_itself_is_calculated_on_one_run():
             "unknown_policy",
             "us has no stored policy the request's reform names.",
         ),
+        # A dynamic of another country is refused as a missing one.
+        (
+            ReportSideError("baseline", UnknownDynamicError("no dynamic")),
+            EconomySubmissionRefusedError,
+            "unknown_dynamic",
+            "us has no stored dynamic the request's baseline names.",
+        ),
+        (
+            ReportSideError("reform", DynamicWithoutValuesError("no values")),
+            EconomySubmissionRefusedError,
+            "dynamic_without_values",
+            "us's stored dynamic that the request's reform names has no parameter "
+            "values the service can read.",
+        ),
         (
             DATABASE_ERROR,
             EconomySubmissionUnavailableError,
@@ -315,7 +388,14 @@ def test_a_policy_compared_with_itself_is_calculated_on_one_run():
             "The simulation database could not be read.",
         ),
     ],
-    ids=["catalog-version", "household", "policy", "database"],
+    ids=[
+        "catalog-version",
+        "household",
+        "policy",
+        "dynamic",
+        "dynamic-without-values",
+        "database",
+    ],
 )
 def test_each_missing_input_is_refused_before_anything_is_written(
     failure, expected_type, code, detail
@@ -346,6 +426,39 @@ def test_a_policy_setting_missing_parameters_is_refused_on_its_side():
         ("body", "baseline", "policy_id", "gov.b"),
     ]
     assert {reason.type for reason in raised.value.reasons} == {"missing_parameter"}
+    assert store.keyed_reports == []
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "reason_type"),
+    [
+        (
+            MissingPolicyParametersError(["gov.simulation.a"], source="dynamic"),
+            "missing_parameters",
+            "missing_parameter",
+        ),
+        (
+            OverlappingReformError(["gov.simulation.a"]),
+            "overlapping_parameters",
+            "overlapping_parameter",
+        ),
+    ],
+    ids=["missing-parameter", "overlapping-parameter"],
+)
+def test_a_dynamic_that_cannot_be_applied_is_refused_on_its_side(
+    error, code, reason_type
+):
+    store = FakeHouseholdReportStore(read_failure=ReportSideError("reform", error))
+
+    with pytest.raises(EconomySubmissionUnprocessableError) as raised:
+        _submit(household_report_service(store))
+
+    assert raised.value.code == code
+    ((reason),) = raised.value.reasons
+    assert (reason.loc, reason.type) == (
+        ("body", "reform", "dynamic_id", "gov.simulation.a"),
+        reason_type,
+    )
     assert store.keyed_reports == []
 
 
@@ -399,6 +512,7 @@ def test_a_household_the_contract_refuses_is_located_on_the_household():
     [
         ("household_id", "unknown_household"),
         ("policy_id", "unknown_policy"),
+        ("dynamic_id", "unknown_dynamic"),
         ("tax_benefit_model_version_id", "unknown_catalog_version"),
         (None, "missing_reference"),
     ],
@@ -517,10 +631,12 @@ def test_a_report_runs_calculation_is_built_from_its_stored_inputs_alone():
         household=_stored_household(),
         year=2027,
         baseline=HouseholdReportSideInputs(
-            simulation_run_id=BASELINE_RUN_ID, policy_values={}
+            simulation_run_id=BASELINE_RUN_ID,
+            reform=SimulationReform(values={}, dynamic_parameters=frozenset()),
         ),
         reform=HouseholdReportSideInputs(
-            simulation_run_id=REFORM_RUN_ID, policy_values=REFORM
+            simulation_run_id=REFORM_RUN_ID,
+            reform=SimulationReform(values=REFORM, dynamic_parameters=frozenset()),
         ),
         worker=manifest_household_worker("us"),
     )
@@ -535,12 +651,44 @@ def test_a_report_runs_calculation_is_built_from_its_stored_inputs_alone():
         assert payload[side] == expected
 
 
+def test_a_value_the_contract_refuses_is_located_on_the_field_that_sets_it():
+    # The contract takes a parameter's value as a number, string, boolean or
+    # list of them; an object is refused.
+    refused_value = {"2026-01-01.2200-12-31": {"not": "a value"}}
+
+    with pytest.raises(EconomySubmissionUnprocessableError) as raised:
+        household_report_calculation(
+            household=_stored_household(),
+            year=2026,
+            baseline=HouseholdReportSideInputs(
+                simulation_run_id=BASELINE_RUN_ID,
+                reform=SimulationReform(values={}, dynamic_parameters=frozenset()),
+            ),
+            reform=HouseholdReportSideInputs(
+                simulation_run_id=REFORM_RUN_ID,
+                reform=SimulationReform(
+                    values={CTC_AMOUNT: refused_value, ELASTICITY: refused_value},
+                    dynamic_parameters=frozenset({ELASTICITY}),
+                ),
+            ),
+            worker=manifest_household_worker("us"),
+        )
+
+    assert raised.value.code == "household_not_calculable"
+    fields = {reason.loc[:6] for reason in raised.value.reasons}
+    assert fields == {
+        ("body", "reform", "policy_id", "policy", "parameters", CTC_AMOUNT),
+        ("body", "reform", "dynamic_id", "policy", "parameters", ELASTICITY),
+    }
+
+
 def test_a_calculation_of_the_baseline_alone_has_no_reform():
     calculation = household_report_calculation(
         household=_stored_household(),
         year=2026,
         baseline=HouseholdReportSideInputs(
-            simulation_run_id=BASELINE_RUN_ID, policy_values=REFORM
+            simulation_run_id=BASELINE_RUN_ID,
+            reform=SimulationReform(values=REFORM, dynamic_parameters=frozenset()),
         ),
         worker=manifest_household_worker("us"),
     )
@@ -556,7 +704,8 @@ def test_a_stored_household_the_builder_cannot_read_is_not_calculable():
             household=_stored_household({"people": "not a list of people"}),
             year=2026,
             baseline=HouseholdReportSideInputs(
-                simulation_run_id=BASELINE_RUN_ID, policy_values={}
+                simulation_run_id=BASELINE_RUN_ID,
+                reform=SimulationReform(values={}, dynamic_parameters=frozenset()),
             ),
             worker=manifest_household_worker("us"),
         )
@@ -575,10 +724,12 @@ def test_one_simulation_run_on_both_sides_with_two_policies_is_built_wrong():
             household=_stored_household(),
             year=2026,
             baseline=HouseholdReportSideInputs(
-                simulation_run_id=BASELINE_RUN_ID, policy_values={}
+                simulation_run_id=BASELINE_RUN_ID,
+                reform=SimulationReform(values={}, dynamic_parameters=frozenset()),
             ),
             reform=HouseholdReportSideInputs(
-                simulation_run_id=BASELINE_RUN_ID, policy_values=REFORM
+                simulation_run_id=BASELINE_RUN_ID,
+                reform=SimulationReform(values=REFORM, dynamic_parameters=frozenset()),
             ),
             worker=manifest_household_worker("us"),
         )
@@ -595,7 +746,9 @@ def test_a_refusal_of_the_missing_variables_option_is_the_services_fault():
         HouseholdExecutionRequest.model_validate(refused_request)
 
     with pytest.raises(HouseholdReportBuildError, match="add_missing_variables"):
-        household_report_calculations._contract_reasons(refused.value, "baseline")
+        household_report_calculations._contract_reasons(
+            refused.value, "baseline", frozenset()
+        )
 
 
 def test_an_unconfirmed_call_is_logged_naming_its_report(caplog):

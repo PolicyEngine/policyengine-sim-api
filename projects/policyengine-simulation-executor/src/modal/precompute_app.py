@@ -12,9 +12,9 @@ thin decorated wrappers, library implementations). Run as a `modal run`
 ``--country`` (default ``us``) picks the country whose level handlers plan
 the run. Each whole dataset's year file is built in one container, and each
 year's subset year files of one dataset (for the US, the 51 state files) in
-another; each current-law baseline is computed in its own container, sized
-like the production ``run_simulation_segment`` workers. See the library
-module for the idempotency, ``--force``, and determinism-check semantics.
+another; each current-law baseline is computed in its own container,
+requesting 8 CPUs and 32 GiB. See the library module for the idempotency,
+``--force``, and determinism-check semantics.
 """
 
 from __future__ import annotations

@@ -1,11 +1,11 @@
 """Request and response models of the household calculation routes.
 
-The Public API names a stored household, and optionally a stored policy, by
-ID; the Simulation Entrypoint reads them from the Public API's tables itself
-and calculates the household's ``default_year`` on the v2 version manifest's
-default worker. Each submission creates a ``household_jobs`` row, which a
-household function on Modal calculates; the read route returns it as it
-stands.
+API v1 names a stored household, and optionally a stored policy and
+dynamic, by ID; the Simulation Entrypoint reads them from API v1's tables
+itself and calculates the household's ``default_year`` on the v2 version
+manifest's default worker. Each submission creates a ``household_jobs`` row,
+which a household function on Modal calculates; the read route returns it as
+it stands.
 """
 
 from __future__ import annotations
@@ -21,12 +21,18 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
 # Why a submission is refused (400): a row it names, or the household
-# function it needs, does not exist.
+# function it needs, does not exist, or its dynamic has no values this
+# release reads.
 HouseholdRefusalCode = Literal[
     # The country has no catalog version for the default worker's .py version.
     "unknown_catalog_version",
     "unknown_household",
     "unknown_policy",
+    # The country has no such dynamic: a dynamic of another country included.
+    "unknown_dynamic",
+    # The dynamic has no parameter values this release reads, so it is not
+    # applied as current law: the service's state, as for economy routes.
+    "dynamic_without_values",
     # The default worker has no household function for the country.
     "no_household_function",
     # The database refused the job: a row it names was deleted after the reads.
@@ -66,8 +72,12 @@ def _omit_spm_default(schema: dict[str, Any]) -> None:
 class HouseholdCalculationRequest(BaseModel):
     """A stored household to calculate under one stored policy, or current law.
 
-    ``household_id`` and ``policy_id`` (omitted or null for current law) name
-    the Public API's rows of ``country``. The calculation is for the
+    It may also name a stored dynamic, whose model assumptions apply too.
+
+    ``household_id``, ``policy_id`` (omitted or null for current law) and
+    ``dynamic_id`` (omitted or null for none) name API v1's rows of
+    ``country``; the dynamic's values are applied with the policy's, and
+    neither may set a parameter the other sets. The calculation is for the
     household's ``default_year``, on the v2 version manifest's default worker.
     ``add_missing_variables`` adds every yearly, monthly and eternal variable
     the household lacks, as the Public API's ``/calculate-full`` does.
@@ -85,6 +95,7 @@ class HouseholdCalculationRequest(BaseModel):
     country: CountryId
     household_id: UUID
     policy_id: UUID | None = None
+    dynamic_id: UUID | None = None
     add_missing_variables: bool = False
     axes: Axes = None
     spm: dict[str, JsonValue] | SkipJsonSchema[None] = Field(
@@ -144,6 +155,7 @@ class HouseholdCalculationState(BaseModel):
     country: str
     household_id: UUID
     policy_id: UUID | None
+    dynamic_id: UUID | None
     year: int
     policyengine_version: str
     country_package_version: str
@@ -188,8 +200,9 @@ class HouseholdRequestUnprocessable(BaseModel):
 
     Request fields FastAPI refuses, and stored data that cannot be
     calculated, share this shape: a household without a default year, a
-    policy setting parameters the catalog version lacks, or a household or
-    policy value the household contract refuses.
+    policy or dynamic setting parameters the catalog version lacks, a
+    dynamic setting a parameter the policy also sets, or a household,
+    policy or dynamic value the household contract refuses.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

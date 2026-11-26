@@ -42,7 +42,6 @@ KEYS_TO_PUBLIC_API_TABLES = {
         "regions(id)",
         "SET NULL",
     ),
-    ("reports", "fk_reports_user_id_users"): (("user_id",), "users(id)", "SET NULL"),
     ("reports", "fk_reports_tax_benefit_model_id_tax_benefit_models"): (
         ("tax_benefit_model_id",),
         "tax_benefit_models(id)",

@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -18,6 +19,7 @@ from economy_output import (
     us_output_with_every_part,
 )
 from policyengine_simulation_contract.stage12_execution import ReportRunIds
+from policyengine_simulation_persistence import CliffImpact
 from policyengine_simulation_persistence.result_tables import BudgetSummary
 from policyengine_stage12_persistence import (
     DistrictCodes,
@@ -50,12 +52,6 @@ POVERTY_PARTS = {
     "race": "poverty_by_race",
 }
 POVERTY_PART_NAMES = ("poverty", "poverty_by_gender", "poverty_by_race")
-CLIFF_COLUMNS = (
-    "baseline_cliff_gap",
-    "baseline_cliff_share",
-    "reform_cliff_gap",
-    "reform_cliff_share",
-)
 LABOR_SUPPLY_TABLES = ("labor_supply_responses", "labor_supply_decile_responses")
 
 
@@ -271,11 +267,7 @@ def test_a_report_run_stores_its_economy_output_as_rows(
             output["inequality"]["top_10_pct_share"][side],
             output["inequality"]["top_1_pct_share"][side],
         )
-    # A cliff impact is each simulation run's own cliff result, which the
-    # report run's completion never writes.
     report_run = seeder.row("report_runs", run_ids.report_run_id)
-    assert output["cliff_impact"] is not None
-    assert {report_run[column] for column in CLIFF_COLUMNS} == {None}
     assert report_run["data_version"] == output["data_version"]
     assert (
         _rebuilt_labor_supply(seeder, run_ids.report_run_id)
@@ -326,9 +318,41 @@ def test_a_report_runs_result_columns_never_name_its_cliff_columns() -> None:
     assert set(result.report_run_columns) == {"spm_provenance", "data_version"}
 
 
-def test_a_completed_report_run_leaves_its_cliff_columns_null(
+def _insert_pending_cliff_results(seeder, run_ids: ReportRunIds) -> None:
+    """Insert a pending cliff result of each of the report run's simulation runs."""
+    with seeder.engine.begin() as connection:
+        for simulation_run_id in (
+            run_ids.baseline_simulation_run_id,
+            run_ids.reform_simulation_run_id,
+        ):
+            connection.execute(
+                insert(CliffImpact.__table__).values(
+                    id=uuid4(), simulation_run_id=simulation_run_id, status="pending"
+                )
+            )
+
+
+def _cliff_results_of(seeder, run_ids: ReportRunIds) -> list[dict[str, Any]]:
+    """Return the cliff results of the report run's two simulation runs, by ID."""
+    statement = (
+        select(CliffImpact.__table__)
+        .where(
+            CliffImpact.simulation_run_id.in_(
+                (run_ids.baseline_simulation_run_id, run_ids.reform_simulation_run_id)
+            )
+        )
+        .order_by(CliffImpact.id)
+    )
+    with seeder.engine.connect() as connection:
+        return [dict(row._mapping) for row in connection.execute(statement)]
+
+
+def test_completing_a_report_run_with_a_cliff_impact_leaves_cliff_results_alone(
     store, seeder, seeded_run: SeededReportRun
 ) -> None:
+    """Only a simulation run's own cliff calculation writes its cliff result."""
+    _insert_pending_cliff_results(seeder, seeded_run.run_ids)
+    cliff_results = _cliff_results_of(seeder, seeded_run.run_ids)
     output = deepcopy(US_ECONOMY_OUTPUT)
     output["cliff_impact"] = {
         "baseline": {"cliff_gap": 120.5, "cliff_share": 0.04},
@@ -338,15 +362,15 @@ def test_a_completed_report_run_leaves_its_cliff_columns_null(
     assert _complete(store, seeded_run, output=output) == RunWrite(
         changed=True, status=RunStatus.SUCCEEDED
     )
-
-    report_run = seeder.row("report_runs", seeded_run.run_ids.report_run_id)
-    assert {report_run[column] for column in CLIFF_COLUMNS} == {None}
+    assert _cliff_results_of(seeder, seeded_run.run_ids) == cliff_results
 
 
 def test_an_output_without_labour_supply_or_cliff_impact_stores_neither(
     store, seeder, seeded_run: SeededReportRun
 ) -> None:
     report_run_id = seeded_run.run_ids.report_run_id
+    _insert_pending_cliff_results(seeder, seeded_run.run_ids)
+    cliff_results = _cliff_results_of(seeder, seeded_run.run_ids)
     output = deepcopy(US_ECONOMY_OUTPUT)
     output["labor_supply_response"] = None
     output["cliff_impact"] = None
@@ -357,8 +381,8 @@ def test_an_output_without_labour_supply_or_cliff_impact_stores_neither(
 
     for table_name in LABOR_SUPPLY_TABLES:
         assert seeder.rows(table_name, report_run_id=report_run_id) == []
+    assert _cliff_results_of(seeder, seeded_run.run_ids) == cliff_results
     report_run = seeder.row("report_runs", report_run_id)
-    assert {report_run[column] for column in CLIFF_COLUMNS} == {None}
     assert report_run["data_version"] == output["data_version"]
     # No receipt is SQL NULL, not JSON null, which reads back as None too.
     report_runs = seeder.table("report_runs")
@@ -477,7 +501,6 @@ def test_a_result_that_cannot_be_stored_leaves_the_report_run_running(
     report_run = seeder.row("report_runs", run_ids.report_run_id)
     assert report_run["status"] == "running"
     # The report run's own result columns roll back with its success.
-    assert {report_run[column] for column in CLIFF_COLUMNS} == {None}
     assert report_run["data_version"] is None
     for table_name in (
         *LABOR_SUPPLY_TABLES,

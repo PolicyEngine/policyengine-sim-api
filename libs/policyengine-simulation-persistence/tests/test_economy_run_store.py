@@ -29,6 +29,7 @@ from economy_rows import (
 from policyengine_simulation_persistence import (
     CatalogDataset,
     CatalogRegion,
+    DynamicWithoutValuesError,
     EconomyCatalogRows,
     EconomyPopulation,
     EconomyRecordOutcomeUnknownError,
@@ -252,6 +253,38 @@ def test_each_missing_row_a_request_names_is_refused(
         assert isinstance(raised.value.error, error_type)
 
 
+def test_a_dynamic_of_another_country_is_refused_on_every_economy_read(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        insert_economy_catalog(connection, parameter_names=(ELASTICITY,))
+        uk_economy = insert_economy_catalog(
+            connection, country="uk", parameter_names=(ELASTICITY,)
+        )
+        uk_dynamic_id = insert_dynamic(
+            connection, uk_economy.catalog, [StoredValue(ELASTICITY, -0.05, START)]
+        )
+        act_as_the_service(connection)
+        store = economy_store_on(connection)
+        uk_dynamic = SimulationChoice(policy_id=None, dynamic_id=uk_dynamic_id)
+
+        with pytest.raises(UnknownDynamicError):
+            store.read_simulation_inputs(REQUEST, uk_dynamic)
+        with pytest.raises(ReportSideError) as report_refusal:
+            store.read_report_inputs(REQUEST, baseline=uk_dynamic, reform=uk_dynamic)
+        with pytest.raises(ReportSideError) as window_refusal:
+            store.read_budget_window_inputs(
+                REQUEST, baseline=CURRENT_LAW, reform=uk_dynamic
+            )
+        uk_inputs = store.read_simulation_inputs(UK_REQUEST, uk_dynamic)
+
+    assert report_refusal.value.side == "baseline"
+    assert isinstance(report_refusal.value.error, UnknownDynamicError)
+    assert window_refusal.value.side == "reform"
+    assert isinstance(window_refusal.value.error, UnknownDynamicError)
+    assert uk_inputs.simulation.reform == {ELASTICITY: {"2026-01-01.2200-12-31": -0.05}}
+
+
 def test_values_the_running_version_lacks_or_both_set_are_refused(
     public_api_database_url,
 ) -> None:
@@ -387,6 +420,7 @@ def test_a_report_and_a_simulation_are_read_as_they_stand(
         ("reform", UnknownPolicyError),
         ("reform", MissingPolicyParametersError),
         ("baseline", OverlappingReformError),
+        ("reform", DynamicWithoutValuesError),
     ],
 )
 def test_a_reports_refused_values_name_the_side_they_belong_to(
@@ -408,12 +442,16 @@ def test_a_reports_refused_values_name_the_side_they_belong_to(
         dynamic_id = insert_dynamic(
             connection, economy.catalog, [StoredValue(ELASTICITY, -0.05, START)]
         )
+        dynamic_without_values_id = insert_dynamic(connection, economy.catalog)
         act_as_the_service(connection)
         refused = {
             UnknownDynamicError: SimulationChoice(None, uuid4()),
             UnknownPolicyError: SimulationChoice(uuid4(), None),
             MissingPolicyParametersError: SimulationChoice(lacking_policy_id, None),
             OverlappingReformError: SimulationChoice(overlapping_policy_id, dynamic_id),
+            DynamicWithoutValuesError: SimulationChoice(
+                None, dynamic_without_values_id
+            ),
         }[error_type]
         choices = {"baseline": CURRENT_LAW, "reform": CURRENT_LAW, side: refused}
 
@@ -493,6 +531,7 @@ def test_every_side_refusal_is_raised_with_its_side(monkeypatch) -> None:
         UnknownDynamicError: UnknownDynamicError("no dynamic"),
         MissingPolicyParametersError: MissingPolicyParametersError(["gov.a"]),
         OverlappingReformError: OverlappingReformError(["gov.a"]),
+        DynamicWithoutValuesError: DynamicWithoutValuesError("no values"),
     }
     assert set(get_args(SideRefusal.__value__)) == set(refusals)
 

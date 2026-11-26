@@ -1,9 +1,9 @@
 """Re-running a stored household report: what the re-run reads, and what it creates.
 
 A household report's re-run gives each side a new run of its own household
-simulation, never reusing one, under a new report run with trigger
-``manual``. These run against a database API v1's own v2 migration
-chain built (``PUBLIC_API_SCHEMA_DATABASE_URL``). The stored report and its
+simulation, never reusing one, under a new report run. These run against a
+database API v1's own v2 migration chain built
+(``PUBLIC_API_SCHEMA_DATABASE_URL``). The stored report and its
 first runs are written as the superuser; the re-run's reads and writes run
 as the simulation service's role, in a transaction the test rolls back.
 """
@@ -235,7 +235,7 @@ def test_a_household_report_is_read_with_its_household_and_each_sides_policy(
     assert alone_definition.reform is None
 
 
-def test_a_household_reports_rerun_is_a_manual_run_of_its_own_simulations(
+def test_a_household_reports_rerun_is_a_new_run_of_its_own_simulations(
     public_api_database_url,
 ) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:
@@ -259,8 +259,6 @@ def test_a_household_reports_rerun_is_a_manual_run_of_its_own_simulations(
         side.simulation_run_id for side in rerun.sides
     )
     assert report_run["report_id"] == report.id
-    # Answer 6: the trigger is each user's record's, not the shared run's.
-    assert report_run["trigger"] is None
     assert report_run["status"] == ReportRunStatus.PENDING
     assert report_run["modal_call_id"] is None
     assert (

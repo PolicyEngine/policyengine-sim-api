@@ -48,7 +48,6 @@ from policyengine_simulation_persistence import (
     ProposedSide,
     ReportRun,
     ReportRunStatus,
-    ReportRunTrigger,
     RerunRecordDeletedError,
     RerunSide,
     SimulationStatus,
@@ -101,7 +100,7 @@ def _insert_window_rows(
 
     Each year has its own current-law simulations, with a pending run each;
     the report names its first year's; its window run and each year's report
-    run are pending, with trigger ``initial``.
+    run are pending.
     """
     pending = RunShape(status=SimulationStatus.PENDING)
     years = tuple(
@@ -130,7 +129,6 @@ def _insert_window_rows(
             id=window_run_id,
             report_id=report_id,
             tax_benefit_model_version_id=economy.catalog.version_id,
-            trigger=ReportRunTrigger.INITIAL,
             recalculate=False,
             status=ReportRunStatus.PENDING,
         )
@@ -148,7 +146,6 @@ def _insert_window_rows(
                 "country_package_version": VERSIONS.country_package_version,
                 "policyengine_version": VERSIONS.policyengine_version,
                 "status": ReportRunStatus.PENDING,
-                "trigger": ReportRunTrigger.INITIAL,
                 "modal_call_id": None,
                 "forced": False,
             }
@@ -302,7 +299,7 @@ def test_a_definitions_years_come_from_the_newest_window_run(
 def test_a_forced_window_rerun_creates_a_window_run_and_each_years_new_runs(
     public_api_database_url,
 ) -> None:
-    """Answers 3 and 6: no run is reused or joined, and no trigger is written."""
+    """Answer 3: no run is reused or joined."""
     with rolled_back_transaction(public_api_database_url) as connection:
         economy = insert_economy_catalog(connection)
         later = insert_later_catalog(connection, economy)
@@ -326,7 +323,6 @@ def test_a_forced_window_rerun_creates_a_window_run_and_each_years_new_runs(
             "report_id",
             "tax_benefit_model_version_id",
             "policyengine_version",
-            "trigger",
             "recalculate",
             "status",
         )
@@ -334,7 +330,6 @@ def test_a_forced_window_rerun_creates_a_window_run_and_each_years_new_runs(
         "report_id": stored.report_id,
         "tax_benefit_model_version_id": later.catalog.version_id,
         "policyengine_version": LATER_POLICYENGINE_VERSION,
-        "trigger": None,
         "recalculate": True,
         "status": ReportRunStatus.PENDING,
     }
@@ -347,7 +342,6 @@ def test_a_forced_window_rerun_creates_a_window_run_and_each_years_new_runs(
         (
             run["year"],
             run["budget_window_run_id"],
-            run["trigger"],
             run["status"],
             run["policyengine_version"],
         )
@@ -356,7 +350,6 @@ def test_a_forced_window_rerun_creates_a_window_run_and_each_years_new_runs(
         (
             year,
             rerun.window_run_id,
-            None,
             ReportRunStatus.PENDING,
             LATER_POLICYENGINE_VERSION,
         )
@@ -495,7 +488,7 @@ def test_an_unforced_window_rerun_after_a_failed_run_names_its_years_runs(
         rerun.window_run_id,
         True,
     )
-    assert (window_run["recalculate"], window_run["trigger"]) == (False, None)
+    assert window_run["recalculate"] is False
     for first, again in zip(found.years, created.years, strict=True):
         assert again.baseline.simulation_run_id == first.baseline.simulation_run_id
         assert again.baseline.run_inserted is False

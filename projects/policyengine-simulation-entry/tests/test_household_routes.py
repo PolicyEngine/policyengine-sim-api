@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 
 JOB_ID = UUID("00000000-0000-4000-8000-0000000000aa")
 HOUSEHOLD_ID = UUID("00000000-0000-4000-8000-0000000000bb")
+DYNAMIC_ID = UUID("00000000-0000-4000-8000-0000000000ce")
 CATALOG_VERSION_ID = UUID("00000000-0000-4000-8000-0000000000dd")
 OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000001"
 SUBMISSION = {"country": "us", "household_id": str(HOUSEHOLD_ID)}
@@ -56,6 +57,7 @@ def _record(**changes: Any) -> HouseholdJobRecord:
         "country": "us",
         "household_id": HOUSEHOLD_ID,
         "policy_id": None,
+        "dynamic_id": None,
         "year": 2026,
         "request_data": SUBMISSION,
         "tax_benefit_model_version_id": CATALOG_VERSION_ID,
@@ -165,6 +167,23 @@ def test_a_submission_answers_202_with_the_job_and_its_status(client_for):
     assert request.add_missing_variables is True
     assert request.spm_requested is True
     assert context["observability_id"] == OBSERVABILITY_ID
+
+
+def test_a_submission_names_a_dynamic_and_its_job_is_read_with_it(client_for):
+    calculations = FakeHouseholdCalculations(stored=_record(dynamic_id=DYNAMIC_ID))
+
+    with client_for(calculations) as client:
+        submitted = client.post(
+            "/household-calculations",
+            json={**SUBMISSION, "dynamic_id": str(DYNAMIC_ID)},
+        )
+        state = client.get(STATE_PATH)
+
+    assert submitted.status_code == 202
+    ((request, _),) = calculations.submissions
+    assert (request.policy_id, request.dynamic_id) == (None, DYNAMIC_ID)
+    assert state.status_code == 200
+    assert state.json()["dynamic_id"] == str(DYNAMIC_ID)
 
 
 def test_a_submission_without_an_observability_id_gets_a_new_one(client_for):
@@ -320,6 +339,7 @@ def test_a_job_is_read_with_its_result_document(client_for):
         "country": "us",
         "household_id": str(HOUSEHOLD_ID),
         "policy_id": None,
+        "dynamic_id": None,
         "year": 2026,
         "policyengine_version": "6.17.1",
         "country_package_version": "2.2.1",

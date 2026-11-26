@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from policyengine_simulation_persistence.economy_inputs import SIDE_ERRORS
 from policyengine_simulation_persistence.economy_rerun_records import (
     insert_household_report_rerun,
 )
@@ -37,11 +38,7 @@ from policyengine_simulation_persistence.household_job_store import (
 from policyengine_simulation_persistence.keyed_household_records import (
     find_or_create_household_report,
 )
-from policyengine_simulation_persistence.policy_reform import (
-    MissingPolicyParametersError,
-    UnknownPolicyError,
-    read_policy_reform,
-)
+from policyengine_simulation_persistence.policy_reform import read_simulation_reform
 from policyengine_simulation_persistence.store_transactions import (
     TransactionFactory,
     bounded_transactions,
@@ -57,6 +54,9 @@ if TYPE_CHECKING:
     from policyengine_simulation_persistence.economy_rerun_records import (
         NewHouseholdReportRerun,
     )
+    from policyengine_simulation_persistence.economy_run_records import (
+        SimulationChoice,
+    )
     from policyengine_simulation_persistence.economy_run_store import ReportSide
     from policyengine_simulation_persistence.household_job_records import (
         StoredHousehold,
@@ -65,7 +65,7 @@ if TYPE_CHECKING:
         FoundHouseholdReport,
         KeyedHouseholdReport,
     )
-    from policyengine_simulation_persistence.policy_reform import PolicyReform
+    from policyengine_simulation_persistence.policy_reform import SimulationReform
     from policyengine_simulation_persistence.shared_rows import FoundReportRun
     from policyengine_simulation_persistence.tables import ReportRunStatus
 
@@ -76,14 +76,14 @@ class HouseholdReportInputs:
 
     ``catalog_version_id`` is the country's catalog version for the .py
     version the report runs on, and ``tax_benefit_model_id`` its model.
-    ``reforms`` holds each requested side's policy values by parameter name
-    and period, empty for current law.
+    ``reforms`` holds each requested side's policy and dynamic values
+    together, with the parameters its dynamic sets.
     """
 
     catalog_version_id: UUID
     tax_benefit_model_id: UUID
     household: StoredHousehold
-    reforms: dict[ReportSide, PolicyReform]
+    reforms: dict[ReportSide, SimulationReform]
 
 
 def _side_reform(
@@ -91,20 +91,19 @@ def _side_reform(
     side: ReportSide,
     *,
     country: str,
-    policy_id: UUID | None,
+    choice: SimulationChoice,
     catalog_version_id: UUID,
-) -> PolicyReform:
-    """Return one side's policy values; raise ReportSideError naming the side."""
-    if policy_id is None:
-        return {}
+) -> SimulationReform:
+    """Return one side's policy and dynamic values; raise ReportSideError naming it."""
     try:
-        return read_policy_reform(
+        return read_simulation_reform(
             session,
             country=country,
-            policy_id=policy_id,
+            policy_id=choice.policy_id,
+            dynamic_id=choice.dynamic_id,
             catalog_version_id=catalog_version_id,
         )
-    except (UnknownPolicyError, MissingPolicyParametersError) as error:
+    except SIDE_ERRORS as error:
         raise ReportSideError(side, error) from error
 
 
@@ -135,16 +134,20 @@ class HouseholdReportStore:
         *,
         country: str,
         household_id: UUID,
-        policy_ids: Mapping[ReportSide, UUID | None],
+        choices: Mapping[ReportSide, SimulationChoice],
         policyengine_version: str,
     ) -> HouseholdReportInputs:
-        """Read the catalog version, the household and each side's policy together.
+        """Read the catalog version, household and each side's values together.
 
-        ``policy_ids`` names each side's stored policy, None for current law.
-        Raise UnknownCatalogVersionError or UnknownHouseholdError, or
-        ReportSideError naming the side whose policy is missing
-        (UnknownPolicyError) or sets parameters the catalog version lacks
-        (MissingPolicyParametersError).
+        ``choices`` names each side's stored policy and dynamic, None for
+        none, whose values are combined as an economy simulation's are
+        (``read_simulation_reform``). Raise UnknownCatalogVersionError or
+        UnknownHouseholdError, or ReportSideError naming the side whose
+        policy or dynamic is missing in the country (UnknownPolicyError,
+        UnknownDynamicError), is a dynamic with no values stored
+        (DynamicWithoutValuesError), sets parameters the catalog version lacks
+        (MissingPolicyParametersError) or sets one the other also sets
+        (OverlappingReformError).
         """
         with self._transaction() as session:
             catalog_version_id = read_catalog_version_id(
@@ -160,15 +163,15 @@ class HouseholdReportStore:
             if household is None:
                 msg = f"{country} has no household {household_id}"
                 raise UnknownHouseholdError(msg)
-            reforms: dict[ReportSide, PolicyReform] = {
+            reforms: dict[ReportSide, SimulationReform] = {
                 side: _side_reform(
                     session,
                     side,
                     country=country,
-                    policy_id=policy_id,
+                    choice=choice,
                     catalog_version_id=catalog_version_id,
                 )
-                for side, policy_id in policy_ids.items()
+                for side, choice in choices.items()
             }
         return HouseholdReportInputs(
             catalog_version_id=catalog_version_id,

@@ -1,8 +1,8 @@
 """Re-run a stored household report on the current .py version.
 
 A household report's re-run calculates its stored household again, in the
-report's own year, under each side's stored policy, on the current
-versions, and keeps every earlier run. The re-run service
+report's own year, under each side's stored policy and dynamic, on the
+current versions, and keeps every earlier run. The re-run service
 (``economy_reruns``) reads the stored report and hands a household report
 to ``HouseholdReportRerunService``, which:
 
@@ -10,10 +10,11 @@ to ``HouseholdReportRerunService``, which:
    the country;
 2. reads, in one transaction, the country's catalog version for that
    worker's .py version, its model, the stored household and each side's
-   policy values, and checks each side's household contract request;
+   policy and dynamic values, and checks each side's household contract
+   request;
 3. for a keyed report's unforced re-run, joins, in one transaction, the
    report's run on the current versions that hasn't failed and wasn't
-   forced, or else creates the report's new run (naming no trigger)
+   forced, or else creates the report's new run
    naming each side's household simulation run on those versions, found or
    inserted, as an economy report's re-run does (C1 · 24's answer 8). A
    forced re-run, and every re-run of a report created before keys, whose
@@ -27,10 +28,10 @@ to ``HouseholdReportRerunService``, which:
    call (and a forced re-run's simulation runs, which only it names). A
    joined run gets no call.
 
-The re-run service hands over only a report naming each row this needs and
-no dynamic, which a household calculation does not apply. Whatever is
-missing or cannot be calculated is refused in steps 1 and 2, before
-anything is written, located at the stored report.
+The re-run service hands over only a report naming each row this needs.
+Whatever is missing or cannot be calculated is refused in steps 1 and 2,
+before anything is written, located at the stored report: a side's
+dynamic of another country is refused as a missing one.
 """
 
 from __future__ import annotations
@@ -101,10 +102,9 @@ class StoredHouseholdReport:
     """A stored household report a re-run calculates again, each row it needs present.
 
     ``baseline`` and ``reform`` are the report's own household simulations,
-    with their stored policies; ``reform`` is None for a report of the
-    baseline alone. Neither names a dynamic, which a household calculation
-    does not apply: the re-run service refuses a report whose side does.
-    ``keyed`` says the report was found or created by key (C1 · 27).
+    with their stored policies and dynamics; ``reform`` is None for a report
+    of the baseline alone. ``keyed`` says the report was found or created by
+    key (C1 · 27).
     """
 
     report_id: UUID
@@ -174,9 +174,8 @@ class HouseholdReportRerunService(
         inputs = await self._read_inputs(
             country=stored.country,
             household_id=stored.household_id,
-            policy_ids={
-                side: definition.choice.policy_id
-                for side, definition in stored.sides.items()
+            choices={
+                side: definition.choice for side, definition in stored.sides.items()
             },
             worker=worker,
             source=STORED_REPORT,

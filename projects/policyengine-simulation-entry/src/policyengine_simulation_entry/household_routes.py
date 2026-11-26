@@ -9,16 +9,16 @@
   returns the job as it stands: its status, the household function's result
   document once it has one, and its error message.
 
-A refused submission answers 400 (a row it names, or the household function
-it needs, is missing) or 422 (its fields, or the stored data it names, cannot
-be calculated), naming why. Either route answers 503 with ``Retry-After``
-when household calculations are not configured or a dependency cannot be
-read, and a submission does too when Modal refuses the call and its job was
-failed; a submission's 503 always means no job will run. Every 500 of either
-route is the JSON error with code ``internal_error``: an unexpected failure,
-a request the service built and the household contract refuses, or a
-submission whose job's commit failed after its row was inserted, so the job
-may exist.
+A refused submission answers 400 (a row it names, or the household function it
+needs, is missing, or its dynamic has no values this release reads) or 422
+(its fields, or the stored data it names, cannot be calculated), naming why.
+Either route answers 503 with ``Retry-After`` when household calculations are
+not configured or a dependency cannot be read, and a submission does too when
+Modal refuses the call and its job was failed; a submission's 503 always means
+no job will run. Every 500 of either route is the JSON error with code
+``internal_error``: an unexpected failure, a request the service built and the
+household contract refuses, or a submission whose job's commit failed after
+its row was inserted, so the job may exist.
 
 A submission gets its observability ID from the caller's header, or a new
 one, and passes it to the household function. ``household_jobs`` keeps no
@@ -76,9 +76,9 @@ _RETRY_AFTER = {
 }
 _SUBMISSION_UNPROCESSABLE = {
     "description": (
-        "The request's fields, or the stored household or policy it names, "
-        "cannot be calculated: one reason per field, its location starting "
-        "with the request field it traces to"
+        "The request's fields, or the stored household, policy or dynamic it "
+        "names, cannot be calculated: one reason per field, its location "
+        "starting with the request field it traces to"
     ),
     "model": HouseholdRequestUnprocessable,
 }
@@ -274,6 +274,7 @@ def _state(record: HouseholdJobRecord) -> HouseholdCalculationState:
         country=record.country,
         household_id=record.household_id,
         policy_id=record.policy_id,
+        dynamic_id=record.dynamic_id,
         year=record.year,
         policyengine_version=record.policyengine_version,
         country_package_version=record.country_package_version,
@@ -302,9 +303,10 @@ def add_household_calculation_routes(
         summary="Submit a household calculation",
         description=(
             "Create a household job calculating a stored household under one "
-            "stored policy, or current law, for the household's default year, "
-            "on the v2 version manifest's default worker, and start it. Poll "
-            "the returned id until its status is succeeded or failed."
+            "stored policy, or current law, and optionally a stored dynamic, "
+            "for the household's default year, on the v2 version manifest's "
+            "default worker, and start it. Poll the returned id until its "
+            "status is succeeded or failed."
         ),
         operation_id="submit_household_calculation",
         status_code=status.HTTP_202_ACCEPTED,
@@ -321,7 +323,8 @@ def add_household_calculation_routes(
             400: {
                 "description": (
                     "A row the request names, or the household function it "
-                    "needs, is missing; code says which"
+                    "needs, is missing, or its dynamic has no parameter values "
+                    "this release reads (dynamic_without_values); code says which"
                 ),
                 **_ERROR,
             },

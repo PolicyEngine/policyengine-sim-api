@@ -41,6 +41,7 @@ from policyengine_simulation_persistence import (
 from public_api_rows import (
     CatalogVersion,
     insert_catalog_version,
+    insert_dynamic,
     insert_household,
     insert_model,
     insert_policy,
@@ -98,13 +99,16 @@ def _stored_inputs(connection: Connection) -> _StoredInputs:
 
 
 def _keyed_report(
-    stored: _StoredInputs, *, reform: SimulationChoice | None
+    stored: _StoredInputs,
+    *,
+    reform: SimulationChoice | None,
+    baseline: SimulationChoice = CURRENT_LAW,
 ) -> KeyedHouseholdReport:
     """Return a request's household report, with fresh IDs to propose."""
     return KeyedHouseholdReport(
         definition=HouseholdReportDefinition(
             country="us",
-            baseline=CURRENT_LAW,
+            baseline=baseline,
             reform=reform,
             household_id=stored.household_id,
             year=2026,
@@ -207,9 +211,6 @@ def test_a_keyed_household_report_is_created_with_its_simulations_and_first_run(
             "key_version",
             "definition_key",
             "dataset_independent_key",
-            "label",
-            "description",
-            "user_id",
         )
     } == {
         "type": "household",
@@ -224,16 +225,11 @@ def test_a_keyed_household_report_is_created_with_its_simulations_and_first_run(
         "key_version": KEY_VERSION,
         "definition_key": definition.definition_key,
         "dataset_independent_key": definition.dataset_independent_key,
-        # Answer 6: a shared report holds no request's label or user.
-        "label": None,
-        "description": None,
-        "user_id": None,
     }
     assert (report["baseline_simulation_id"], report["reform_simulation_id"]) == (
         request.baseline.simulation_id,
         request.reform.simulation_id,
     )
-    assert report_run["trigger"] is None
     assert report_run["forced"] is False
     assert (
         report_run["baseline_simulation_run_id"],
@@ -288,6 +284,44 @@ def test_an_identical_household_request_ends_on_the_same_rows_and_inserts_nothin
     assert again.baseline == replace(first.baseline, run_inserted=False)
     assert again.reform == replace(first.reform, run_inserted=False)
     assert counts_again == counts
+
+
+def test_each_sides_dynamic_is_stored_on_its_simulation_and_keys_it_apart(
+    public_api_database_url,
+) -> None:
+    with rolled_back_transaction(public_api_database_url) as connection:
+        stored = _stored_inputs(connection)
+        dynamic_id = insert_dynamic(connection, stored.catalog)
+        with_dynamic = SimulationChoice(policy_id=None, dynamic_id=dynamic_id)
+        reform_with_dynamic = replace(stored.reform, dynamic_id=dynamic_id)
+        act_as_the_service(connection)
+
+        static = in_session(
+            connection,
+            find_or_create_household_report,
+            _keyed_report(stored, reform=stored.reform),
+        )
+        dynamic = in_session(
+            connection,
+            find_or_create_household_report,
+            _keyed_report(stored, baseline=with_dynamic, reform=reform_with_dynamic),
+        )
+        assert dynamic.reform is not None
+        simulations = {
+            side: _row(connection, "simulations", found_side.simulation_id)
+            for side, found_side in (
+                ("baseline", dynamic.baseline),
+                ("reform", dynamic.reform),
+            )
+        }
+
+    assert dynamic.report_id != static.report_id
+    assert dynamic.baseline.simulation_id != static.baseline.simulation_id
+    assert {side: row["dynamic_id"] for side, row in simulations.items()} == {
+        "baseline": dynamic_id,
+        "reform": dynamic_id,
+    }
+    assert simulations["reform"]["policy_id"] == stored.reform_policy_id
 
 
 def test_a_household_policy_compared_with_itself_names_one_simulation_run_twice(
@@ -505,7 +539,7 @@ def test_a_keyed_household_rerun_after_a_failed_run_names_its_simulations_runs(
         created.baseline_simulation_run_id,
         created.reform_simulation_run_id,
     ) == (found.baseline.simulation_run_id, found.reform.simulation_run_id)
-    assert (report_run["trigger"], report_run["forced"]) == (None, False)
+    assert report_run["forced"] is False
 
 
 def test_a_forced_keyed_household_rerun_is_an_extra_run_beside_the_one_under_way(

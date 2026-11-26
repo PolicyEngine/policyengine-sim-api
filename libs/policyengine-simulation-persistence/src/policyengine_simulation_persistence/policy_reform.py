@@ -6,8 +6,12 @@ date, or with no end date indefinitely. A calculation on any catalog version
 applies them by parameter name, as ``{parameter name: {period: value}}``, the
 shape of API v1's policy JSON that the household functions' contract
 and the economy requests take. A dynamic's values are stored and read the same
-way. A simulation applies its policy's and its dynamic's values together, and
-is refused when both set the same parameter (``combine_reforms``).
+way, and a dynamic, like a policy, belongs to one country. A simulation,
+economy or household, applies its policy's and its dynamic's values together
+(``read_simulation_reform``), and is refused when both set the same parameter
+(``combine_reforms``). API v1 stores no dynamic without values, so a dynamic
+the reader finds no values for is refused rather than applied as current
+law: its values are stored where this release doesn't read them.
 
 Each period is a range, ``YYYY-MM-DD.YYYY-MM-DD``, with the dates read in
 UTC. A value with no end date follows .py's own rule
@@ -30,6 +34,7 @@ on", but policyengine-uk's reform dictionary as that one day.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, date, timedelta
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -48,7 +53,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
-    from sqlalchemy import ColumnElement
+    from sqlalchemy import ColumnElement, Row
     from sqlalchemy.orm import Session
 
 # The last day a value without an end date is applied.
@@ -65,7 +70,17 @@ class UnknownPolicyError(LookupError):
 
 
 class UnknownDynamicError(LookupError):
-    """API v1 has no such dynamic."""
+    """API v1 has no such dynamic in the country."""
+
+
+class DynamicWithoutValuesError(LookupError):
+    """API v1 has the dynamic, but no parameter values are stored for it here.
+
+    API v1 refuses to store a dynamic without values, so its values are
+    stored where this release does not read them. Applying it as current law
+    would store a result under a key naming the dynamic, which later
+    requests would reuse.
+    """
 
 
 class MissingPolicyParametersError(ValueError):
@@ -147,35 +162,103 @@ def read_policy_reform(
     if found is None:
         msg = f"{country} has no policy {policy_id}"
         raise UnknownPolicyError(msg)
-    return _read_reform(
+    return _reform_from_values(
         session,
-        owner=ParameterValue.policy_id == policy_id,
+        _read_values(session, owner=ParameterValue.policy_id == policy_id),
         catalog_version_id=catalog_version_id,
         source="policy",
     )
 
 
 def read_dynamic_reform(
-    session: Session, *, dynamic_id: UUID, catalog_version_id: UUID
+    session: Session,
+    *,
+    country: str,
+    dynamic_id: UUID,
+    catalog_version_id: UUID,
 ) -> PolicyReform:
-    """Return the values the dynamic sets, by parameter name and period.
+    """Return the values ``country``'s dynamic sets, by parameter name and period.
 
     The periods follow the same rule as a policy's. Raise
-    UnknownDynamicError when there is no such dynamic, and
-    MissingPolicyParametersError, naming the dynamic as its source, when
-    ``catalog_version_id`` lacks a parameter it sets.
+    UnknownDynamicError when the country has no such dynamic, a dynamic
+    stored for another country included; DynamicWithoutValuesError when no
+    parameter value is stored for it; and MissingPolicyParametersError,
+    naming the dynamic as its source, when ``catalog_version_id`` lacks a
+    parameter it sets. A dynamic whose values are read but whose periods
+    hold no day, as for values starting after 2200, is read as no change.
     """
     found = session.execute(
-        select(Dynamic.id).where(Dynamic.id == dynamic_id)
+        select(Dynamic.id).where(
+            Dynamic.id == dynamic_id, Dynamic.country_id == country
+        )
     ).scalar_one_or_none()
     if found is None:
-        msg = f"there is no dynamic {dynamic_id}"
+        msg = f"{country} has no dynamic {dynamic_id}"
         raise UnknownDynamicError(msg)
-    return _read_reform(
-        session,
-        owner=ParameterValue.dynamic_id == dynamic_id,
-        catalog_version_id=catalog_version_id,
-        source="dynamic",
+    values = _read_values(session, owner=ParameterValue.dynamic_id == dynamic_id)
+    if not values:
+        msg = (
+            f"{country}'s dynamic {dynamic_id} has no parameter values "
+            "the service can read"
+        )
+        raise DynamicWithoutValuesError(msg)
+    return _reform_from_values(
+        session, values, catalog_version_id=catalog_version_id, source="dynamic"
+    )
+
+
+@dataclass(frozen=True)
+class SimulationReform:
+    """The values a simulation applies: its policy's and its dynamic's together.
+
+    ``values`` holds both by parameter name and period, empty for current
+    law with no dynamic. ``dynamic_parameters`` names the parameters the
+    dynamic sets, none of which the policy sets.
+    """
+
+    values: PolicyReform
+    dynamic_parameters: frozenset[str]
+
+
+def read_simulation_reform(
+    session: Session,
+    *,
+    country: str,
+    policy_id: UUID | None,
+    dynamic_id: UUID | None,
+    catalog_version_id: UUID,
+) -> SimulationReform:
+    """Return the values ``country``'s simulation applies: its policy's and dynamic's.
+
+    None for either reads nothing for it. Raise UnknownPolicyError or
+    UnknownDynamicError for one the country doesn't have,
+    DynamicWithoutValuesError for a dynamic with no values stored,
+    MissingPolicyParametersError for one setting a parameter
+    ``catalog_version_id`` lacks, and OverlappingReformError when both set a
+    parameter.
+    """
+    policy = (
+        {}
+        if policy_id is None
+        else read_policy_reform(
+            session,
+            country=country,
+            policy_id=policy_id,
+            catalog_version_id=catalog_version_id,
+        )
+    )
+    dynamic = (
+        {}
+        if dynamic_id is None
+        else read_dynamic_reform(
+            session,
+            country=country,
+            dynamic_id=dynamic_id,
+            catalog_version_id=catalog_version_id,
+        )
+    )
+    return SimulationReform(
+        values=combine_reforms(policy, dynamic), dynamic_parameters=frozenset(dynamic)
     )
 
 
@@ -190,19 +273,11 @@ def combine_reforms(policy: PolicyReform, dynamic: PolicyReform) -> PolicyReform
     return {**policy, **dynamic}
 
 
-def _read_reform(
-    session: Session,
-    *,
-    owner: ColumnElement[bool],
-    catalog_version_id: UUID,
-    source: ReformSource,
-) -> PolicyReform:
-    """Return the values ``owner`` selects, by parameter name and .py's periods.
-
-    Raise MissingPolicyParametersError, naming ``source``, when
-    ``catalog_version_id`` lacks a parameter they set.
-    """
-    values = session.execute(
+def _read_values(
+    session: Session, *, owner: ColumnElement[bool]
+) -> Sequence[Row[tuple[str, object, datetime, datetime | None]]]:
+    """Return the values ``owner`` selects, by parameter name, then start date."""
+    return session.execute(
         select(
             Parameter.name,
             ParameterValue.value_json,
@@ -214,6 +289,20 @@ def _read_reform(
         .where(owner)
         .order_by(Parameter.name, ParameterValue.start_date)
     ).all()
+
+
+def _reform_from_values(
+    session: Session,
+    values: Sequence[Row[tuple[str, object, datetime, datetime | None]]],
+    *,
+    catalog_version_id: UUID,
+    source: ReformSource,
+) -> PolicyReform:
+    """Return ``values`` by parameter name and .py's periods (``_read_values``).
+
+    Raise MissingPolicyParametersError, naming ``source``, when
+    ``catalog_version_id`` lacks a parameter they set.
+    """
     names = sorted({row.name for row in values})
     available = set(
         session.execute(

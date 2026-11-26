@@ -133,23 +133,28 @@ def test_simulation_workers_are_classes_restored_from_memory_snapshots(monkeypat
     function_options = dict(app.app.function_calls)
     worker_options = {
         "image": app.simulation_image,
-        "cpu": 8.0,
-        "memory": 32768,
         "timeout": 3600,
         "retries": 0,
         "secrets": [app.gcp_secret, app.hf_secret],
         "enable_memory_snapshot": True,
     }
+    simulation_worker_resources = {"cpu": 8.0, "memory": 32768, "max_containers": 100}
+    # A segment child calculates one region group in one process, so it
+    # keeps one CPU busy. With both countries' models loaded it peaks at about
+    # 3.4 GiB for a year whose dataset and baseline are baked into the image,
+    # and at about 6.9 GiB for a year whose dataset and baseline it builds
+    # itself. 1 CPU and 10 GiB fit both.
+    segment_worker_resources = {"cpu": 1.0, "memory": 10240, "max_containers": 300}
     # Two classes, so the segment children keep their own container pool: a
     # blocking segmented parent must never share a bounded pool with the
     # children it waits on.
     assert class_options == {
-        "SimulationWorker": {**worker_options, "max_containers": 100},
-        "SimulationSegmentWorker": {**worker_options, "max_containers": 300},
+        "SimulationWorker": {**worker_options, **simulation_worker_resources},
+        "SimulationSegmentWorker": {**worker_options, **segment_worker_resources},
     }
-    # Plain functions with the same names and limits stay, without a snapshot,
-    # for callers still running the code from before the classes: the gateway
-    # while a deploy is under way, and runs that started before it.
+    # Plain functions with the same names and resources stay, without a
+    # snapshot, for callers still running the code from before the classes:
+    # the gateway while a deploy is under way, and runs that started before it.
     function_form_options = {
         option: value
         for option, value in worker_options.items()
@@ -157,11 +162,11 @@ def test_simulation_workers_are_classes_restored_from_memory_snapshots(monkeypat
     }
     assert function_options["run_simulation"] == {
         **function_form_options,
-        "max_containers": 100,
+        **simulation_worker_resources,
     }
     assert function_options["run_simulation_segment"] == {
         **function_form_options,
-        "max_containers": 300,
+        **segment_worker_resources,
     }
     # The budget-window parent stays a small plain function with no snapshot.
     assert "enable_memory_snapshot" not in function_options["run_budget_window_batch"]

@@ -83,7 +83,8 @@ DESCRIPTION_NOT_STORED = (
 # Why a request is refused (400), naming a row the caller chose that doesn't
 # exist, or the region's dataset: the Public API answers these as its caller's
 # error. On a re-run they name the stored record's own region, dataset or
-# dynamic, which the current catalog version lacks or which was deleted.
+# dynamic, which the current catalog version lacks or which was deleted. A
+# dynamic stored for another country is refused as one that doesn't exist.
 CallerRowRefusalCode = Literal["unknown_region", "unknown_dataset", "unknown_dynamic"]
 # Why a request is refused (400) for the service's own state, or a row the
 # Public API checks before asking. On a report's re-run, ``unknown_policy`` and
@@ -108,6 +109,10 @@ ServiceStateRefusalCode = Literal[
     # The catalog version's constituency and local-authority regions don't
     # all use the dataset the default worker calculates local areas on.
     "local_area_dataset_mismatch",
+    # A stored dynamic has no parameter values this release reads. API v1
+    # stores no dynamic without values, so they are stored where this release
+    # doesn't read them; the dynamic is not applied as current law.
+    "dynamic_without_values",
 ]
 EconomyRefusalCode = Literal[CallerRowRefusalCode, ServiceStateRefusalCode]
 # Why stored values cannot be calculated (422).

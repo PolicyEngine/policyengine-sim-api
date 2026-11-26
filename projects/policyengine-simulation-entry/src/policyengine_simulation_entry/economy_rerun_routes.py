@@ -177,7 +177,9 @@ def _responses(record: RecordName) -> dict[int | str, dict[str, Any]]:
                 f"version, or a function the {record} needs is missing"
                 f"{_HOUSEHOLD_ANSWERS[record].get(400, '')}; nothing was written. "
                 f"{_STORED_ROW_CODES[record]} name the stored {record}'s own "
-                "rows; any other code is the service's state"
+                "rows; any other code is the service's state, such as "
+                "dynamic_without_values (a stored dynamic with no parameter values "
+                "this release reads)"
             ),
             **ERROR_ANSWER,
         },

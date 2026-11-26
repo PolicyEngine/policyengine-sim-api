@@ -65,8 +65,8 @@ or `report_runs.spm_provenance` is stored as SQL `NULL`, not JSON `null`, so
 a query for `IS NULL` finds a run with no result.
 
 Each service writes only its own tables, and the foreign keys between them
-stay: 20 keys name rows the Public API writes in its users, policies,
-dynamics, households, datasets, regions and model catalog tables. PostgreSQL
+stay: 19 keys name rows API v1 writes in its policies, dynamics, households,
+datasets, regions and model catalog tables. PostgreSQL
 checks each of them on insert, as the referenced table's owner, so the
 service's role needs no privilege on those tables for it, and a row naming
 one that doesn't exist fails with SQLSTATE `23503`. `referenced_tables.py`
@@ -122,18 +122,20 @@ and they are kept apart from the models of the tables the service writes
 for a household calculation, one `household_jobs` row. The service finds the
 catalog version by country and .py version (`read_catalog_version_id`) and
 the stored household in its country (`read_stored_household`), creates the
-job `pending` with no Modal call ID and no dynamic (`insert_household_job`),
+job `pending` with no Modal call ID, naming its policy and dynamic
+(`insert_household_job`),
 starts the household function's call, then records the call's ID
 (`record_household_call`), or fails the job at once when Modal refuses the
 call (`fail_unstarted_household_job`). Both updates apply only while the job
 is still `pending` with no call ID, and set `updated_at` themselves. A job
-naming a household, policy or catalog version that does not exist is refused
-by its foreign key with SQLSTATE `23503`; `HouseholdJobReferenceError` names
-the column. Each function takes an ORM session, so the caller chooses the
-transactions. `HouseholdJobStore` runs them as the Simulation Entrypoint
-does, each step in a session and transaction of its own: `read_inputs` reads
-the catalog version, the household and the policy's reform values together,
-and `create_job`, `record_call`, `fail_unstarted` and `read` each write or
+naming a household, policy, dynamic or catalog version that does not exist
+is refused by its foreign key with SQLSTATE `23503`;
+`HouseholdJobReferenceError` names the column. Each function takes an ORM
+session, so the caller chooses the transactions. `HouseholdJobStore` runs
+them as the Simulation Entrypoint does, each step in a session and
+transaction of its own: `read_inputs` reads the catalog version, the
+household, and the policy's and dynamic's values combined
+(`read_simulation_reform`) together, and `create_job`, `record_call`, `fail_unstarted` and `read` each write or
 read the job. `insert_household_job` flushes the new row, so its INSERT runs
 before the commit. A `create_job` whose commit fails after that flush raises
 `EconomyRecordOutcomeUnknownError`, as the economy and household report
@@ -253,16 +255,15 @@ report and run rows (C1 · 24). These modules do it:
   runs, found or inserted in simulation ID order, and each year's report
   run (`insert_window_years`, which the window re-runs share).
   `EconomyRunStore.find_or_create_budget_window` runs it in a transaction
-  of its own. No keyed create writes a label, description, user or trigger
-  (C1 · 24's answer 6): each user's saved report and report-run record hold
-  them, in the Public API.
+  of its own.
 
 ## Household reports
 
 A household report calculates one stored household, for one year, under a
 baseline and, optionally, a reform. Its report has type `household`
 (`HOUSEHOLD_REPORT_TYPE`) and names the household, and each side is a
-household simulation (no dataset or region) naming the side's policy.
+household simulation (no dataset or region) naming the side's policy and
+dynamic.
 `keyed_household_records.py` finds or creates the report, its simulations
 and its run by key, as an economy report's are (C1 · 24's answer 8);
 `household_report_records.py` builds each side's run, `pending` with no
@@ -273,12 +274,14 @@ is refused as `EconomyRecordReferenceError`.
 `HouseholdReportStore` runs the steps in ORM sessions and transactions of
 their own, opened by `from_session_factory` with `bounded_session`:
 `read_inputs` reads the catalog version for the .py version, the country's
-model, the stored household and each side's policy values together,
-raising `UnknownCatalogVersionError`, `UnknownHouseholdError` or
-`ReportSideError` for the side whose policy is missing or sets parameters
-the catalog version lacks; `find_or_create_report` raises
-`EconomyRecordOutcomeUnknownError` when the commit fails after the rows were
-inserted; and `record_report_call` and `fail_unstarted_report` use the
+model, the stored household and each side's policy and dynamic values,
+combined (`read_simulation_reform`), together, raising
+`UnknownCatalogVersionError`, `UnknownHouseholdError` or `ReportSideError`
+for the side whose policy or dynamic is missing in the country, is a
+dynamic with no values stored, sets parameters the catalog version lacks, or
+sets one the other also sets;
+`find_or_create_report` raises `EconomyRecordOutcomeUnknownError` when the
+commit fails after the rows were inserted; and `record_report_call` and `fail_unstarted_report` use the
 economy report run writes.
 
 ## Re-running a report or simulation
@@ -295,8 +298,8 @@ version, dataset and region it calculates on.
   each simulation's policy and dynamic.
 - `insert_report_rerun` joins the report's run on the re-run's versions
   that hasn't failed and wasn't forced (pending, running or succeeded),
-  creating nothing, or else creates the report's new run, naming no
-  trigger (answer 6), each side joining its simulation's run on those versions that hasn't
+  creating nothing, or else creates the report's new run, each side joining
+  its simulation's run on those versions that hasn't
   failed and wasn't forced, in any state, or inserting one
   (`find_or_insert_side_runs`, as a keyed create does). A report run another
   request inserts after the lookup is joined, and a savepoint takes back
@@ -321,8 +324,8 @@ re-run's versions that hasn't failed and isn't a recalculation, with its
 year runs, or else inserts the window run and each year's report run on
 its sides' runs, found or inserted. One that recalculates is a forced
 re-run, never refused, an extra window run whose year runs and simulation
-runs are marked `forced`. Either records the window run's .py version and
-no trigger, and `EconomyRunStore.create_window_rerun` returns the window
+runs are marked `forced`. Either records the window run's .py version, and
+`EconomyRunStore.create_window_rerun` returns the window
 run and years it ended on.
 
 A household report's definition also names its household (`household_id`).
@@ -331,7 +334,7 @@ A household report's definition also names its household (`household_id`).
 report's re-run is, it takes the same lock and joins the report's run on
 the re-run's versions, or else each side joins its own household
 simulation's run on those versions (no dataset or region, the report's
-year) or inserts one, under a new report run (no trigger). A forced
+year) or inserts one, under a new report run. A forced
 one, as every re-run of a household report without keys is (interim answer
 B), takes no lock, is never refused, and marks its report run and a new run
 of each side `forced`. `HouseholdReportStore.create_report_rerun` runs it
@@ -354,9 +357,17 @@ the parameters of the catalog version it was saved on, so a calculation on
 any catalog version applies them by name; a parameter the calculation's
 version lacks raises `MissingPolicyParametersError`, naming each one, and a
 policy the country doesn't have raises `UnknownPolicyError`.
-`read_dynamic_reform` reads a stored dynamic the same way (`UnknownDynamicError`
-for none), and `combine_reforms` joins a simulation's policy and dynamic
-values, refusing a parameter both set (`OverlappingReformError`).
+`read_dynamic_reform` reads a stored dynamic the same way: a dynamic, like a
+policy, belongs to one country, and one the country doesn't have, another
+country's included, raises `UnknownDynamicError`. A dynamic with no
+parameter values stored raises `DynamicWithoutValuesError` rather than being
+applied as current law: API v1 stores no dynamic without values, so its
+values are where this release doesn't read them, and a current-law result
+would be stored under a key naming the dynamic. `combine_reforms` joins a
+simulation's policy and dynamic values, refusing a parameter both set
+(`OverlappingReformError`), and `read_simulation_reform` reads both and
+joins them, as every simulation does: economy (`read_simulation_values`),
+household job and household report side.
 
 Each period is a range, `YYYY-MM-DD.YYYY-MM-DD`, with the stored dates read
 in UTC. A value with no end date follows .py's own rule
@@ -403,8 +414,8 @@ the service writes, as the service's role; `test_modal_worker_writes`, as the
 Modal worker role, checks the role's privileges, records a run's state in
 each run table, inserts a row in every result table and reads back that a
 `None` JSON result is SQL `NULL`. Another test, outside the rule, requires the modelled
-tables' foreign keys to the Public API's users, policies, dynamics,
-households, datasets, regions and model catalog tables to be exactly the 20
+tables' foreign keys to API v1's policies, dynamics, households, datasets,
+regions and model catalog tables to be exactly the 19
 in `tests/public_api_keys.py`, each by its own table, its name and the table
 it names, so a key dropped, added, renamed, moved or pointed at another table
 shows even if the models follow it. The job then gives the Modal worker role
@@ -475,9 +486,8 @@ run's and cliff calculation's state (`status`, `modal_call_id`,
 run has no call of its own) and of the results its own row holds: a report
 run's `spm_provenance` and `data_version`, a simulation run's output file and
 `household_result`, a household job's `result`, and a cliff calculation's
-`cliff_gap` and `cliff_share`. It no longer writes a report run's four cliff
-columns, which API v1 is to drop: a report run's cliff impact is its
-two simulation runs' cliff results. The same privilege manifest grants them;
+`cliff_gap` and `cliff_share`. A report run's cliff impact is its two
+simulation runs' cliff results. API v1's manifest grants these privileges;
 `test_modal_worker_writes` checks that in CI.
 
 `missing_table_privileges` returns each one the connected role lacks, ordered

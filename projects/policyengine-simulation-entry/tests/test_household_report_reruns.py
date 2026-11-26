@@ -19,10 +19,12 @@ from economy_rerun_fakes import (
     FakeRerunStore,
     rerun_service,
 )
-from economy_service_fakes import DYNAMIC_ID, FakeCaller
+from economy_service_fakes import FakeCaller
 from household_report_fakes import (
     CATALOG_VERSION_ID,
     CTC_AMOUNT,
+    DYNAMIC_ID,
+    DYNAMIC_VALUES,
     HOUSEHOLD_ID,
     POLICY_ID,
     REFORM,
@@ -59,6 +61,7 @@ from policyengine_simulation_entry.household_workers import (
 )
 from policyengine_simulation_entry.simulation_database import SimulationDatabase
 from policyengine_simulation_persistence import (
+    DynamicWithoutValuesError,
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
     FoundReportRun,
@@ -74,6 +77,7 @@ from policyengine_simulation_persistence import (
     SideDefinition,
     SimulationChoice,
     UnknownCatalogVersionError,
+    UnknownDynamicError,
     UnknownHouseholdError,
     UnknownPolicyError,
 )
@@ -177,7 +181,10 @@ def test_a_household_report_is_rerun_as_new_runs_of_its_own_simulations(
         {
             "country": "us",
             "household_id": HOUSEHOLD_ID,
-            "policy_ids": {"baseline": None, "reform": POLICY_ID},
+            "choices": {
+                "baseline": SimulationChoice(policy_id=None, dynamic_id=None),
+                "reform": SimulationChoice(policy_id=POLICY_ID, dynamic_id=None),
+            },
             "policyengine_version": worker.bundle.policyengine_version,
         }
     ]
@@ -233,7 +240,9 @@ def test_a_household_report_of_the_baseline_alone_is_rerun_without_a_reform() ->
     rerun = _rerun(service)
 
     (read,) = households.reads
-    assert read["policy_ids"] == {"baseline": None}
+    assert read["choices"] == {
+        "baseline": SimulationChoice(policy_id=None, dynamic_id=None)
+    }
     (created,) = households.report_reruns
     assert created.reform is None
     assert created.simulation_run_ids == (BASELINE_RUN_ID,)
@@ -249,26 +258,6 @@ def test_a_household_report_of_the_baseline_alone_is_rerun_without_a_reform() ->
         ({"baseline": None}, "baseline simulation"),
         ({"year": None}, "year"),
         ({"country": "fr"}, "country"),
-        # A household calculation applies no dynamic, so a side naming one
-        # would be calculated as it was not stored.
-        (
-            {
-                "baseline": SideDefinition(
-                    simulation_id=BASELINE_SIMULATION_ID,
-                    choice=SimulationChoice(policy_id=None, dynamic_id=DYNAMIC_ID),
-                )
-            },
-            "dynamic",
-        ),
-        (
-            {
-                "reform": SideDefinition(
-                    simulation_id=REFORM_SIMULATION_ID,
-                    choice=SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID),
-                )
-            },
-            "dynamic",
-        ),
     ],
 )
 def test_a_household_report_the_service_cannot_rerun_is_refused(changes, named) -> None:
@@ -285,6 +274,70 @@ def test_a_household_report_the_service_cannot_rerun_is_refused(changes, named) 
     assert households.reads == []
 
 
+def test_each_stored_sides_dynamic_is_applied_on_a_rerun() -> None:
+    """A household report naming a dynamic, as C1 · 45's reports do, is re-run."""
+    with_dynamics = replace(
+        STORED_HOUSEHOLD_REPORT,
+        baseline=SideDefinition(
+            simulation_id=BASELINE_SIMULATION_ID,
+            choice=SimulationChoice(policy_id=None, dynamic_id=DYNAMIC_ID),
+        ),
+        reform=SideDefinition(
+            simulation_id=REFORM_SIMULATION_ID,
+            choice=SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID),
+        ),
+    )
+    households = FakeHouseholdReportStore()
+    caller = FakeHouseholdReportCaller()
+    service, _, _ = _services(with_dynamics, households=households, caller=caller)
+
+    _rerun(service)
+
+    (read,) = households.reads
+    assert read["choices"] == {
+        "baseline": SimulationChoice(policy_id=None, dynamic_id=DYNAMIC_ID),
+        "reform": SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID),
+    }
+    ((_, payload, _, _),) = caller.calls
+    assert payload["baseline"] == _side_request(BASELINE_RUN_ID, DYNAMIC_VALUES)
+    assert payload["reform"] == _side_request(
+        REFORM_RUN_ID, {**REFORM, **DYNAMIC_VALUES}
+    )
+
+
+def test_a_stored_sides_dynamic_of_another_country_is_refused_at_the_report() -> None:
+    households = FakeHouseholdReportStore(
+        read_failure=ReportSideError("reform", UnknownDynamicError("no dynamic"))
+    )
+    service, _, _ = _services(households=households)
+
+    with pytest.raises(EconomySubmissionRefusedError) as refused:
+        _rerun(service)
+
+    assert (refused.value.code, refused.value.detail) == (
+        "unknown_dynamic",
+        "us has no stored dynamic the report's reform names.",
+    )
+    assert households.report_reruns == []
+
+
+def test_a_stored_sides_dynamic_without_values_is_refused_at_the_report() -> None:
+    households = FakeHouseholdReportStore(
+        read_failure=ReportSideError("baseline", DynamicWithoutValuesError("no values"))
+    )
+    service, _, _ = _services(households=households)
+
+    with pytest.raises(EconomySubmissionRefusedError) as refused:
+        _rerun(service)
+
+    assert (refused.value.code, refused.value.detail) == (
+        "dynamic_without_values",
+        "us's stored dynamic that the report's baseline names has no parameter "
+        "values the service can read.",
+    )
+    assert households.report_reruns == []
+
+
 def test_a_household_rerun_answers_503_when_household_reports_are_not_configured() -> (
     None
 ):
@@ -299,14 +352,8 @@ def test_a_household_rerun_answers_503_when_household_reports_are_not_configured
 
 def test_a_household_report_that_cannot_be_rerun_is_refused_even_unconfigured() -> None:
     """A report that can never be re-run is not answered as one to retry."""
-    dynamic_reform = replace(
-        STORED_HOUSEHOLD_REPORT,
-        reform=SideDefinition(
-            simulation_id=REFORM_SIMULATION_ID,
-            choice=SimulationChoice(policy_id=POLICY_ID, dynamic_id=DYNAMIC_ID),
-        ),
-    )
-    store = FakeRerunStore(report_definition=dynamic_reform)
+    without_household = replace(STORED_HOUSEHOLD_REPORT, household_id=None)
+    store = FakeRerunStore(report_definition=without_household)
 
     with pytest.raises(EconomyRerunConflictError) as refused:
         _rerun(rerun_service(store))
