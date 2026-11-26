@@ -562,7 +562,7 @@ class _CountryModelsLoadedBeforeSnapshot:
 
     @modal.enter(snap=True)
     def load_country_models(self) -> None:
-        """Load both countries' models and the SPM capability into the snapshot.
+        """Load the models and SPM capability, then warm up, before the snapshot.
 
         First records whether Modal snapshots this container, and its task ID,
         so each call can report how its container started (``_ContainerCalls``).

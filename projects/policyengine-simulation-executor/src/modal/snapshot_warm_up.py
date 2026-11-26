@@ -5,12 +5,14 @@ calculations for that year reuse. Profiled on Modal ``testing`` on
 2026-11-25, that was about 20 s of the first calculation, mostly building the
 US parameter values at the calculation date (``ParameterNode._get_at_instant``)
 and the SPM threshold amounts; the snapshot hook's model preload does neither.
-What carries from one request to the next is what the packages keep for the
-whole process: every simulation's baseline branch shares the module-level
-parameter tree and its values at each date (``share_spm_policy`` in
-policyengine-us), and spm-calculator keeps its threshold tables and price
-index series. A request's reform builds its own parameter tree, and each
-simulation its own SPM amount cache, so those are built in every request.
+That profile compared two calculations in one process, so it doesn't show
+which of this work a warm-up under another group and reform leaves for a
+later request. A request can reuse only what the packages keep for the whole
+process, such as the module-level parameter tree that every simulation's
+baseline branch shares (``share_spm_policy`` in policyengine-us),
+spm-calculator's threshold tables and price index series, and the modules the
+calculation imports. A request's reform builds its own parameter tree, and
+each simulation its own SPM amount cache.
 
 So ``SimulationWorker`` and ``SimulationSegmentWorker`` in
 ``src/modal/app.py`` run :func:`warm_up_first_calculation` in their
@@ -35,9 +37,10 @@ where it is safe before a snapshot, and only where Modal takes one:
   importing them again could fetch the data release manifest again, and
   when the group's year file and baseline are in the image's data folder
   and the year file passes .py's reuse checks, so nothing is downloaded or
-  built from source. It skips the Google Cloud
-  credential setup of ``run_simulation_impl``, which reads a Modal Secret:
-  Secrets aren't read before the snapshot.
+  built from source. It skips the Google Cloud credential setup of
+  ``run_simulation_impl``, which reads a Modal Secret, and reads no Secret
+  itself. (The preload before it already reads the Hugging Face token and
+  fetches the data release manifest, as ``country_model_preload`` says.)
 - **No telemetry.** It configures no observability and gives the
   calculation a runtime that records and sends nothing, so it writes no
   operation record or span and no call number (``_ContainerCalls``).
@@ -45,7 +48,10 @@ where it is safe before a snapshot, and only where Modal takes one:
   .py's in-process cache and the output files it saved in the data folder,
   so a later call loads its baseline from the image as it would without the
   warm-up. What stays is what the packages keep for the whole process, as
-  above, and the modules the calculation imported.
+  above. One case differs: when .py finds the baked baseline incomplete or
+  out of date, it calculates it again and saves it over the image's file, as
+  a call would. That file goes into the snapshot, so restored containers
+  load it and report a hit; the warm-up logs a warning naming it.
 - **Never fatal.** A failure or skip logs a warning, and the container
   starts as it would without the warm-up.
 """
@@ -233,14 +239,18 @@ def _removing_what_the_calculation_leaves(data_folder: Path) -> Iterator[None]:
     random ID) and saves an output it calculated beside the dataset, as
     ``<storage ID>.h5``. Left there, they would go into the snapshot, and a
     later call for the warm-up's group would use the cached baseline instead
-    of loading the baked one.
+    of loading the baked one. An output saved over a file the image already
+    held can't be undone here, so it is logged as a warning.
     """
     from policyengine.core.simulation import (  # noqa: PLC0415  # resolved per call so tests can patch policyengine's simulation cache
         _cache as simulation_cache,
     )
 
     cached_before = set(simulation_cache._cache)  # noqa: SLF001  # policyengine's LRUCache has no public listing or remove
-    outputs_before = set(data_folder.glob("*.h5"))
+    outputs_before = {
+        output: _size_and_modification_time(output)
+        for output in data_folder.glob("*.h5")
+    }
     try:
         yield
     finally:
@@ -250,6 +260,27 @@ def _removing_what_the_calculation_leaves(data_folder: Path) -> Iterator[None]:
             if storage_id not in cached_before
         ]:
             simulation_cache._cache.pop(storage_id, None)  # noqa: SLF001  # as above
-        for output in set(data_folder.glob("*.h5")) - outputs_before:
+        for output in set(data_folder.glob("*.h5")) - outputs_before.keys():
             output.unlink(missing_ok=True)
         gc.collect()
+        saved_over = sorted(
+            output.name
+            for output, state_before in outputs_before.items()
+            if _size_and_modification_time(output) != state_before
+        )
+        if saved_over:
+            logger.warning(
+                "The warm-up calculation saved over %s in the image's data "
+                "folder, which .py found incomplete or out of date; containers "
+                "restored from this snapshot load the warm-up's copy",
+                ", ".join(saved_over),
+            )
+
+
+def _size_and_modification_time(path: Path) -> tuple[int, int] | None:
+    """Return a file's size and modification time in nanoseconds, or None if gone."""
+    try:
+        status = path.stat()
+    except FileNotFoundError:
+        return None
+    return status.st_size, status.st_mtime_ns
