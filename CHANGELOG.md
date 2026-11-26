@@ -10,6 +10,17 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.27.0] - 2026-11-26
+
+### Removed
+
+- Versioned simulation apps deployed from this release define their workers only as the `SimulationWorker` and `SimulationSegmentWorker` classes. The plain `run_simulation` and `run_simulation_segment` functions, which served callers still running the code from before the classes, are removed.
+
+  The gateway now spawns comparison simulations only through the `SimulationWorker` class, and no longer falls back to the plain `run_simulation` function of apps deployed before the classes. A comparison request pinned to one of those apps (every policyengine.py release before 6.20.0) now fails instead of running there. Budget-window requests still run on those apps, which spawn their own yearly simulations.
+
+  A rollback that would move `latest` to another app that defines no `SimulationWorker` class is now refused, and routing is left unchanged. Undoing the pending publication's own plan still puts back what it replaced, so it can put `latest` back on an app from before 6.20.0 if `latest` was on one before that deployment; every unpinned comparison request then fails.
+
+
 ## [0.26.3] - 2026-11-26
 
 ### Changed
