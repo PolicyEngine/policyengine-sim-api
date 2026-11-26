@@ -97,29 +97,6 @@ class TestSubmitSimulationEndpoint:
         assert mock_modal["func"].last_from_name_call is None
         assert mock_modal["func"].calls == []
 
-    def test__given_a_failed_spawn_on_the_worker_class__then_no_function_is_tried(
-        self, mock_modal, client: TestClient
-    ):
-        """Given the class exists but its spawn fails, then don't fall back."""
-        # Given
-        mock_modal["dicts"]["simulation-api-us-versions"] = {
-            "latest": "1.500.0",
-            "1.500.0": "policyengine-simulation-py4-10-0",
-        }
-        spawn_failure = mock_modal["exception"].NotFoundError("spawn failed")
-        mock_modal["func"].spawn_error = spawn_failure
-
-        # When
-        with pytest.raises(mock_modal["exception"].NotFoundError) as raised:
-            client.post(
-                "/simulate/economy/comparison",
-                json={"country": "us", "scope": "macro", "reform": {}},
-            )
-
-        # Then: the class lookup succeeded, so its spawn error is the answer.
-        assert raised.value is spawn_failure
-        assert mock_modal["func"].last_from_name_call is None
-
     def test__given_submission__then_returns_job_id_and_poll_url(
         self, mock_modal, client: TestClient
     ):

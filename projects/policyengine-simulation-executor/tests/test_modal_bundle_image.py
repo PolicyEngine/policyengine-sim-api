@@ -177,8 +177,6 @@ def test_simulation_workers_use_the_contract_names(monkeypatch):
         getattr(segment_worker, simulation_workers.SEGMENT_WORKER_METHOD)
         in recorded_methods
     )
-    # Apps deployed before the class form define run_simulation as a function.
-    assert simulation_workers.FUNCTION_FORM_SIMULATION_WORKER == "run_simulation"
 
 
 def test_the_simulation_workers_are_not_also_plain_functions(monkeypatch):
@@ -189,9 +187,8 @@ def test_the_simulation_workers_are_not_also_plain_functions(monkeypatch):
 
     app = importlib.import_module("src.modal.app")
 
-    # Every caller of an app built from this code reaches the workers through
-    # their classes. Only apps deployed from earlier code define the plain
-    # run_simulation function that the gateway falls back to.
+    # Every caller of an app built from this code, the gateway included,
+    # reaches the workers only through their classes.
     plain_function_names = {name for name, _options in app.app.function_calls}
     for worker_method_name in (
         simulation_workers.SIMULATION_WORKER_METHOD,

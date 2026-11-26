@@ -291,17 +291,13 @@ class MockFunction:
     """Mock for Modal Function."""
 
     def __init__(self) -> None:
-        """Start with no recorded spawns or lookups.
-
-        Set ``spawn_error`` to make every spawn raise it.
-        """
+        """Start with no recorded spawns or lookups."""
         self.last_payload = None
         self.last_observability_context = None
         self.last_from_name_call = None
         self.last_cls_from_name_call = None
         self.last_call = None
         self.calls = []
-        self.spawn_error: Exception | None = None
 
     def bind(self, app_name: str, func_name: str) -> "BoundMockFunction":
         """Return a handle for one app function that records into this mock."""
@@ -334,8 +330,6 @@ class BoundMockFunction:
         A ``run_budget_window_batch`` spawn gets the batch ID and stays running;
         any other spawn completes immediately.
         """
-        if self.recorder.spawn_error is not None:
-            raise self.recorder.spawn_error
         self.recorder.last_payload = payload
         self.recorder.last_observability_context = observability_context
         is_batch = self.func_name == "run_budget_window_batch"
@@ -369,10 +363,10 @@ class MockWorkerClass:
     """Class handle returned by Modal.Cls.from_name.
 
     For an app in ``apps_without_worker_class``, such as one deployed before
-    the workers were classes, Modal can't resolve the class: ``hydrate`` and
-    a method's spawn raise ``NotFoundError``, as Modal does when it resolves
-    the lazy handle. Otherwise, calling the handle returns an instance whose
-    methods record their spawns into ``recorder``.
+    the workers were classes, Modal can't resolve the class: a method's spawn
+    raises ``NotFoundError``, as Modal does when it resolves the lazy handle.
+    Otherwise, calling the handle returns an instance whose methods record
+    their spawns into ``recorder``.
     """
 
     def __init__(
@@ -396,13 +390,6 @@ class MockWorkerClass:
             f"Lookup failed for Cls '{self.class_name}' from the '{self.app_name}' app"
         )
         return MockModalException.NotFoundError(msg)
-
-    def hydrate(self) -> Self:
-        """Resolve the class, or raise ``NotFoundError`` if the app has none."""
-        error = self.lookup_error()
-        if error is not None:
-            raise error
-        return self
 
     def __call__(self) -> "MockWorkerInstance":
         """Return an instance of the worker class."""
