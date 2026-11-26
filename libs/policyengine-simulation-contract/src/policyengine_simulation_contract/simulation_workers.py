@@ -15,8 +15,8 @@ The gateway and the executor both look the workers up by these names in a
 deployed app, so both read them from here.
 
 Apps deployed before the workers were classes define ``run_simulation`` as a
-plain Modal function instead. The gateway spawns only through the class, so it
-runs no simulation on those apps.
+plain Modal function instead. The gateway spawns comparison simulations only
+through the class, so it can't run them on those apps.
 """
 
 SIMULATION_WORKER_CLASS = "SimulationWorker"

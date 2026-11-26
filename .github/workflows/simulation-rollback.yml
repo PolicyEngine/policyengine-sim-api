@@ -16,7 +16,10 @@ name: Roll back Simulation API
 #   state is what it published, so it never overwrites a later release; the
 #   failed release's routes go too.
 # - policyengine_version: point latest at that published release. Other
-#   releases, including the failed one, stay pinnable.
+#   releases, including the failed one, stay pinnable. The gateway runs
+#   comparison requests only on apps that define the SimulationWorker class
+#   (policyengine.py 6.20.0 and later), so after a rollback to an earlier
+#   release every unpinned comparison request fails.
 
 on:
   workflow_dispatch:
