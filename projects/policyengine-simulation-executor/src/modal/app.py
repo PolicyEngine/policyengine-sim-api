@@ -609,8 +609,14 @@ class SimulationWorker(_CountryModelsLoadedBeforeSnapshot):
 
 @app.cls(
     image=simulation_image,
-    cpu=8.0,
-    memory=32768,
+    # A segment child calculates one region group in one process, so it
+    # keeps one CPU busy. Measured on Modal with both countries' models
+    # loaded, it peaks at about 3.4 GiB for a year whose dataset and
+    # baseline are baked into the image, and at about 6.9 GiB for a year
+    # whose dataset and baseline it builds itself. The memory is a request,
+    # not a limit.
+    cpu=1.0,
+    memory=10240,
     timeout=3600,
     retries=0,
     max_containers=300,
@@ -664,8 +670,9 @@ def run_simulation(
 
 @app.function(
     image=simulation_image,
-    cpu=8.0,
-    memory=32768,
+    # The same resources as SimulationSegmentWorker.
+    cpu=1.0,
+    memory=10240,
     timeout=3600,
     retries=0,
     max_containers=300,
