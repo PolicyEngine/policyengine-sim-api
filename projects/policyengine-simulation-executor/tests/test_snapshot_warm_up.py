@@ -1,12 +1,11 @@
 """The warm-up calculation the simulation workers run before their memory snapshot.
 
-The first calculation in a process builds the US parameter values for its
-year and the SPM threshold amounts, which later calculations reuse. The
-workers' snapshot hook runs one calculation of a region group whose dataset
-and baseline are in the image, so containers restored from the snapshot
-start with that work done. These tests replace the calculation itself with a
-fake that touches .py's in-process simulation cache and the data folder as a
-real one does.
+A process's first calculation for a year does one-time work that later
+calculations reuse. The workers' snapshot hook runs one calculation of a
+region group whose dataset and baseline are in the image, so containers
+restored from the snapshot start with that work done. These tests replace
+the calculation itself with a fake that touches .py's in-process simulation
+cache and the data folder as a real one does.
 """
 
 from __future__ import annotations

@@ -48,10 +48,12 @@ where it is safe before a snapshot, and only where Modal takes one:
   .py's in-process cache and the output files it saved in the data folder,
   so a later call loads its baseline from the image as it would without the
   warm-up. What stays is what the packages keep for the whole process, as
-  above. One case differs: when .py finds the baked baseline incomplete or
-  out of date, it calculates it again and saves it over the image's file, as
-  a call would. That file goes into the snapshot, so restored containers
-  load it and report a hit; the warm-up logs a warning naming it.
+  above. One case differs: when the baked baseline is incomplete, out of
+  date or unreadable, the calculation runs it again and saves it over the
+  image's file, as a call would. The warm-up keeps that copy, which holds
+  the baseline the calculation needed, so it goes into the snapshot and
+  restored containers load it; it logs a warning naming the file, since
+  those containers' calls then don't report the baked file's problem.
 - **Never fatal.** A failure or skip logs a warning, and the container
   starts as it would without the warm-up.
 """
@@ -240,7 +242,8 @@ def _removing_what_the_calculation_leaves(data_folder: Path) -> Iterator[None]:
     ``<storage ID>.h5``. Left there, they would go into the snapshot, and a
     later call for the warm-up's group would use the cached baseline instead
     of loading the baked one. An output saved over a file the image already
-    held can't be undone here, so it is logged as a warning.
+    held, when the baked baseline was incomplete, out of date or unreadable,
+    is kept, and logged as a warning.
     """
     from policyengine.core.simulation import (  # noqa: PLC0415  # resolved per call so tests can patch policyengine's simulation cache
         _cache as simulation_cache,
@@ -271,8 +274,9 @@ def _removing_what_the_calculation_leaves(data_folder: Path) -> Iterator[None]:
         if saved_over:
             logger.warning(
                 "The warm-up calculation saved over %s in the image's data "
-                "folder, which .py found incomplete or out of date; containers "
-                "restored from this snapshot load the warm-up's copy",
+                "folder, because the baked file was incomplete, out of date or "
+                "unreadable; containers restored from this snapshot load the "
+                "warm-up's copy",
                 ", ".join(saved_over),
             )
 
