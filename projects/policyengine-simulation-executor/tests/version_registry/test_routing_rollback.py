@@ -365,8 +365,11 @@ def test_a_chain_of_attempts_is_undone_in_order(monkeypatch, patched_modal):
 #
 # The gateway spawns comparison requests only through an app's
 # SimulationWorker class, which apps deployed before policyengine.py 6.20.0
-# don't define. A rollback that routed latest to one would fail every unpinned
-# comparison request, so it is refused and routing is left as it was.
+# don't define. A rollback of a finished release that would move latest to
+# another app without the class would fail every unpinned comparison request,
+# so it is refused and routing is left as it was. Undoing an unfinished
+# publication always puts back what it replaced: refusing would leave the
+# publication pending, and every later routing change refuses while one is.
 
 
 def test_restoring_latest_checks_that_its_app_defines_the_worker_class(
@@ -439,6 +442,89 @@ def test_undoing_plans_writes_nothing_if_any_restored_state_has_no_worker_class(
         registry.restore_routing_plans(environment="staging", plans=[first, second])
 
     assert store.get("active") == second["after"]
+
+
+def test_restoring_latest_to_the_release_it_is_on_needs_no_worker_class(
+    monkeypatch, patched_modal, worker_class_lookups
+):
+    state = published_routing_state(monkeypatch, None, "6.17.1", "1.1.0", "2.1.0")
+    store = install_routing_store(patched_modal, state)
+    worker_class_lookups.apps_without_worker_class.add(versioned_app_name("6.17.1"))
+
+    restored = registry.restore_routing_state(
+        environment="staging", policyengine_version="6.17.1"
+    )
+
+    # Latest stays on the app it was on, so no request routes differently.
+    assert restored["latest"]["policyengine"] == "6.17.1"
+    assert store.get("active") == restored
+    assert worker_class_lookups.lookups == []
+
+
+def test_undoing_a_plan_that_leaves_latest_where_it_is_needs_no_worker_class(
+    monkeypatch, patched_modal, worker_class_lookups
+):
+    original = published_routing_state(monkeypatch, None, "6.17.1", "1.1.0", "2.1.0")
+    store = install_routing_store(patched_modal, original)
+    # An older release adds its routes without moving latest.
+    older_release = publication_plan(
+        monkeypatch, original, ("6.16.0", "1.0.0", "2.0.0")
+    )
+    registry.apply_routing_plan(environment="staging", plan=older_release)
+    assert older_release["after"]["latest"] == original["latest"]
+    worker_class_lookups.apps_without_worker_class.add(versioned_app_name("6.17.1"))
+
+    assert (
+        registry.restore_routing_plans(environment="staging", plans=[older_release])
+        == "restored"
+    )
+
+    assert store.get("active") == json.loads(json.dumps(original))
+    assert worker_class_lookups.lookups == []
+
+
+def test_undoing_an_unfinished_publication_puts_back_what_it_replaced(
+    monkeypatch, patched_modal, worker_class_lookups
+):
+    """A deployment's own restore after a failed check, without the class."""
+    original = published_routing_state(monkeypatch, None, "6.17.1", "1.1.0", "2.1.0")
+    store = install_routing_store(patched_modal, original)
+    pending = publication_plan(
+        monkeypatch,
+        original,
+        ("6.20.0", "1.1.0", "2.2.0"),
+        publication_id="74401-1-beta",
+    )
+    registry.record_routing_plan(environment="staging", plan=pending)
+    registry.apply_routing_plan(environment="staging", plan=pending)
+    worker_class_lookups.apps_without_worker_class.add(versioned_app_name("6.17.1"))
+
+    assert (
+        registry.restore_routing_plans(environment="staging", plans=[pending])
+        == "restored"
+    )
+
+    assert store.get("active") == json.loads(json.dumps(original))
+    assert store.get("publication") == {"status": "restored", "plan": pending}
+    assert worker_class_lookups.lookups == []
+
+
+def test_a_failed_worker_class_lookup_stops_the_rollback_and_writes_nothing(
+    monkeypatch, patched_modal, worker_class_lookups
+):
+    state = published_routing_state(monkeypatch, None, "6.20.0", "1.1.0", "2.1.0")
+    state = published_routing_state(monkeypatch, state, "6.20.3", "1.1.0", "2.2.0")
+    store = install_routing_store(patched_modal, state)
+    lookup_failure = ConnectionError("Modal is unreachable")
+    worker_class_lookups.lookup_errors[versioned_app_name("6.20.0")] = lookup_failure
+
+    with pytest.raises(ConnectionError) as raised:
+        registry.restore_routing_state(
+            environment="staging", policyengine_version="6.20.0"
+        )
+
+    assert raised.value is lookup_failure
+    assert store.get("active") == json.loads(json.dumps(state))
 
 
 @pytest.mark.usefixtures("serialized_workflow")

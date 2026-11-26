@@ -357,10 +357,10 @@ def test_operator_restores_any_valid_pending_plan_in_the_selected_store(
     assert store.get("publication") == {"status": "restored", "plan": pending}
 
 
-def test_operator_recovery_never_routes_latest_to_an_app_without_the_worker_class(
+def test_operator_recovery_puts_back_what_the_publication_replaced_without_the_class(
     monkeypatch, patched_modal, worker_class_lookups
 ):
-    """The gateway can't run comparisons on apps from before .py 6.20.0."""
+    """Refusing would leave the publication pending, which blocks every write."""
     before = published_routing_state(monkeypatch, None, "6.17.1", "1.1.0", "2.1.0")
     store = install_routing_store(patched_modal, before)
     pending = publication_plan(
@@ -373,13 +373,16 @@ def test_operator_recovery_never_routes_latest_to_an_app_without_the_worker_clas
     registry.apply_routing_plan(environment="staging", plan=pending)
     worker_class_lookups.apps_without_worker_class.add(versioned_app_name("6.17.1"))
 
-    with pytest.raises(ValueError, match="defines no SimulationWorker class"):
+    assert (
         registry.finalize_routing_publication(
             environment="staging", release_environment="beta", gates_passed=False
         )
+        == "restored"
+    )
 
-    assert store.get("active") == pending["after"]
-    assert store.get("publication") == {"status": "pending", "plan": pending}
+    assert store.get("active") == before
+    assert store.get("publication") == {"status": "restored", "plan": pending}
+    assert worker_class_lookups.lookups == []
 
 
 @pytest.mark.parametrize("status", ["pending", "completed", "restored"])

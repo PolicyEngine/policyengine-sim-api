@@ -45,38 +45,35 @@ class FakeWorkerClassLookups:
     Every app defines the ``SimulationWorker`` class except the ones in
     ``apps_without_worker_class``, such as apps deployed before the workers
     were classes: resolving their class handle raises ``NotFoundError``.
+    Resolving the class of an app in ``lookup_errors`` raises that error.
     """
 
     def __init__(self) -> None:
         self.apps_without_worker_class: set[str] = set()
+        self.lookup_errors: dict[str, Exception] = {}
         self.lookups: list[tuple[str, str, str]] = []
 
     def from_name(
         self, app_name: str, class_name: str, *, environment_name: str
     ) -> FakeWorkerClassHandle:
         self.lookups.append((environment_name, app_name, class_name))
-        return FakeWorkerClassHandle(
-            app_name,
-            class_name,
-            defined=app_name not in self.apps_without_worker_class,
-        )
+        lookup_error = self.lookup_errors.get(app_name)
+        if lookup_error is None and app_name in self.apps_without_worker_class:
+            lookup_error = NotFoundError(
+                f"Lookup failed for Cls '{class_name}' from the '{app_name}' app"
+            )
+        return FakeWorkerClassHandle(lookup_error)
 
 
 class FakeWorkerClassHandle:
-    """A lazy class handle: resolving it raises if the app has no such class."""
+    """A lazy class handle: resolving it raises the app's lookup error, if any."""
 
-    def __init__(self, app_name: str, class_name: str, *, defined: bool) -> None:
-        self.app_name = app_name
-        self.class_name = class_name
-        self.defined = defined
+    def __init__(self, lookup_error: Exception | None) -> None:
+        self.lookup_error = lookup_error
 
     def hydrate(self) -> FakeWorkerClassHandle:
-        if not self.defined:
-            msg = (
-                f"Lookup failed for Cls '{self.class_name}' "
-                f"from the '{self.app_name}' app"
-            )
-            raise NotFoundError(msg)
+        if self.lookup_error is not None:
+            raise self.lookup_error
         return self
 
 
