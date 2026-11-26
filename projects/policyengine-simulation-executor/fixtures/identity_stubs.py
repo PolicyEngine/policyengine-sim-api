@@ -1,16 +1,17 @@
-"""Shared stubs for ``collect_dataset_identity``'s input seams.
+"""Shared stubs for the input seams of ``artifact_keys.year_file_identity``.
 
-The key-discipline tests (test_artifact_keys) and the writer==reader
-contract tests (test_precompute) must stub the SAME seam list —
-``release_bundle.get_country_release_bundle``,
-``release_bundle._receipt_dataset``,
+The key tests (test_prebuilt_identities, test_artifact_keys) and the
+writer==reader contract tests (test_prebuilt_plan) must stub the SAME seam
+list — ``release_bundle.get_country_release_bundle``,
 ``manifest.resolve_dataset_reference``, ``manifest.dataset_logical_name``,
-``manifest.get_release_manifest``, ``spm.runtime_spm_capability`` — or one
-suite silently tests a stale list when identity collection grows a seam.
-This is that list's one home.
+``manifest.get_release_manifest``, ``spm.runtime_spm_capability``,
+``artifact_keys._installed_package_versions`` — or one suite silently tests
+a stale list when identity collection grows a seam. This is that list's one
+home. ``release_bundle._receipt_dataset`` is stubbed too, for the bundle
+helpers that read the install receipt; no identity reads it.
 
-The SPM capability is a seam because ``collect_dataset_identity`` resolves
-the installed bundle's SPM selection into the dataset identity. The default
+The SPM capability is a seam because ``year_file_identity`` resolves the
+installed bundle's SPM selection into the year-file identity. The default
 stub has no capability so fixed identifier tests remain tied to their
 synthetic inputs instead of whichever PolicyEngine release is installed.
 """
@@ -31,7 +32,8 @@ def install_identity_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     SPM-capability state, plus a handle to the installed capability resolver
     for tests that intentionally exercise the installed release. The bundle
     has one non-default dataset, ``populace_cps_local``, for the per-state
-    dataset identities.
+    dataset identities. ``core_version`` is the policyengine-core version the
+    installed-package stub reports.
     """
     # This module imports ``get_release_manifest`` by value while constructing
     # country models. Import it before replacing the manifest module's function
@@ -62,6 +64,7 @@ def install_identity_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         },
     )
     release_datasets = {
+        "populace_cps": SimpleNamespace(sha256="d00dfeed" * 8),
         "populace_cps_local": SimpleNamespace(sha256="c0ffee00" * 8),
     }
     receipt_entry = {
@@ -74,6 +77,7 @@ def install_identity_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         receipt_entry=receipt_entry,
         release_datasets=release_datasets,
         spm_capability=None,
+        core_version="3.33.3",
     )
 
     monkeypatch.setattr(
@@ -99,6 +103,27 @@ def install_identity_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
             certification=SimpleNamespace(data_build_fingerprint="fp-123"),
             datasets=state.release_datasets,
         ),
+    )
+
+    from policyengine_simulation_executor import (  # noqa: PLC0415  # patch target, imported when the stubs are installed
+        artifact_keys,
+    )
+
+    def installed_package_versions(country: str) -> dict[str, str]:
+        country_bundle = release_bundle.get_country_release_bundle(country)
+        return {
+            "policyengine": country_bundle.policyengine_version,
+            "policyengine-core": state.core_version,
+            f"policyengine-{country.lower()}": country_bundle.model_version,
+        }
+
+    # Year-file keys name the installed packages; the stub pins them to the
+    # bundle's versions and a fixed policyengine-core version.
+    monkeypatch.setattr(
+        artifact_keys,
+        "_installed_package_versions",
+        installed_package_versions,
+        raising=False,
     )
 
     from policyengine_simulation_executor import (

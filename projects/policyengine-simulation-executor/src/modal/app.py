@@ -178,8 +178,14 @@ OBSERVABILITY_ENV = modal_image_environment()
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
 
 
-def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
-    """Resolve the artifact bucket and deploy manifest on the deploying machine.
+# The deploy-time variable naming each country's precomputed manifest. Only
+# the US has prebuilt files today; a country is added here when its
+# precompute publishes a manifest.
+MANIFEST_DIGEST_VARIABLES = {"us": "POLICYENGINE_MANIFEST_DIGEST"}
+
+
+def _deploy_time_artifact_inputs(country: str = "us") -> tuple[str, dict | None]:
+    """Resolve the bucket and a country's deploy manifest on the deploying machine.
 
     The manifest content rides into the fetch layer's args, so Modal's
     layer cache busts exactly when the deployed artifact set changes.
@@ -197,7 +203,7 @@ def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
     """
     if not modal.is_local():
         return "", None
-    digest = os.environ.get("POLICYENGINE_MANIFEST_DIGEST")
+    digest = os.environ.get(MANIFEST_DIGEST_VARIABLES[country])
     bucket = os.environ.get("POLICYENGINE_ARTIFACT_BUCKET", "")
     if not digest:
         return bucket, None
@@ -219,10 +225,19 @@ def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
     # Validate on the runner so a corrupt or foreign manifest fails the
     # deploy here, not mid-image-build.
     manifest = ArtifactManifest.model_validate(payload)
+    if manifest.country != country:
+        msg = (
+            f"{MANIFEST_DIGEST_VARIABLES[country]} names a {manifest.country} "
+            f"manifest, not a {country} one."
+        )
+        raise RuntimeError(msg)
     return store.bucket_name, manifest.canonical_payload()
 
 
-_ARTIFACT_BUCKET, _DEPLOY_MANIFEST = _deploy_time_artifact_inputs()
+_ARTIFACT_INPUTS = {
+    country: _deploy_time_artifact_inputs(country)
+    for country in MANIFEST_DIGEST_VARIABLES
+}
 
 
 def build_runtime_simulation_image() -> modal.Image:
@@ -268,27 +283,29 @@ def build_runtime_simulation_image() -> modal.Image:
 
 
 def build_base_simulation_image() -> modal.Image:
-    """Runtime image layers plus the artifact fetch."""
-    return (
-        build_runtime_simulation_image()
-        # Bake the precomputed store artifacts (single-year US datasets
-        # and cohort baselines) into the image. This layer MUST stay
-        # before add_local_python_source — that layer is keyed on source
-        # file hashes, so anything after it rebuilds on every code
-        # change. Its args carry the content-addressed manifest, so the
-        # cache busts exactly when the artifact set changes and never
-        # otherwise. UK requests still build datasets at request time.
-        .run_function(
+    """Runtime image layers plus one artifact download step per country, US first."""
+    image = build_runtime_simulation_image()
+    # Bake each country's precomputed files (year files and current-law
+    # baselines) into the image's prebuilt folders. These layers MUST stay
+    # before add_local_python_source — that layer is keyed on source file
+    # hashes, so anything after it rebuilds on every code change. Each
+    # layer's args carry its country's content-addressed manifest, so its
+    # cache busts exactly when that country's file set changes, and a later
+    # country's change rebuilds only its own step and the ones after it. UK
+    # requests still build datasets at request time.
+    for country in MANIFEST_DIGEST_VARIABLES:
+        bucket, manifest = _ARTIFACT_INPUTS[country]
+        image = image.run_function(
             fetch_artifacts,
-            args=(_ARTIFACT_BUCKET, _DEPLOY_MANIFEST),
+            args=(bucket, manifest),
             secrets=[gcp_secret],
             cpu=2.0,
             memory=4096,
-            # The national files and baselines are about 430 MB; the
-            # per-state datasets (51 states for each year) add several GB.
+            # The US national files and baselines are about 430 MB; the
+            # per-state year files (51 states for each year) add several GB.
             timeout=3600,
         )
-    )
+    return image
 
 
 # Heavy image for the simulation workers. Its last layer checks that both

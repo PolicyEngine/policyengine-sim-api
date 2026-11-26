@@ -9,6 +9,7 @@ add_local_python_source).
 """
 
 import ast
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -44,7 +45,31 @@ class FakeGcsClient:
         return SimpleNamespace(blob=lambda path: FakeBlob(self, path))
 
 
-def _manifest():
+def _content(digest):
+    return f"bytes-{digest}".encode()
+
+
+def _artifact(kind, digest, *, filename, folder, **placement):
+    content = _content(digest)
+    prefix = "year-files" if kind == "year_file" else "baselines"
+    return {
+        "kind": kind,
+        "level": placement.get("level", "national"),
+        "region": placement.get("region"),
+        "path": f"{prefix}/us/{digest}/{filename}",
+        "filename": filename,
+        "folder": folder,
+        "year": 2026,
+        "digest": digest,
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "size_bytes": len(content),
+    }
+
+
+NATIONAL_FOLDER = "prebuilt/us/populace/all"
+
+
+def _manifest(*extra_artifacts):
     """Return the wire shape fetch_artifacts consumes, derived from the schema.
 
     The layer itself cannot import the model, so it speaks the canonical
@@ -52,40 +77,46 @@ def _manifest():
     """
     return ArtifactManifest.model_validate(
         {
-            "schema": "mf1",
+            "schema": "mf2",
             "country": "us",
             "receipt": {
                 "policyengine_version": "4.22.0",
+                "policyengine_core_version": "3.33.3",
                 "model_version": "1.3.0",
                 "data_version": "1.2.3",
                 "data_artifact_revision": "rev-abc",
-                "default_dataset": "populace_cps",
+                "default_dataset": "populace",
             },
             "artifacts": [
-                {
-                    "type": "dataset",
-                    "path": "datasets/us/d1/populace_year_2026.h5",
-                    "filename": "populace_year_2026.h5",
-                    "year": 2026,
-                    "digest": "d1",
-                },
-                {
-                    "type": "baseline",
-                    "path": "baselines/us/b1/bl1-aaaa.h5",
-                    "filename": "bl1-aaaa.h5",
-                    "year": 2026,
-                    "digest": "b1",
-                },
+                _artifact(
+                    "year_file",
+                    "d1",
+                    filename="populace_year_2026.h5",
+                    folder=NATIONAL_FOLDER,
+                ),
+                _artifact(
+                    "baseline",
+                    "b1",
+                    filename="bl3-aaaa.h5",
+                    folder=NATIONAL_FOLDER,
+                    level="state_group",
+                    region="region_group/state/ca",
+                ),
+                *extra_artifacts,
             ],
         }
     ).canonical_payload()
 
 
+def _store_every_artifact(client, manifest):
+    for artifact in manifest["artifacts"]:
+        client.objects[artifact["path"]] = _content(artifact["digest"])
+
+
 @pytest.fixture
 def fake_client():
     client = FakeGcsClient()
-    for artifact in _manifest()["artifacts"]:
-        client.objects[artifact["path"]] = f"bytes-{artifact['digest']}".encode()
+    _store_every_artifact(client, _manifest())
     return client
 
 
@@ -94,20 +125,22 @@ def data_folder(monkeypatch, tmp_path):
     folder = tmp_path / "data"
     monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(folder))
     monkeypatch.setenv("POLICYENGINE_VERSION", "4.22.0")
+    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.33.3")
     monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.3.0")
     monkeypatch.delenv("POLICYENGINE_BUNDLE_RECEIPT", raising=False)
     return folder
 
 
 class TestFetchArtifacts:
-    def test_downloads_every_artifact_under_its_runtime_filename(
+    def test_downloads_every_artifact_into_its_prebuilt_folder(
         self, fake_client, data_folder
     ):
         fetch_artifacts("test-bucket", _manifest(), client=fake_client)
         assert "test-bucket" in fake_client.bucket_names
         for artifact in _manifest()["artifacts"]:
-            target = data_folder / artifact["filename"]
-            assert target.read_bytes() == f"bytes-{artifact['digest']}".encode()
+            target = data_folder / NATIONAL_FOLDER / artifact["filename"]
+            assert target.read_bytes() == _content(artifact["digest"])
+        assert not (data_folder / "populace_year_2026.h5").exists()
 
     @pytest.mark.usefixtures("data_folder")
     def test_missing_store_object_fails_before_any_download(self, fake_client):
@@ -123,76 +156,79 @@ class TestFetchArtifacts:
             fetch_artifacts("test-bucket", None, client=fake_client)
         assert fake_client.downloads == []
 
-    def test_overwrites_a_preexisting_same_named_file(self, fake_client, data_folder):
-        """No skip-if-exists: stale same-named bytes must never reach the image."""
-        data_folder.mkdir(parents=True)
-        stale = data_folder / "populace_year_2026.h5"
-        stale.write_bytes(b"stale")
-        fetch_artifacts("test-bucket", _manifest(), client=fake_client)
-        assert stale.read_bytes() == b"bytes-d1"
+    def test_refuses_a_file_already_in_the_image_before_any_download(
+        self, fake_client, data_folder
+    ):
+        """A second country's download step must never replace the first's files."""
+        existing = data_folder / NATIONAL_FOLDER / "populace_year_2026.h5"
+        existing.parent.mkdir(parents=True)
+        existing.write_bytes(b"earlier")
+
+        with pytest.raises(RuntimeError, match="already"):
+            fetch_artifacts("test-bucket", _manifest(), client=fake_client)
+        assert fake_client.downloads == []
+        assert existing.read_bytes() == b"earlier"
+
+    @pytest.mark.parametrize("field", ["sha256", "size_bytes"])
+    def test_refuses_a_file_whose_content_differs(
+        self, fake_client, data_folder, field
+    ):
+        manifest = _manifest()
+        manifest["artifacts"][1][field] = (
+            "0" * 64 if field == "sha256" else manifest["artifacts"][1][field] + 1
+        )
+
+        with pytest.raises(RuntimeError, match=r"bl3-aaaa\.h5"):
+            fetch_artifacts("test-bucket", manifest, client=fake_client)
+        folder = data_folder / NATIONAL_FOLDER
+        assert not (folder / "bl3-aaaa.h5").exists()
+        assert not list(folder.glob("*.partial"))
 
 
-def _state_dataset_artifact(state_code, *, folder=None, filename=None):
-    digest = f"s-{state_code}"
-    return {
-        "type": "state_dataset",
-        "path": f"state-datasets/us/{digest}/populace_local_year_2026.h5",
-        "filename": filename or "populace_local_year_2026.h5",
-        "folder": folder or f"state-datasets/populace_local/{state_code}",
-        "state_code": state_code,
-        "year": 2026,
-        "digest": digest,
-    }
+def _state_year_file(state_code, *, folder=None, filename=None):
+    return _artifact(
+        "year_file",
+        f"s-{state_code}",
+        filename=filename or "populace_local_year_2026.h5",
+        folder=folder or f"prebuilt/us/populace_local/{state_code}",
+        level="state",
+        region=f"state/{state_code.lower()}",
+    )
 
 
-def _manifest_with_state_datasets(*state_artifacts):
-    manifest = _manifest()
-    manifest["artifacts"] = [*manifest["artifacts"], *state_artifacts]
-    return manifest
-
-
-def _store_every_artifact(client, manifest):
-    for artifact in manifest["artifacts"]:
-        client.objects[artifact["path"]] = f"bytes-{artifact['digest']}".encode()
-
-
-class TestStateDatasetPlacement:
-    """Entries with a ``folder`` land in it; every state shares one filename."""
+class TestStateFilePlacement:
+    """Every state's year file has one filename and lands in its own folder."""
 
     def test_places_each_state_file_in_its_own_folder(self, fake_client, data_folder):
-        manifest = _manifest_with_state_datasets(
-            _state_dataset_artifact("UT"), _state_dataset_artifact("WY")
-        )
+        manifest = _manifest(_state_year_file("UT"), _state_year_file("WY"))
         _store_every_artifact(fake_client, manifest)
 
         fetch_artifacts("test-bucket", manifest, client=fake_client)
 
-        state_folder = data_folder / "state-datasets" / "populace_local"
+        state_folder = data_folder / "prebuilt" / "us" / "populace_local"
         assert (state_folder / "UT" / "populace_local_year_2026.h5").read_bytes() == (
             b"bytes-s-UT"
         )
         assert (state_folder / "WY" / "populace_local_year_2026.h5").read_bytes() == (
             b"bytes-s-WY"
         )
-        assert (data_folder / "populace_year_2026.h5").read_bytes() == b"bytes-d1"
-        assert not (data_folder / "populace_local_year_2026.h5").exists()
 
     @pytest.mark.parametrize(
         "folder",
         [
-            "/abs/state-datasets/UT",
-            "state-datasets/../../escape",
-            "state-datasets/./UT",
-            "state-datasets//UT",
-            "state-datasets\\UT",
+            "/abs/prebuilt/us/UT",
+            "prebuilt/us/../../escape",
+            "prebuilt/us/./UT",
+            "prebuilt/us//UT",
+            "prebuilt\\us\\UT",
+            "state-datasets/populace_local/UT",
+            "prebuilt/uk/populace_local/UT",
             "",
         ],
     )
     @pytest.mark.usefixtures("data_folder")
     def test_refuses_an_unsafe_folder_before_any_download(self, fake_client, folder):
-        manifest = _manifest_with_state_datasets(
-            _state_dataset_artifact("UT", folder=folder or None)
-        )
+        manifest = _manifest(_state_year_file("UT"))
         manifest["artifacts"][-1]["folder"] = folder
         _store_every_artifact(fake_client, manifest)
 
@@ -207,9 +243,7 @@ class TestStateDatasetPlacement:
     def test_refuses_an_unsafe_filename_before_any_download(
         self, fake_client, filename
     ):
-        manifest = _manifest_with_state_datasets(
-            _state_dataset_artifact("UT", filename=filename)
-        )
+        manifest = _manifest(_state_year_file("UT", filename=filename))
         _store_every_artifact(fake_client, manifest)
 
         with pytest.raises(RuntimeError, match="filename"):
@@ -218,10 +252,8 @@ class TestStateDatasetPlacement:
 
     @pytest.mark.usefixtures("data_folder")
     def test_refuses_two_entries_for_one_file_before_any_download(self, fake_client):
-        repeated = _state_dataset_artifact("UT")
-        manifest = _manifest_with_state_datasets(
-            repeated, {**repeated, "path": "state-datasets/us/other/x.h5"}
-        )
+        repeated = _state_year_file("UT")
+        manifest = _manifest(repeated, {**repeated, "path": "year-files/us/other/x.h5"})
         _store_every_artifact(fake_client, manifest)
 
         with pytest.raises(RuntimeError, match="more than once"):
@@ -230,6 +262,22 @@ class TestStateDatasetPlacement:
 
 
 class TestFreshnessGate:
+    @pytest.mark.usefixtures("data_folder")
+    def test_rejects_a_policyengine_core_version_mismatch(
+        self, monkeypatch, fake_client
+    ):
+        monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.34.0")
+        with pytest.raises(RuntimeError, match="POLICYENGINE_CORE_VERSION"):
+            fetch_artifacts("test-bucket", _manifest(), client=fake_client)
+        assert fake_client.downloads == []
+
+    @pytest.mark.usefixtures("data_folder")
+    def test_rejects_a_manifest_of_another_schema(self, fake_client):
+        manifest = {**_manifest(), "schema": "mf1"}
+        with pytest.raises(RuntimeError, match="mf1"):
+            fetch_artifacts("test-bucket", manifest, client=fake_client)
+        assert fake_client.downloads == []
+
     @pytest.mark.usefixtures("data_folder")
     def test_rejects_a_policyengine_version_mismatch(self, monkeypatch, fake_client):
         monkeypatch.setenv("POLICYENGINE_VERSION", "4.99.0")
@@ -507,11 +555,11 @@ class TestCharacterization:
             blob=lambda path: SilentBlob(fake_client, path)
         )
 
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(RuntimeError, match="wrote no file"):
             fetch_artifacts("test-bucket", _manifest(), client=fake_client)
 
         assert fake_client.downloads == [
-            ("datasets/us/d1/populace_year_2026.h5", "populace_year_2026.h5")
+            ("year-files/us/d1/populace_year_2026.h5", "populace_year_2026.h5.partial")
         ]
 
     def test_files_missing_after_every_download_fail_the_build(
@@ -519,7 +567,7 @@ class TestCharacterization:
     ):
         class ReplacingBlob(FakeBlob):
             def download_to_filename(self, filename):
-                for existing in data_folder.iterdir():
+                for existing in Path(filename).parent.iterdir():
                     existing.unlink()
                 super().download_to_filename(filename)
 
@@ -530,7 +578,7 @@ class TestCharacterization:
         with pytest.raises(RuntimeError) as error:
             fetch_artifacts("test-bucket", _manifest(), client=fake_client)
 
-        missing = str(data_folder / "populace_year_2026.h5")
+        missing = str(data_folder / NATIONAL_FOLDER / "populace_year_2026.h5")
         assert str(error.value) == (
             f"Artifact fetch did not produce expected files: [{missing!r}]"
         )
@@ -549,4 +597,4 @@ class TestCharacterization:
         ]
         assert len(fetched) == 2
         assert fetched[0].endswith("populace_year_2026.h5 (0.0 MB)")
-        assert fetched[1].endswith("bl1-aaaa.h5 (0.0 MB)")
+        assert fetched[1].endswith("bl3-aaaa.h5 (0.0 MB)")

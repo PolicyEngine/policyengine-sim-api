@@ -331,10 +331,11 @@ def _fake_manifest():
 
     return ArtifactManifest.model_validate(
         {
-            "schema": "mf1",
+            "schema": "mf2",
             "country": "us",
             "receipt": {
                 "policyengine_version": "4.19.1",
+                "policyengine_core_version": "3.27.1",
                 "model_version": "1.700.0",
                 "data_version": "1.2.3",
                 "data_artifact_revision": "rev-abc",
@@ -342,11 +343,16 @@ def _fake_manifest():
             },
             "artifacts": [
                 {
-                    "type": "dataset",
-                    "path": "datasets/us/d1/populace_year_2026.h5",
+                    "kind": "year_file",
+                    "level": "national",
+                    "region": None,
+                    "path": "year-files/us/d1/populace_year_2026.h5",
                     "filename": "populace_year_2026.h5",
+                    "folder": "prebuilt/us/populace_cps/all",
                     "year": 2026,
                     "digest": "d1",
+                    "sha256": "1" * 64,
+                    "size_bytes": 100,
                 },
             ],
         }
@@ -458,13 +464,16 @@ def test_a_manifest_listing_state_datasets_reaches_the_fetch_layer(monkeypatch):
     manifest = _fake_manifest()
     manifest["artifacts"].append(
         {
-            "type": "state_dataset",
-            "path": "state-datasets/us/s1/populace_local_year_2026.h5",
+            "kind": "year_file",
+            "level": "state",
+            "region": "state/ut",
+            "path": "year-files/us/s1/populace_local_year_2026.h5",
             "filename": "populace_local_year_2026.h5",
-            "folder": "state-datasets/populace_local/UT",
-            "state_code": "UT",
+            "folder": "prebuilt/us/populace_local/UT",
             "year": 2026,
             "digest": "s1",
+            "sha256": "2" * 64,
+            "size_bytes": 200,
         }
     )
 

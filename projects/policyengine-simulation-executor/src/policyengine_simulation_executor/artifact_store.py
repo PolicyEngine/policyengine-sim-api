@@ -20,9 +20,11 @@ the network.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +36,23 @@ if TYPE_CHECKING:
     from google.cloud import storage
 
 ARTIFACT_BUCKET_ENV = "POLICYENGINE_ARTIFACT_BUCKET"
+_HASH_CHUNK_BYTES = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class StoredObject:
+    """A stored object's content SHA-256 and size, which the manifest records."""
+
+    sha256: str
+    size_bytes: int
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(_HASH_CHUNK_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def resolve_bucket_name(explicit: str | None = None) -> str:
@@ -90,17 +109,43 @@ class ArtifactStore:
     def upload_file(self, path: str, local_path: str | Path) -> bool:
         """Upload a local file write-once; return whether this call created the object.
 
-        False means an object already existed at that key, which counts as
-        success because keys digest the full input closure (see the module
-        docstring).
+        The object records the file's SHA-256 and size as metadata, which the
+        manifest copies. False means an object already existed at that key,
+        which counts as success because keys digest the full input closure
+        (see the module docstring).
         """
+        source = Path(local_path)
+        blob = self._blob(path)
+        blob.metadata = {
+            "sha256": _file_sha256(source),
+            "size_bytes": str(source.stat().st_size),
+        }
         try:
-            self._blob(path).upload_from_filename(
-                str(local_path), if_generation_match=0
-            )
+            blob.upload_from_filename(str(source), if_generation_match=0)
         except PreconditionFailed:
             return False
         return True
+
+    def describe(self, path: str) -> StoredObject:
+        """Return the stored object's SHA-256 and size.
+
+        Uses the object's metadata, or hashes its content when the metadata
+        lacks them. Raises ``FileNotFoundError`` when there is no object.
+        """
+        blob = self._blob(path)
+        try:
+            blob.reload()
+        except NotFound:
+            raise FileNotFoundError(path) from None
+        metadata = blob.metadata or {}
+        sha256 = metadata.get("sha256")
+        size_bytes = metadata.get("size_bytes")
+        if isinstance(sha256, str) and isinstance(size_bytes, str):
+            return StoredObject(sha256=sha256, size_bytes=int(size_bytes))
+        payload = blob.download_as_bytes()
+        return StoredObject(
+            sha256=hashlib.sha256(payload).hexdigest(), size_bytes=len(payload)
+        )
 
     def upload_bytes(
         self,

@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.26.3] - 2026-11-26
+
+### Changed
+
+- The run_simulation app's precomputed year files and current-law baselines are now planned, built and looked up through handlers that take a country and a dataset level (national, group of states, state, district, UK nation, UK local area). US results and the set of US files built are unchanged, but the files have new keys (`yf1` year files, `bl3` baselines, including the policyengine-core version), sit under `prebuilt/<country>/<dataset>/<subset>/` in the image, and are listed in one `mf2` manifest per country, whose recorded SHA-256 and size the image build checks for each file. The precompute takes `--country` (default `us`). The first release with this change recomputes every US file once, as a .py version update does.
+
+
 ## [0.26.2] - 2026-11-26
 
 ### Changed
