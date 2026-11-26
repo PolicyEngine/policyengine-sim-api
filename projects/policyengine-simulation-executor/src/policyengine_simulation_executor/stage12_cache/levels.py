@@ -299,14 +299,12 @@ def prebuilt_dataset_folder(run: RunScope, data_folder: str) -> PrebuiltFolder |
     default dataset and a temporary folder for any other. Never raises, so a
     lookup failure costs a dataset build, never a request.
     """
-    prebuilt = prebuilt_for(run.country)
-    if prebuilt is None:
-        return None
-    handler = prebuilt.handler_for_run(run)
-    if handler is None:
-        return None
     try:
-        folder = handler.baked_data_folder(run, data_folder)
+        prebuilt = prebuilt_for(run.country)
+        handler = None if prebuilt is None else prebuilt.handler_for_run(run)
+        folder = (
+            None if handler is None else handler.baked_data_folder(run, data_folder)
+        )
     except Exception:  # noqa: BLE001  # the request path never fails over a prebuilt-file lookup; the failure is logged
         logger.warning(
             "Could not look up the prebuilt year file of %s region %s; "
@@ -316,6 +314,6 @@ def prebuilt_dataset_folder(run: RunScope, data_folder: str) -> PrebuiltFolder |
             exc_info=True,
         )
         return None
-    if folder is None:
+    if handler is None or folder is None:
         return None
     return PrebuiltFolder(folder=folder, dataset_source=handler.baked_dataset_source)

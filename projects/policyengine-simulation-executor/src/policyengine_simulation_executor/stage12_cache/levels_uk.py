@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from policyengine.core.scoping_strategy import RegionGroupStrategy
+
 from policyengine_simulation_executor.stage12_cache.levels import (
     BaselineScope,
     BaselineTarget,
@@ -95,18 +97,23 @@ class _UkLevel:
 
 
 class UkNationalHandler(_UkLevel):
-    """The UK-wide run on the default dataset."""
+    """A UK-wide run, or a run over a group of nations, on the default dataset."""
 
     level = DatasetLevel.NATIONAL
 
     def baseline_scope(self, run: RunScope) -> BaselineScope | None:
-        """Give the unscoped UK-wide run on the default dataset a fixed ID."""
-        if (
-            run.region.code == UK
-            and run.region.scoping_strategy is None
-            and run.dataset.is_default
-        ):
+        """Give an unscoped UK-wide run or a group of nations a fixed ID.
+
+        A group's scope is its strategy's cache key, as it was before the
+        handlers; both read the UK national year file.
+        """
+        if not run.dataset.is_default:
+            return None
+        strategy = run.region.scoping_strategy
+        if run.region.code == UK and strategy is None:
             return BaselineScope(region="national", scope_key=None)
+        if isinstance(strategy, RegionGroupStrategy):
+            return BaselineScope(region=run.region.code, scope_key=strategy.cache_key)
         return None
 
 
@@ -144,12 +151,15 @@ def uk_level_of(run: RunScope) -> DatasetLevel | None:
 
     The local-area dataset comes first, because a breakdown run's region is
     ``uk`` or a nation. A dataset other than the default that the bundle does
-    not route area regions to has no level.
+    not route area regions to has no level. A group of nations reads the
+    national year file, so it is a national run.
     """
     if not run.dataset.is_default:
         routed = _routed_area_dataset_name()
         return DatasetLevel.LOCAL_AREA if run.dataset.name == routed else None
-    if run.region.code == UK:
+    if run.region.code == UK or isinstance(
+        run.region.scoping_strategy, RegionGroupStrategy
+    ):
         return DatasetLevel.NATIONAL
     if run.region.code.startswith(_NATION_PREFIX):
         return DatasetLevel.NATION
