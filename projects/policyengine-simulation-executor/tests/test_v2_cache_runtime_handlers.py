@@ -162,6 +162,21 @@ class TestFixedIdsThroughTheHandlers:
 
         assert built.kind == "random"
 
+    def test_failing_handler_settings_give_a_random_id(
+        self, recorded_build, monkeypatch
+    ):
+        from policyengine_simulation_executor.stage12_cache import levels_us
+
+        def fail():
+            msg = "the US handler settings failed to load"
+            raise RuntimeError(msg)
+
+        monkeypatch.setattr(levels_us, "us_prebuilt", fail)
+
+        built = recorded_build(scoped_planned_simulation(2026, FIRST_GROUP))
+
+        assert built.kind == "random"
+
     def test_a_level_the_cache_does_not_precompute_gives_a_random_id(
         self, recorded_build, monkeypatch
     ):
@@ -332,6 +347,33 @@ class TestBuildersThroughTheHandlers:
         assert [result.state_code for result in results] == ["UT", "WY"]
         assert us_inputs.cache_bucket.objects[entries[0].path] == b"rows of UT"
         assert us_inputs.cache_bucket.objects[entries[1].path] == b"rows of WY"
+
+    def test_the_national_build_leaves_no_work_folder_behind(
+        self, us_inputs, monkeypatch
+    ):
+        from policyengine_simulation_executor.stage12_cache import levels_us
+        from policyengine_simulation_executor.stage12_cache.levels import (
+            year_file_name,
+        )
+
+        plan = precompute.plan_artifacts_impl(BUCKET)
+        work_folders = []
+
+        def write_year_files(_handler, _year, targets, work_folder):
+            work_folders.append(Path(work_folder))
+            (target,) = targets
+            path = us_inputs.data_folder / year_file_name(target)
+            path.write_bytes(b"national year file")
+            return {target: path}
+
+        monkeypatch.setattr(
+            levels_us.UsNationalHandler, "write_year_files", write_year_files
+        )
+
+        precompute.build_dataset_impl(BUCKET, plan.datasets[0])
+
+        (work_folder,) = work_folders
+        assert not work_folder.exists()
 
     def test_the_national_build_writes_through_the_national_handler(
         self, us_inputs, monkeypatch

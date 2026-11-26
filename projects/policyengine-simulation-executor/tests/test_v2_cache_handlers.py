@@ -98,13 +98,35 @@ class TestPlanThroughTheHandlers:
         self, us_inputs, monkeypatch
     ):
         from policyengine_simulation_executor.stage12_cache import cache_levels
+        from policyengine_simulation_executor.stage12_cache.levels import (
+            DatasetLevel,
+        )
+
+        monkeypatch.setattr(
+            cache_levels,
+            "CACHE_BASELINE_LEVELS",
+            {"us": (DatasetLevel.STATE_GROUP, DatasetLevel.STATE)},
+        )
+
+        # The cache has no key for single-state baselines.
+        with pytest.raises(RuntimeError, match="no v2 cache key for state baselines"):
+            precompute.plan_artifacts_impl(BUCKET)
+
+    def test_refuses_a_cache_without_baselines_before_building_anything(
+        self, us_inputs, monkeypatch
+    ):
+        """The precompute, the manifest and the deploy check all need a baseline."""
+        from policyengine_simulation_executor.stage12_cache import (
+            cache_levels,
+            precompute_planning,
+        )
 
         monkeypatch.setattr(cache_levels, "CACHE_BASELINE_LEVELS", {"us": ()})
 
-        plan = precompute.plan_artifacts_impl(BUCKET)
-
-        assert plan.baselines == ()
-        assert len(plan.datasets) == 3
+        with pytest.raises(RuntimeError, match="at least one baseline level"):
+            precompute.plan_artifacts_impl(BUCKET)
+        with pytest.raises(RuntimeError, match="at least one baseline level"):
+            precompute_planning.expected_cache_contents("us")
 
     def test_the_year_files_follow_the_caches_own_year_file_levels(
         self, us_inputs, monkeypatch
@@ -203,13 +225,18 @@ class TestExpectedCacheContents:
             levels_us,
             precompute_planning,
         )
+        from policyengine_simulation_executor.stage12_cache.levels import (
+            DatasetLevel,
+        )
 
         monkeypatch.setattr(levels_us, "US_PREBUILT_YEARS", (2026, 2027))
-        monkeypatch.setattr(cache_levels, "CACHE_BASELINE_LEVELS", {"us": ()})
+        monkeypatch.setattr(
+            cache_levels, "CACHE_YEAR_FILE_LEVELS", {"us": (DatasetLevel.STATE,)}
+        )
 
         assert precompute_planning.expected_cache_contents("us") == {
             "years": [2026, 2027],
-            "artifact_counts": {"dataset": 2, "baseline": 0},
+            "artifact_counts": {"dataset": 0, "baseline": 40},
         }
 
     def test_load_no_country_model(self, us_inputs, monkeypatch):
