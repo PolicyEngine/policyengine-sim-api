@@ -365,11 +365,11 @@ def test_a_chain_of_attempts_is_undone_in_order(monkeypatch, patched_modal):
 #
 # The gateway spawns comparison requests only through an app's
 # SimulationWorker class, which apps deployed before policyengine.py 6.20.0
-# don't define. A rollback of a finished release that would move latest to
-# another app without the class would fail every unpinned comparison request,
-# so it is refused and routing is left as it was. Undoing an unfinished
-# publication always puts back what it replaced: refusing would leave the
-# publication pending, and every later routing change refuses while one is.
+# don't define. A restore that would move latest to another app without the
+# class would fail every unpinned comparison request, so it is refused and
+# routing is left as it was. Undoing the pending publication's own plan always
+# puts back what it replaced: refusing would leave the publication pending, and
+# every other routing change refuses while one is.
 
 
 def test_restoring_latest_checks_that_its_app_defines_the_worker_class(

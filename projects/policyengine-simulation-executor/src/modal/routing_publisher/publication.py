@@ -110,12 +110,12 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
     starting state no plan replaced (nothing was applied, or it was already
     undone). Any other live state is a conflict and nothing is changed.
 
-    With no publication pending, a restore that would move ``latest`` to an
-    app without the worker class raises ``LatestAppWithoutWorkerClassError``
-    and changes nothing (:func:`require_latest_app_defines_worker_class`).
-    Undoing an unfinished publication always puts back what it replaced:
-    every later routing change refuses while a publication is pending, so
-    refusing to undo one would leave nothing that could.
+    A restore that would move ``latest`` to an app without the worker class
+    raises ``LatestAppWithoutWorkerClassError`` and changes nothing
+    (:func:`require_latest_app_defines_worker_class`), with one exception:
+    undoing the pending publication's own plan always puts back what it
+    replaced. Every other routing change refuses while a publication is
+    pending, so refusing to undo it would leave nothing that could.
     """
     require_serialized_routing_workflow()
     for plan in plans:
@@ -135,11 +135,19 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
         store,
         plans,
         environment=environment,
-        check_worker_class=pending is None,
+        unfinished_plan=pending,
     )
     if pending is not None:
         write_publication_record(store, plan=pending, status="restored")
     return outcome
+
+
+def _is_same_plan(plan: dict, other: dict) -> bool:
+    """Whether two plans are one publication: same ID and the same two states."""
+    return all(
+        plan.get(key) == other.get(key)
+        for key in ("publication_id", "before_sha256", "after_sha256")
+    )
 
 
 def _restore_live_plans(
@@ -147,15 +155,16 @@ def _restore_live_plans(
     plans: list[dict],
     *,
     environment: str,
-    check_worker_class: bool,
+    unfinished_plan: dict | None,
 ) -> str:
     """Restore each live plan's starting state, the one given last first.
 
-    With ``check_worker_class``, every state it would write is checked
-    first, and if any moves ``latest`` to an app without the worker class,
-    nothing is written (:func:`require_latest_app_defines_worker_class`).
-    Returns ``restored``, or ``unchanged`` when the live state is a starting
-    state no plan replaced; any other live state is a conflict.
+    Every state it would write is checked first, except the starting state of
+    ``unfinished_plan`` (the pending publication), and if any moves
+    ``latest`` to an app without the worker class, nothing is written
+    (:func:`require_latest_app_defines_worker_class`). Returns ``restored``,
+    or ``unchanged`` when the live state is a starting state no plan
+    replaced; any other live state is a conflict.
     """
     live_state = store.get(ROUTING_STATE_ACTIVE_KEY)
     digest = routing_state_digest(live_state)
@@ -169,11 +178,12 @@ def _restore_live_plans(
             )
             raise RoutingConflictError(msg)
         return "unchanged"
-    if check_worker_class:
-        for plan in plans_to_undo:
-            require_latest_app_defines_worker_class(
-                plan["before"], live_state=live_state, environment=environment
-            )
+    for plan in plans_to_undo:
+        if unfinished_plan is not None and _is_same_plan(plan, unfinished_plan):
+            continue
+        require_latest_app_defines_worker_class(
+            plan["before"], live_state=live_state, environment=environment
+        )
     for plan in plans_to_undo:
         _write_starting_state(store, plan)
     return "restored"

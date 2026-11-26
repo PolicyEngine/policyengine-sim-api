@@ -72,11 +72,12 @@ def require_latest_app_defines_worker_class(
     when Modal finds no such class in the app, or no such app; any other
     Modal error is raised as it is.
 
-    Only a move is checked: a state whose ``latest.policyengine`` routes to
-    the app the live state's does changes where no request goes. Nor is a
-    state with no routed ``latest.policyengine`` release; the gateway then
-    routes requests without a pin by the latest country model, or, with no
-    routing state at all, by the per-country Dicts from before it.
+    Only a move is checked. If ``state`` routes ``latest.policyengine`` to
+    the same app as ``live_state`` does, no request would go anywhere new.
+    A state with no routed ``latest.policyengine`` release isn't checked
+    either: the gateway then routes requests without a pin by the latest
+    country model, or, with no routing state at all, by the per-country
+    Dicts from before it.
     """
     version, app_name = _latest_route(state)
     if not app_name or app_name == _latest_route(live_state)[1]:

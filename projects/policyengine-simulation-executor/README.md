@@ -55,12 +55,15 @@ publication is still active. Manual rollback checks the plan inventory across
 all run attempts before restoring the chain. A version-mode rollback instead
 moves latest to an already published version and keeps other versions pinnable.
 The gateway runs comparison requests only on apps that define the
-`SimulationWorker` class (policyengine.py 6.20.0 and later). A version-mode or
-deployment-run rollback of a finished release therefore refuses to move latest
-to another app that Modal finds without that class, and leaves routing
-unchanged. Undoing an unfinished publication (recovery, or a deployment's own
-restore after a failed check) always puts back what it replaced, because every
-routing change refuses while a publication is pending.
+`SimulationWorker` class (policyengine.py 6.20.0 and later). A restore that
+would move latest to another app that Modal finds without that class is
+therefore refused, and routing is left unchanged. The one exception is
+undoing the pending publication's own plan, which always puts back what it
+replaced, because every other routing change refuses while a publication is
+pending. That covers recovery and a deployment's restore of its own
+unfinished publication after a failed step. It can put latest back on an
+app from before policyengine.py 6.20.0, if latest was on one before that
+deployment.
 Routing writes and recovery use no lease or lock expiry wait.
 For a same-version redeploy that replaced a Modal app in place, redeploy the
 previous commit to recover its code; restoring routing alone cannot recover it.
