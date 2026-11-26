@@ -48,6 +48,7 @@ from src.modal.bundle_data import bundle_data_install_command
 from src.modal.ca_certificates import GRPC_CA_BUNDLE_ENV, OPERATING_SYSTEM_CA_PACKAGE
 from src.modal.country_model_preload import preload_country_models
 from src.modal.logging_redaction import redact_params_for_logging
+from src.modal.snapshot_warm_up import warm_up_first_calculation
 from src.modal.static_runtime_files import add_static_runtime_files
 
 import modal
@@ -566,10 +567,14 @@ class _CountryModelsLoadedBeforeSnapshot:
         First records whether Modal snapshots this container, and its task ID,
         so each call can report how its container started (``_ContainerCalls``).
         Telemetry is non-fatal: a failed record must never stop the preload.
+        Then, in a container Modal snapshots, runs one warm-up calculation
+        (``src/modal/snapshot_warm_up.py``), so restored containers start with
+        the first precompute year's values built.
         """
         with contextlib.suppress(Exception):
             _CONTAINER_CALLS.record_snapshot_hook()
         preload_country_models()
+        warm_up_first_calculation()
 
     @modal.enter(snap=False)
     def reseed_random_after_restore(self) -> None:
