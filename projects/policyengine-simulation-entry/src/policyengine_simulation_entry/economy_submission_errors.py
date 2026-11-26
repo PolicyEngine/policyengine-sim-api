@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal
 
 from policyengine_simulation_persistence import (
+    DynamicWithoutValuesError,
     LocalAreaDatasetMismatchError,
     MissingPolicyParametersError,
     OverlappingReformError,
@@ -93,7 +94,11 @@ STORED_SIMULATION = RefusalSource(named_by="the simulation", location="simulatio
 
 
 class EconomySubmissionRefusedError(Exception):
-    """A row the submission names, or a function it needs, is missing (400)."""
+    """A row or function the submission needs, or a dynamic's values, is missing (400).
+
+    ``dynamic_without_values``: the dynamic exists, but this release reads
+    none of its parameter values.
+    """
 
     def __init__(self, *, code: EconomyRefusalCode, detail: str) -> None:
         """Keep the reason's code and its description."""
@@ -199,8 +204,9 @@ def read_refusal(
     """Return the refusal a store read's error means, or None for any other error.
 
     A missing catalog version, region, dataset, policy or dynamic is refused
-    (400), and so is a catalog whose area regions don't use the dataset the
-    default worker calculates local areas on; a policy or dynamic setting
+    (400), and so are a dynamic with no parameter values this release reads
+    and a catalog whose area regions don't use the dataset the default worker
+    calculates local areas on; a policy or dynamic setting
     parameters the catalog version lacks,
     or both setting one, cannot be calculated (422). A report side's refusal
     (ReportSideError) is located on that side's fields, under ``source``:
@@ -274,7 +280,9 @@ def simulation_values_refusal(
 
     Economy and household simulations alike: a policy or dynamic the
     country doesn't have, a dynamic of another country included, is refused
-    (400), its detail saying what ``named_by``; one setting parameters the
+    (400), its detail saying what ``named_by``; so is a dynamic with no
+    parameter values stored (``dynamic_without_values``), whose values this
+    release can't read, a state of the service; one setting parameters the
     catalog version for ``policyengine_version`` lacks, or a dynamic setting
     one its policy sets, cannot be calculated (422), each reason located
     under ``location`` at ``policy_id`` or ``dynamic_id``. Every detail is
@@ -289,6 +297,14 @@ def simulation_values_refusal(
         return EconomySubmissionRefusedError(
             code="unknown_dynamic",
             detail=f"{country} has no stored dynamic {named_by} names.",
+        )
+    if isinstance(error, DynamicWithoutValuesError):
+        return EconomySubmissionRefusedError(
+            code="dynamic_without_values",
+            detail=(
+                f"{country}'s stored dynamic that {named_by} names has no parameter "
+                "values the service can read."
+            ),
         )
     if isinstance(error, MissingPolicyParametersError):
         field_name = "policy_id" if error.source == "policy" else "dynamic_id"

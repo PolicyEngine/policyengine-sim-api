@@ -32,6 +32,7 @@ from policyengine_simulation_persistence.household_job_store import (
     UnknownCatalogVersionError,
 )
 from policyengine_simulation_persistence.policy_reform import (
+    DynamicWithoutValuesError,
     MissingPolicyParametersError,
     OverlappingReformError,
     UnknownDynamicError,
@@ -52,6 +53,7 @@ type ReportSide = Literal["baseline", "reform"]
 type SideRefusal = (
     UnknownPolicyError
     | UnknownDynamicError
+    | DynamicWithoutValuesError
     | MissingPolicyParametersError
     | OverlappingReformError
 )
@@ -88,8 +90,8 @@ class ReportSideError(Exception):
     """A report side's policy or dynamic is refused.
 
     ``side`` names the side, and ``error`` is the policy reader's refusal:
-    UnknownPolicyError, UnknownDynamicError, MissingPolicyParametersError or
-    OverlappingReformError.
+    UnknownPolicyError, UnknownDynamicError, DynamicWithoutValuesError,
+    MissingPolicyParametersError or OverlappingReformError.
     """
 
     def __init__(self, side: ReportSide, error: SideRefusal) -> None:

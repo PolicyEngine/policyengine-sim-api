@@ -9,16 +9,16 @@
   returns the job as it stands: its status, the household function's result
   document once it has one, and its error message.
 
-A refused submission answers 400 (a row it names, or the household function
-it needs, is missing) or 422 (its fields, or the stored data it names, cannot
-be calculated), naming why. Either route answers 503 with ``Retry-After``
-when household calculations are not configured or a dependency cannot be
-read, and a submission does too when Modal refuses the call and its job was
-failed; a submission's 503 always means no job will run. Every 500 of either
-route is the JSON error with code ``internal_error``: an unexpected failure,
-a request the service built and the household contract refuses, or a
-submission whose job's commit failed after its row was inserted, so the job
-may exist.
+A refused submission answers 400 (a row it names, or the household function it
+needs, is missing, or its dynamic has no values this release reads) or 422
+(its fields, or the stored data it names, cannot be calculated), naming why.
+Either route answers 503 with ``Retry-After`` when household calculations are
+not configured or a dependency cannot be read, and a submission does too when
+Modal refuses the call and its job was failed; a submission's 503 always means
+no job will run. Every 500 of either route is the JSON error with code
+``internal_error``: an unexpected failure, a request the service built and the
+household contract refuses, or a submission whose job's commit failed after
+its row was inserted, so the job may exist.
 
 A submission gets its observability ID from the caller's header, or a new
 one, and passes it to the household function. ``household_jobs`` keeps no
@@ -323,7 +323,8 @@ def add_household_calculation_routes(
             400: {
                 "description": (
                     "A row the request names, or the household function it "
-                    "needs, is missing; code says which"
+                    "needs, is missing, or its dynamic has no parameter values "
+                    "this release reads (dynamic_without_values); code says which"
                 ),
                 **_ERROR,
             },

@@ -15,6 +15,7 @@ from policyengine_simulation_entry.economy_submission_errors import (
     simulation_values_refusal,
 )
 from policyengine_simulation_persistence import (
+    DynamicWithoutValuesError,
     MissingPolicyParametersError,
     OverlappingReformError,
     UnknownCatalogVersionError,
@@ -60,6 +61,24 @@ def test_a_policy_or_dynamic_the_country_lacks_is_refused_in_the_callers_words(
 
     assert isinstance(refusal, EconomySubmissionRefusedError)
     assert (refusal.code, refusal.detail) == (code, detail)
+    assert STORE_TEXT not in refusal.detail
+
+
+def test_a_dynamic_without_values_is_refused_as_the_services_state() -> None:
+    """The dynamic exists, but this release reads none of its values.
+
+    API v1 stores no dynamic without values, so the values are stored where
+    this release doesn't read them: a state of the service, not a row the
+    caller chose that doesn't exist, so the code is not ``unknown_dynamic``.
+    """
+    refusal = _refusal(DynamicWithoutValuesError(STORE_TEXT))
+
+    assert isinstance(refusal, EconomySubmissionRefusedError)
+    assert (refusal.code, refusal.detail) == (
+        "dynamic_without_values",
+        "uk's stored dynamic that the request's reform names has no parameter "
+        "values the service can read.",
+    )
     assert STORE_TEXT not in refusal.detail
 
 

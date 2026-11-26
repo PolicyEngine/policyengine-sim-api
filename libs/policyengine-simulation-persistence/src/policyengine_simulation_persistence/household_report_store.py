@@ -144,7 +144,8 @@ class HouseholdReportStore:
         (``read_simulation_reform``). Raise UnknownCatalogVersionError or
         UnknownHouseholdError, or ReportSideError naming the side whose
         policy or dynamic is missing in the country (UnknownPolicyError,
-        UnknownDynamicError), sets parameters the catalog version lacks
+        UnknownDynamicError), is a dynamic with no values stored
+        (DynamicWithoutValuesError), sets parameters the catalog version lacks
         (MissingPolicyParametersError) or sets one the other also sets
         (OverlappingReformError).
         """

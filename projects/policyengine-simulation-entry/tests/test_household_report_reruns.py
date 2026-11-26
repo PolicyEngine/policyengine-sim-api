@@ -61,6 +61,7 @@ from policyengine_simulation_entry.household_workers import (
 )
 from policyengine_simulation_entry.simulation_database import SimulationDatabase
 from policyengine_simulation_persistence import (
+    DynamicWithoutValuesError,
     EconomyRecordOutcomeUnknownError,
     EconomyRecordReferenceError,
     FoundReportRun,
@@ -316,6 +317,23 @@ def test_a_stored_sides_dynamic_of_another_country_is_refused_at_the_report() ->
     assert (refused.value.code, refused.value.detail) == (
         "unknown_dynamic",
         "us has no stored dynamic the report's reform names.",
+    )
+    assert households.report_reruns == []
+
+
+def test_a_stored_sides_dynamic_without_values_is_refused_at_the_report() -> None:
+    households = FakeHouseholdReportStore(
+        read_failure=ReportSideError("baseline", DynamicWithoutValuesError("no values"))
+    )
+    service, _, _ = _services(households=households)
+
+    with pytest.raises(EconomySubmissionRefusedError) as refused:
+        _rerun(service)
+
+    assert (refused.value.code, refused.value.detail) == (
+        "dynamic_without_values",
+        "us's stored dynamic that the report's baseline names has no parameter "
+        "values the service can read.",
     )
     assert households.report_reruns == []
 

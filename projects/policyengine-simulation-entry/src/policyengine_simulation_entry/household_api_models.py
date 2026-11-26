@@ -21,7 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
 # Why a submission is refused (400): a row it names, or the household
-# function it needs, does not exist.
+# function it needs, does not exist, or its dynamic has no values this
+# release reads.
 HouseholdRefusalCode = Literal[
     # The country has no catalog version for the default worker's .py version.
     "unknown_catalog_version",
@@ -29,6 +30,9 @@ HouseholdRefusalCode = Literal[
     "unknown_policy",
     # The country has no such dynamic: a dynamic of another country included.
     "unknown_dynamic",
+    # The dynamic has no parameter values this release reads, so it is not
+    # applied as current law: the service's state, as for economy routes.
+    "dynamic_without_values",
     # The default worker has no household function for the country.
     "no_household_function",
     # The database refused the job: a row it names was deleted after the reads.

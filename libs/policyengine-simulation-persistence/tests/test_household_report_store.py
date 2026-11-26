@@ -17,6 +17,7 @@ import pytest
 from conftest import act_as_the_service, rolled_back_transaction, session_factory_on
 from household_report_rows import insert_household_report_rows
 from policyengine_simulation_persistence import (
+    DynamicWithoutValuesError,
     HouseholdReportStore,
     MissingPolicyParametersError,
     OverlappingReformError,
@@ -177,7 +178,7 @@ def test_each_sides_dynamic_is_applied_with_its_policy(public_api_database_url) 
     }
 
 
-def test_a_sides_dynamic_of_another_country_or_overlapping_its_policy_is_refused(
+def test_a_sides_dynamic_of_another_country_overlapping_or_without_values_is_refused(
     public_api_database_url,
 ) -> None:
     with rolled_back_transaction(public_api_database_url) as connection:
@@ -199,6 +200,7 @@ def test_a_sides_dynamic_of_another_country_or_overlapping_its_policy_is_refused
         dynamic_id = insert_dynamic(
             connection, catalog, [StoredValue(ELASTICITY, -0.05, START)]
         )
+        dynamic_without_values_id = insert_dynamic(connection, catalog)
         act_as_the_service(connection)
         store = _store_on(connection)
 
@@ -223,12 +225,27 @@ def test_a_sides_dynamic_of_another_country_or_overlapping_its_policy_is_refused
                 policyengine_version=POLICYENGINE_VERSION,
             )
 
+        with pytest.raises(ReportSideError) as without_values:
+            store.read_inputs(
+                country="us",
+                household_id=household_id,
+                choices={
+                    "baseline": CURRENT_LAW,
+                    "reform": SimulationChoice(
+                        None, dynamic_id=dynamic_without_values_id
+                    ),
+                },
+                policyengine_version=POLICYENGINE_VERSION,
+            )
+
     assert other_country.value.side == "baseline"
     assert isinstance(other_country.value.error, UnknownDynamicError)
     assert str(other_country.value.error) == f"us has no dynamic {uk_dynamic_id}"
     assert overlapping.value.side == "reform"
     assert isinstance(overlapping.value.error, OverlappingReformError)
     assert overlapping.value.error.parameter_names == (ELASTICITY,)
+    assert without_values.value.side == "reform"
+    assert isinstance(without_values.value.error, DynamicWithoutValuesError)
 
 
 def test_each_missing_input_is_refused(public_api_database_url) -> None:
