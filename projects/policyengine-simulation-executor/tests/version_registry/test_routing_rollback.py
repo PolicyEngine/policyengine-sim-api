@@ -509,7 +509,41 @@ def test_undoing_an_unfinished_publication_puts_back_what_it_replaced(
     assert worker_class_lookups.lookups == []
 
 
-def test_only_the_unfinished_publication_among_kept_plans_skips_the_check(
+def test_the_pending_plan_among_kept_plans_is_undone_without_the_check(
+    monkeypatch, patched_modal, worker_class_lookups
+):
+    """A run's routes plan finished; its latest plan is pending, finalizer lost."""
+    original = published_routing_state(monkeypatch, None, "6.17.1", "1.1.0", "2.1.0")
+    store = install_routing_store(patched_modal, original)
+    # An older release adds its routes without moving latest.
+    routes_plan = publication_plan(monkeypatch, original, ("6.16.0", "1.0.0", "2.0.0"))
+    registry.apply_routing_plan(environment="staging", plan=routes_plan)
+    assert routes_plan["after"]["latest"] == original["latest"]
+    latest_plan = publication_plan(
+        monkeypatch,
+        routes_plan["after"],
+        ("6.20.0", "1.1.0", "2.2.0"),
+        publication_id="74401-1-beta",
+    )
+    registry.record_routing_plan(environment="staging", plan=latest_plan)
+    registry.apply_routing_plan(environment="staging", plan=latest_plan)
+    worker_class_lookups.apps_without_worker_class.add(versioned_app_name("6.17.1"))
+
+    assert (
+        registry.restore_routing_plans(
+            environment="staging", plans=[routes_plan, latest_plan]
+        )
+        == "restored"
+    )
+
+    # The pending plan's undo is exempt, and the routes plan's leaves latest
+    # where that put it, so no class is looked up.
+    assert store.get("active") == json.loads(json.dumps(original))
+    assert store.get("publication") == {"status": "restored", "plan": latest_plan}
+    assert worker_class_lookups.lookups == []
+
+
+def test_finished_plans_among_kept_plans_are_still_checked(
     monkeypatch, patched_modal, worker_class_lookups
 ):
     """A run's earlier attempt finished; its rerun's publication is pending."""
@@ -528,9 +562,14 @@ def test_only_the_unfinished_publication_among_kept_plans_skips_the_check(
     worker_class_lookups.apps_without_worker_class.add(versioned_app_name("6.17.1"))
 
     # Undoing the finished plan too would move latest to 6.17.1.
-    with pytest.raises(ValueError, match="defines no SimulationWorker class"):
+    with pytest.raises(
+        ValueError, match="defines no SimulationWorker class"
+    ) as refused:
         registry.restore_routing_plans(environment="staging", plans=[finished, pending])
 
+    # A version rollback refuses while a publication is pending, so the
+    # message names the way that undoes it first.
+    assert "resolve_pending_publication" in str(refused.value)
     assert store.get("active") == pending["after"]
     assert store.get("publication") == {"status": "pending", "plan": pending}
     # Recovery still undoes the pending publication alone.
