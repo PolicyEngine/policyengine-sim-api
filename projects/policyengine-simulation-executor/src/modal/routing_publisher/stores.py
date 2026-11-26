@@ -1,5 +1,6 @@
 """Open the routing Modal Dicts, and write whole routing states to them."""
 
+from policyengine_simulation_contract.simulation_workers import SIMULATION_WORKER_CLASS
 from src.modal.routing_publisher.legacy import (
     build_legacy_seed_routing_state,
     merge_legacy_seed_into_current,
@@ -45,6 +46,44 @@ def routing_store(environment: str, *, create_if_missing: bool) -> "modal.Dict |
             return None
         raise
     return store
+
+
+class LatestAppWithoutWorkerClassError(ValueError):
+    """A routing change would route ``latest`` to an app without the worker class."""
+
+
+def require_latest_app_defines_worker_class(state: object, *, environment: str) -> None:
+    """Refuse a routing state whose ``latest`` app can't run comparison requests.
+
+    The gateway spawns comparison requests only through an app's
+    ``SimulationWorker`` class, which apps deployed before policyengine.py
+    6.20.0 don't define, so routing ``latest`` to one of them would fail every
+    unpinned comparison request. Raises ``LatestAppWithoutWorkerClassError``
+    when Modal finds no such class in the app, or no such app. A state that
+    routes ``latest`` to no app is not this check's concern.
+    """
+    routing = coerce_routing_state(state)
+    version = routing["latest"].get("policyengine")
+    app_name = routing["routes"]["policyengine"].get(version) if version else None
+    if not app_name:
+        return
+    worker_class = modal.Cls.from_name(
+        app_name, SIMULATION_WORKER_CLASS, environment_name=environment
+    )
+    try:
+        worker_class.hydrate()
+    except Exception as exc:
+        if exc.__class__.__name__ != "NotFoundError":
+            raise
+        msg = (
+            f"policyengine {version} routes to {app_name}, which defines no "
+            f"{SIMULATION_WORKER_CLASS} class in Modal environment {environment}. "
+            "The gateway runs comparison requests only through that class, which "
+            "apps deployed before policyengine.py 6.20.0 don't define, so routing "
+            "latest there would fail every unpinned comparison request; routing "
+            "is unchanged"
+        )
+        raise LatestAppWithoutWorkerClassError(msg) from exc
 
 
 def modal_dict_snapshot(
@@ -151,7 +190,11 @@ def restore_routing_state(
     policyengine_version: str,
     expected_latest: str | None = None,
 ) -> RoutingState:
-    """Point ``latest`` back at a published policyengine.py version and store it."""
+    """Point ``latest`` back at a published policyengine.py version and store it.
+
+    Refuses, writing nothing, a version whose app defines no worker class
+    (:func:`require_latest_app_defines_worker_class`).
+    """
     require_serialized_routing_workflow()
     store = modal.Dict.from_name(
         ROUTING_STATE_DICT_NAME,
@@ -164,5 +207,6 @@ def restore_routing_state(
         policyengine_version=policyengine_version,
         expected_latest=expected_latest,
     )
+    require_latest_app_defines_worker_class(next_state, environment=environment)
     store[ROUTING_STATE_ACTIVE_KEY] = next_state
     return next_state
