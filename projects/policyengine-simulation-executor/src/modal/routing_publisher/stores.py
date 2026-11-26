@@ -61,7 +61,7 @@ def _latest_route(state: object) -> tuple[str | None, str | None]:
 
 
 def require_latest_app_defines_worker_class(
-    state: object, *, live_state: object, environment: str
+    state: object, *, replaced_state: object, environment: str
 ) -> None:
     """Refuse a routing state that moves ``latest`` to an app without the worker class.
 
@@ -73,14 +73,14 @@ def require_latest_app_defines_worker_class(
     Modal error is raised as it is.
 
     Only a move is checked. If ``state`` routes ``latest.policyengine`` to
-    the same app as ``live_state`` does, no request would go anywhere new.
-    A state with no routed ``latest.policyengine`` release isn't checked
-    either: the gateway then routes requests without a pin by the latest
-    country model, or, with no routing state at all, by the per-country
-    Dicts from before it.
+    the same app as ``replaced_state``, the state it is written over,
+    requests without a pin keep going to the same app. A state with no
+    routed ``latest.policyengine`` release isn't checked either: the gateway
+    then routes requests without a pin by the latest country model, or,
+    with no routing state at all, by the per-country Dicts from before it.
     """
     version, app_name = _latest_route(state)
-    if not app_name or app_name == _latest_route(live_state)[1]:
+    if not app_name or app_name == _latest_route(replaced_state)[1]:
         return
     worker_class = modal.Cls.from_name(
         app_name, SIMULATION_WORKER_CLASS, environment_name=environment
@@ -96,7 +96,9 @@ def require_latest_app_defines_worker_class(
             "The gateway runs comparison requests only through that class, which "
             "apps deployed before policyengine.py 6.20.0 don't define, so moving "
             "latest there would fail every unpinned comparison request. Routing "
-            "is unchanged; roll back to a release from policyengine.py 6.20.0 on"
+            "is unchanged. Roll back to a release from policyengine.py 6.20.0 on "
+            "instead; if a routing publication is pending, undo it first with "
+            "resolve_pending_publication"
         )
         raise LatestAppWithoutWorkerClassError(msg) from exc
 
@@ -224,7 +226,7 @@ def restore_routing_state(
         expected_latest=expected_latest,
     )
     require_latest_app_defines_worker_class(
-        next_state, live_state=live_state, environment=environment
+        next_state, replaced_state=live_state, environment=environment
     )
     store[ROUTING_STATE_ACTIVE_KEY] = next_state
     return next_state

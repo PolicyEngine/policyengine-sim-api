@@ -159,15 +159,15 @@ def _restore_live_plans(
 ) -> str:
     """Restore each live plan's starting state, the one given last first.
 
-    Every state it would write is checked first, except the starting state of
-    ``unfinished_plan`` (the pending publication), and if any moves
-    ``latest`` to an app without the worker class, nothing is written
-    (:func:`require_latest_app_defines_worker_class`). Returns ``restored``,
+    Every plan's undo is checked first, except that of ``unfinished_plan``
+    (the pending publication): each plan is live when it is undone, so its
+    undo writes its starting state over its published state. If any undo
+    moves ``latest`` to another app without the worker class, nothing is
+    written (:func:`require_latest_app_defines_worker_class`). Returns ``restored``,
     or ``unchanged`` when the live state is a starting state no plan
     replaced; any other live state is a conflict.
     """
-    live_state = store.get(ROUTING_STATE_ACTIVE_KEY)
-    digest = routing_state_digest(live_state)
+    digest = routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
     plans_to_undo = _plans_to_undo(plans, live_digest=digest)
     if not plans_to_undo:
         if not any(plan["before_sha256"] == digest for plan in plans):
@@ -182,7 +182,7 @@ def _restore_live_plans(
         if unfinished_plan is not None and _is_same_plan(plan, unfinished_plan):
             continue
         require_latest_app_defines_worker_class(
-            plan["before"], live_state=live_state, environment=environment
+            plan["before"], replaced_state=plan["after"], environment=environment
         )
     for plan in plans_to_undo:
         _write_starting_state(store, plan)
