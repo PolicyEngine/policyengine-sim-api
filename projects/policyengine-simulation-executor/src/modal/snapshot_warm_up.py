@@ -314,7 +314,8 @@ def _removing_what_the_calculation_leaves(output_folder: Path) -> Iterator[None]
             logger.warning(
                 "The warm-up calculation saved over %s in %s, because the baked "
                 "file was incomplete, out of date or unreadable; containers "
-                "restored from this snapshot load the warm-up's copy",
+                "restored from this snapshot start with the file as the warm-up "
+                "left it",
                 ", ".join(saved_over),
                 output_folder,
             )
