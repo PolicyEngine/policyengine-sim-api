@@ -1,6 +1,6 @@
 """PolicyEngine 6's SPM-aware ``storage_id`` expression for test doubles.
 
-Precompute plans a store path from ``BaselineArtifactIdentity.storage_id``
+Precompute plans a store path from ``BaselineIdentity.storage_id``
 and the in-container worker aborts when the wrapper's value disagrees, so the
 two derivations have to be one identifier reached down two paths.
 

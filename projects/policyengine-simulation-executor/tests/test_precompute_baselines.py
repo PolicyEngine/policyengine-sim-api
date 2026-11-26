@@ -258,7 +258,7 @@ class TestComputeBaselineImpl:
         Nothing else in hermetic CI runs ``compute_baseline_impl`` with a
         selection: the identity's storage id was only ever compared to
         itself, and the one case that reached the guard covered the abort.
-        Here the plan is the planner's own ``BaselineArtifactIdentity`` and
+        Here the plan is the planner's own ``BaselineIdentity`` and
         the container names its artifact the wrapper's way, so the guard
         passing at all is the claim -- if the two derivations differed, no
         canonical artifact could be published and the deploy would be

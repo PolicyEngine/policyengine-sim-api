@@ -1,17 +1,17 @@
-"""Shared stubs for ``collect_dataset_identity``'s input seams.
+"""Shared stubs for the input seams of ``artifact_keys.year_file_identity``.
 
-The key-discipline tests (test_artifact_keys) and the writer==reader
-contract tests (test_precompute) must stub the SAME seam list —
-``release_bundle.get_country_release_bundle``,
-``release_bundle._receipt_dataset``,
+The key tests (test_prebuilt_identities, test_artifact_keys) and the
+writer==reader contract tests (test_prebuilt_plan) must stub the SAME seam
+list — ``release_bundle.get_country_release_bundle``,
 ``manifest.resolve_dataset_reference``, ``manifest.dataset_logical_name``,
 ``manifest.get_release_manifest``, ``spm.runtime_spm_capability``,
-``artifact_keys._installed_package_versions`` — or one
-suite silently tests a stale list when identity collection grows a seam.
-This is that list's one home.
+``artifact_keys._installed_package_versions`` — or one suite silently tests
+a stale list when identity collection grows a seam. This is that list's one
+home. ``release_bundle._receipt_dataset`` is stubbed too, for the bundle
+helpers that read the install receipt; no identity reads it.
 
-The SPM capability is a seam because ``collect_dataset_identity`` resolves
-the installed bundle's SPM selection into the dataset identity. The default
+The SPM capability is a seam because ``year_file_identity`` resolves the
+installed bundle's SPM selection into the year-file identity. The default
 stub has no capability so fixed identifier tests remain tied to their
 synthetic inputs instead of whichever PolicyEngine release is installed.
 """
