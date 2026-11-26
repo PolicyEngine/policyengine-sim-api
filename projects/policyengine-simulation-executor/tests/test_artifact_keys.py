@@ -1,12 +1,10 @@
-"""Artifact key discipline tests.
+"""Artifact key discipline tests that hold whatever the identity schema.
 
-The content-addressed store's whole correctness story rests on three
-properties locked in here: (1) digests are canonical (field order never
-matters), (2) every payload field independently rotates the digest (no
-input silently outside the key), and (3) the digests and the upstream
-``ScopingStrategy.cache_key`` strings are STABLE — the golden tests turn
-any change into a conscious, reviewable diff instead of silent cache
-churn (or, worse, a writer/reader mismatch).
+The content-addressed store's correctness story rests on canonical digests
+(field order never matters), on the upstream ``ScopingStrategy.cache_key``
+strings the baseline key embeds being stable, and on the planner's storage
+ID naming the same file .py's wrapper saves. The ``yf1`` and ``bl3`` payload
+goldens live in ``test_prebuilt_identities``.
 """
 
 from types import SimpleNamespace
@@ -18,134 +16,31 @@ from fixtures.wrapper_spm import (
 )
 from policyengine_simulation_executor import artifact_keys as ak
 
-_DATASET_KWARGS = {
-    "country": "us",
-    "dataset": "populace_cps",
-    "year": 2026,
-    "data_version": "1.2.3",
-    "data_artifact_revision": "rev-abc",
-    "source_sha256": "feedbead" * 8,
-    "data_build_fingerprint": "fp-123",
-    "model_version": "9.9.9",
-    "policyengine_version": "4.22.0",
-}
-
-_DATASET_GOLDEN = "183ffe49d74669b653fb408b0b7298128ba7c6e990f4479487712a5d79553be3"
-_DATASET_NO_SHA_GOLDEN = (
-    "25dded8192092f477e4502dae07709e72b6e579f372a9f8346b5eabce07d91b6"
-)
-
-_BASELINE_KWARGS = {
-    "country": "us",
-    "region": "national",
-    "scope_key": "region_group:row_filter:state_code=CA|row_filter:state_code=WV",
-    "dataset_digest": _DATASET_GOLDEN,
-    "model_version": "9.9.9",
-    "policyengine_version": "4.22.0",
-    # Explicit (== the default) so the perturbation matrix proves the
-    # policy field participates in the digest.
-    "policy": ak.CURRENT_LAW_POLICY,
-}
-
-_BASELINE_GOLDEN = "f9cac05d94509895eb48ea33ea5f72d40eb9b954989df05ca6506009d8dedae2"
-
-_STATE_DATASET_KWARGS = {
-    "country": "us",
-    "dataset": "populace_cps_local",
-    "dataset_uri": "hf://org/repo/populace_cps_local.h5@rev-local",
-    "source_sha256": "c0ffee00" * 8,
-    "year": 2026,
-    "state_code": "UT",
-    "state_fips": 49,
-    "filter_variable": "state_fips",
-    "model_version": "9.9.9",
-    "policyengine_version": "4.22.0",
-}
-
-_STATE_DATASET_GOLDEN = (
-    "e1f1f9f7573eb090ef887967a49314c1cbf0fb20c8021779bf3804b26b24117f"
-)
+_GROUP_SCOPE_KEY = "region_group:row_filter:state_code=CA|row_filter:state_code=WV"
 
 
-class TestDigests:
-    def test_dataset_key_golden(self):
-        assert ak.dataset_key(ak.DatasetKeyInputs(**_DATASET_KWARGS)) == _DATASET_GOLDEN
-
-    def test_none_field_is_a_distinct_identity(self):
-        digest = ak.dataset_key(
-            ak.DatasetKeyInputs(**{**_DATASET_KWARGS, "source_sha256": None})
-        )
-        assert digest == _DATASET_NO_SHA_GOLDEN
-        assert digest != _DATASET_GOLDEN
-
-    def test_baseline_key_golden(self):
-        assert (
-            ak.baseline_key(ak.BaselineKeyInputs(**_BASELINE_KWARGS))
-            == _BASELINE_GOLDEN
-        )
-
-    @pytest.mark.parametrize("field", sorted(_DATASET_KWARGS))
-    def test_every_dataset_field_perturbs_digest(self, field):
-        perturbed = {**_DATASET_KWARGS, field: 2027 if field == "year" else "other"}
-        assert ak.dataset_key(ak.DatasetKeyInputs(**perturbed)) != _DATASET_GOLDEN
-
-    @pytest.mark.parametrize("field", sorted(_BASELINE_KWARGS))
-    def test_every_baseline_field_perturbs_digest(self, field):
-        perturbed = {**_BASELINE_KWARGS, field: "other"}
-        assert ak.baseline_key(ak.BaselineKeyInputs(**perturbed)) != _BASELINE_GOLDEN
-
-    def test_canonical_digest_ignores_insertion_order(self):
-        forward = {"a": 1, "b": {"c": 2, "d": None}}
-        backward = {"b": {"d": None, "c": 2}, "a": 1}
-        assert ak.canonical_digest(forward) == ak.canonical_digest(backward)
-
-    def test_state_dataset_key_golden(self):
-        assert (
-            ak.state_dataset_key(ak.StateDatasetKeyInputs(**_STATE_DATASET_KWARGS))
-            == _STATE_DATASET_GOLDEN
-        )
-
-    @pytest.mark.parametrize("field", sorted(_STATE_DATASET_KWARGS))
-    def test_every_state_dataset_field_perturbs_digest(self, field):
-        replacement = {"year": 2027, "state_fips": 56}.get(field, "other")
-        perturbed = {**_STATE_DATASET_KWARGS, field: replacement}
-        assert (
-            ak.state_dataset_key(ak.StateDatasetKeyInputs(**perturbed))
-            != _STATE_DATASET_GOLDEN
-        )
-
-    def test_state_dataset_spm_selection_is_part_of_the_key(self):
-        with_spm = ak.StateDatasetKeyInputs(
-            **_STATE_DATASET_KWARGS, spm={"forecast": "x"}
-        )
-        assert ak.state_dataset_key(with_spm) != _STATE_DATASET_GOLDEN
-
-    def test_simulation_id_shape(self):
-        sim_id = ak.baseline_simulation_id(_BASELINE_GOLDEN)
-        assert sim_id == "bl1-f9cac05d94509895"
-        # Filename-safe and disjoint from the dataset filename pattern.
-        assert "/" not in sim_id
-        assert "_year_" not in sim_id
+def test_canonical_digest_ignores_insertion_order():
+    forward = {"a": 1, "b": {"c": 2, "d": None}}
+    backward = {"b": {"d": None, "c": 2}, "a": 1}
+    assert ak.canonical_digest(forward) == ak.canonical_digest(backward)
 
 
-class TestStoreLayout:
-    def test_dataset_path(self):
-        path = ak.dataset_artifact_path("US", "d" * 64, "populace_cps", 2026)
-        assert path == f"datasets/us/{'d' * 64}/populace_cps_year_2026.h5"
+def test_simulation_id_shape(monkeypatch):
+    from policyengine_simulation_executor.stage12_cache.levels import BaselineScope
+    from policyengine_simulation_executor.stage12_cache.levels_us import (
+        national_year_file,
+    )
 
-    def test_baseline_path(self):
-        path = ak.baseline_artifact_path("us", "b" * 64, "bl1-abc")
-        assert path == f"baselines/us/{'b' * 64}/bl1-abc.h5"
-
-    def test_state_dataset_path(self):
-        path = ak.state_dataset_artifact_path(
-            "US", "s" * 64, "populace_cps_local", 2026
-        )
-        assert path == (f"state-datasets/us/{'s' * 64}/populace_cps_local_year_2026.h5")
-
-    def test_manifest_and_marker_paths(self):
-        assert ak.manifest_path("m" * 64) == f"manifests/{'m' * 64}.json"
-        assert ak.deployed_marker_path("beta") == "deployed/beta.json"
+    install_identity_stubs(monkeypatch)
+    identity = ak.baseline_identity(
+        ak.year_file_identity(national_year_file(2026)),
+        BaselineScope(region="national", scope_key=None),
+    )
+    simulation_id = identity.simulation_id
+    assert simulation_id == f"bl3-{identity.digest[:16]}"
+    # Filename-safe and disjoint from the year-file name pattern.
+    assert "/" not in simulation_id
+    assert "_year_" not in simulation_id
 
 
 class TestUpstreamCacheKeyGoldens:
@@ -178,93 +73,8 @@ class TestUpstreamCacheKeyGoldens:
 
 @pytest.fixture
 def stub_identity_sources(monkeypatch):
-    """Stub the bundle/manifest/receipt seams collect_dataset_identity reads."""
+    """Stub the bundle/manifest/receipt seams the identity collectors read."""
     return install_identity_stubs(monkeypatch)
-
-
-class TestIdentityCollection:
-    @pytest.mark.usefixtures("stub_identity_sources")
-    def test_collected_identity_matches_golden(self):
-        identity = ak.collect_dataset_identity("us", 2026)
-        assert identity.digest == _DATASET_GOLDEN
-        assert identity.filename == "populace_cps_year_2026.h5"
-        assert identity.store_path == (
-            f"datasets/us/{_DATASET_GOLDEN}/populace_cps_year_2026.h5"
-        )
-
-    def test_receipt_version_mismatch_drops_source_sha(self, stub_identity_sources):
-        stub_identity_sources.receipt_entry = {
-            "country": "us",
-            "version": "0.0.1",
-            "installed_sha256": "feedbead" * 8,
-        }
-        identity = ak.collect_dataset_identity("us", 2026)
-        assert identity.source_sha256 is None
-        assert identity.digest == _DATASET_NO_SHA_GOLDEN
-
-    def test_missing_receipt_falls_back_to_none(self, stub_identity_sources):
-        stub_identity_sources.receipt_entry = None
-        identity = ak.collect_dataset_identity("us", 2026)
-        assert identity.source_sha256 is None
-        assert identity.digest == _DATASET_NO_SHA_GOLDEN
-
-    def test_expected_sha_used_when_installed_absent(self, stub_identity_sources):
-        stub_identity_sources.receipt_entry = {
-            "country": "us",
-            "version": "1.2.3",
-            "expected_sha256": "feedbead" * 8,
-        }
-        assert ak.collect_dataset_identity("us", 2026).digest == _DATASET_GOLDEN
-
-    @pytest.mark.usefixtures("stub_identity_sources")
-    def test_baseline_identity_composes(self):
-        identity = ak.collect_baseline_identity(
-            "us",
-            2026,
-            region="national",
-            scope_key=_BASELINE_KWARGS["scope_key"],
-        )
-        assert identity.digest == _BASELINE_GOLDEN
-        assert identity.simulation_id == "bl1-f9cac05d94509895"
-        assert identity.store_path == (
-            f"baselines/us/{_BASELINE_GOLDEN}/bl1-f9cac05d94509895.h5"
-        )
-
-    def test_installed_spm_defaults_enter_dataset_identity(
-        self,
-        stub_identity_sources,
-        monkeypatch,
-    ):
-        """PolicyEngine 6's bundle-selected SPM inputs rotate artifact keys."""
-        from policyengine_simulation_executor import spm as executor_spm
-
-        class _StubForecast:
-            years = (2026,)
-
-            def entry(self, year, *, scenario, as_of):
-                return {"year": year, "scenario": scenario, "as_of": as_of}
-
-        monkeypatch.setattr(
-            executor_spm, "_forecast", lambda _expected_sha256: _StubForecast()
-        )
-        monkeypatch.setattr(
-            executor_spm,
-            "_prevalidate_selection",
-            lambda _selection_json, _start_year, _window_size: None,
-        )
-
-        capability = stub_identity_sources.installed_spm_capability()
-        assert capability is not None
-        stub_identity_sources.spm_capability = capability
-
-        identity = ak.collect_dataset_identity("us", 2026)
-        expected_selection = capability.defaults.model_dump(mode="json")
-
-        assert identity.spm == expected_selection
-        assert identity.digest == ak.dataset_key(
-            ak.DatasetKeyInputs(**_DATASET_KWARGS, spm=expected_selection)
-        )
-        assert identity.digest != _DATASET_GOLDEN
 
 
 _SPM_SELECTION = {
@@ -276,7 +86,7 @@ _SPM_SELECTION = {
     "as_of": None,
 }
 _SPM_STORAGE_GOLDEN = (
-    "bl1-21f52b30719e20bb-spm-"
+    "bl3-3afa7cef3a4c4d91-spm-"
     "7396bf5f4876c42bb6cba0f9533478098edc0861cc3657bd0d60f88dbb26ac39"
 )
 
@@ -284,7 +94,7 @@ _SPM_STORAGE_GOLDEN = (
 class TestWrapperStorageIdAgreement:
     """The planner's storage id against PolicyEngine 6, which names the file.
 
-    Precompute plans a store path from ``BaselineArtifactIdentity.storage_id``
+    Precompute plans a store path from ``BaselineIdentity.storage_id``
     and the in-container worker refuses to publish when the wrapper's own
     ``Simulation.storage_id`` disagrees. The wrapper's value also names the
     saved ``.h5``, so the two derivations are not merely compared — they are
@@ -302,19 +112,21 @@ class TestWrapperStorageIdAgreement:
     def identity(self, stub_identity_sources):
         """Build the identity directly from an already-resolved selection.
 
-        ``collect_baseline_identity`` resolves the selection through the
-        installed bundle first; that resolution is the contract suite's
-        subject. What is under test here is only what the identity then
-        does with the resolved dict.
+        ``baseline_identity`` resolves the selection through the installed
+        bundle first; that resolution is the contract suite's subject. What
+        is under test here is only what the identity then does with the
+        resolved dict.
         """
+        from policyengine_simulation_executor.stage12_cache.levels_us import (
+            national_year_file,
+        )
 
         def _identity(spm=None):
-            return ak.BaselineArtifactIdentity(
+            return ak.BaselineIdentity(
                 spm=spm,
-                country="us",
                 region="national",
-                scope_key=_BASELINE_KWARGS["scope_key"],
-                dataset=ak.collect_dataset_identity("us", 2026),
+                scope_key=_GROUP_SCOPE_KEY,
+                year_file=ak.year_file_identity(national_year_file(2026)),
             )
 
         return _identity
@@ -409,43 +221,3 @@ class TestWrapperStorageIdAgreement:
             tax_benefit_model_version=SimpleNamespace(country_code="us"),
         )
         assert wrapper.storage_id == built.storage_id
-
-
-class TestStateDatasetIdentityCollection:
-    def test_collected_identity_matches_golden(self, stub_identity_sources):
-        identity = ak.collect_state_dataset_identity(
-            "us",
-            2026,
-            dataset="populace_cps_local",
-            state_code="UT",
-            state_fips=49,
-            filter_variable="state_fips",
-        )
-
-        assert identity.digest == _STATE_DATASET_GOLDEN
-        assert identity.filename == "populace_cps_local_year_2026.h5"
-        assert identity.store_path == (
-            f"state-datasets/us/{_STATE_DATASET_GOLDEN}/populace_cps_local_year_2026.h5"
-        )
-
-    def test_a_dataset_without_a_certified_sha_is_a_distinct_identity(
-        self, stub_identity_sources
-    ):
-        stub_identity_sources.release_datasets["populace_cps_local"] = SimpleNamespace(
-            sha256=None
-        )
-
-        identity = ak.collect_state_dataset_identity(
-            "us",
-            2026,
-            dataset="populace_cps_local",
-            state_code="UT",
-            state_fips=49,
-            filter_variable="state_fips",
-        )
-
-        assert identity.source_sha256 is None
-        assert identity.digest != _STATE_DATASET_GOLDEN
-
-    def test_the_default_dataset_identity_is_unchanged(self, stub_identity_sources):
-        assert ak.collect_dataset_identity("us", 2026).digest == _DATASET_GOLDEN

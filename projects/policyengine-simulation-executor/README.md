@@ -54,6 +54,16 @@ and deployment-run rollback restore that state only while the corresponding
 publication is still active. Manual rollback checks the plan inventory across
 all run attempts before restoring the chain. A version-mode rollback instead
 moves latest to an already published version and keeps other versions pinnable.
+The gateway runs comparison requests only on apps that define the
+`SimulationWorker` class (policyengine.py 6.20.0 and later). A restore that
+would move latest to another app that Modal finds without that class is
+therefore refused, and routing is left unchanged. The one exception is
+undoing the pending publication's own plan, which always puts back what it
+replaced, because every other routing change refuses while a publication is
+pending. That covers recovery and a deployment's restore of its own
+unfinished publication after a failed step. It can put latest back on an
+app from before policyengine.py 6.20.0, if latest was on one before that
+deployment.
 Routing writes and recovery use no lease or lock expiry wait.
 For a same-version redeploy that replaced a Modal app in place, redeploy the
 previous commit to recover its code; restoring routing alone cannot recover it.
@@ -276,14 +286,17 @@ an operator repairs them by hand.
 
 ## Baseline artifact pipeline (precompute → store → image fetch)
 
-The precompute app fills a content-addressed GCS store with single-year US
-datasets (2026, 2027, 2025), the 20 per-cohort national baseline
-simulations per year, and per-state datasets: for each state region whose
-requests load a dataset other than the bundle default (the ACS-local
-dataset since policyengine 6.7), that dataset's year file filtered to the
-state's households, one file per state and year. The deploy bakes them into
-the image, and the runtime loads baselines instead of computing them. Library logic lives in
-`src/policyengine_simulation_executor/precompute.py` (keys:
+The precompute app fills a content-addressed GCS store for one country
+(`--country`, default `us`), planned by that country's level handlers
+(`src/policyengine_simulation_executor/stage12_cache/levels*.py`). For the
+US it builds the default dataset's year file for 2026, 2027 and 2025, the
+current-law baseline of each of the 20 groups of states per year, and state
+year files: for each state region whose requests load a dataset other than
+the bundle default (the ACS-local dataset since policyengine 6.7), that
+dataset's year file filtered to the state's households, one file per state
+and year. The UK builds nothing yet. The deploy copies the files into the
+image, and the runtime loads them instead of computing them. Library logic
+lives in `src/policyengine_simulation_executor/precompute.py` (keys:
 `artifact_keys.py`, store client: `artifact_store.py`); the Modal app
 (`src/modal/precompute_app.py`) is plumbing only.
 
@@ -300,17 +313,20 @@ Manual runs remain valid for ad-hoc warming:
 The deploy job consumes the precompute job's manifest digest:
 `src/modal/app.py` resolves the manifest from GCS on the deploying
 machine and passes its content as the `fetch_artifacts` image layer's
-args (`src/modal/_image_setup.py`). The layer downloads the full
-artifact set into `POLICYENGINE_DATA_FOLDER`: about 430 MB of national
-datasets and baselines, plus several GB of per-state datasets, each placed
-in `state-datasets/<dataset>/<state>/` under the year file's own name. It
-sits between
-the version env and the source mount — do not reorder. Because the
-manifest is content-addressed and rides in the layer args, Modal's layer
-cache busts exactly when the artifact set changes and never otherwise;
-there is no force-rebuild ritual. A freshness gate inside the layer
-refuses to bake artifacts computed for versions other than the image's
-own, and any missing store object fails the build loudly.
+args (`src/modal/_image_setup.py`); each country with a manifest gets one
+such layer, US only today. The layer downloads the country's full file set
+under `POLICYENGINE_DATA_FOLDER`, each file in
+`prebuilt/<country>/<dataset>/<state code or all>/` under its own name: for
+the US, about 430 MB of national year files and group-of-states baselines in
+`prebuilt/us/<default dataset>/all/`, plus several GB of state year files in
+`prebuilt/us/<state-level dataset>/<state>/`. It sits between the version
+env and the source mount — do not reorder. Because the manifest is
+content-addressed and rides in the layer args, Modal's layer cache rebuilds
+the layer exactly when the file set changes and never otherwise; there is no
+forced rebuild to run. The layer refuses a manifest of another schema or one
+computed for package versions other than the image's own, checks each
+downloaded file's SHA-256 and size against the manifest, refuses a file
+already in the image, and fails the build on any missing store object.
 
 After the health check, each deploy leg writes a
 `deployed/<environment>.json` marker (`deployed/beta.json`,
@@ -343,20 +359,24 @@ Operational notes:
   precompute — deletion turns the key back into an ordinary miss, and the
   next deploy's precompute job recomputes it before the deploy leg builds
   the image.
-- A determinism gate runs whenever baselines were computed: one cohort's
-  uploaded artifact is compared frame-by-frame against an independent
-  fresh run. The run fails if they differ.
+- A determinism check runs whenever baselines were computed: for each
+  level that computed any, one uploaded baseline is compared column by
+  column against an independent fresh run. The run fails if they differ.
 - The final stdout line `MANIFEST_DIGEST=<digest>` names the published
   deploy manifest; the deploy pipeline consumes exactly that line.
 - Only pure default requests read the baked folder: any request naming an
   explicit `data` dataset or pinning a `data_version` bypasses it (see
   `_load_dataset` in `simulation_runtime.py`).
-- A US state or congressional-district request whose region loads a
-  non-default dataset reads its state's baked file when the image has one for
-  the requested year and .py's year-file reuse checks accept it (see
-  `state_datasets.baked_state_data_folder`). Otherwise it prepares the full
-  regional dataset during the request, as before. The run records which in
-  its `dataset_source` attribute: `baked_state` or `on_demand`.
+- Every run whose region has a dataset level (US national, group of states,
+  state or congressional district) reads its year file from its prebuilt
+  folder when the image has one for the requested year and .py's year-file
+  reuse checks accept it (see `prebuilt_dataset_folder` in
+  `stage12_cache/levels.py`). A district reads its state's file. Otherwise
+  the run uses the folder it used before the prebuilt files: the data
+  folder's root for the default dataset, or a temporary folder where it
+  prepares the full state-level dataset. A run on a non-default dataset
+  records which in its `dataset_source` attribute: `baked_state` or
+  `on_demand`.
 - Known residual, inherited rather than introduced: a data re-release
   under the same revision labels leaves the cached bundle-install layer —
   and therefore the receipt every artifact key derives from — unchanged.

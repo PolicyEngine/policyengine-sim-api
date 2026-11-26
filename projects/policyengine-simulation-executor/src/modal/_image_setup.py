@@ -12,6 +12,7 @@ so policyengine_simulation_executor is not importable there at all.
 # wherever the app loads; any other package loads only inside the function
 # that needs it. Annotation-only imports sit under TYPE_CHECKING, so the
 # annotations that use them are quoted.
+import hashlib
 import json
 import logging
 import os
@@ -25,13 +26,20 @@ if TYPE_CHECKING:
     from google.cloud import storage
 
 
+# The manifest schema this step reads (precompute_models.MANIFEST_SCHEMA;
+# this module cannot import it).
+_MANIFEST_SCHEMA = "mf2"
+_PREBUILT_DIRECTORY = "prebuilt"
+_HASH_CHUNK_BYTES = 1024 * 1024
+
+
 def fetch_artifacts(
     bucket: str,
     manifest: "Mapping[str, Any] | None",
     *,
     client: "storage.Client | None" = None,
 ) -> None:
-    """Download every manifest-listed artifact into the image data folder.
+    """Download every artifact one country's manifest lists into its prebuilt folder.
 
     Runs as an image-build layer between ``.env(VERSION_ENV)`` and
     ``add_local_python_source``, so it must stay self-contained (no
@@ -68,21 +76,33 @@ def fetch_artifacts(
     )
     data_folder.mkdir(parents=True, exist_ok=True)
     _download_manifest_artifacts(
-        client.bucket(bucket), manifest["artifacts"], data_folder
+        client.bucket(bucket),
+        manifest["artifacts"],
+        data_folder,
+        country=str(manifest["country"]),
     )
 
 
 def _require_manifest_matches_image(manifest: "Mapping[str, Any]") -> None:
-    """Freshness gate: refuse artifacts computed for another version-set.
+    """Freshness check: refuse artifacts computed for another version-set.
 
-    The image's policyengine and country model versions must equal the
+    The manifest must have the schema this step reads, and the image's
+    policyengine, policyengine-core and country model versions must equal the
     manifest receipt's, and so must the installed data version when the
     bundle receipt records one.
     """
+    if manifest.get("schema") != _MANIFEST_SCHEMA:
+        msg = (
+            f"The artifact manifest has schema {manifest.get('schema')!r}; this "
+            f"image reads {_MANIFEST_SCHEMA!r}. Re-run the precompute for the "
+            "current code."
+        )
+        raise RuntimeError(msg)
     country = str(manifest["country"])
     receipt = manifest["receipt"]
     expected_env = {
         "POLICYENGINE_VERSION": receipt["policyengine_version"],
+        "POLICYENGINE_CORE_VERSION": receipt["policyengine_core_version"],
         f"POLICYENGINE_{country.upper()}_VERSION": receipt["model_version"],
     }
     for env_var, manifest_value in expected_env.items():
@@ -178,13 +198,15 @@ def _service_account_credentials(blob: str) -> "dict[str, Any]":
     }
 
 
-def _artifact_target(data_folder: "Path", artifact: "Mapping[str, Any]") -> "Path":
-    """Return where an artifact lands: its ``folder`` (if any) under the data folder.
+def _artifact_target(
+    data_folder: "Path", artifact: "Mapping[str, Any]", *, country: str
+) -> "Path":
+    """Return where an artifact lands: its ``folder`` under the data folder.
 
-    Per-state datasets share one ``filename`` and differ by ``folder``, a
-    relative path such as ``state-datasets/<dataset>/<state>``. Anything that
-    could leave the data folder, or name a different file than intended, is
-    refused.
+    Every folder sits under ``prebuilt/<country>/``, so prebuilt files never
+    land beside the source datasets the bundle install writes into the data
+    folder's root. Anything that could leave that folder, or name a different
+    file than intended, is refused.
     """
     filename = artifact.get("filename")
     if (
@@ -196,39 +218,88 @@ def _artifact_target(data_folder: "Path", artifact: "Mapping[str, Any]") -> "Pat
         msg = f"Artifact {artifact.get('path')!r} has an unsafe filename {filename!r}"
         raise RuntimeError(msg)
     folder = artifact.get("folder")
-    if folder is None:
-        return data_folder / filename
-    parts = (
-        PurePosixPath(folder).parts
-        if isinstance(folder, str) and folder and "\\" not in folder
-        else ()
-    )
+    if not isinstance(folder, str) or not folder or "\\" in folder:
+        msg = f"Artifact {artifact.get('path')!r} has an unsafe folder {folder!r}"
+        raise RuntimeError(msg)
+    parts = PurePosixPath(folder).parts
     if (
-        not parts
+        len(parts) < 3  # noqa: PLR2004  # prebuilt, the country, and at least the dataset
         or PurePosixPath(folder).is_absolute()
         or any(part in {".", ".."} for part in parts)
         or "/".join(parts) != folder
+        or parts[:2] != (_PREBUILT_DIRECTORY, country.lower())
     ):
         msg = f"Artifact {artifact.get('path')!r} has an unsafe folder {folder!r}"
         raise RuntimeError(msg)
     return data_folder.joinpath(*parts, filename)
 
 
+def _file_sha256(path: "Path") -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(_HASH_CHUNK_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _download_checked(
+    bucket_handle: "storage.Bucket", artifact: "Mapping[str, Any]", target: "Path"
+) -> None:
+    """Download one artifact beside ``target`` and move it into place once checked.
+
+    The downloaded file's size and SHA-256 must equal the manifest's, so a
+    failed or altered download leaves nothing at ``target``.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(target.name + ".partial")
+    try:
+        bucket_handle.blob(artifact["path"]).download_to_filename(str(partial))
+        if not partial.exists():
+            msg = f"Downloading {artifact['path']} wrote no file for {target.name}"
+            raise RuntimeError(msg)
+        if partial.stat().st_size != artifact["size_bytes"]:
+            msg = (
+                f"{target.name} from {artifact['path']} has {partial.stat().st_size} "
+                f"bytes, not the manifest's {artifact['size_bytes']}"
+            )
+            raise RuntimeError(msg)
+        if _file_sha256(partial) != artifact["sha256"]:
+            msg = (
+                f"{target.name} from {artifact['path']} does not have the "
+                "manifest's SHA-256"
+            )
+            raise RuntimeError(msg)
+        partial.replace(target)
+    finally:
+        partial.unlink(missing_ok=True)
+
+
 def _download_manifest_artifacts(
     bucket_handle: "storage.Bucket",
     artifacts: "Sequence[Mapping[str, Any]]",
     data_folder: "Path",
+    *,
+    country: str,
 ) -> None:
-    """Download every artifact to its runtime location, failing on any gap.
+    """Download every artifact to its prebuilt folder, failing on any gap.
 
-    Every target and store object is checked before anything downloads, and
-    every expected file is checked after.
+    Every target and store object is checked before anything downloads: a
+    target listed twice, or already in the image (another country's step
+    must never replace the first's files), stops the build. Every expected
+    file is checked after.
     """
     logger = logging.getLogger(__name__)
-    targets = [_artifact_target(data_folder, artifact) for artifact in artifacts]
+    targets = [
+        _artifact_target(data_folder, artifact, country=country)
+        for artifact in artifacts
+    ]
     repeated = sorted({str(target) for target in targets if targets.count(target) > 1})
     if repeated:
         msg = f"The manifest lists these files more than once: {repeated}"
+        raise RuntimeError(msg)
+    existing = [str(target) for target in targets if target.exists()]
+    if existing:
+        msg = f"These files are already in the image: {existing}"
         raise RuntimeError(msg)
     missing = [
         artifact["path"]
@@ -244,12 +315,8 @@ def _download_manifest_artifacts(
             + ", ".join(missing)
         )
 
-    # Unconditional downloads: a same-named stale file must never
-    # survive into the image, and the layer starts empty of these
-    # files anyway.
     for artifact, target in zip(artifacts, targets, strict=True):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        bucket_handle.blob(artifact["path"]).download_to_filename(str(target))
+        _download_checked(bucket_handle, artifact, target)
         logger.info("Fetched %s (%.1f MB)", target, target.stat().st_size / 1e6)
 
     absent = [str(target) for target in targets if not target.exists()]

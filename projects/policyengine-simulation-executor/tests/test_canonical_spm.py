@@ -460,33 +460,37 @@ class TestResolutionIsNotRepeatedWork:
     def test_collecting_a_baseline_identity_prevalidates_once(self, monkeypatch):
         """The repeat the review counted, through the real collectors.
 
-        ``collect_baseline_identity`` normalizes the request's selection and
-        then ``collect_dataset_identity`` normalizes the bundle's default for
-        the same year. When both resolve to the same selection that is one
-        prevalidation for the pair, and repeating the collection -- as a
-        request does -- adds none.
+        ``year_file_identity`` normalizes the bundle's default selection for
+        the year and ``baseline_identity`` the request's. When both resolve
+        to the same selection that is one prevalidation for the pair, and
+        repeating the collection -- as a request does -- adds none.
         """
         from fixtures.identity_stubs import install_identity_stubs
+        from policyengine_simulation_executor.stage12_cache.levels import (
+            BaselineScope,
+        )
+        from policyengine_simulation_executor.stage12_cache.levels_us import (
+            national_year_file,
+        )
 
         install_identity_stubs(monkeypatch)
         stubs = self._stub_provider(monkeypatch)
+        national = BaselineScope(region="national", scope_key=None)
 
-        first = artifact_keys.collect_baseline_identity(
-            "us", 2026, region="us", scope_key=None, spm={"geography_kind": "national"}
-        )
+        def collect(spm):
+            year_file = artifact_keys.year_file_identity(national_year_file(2026))
+            return artifact_keys.baseline_identity(year_file, national, spm)
+
+        first = collect({"geography_kind": "national"})
         assert first.spm == SELECTION
         assert stubs.constructions.call_count == 1
 
-        second = artifact_keys.collect_baseline_identity(
-            "us", 2026, region="us", scope_key=None, spm={"geography_kind": "national"}
-        )
+        second = collect({"geography_kind": "national"})
         assert second.storage_id == first.storage_id
         assert stubs.constructions.call_count == 1
 
         # A request that differs from the bundle default still resolves both.
-        county = artifact_keys.collect_baseline_identity(
-            "us", 2026, region="us", scope_key=None, spm={"geography_kind": "county"}
-        )
+        county = collect({"geography_kind": "county"})
         assert county.storage_id != first.storage_id
         assert stubs.constructions.call_count == 2
 
@@ -558,34 +562,35 @@ def test_actual_http_formula_error_contract(monkeypatch, code, observability_run
     ],
 )
 def test_each_setting_rotates_artifact_identity(key, value):
-    common = {
-        "country": "us",
-        "region": "national",
-        "scope_key": None,
-        "dataset_digest": "d" * 64,
-        "model_version": "test",
-        "policyengine_version": "test",
-    }
     changed = {**SELECTION, key: value}
-    assert artifact_keys.baseline_key(
-        artifact_keys.BaselineKeyInputs(**common, spm=SELECTION)
-    ) != artifact_keys.baseline_key(
-        artifact_keys.BaselineKeyInputs(**common, spm=changed)
-    )
-    ds = {
-        "country": "us",
-        "dataset": "test",
-        "year": 2026,
-        "data_version": "test",
-        "data_artifact_revision": "test",
-        "source_sha256": None,
-        "data_build_fingerprint": None,
-        "model_version": "test",
-        "policyengine_version": "test",
-    }
-    assert artifact_keys.dataset_key(
-        artifact_keys.DatasetKeyInputs(**ds, spm=SELECTION)
-    ) != artifact_keys.dataset_key(artifact_keys.DatasetKeyInputs(**ds, spm=changed))
+
+    def year_file(spm):
+        return artifact_keys.YearFileIdentity(
+            country="us",
+            dataset="test",
+            dataset_sha256=None,
+            data_version="test",
+            data_artifact_revision="test",
+            certification_fingerprint=None,
+            year=2026,
+            subset=None,
+            packages={"policyengine": "test"},
+            spm=spm,
+            stem="test",
+            folder="prebuilt/us/test/all",
+        )
+
+    def baseline(spm):
+        return artifact_keys.BaselineIdentity(
+            year_file=year_file(SELECTION),
+            region="national",
+            scope_key=None,
+            spm=spm,
+        )
+
+    assert year_file(SELECTION).digest != year_file(changed).digest
+    assert baseline(SELECTION).digest != baseline(changed).digest
+    assert baseline(SELECTION).storage_id != baseline(changed).storage_id
 
 
 def test_fanout_and_budget_window_preserve_settings_and_receipts():
@@ -658,6 +663,7 @@ def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
 
 def test_identity_errors_do_not_degrade_to_an_unidentified_baseline(monkeypatch):
     from policyengine_simulation_executor import baseline_artifacts
+    from policyengine_simulation_executor.simulation_runtime import DatasetSelection
 
     monkeypatch.setattr(
         baseline_artifacts,
@@ -669,7 +675,9 @@ def test_identity_errors_do_not_degrade_to_an_unidentified_baseline(monkeypatch)
             baseline_artifacts.BaselineIdentityRequest(
                 {},
                 country="us",
-                dataset_is_default=True,
+                dataset=DatasetSelection(
+                    "populace_cps", "hf://default", is_default=True
+                ),
                 policy=None,
                 region_code="us",
                 scoping_strategy=None,
@@ -714,14 +722,11 @@ def test_gateway_poll_returns_structured_400(monkeypatch, code):
     assert response.json()["result"] is None
 
 
-class _HydratedWorkerClass:
+class _WorkerClassHandle:
     """A ``modal.Cls`` lookup of a class the app defines."""
 
     def __init__(self, worker):
         self.worker = worker
-
-    def hydrate(self):
-        return self
 
     def __call__(self):
         return self.worker
@@ -754,7 +759,7 @@ def test_gateway_submission_uses_registry_capability_before_spawn(monkeypatch):
         "modal",
         SimpleNamespace(
             Cls=SimpleNamespace(
-                from_name=lambda *_args: _HydratedWorkerClass(simulation_worker)
+                from_name=lambda *_args: _WorkerClassHandle(simulation_worker)
             )
         ),
     )

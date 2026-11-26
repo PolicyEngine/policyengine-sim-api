@@ -23,7 +23,7 @@ def _load_through_runtime(
     monkeypatch, *, region_resolution, selection, baked_folder, time_period=2026
 ):
     """Run the annual runtime up to its dataset load and return what it did."""
-    from policyengine_simulation_executor import state_datasets
+    from policyengine_simulation_executor.stage12_cache import levels
 
     load_calls = []
     lookups = []
@@ -32,8 +32,8 @@ def _load_through_runtime(
         load_calls.append({"selection": selection, "data_folder": data_folder})
         return object()
 
-    def fake_baked_state_data_folder(**kwargs):
-        lookups.append(kwargs)
+    def fake_prebuilt_dataset_folder(run, data_folder):
+        lookups.append({"run": run, "data_folder": data_folder})
         return baked_folder
 
     def stop_after_loading(*_args, **_kwargs):
@@ -55,9 +55,7 @@ def _load_through_runtime(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",
         fake_load_dataset,
     )
-    monkeypatch.setattr(
-        state_datasets, "baked_state_data_folder", fake_baked_state_data_folder
-    )
+    monkeypatch.setattr(levels, "prebuilt_dataset_folder", fake_prebuilt_dataset_folder)
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
         stop_after_loading,
@@ -87,31 +85,38 @@ def _regional_selection():
     )
 
 
+def _prebuilt(folder, dataset_source=None):
+    from policyengine_simulation_executor.stage12_cache.levels import PrebuiltFolder
+
+    return PrebuiltFolder(folder=folder, dataset_source=dataset_source)
+
+
 def test_runtime_loads_a_state_from_its_baked_folder(monkeypatch):
+    utah = RegionResolution(code="state/ut", dataset_reference="ref", state_code="UT")
     loaded = _load_through_runtime(
         monkeypatch,
-        region_resolution=RegionResolution(
-            code="state/ut", dataset_reference="ref", state_code="UT"
-        ),
+        region_resolution=utah,
         selection=_regional_selection(),
-        baked_folder="/opt/policyengine/data/state-datasets/acs/UT",
+        baked_folder=_prebuilt(
+            "/opt/policyengine/data/prebuilt/us/acs/UT", "baked_state"
+        ),
     )
 
     assert loaded.load_calls == [
         {
             "selection": _regional_selection(),
-            "data_folder": "/opt/policyengine/data/state-datasets/acs/UT",
+            "data_folder": "/opt/policyengine/data/prebuilt/us/acs/UT",
         }
     ]
-    assert loaded.lookups == [
-        {
-            "country": "us",
-            "selection": _regional_selection(),
-            "state_code": "UT",
-            "year": 2026,
-            "data_folder": resolve_data_folder(),
-        }
-    ]
+    assert len(loaded.lookups) == 1
+    run = loaded.lookups[0]["run"]
+    assert (run.country, run.year, run.region, run.dataset) == (
+        "us",
+        2026,
+        utah,
+        _regional_selection(),
+    )
+    assert loaded.lookups[0]["data_folder"] == resolve_data_folder()
     assert loaded.context["dataset_source"] == "baked_state"
 
 
@@ -129,20 +134,38 @@ def test_runtime_prepares_a_state_on_demand_without_a_baked_file(monkeypatch):
     )
 
     assert loaded.load_calls[0]["data_folder"] is None
-    assert loaded.lookups[0]["year"] == 2028
+    assert loaded.lookups[0]["run"].year == 2028
     assert loaded.context["dataset_source"] == "on_demand"
 
 
-def test_runtime_loads_a_national_run_from_the_default_folder(monkeypatch):
+def _default_selection():
     bundle = get_country_release_bundle("us")
+    return DatasetSelection(
+        name=bundle.default_dataset,
+        uri=bundle.default_dataset_uri,
+        is_default=True,
+    )
+
+
+def test_runtime_loads_a_national_run_from_its_prebuilt_folder(monkeypatch):
     loaded = _load_through_runtime(
         monkeypatch,
         region_resolution=RegionResolution(code="us"),
-        selection=DatasetSelection(
-            name=bundle.default_dataset,
-            uri=bundle.default_dataset_uri,
-            is_default=True,
-        ),
+        selection=_default_selection(),
+        baked_folder=_prebuilt("/opt/policyengine/data/prebuilt/us/populace/all"),
+    )
+
+    assert loaded.load_calls[0]["data_folder"] == (
+        "/opt/policyengine/data/prebuilt/us/populace/all"
+    )
+    assert "dataset_source" not in loaded.context
+
+
+def test_runtime_loads_a_national_run_from_the_default_folder(monkeypatch):
+    loaded = _load_through_runtime(
+        monkeypatch,
+        region_resolution=RegionResolution(code="us"),
+        selection=_default_selection(),
         baked_folder=None,
     )
 
@@ -152,7 +175,7 @@ def test_runtime_loads_a_national_run_from_the_default_folder(monkeypatch):
 
 def _builder_data_version(monkeypatch, *, region_resolution, dataset_selection):
     """Run the annual runtime and return the data version it gives the builder."""
-    from policyengine_simulation_executor import state_datasets
+    from policyengine_simulation_executor.stage12_cache import levels
 
     selection = installed_spm_selection()
     simulations = [spm_capable_simulation(selection), spm_capable_simulation(selection)]
@@ -178,7 +201,7 @@ def _builder_data_version(monkeypatch, *, region_resolution, dataset_selection):
         lambda _params, *, region_resolution: dataset_selection,
     )
     monkeypatch.setattr(
-        state_datasets, "baked_state_data_folder", lambda **_kwargs: None
+        levels, "prebuilt_dataset_folder", lambda _run, _data_folder: None
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",

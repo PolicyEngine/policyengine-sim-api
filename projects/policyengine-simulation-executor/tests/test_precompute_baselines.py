@@ -1,4 +1,4 @@
-"""Tests for computing the precompute's cohort baselines and checking determinism."""
+"""Tests for computing the precompute's baselines and checking their determinism."""
 
 import sys
 from pathlib import Path
@@ -11,25 +11,72 @@ from fixtures.wrapper_spm import wrapper_storage_id
 from policyengine_simulation_executor import precompute, precompute_baselines
 from policyengine_simulation_executor.artifact_keys import canonical_digest
 from policyengine_simulation_executor.precompute_models import BaselinePlanEntry
+from policyengine_simulation_executor.stage12_cache.levels import (
+    DatasetLevel,
+    PrebuiltFolder,
+)
+
+
+def _recording_lookup(state):
+    """Return a prebuilt-folder lookup that records calls and finds ``state.folder``."""
+
+    def prebuilt_dataset_folder(run, data_folder):
+        state.lookups.append((run, data_folder))
+        if state.prebuilt_folder is None:
+            return None
+        return PrebuiltFolder(folder=state.prebuilt_folder, dataset_source=None)
+
+    return prebuilt_dataset_folder
+
+
+def _baseline_entry(simulation_id, storage_id=None):
+    return BaselinePlanEntry(
+        country="us",
+        level=DatasetLevel.STATE_GROUP,
+        year=2026,
+        region="region_group/state/ca+state/wv",
+        label="group 1 of 20",
+        request={
+            "country": "us",
+            "scope": "macro",
+            "region_group": ["state/ca", "state/wv"],
+            "time_period": 2026,
+        },
+        year_file_path="year-files/us/yf-2026/populace_year_2026.h5",
+        year_file_filename="populace_year_2026.h5",
+        folder="prebuilt/us/populace_cps/all",
+        digest="bl-d",
+        path=f"baselines/us/bl-d/{storage_id or simulation_id}.h5",
+        simulation_id=simulation_id,
+        storage_id=storage_id or simulation_id,
+        exists=False,
+    )
 
 
 class TestComputeBaselineImpl:
     @pytest.fixture
     def cohort_stubs(self, monkeypatch, tmp_path):
-        from policyengine_simulation_executor import artifact_keys, artifact_store
+        from policyengine_simulation_executor import artifact_store
         from policyengine_simulation_executor import simulation_runtime as sr
         from policyengine_simulation_executor.baseline_artifacts import (
             ArtifactBaselineSimulation,
         )
 
+        folder = tmp_path / "prebuilt" / "us" / "populace_cps" / "all"
         state = SimpleNamespace(
-            folder=tmp_path, downloads=[], uploads=[], configured=[]
+            folder=folder,
+            data_folder=tmp_path,
+            downloads=[],
+            uploads=[],
+            configured=[],
+            lookups=[],
+            prebuilt_folder=str(folder),
         )
 
         class StubBaseline(ArtifactBaselineSimulation):
             def ensure(self):
                 self._artifact_outcome = "miss"
-                (tmp_path / f"{self.id}.h5").write_bytes(b"artifact-bytes")
+                (folder / f"{self.id}.h5").write_bytes(b"artifact-bytes")
 
         class SilentBaseline(ArtifactBaselineSimulation):
             def ensure(self):
@@ -55,12 +102,12 @@ class TestComputeBaselineImpl:
 
             def ensure(self):
                 self._artifact_outcome = "miss"
-                (tmp_path / f"{self.storage_id}.h5").write_bytes(b"artifact-bytes")
+                (folder / f"{self.storage_id}.h5").write_bytes(b"artifact-bytes")
 
         state.spm = None
-        state.baseline = StubBaseline.model_construct(id="bl1-cohort")
-        state.make_silent = lambda: SilentBaseline.model_construct(id="bl1-cohort")
-        state.make_spm = lambda sim_id="bl1-cohort": SPMStubBaseline.model_construct(
+        state.baseline = StubBaseline.model_construct(id="bl3-cohort")
+        state.make_silent = lambda: SilentBaseline.model_construct(id="bl3-cohort")
+        state.make_spm = lambda sim_id="bl3-cohort": SPMStubBaseline.model_construct(
             id=sim_id
         )
 
@@ -86,12 +133,7 @@ class TestComputeBaselineImpl:
         )
 
         monkeypatch.setattr(
-            artifact_keys,
-            "collect_dataset_identity",
-            lambda _country, year: SimpleNamespace(
-                store_path=f"datasets/us/ds-{year}/populace_year_{year}.h5",
-                filename=f"populace_year_{year}.h5",
-            ),
+            precompute_baselines, "prebuilt_dataset_folder", _recording_lookup(state)
         )
         monkeypatch.setattr(artifact_store, "ArtifactStore", FakeStore)
         monkeypatch.setattr(sr, "resolve_data_folder", lambda: str(tmp_path))
@@ -105,34 +147,32 @@ class TestComputeBaselineImpl:
                 dataset_reference=None,
             ),
         )
-        monkeypatch.setattr(
-            sr,
-            "_load_dataset",
-            lambda _params, country_module, selection: "dataset",
-        )
+
+        def load_dataset(_params, *, country_module, selection, data_folder):
+            state.load_folder = data_folder
+            return "dataset"
+
+        monkeypatch.setattr(sr, "_load_dataset", load_dataset)
         monkeypatch.setattr(
             sr, "_build_simulation", lambda _params, **_kwargs: state.baseline
         )
         return state
 
-    def _entry(self, sim_id="bl1-cohort"):
-        return BaselinePlanEntry(
-            year=2026,
-            group=["state/ca", "state/wv"],
-            region="state/ca+state/wv",
-            digest="bl-d",
-            path=f"baselines/us/bl-d/{sim_id}.h5",
-            simulation_id=sim_id,
-            exists=False,
-        )
+    def _entry(self, sim_id="bl3-cohort", storage_id=None):
+        return _baseline_entry(sim_id, storage_id)
 
     def test_downloads_dataset_configures_extras_and_uploads(self, cohort_stubs):
         result = precompute.compute_baseline_impl("bucket-x", self._entry())
         assert cohort_stubs.downloads == [
             (
-                "datasets/us/ds-2026/populace_year_2026.h5",
+                "year-files/us/yf-2026/populace_year_2026.h5",
                 str(cohort_stubs.folder / "populace_year_2026.h5"),
             )
+        ]
+        # The year file is read from the prebuilt folder its run reads.
+        assert cohort_stubs.load_folder == str(cohort_stubs.folder)
+        assert [data_folder for _run, data_folder in cohort_stubs.lookups] == [
+            str(cohort_stubs.data_folder)
         ]
         # The extras configuration is load-bearing: without it every
         # production request fails the column guard and recomputes.
@@ -141,37 +181,43 @@ class TestComputeBaselineImpl:
         ]
         assert cohort_stubs.uploads == [
             (
-                "baselines/us/bl-d/bl1-cohort.h5",
-                str(cohort_stubs.folder / "bl1-cohort.h5"),
+                "baselines/us/bl-d/bl3-cohort.h5",
+                str(cohort_stubs.folder / "bl3-cohort.h5"),
             )
         ]
-        assert result.simulation_id == "bl1-cohort"
+        assert result.simulation_id == "bl3-cohort"
         assert result.outcome == "miss"
         assert result.uploaded is True
         assert result.size_bytes == len(b"artifact-bytes")
 
     def test_present_local_dataset_skips_download(self, cohort_stubs):
+        cohort_stubs.folder.mkdir(parents=True)
         (cohort_stubs.folder / "populace_year_2026.h5").write_bytes(b"already-here")
         precompute.compute_baseline_impl("bucket-x", self._entry())
         assert cohort_stubs.downloads == []
 
     def test_refuses_to_act_under_a_mismatched_id(self, cohort_stubs):
         with pytest.raises(RuntimeError, match="refusing to act"):
-            precompute.compute_baseline_impl("bucket-x", self._entry("bl1-other"))
+            precompute.compute_baseline_impl("bucket-x", self._entry("bl3-other"))
+        assert cohort_stubs.uploads == []
+
+    def test_refuses_a_year_file_its_run_would_not_read(self, cohort_stubs):
+        cohort_stubs.prebuilt_folder = None
+        with pytest.raises(RuntimeError, match="not one its run would read"):
+            precompute.compute_baseline_impl("bucket-x", self._entry())
         assert cohort_stubs.uploads == []
 
     def test_refuses_a_mismatched_planned_storage_id(self, cohort_stubs):
-        entry = self._entry()
-        entry.path = "baselines/us/bl-d/bl1-cohort-spm-planned.h5"
+        entry = self._entry(storage_id="bl3-cohort-spm-planned")
         with pytest.raises(RuntimeError, match="storage ids disagree"):
             precompute.compute_baseline_impl("bucket-x", entry)
         assert cohort_stubs.configured == []
         assert cohort_stubs.uploads == []
-        assert not (cohort_stubs.folder / "bl1-cohort.h5").exists()
+        assert not (cohort_stubs.folder / "bl3-cohort.h5").exists()
 
     @staticmethod
     def _planned_identity(selection):
-        """Return a real ``BaselineArtifactIdentity``, not a restated expression.
+        """Return a real ``BaselineIdentity``, not a restated expression.
 
         The plan the deploy publishes comes from this object's properties,
         so keying the test off them is what makes the write path a
@@ -180,27 +226,27 @@ class TestComputeBaselineImpl:
         longer names the planned file.
         """
         from policyengine_simulation_executor.artifact_keys import (
-            BaselineArtifactIdentity,
-            DatasetArtifactIdentity,
+            BaselineIdentity,
+            YearFileIdentity,
         )
 
-        return BaselineArtifactIdentity(
+        return BaselineIdentity(
             spm=selection,
-            country="us",
-            region="state/ca+state/wv",
+            region="region_group/state/ca+state/wv",
             scope_key="scoping",
-            dataset=DatasetArtifactIdentity(
-                spm=selection,
+            year_file=YearFileIdentity(
                 country="us",
                 dataset="populace_cps",
-                stem="populace",
-                year=2026,
+                dataset_sha256=None,
                 data_version="1.2.3",
                 data_artifact_revision="rev-abc",
-                source_sha256=None,
-                data_build_fingerprint=None,
-                model_version="9.9.9",
-                policyengine_version="4.22.0",
+                certification_fingerprint=None,
+                year=2026,
+                subset=None,
+                packages={"policyengine": "4.22.0"},
+                spm=selection,
+                stem="populace",
+                folder="prebuilt/us/populace_cps/all",
             ),
         )
 
@@ -212,7 +258,7 @@ class TestComputeBaselineImpl:
         Nothing else in hermetic CI runs ``compute_baseline_impl`` with a
         selection: the identity's storage id was only ever compared to
         itself, and the one case that reached the guard covered the abort.
-        Here the plan is the planner's own ``BaselineArtifactIdentity`` and
+        Here the plan is the planner's own ``BaselineIdentity`` and
         the container names its artifact the wrapper's way, so the guard
         passing at all is the claim -- if the two derivations differed, no
         canonical artifact could be published and the deploy would be
@@ -230,7 +276,7 @@ class TestComputeBaselineImpl:
         cohort_stubs.spm = selection
         cohort_stubs.baseline = cohort_stubs.make_spm(planned.simulation_id)
 
-        entry = self._entry(planned.simulation_id)
+        entry = self._entry(planned.simulation_id, planned.storage_id)
         entry.digest = planned.digest
         entry.path = planned.store_path
 
@@ -263,10 +309,8 @@ class TestComputeBaselineImpl:
         """
         cohort_stubs.spm = {"scenario": "zero_real"}
         cohort_stubs.baseline = cohort_stubs.make_spm()
-        entry = self._entry()
-        entry.path = (
-            f"baselines/us/bl-d/bl1-cohort-spm-"
-            f"{canonical_digest({'scenario': 'ce_trend'})}.h5"
+        entry = self._entry(
+            storage_id=f"bl3-cohort-spm-{canonical_digest({'scenario': 'ce_trend'})}"
         )
         with pytest.raises(RuntimeError, match="storage ids disagree"):
             precompute.compute_baseline_impl("bucket-x", entry)
@@ -274,7 +318,7 @@ class TestComputeBaselineImpl:
         assert cohort_stubs.uploads == []
 
     def test_refuses_a_plain_simulation(self, cohort_stubs):
-        cohort_stubs.baseline = SimpleNamespace(id="bl1-cohort")
+        cohort_stubs.baseline = SimpleNamespace(id="bl3-cohort")
         with pytest.raises(RuntimeError, match="plain Simulation"):
             precompute.compute_baseline_impl("bucket-x", self._entry())
         assert cohort_stubs.uploads == []
@@ -306,7 +350,7 @@ class TestVerifyDeterminismImpl:
                     Path(local_path).write_bytes(b"artifact")
 
             class FakeBaseline:
-                id = "bl1-verify"
+                id = "bl3-verify"
                 dataset = "dataset"
                 tax_benefit_model_version = "model-version"
                 scoping_strategy = "scoping"
@@ -330,20 +374,14 @@ class TestVerifyDeterminismImpl:
 
             monkeypatch.setattr(
                 precompute_baselines,
-                "_prepare_cohort_baseline",
+                "_prepare_baseline",
                 lambda _bucket, _expected: (FakeStore(), tmp_path, FakeBaseline()),
             )
             monkeypatch.setattr("policyengine.core.Simulation", FakeFresh)
             if on_disk:
-                (tmp_path / "bl1-verify.h5").write_bytes(b"artifact")
-            entry = BaselinePlanEntry(
-                year=2026,
-                group=["state/ca"],
-                region="state/ca",
-                digest="d",
-                path="baselines/us/d/bl1-verify.h5",
-                simulation_id="bl1-verify",
-                exists=True,
+                (tmp_path / "bl3-verify.h5").write_bytes(b"artifact")
+            entry = _baseline_entry("bl3-verify").model_copy(
+                update={"digest": "d", "path": "baselines/us/d/bl3-verify.h5"}
             )
             verdict = precompute.verify_determinism_impl("bucket-x", entry)
             return verdict, downloads, captured
@@ -401,7 +439,7 @@ class TestVerifyDeterminismImpl:
         verdict, downloads, _ = run_verification(
             self._frames(), self._frames(), on_disk=False
         )
-        assert downloads == ["baselines/us/d/bl1-verify.h5"]
+        assert downloads == ["baselines/us/d/bl3-verify.h5"]
         assert verdict.equal is True
 
     def test_fresh_run_reuses_the_baseline_inputs(self, run_verification):

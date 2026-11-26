@@ -399,11 +399,12 @@ def test_the_uk_local_area_breakdown_retries_its_dataset_load(monkeypatch):
 
 
 def test_the_annual_runtime_retries_its_dataset_load(monkeypatch):
-    from policyengine_simulation_executor import simulation_runtime, state_datasets
+    from policyengine_simulation_executor import simulation_runtime
     from policyengine_simulation_executor.simulation_runtime import (
         RegionResolution,
         _run_simulation_impl_core,
     )
+    from policyengine_simulation_executor.stage12_cache import levels
     from test_simulation_output_fakes import TrackingRuntime
 
     recorded = _RecordedTiming()
@@ -446,7 +447,7 @@ def test_the_annual_runtime_retries_its_dataset_load(monkeypatch):
     )
     monkeypatch.setattr(simulation_runtime, "_load_dataset", flaky_load_dataset)
     monkeypatch.setattr(
-        state_datasets, "baked_state_data_folder", lambda **_kwargs: None
+        levels, "prebuilt_dataset_folder", lambda _run, _data_folder: None
     )
     monkeypatch.setattr(simulation_runtime, "_build_simulation", stop_after_loading)
 
