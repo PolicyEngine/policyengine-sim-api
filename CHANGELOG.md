@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.26.2] - 2026-11-26
+
+### Changed
+
+- Segment children of segmented national runs (the `SimulationSegmentWorker` class and the plain `run_simulation_segment` function) now request 1 CPU and 10 GiB instead of 8 CPUs and 32 GiB. A child calculates one region group (a set of states) in one process, so it uses one CPU. With both countries' models loaded it uses about 3.4 GiB for a precomputed year (2025–2027), and about 6.9 GiB for another year, whose dataset and current-law baseline it builds itself. At list price, the 20 children of a segmented national run cost about a fifth as much.
+
+
 ## [0.26.1] - 2026-11-26
 
 ### Changed
