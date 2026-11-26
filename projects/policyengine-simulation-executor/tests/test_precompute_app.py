@@ -103,36 +103,33 @@ def test_state_dataset_wrapper_validates_entries_in_and_dumps_results_out(
 ):
     from policyengine_simulation_executor import precompute as lib
     from policyengine_simulation_executor.precompute_models import (
-        StateDatasetBuildResult,
-        StateDatasetPlanEntry,
+        YearFileBuildResult,
+        YearFilePlanEntry,
     )
 
-    entry = StateDatasetPlanEntry(
+    entry = YearFilePlanEntry(
+        country="us",
+        level="state",
         year=2026,
-        state_code="UT",
-        region="state/ut",
         dataset="populace_local",
-        digest="sd1",
-        path="state-datasets/us/sd1/populace_local_year_2026.h5",
+        region="state/ut",
+        subset_code="UT",
+        digest="yf1",
+        path="year-files/us/yf1/populace_local_year_2026.h5",
         filename="populace_local_year_2026.h5",
-        folder="state-datasets/populace_local/UT",
+        folder="prebuilt/us/populace_local/UT",
         exists=False,
     )
-    result = StateDatasetBuildResult(
-        year=2026,
-        state_code="UT",
-        path=entry.path,
-        uploaded=True,
-        size_bytes=5,
-        build_seconds=1.0,
+    result = YearFileBuildResult(
+        year=2026, path=entry.path, uploaded=True, size_bytes=5, build_seconds=1.0
     )
     seen = {}
 
-    def fake_build_state_datasets(bucket, year, expected):
+    def fake_build_year_files(bucket, year, expected):
         seen["call"] = (bucket, year, expected)
         return [result]
 
-    monkeypatch.setattr(lib, "build_state_datasets_impl", fake_build_state_datasets)
+    monkeypatch.setattr(lib, "build_year_files_impl", fake_build_year_files)
 
     assert precompute_module.build_state_datasets(
         "bucket-x", 2026, [entry.model_dump()]
@@ -159,32 +156,52 @@ def _sample_plan():
 
     return PrecomputePlan.model_validate(
         {
-            "datasets": [
+            "country": "us",
+            "year_files": [
                 {
+                    "country": "us",
+                    "level": "national",
                     "year": 2026,
+                    "dataset": "populace",
+                    "region": None,
+                    "subset_code": None,
                     "digest": "d1",
-                    "path": "datasets/us/d1/populace_year_2026.h5",
+                    "path": "year-files/us/d1/populace_year_2026.h5",
                     "filename": "populace_year_2026.h5",
+                    "folder": "prebuilt/us/populace/all",
                     "exists": False,
                 }
             ],
             "baselines": [
                 {
+                    "country": "us",
+                    "level": "state_group",
                     "year": 2026,
-                    "group": ["state/ca"],
-                    "region": "state/ca",
+                    "region": "region_group/state/ca",
+                    "label": "group 16 of 20",
+                    "request": {
+                        "country": "us",
+                        "scope": "macro",
+                        "region_group": ["state/ca"],
+                        "time_period": 2026,
+                    },
+                    "year_file_path": "year-files/us/d1/populace_year_2026.h5",
+                    "year_file_filename": "populace_year_2026.h5",
+                    "folder": "prebuilt/us/populace/all",
                     "digest": "b1",
-                    "path": "baselines/us/b1/bl1-aaaa.h5",
-                    "simulation_id": "bl1-aaaa",
+                    "path": "baselines/us/b1/bl3-aaaa.h5",
+                    "simulation_id": "bl3-aaaa",
+                    "storage_id": "bl3-aaaa",
                     "exists": False,
                 }
             ],
             "receipt": {
                 "policyengine_version": "4.22.0",
+                "policyengine_core_version": "3.33.3",
                 "model_version": "1.0.0",
                 "data_version": "1.2.3",
                 "data_artifact_revision": "rev-abc",
-                "default_dataset": "populace_cps",
+                "default_dataset": "populace",
             },
         }
     )
@@ -198,35 +215,40 @@ def test_wrappers_validate_dicts_in_and_dump_models_out(precompute_module, monke
     from policyengine_simulation_executor import precompute as lib
     from policyengine_simulation_executor.precompute_models import (
         BaselineComputeResult,
-        DatasetBuildResult,
         DeterminismVerdict,
+        YearFileBuildResult,
     )
 
     plan = _sample_plan()
     seen = {}
 
-    monkeypatch.setattr(lib, "plan_artifacts_impl", lambda _bucket: plan)
-    assert precompute_module.plan_artifacts("bucket-x") == plan.model_dump()
+    def fake_plan_artifacts(bucket, country):
+        seen["plan"] = (bucket, country)
+        return plan
 
-    dataset_result = DatasetBuildResult(
+    monkeypatch.setattr(lib, "plan_artifacts_impl", fake_plan_artifacts)
+    assert precompute_module.plan_artifacts("bucket-x", "us") == plan.model_dump()
+    assert seen["plan"] == ("bucket-x", "us")
+
+    dataset_result = YearFileBuildResult(
         year=2026, path="p", uploaded=True, build_seconds=1.0, size_bytes=3
     )
 
-    def fake_build_dataset(bucket, expected):
-        seen["dataset"] = (bucket, expected)
-        return dataset_result
+    def fake_build_year_files(bucket, year, expected):
+        seen["dataset"] = (bucket, year, expected)
+        return [dataset_result]
 
-    monkeypatch.setattr(lib, "build_dataset_impl", fake_build_dataset)
+    monkeypatch.setattr(lib, "build_year_files_impl", fake_build_year_files)
     assert (
-        precompute_module.build_dataset("bucket-x", plan.datasets[0].model_dump())
+        precompute_module.build_dataset("bucket-x", plan.year_files[0].model_dump())
         == dataset_result.model_dump()
     )
-    assert seen["dataset"] == ("bucket-x", plan.datasets[0])
+    assert seen["dataset"] == ("bucket-x", 2026, [plan.year_files[0]])
 
     baseline_result = BaselineComputeResult(
         year=2026,
-        group=["state/ca"],
-        simulation_id="bl1-aaaa",
+        label="group 16 of 20",
+        simulation_id="bl3-aaaa",
         outcome="miss",
         uploaded=True,
         compute_seconds=2.0,
@@ -281,8 +303,9 @@ def test_local_entrypoint_wires_bucket_force_and_handles(
 
     captured = {}
 
-    def fake_run_precompute(bucket, *, force, functions):
+    def fake_run_precompute(bucket, *, country, force, functions):
         captured["bucket"] = bucket
+        captured["country"] = country
         captured["force"] = force
         captured["handles"] = vars(functions)
         return "digest"
@@ -294,7 +317,11 @@ def test_local_entrypoint_wires_bucket_force_and_handles(
 
     precompute_module.main(force=True)
     assert captured["bucket"] == "bucket-env"
+    assert captured["country"] == "us"
     assert captured["force"] is True
+    precompute_module.main(country="uk")
+    assert captured["country"] == "uk"
+    assert captured["force"] is False
     assert captured["handles"] == {
         "plan_artifacts": precompute_module.plan_artifacts,
         "build_dataset": precompute_module.build_dataset,

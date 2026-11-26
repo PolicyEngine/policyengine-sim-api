@@ -1,110 +1,96 @@
-"""Tests for building the precompute's national and per-state datasets."""
+"""Tests for building the precompute's year files through the level handlers."""
 
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from policyengine_simulation_executor import precompute, precompute_datasets
-from policyengine_simulation_executor.precompute_models import (
-    DatasetPlanEntry,
-    StateDatasetPlanEntry,
+from fixtures.us_prebuilt_inputs import install_us_prebuilt_inputs
+from policyengine_simulation_executor import artifact_keys, precompute
+from policyengine_simulation_executor.precompute_models import YearFilePlanEntry
+from policyengine_simulation_executor.stage12_cache import levels_us
+from policyengine_simulation_executor.stage12_cache.levels import (
+    DatasetLevel,
+    SubsetFilter,
+    YearFileTarget,
+    prebuilt_folder,
 )
 
 
-class TestBuildDatasetImpl:
+def _entry_for(identity, target):
+    return YearFilePlanEntry(
+        country="us",
+        level=target.level,
+        year=target.year,
+        dataset=target.dataset,
+        region=None if target.subset is None else target.subset.region,
+        subset_code=None if target.subset is None else target.subset.code,
+        digest=identity.digest,
+        path=identity.store_path,
+        filename=identity.filename,
+        folder=identity.folder,
+        exists=False,
+    )
+
+
+class TestBuildingAWholeDatasetYearFile:
     @pytest.fixture
-    def dataset_stubs(self, monkeypatch, tmp_path):
-        from policyengine_simulation_executor import (
-            artifact_keys,
-            artifact_store,
-            release_bundle,
-        )
-        from policyengine_simulation_executor import simulation_runtime as sr
+    def national_build(self, monkeypatch, tmp_path):
+        inputs = install_us_prebuilt_inputs(monkeypatch)
+        monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path))
+        state = SimpleNamespace(ensure_calls=[], write_file=True, inputs=inputs)
 
-        state = SimpleNamespace(
-            folder=tmp_path,
-            uploads=[],
-            ensure_calls=[],
-            write_file=True,
-            identity=SimpleNamespace(
-                digest="ds-2026",
-                store_path="datasets/us/ds-2026/populace_year_2026.h5",
-                filename="populace_year_2026.h5",
-            ),
-        )
-
-        class FakeStore:
-            def __init__(self, bucket):
-                self.bucket = bucket
-
-            def upload_file(self, path, local_path):
-                state.uploads.append((path, str(local_path)))
-                return True
-
-        def fake_ensure_datasets(*, datasets, years, data_folder):
+        def ensure_datasets(*, datasets, years, data_folder):
             state.ensure_calls.append((datasets, years, data_folder))
             if state.write_file:
-                (tmp_path / state.identity.filename).write_bytes(b"h5-bytes")
+                (tmp_path / "populace_cps_year_2026.h5").write_bytes(b"h5-bytes")
 
-        monkeypatch.setattr(
-            artifact_keys,
-            "collect_dataset_identity",
-            lambda _country, _year: state.identity,
-        )
-        monkeypatch.setattr(artifact_store, "ArtifactStore", FakeStore)
-        monkeypatch.setattr(sr, "resolve_data_folder", lambda: str(tmp_path))
-        monkeypatch.setattr(
-            sr,
-            "_country_module",
-            lambda _country: SimpleNamespace(ensure_datasets=fake_ensure_datasets),
-        )
-        monkeypatch.setattr(
-            release_bundle,
-            "get_country_release_bundle",
-            lambda _country: SimpleNamespace(default_dataset="populace_cps"),
-        )
+        inputs.us_module.ensure_datasets = ensure_datasets
+        target = levels_us.national_year_file(2026)
+        state.entry = _entry_for(artifact_keys.year_file_identity(target), target)
+        state.folder = tmp_path
         return state
 
-    def _entry(self, path="datasets/us/ds-2026/populace_year_2026.h5"):
-        return DatasetPlanEntry(
-            year=2026,
-            digest="ds-2026",
-            path=path,
-            filename="populace_year_2026.h5",
-            exists=False,
+    def test_builds_and_uploads_under_the_planned_key(self, national_build):
+        (result,) = precompute.build_year_files_impl(
+            "bucket-x", 2026, [national_build.entry]
         )
 
-    def test_builds_and_uploads_under_the_planned_key(self, dataset_stubs):
-        result = precompute.build_dataset_impl("bucket-x", self._entry())
-        assert dataset_stubs.ensure_calls == [
-            (["populace_cps"], [2026], str(dataset_stubs.folder))
+        assert national_build.ensure_calls == [
+            (["populace_cps"], [2026], str(national_build.folder))
         ]
-        assert dataset_stubs.uploads == [
-            (
-                "datasets/us/ds-2026/populace_year_2026.h5",
-                str(dataset_stubs.folder / "populace_year_2026.h5"),
-            )
+        uploads = national_build.inputs.gcs_client.uploads
+        assert [(path, data) for _bucket, path, data, _kwargs in uploads] == [
+            (national_build.entry.path, b"h5-bytes")
         ]
         assert result.year == 2026
+        assert result.path == national_build.entry.path
         assert result.uploaded is True
         assert result.size_bytes == len(b"h5-bytes")
 
-    def test_refuses_to_upload_under_a_mismatched_key(self, dataset_stubs):
-        with pytest.raises(RuntimeError, match="refusing to upload"):
-            precompute.build_dataset_impl(
-                "bucket-x", self._entry(path="datasets/us/OTHER/file.h5")
-            )
-        assert dataset_stubs.uploads == []
+    def test_refuses_to_build_under_a_mismatched_key(self, national_build):
+        mismatched = national_build.entry.model_copy(
+            update={"path": "year-files/us/OTHER/file.h5"}
+        )
 
-    def test_fails_loudly_when_no_file_is_produced(self, dataset_stubs):
-        dataset_stubs.write_file = False
+        with pytest.raises(RuntimeError, match="refusing to build"):
+            precompute.build_year_files_impl("bucket-x", 2026, [mismatched])
+        assert national_build.ensure_calls == []
+        assert national_build.inputs.gcs_client.uploads == []
+
+    def test_fails_loudly_when_no_file_is_produced(self, national_build):
+        national_build.write_file = False
+
         with pytest.raises(RuntimeError, match="produced no file"):
-            precompute.build_dataset_impl("bucket-x", self._entry())
-        assert dataset_stubs.uploads == []
+            precompute.build_year_files_impl("bucket-x", 2026, [national_build.entry])
+        assert national_build.inputs.gcs_client.uploads == []
+
+    def test_an_empty_build_does_nothing(self, national_build):
+        assert precompute.build_year_files_impl("bucket-x", 2026, []) == []
+        assert national_build.ensure_calls == []
 
 
-class TestBuildStateDatasetsImpl:
-    """Building, checking and uploading one year's per-state datasets."""
+class TestBuildingStateYearFiles:
+    """Building, checking and uploading one year's state year files."""
 
     YEAR = 2026
 
@@ -113,10 +99,7 @@ class TestBuildStateDatasetsImpl:
         from fixtures import state_dataset_sources as sources
         from policyengine.core.scoping_strategy import RowFilterStrategy
         from policyengine.tax_benefit_models import us as us_module
-        from policyengine_simulation_executor import (
-            artifact_keys,
-            artifact_store,
-        )
+        from policyengine_simulation_executor import artifact_store
         from policyengine_simulation_executor import simulation_runtime as sr
 
         state = SimpleNamespace(
@@ -128,37 +111,47 @@ class TestBuildStateDatasetsImpl:
         )
 
         def target(state_code, fips):
-            return precompute.StateDatasetTarget(
-                region=f"state/{state_code.lower()}",
-                state_code=state_code,
-                state_fips=fips,
-                filter_variable="state_fips",
+            return YearFileTarget(
+                country="us",
+                level=DatasetLevel.STATE,
                 dataset=sources.REGIONAL_DATASET,
-                scoping_strategy=RowFilterStrategy(
-                    variable_name="state_fips", variable_value=fips
+                year=self.YEAR,
+                subset=SubsetFilter(
+                    region=f"state/{state_code.lower()}",
+                    code=state_code,
+                    variable="state_fips",
+                    value=fips,
+                    scoping_strategy=RowFilterStrategy(
+                        variable_name="state_fips", variable_value=fips
+                    ),
                 ),
+                folder=prebuilt_folder("us", sources.REGIONAL_DATASET, state_code),
             )
 
+        state.target = target
         state.targets = [
             target("UT", sources.UTAH_FIPS),
             target("WY", sources.WYOMING_FIPS),
         ]
         monkeypatch.setattr(
-            precompute_datasets, "state_dataset_targets", lambda: list(state.targets)
+            levels_us.UsStateHandler,
+            "year_file_targets",
+            lambda _handler, _year: list(state.targets),
         )
 
-        def fake_state_identity(
-            _country, year, *, dataset, state_code, state_fips, filter_variable
-        ):
-            digest = f"sd-{year}-{state_code}-{state_fips}-{filter_variable}"
+        def fake_year_file_identity(target):
+            digest = f"yf-{target.year}-{target.subset.code}-{target.subset.value}"
             return SimpleNamespace(
                 digest=digest,
-                store_path=f"state-datasets/us/{digest}/{dataset}_year_{year}.h5",
-                filename=f"{dataset}_year_{year}.h5",
+                store_path=(
+                    f"year-files/us/{digest}/{target.dataset}_year_{target.year}.h5"
+                ),
+                filename=f"{target.dataset}_year_{target.year}.h5",
+                folder=target.folder,
             )
 
         monkeypatch.setattr(
-            artifact_keys, "collect_state_dataset_identity", fake_state_identity
+            artifact_keys, "year_file_identity", fake_year_file_identity
         )
 
         class FakeStore:
@@ -208,36 +201,13 @@ class TestBuildStateDatasetsImpl:
             ),
         )
         state.sources = sources
-        state.entry = lambda state_code, fips: self._entry(
-            fake_state_identity, state_code, fips
+        state.entry = lambda state_code, fips: _entry_for(
+            fake_year_file_identity(target(state_code, fips)), target(state_code, fips)
         )
         return state
 
-    def _entry(self, identity_for, state_code, fips):
-        from fixtures.state_dataset_sources import REGIONAL_DATASET
-
-        identity = identity_for(
-            "us",
-            self.YEAR,
-            dataset=REGIONAL_DATASET,
-            state_code=state_code,
-            state_fips=fips,
-            filter_variable="state_fips",
-        )
-        return StateDatasetPlanEntry(
-            year=self.YEAR,
-            state_code=state_code,
-            region=f"state/{state_code.lower()}",
-            dataset=REGIONAL_DATASET,
-            digest=identity.digest,
-            path=identity.store_path,
-            filename=identity.filename,
-            folder=f"state-datasets/{REGIONAL_DATASET}/{state_code}",
-            exists=False,
-        )
-
     def _build(self, state_build, entries):
-        return precompute.build_state_datasets_impl(
+        return precompute.build_year_files_impl(
             "bucket-x", self.YEAR, entries, work_folder=state_build.work_folder
         )
 
@@ -260,9 +230,8 @@ class TestBuildStateDatasetsImpl:
         assert sources.stored_ids(wyoming, "household") == [3]
         assert sources.stored_ids(wyoming, "person") == [4]
         assert sources.stored_ids(wyoming, "spm_unit") == [3]
-        assert [(result.state_code, result.year) for result in results] == [
-            ("UT", 2026),
-            ("WY", 2026),
+        assert [(result.path, result.year) for result in results] == [
+            (entry.path, 2026) for entry in self._both_states(state_build)
         ]
 
     def test_keeps_every_weight_unchanged(self, state_build):
@@ -330,7 +299,7 @@ class TestBuildStateDatasetsImpl:
         stored = dict(state_build.uploads)
 
         for target, entry in zip(state_build.targets, entries, strict=True):
-            expected = target.scoping_strategy.apply(
+            expected = target.subset.scoping_strategy.apply(
                 entity_data=state_build.sources.source_entity_frames(),
                 group_entities=US_GROUP_ENTITIES,
                 year=self.YEAR,
@@ -338,7 +307,7 @@ class TestBuildStateDatasetsImpl:
             for entity, frame in expected.items():
                 assert state_build.sources.stored_ids(stored[entry.path], entity) == [
                     int(value) for value in frame[f"{entity}_id"]
-                ], (target.state_code, entity)
+                ], (target.subset.code, entity)
 
     def test_prepares_the_full_country_year_file_once(self, state_build):
         self._build(state_build, self._both_states(state_build))
@@ -384,33 +353,10 @@ class TestBuildStateDatasetsImpl:
 
         results = self._build(state_build, self._both_states(state_build))
 
-        assert [result.state_code for result in results] == ["UT", "WY"]
-
-    def test_refuses_a_target_without_a_row_filter(self, state_build):
-        from dataclasses import replace
-
-        state_build.targets[0] = replace(state_build.targets[0], scoping_strategy=None)
-
-        with pytest.raises(RuntimeError, match="no row filter"):
-            self._build(state_build, self._both_states(state_build))
-        assert state_build.uploads == []
-        assert state_build.ensure_calls == []
+        assert len(results) == 2
 
     def test_refuses_a_state_with_no_households(self, state_build):
-        from policyengine.core.scoping_strategy import RowFilterStrategy
-
-        state_build.targets.append(
-            precompute.StateDatasetTarget(
-                region="state/id",
-                state_code="ID",
-                state_fips=16,
-                filter_variable="state_fips",
-                dataset=state_build.sources.REGIONAL_DATASET,
-                scoping_strategy=RowFilterStrategy(
-                    variable_name="state_fips", variable_value=16
-                ),
-            )
-        )
+        state_build.targets.append(state_build.target("ID", 16))
 
         with pytest.raises(ValueError, match="No households"):
             self._build(state_build, [state_build.entry("ID", 16)])
@@ -418,7 +364,7 @@ class TestBuildStateDatasetsImpl:
 
     def test_refuses_a_plan_entry_whose_key_differs_in_the_container(self, state_build):
         entry = state_build.entry("UT", state_build.sources.UTAH_FIPS)
-        mismatched = entry.model_copy(update={"path": "state-datasets/us/OTHER/x.h5"})
+        mismatched = entry.model_copy(update={"path": "year-files/us/OTHER/x.h5"})
 
         with pytest.raises(RuntimeError, match="refusing to build"):
             self._build(state_build, [mismatched])
@@ -427,7 +373,7 @@ class TestBuildStateDatasetsImpl:
     def test_refuses_a_state_the_container_does_not_target(self, state_build):
         state_build.targets = state_build.targets[:1]
 
-        with pytest.raises(RuntimeError, match="state/wy"):
+        with pytest.raises(RuntimeError, match="WY"):
             self._build(state_build, self._both_states(state_build))
         assert state_build.ensure_calls == []
 
@@ -435,7 +381,7 @@ class TestBuildStateDatasetsImpl:
         entry = state_build.entry("UT", state_build.sources.UTAH_FIPS)
 
         with pytest.raises(ValueError, match="2027"):
-            precompute.build_state_datasets_impl(
+            precompute.build_year_files_impl(
                 "bucket-x",
                 2027,
                 [entry],

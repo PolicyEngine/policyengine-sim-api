@@ -32,30 +32,45 @@ def _region_group():
     )
 
 
+_DEFAULT_DATASET = SimpleNamespace(name="populace_us_2024", is_default=True)
+_STATE_LEVEL_DATASET = SimpleNamespace(
+    name="populace_us_2024_acs_local", is_default=False
+)
+
+
+def _record_identity_collection(monkeypatch, calls, simulation_id):
+    """Replace the identity collectors with ones that record what they were asked."""
+
+    def year_file_identity(target):
+        return SimpleNamespace(target=target)
+
+    def baseline_identity(year_file, scope, spm=None):
+        calls.append(
+            {
+                "country": year_file.target.country,
+                "year": year_file.target.year,
+                "region": scope.region,
+                "scope_key": scope.scope_key,
+            }
+        )
+        return SimpleNamespace(simulation_id=simulation_id)
+
+    monkeypatch.setattr(ak, "year_file_identity", year_file_identity)
+    monkeypatch.setattr(ak, "baseline_identity", baseline_identity)
+
+
 class TestDeterministicBaselineId:
     @pytest.fixture
     def collected(self, monkeypatch):
         calls = []
-
-        def fake_collect(country, year, *, region, scope_key):
-            calls.append(
-                {
-                    "country": country,
-                    "year": year,
-                    "region": region,
-                    "scope_key": scope_key,
-                }
-            )
-            return SimpleNamespace(simulation_id="bl1-deadbeefdeadbeef")
-
-        monkeypatch.setattr(ak, "collect_baseline_identity", fake_collect)
+        _record_identity_collection(monkeypatch, calls, "bl3-deadbeefdeadbeef")
         return calls
 
     def _id(self, _collected, **overrides):
         kwargs = {
             "params": {"scope": "macro"},
             "country": "us",
-            "dataset_is_default": True,
+            "dataset": _DEFAULT_DATASET,
             "policy": None,
             "region_code": "us",
             "scoping_strategy": None,
@@ -65,7 +80,7 @@ class TestDeterministicBaselineId:
         return ba.deterministic_baseline_id(ba.BaselineIdentityRequest(**kwargs))
 
     def test_national_baseline_qualifies(self, collected):
-        assert self._id(collected) == "bl1-deadbeefdeadbeef"
+        assert self._id(collected) == "bl3-deadbeefdeadbeef"
         assert collected == [
             {"country": "us", "year": 2026, "region": "national", "scope_key": None}
         ]
@@ -77,7 +92,7 @@ class TestDeterministicBaselineId:
             region_code="region_group/state/ca+state/wv",
             scoping_strategy=group,
         )
-        assert sim_id == "bl1-deadbeefdeadbeef"
+        assert sim_id == "bl3-deadbeefdeadbeef"
         assert collected[0]["region"] == "region_group/state/ca+state/wv"
         assert collected[0]["scope_key"] == group.cache_key
 
@@ -97,7 +112,7 @@ class TestDeterministicBaselineId:
         elif kind == "scalar":
             policy = {path: 0.21}
 
-        assert self._id(collected) == "bl1-deadbeefdeadbeef"
+        assert self._id(collected) == "bl3-deadbeefdeadbeef"
         baseline_calls = list(collected)
         assert self._id(collected, policy=policy) is None
         assert (
@@ -105,7 +120,7 @@ class TestDeterministicBaselineId:
                 ba.BaselineIdentityRequest(
                     {"scope": "macro"},
                     country="us",
-                    dataset_is_default=True,
+                    dataset=_DEFAULT_DATASET,
                     policy=policy,
                     region_code="us",
                     scoping_strategy=None,
@@ -122,7 +137,7 @@ class TestDeterministicBaselineId:
         assert self._id(collected, params=params) is None
 
     def test_nondefault_dataset_disqualifies(self, collected):
-        assert self._id(collected, dataset_is_default=False) is None
+        assert self._id(collected, dataset=_STATE_LEVEL_DATASET) is None
 
     def test_a_uk_local_area_baseline_gets_no_deterministic_id(self, collected):
         # A UK-wide local-area breakdown simulates the whole local-area
@@ -130,7 +145,10 @@ class TestDeterministicBaselineId:
         # never load the national file's precomputed artifact.
         assert (
             self._id(
-                collected, country="uk", region_code="uk", dataset_is_default=False
+                collected,
+                country="uk",
+                region_code="uk",
+                dataset=SimpleNamespace(name="microcosm_dense", is_default=False),
             )
             is None
         )
@@ -156,13 +174,13 @@ class TestDeterministicBaselineId:
             msg = "manifest unavailable"
             raise RuntimeError(msg)
 
-        monkeypatch.setattr(ak, "collect_baseline_identity", boom)
+        monkeypatch.setattr(ak, "year_file_identity", boom)
         assert (
             ba.deterministic_baseline_id(
                 ba.BaselineIdentityRequest(
                     {"scope": "macro"},
                     country="us",
-                    dataset_is_default=True,
+                    dataset=_DEFAULT_DATASET,
                     policy=None,
                     region_code="us",
                     scoping_strategy=None,
@@ -430,16 +448,17 @@ class TestBuildSimulationSelection:
     def test_qualifying_baseline_uses_artifact_class(self, wired):
         from policyengine_simulation_executor import simulation_runtime as sr
 
-        wired.id = "bl1-deadbeefdeadbeef"
+        wired.id = "bl3-deadbeefdeadbeef"
+        wired.dataset_selection = SimpleNamespace(is_default=True)
         sr._build_simulation(
             {"country": "us", "scope": "macro"},
             dataset="dataset",
-            dataset_selection=SimpleNamespace(is_default=True),
+            dataset_selection=wired.dataset_selection,
             policy=None,
             region=sr.RegionResolution(code="us"),
         )
         assert wired.plain_kwargs is None
-        assert wired.artifact_kwargs["id"] == "bl1-deadbeefdeadbeef"
+        assert wired.artifact_kwargs["id"] == "bl3-deadbeefdeadbeef"
         assert wired.artifact_kwargs["dataset"] == "dataset"
         expected_selection = (
             None if wired.capability is None else wired.capability.defaults.model_dump()
@@ -455,11 +474,12 @@ class TestBuildSimulationSelection:
         assert wired.id_kwargs == {
             "params": expected_params,
             "country": "us",
-            "dataset_is_default": True,
+            "dataset": wired.dataset_selection,
             "policy": None,
             "region_code": "us",
             "scoping_strategy": None,
             "year": sr.DEFAULT_YEAR,
+            "state_code": None,
         }
 
     def test_non_qualifying_uses_plain_simulation(self, wired):
@@ -502,12 +522,7 @@ def test_bounded_reform_build_keeps_current_law_artifact_reuse(monkeypatch):
         lambda **kwargs: SimpleNamespace(kind="plain", **kwargs),
     )
     identities = []
-
-    def collect_identity(*args, **kwargs):
-        identities.append((args, kwargs))
-        return SimpleNamespace(simulation_id="bl1-current-law")
-
-    monkeypatch.setattr(ak, "collect_baseline_identity", collect_identity)
+    _record_identity_collection(monkeypatch, identities, "bl3-current-law")
     kwargs = {
         "dataset": "dataset",
         "dataset_selection": sr.DatasetSelection("default", "default", is_default=True),
@@ -524,7 +539,7 @@ def test_bounded_reform_build_keeps_current_law_artifact_reuse(monkeypatch):
     )
 
     assert baseline.kind == "artifact"
-    assert baseline.id == "bl1-current-law"
+    assert baseline.id == "bl3-current-law"
     assert baseline.policy is None
     assert reform.kind == "plain"
     assert isinstance(reform.policy, policyengine_core.Policy)
@@ -542,7 +557,7 @@ class TestIdentityErrorContract:
         return {
             "params": {"scope": "macro"},
             "country": "us",
-            "dataset_is_default": True,
+            "dataset": _DEFAULT_DATASET,
             "policy": None,
             "region_code": "us",
             "scoping_strategy": None,
@@ -554,7 +569,7 @@ class TestIdentityErrorContract:
             msg = "receipt unreadable"
             raise RuntimeError(msg)
 
-        monkeypatch.setattr(ak, "collect_baseline_identity", boom)
+        monkeypatch.setattr(ak, "year_file_identity", boom)
         with pytest.raises(RuntimeError, match="receipt unreadable"):
             ba.qualifying_baseline_identity(
                 ba.BaselineIdentityRequest(**self._kwargs())
@@ -565,7 +580,7 @@ class TestIdentityErrorContract:
             msg = "receipt unreadable"
             raise RuntimeError(msg)
 
-        monkeypatch.setattr(ak, "collect_baseline_identity", boom)
+        monkeypatch.setattr(ak, "year_file_identity", boom)
         assert (
             ba.deterministic_baseline_id(ba.BaselineIdentityRequest(**self._kwargs()))
             is None
