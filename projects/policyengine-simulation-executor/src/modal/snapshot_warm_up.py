@@ -1,17 +1,25 @@
 """Run one calculation before Modal takes the simulation workers' memory snapshot.
 
-A process's first calculation for a year builds work that its later
-calculations for that year reuse: the US parameter tree's values at the
-calculation date (``ParameterNode._get_at_instant``) and the SPM threshold
-amounts. Profiled on Modal ``testing`` on 2026-11-25, that took about 20 s of
-the first calculation, and the snapshot hook's model preload doesn't do it.
+A process's first calculation for a year does work that its later
+calculations for that year reuse. Profiled on Modal ``testing`` on
+2026-11-25, that was about 20 s of the first calculation, mostly building the
+US parameter values at the calculation date (``ParameterNode._get_at_instant``)
+and the SPM threshold amounts; the snapshot hook's model preload does neither.
+What carries from one request to the next is what the packages keep for the
+whole process: every simulation's baseline branch shares the module-level
+parameter tree and its values at each date (``share_spm_policy`` in
+policyengine-us), and spm-calculator keeps its threshold tables and price
+index series. A request's reform builds its own parameter tree, and each
+simulation its own SPM amount cache, so those are built in every request.
+
 So ``SimulationWorker`` and ``SimulationSegmentWorker`` in
 ``src/modal/app.py`` run :func:`warm_up_first_calculation` in their
 ``@modal.enter(snap=True)`` hook, after the preload, and every container
 restored from the snapshot starts with that work done for the warm-up year.
-In the same measurement, a warm-up of one region group made restored
-containers' first calculation 11 to 15 s faster, with identical results, and the
-containers Modal took snapshots from started 72 to 97 s later.
+Measured on Modal ``testing`` (2026-11-25 on 8 CPUs, 2026-11-26 on 1 CPU), a
+warm-up of another region group under another reform made restored
+containers' first calculation 11 to 16 s faster, with identical results, and
+the containers Modal took snapshots from started about 70 to 100 s later.
 
 The warm-up calculates one segmented national run's child request: a region
 group whose dataset and current-law baseline the precompute bakes into the
@@ -25,8 +33,9 @@ where it is safe before a snapshot, and only where Modal takes one:
   save that call about 15 s.
 - **No connection.** It runs only when the US models were preloaded, since
   importing them again could fetch the data release manifest again, and
-  when the group's year file and baseline are in the image's data folder,
-  so nothing is downloaded or built from source. It skips the Google Cloud
+  when the group's year file and baseline are in the image's data folder
+  and the year file passes .py's reuse checks, so nothing is downloaded or
+  built from source. It skips the Google Cloud
   credential setup of ``run_simulation_impl``, which reads a Modal Secret:
   Secrets aren't read before the snapshot.
 - **No telemetry.** It configures no observability and gives the
@@ -35,8 +44,8 @@ where it is safe before a snapshot, and only where Modal takes one:
 - **Nothing left for a request.** It removes the simulations it added to
   .py's in-process cache and the output files it saved in the data folder,
   so a later call loads its baseline from the image as it would without the
-  warm-up. Only what .py and policyengine-core keep for every calculation
-  stays: the values built for the warm-up year.
+  warm-up. What stays is what the packages keep for the whole process, as
+  above, and the modules the calculation imported.
 - **Never fatal.** A failure or skip logs a warning, and the container
   starts as it would without the warm-up.
 """
@@ -174,9 +183,9 @@ def _calculate_unless_unsafe() -> str | None:
     )
 
     data_folder = Path(resolve_data_folder())
-    missing = _missing_baked_inputs(data_folder)
-    if missing:
-        return f"the image's data folder lacks {', '.join(missing)}"
+    baked_inputs_problem = _baked_inputs_problem(data_folder)
+    if baked_inputs_problem is not None:
+        return baked_inputs_problem
     with _removing_what_the_calculation_leaves(data_folder):
         _run_simulation_impl_core(
             warm_up_request(),
@@ -185,11 +194,13 @@ def _calculate_unless_unsafe() -> str | None:
     return None
 
 
-def _missing_baked_inputs(data_folder: Path) -> list[str]:
-    """Return the warm-up's baked files that aren't in ``data_folder``.
+def _baked_inputs_problem(data_folder: Path) -> str | None:
+    """Return why the warm-up can't use the image's baked inputs, or None.
 
     The year file and the current-law baseline are named as the precompute
-    names them, and as the calculation looks for them.
+    names them, and as the calculation looks for them. The year file must
+    also pass .py's reuse checks: otherwise ``ensure_datasets`` would build it
+    again from the dataset's source, which it may download.
     """
     from policyengine_simulation_executor.artifact_keys import (  # noqa: PLC0415  # loaded in the worker container, not at deploy time
         baseline_artifact_filename,
@@ -197,15 +208,20 @@ def _missing_baked_inputs(data_folder: Path) -> list[str]:
     from policyengine_simulation_executor.precompute_planning import (  # noqa: PLC0415  # resolved per call so tests can patch precompute_planning.cohort_identity
         cohort_identity,
     )
+    from policyengine_simulation_executor.state_datasets import (  # noqa: PLC0415  # resolved per call so tests can patch state_datasets.year_file_reuse_problem
+        year_file_reuse_problem,
+    )
 
     identity = cohort_identity(WARM_UP_YEAR, list(WARM_UP_REGION_GROUP))
-    filenames = (
-        identity.dataset.filename,
-        baseline_artifact_filename(identity.storage_id),
-    )
-    return [
-        filename for filename in filenames if not (data_folder / filename).is_file()
-    ]
+    year_file = data_folder / identity.dataset.filename
+    baseline_file = data_folder / baseline_artifact_filename(identity.storage_id)
+    missing = [path.name for path in (year_file, baseline_file) if not path.is_file()]
+    if missing:
+        return f"the image's data folder lacks {', '.join(missing)}"
+    reuse_problem = year_file_reuse_problem(year_file, identity.dataset.dataset)
+    if reuse_problem is not None:
+        return f"its year file {year_file.name} would be built again: {reuse_problem}"
+    return None
 
 
 @contextlib.contextmanager

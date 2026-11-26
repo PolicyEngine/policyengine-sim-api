@@ -569,7 +569,7 @@ class _CountryModelsLoadedBeforeSnapshot:
         Telemetry is non-fatal: a failed record must never stop the preload.
         Then, in a container Modal snapshots, runs one warm-up calculation
         (``src/modal/snapshot_warm_up.py``), so restored containers start with
-        the first precompute year's values built.
+        work their first calculation for the first precompute year would do.
         """
         with contextlib.suppress(Exception):
             _CONTAINER_CALLS.record_snapshot_hook()
