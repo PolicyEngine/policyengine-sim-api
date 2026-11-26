@@ -19,9 +19,11 @@ name: Roll back Simulation API
 #   releases, including the failed one, stay pinnable.
 #
 # The gateway runs comparison requests only on apps that define the
-# SimulationWorker class (policyengine.py 6.20.0 and later), so each way
-# refuses to route latest to an app Modal finds without that class, and
-# leaves routing unchanged.
+# SimulationWorker class (policyengine.py 6.20.0 and later). So deploy_run_id
+# and policyengine_version refuse to move latest to another app Modal finds
+# without that class, and leave routing unchanged. resolve_pending_publication
+# always puts back what the unfinished publication replaced: every routing
+# change refuses while one is pending.
 
 on:
   workflow_dispatch:
