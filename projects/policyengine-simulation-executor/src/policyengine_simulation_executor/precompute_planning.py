@@ -174,6 +174,7 @@ def _source_file_entries(
                     country=prebuilt.country,
                     level=target.level,
                     dataset=target.dataset,
+                    digest=identity.digest,
                     sha256=identity.dataset_sha256,
                     path=identity.store_path,
                     filename=identity.filename,

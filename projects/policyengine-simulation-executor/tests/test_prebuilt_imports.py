@@ -59,6 +59,9 @@ def _run_without_database_packages(code: str) -> subprocess.CompletedProcess[str
         "policyengine_simulation_executor.stage12_cache.levels_us",
         "policyengine_simulation_executor.stage12_cache.levels_uk",
         "policyengine_simulation_executor.national_partition",
+        "policyengine_simulation_executor.simulation_runtime",
+        "policyengine_simulation_executor.baseline_artifacts",
+        "policyengine_simulation_executor.precompute",
     ],
 )
 def test_imports_without_the_database_packages(module):

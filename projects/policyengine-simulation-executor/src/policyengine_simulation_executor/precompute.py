@@ -151,8 +151,7 @@ def build_manifest(
             filename=entry.filename,
             folder=entry.folder,
             year=None,
-            # A source file is addressed by its certified SHA-256.
-            digest=entry.sha256,
+            digest=entry.digest,
             sha256=stored[entry.path].sha256,
             size_bytes=stored[entry.path].size_bytes,
         )
@@ -291,7 +290,9 @@ def run_precompute(
     Everything crossing a handle is a plain dict (Modal's serialization
     boundary); it is validated back into models immediately on return.
     The determinism check recomputes the first computed baseline of each
-    level that computed any (a no-op run stays a no-op). Returns the manifest
+    level that computed any (a no-op run stays a no-op). A plan that needs a
+    source file stops before any build, since nothing copies one into the
+    store yet. Returns the manifest
     digest; the LAST echoed line is the ``MANIFEST_DIGEST=`` contract the
     deploy job parses.
     """
@@ -300,6 +301,13 @@ def run_precompute(
         functions.plan_artifacts.remote(bucket, country)
     )
     work = select_work(plan, force=force)
+    if work.source_files:
+        missing = ", ".join(entry.path for entry in work.source_files)
+        msg = (
+            "This precompute cannot copy source files into the store yet, and "
+            f"the plan needs these source files: {missing}"
+        )
+        raise SystemExit(msg)
     echo(
         f"Plan: {len(plan.year_files)} year files ({len(work.year_files)} to "
         f"build), {len(plan.baselines)} baselines ({len(work.baselines)} to compute)"

@@ -101,11 +101,15 @@ class BaselinePlanEntry(_StrictModel):
 
 
 class SourceFilePlanEntry(_StrictModel):
-    """A source dataset copied into the image as is, addressed by its certified hash."""
+    """A source dataset copied into the image as is, addressed by its certified hash.
+
+    ``digest`` is its ``sf1`` identity digest, which the manifest records.
+    """
 
     country: str
     level: DatasetLevel
     dataset: str
+    digest: str
     sha256: str
     path: str
     filename: str
