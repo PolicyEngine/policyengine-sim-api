@@ -722,14 +722,11 @@ def test_gateway_poll_returns_structured_400(monkeypatch, code):
     assert response.json()["result"] is None
 
 
-class _HydratedWorkerClass:
+class _WorkerClassHandle:
     """A ``modal.Cls`` lookup of a class the app defines."""
 
     def __init__(self, worker):
         self.worker = worker
-
-    def hydrate(self):
-        return self
 
     def __call__(self):
         return self.worker
@@ -762,7 +759,7 @@ def test_gateway_submission_uses_registry_capability_before_spawn(monkeypatch):
         "modal",
         SimpleNamespace(
             Cls=SimpleNamespace(
-                from_name=lambda *_args: _HydratedWorkerClass(simulation_worker)
+                from_name=lambda *_args: _WorkerClassHandle(simulation_worker)
             )
         ),
     )

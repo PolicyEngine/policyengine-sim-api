@@ -152,22 +152,6 @@ def test_simulation_workers_are_classes_restored_from_memory_snapshots(monkeypat
         "SimulationWorker": {**worker_options, **simulation_worker_resources},
         "SimulationSegmentWorker": {**worker_options, **segment_worker_resources},
     }
-    # Plain functions with the same names and resources stay, without a
-    # snapshot, for callers still running the code from before the classes:
-    # the gateway while a deploy is under way, and runs that started before it.
-    function_form_options = {
-        option: value
-        for option, value in worker_options.items()
-        if option != "enable_memory_snapshot"
-    }
-    assert function_options["run_simulation"] == {
-        **function_form_options,
-        **simulation_worker_resources,
-    }
-    assert function_options["run_simulation_segment"] == {
-        **function_form_options,
-        **segment_worker_resources,
-    }
     # The budget-window parent stays a small plain function with no snapshot.
     assert "enable_memory_snapshot" not in function_options["run_budget_window_batch"]
 
@@ -193,8 +177,25 @@ def test_simulation_workers_use_the_contract_names(monkeypatch):
         getattr(segment_worker, simulation_workers.SEGMENT_WORKER_METHOD)
         in recorded_methods
     )
-    # Apps deployed before the class form define run_simulation as a function.
-    assert simulation_workers.FUNCTION_FORM_SIMULATION_WORKER == "run_simulation"
+
+
+def test_the_simulation_workers_are_not_also_plain_functions(monkeypatch):
+    from policyengine_simulation_contract import simulation_workers
+
+    install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    # Every caller of an app built from this code, the gateway included,
+    # reaches the workers only through their classes.
+    plain_function_names = {name for name, _options in app.app.function_calls}
+    for worker_method_name in (
+        simulation_workers.SIMULATION_WORKER_METHOD,
+        simulation_workers.SEGMENT_WORKER_METHOD,
+    ):
+        assert worker_method_name not in plain_function_names
+        assert not hasattr(app, worker_method_name)
 
 
 def test_both_simulation_workers_load_the_country_models_before_the_snapshot(

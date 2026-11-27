@@ -187,8 +187,8 @@ its running segments.
 
 ### Container start and call number
 
-Each call of the versioned app's workers (`run_simulation` and
-`run_simulation_segment`, as class methods and as plain functions) and of
+Each call of the versioned app's workers (the `SimulationWorker.run_simulation`
+and `SimulationSegmentWorker.run_simulation_segment` methods) and of
 `run_budget_window_batch` sets two attributes on its operation, so on its
 `operation.completed` log record and its span. Only the operation's span
 carries them, not its child spans such as `country_module_load`.
@@ -197,7 +197,7 @@ operation opens, so a call that fails or is preempted carries them too.
 
 | Attribute | Values |
 |---|---|
-| `container_start` | `restored_from_snapshot`: the container was restored from a memory snapshot, so it started with the country models loaded. `took_snapshot`: Modal took the snapshot from this container, after the snapshot hook loaded the models in it. `no_snapshot`: the container neither took a snapshot nor was restored from one. That is every container of the plain `run_simulation` and `run_simulation_segment` functions and of `run_budget_window_batch`, which have no snapshot hook, and a worker class container that Modal started without snapshots, whose hook loaded the models before its first call. |
+| `container_start` | `restored_from_snapshot`: the container was restored from a memory snapshot, so it started with the country models loaded. `took_snapshot`: Modal took the snapshot from this container, after the snapshot hook loaded the models in it. `no_snapshot`: the container neither took a snapshot nor was restored from one. That is every container of the plain `run_budget_window_batch` function, which has no snapshot hook, and a worker class container that Modal started without snapshots, whose hook loaded the models before its first call. |
 | `container_call_number` | The call's place among the container's calls that opened their operation: 1 for the first, 2 for the second, and so on. A call counts even when reading or setting these attributes fails. |
 
 How a call tells them apart, in Modal 1.6.4:
@@ -234,12 +234,13 @@ times each container was queued and became ready (`enqueued_at` and
 `started_at`), which include scheduling as well as the restore. A call's spans show the setup still left
 in it:
 
-- In the first call of a container of the plain `run_simulation` or
-  `run_simulation_segment` function, which loads the models itself, most of
-  that setup is in the `country_module_load` span, which
-  imports policyengine.py's country model module, and, for a US run, in the
-  time from the operation's start to that span, which includes the SPM
-  capability check. A segmented national run's `run_simulation` call opens no
+- In apps deployed before the worker classes, whose workers load the models
+  in each container's first call, most of that setup is in the
+  `country_module_load` span, which imports policyengine.py's country model
+  module, and, for a US run, in the time from the operation's start to that
+  span, which includes the SPM capability check. Those apps' records carry
+  neither attribute, so `container_call_number` can't pick out a container's
+  first call. A segmented national run's `run_simulation` call opens no
   `country_module_load` span: its segment workers' calls do.
 - In a container whose hook loaded the models, the first call's time there
   should be close to later calls' (`container_call_number` above 1).
