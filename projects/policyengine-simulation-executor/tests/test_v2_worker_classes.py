@@ -7,6 +7,7 @@ import os
 import random
 import subprocess
 import sys
+import typing
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -23,6 +24,12 @@ from policyengine_simulation_executor.stage12_timeouts import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+OBSERVABILITY_CONTEXT = {
+    "captured_at": "2026-11-27T00:00:00Z",
+    "observability_id": "00000000-0000-4000-8000-000000000001",
+    "traceparent": "00-00000000000000000000000000000001-0000000000000001-01",
+}
+SIMULATION_RUN_ID = "00000000-0000-4000-8000-00000000b001"
 WORKER_METHOD_NAMES = (
     "run_single_simulation_us",
     "run_single_simulation_uk",
@@ -132,6 +139,17 @@ def test_each_v2_worker_class_has_one_snapshot_hook_and_one_restore_hook(
         assert worker_class.reseed_random_after_restore is restore_hooks[0]
 
 
+def test_the_v2_worker_classes_annotations_resolve_at_run_time(monkeypatch) -> None:
+    # Modal reads a class's annotations with typing.get_type_hints, when it
+    # deploys the class and when a container starts it, once the class
+    # declares a modal.parameter.
+    v2_app = _load_v2_app(monkeypatch)
+
+    for method_name in WORKER_METHOD_NAMES:
+        type_hints = typing.get_type_hints(_worker_class(v2_app, method_name))
+        assert "snapshot_countries" in type_hints
+
+
 def test_each_v2_worker_class_loads_only_its_own_countrys_models(
     monkeypatch,
 ) -> None:
@@ -164,10 +182,13 @@ def test_importing_the_v2_app_loads_neither_countrys_models() -> None:
         "    'policyengine.tax_benefit_models.uk',\n"
         "}))\n"
     )
+    # Without the deploy step's inputs, the import reads no cache manifest
+    # and checks no app name or bundle values.
     environment = {
         name: value
         for name, value in os.environ.items()
-        if name != "POLICYENGINE_SKIP_COUNTRY_IMPORTS"
+        if name not in {"POLICYENGINE_SKIP_COUNTRY_IMPORTS", "MODAL_APP_NAME"}
+        and not name.startswith("STAGE12_")
     }
 
     imported = subprocess.run(
@@ -228,6 +249,7 @@ class RecordingRuntime:
 
     def __init__(self) -> None:
         self.operation_names: list[str] = []
+        self.operation_keywords: list[dict] = []
         self.shutdown_calls = 0
 
     def set_context(self, **_attributes) -> None:
@@ -237,8 +259,9 @@ class RecordingRuntime:
         return {}
 
     @contextmanager
-    def operation(self, name, **_keywords):
+    def operation(self, name, **keywords):
         self.operation_names.append(name)
+        self.operation_keywords.append(keywords)
         yield
 
     def shutdown(self) -> None:
@@ -272,13 +295,19 @@ def _call_worker(monkeypatch, v2_app, worker) -> dict:
     if worker.__name__ == SEGMENT_WORKER_METHOD:
         result = worker(
             {"simulation": {"role": "baseline"}, "segment_index": 0},
-            observability_context=None,
+            observability_context=OBSERVABILITY_CONTEXT,
+            simulation_run_id=SIMULATION_RUN_ID,
         )
     else:
-        result = worker({"role": "baseline"}, {}, observability_context=None)
+        result = worker(
+            {"role": "baseline"}, {}, observability_context=OBSERVABILITY_CONTEXT
+        )
     return {
         "result": result,
         "operations": runtime.operation_names,
+        # The call's own observability context, and for a segment the
+        # simulation run it names, reach its operation.
+        "operation_keywords": runtime.operation_keywords,
         "shutdown_calls": runtime.shutdown_calls,
         "modal_call_id": received_keywords.get("modal_call_id"),
         "required_country": received_keywords.get("required_country"),
@@ -302,6 +331,13 @@ def test_a_v2_worker_class_method_runs_the_same_code_as_its_plain_function(
     assert through_the_class == through_the_function
     assert through_the_class["shutdown_calls"] == 1
     assert len(through_the_class["operations"]) == 1
+    (operation_keywords,) = through_the_class["operation_keywords"]
+    assert (
+        operation_keywords["remote_context"]["observability_id"]
+        == (OBSERVABILITY_CONTEXT["observability_id"])
+    )
+    if method_name == SEGMENT_WORKER_METHOD:
+        assert operation_keywords["attributes"]["database_row_id"] == SIMULATION_RUN_ID
     if method_name != SEGMENT_WORKER_METHOD:
         assert through_the_class["modal_call_id"] == "fc-worker-call"
 
@@ -325,6 +361,8 @@ def test_a_v2_deploy_with_a_modal_client_older_than_1_6_4_is_refused(
         importlib.import_module("src.modal.v2_app")
 
     assert client_version in str(refused.value)
+    # The message says how to deploy this app from the locked environment.
+    assert "modal deploy src/modal/v2_app.py" in str(refused.value)
     sys.modules.pop("src.modal.v2_images", None)
     sys.modules.pop("src.modal.v2_app", None)
 
