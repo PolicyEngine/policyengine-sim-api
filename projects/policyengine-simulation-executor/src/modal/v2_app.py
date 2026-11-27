@@ -138,7 +138,6 @@ modal_worker_database_secret = modal.Secret.from_name(
     required_keys=[MODAL_WORKER_DATABASE_URL_ENV],
 )
 report_run_writer_secrets = [*worker_secrets, modal_worker_database_secret]
-# How this container started, and its calls' numbers: one worker per container.
 _CONTAINER_CALLS = ContainerCalls()
 
 
@@ -235,6 +234,7 @@ def _run_single_simulation_segment_us(
         service_role="stage12_segment_worker",
         platform="modal",
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
+        service_version=RESOLVED_BUNDLE.bundle.policyengine_version,
     )
 
     try:
@@ -243,6 +243,7 @@ def _run_single_simulation_segment_us(
             STAGE12_SEGMENT_STAGES.name(Stage.STAGE12_SEGMENT_EXECUTION),
             attributes={
                 "runner_name": "stage12",
+                "modal_app_name": APP_NAME,
                 "simulation_role": payload.get("simulation", {}).get("role"),
                 "segment_index": payload.get("segment_index"),
                 **stage12_runtime.operation_record_attributes(
@@ -280,6 +281,7 @@ def _run_single_simulation_us(
         service_role="stage12_simulation_worker",
         platform="modal",
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
+        service_version=RESOLVED_BUNDLE.bundle.policyengine_version,
     )
 
     # Read inside ``try``, so the runtime is shut down whatever happens.
@@ -305,6 +307,7 @@ def _run_single_simulation_us(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
                 "runner_name": "stage12",
+                "modal_app_name": APP_NAME,
                 "simulation_role": payload.get("role"),
                 **stage12_runtime.simulation_worker_record_attributes(
                     context, modal_call_id
@@ -346,6 +349,7 @@ def _run_single_simulation_uk(
         service_role="stage12_simulation_worker",
         platform="modal",
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
+        service_version=RESOLVED_BUNDLE.bundle.policyengine_version,
     )
     try:
         modal_call_id = modal.current_function_call_id()
@@ -354,6 +358,7 @@ def _run_single_simulation_uk(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
                 "runner_name": "stage12",
+                "modal_app_name": APP_NAME,
                 "simulation_role": payload.get("role"),
                 **stage12_runtime.simulation_worker_record_attributes(
                     context, modal_call_id
@@ -394,7 +399,6 @@ class _V2CountryModelsLoadedBeforeSnapshot:
     @modal.enter(snap=True)
     def load_country_models(self) -> None:
         """Load the class's country models, and for the US the SPM capability."""
-        # For each call's container_start; a failed record never stops the preload.
         with contextlib.suppress(Exception):
             _CONTAINER_CALLS.record_snapshot_hook()
         preload_country_models(self.snapshot_countries)
