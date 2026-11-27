@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from policyengine_simulation_contract.job_progress import (
     JOB_PROGRESS_CAPABILITY_VERSION,
+    JOB_SUBMITTED_AT_PARAM,
     JobExecution,
     JobProgressRecord,
     JobSegmentProgress,
@@ -85,6 +86,16 @@ class TestSubmission:
 
         metadata = mock_modal["dicts"][JOB_METADATA_DICT_NAME][job_id]
         assert metadata["job_progress"] is None
+
+    def test__the_spawned_job_carries_its_submission_time(
+        self, mock_modal, client: TestClient
+    ):
+        # The worker records the job's queue time from it.
+        job_id = _submit(client)
+
+        metadata = mock_modal["dicts"][JOB_METADATA_DICT_NAME][job_id]
+        spawned_payload = mock_modal["func"].last_payload
+        assert spawned_payload[JOB_SUBMITTED_AT_PARAM] == metadata["submitted_at"]
 
 
 class TestStageReportingWorker:
