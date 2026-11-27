@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 
 import modal
 from policyengine_simulation_contract.stage12_simulation_workers import (
-    SEGMENT_WORKER_CLASS,
     SEGMENT_WORKER_METHOD,
 )
 from policyengine_simulation_observability.stages import (
@@ -23,6 +22,7 @@ from .failure_recording import FailureSite, report_failure
 from .failures import Stage12CancellationError, Stage12ExecutionError
 from .partition import stage12_region_groups_for_model
 from .segmentation import build_segment_inputs, merge_segment_results
+from .worker_lookup import deployed_worker
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -80,10 +80,10 @@ class Stage12SegmentRunner:
         simulation_run_id: UUID | None = None,
         seams: SegmentRunnerSeams | None = None,
     ) -> None:
-        """Look up the segment worker class deployed in ``app_name``.
+        """Look up the segment worker deployed in ``app_name``.
 
-        Its containers restore from a memory snapshot with the US models
-        loaded, so each segment starts without loading them.
+        It is a method of a Modal class whose containers restore from a
+        memory snapshot with the US models loaded (``deployed_worker``).
 
         ``cancellation_requested`` is checked between polls. Each segment's
         call is passed ``simulation_run_id``, the detailed-save simulation run
@@ -102,10 +102,9 @@ class Stage12SegmentRunner:
             if seams.groups is not None
             else None
         )
-        segment_worker = seams.modal_module.Cls.from_name(
-            app_name, SEGMENT_WORKER_CLASS
-        )()
-        self.child_function = getattr(segment_worker, SEGMENT_WORKER_METHOD)
+        self.child_function = deployed_worker(
+            seams.modal_module, app_name, SEGMENT_WORKER_METHOD
+        )
 
     def _groups(self) -> list[list[str]]:
         if self.groups is not None:

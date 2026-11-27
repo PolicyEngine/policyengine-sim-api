@@ -8,9 +8,6 @@ from functools import partial
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, Protocol
 
-from policyengine_simulation_contract.stage12_simulation_workers import (
-    worker_class_name,
-)
 from policyengine_stage12_persistence import Stage12PersistenceStore
 
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -19,6 +16,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
 )
 
 from .database_retry import open_session_with_retry
+from .worker_lookup import deployed_worker
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -150,27 +148,15 @@ class ModalChildInvoker:
     def spawn(self, request: ChildSpawnRequest) -> ChildCall:
         """Look up ``function_name`` in ``application_name`` and spawn it.
 
-        A simulation worker is a method of a Modal class, whose containers
-        restore from a memory snapshot with the models loaded; the name
-        stored in the context is the method's. The coordinator spawns only in
-        its own application, which defines the class. Any other name is
-        looked up as a plain function.
+        A simulation worker is a method of a Modal class, and the name stored
+        in the context is the method's (``deployed_worker``).
         """
-        modal: Any = import_module("modal")
-        class_name = worker_class_name(request.function_name)
-        if class_name is None:
-            function = modal.Function.from_name(
-                request.application_name,
-                request.function_name,
-                environment_name=request.environment,
-            )
-        else:
-            worker = modal.Cls.from_name(
-                request.application_name,
-                class_name,
-                environment_name=request.environment,
-            )()
-            function = getattr(worker, request.function_name)
+        function = deployed_worker(
+            import_module("modal"),
+            request.application_name,
+            request.function_name,
+            environment_name=request.environment,
+        )
         return function.spawn(
             request.simulation,
             request.context,
