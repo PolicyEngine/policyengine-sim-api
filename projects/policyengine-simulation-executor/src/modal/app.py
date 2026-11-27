@@ -491,7 +491,7 @@ class _CountryModelsLoadedBeforeSnapshot:
         """Load the models and SPM capability, then warm up, before the snapshot.
 
         First records whether Modal snapshots this container, and its task ID,
-        so each call can report how its container started (``_ContainerCalls``).
+        so each call can report how its container started (``ContainerCalls``).
         Telemetry is non-fatal: a failed record must never stop the preload.
         Then, in a container Modal snapshots, runs one warm-up calculation
         (``src/modal/snapshot_warm_up.py``), so restored containers start with
