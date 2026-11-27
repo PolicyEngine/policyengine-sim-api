@@ -300,7 +300,11 @@ How a call tells them apart, in Modal 1.6.4:
   the one serving the call.
 
 Neither the restore nor the snapshot hook runs inside a call, so no span
-measures them. Modal's container records (its `TaskGetInfo` call) give the
+measures them. That includes the warm-up calculation that the versioned app's
+workers and the v2 app's US workers run in the hook of a container Modal
+snapshots (`src/modal/snapshot_warm_up.py`, `src/modal/v2_snapshot_warm_up.py`):
+it opens no span or operation and takes no call number, so the container's
+first call is still number 1. Modal's container records (its `TaskGetInfo` call) give the
 times each container was queued and became ready (`enqueued_at` and
 `started_at`), which include scheduling as well as the restore. A call's spans show the setup still left
 in it:
