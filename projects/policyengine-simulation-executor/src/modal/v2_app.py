@@ -23,6 +23,7 @@ existing ``policyengine-simulation-py{version}`` applications.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import random
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -58,6 +59,7 @@ from policyengine_simulation_observability.stages import (
 from policyengine_simulation_observability.telemetry import (
     normalize_observability_context,
 )
+from src.modal.container_calls import ContainerCalls
 from src.modal.country_model_preload import preload_country_models
 from src.modal.v2_images import (
     BUNDLE_VALUES,
@@ -136,6 +138,8 @@ modal_worker_database_secret = modal.Secret.from_name(
     required_keys=[MODAL_WORKER_DATABASE_URL_ENV],
 )
 report_run_writer_secrets = [*worker_secrets, modal_worker_database_secret]
+# How this container started, and its calls' numbers: one worker per container.
+_CONTAINER_CALLS = ContainerCalls()
 
 
 def _validate(country: CountryId) -> dict:
@@ -249,6 +253,7 @@ def _run_single_simulation_segment_us(
             },
             remote_context=propagated,
         ):
+            _CONTAINER_CALLS.set_call_attributes(runtime)
             return stage12_runtime.calculate_segment(
                 payload, runtime=runtime
             ).model_dump(mode="python")
@@ -307,6 +312,7 @@ def _run_single_simulation_us(
             },
             remote_context=propagated,
         ):
+            _CONTAINER_CALLS.set_call_attributes(runtime)
             return stage12_runtime.run_single_simulation(
                 payload,
                 context,
@@ -355,6 +361,7 @@ def _run_single_simulation_uk(
             },
             remote_context=propagated,
         ):
+            _CONTAINER_CALLS.set_call_attributes(runtime)
             return stage12_runtime.run_single_simulation(
                 payload,
                 context,
@@ -387,6 +394,9 @@ class _V2CountryModelsLoadedBeforeSnapshot:
     @modal.enter(snap=True)
     def load_country_models(self) -> None:
         """Load the class's country models, and for the US the SPM capability."""
+        # For each call's container_start; a failed record never stops the preload.
+        with contextlib.suppress(Exception):
+            _CONTAINER_CALLS.record_snapshot_hook()
         preload_country_models(self.snapshot_countries)
 
     @modal.enter(snap=False)
