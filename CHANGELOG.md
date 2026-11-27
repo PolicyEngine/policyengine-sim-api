@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.27.3] - 2026-11-27
+
+### Changed
+
+- The v2 report app's cache now plans, builds and looks up its files through the same level handlers as the run_simulation app, with its own list of the levels it covers (US national and state year files, and the 20 state-group baselines). Its keys, store paths, files and fixed baseline IDs are unchanged. The files now sit under `prebuilt/us/<dataset>/<state or "all">/` in the US worker image, every manifest entry records its folder, so the manifest digest changes once, and the image build checks the years and file counts the deploying machine computes from the handler settings.
+
+
 ## [0.27.2] - 2026-11-27
 
 ### Changed
