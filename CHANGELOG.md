@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.27.1] - 2026-11-27
+
+### Changed
+
+- The simulation workers' snapshot hook now runs one warm-up calculation of a region group baked into the image, for the first precompute year, in each container Modal takes a memory snapshot from. Containers restored from the snapshot then start with part of the work their first calculation for that year would otherwise do, which made their first calculation 11 to 16 s faster on Modal `testing`, on 8 CPUs and on 1 CPU. Containers that take a snapshot start about 70 to 100 s later. A warm-up that fails or can't run safely only logs a warning, and the container starts as before.
+
+
 ## [0.27.0] - 2026-11-26
 
 ### Removed
