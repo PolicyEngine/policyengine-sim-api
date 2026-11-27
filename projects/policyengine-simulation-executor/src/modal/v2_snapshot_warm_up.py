@@ -4,12 +4,16 @@ A process's first calculation for a year does work that its later
 calculations for that year reuse: mostly building the US parameter values at
 the calculation date and the SPM threshold amounts, about 20 s of the first
 calculation when profiled on Modal ``testing`` (2026-11-25, in the
-run_simulation app; ``src/modal/snapshot_warm_up.py`` says which of that work
-a later request can reuse). The v2 workers' snapshot hook otherwise only
-loads the models. So ``SimulationSegmentWorkerUS`` and ``SimulationWorkerUS``
-in ``src/modal/v2_app.py`` run :func:`warm_up_first_us_calculation` in their
-``@modal.enter(snap=True)`` hook, after the preload, and every container
-restored from the snapshot starts with that work done for the warm-up year.
+run_simulation app). A later request can reuse only what the packages keep
+for the whole process, such as the module-level parameter tree that every
+simulation's baseline branch shares (``share_spm_policy`` in policyengine-us),
+spm-calculator's threshold tables and the modules the calculation imports; a
+request's reform builds its own parameter tree. The v2 workers' snapshot hook
+otherwise only loads the models. So ``SimulationSegmentWorkerUS`` and
+``SimulationWorkerUS`` in ``src/modal/v2_app.py`` run
+:func:`warm_up_first_us_calculation` in their ``@modal.enter(snap=True)``
+hook, after the preload, and every container restored from the snapshot
+starts with that work done for the warm-up year.
 The run_simulation app's workers run the same kind of warm-up, which made
 restored containers' first calculation 11 to 16 s faster on Modal
 ``testing``, with identical results; this one hasn't been measured.
@@ -44,17 +48,23 @@ Modal takes one:
   ``src/modal/container_calls.py``).
 - **Nothing left for a request.** It removes the simulation it added to
   .py's in-process cache and the output file it saved in the prebuilt
-  folder (``removing_what_the_calculation_leaves``), so a later call finds
+  folder (``_removing_what_the_calculation_leaves``), so a later call finds
   the image's files as it would without the warm-up. What stays is what the
   packages keep for the whole process.
 - **Never fatal.** A failure or skip logs a warning, and the container
   starts as it would without the warm-up. The executor modules it uses are
   looked up when it runs, not when ``v2_app.py`` imports this module, so a
   move or rename in them costs only the warm-up.
+
+The run_simulation app's warm-up (``src/modal/snapshot_warm_up.py``) does the
+same for that app's workers. This module shares no code with it, since that
+app is to be removed while this one stays.
 """
 
 from __future__ import annotations
 
+import contextlib
+import gc
 import logging
 import os
 import sys
@@ -63,15 +73,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.modal.country_model_preload import COUNTRY_MODEL_MODULES
-from src.modal.snapshot_warm_up import (
-    SNAPSHOT_FLAG_ENV_NAME,
-    WARM_UP_REFORM_PARAMETER,
-    WARM_UP_REFORM_VALUE,
-    removing_what_the_calculation_leaves,
-)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
     from policyengine_simulation_contract.stage12_execution import (
         PlannedSimulationExecutionInput,
@@ -82,7 +86,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Modal's worker sets this to "1" in the containers it takes a snapshot from
+# or restores (``run_function`` in modal/_container_entrypoint.py, Modal
+# 1.6.4). Restored containers don't run the snapshot hook.
+SNAPSHOT_FLAG_ENV_NAME = "MODAL_ENABLE_SNAP_RESTORE"
 WARM_UP_COUNTRY = "us"
+# The reform makes the warm-up calculate a reform simulation, as a request
+# does: the Child Tax Credit's base amount, raised to $2,500.
+WARM_UP_REFORM_PARAMETER = "gov.irs.credits.ctc.amount.base[0].amount"
+WARM_UP_REFORM_VALUE = 2500
 
 
 class _WarmUpUnsafeError(Exception):
@@ -191,7 +203,7 @@ def _calculate_unless_unsafe() -> None:
     started = time.monotonic()
     with (
         skip_gcp_credential_setup(),
-        removing_what_the_calculation_leaves(prebuilt_folder),
+        _removing_what_the_calculation_leaves(prebuilt_folder),
     ):
         # Sent as the fan-out sends a segment to its worker.
         stage12_runtime.calculate_segment(
@@ -258,3 +270,32 @@ def _prebuilt_folder_with_year_file(segment: Stage12SegmentInput) -> Path:
         )
         raise _WarmUpUnsafeError(msg)
     return Path(prebuilt.folder)
+
+
+@contextlib.contextmanager
+def _removing_what_the_calculation_leaves(output_folder: Path) -> Iterator[None]:
+    """Remove the simulations and output files a calculation adds, even if it fails.
+
+    .py's ``Simulation.ensure()`` caches the reform in the process under a new
+    random ID and saves its output beside the year file it loaded, in
+    ``output_folder``, as ``<storage ID>.h5``. Left there, both would go into
+    the snapshot, taking memory and disk in every restored container.
+    """
+    from policyengine.core.simulation import (  # noqa: PLC0415  # resolved per call so tests can patch policyengine's simulation cache
+        _cache as simulation_cache,
+    )
+
+    cached_before = set(simulation_cache._cache)  # noqa: SLF001  # policyengine's LRUCache has no public listing or remove
+    outputs_before = set(output_folder.glob("*.h5"))
+    try:
+        yield
+    finally:
+        for storage_id in [
+            storage_id
+            for storage_id in simulation_cache._cache  # noqa: SLF001  # as above
+            if storage_id not in cached_before
+        ]:
+            simulation_cache._cache.pop(storage_id, None)  # noqa: SLF001  # as above
+        for output in set(output_folder.glob("*.h5")) - outputs_before:
+            output.unlink(missing_ok=True)
+        gc.collect()

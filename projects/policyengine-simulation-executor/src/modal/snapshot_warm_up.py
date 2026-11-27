@@ -208,7 +208,7 @@ def _calculate_unless_unsafe() -> None:
     request = warm_up_request(target)
     prebuilt_folder = _prebuilt_folder_with_baked_inputs(target, request)
     started = time.monotonic()
-    with removing_what_the_calculation_leaves(prebuilt_folder):
+    with _removing_what_the_calculation_leaves(prebuilt_folder):
         _run_simulation_impl_core(
             request, runtime=cast("ObservabilityRuntime", _RecordNothingRuntime())
         )
@@ -272,7 +272,7 @@ def _prebuilt_folder_with_baked_inputs(
 
 
 @contextlib.contextmanager
-def removing_what_the_calculation_leaves(output_folder: Path) -> Iterator[None]:
+def _removing_what_the_calculation_leaves(output_folder: Path) -> Iterator[None]:
     """Remove the simulations and output files a calculation adds, even if it fails.
 
     .py's ``Simulation.ensure()`` caches each simulation in the process (its
@@ -283,9 +283,7 @@ def removing_what_the_calculation_leaves(output_folder: Path) -> Iterator[None]:
     would use the cached baseline instead
     of loading the baked one. An output saved over a file the image already
     held, when the baked baseline was incomplete, out of date or unreadable,
-    is kept, and logged as a warning. The v2 workers' warm-up
-    (``src/modal/v2_snapshot_warm_up.py``) uses it too: its calculation adds
-    only a reform.
+    is kept, and logged as a warning.
     """
     from policyengine.core.simulation import (  # noqa: PLC0415  # resolved per call so tests can patch policyengine's simulation cache
         _cache as simulation_cache,
