@@ -1123,6 +1123,56 @@ class TestModalRunSimulation:
         assert dispatched_params == [malformed_params]
         assert _queue_time_attributes(events) == []
 
+    def test__a_failing_start_time_read_leaves_the_result_unchanged(
+        self, modal_app, monkeypatch
+    ):
+        def dispatch(_params, *, app_name, runtime, progress):
+            return {"ok": True}
+
+        events, _ = self._wire_reporter_started_at(
+            modal_app, monkeypatch, dispatch, started_at=T0
+        )
+        reporter = modal_app._job_progress_reporter()
+
+        def failing_started_at():
+            msg = "record unavailable"
+            raise RuntimeError(msg)
+
+        monkeypatch.setattr(reporter, "started_at", failing_started_at)
+
+        assert modal_app.SimulationWorker().run_simulation(
+            {"country": "us", JOB_SUBMITTED_AT_PARAM: T0.isoformat()}
+        ) == {"ok": True}
+        assert _queue_time_attributes(events) == []
+
+    def test__a_failing_attribute_write_leaves_the_result_unchanged(
+        self, modal_app, monkeypatch
+    ):
+        def dispatch(_params, *, app_name, runtime, progress):
+            return {"ok": True}
+
+        events, _ = self._wire_reporter_started_at(
+            modal_app, monkeypatch, dispatch, started_at=T0
+        )
+
+        class _QueueTimeRefusingRuntime(_RecordingRuntime):
+            def set_context(self, **attributes):
+                if "job_queue_seconds" in attributes:
+                    msg = "attribute refused"
+                    raise RuntimeError(msg)
+                super().set_context(**attributes)
+
+        monkeypatch.setattr(
+            modal_app,
+            "_configure_modal_observability",
+            lambda *, service_role: _QueueTimeRefusingRuntime(events),
+        )
+
+        assert modal_app.SimulationWorker().run_simulation(
+            {"country": "us", JOB_SUBMITTED_AT_PARAM: T0.isoformat()}
+        ) == {"ok": True}
+        assert "operation_end" in events
+
     def test__a_job_without_a_submission_time_records_no_queue_time(
         self, modal_app, monkeypatch
     ):
