@@ -13,11 +13,13 @@ test runs the real v2 calculation up to its dataset load.
 
 from __future__ import annotations
 
+import gc
 import importlib
 import logging
 import os
 import socket
 import sys
+import weakref
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -767,5 +769,74 @@ def test_the_warm_up_reform_changes_a_parameter_of_the_installed_us_model(
         warm_up_module.WARM_UP_REFORM_PARAMETER
     )(period_start)
 
-    # A reform equal to current law would leave nothing to calculate.
+    # A reform equal to current law would calculate current law again.
     assert current_law_value != warm_up_module.WARM_UP_REFORM_VALUE
+
+
+class _CyclicCalculationObject:
+    """Refers to itself, as policyengine-core's simulation objects do."""
+
+    def __init__(self) -> None:
+        self.itself = self
+
+
+@pytest.mark.usefixtures("snapshotted_container")
+def test_a_failed_warm_up_frees_its_calculation_before_the_snapshot(
+    warm_up_module, calculation, monkeypatch
+):
+    # Left allocated, a failed calculation's objects would go into the
+    # snapshot, and every restored container would start with them.
+    calculation_objects: list[weakref.ref] = []
+    warnings: list[str] = []
+
+    def failing_calculation(_payload, **_options):
+        microsimulation = _CyclicCalculationObject()
+        calculation_objects.append(weakref.ref(microsimulation))
+        msg = "the planned column household_tax is missing"
+        raise ValueError(msg)
+
+    def record_warning(message, *args, **_options):
+        # Only the message: a log record keeps the traceback, and with it
+        # the failed calculation's frames.
+        warnings.append(message % args)
+
+    monkeypatch.setattr(stage12_runtime, "calculate_segment", failing_calculation)
+    monkeypatch.setattr(warm_up_module.logger, "warning", record_warning)
+    # Only the warm-up's own collection may free the objects.
+    automatic_collection_was_on = gc.isenabled()
+    gc.disable()
+    try:
+        warm_up_module.warm_up_first_us_calculation(("us",))
+    finally:
+        if automatic_collection_was_on:
+            gc.enable()
+
+    [calculation_object] = calculation_objects
+    assert calculation_object() is None
+    [warning] = warnings
+    assert "Warm-up calculation failed" in warning
+
+
+@pytest.mark.usefixtures("snapshotted_container")
+def test_the_warm_up_leaves_no_memory_warning_marked_as_given(
+    warm_up_module, calculation, monkeypatch
+):
+    from policyengine.core import cache as policyengine_cache
+
+    # .py's cache warns once per process when its memory passes 8, 16 and
+    # 32 GB, and remembers each warning given.
+    warnings_given: set[int] = set()
+    monkeypatch.setattr(policyengine_cache, "_warned_thresholds", warnings_given)
+    nine_gigabytes = SimpleNamespace(rss=9 * 1024**3)
+    monkeypatch.setattr(
+        policyengine_cache.psutil,
+        "Process",
+        lambda: SimpleNamespace(memory_info=lambda: nine_gigabytes),
+    )
+
+    warm_up_module.warm_up_first_us_calculation(("us",))
+
+    # The warm-up's calculation passed 8 GB, but a restored container's own
+    # calls must still get the warning when they pass it.
+    assert len(calculation.payloads) == 1
+    assert warnings_given == set()
