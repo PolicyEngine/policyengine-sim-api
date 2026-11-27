@@ -111,25 +111,54 @@ def _results(simulation) -> list[dict]:
     ]
 
 
+class ClassNotDeployedError(Exception):
+    """Stands in for ``modal.exception.NotFoundError``."""
+
+
 def _segment_worker_lookup(
     segment_function: object,
-    class_lookups: list[tuple[str, str]] | None = None,
+    lookups: list[tuple[str, str, str]] | None = None,
+    *,
+    class_deployed: bool = True,
 ) -> SimpleNamespace:
-    """Stand in for ``modal``: its segment worker class spawns ``segment_function``.
+    """Stand in for ``modal``: its segment worker spawns ``segment_function``.
 
-    Each lookup of a class by name is appended to ``class_lookups``.
+    Each lookup by name is appended to ``lookups`` as ``(kind, app, name)``.
+    With ``class_deployed`` False, hydrating the class raises the not-found
+    error, and the plain function of the method's name spawns instead.
     """
+
+    def record(kind: str, app_name: str, name: str) -> None:
+        if lookups is not None:
+            lookups.append((kind, app_name, name))
+
+    class SegmentWorkerClass:
+        def hydrate(self):
+            if not class_deployed:
+                msg = "the app defines no such class"
+                raise ClassNotDeployedError(msg)
+            return self
+
+        def __call__(self):
+            return SimpleNamespace(run_single_simulation_segment_us=segment_function)
 
     class ClassLookup:
         @staticmethod
         def from_name(app_name, class_name):
-            if class_lookups is not None:
-                class_lookups.append((app_name, class_name))
-            return lambda: SimpleNamespace(
-                run_single_simulation_segment_us=segment_function
-            )
+            record("class", app_name, class_name)
+            return SegmentWorkerClass()
 
-    return SimpleNamespace(Cls=ClassLookup)
+    class FunctionLookup:
+        @staticmethod
+        def from_name(app_name, function_name):
+            record("function", app_name, function_name)
+            return segment_function
+
+    return SimpleNamespace(
+        Cls=ClassLookup,
+        Function=FunctionLookup,
+        exception=SimpleNamespace(NotFoundError=ClassNotDeployedError),
+    )
 
 
 def test_segments_are_started_through_the_segment_worker_class() -> None:
@@ -137,13 +166,13 @@ def test_segments_are_started_through_the_segment_worker_class() -> None:
     # models loaded.
     simulation = planned_simulation(SimulationRole.BASELINE)
     function = FakeFunction(_results(simulation), {})
-    class_lookups: list[tuple[str, str]] = []
+    lookups: list[tuple[str, str, str]] = []
     runner = Stage12SegmentRunner(
         simulation,
         app_name="stage12-app",
         runtime=cast("ObservabilityRuntime", FakeRuntime()),
         seams=SegmentRunnerSeams(
-            modal_module=_segment_worker_lookup(function, class_lookups),
+            modal_module=_segment_worker_lookup(function, lookups),
             groups=US_REGION_GROUPS,
             sleep=lambda _seconds: None,
         ),
@@ -151,7 +180,35 @@ def test_segments_are_started_through_the_segment_worker_class() -> None:
 
     runner.run()
 
-    assert class_lookups == [("stage12-app", "SimulationSegmentWorkerUS")]
+    assert lookups == [("class", "stage12-app", "SimulationSegmentWorkerUS")]
+    assert len(function.spawns) == len(US_REGION_GROUPS)
+
+
+def test_segments_start_on_the_function_when_the_app_has_no_segment_class() -> None:
+    # A US simulation still running when its app is rolled back in place, to a
+    # commit from before the classes, finds only the plain function.
+    simulation = planned_simulation(SimulationRole.BASELINE)
+    function = FakeFunction(_results(simulation), {})
+    lookups: list[tuple[str, str, str]] = []
+    runner = Stage12SegmentRunner(
+        simulation,
+        app_name="stage12-app",
+        runtime=cast("ObservabilityRuntime", FakeRuntime()),
+        seams=SegmentRunnerSeams(
+            modal_module=_segment_worker_lookup(
+                function, lookups, class_deployed=False
+            ),
+            groups=US_REGION_GROUPS,
+            sleep=lambda _seconds: None,
+        ),
+    )
+
+    runner.run()
+
+    assert lookups == [
+        ("class", "stage12-app", "SimulationSegmentWorkerUS"),
+        ("function", "stage12-app", "run_single_simulation_segment_us"),
+    ]
     assert len(function.spawns) == len(US_REGION_GROUPS)
 
 

@@ -527,8 +527,16 @@ def test_successful_coordination_records_every_stage_and_state():
         assert child.simulation_callable == "run_single_simulation_us"
 
 
-def _recording_modal(calls: list) -> object:
-    """Stand in for ``modal``, recording each lookup, spawn and restore in ``calls``."""
+class _ClassNotDeployedError(Exception):
+    """Stands in for ``modal.exception.NotFoundError``."""
+
+
+def _recording_modal(calls: list, *, class_deployed: bool = True) -> object:
+    """Stand in for ``modal``, recording each lookup, spawn and restore in ``calls``.
+
+    With ``class_deployed`` False, hydrating a class raises the not-found
+    error, as for an app rolled back to a commit from before the classes.
+    """
     from types import SimpleNamespace
 
     def spawn(*spawn_args, **spawn_kwargs):
@@ -539,11 +547,22 @@ def _recording_modal(calls: list) -> object:
         calls.append(("Function.from_name", args, kwargs))
         return SimpleNamespace(spawn=spawn)
 
+    class WorkerClass:
+        def hydrate(self):
+            calls.append(("Cls.hydrate", (), {}))
+            if not class_deployed:
+                msg = "the app defines no such class"
+                raise _ClassNotDeployedError(msg)
+            return self
+
+        def __call__(self):
+            return SimpleNamespace(
+                run_single_simulation_us=SimpleNamespace(spawn=spawn)
+            )
+
     def class_from_name(*args, **kwargs):
         calls.append(("Cls.from_name", args, kwargs))
-        return lambda: SimpleNamespace(
-            run_single_simulation_us=SimpleNamespace(spawn=spawn)
-        )
+        return WorkerClass()
 
     def from_id(invocation_id):
         calls.append(("FunctionCall.from_id", (invocation_id,), {}))
@@ -553,6 +572,7 @@ def _recording_modal(calls: list) -> object:
         Cls=SimpleNamespace(from_name=class_from_name),
         Function=SimpleNamespace(from_name=function_from_name),
         FunctionCall=SimpleNamespace(from_id=from_id),
+        exception=SimpleNamespace(NotFoundError=_ClassNotDeployedError),
     )
 
 
@@ -594,12 +614,44 @@ def test_modal_child_invoker_spawns_a_worker_through_its_class_and_restores_call
             ("application", "SimulationWorkerUS"),
             {"environment_name": "staging"},
         ),
+        ("Cls.hydrate", (), {}),
         (
             "spawn",
             ({"role": "baseline"}, {"request_id": "request-1"}),
             {"observability_context": {"traceparent": "trace"}},
         ),
         ("FunctionCall.from_id", ("call-1",), {}),
+    ]
+
+
+def test_modal_child_invoker_spawns_the_function_when_the_app_has_no_worker_class(
+    monkeypatch,
+):
+    from policyengine_simulation_executor.stage12_runtime import dependencies
+
+    calls = []
+    fake_modal = _recording_modal(calls, class_deployed=False)
+    monkeypatch.setattr(dependencies, "import_module", lambda _name: fake_modal)
+
+    spawned = dependencies.ModalChildInvoker().spawn(
+        _spawn_request(dependencies, "run_single_simulation_us")
+    )
+
+    # A coordinator call still running when its app is rolled back in place,
+    # to a commit from before the classes, finds only the plain function.
+    assert spawned == "spawned-call"
+    assert calls[1:] == [
+        ("Cls.hydrate", (), {}),
+        (
+            "Function.from_name",
+            ("application", "run_single_simulation_us"),
+            {"environment_name": "staging"},
+        ),
+        (
+            "spawn",
+            ({"role": "baseline"}, {"request_id": "request-1"}),
+            {"observability_context": {"traceparent": "trace"}},
+        ),
     ]
 
 

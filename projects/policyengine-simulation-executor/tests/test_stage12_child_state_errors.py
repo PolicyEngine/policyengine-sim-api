@@ -341,12 +341,17 @@ def test_a_segment_failure_is_reported_exactly_once(caplog) -> None:
                 ),
             )
 
+    class SegmentWorkerClass:
+        def hydrate(self):
+            return self
+
+        def __call__(self):
+            return SimpleNamespace(run_single_simulation_segment_us=SegmentFunction())
+
     class SegmentWorkerLookup:
         @staticmethod
         def from_name(_app_name, _class_name):
-            return lambda: SimpleNamespace(
-                run_single_simulation_segment_us=SegmentFunction()
-            )
+            return SegmentWorkerClass()
 
     def segmented_calculator(value, cancellation_requested):
         return Stage12SegmentRunner(
