@@ -36,7 +36,7 @@ from policyengine_simulation_contract.stage12_execution import (
 from policyengine_simulation_executor import simulation_runtime
 from policyengine_simulation_executor.spm import normalize_runtime_spm
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
-from policyengine_simulation_executor.stage12_cache import precompute_planning
+from policyengine_simulation_executor.stage12_cache import levels, precompute_planning
 from policyengine_simulation_executor.stage12_runtime import segmentation
 from policyengine_simulation_executor.stage12_runtime.cached_simulation import (
     qualifying_cache_identity,
@@ -204,8 +204,12 @@ def _group_segment_identity(
     return qualifying_cache_identity(
         scoped,
         resolved=load_stage12_bundle(),
-        dataset_is_default=dataset_selection.is_default,
-        scoping_strategy=region.scoping_strategy,
+        run=levels.RunScope(
+            country=scoped.geography.country,
+            year=scoped.year,
+            region=region,
+            dataset=dataset_selection,
+        ),
         spm=normalize_runtime_spm(params),
     )
 
