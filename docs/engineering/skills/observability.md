@@ -84,7 +84,11 @@ call = function.spawn(payload, observability_context=context)
 ```
 
 Keep `payload` limited to calculation inputs and functional metadata. Do not
-add `_observability_context` to it.
+add `_observability_context` to it. Two underscore-prefixed telemetry values
+are the exceptions: API v1's `_telemetry` envelope, which
+`split_internal_payload` removes before the calculation, and the annual job's
+`_job_submitted_at` (see "Annual job queue time"), which the worker removes
+when the call starts.
 
 At the receiving function, validate the separate argument with
 `normalize_observability_context` and pass the result to
@@ -162,6 +166,45 @@ attribute set is bounded by the `JobStage` enum.
 Modal can run the same call again after a preemption, under the same call
 id. A later attempt continues the stored stage record, so the durations add
 up over attempts, and `job_attempts` counts them.
+
+### Annual job queue time
+
+`run_simulation` also sets `job_queue_seconds` on its operation: the seconds
+from the gateway's submission of the job to the job's start in the worker.
+
+- **Submission time:** the gateway sends it with the spawned job under the
+  `_job_submitted_at` parameter (`JOB_SUBMITTED_AT_PARAM` in
+  `policyengine_simulation_contract.job_progress`), the same value it stores
+  as the job metadata's `submitted_at`. The leading underscore keeps it out of
+  the operation's logged attributes (`redact_params_for_logging`), and the
+  worker removes it before the calculation, so segment children never get it.
+- **Start time:** the stage record's `started_at`, which is the first
+  attempt's start and carries over to later attempts. While each later
+  attempt finds the earlier attempt's record, every attempt's record, a
+  preempted one's included, carries the same value, so the successful
+  attempt's record carries it too, and the value counts neither the earlier
+  attempts' running time nor the wait before a later attempt. When a later
+  attempt finds no earlier record, see "No earlier record" below.
+- **Counting jobs:** a preempted job writes one record per attempt, each with
+  the same value, so a median or percentile over jobs takes one record per
+  `function_call_id`, such as the one whose `outcome` is `success`.
+- **When it is set:** when the operation opens, so a failed or preempted call
+  carries it too.
+- **Clocks:** the two times come from the gateway's and the worker's
+  machines. A start before the submission can only mean those clocks differ,
+  and is recorded as 0. Values are rounded to hundredths of a second.
+- **Jobs without it:** the years that a budget-window batch spawns. The
+  gateway doesn't put the key in the batch's payload, whose top-level keys
+  `run_budget_window_batch` validates with `extra="forbid"` in apps of every
+  age, and the batch adds none to its years' payloads. Records from worker
+  apps deployed before this attribute, and from calls an older gateway
+  spawned, carry none either.
+- **No earlier record:** a later attempt that finds no earlier attempt's
+  record starts a new one, so its value includes the earlier attempts' time.
+  That happens when reading the record fails, and when the earlier attempt's
+  writes failed or it was preempted before its first write.
+- **Only ISO 8601 times:** the value must be a string with a time zone, as
+  the gateway sends it. Anything else, a number included, records nothing.
 
 ### Preemptions
 

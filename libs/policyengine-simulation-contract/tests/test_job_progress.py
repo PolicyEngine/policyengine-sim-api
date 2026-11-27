@@ -13,6 +13,7 @@ from policyengine_simulation_contract.job_progress import (
     JobSegmentProgress,
     JobStage,
     job_progress_fields,
+    job_queue_seconds,
     stage_progress_floor,
     stage_progress_max,
     supported_job_progress_capability,
@@ -326,6 +327,36 @@ class TestSupportedJobProgressCapability:
     @pytest.mark.parametrize("value", [None, True, "1", 0, 2, 1.0])
     def test__other_values_are_unsupported(self, value):
         assert supported_job_progress_capability(value) is None
+
+
+class TestJobQueueSeconds:
+    def test__seconds_from_the_submission_to_the_first_start(self):
+        assert job_queue_seconds(SUBMITTED, started_at=STARTED) == 30.0
+
+    def test__seconds_are_rounded_to_hundredths(self):
+        started_at = datetime(2026, 10, 13, 12, 0, 7, 254_000, tzinfo=UTC)
+
+        assert job_queue_seconds(SUBMITTED, started_at=started_at) == 7.25
+
+    def test__a_start_before_the_submission_counts_as_no_wait(self):
+        # Only the gateway's and the worker's clocks differing can cause it.
+        started_at = datetime(2026, 10, 13, 11, 59, 59, 800_000, tzinfo=UTC)
+
+        assert job_queue_seconds(SUBMITTED, started_at=started_at) == 0.0
+
+    @pytest.mark.parametrize(
+        "submitted_at",
+        [None, "not a time", "2026-10-13T12:00:00", {"at": SUBMITTED}],
+    )
+    def test__a_missing_or_unreadable_submission_time_gives_none(self, submitted_at):
+        assert job_queue_seconds(submitted_at, started_at=STARTED) is None
+
+    @pytest.mark.parametrize(
+        "submitted_at", [0, 1760356800, "1760356800", 1760356800.0]
+    )
+    def test__a_number_is_not_read_as_a_unix_time(self, submitted_at):
+        # The gateway sends an ISO 8601 time; a number means another sender.
+        assert job_queue_seconds(submitted_at, started_at=STARTED) is None
 
 
 class TestJobProgressModels:

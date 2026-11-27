@@ -94,6 +94,39 @@ class TestBudgetWindowBatchEndpoints:
         assert response.status_code == 200
         assert "data" not in mock_modal["func"].last_payload
 
+    def test__given_budget_window_submission__then_sends_no_job_submission_time(
+        self, mock_modal, client: TestClient
+    ):
+        """The batch refuses unknown keys, on apps of every age.
+
+        ``run_budget_window_batch`` validates its parameters with
+        ``BudgetWindowBatchRequest``, whose ``extra="forbid"`` would refuse
+        the annual jobs' submission-time key.
+        """
+        from policyengine_simulation_contract.gateway_models import (
+            BudgetWindowBatchRequest,
+        )
+        from policyengine_simulation_contract.job_progress import (
+            JOB_SUBMITTED_AT_PARAM,
+        )
+
+        response = client.post(
+            "/simulate/economy/budget-window",
+            json={
+                "country": "us",
+                "region": "us",
+                "scope": "macro",
+                "reform": {},
+                "start_year": "2026",
+                "window_size": 2,
+            },
+        )
+
+        assert response.status_code == 200
+        spawned_payload = mock_modal["func"].last_payload
+        assert JOB_SUBMITTED_AT_PARAM not in spawned_payload
+        BudgetWindowBatchRequest.model_validate(spawned_payload)
+
     def test__given_budget_window_submission__then_returns_parent_batch_job_id(
         self, mock_modal, client: TestClient
     ):

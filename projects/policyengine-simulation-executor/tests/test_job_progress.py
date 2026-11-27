@@ -14,6 +14,7 @@ from fixtures.fake_modal import install_fake_modal
 from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from fixtures.spm_doubles import installed_spm_selection, spm_capable_simulation
 from policyengine_simulation_contract.job_progress import (
+    JOB_SUBMITTED_AT_PARAM,
     JobExecution,
     JobProgressRecord,
     JobSegmentProgress,
@@ -232,6 +233,22 @@ class TestStoredJobProgressReporter:
 
         assert writer.writes == []
 
+    def test__started_at_is_none_before_the_record_starts(self):
+        reporter, _, _ = _reporter()
+
+        assert reporter.started_at() is None
+
+    def test__started_at_is_when_the_record_started(self):
+        reporter, _, clock = _reporter()
+        reporter.start()
+        clock.advance(40)
+        reporter.enter(JobStage.BASELINE)
+
+        assert reporter.started_at() == T0
+
+    def test__the_null_reporter_has_no_start(self):
+        assert NULL_JOB_PROGRESS.started_at() is None
+
     def test__write_failures_are_logged_once_and_never_raised(self, caplog):
         calls = []
 
@@ -326,6 +343,13 @@ class TestRestartedAttempt:
         ]
         assert reform_starts[0] == T0 - timedelta(seconds=30)
         assert reform_starts[-1] == T0 + timedelta(seconds=30)
+
+    def test__started_at_stays_the_first_attempts_start(self):
+        earlier = _earlier_attempt()
+        reporter, _, _ = _restarted_reporter(earlier)
+        reporter.start()
+
+        assert reporter.started_at() == earlier.started_at
 
     def test__durations_add_up_over_attempts(self):
         reporter, writer, clock = _restarted_reporter(_earlier_attempt())
@@ -785,6 +809,14 @@ class _RecordingRuntime(NoOpObservabilityRuntime):
         self.events.append("shutdown")
 
 
+def _queue_time_attributes(events) -> list[tuple[int, dict]]:
+    return [
+        (index, event[1])
+        for index, event in enumerate(events)
+        if isinstance(event, tuple) and "job_queue_seconds" in event[1]
+    ]
+
+
 def _stage_attributes(events) -> list[tuple[int, dict]]:
     return [
         (index, event[1])
@@ -968,6 +1000,245 @@ class TestModalRunSimulation:
         assert modal_app.SimulationWorker().run_simulation({"country": "us"}) == {
             "ok": True
         }
+
+    def _wire_reporter_started_at(
+        self, app, monkeypatch, dispatch, *, started_at, earlier=None
+    ):
+        """Wire the call with a stage reporter whose clock reads ``started_at``."""
+        events, writes = self._wire(app, monkeypatch, dispatch, earlier=earlier)
+        reporter = StoredJobProgressReporter(
+            "fc-job-1",
+            write=lambda job_id, record: writes.append((job_id, record)),
+            read=lambda _job_id: earlier,
+            clock=lambda: started_at,
+        )
+        monkeypatch.setattr(app, "_job_progress_reporter", lambda: reporter)
+        return events, writes
+
+    def test__records_the_queue_time_from_the_gateway_submission(
+        self, modal_app, monkeypatch
+    ):
+        def dispatch(_params, *, app_name, runtime, progress):
+            return {"ok": True}
+
+        events, _ = self._wire_reporter_started_at(
+            modal_app,
+            monkeypatch,
+            dispatch,
+            started_at=T0 + timedelta(seconds=7.25),
+        )
+
+        modal_app.SimulationWorker().run_simulation(
+            {"country": "us", JOB_SUBMITTED_AT_PARAM: T0.isoformat()}
+        )
+
+        [(index, attributes)] = _queue_time_attributes(events)
+        assert attributes == {"job_queue_seconds": 7.25}
+        assert events.index("operation_start") < index < events.index("operation_end")
+
+    def test__a_later_attempt_records_the_queue_time_to_the_first_start(
+        self, modal_app, monkeypatch
+    ):
+        # The record's started_at carries over from the first attempt, so the
+        # successful attempt's record carries the job's queue time too.
+        earlier = _earlier_attempt()
+        submitted_at = earlier.started_at - timedelta(seconds=12)
+
+        def dispatch(_params, *, app_name, runtime, progress):
+            return {"ok": True}
+
+        events, _ = self._wire_reporter_started_at(
+            modal_app, monkeypatch, dispatch, started_at=T0, earlier=earlier
+        )
+
+        modal_app.SimulationWorker().run_simulation(
+            {"country": "us", JOB_SUBMITTED_AT_PARAM: submitted_at.isoformat()}
+        )
+
+        [(_, attributes)] = _queue_time_attributes(events)
+        assert attributes == {"job_queue_seconds": 12.0}
+
+    def test__a_failed_job_records_its_queue_time_too(self, modal_app, monkeypatch):
+        def dispatch(_params, *, app_name, runtime, progress):
+            msg = "model failed"
+            raise RuntimeError(msg)
+
+        events, _ = self._wire_reporter_started_at(
+            modal_app,
+            monkeypatch,
+            dispatch,
+            started_at=T0 + timedelta(seconds=3),
+        )
+
+        with pytest.raises(RuntimeError, match="model failed"):
+            modal_app.SimulationWorker().run_simulation(
+                {"country": "us", JOB_SUBMITTED_AT_PARAM: T0.isoformat()}
+            )
+
+        [(_, attributes)] = _queue_time_attributes(events)
+        assert attributes == {"job_queue_seconds": 3.0}
+
+    def test__a_preempted_attempt_records_its_queue_time_too(
+        self, modal_app, monkeypatch
+    ):
+        def dispatch(_params, *, app_name, runtime, progress):
+            raise KeyboardInterrupt
+
+        events, _ = self._wire_reporter_started_at(
+            modal_app,
+            monkeypatch,
+            dispatch,
+            started_at=T0 + timedelta(seconds=4),
+        )
+
+        with pytest.raises(KeyboardInterrupt):
+            modal_app.SimulationWorker().run_simulation(
+                {"country": "us", JOB_SUBMITTED_AT_PARAM: T0.isoformat()}
+            )
+
+        [(index, attributes)] = _queue_time_attributes(events)
+        assert attributes == {"job_queue_seconds": 4.0}
+        assert index < events.index("operation_end")
+
+    def test__parameters_that_are_not_a_dict_still_reach_the_calculation(
+        self, modal_app, monkeypatch
+    ):
+        # Reading the submission time must not fail a call before its
+        # operation opens; the calculation reports malformed parameters.
+        dispatched_params = []
+
+        def dispatch(params, *, app_name, runtime, progress):
+            dispatched_params.append(params)
+            return {"ok": True}
+
+        events, _ = self._wire_reporter_started_at(
+            modal_app, monkeypatch, dispatch, started_at=T0
+        )
+        malformed_params = ["country", "us"]
+
+        assert modal_app.SimulationWorker().run_simulation(malformed_params) == {
+            "ok": True
+        }
+
+        assert dispatched_params == [malformed_params]
+        assert _queue_time_attributes(events) == []
+
+    def test__a_failing_start_time_read_leaves_the_result_unchanged(
+        self, modal_app, monkeypatch
+    ):
+        def dispatch(_params, *, app_name, runtime, progress):
+            return {"ok": True}
+
+        events, _ = self._wire_reporter_started_at(
+            modal_app, monkeypatch, dispatch, started_at=T0
+        )
+        reporter = modal_app._job_progress_reporter()
+
+        def failing_started_at():
+            msg = "record unavailable"
+            raise RuntimeError(msg)
+
+        monkeypatch.setattr(reporter, "started_at", failing_started_at)
+
+        assert modal_app.SimulationWorker().run_simulation(
+            {"country": "us", JOB_SUBMITTED_AT_PARAM: T0.isoformat()}
+        ) == {"ok": True}
+        assert _queue_time_attributes(events) == []
+
+    def test__a_failing_attribute_write_leaves_the_result_unchanged(
+        self, modal_app, monkeypatch
+    ):
+        def dispatch(_params, *, app_name, runtime, progress):
+            return {"ok": True}
+
+        events, _ = self._wire_reporter_started_at(
+            modal_app, monkeypatch, dispatch, started_at=T0
+        )
+
+        class _QueueTimeRefusingRuntime(_RecordingRuntime):
+            def set_context(self, **attributes):
+                if "job_queue_seconds" in attributes:
+                    msg = "attribute refused"
+                    raise RuntimeError(msg)
+                super().set_context(**attributes)
+
+        monkeypatch.setattr(
+            modal_app,
+            "_configure_modal_observability",
+            lambda *, service_role: _QueueTimeRefusingRuntime(events),
+        )
+
+        assert modal_app.SimulationWorker().run_simulation(
+            {"country": "us", JOB_SUBMITTED_AT_PARAM: T0.isoformat()}
+        ) == {"ok": True}
+        assert "operation_end" in events
+
+    def test__a_job_without_a_submission_time_records_no_queue_time(
+        self, modal_app, monkeypatch
+    ):
+        # Jobs that budget-window batches and older gateways spawn carry no
+        # submission time.
+        def dispatch(_params, *, app_name, runtime, progress):
+            return {"ok": True}
+
+        events, _ = self._wire_reporter_started_at(
+            modal_app, monkeypatch, dispatch, started_at=T0
+        )
+
+        modal_app.SimulationWorker().run_simulation({"country": "us"})
+
+        assert _queue_time_attributes(events) == []
+
+    def test__the_calculation_never_sees_the_submission_time(
+        self, modal_app, monkeypatch
+    ):
+        # Segment children copy the parameters they are given.
+        dispatched_params = []
+
+        def dispatch(params, *, app_name, runtime, progress):
+            dispatched_params.append(params)
+            return {"ok": True}
+
+        self._wire_reporter_started_at(modal_app, monkeypatch, dispatch, started_at=T0)
+
+        modal_app.SimulationWorker().run_simulation(
+            {"country": "us", JOB_SUBMITTED_AT_PARAM: T0.isoformat()}
+        )
+
+        assert dispatched_params == [{"country": "us"}]
+
+    def test__the_operation_record_carries_the_queue_time(
+        self, modal_app, monkeypatch, recorded_observability_runtime
+    ):
+        runtime, written_records = recorded_observability_runtime
+
+        def dispatch(_params, *, app_name, runtime, progress):
+            return {"ok": True}
+
+        self._wire_reporter_started_at(
+            modal_app,
+            monkeypatch,
+            dispatch,
+            started_at=T0 + timedelta(seconds=7.25),
+        )
+        monkeypatch.setattr(
+            modal_app,
+            "_configure_modal_observability",
+            lambda *, service_role: runtime,
+        )
+
+        modal_app.SimulationWorker().run_simulation(
+            {"country": "us", JOB_SUBMITTED_AT_PARAM: T0.isoformat()}
+        )
+
+        [completion] = [
+            record
+            for record in written_records
+            if record.get("event.name") == "operation.completed"
+        ]
+        # Read after the package's attribute filter, which drops some key names.
+        assert completion["attributes"]["job_queue_seconds"] == 7.25
+        assert JOB_SUBMITTED_AT_PARAM not in completion["attributes"]
 
     def test__no_call_id_means_no_reporting(self, modal_app, monkeypatch):
         def missing_call_id():

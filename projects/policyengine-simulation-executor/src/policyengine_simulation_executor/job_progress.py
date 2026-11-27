@@ -74,6 +74,10 @@ class JobProgressReporter(Protocol):
         """Return how many times Modal has started this call."""
         ...
 
+    def started_at(self) -> datetime | None:
+        """Return when the job's first attempt started, or None without a record."""
+        ...
+
 
 class NullJobProgressReporter:
     """Reports nothing."""
@@ -106,6 +110,10 @@ class NullJobProgressReporter:
     def attempts(self) -> int:
         """Return 1, since no earlier attempt is known."""
         return 1
+
+    def started_at(self) -> datetime | None:
+        """Return None, since no record is kept."""
+        return None
 
 
 NULL_JOB_PROGRESS = NullJobProgressReporter()
@@ -274,6 +282,14 @@ class StoredJobProgressReporter:
     def attempts(self) -> int:
         """Return this attempt's number, counting from 1."""
         return 1 if self._record is None else self._record.attempts
+
+    def started_at(self) -> datetime | None:
+        """Return the record's start, an earlier attempt's when this one continues it.
+
+        None before ``start()``. When reading the earlier attempt's record
+        failed, this attempt started a new record, so it is this attempt's.
+        """
+        return None if self._record is None else self._record.started_at
 
     def _earlier_attempt(self) -> JobProgressRecord | None:
         if self._read is None:
