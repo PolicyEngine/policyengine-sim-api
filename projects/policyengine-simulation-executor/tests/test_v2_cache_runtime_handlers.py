@@ -188,31 +188,40 @@ class TestFixedIdsThroughTheHandlers:
 
         assert built.kind == "random"
 
-    def test_a_cached_level_still_needs_a_states_only_group(
-        self, recorded_build, monkeypatch
-    ):
-        from policyengine_simulation_contract.stage12_execution import (
-            GeographySelection,
-        )
-        from policyengine_simulation_executor.stage12_cache import cache_levels
+    def test_a_cached_level_still_needs_a_states_only_group(self, recorded_build):
+        """A group with a district gets a handler scope, but no fixed ID."""
         from policyengine_simulation_executor.stage12_cache.levels import (
             DatasetLevel,
-        )
-        from policyengine_simulation_executor.stage12_cache.precompute_planning import (
-            _planned_pair,
-        )
-
-        monkeypatch.setattr(
-            cache_levels,
-            "CACHE_BASELINE_LEVELS",
-            {"us": (DatasetLevel.STATE_GROUP, DatasetLevel.NATIONAL)},
-        )
-        baseline, _reform = _planned_pair(2026)
-        national = baseline.model_copy(
-            update={"geography": GeographySelection(country="us", region="us")}
+            RunScope,
+            prebuilt_for,
         )
 
-        assert recorded_build(national).kind == "random"
+        group_with_a_district = scoped_planned_simulation(
+            2026, ("state/ca", "congressional_district/UT01")
+        )
+        params = simulation_runtime_params(group_with_a_district)
+        region = simulation_runtime.resolve_region(
+            country_module=simulation_runtime._country_module("us"),
+            country="us",
+            params=params,
+        )
+        run = RunScope(
+            country="us",
+            year=2026,
+            region=region,
+            dataset=simulation_runtime._resolve_dataset_selection(
+                params, region_resolution=region
+            ),
+        )
+        prebuilt = prebuilt_for("us")
+
+        # Only the states-only check keeps this group from a fixed ID: its
+        # level is one the cache precomputes, and the handler gives it a key.
+        assert prebuilt.level_of(run) is DatasetLevel.STATE_GROUP
+        scope = prebuilt.handlers[DatasetLevel.STATE_GROUP].baseline_scope(run)
+        assert scope is not None
+        assert scope.scope_key
+        assert recorded_build(group_with_a_district).kind == "random"
 
 
 class _StoppedAfterLoadingError(Exception):

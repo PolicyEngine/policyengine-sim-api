@@ -219,24 +219,17 @@ class TestExpectedCacheContents:
             "artifact_counts": {"dataset": 3, "baseline": 60},
         }
 
-    def test_follow_the_settings(self, us_inputs, monkeypatch):
+    def test_follow_the_handler_years(self, us_inputs, monkeypatch):
         from policyengine_simulation_executor.stage12_cache import (
-            cache_levels,
             levels_us,
             precompute_planning,
         )
-        from policyengine_simulation_executor.stage12_cache.levels import (
-            DatasetLevel,
-        )
 
         monkeypatch.setattr(levels_us, "US_PREBUILT_YEARS", (2026, 2027))
-        monkeypatch.setattr(
-            cache_levels, "CACHE_YEAR_FILE_LEVELS", {"us": (DatasetLevel.STATE,)}
-        )
 
         assert precompute_planning.expected_cache_contents("us") == {
             "years": [2026, 2027],
-            "artifact_counts": {"dataset": 0, "baseline": 40},
+            "artifact_counts": {"dataset": 2, "baseline": 40},
         }
 
     def test_load_no_country_model(self, us_inputs, monkeypatch):
