@@ -42,6 +42,7 @@ from public_api_rows import (
     insert_dynamic,
     insert_household,
     insert_model,
+    insert_parameter,
     insert_policy,
 )
 from sqlalchemy import text
@@ -211,6 +212,9 @@ def test_a_dynamic_that_cannot_be_applied_is_refused(public_api_database_url) ->
         policy_id = insert_policy(
             connection, catalog, [StoredValue(CTC_AMOUNT, 3_000, START)]
         )
+        # API v1 stores each name in one kind's table; a dynamic setting the
+        # policy's parameter needs the name in both.
+        insert_parameter(connection, catalog, CTC_AMOUNT, kind="dynamic")
         overlapping_dynamic_id = insert_dynamic(
             connection, catalog, [StoredValue(CTC_AMOUNT, 2_000, START)]
         )

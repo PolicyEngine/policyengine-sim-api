@@ -37,6 +37,7 @@ from public_api_rows import (
     insert_dynamic,
     insert_household,
     insert_model,
+    insert_parameter,
     insert_policy,
 )
 from sqlalchemy import text
@@ -194,6 +195,9 @@ def test_a_sides_dynamic_of_another_country_overlapping_or_without_values_is_ref
         uk_dynamic_id = insert_dynamic(
             connection, uk_catalog, [StoredValue(ELASTICITY, -0.05, START)]
         )
+        # API v1 stores each name in one kind's table; a policy setting the
+        # dynamic's parameter needs the name in both.
+        insert_parameter(connection, catalog, ELASTICITY, kind="policy")
         policy_id = insert_policy(
             connection, catalog, [StoredValue(ELASTICITY, -0.1, START)]
         )

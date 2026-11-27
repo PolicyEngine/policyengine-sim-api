@@ -3,13 +3,18 @@
 API v1 writes households, policies, dynamics, their parameter values and its
 model catalog; the tests insert them as the superuser, in a transaction they
 roll back, before acting as the simulation service's role.
+
+API v1 keeps two kinds of parameter apart (C1 · 50): a dynamic's parameters
+(``dynamic_parameters``), with their current-law values and every dynamic's
+values in ``dynamic_parameter_values``, and a policy's (``parameters``), with
+their current-law values and every policy's values in ``parameter_values``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final, Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
@@ -21,6 +26,16 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from sqlalchemy import Connection, TextClause
+
+# Which of API v1's tables a parameter is stored in.
+type ParameterKind = Literal["policy", "dynamic"]
+
+# API v1's ``DYNAMIC_PARAMETER_PREFIXES``: a name under one of its country's
+# prefixes is a dynamic parameter, and any other a policy parameter.
+DYNAMIC_PARAMETER_PREFIXES: Final[Mapping[str, tuple[str, ...]]] = {
+    "uk": ("gov.simulation.", "gov.dynamic."),
+    "us": ("gov.simulation.", "simulation."),
+}
 
 
 @dataclass(frozen=True)
@@ -62,6 +77,73 @@ def insert_model(connection: Connection, country: str) -> UUID:
     return model_id
 
 
+def parameter_kind(country: str, parameter_name: str) -> ParameterKind:
+    """Return the kind of the country's parameter, by API v1's prefixes."""
+    if parameter_name.startswith(DYNAMIC_PARAMETER_PREFIXES[country]):
+        return "dynamic"
+    return "policy"
+
+
+@dataclass(frozen=True)
+class _ParameterStatements:
+    """The statements that store one kind of parameter and its values.
+
+    ``owned_value`` stores a value a policy or dynamic sets, binding its ID as
+    ``owner_id``; ``current_law_value`` stores one with no owner.
+    """
+
+    parameter: TextClause
+    parameter_ids: TextClause
+    current_law_value: TextClause
+    owned_value: TextClause
+
+
+_PARAMETER_STATEMENTS: Final[Mapping[ParameterKind, _ParameterStatements]] = {
+    "policy": _ParameterStatements(
+        parameter=text(
+            "INSERT INTO public.parameters (id, name, tax_benefit_model_version_id) "
+            "VALUES (:id, :name, :version_id)"
+        ),
+        parameter_ids=text(
+            "SELECT name, id FROM public.parameters "
+            "WHERE tax_benefit_model_version_id = :version_id"
+        ),
+        current_law_value=text(
+            "INSERT INTO public.parameter_values "
+            "(id, parameter_id, value_json, start_date, end_date) "
+            "VALUES (:id, :parameter_id, :value, :start_date, :end_date)"
+        ).bindparams(bindparam("value", type_=JSONB)),
+        owned_value=text(
+            "INSERT INTO public.parameter_values "
+            "(id, parameter_id, value_json, start_date, end_date, policy_id) "
+            "VALUES (:id, :parameter_id, :value, :start_date, :end_date, :owner_id)"
+        ).bindparams(bindparam("value", type_=JSONB)),
+    ),
+    "dynamic": _ParameterStatements(
+        parameter=text(
+            "INSERT INTO public.dynamic_parameters "
+            "(id, name, tax_benefit_model_version_id) "
+            "VALUES (:id, :name, :version_id)"
+        ),
+        parameter_ids=text(
+            "SELECT name, id FROM public.dynamic_parameters "
+            "WHERE tax_benefit_model_version_id = :version_id"
+        ),
+        current_law_value=text(
+            "INSERT INTO public.dynamic_parameter_values "
+            "(id, dynamic_parameter_id, value_json, start_date, end_date) "
+            "VALUES (:id, :parameter_id, :value, :start_date, :end_date)"
+        ).bindparams(bindparam("value", type_=JSONB)),
+        owned_value=text(
+            "INSERT INTO public.dynamic_parameter_values "
+            "(id, dynamic_parameter_id, value_json, start_date, end_date, "
+            "dynamic_id) "
+            "VALUES (:id, :parameter_id, :value, :start_date, :end_date, :owner_id)"
+        ).bindparams(bindparam("value", type_=JSONB)),
+    ),
+}
+
+
 def insert_catalog_version(
     connection: Connection,
     *,
@@ -70,7 +152,11 @@ def insert_catalog_version(
     policyengine_version: str,
     parameter_names: Iterable[str] = (),
 ) -> CatalogVersion:
-    """Insert a catalog version of the model and its named parameters."""
+    """Insert a catalog version of the model and its named parameters.
+
+    As API v1's publication does, each name is stored in the table of its
+    kind (``parameter_kind``).
+    """
     version_id = uuid4()
     connection.execute(
         text(
@@ -80,68 +166,107 @@ def insert_catalog_version(
         ),
         {"id": version_id, "model_id": model_id, "version": policyengine_version},
     )
-    for name in parameter_names:
-        connection.execute(
-            text(
-                "INSERT INTO public.parameters "
-                "(id, name, tax_benefit_model_version_id) "
-                "VALUES (:id, :name, :version_id)"
-            ),
-            {"id": uuid4(), "name": name, "version_id": version_id},
-        )
-    return CatalogVersion(
+    catalog = CatalogVersion(
         country=country,
         model_id=model_id,
         version_id=version_id,
         policyengine_version=policyengine_version,
     )
+    for name in parameter_names:
+        insert_parameter(connection, catalog, name, kind=parameter_kind(country, name))
+    return catalog
 
 
-def _parameter_ids(connection: Connection, version_id: UUID) -> dict[str, UUID]:
+def insert_current_law_values(
+    connection: Connection, catalog: CatalogVersion, values: Iterable[StoredValue]
+) -> None:
+    """Insert current-law values of ``catalog``'s parameters, as its publication does.
+
+    Each value names a parameter of the catalog version and is stored with no
+    owner, beside the other values of its parameter's kind.
+    """
+    for stored in values:
+        kind = parameter_kind(catalog.country, stored.parameter_name)
+        _insert_value(
+            connection,
+            _PARAMETER_STATEMENTS[kind].current_law_value,
+            stored,
+            parameter_id=_parameter_ids(connection, catalog.version_id, kind)[
+                stored.parameter_name
+            ],
+        )
+
+
+def insert_parameter(
+    connection: Connection, catalog: CatalogVersion, name: str, *, kind: ParameterKind
+) -> UUID:
+    """Insert a parameter of ``catalog`` named ``name`` in the table of ``kind``.
+
+    ``insert_catalog_version`` stores each name in the table of its own kind,
+    as API v1 does. A test of a policy and a dynamic that set one parameter
+    adds the name to the other table with this, a state API v1 never stores.
+    """
+    parameter_id = uuid4()
+    connection.execute(
+        _PARAMETER_STATEMENTS[kind].parameter,
+        {"id": parameter_id, "name": name, "version_id": catalog.version_id},
+    )
+    return parameter_id
+
+
+def _parameter_ids(
+    connection: Connection, version_id: UUID, kind: ParameterKind
+) -> dict[str, UUID]:
     rows = connection.execute(
-        text(
-            "SELECT name, id FROM public.parameters "
-            "WHERE tax_benefit_model_version_id = :version_id"
-        ),
-        {"version_id": version_id},
+        _PARAMETER_STATEMENTS[kind].parameter_ids, {"version_id": version_id}
     )
     return {row.name: row.id for row in rows}
 
 
-@dataclass(frozen=True)
-class _SavedReformStatements:
-    """The two inserts that save a policy or a dynamic and the values it sets.
+def _insert_value(
+    connection: Connection,
+    statement: TextClause,
+    stored: StoredValue,
+    *,
+    parameter_id: UUID,
+    owner_id: UUID | None = None,
+) -> None:
+    connection.execute(
+        statement,
+        {
+            "id": uuid4(),
+            "parameter_id": parameter_id,
+            "value": stored.value,
+            "start_date": stored.start_date,
+            "end_date": stored.end_date,
+            **({} if owner_id is None else {"owner_id": owner_id}),
+        },
+    )
 
-    ``values`` binds the saved row's ID as ``saved_id``.
-    """
+
+@dataclass(frozen=True)
+class _SavedReform:
+    """How a policy or dynamic is saved: its row and the kind of parameter it sets."""
 
     row: TextClause
-    values: TextClause
+    parameter_kind: ParameterKind
 
 
-_POLICY_STATEMENTS = _SavedReformStatements(
+_POLICY = _SavedReform(
     row=text(
         "INSERT INTO public.policies (id, country_id, tax_benefit_model_id, "
         "tax_benefit_model_version_id, canonicalization_version, content_hash) "
         "VALUES (:id, :country, :model_id, :version_id, 1, :content_hash)"
     ),
-    values=text(
-        "INSERT INTO public.parameter_values "
-        "(id, parameter_id, value_json, start_date, end_date, policy_id) "
-        "VALUES (:id, :parameter_id, :value, :start_date, :end_date, :saved_id)"
-    ).bindparams(bindparam("value", type_=JSONB)),
+    parameter_kind="policy",
 )
-_DYNAMIC_STATEMENTS = _SavedReformStatements(
+_DYNAMIC = _SavedReform(
     row=text(
         "INSERT INTO public.dynamics (id, country_id, tax_benefit_model_id, "
         "tax_benefit_model_version_id, canonicalization_version, content_hash) "
         "VALUES (:id, :country, :model_id, :version_id, 1, :content_hash)"
     ),
-    values=text(
-        "INSERT INTO public.parameter_values "
-        "(id, parameter_id, value_json, start_date, end_date, dynamic_id) "
-        "VALUES (:id, :parameter_id, :value, :start_date, :end_date, :saved_id)"
-    ).bindparams(bindparam("value", type_=JSONB)),
+    parameter_kind="dynamic",
 )
 
 
@@ -149,17 +274,18 @@ def _insert_saved_reform(
     connection: Connection,
     catalog: CatalogVersion,
     values: Iterable[StoredValue],
-    statements: _SavedReformStatements,
+    saved: _SavedReform,
 ) -> UUID:
     """Insert a policy or dynamic saved on ``catalog`` and the values it sets.
 
     API v1 stores both alike: on the catalog's country, model and version,
     with a canonicalization version and a content hash. Each value names a
-    parameter of that catalog version by name.
+    parameter of that catalog version by name, among the parameters of the
+    kind the policy or dynamic sets.
     """
     saved_id = uuid4()
     connection.execute(
-        statements.row,
+        saved.row,
         {
             "id": saved_id,
             "country": catalog.country,
@@ -168,18 +294,15 @@ def _insert_saved_reform(
             "content_hash": _stand_in_content_hash(saved_id),
         },
     )
-    parameter_ids = _parameter_ids(connection, catalog.version_id)
+    statements = _PARAMETER_STATEMENTS[saved.parameter_kind]
+    parameter_ids = _parameter_ids(connection, catalog.version_id, saved.parameter_kind)
     for stored in values:
-        connection.execute(
-            statements.values,
-            {
-                "id": uuid4(),
-                "parameter_id": parameter_ids[stored.parameter_name],
-                "value": stored.value,
-                "start_date": stored.start_date,
-                "end_date": stored.end_date,
-                "saved_id": saved_id,
-            },
+        _insert_value(
+            connection,
+            statements.owned_value,
+            stored,
+            parameter_id=parameter_ids[stored.parameter_name],
+            owner_id=saved_id,
         )
     return saved_id
 
@@ -189,8 +312,11 @@ def insert_policy(
     catalog: CatalogVersion,
     values: Iterable[StoredValue] = (),
 ) -> UUID:
-    """Insert a policy saved on ``catalog`` and the values it sets."""
-    return _insert_saved_reform(connection, catalog, values, _POLICY_STATEMENTS)
+    """Insert a policy saved on ``catalog`` and the values it sets.
+
+    Each value names a policy parameter of ``catalog``.
+    """
+    return _insert_saved_reform(connection, catalog, values, _POLICY)
 
 
 def insert_dynamic(
@@ -198,8 +324,11 @@ def insert_dynamic(
     catalog: CatalogVersion,
     values: Iterable[StoredValue] = (),
 ) -> UUID:
-    """Insert a dynamic saved on ``catalog`` and the values it sets."""
-    return _insert_saved_reform(connection, catalog, values, _DYNAMIC_STATEMENTS)
+    """Insert a dynamic saved on ``catalog`` and the values it sets.
+
+    Each value names a dynamic parameter of ``catalog``.
+    """
+    return _insert_saved_reform(connection, catalog, values, _DYNAMIC)
 
 
 def insert_dataset(

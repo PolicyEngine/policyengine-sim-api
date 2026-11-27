@@ -117,7 +117,10 @@ class Policy(InputBase):
 
 
 class Parameter(InputBase):
-    """A catalog version's parameter, named once within it."""
+    """A catalog version's policy parameter, named once within it.
+
+    API v1 keeps the parameters a dynamic sets apart, as ``DynamicParameter``.
+    """
 
     __tablename__ = "parameters"
 
@@ -127,10 +130,11 @@ class Parameter(InputBase):
 
 
 class ParameterValue(InputBase):
-    """A parameter's value from ``start_date`` until ``end_date``.
+    """A policy parameter's value from ``start_date`` until ``end_date``.
 
     With no end date it applies indefinitely. A policy's own values name it in
-    ``policy_id``, and a dynamic's in ``dynamic_id``.
+    ``policy_id``; a value with none is current law, which the service doesn't
+    read. A dynamic's values are ``DynamicParameterValue`` rows.
     """
 
     __tablename__ = "parameter_values"
@@ -141,7 +145,6 @@ class ParameterValue(InputBase):
     start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     policy_id: Mapped[UUID | None] = mapped_column(Uuid)
-    dynamic_id: Mapped[UUID | None] = mapped_column(Uuid)
 
 
 class Dynamic(InputBase):
@@ -149,13 +152,47 @@ class Dynamic(InputBase):
 
     Behavioural responses are an example. API v1 saves a dynamic as it saves a
     policy, on a country's catalog version; sim reads its ID and its country,
-    so a simulation refuses another country's dynamic.
+    so a simulation refuses another country's dynamic. Its values are
+    ``DynamicParameterValue`` rows.
     """
 
     __tablename__ = "dynamics"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     country_id: Mapped[str] = mapped_column(String(2))
+
+
+class DynamicParameter(InputBase):
+    """A catalog version's dynamic parameter, named once within it.
+
+    API v1 keeps the parameters a dynamic sets, the model's assumptions such
+    as behavioural responses, apart from the ones a policy sets
+    (``Parameter``).
+    """
+
+    __tablename__ = "dynamic_parameters"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    name: Mapped[str] = mapped_column(String(512))
+    tax_benefit_model_version_id: Mapped[UUID] = mapped_column(Uuid)
+
+
+class DynamicParameterValue(InputBase):
+    """A dynamic parameter's value from ``start_date`` until ``end_date``.
+
+    With no end date it applies indefinitely. A dynamic's own values name it
+    in ``dynamic_id``; a value with none is current law, which the service
+    doesn't read.
+    """
+
+    __tablename__ = "dynamic_parameter_values"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    dynamic_parameter_id: Mapped[UUID] = mapped_column(Uuid)
+    value_json: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dynamic_id: Mapped[UUID | None] = mapped_column(Uuid)
 
 
 input_metadata = InputBase.metadata

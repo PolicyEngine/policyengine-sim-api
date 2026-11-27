@@ -106,9 +106,10 @@ run's economy output.
 
 ## Input tables
 
-`input_tables.py` holds read-only models of the Public API's tables a
+`input_tables.py` holds read-only models of API v1's tables a
 calculation is read from: `households`, `policies`, `dynamics`, `parameters`,
-`parameter_values`, `regions`, `datasets`, `tax_benefit_models` and
+`parameter_values`, `dynamic_parameters`, `dynamic_parameter_values`,
+`regions`, `datasets`, `tax_benefit_models` and
 `tax_benefit_model_versions`, in `input_metadata`. The service only reads them, with `SELECT`. Each names only
 the columns the service reads and its primary key, `id`, which a mapped class
 needs, so they are not models of the whole tables,
@@ -357,7 +358,10 @@ the parameters of the catalog version it was saved on, so a calculation on
 any catalog version applies them by name; a parameter the calculation's
 version lacks raises `MissingPolicyParametersError`, naming each one, and a
 policy the country doesn't have raises `UnknownPolicyError`.
-`read_dynamic_reform` reads a stored dynamic the same way: a dynamic, like a
+`read_dynamic_reform` reads a stored dynamic the same way, from the tables
+API v1 keeps a dynamic's parameters and values in, apart from a policy's
+(`dynamic_parameters` and `dynamic_parameter_values`, whose rows with no
+dynamic are current law, which the service doesn't read). A dynamic, like a
 policy, belongs to one country, and one the country doesn't have, another
 country's included, raises `UnknownDynamicError`. A dynamic with no
 parameter values stored raises `DynamicWithoutValuesError` rather than being

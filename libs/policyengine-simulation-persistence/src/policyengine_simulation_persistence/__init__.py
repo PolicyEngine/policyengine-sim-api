@@ -123,6 +123,8 @@ from policyengine_simulation_persistence.household_report_store import (
 from policyengine_simulation_persistence.input_tables import (
     Dataset,
     Dynamic,
+    DynamicParameter,
+    DynamicParameterValue,
     Household,
     Parameter,
     ParameterValue,
@@ -247,6 +249,8 @@ __all__ = [
     "DecileImpact",
     "DecileType",
     "Dynamic",
+    "DynamicParameter",
+    "DynamicParameterValue",
     "DynamicWithoutValuesError",
     "EconomyCatalogRows",
     "EconomyPopulation",

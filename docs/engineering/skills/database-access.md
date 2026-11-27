@@ -175,8 +175,10 @@ and this repository has no migration chain of its own
   The service connects as its own role, which policyengine-api's privilege
   manifest grants.
 - the policyengine-api tables a calculation is read from (`households`,
-  `policies`, `parameters`, `parameter_values`, `tax_benefit_models` and
-  `tax_benefit_model_versions`), which the simulation service only reads.
+  `policies`, `dynamics`, `parameters`, `parameter_values`,
+  `dynamic_parameters`, `dynamic_parameter_values`, `regions`, `datasets`,
+  `tax_benefit_models` and `tax_benefit_model_versions`), which the
+  simulation service only reads.
   Their read-only models in that library's `input_tables.py` name only the
   columns the service reads and each table's primary key, apart from the
   models of the tables it writes.
