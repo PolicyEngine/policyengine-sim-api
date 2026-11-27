@@ -44,6 +44,8 @@ class RecordingRuntime:
 
 def _load(monkeypatch):
     install_fake_modal(monkeypatch)
+    # The app builds its images in src/modal/v2_images.py.
+    sys.modules.pop("src.modal.v2_images", None)
     sys.modules.pop("src.modal.v2_app", None)
     return importlib.import_module("src.modal.v2_app")
 
@@ -922,6 +924,8 @@ def test_stage12_functions_record_a_preemption_at_warning(
 def test_external_package_values_are_assertions_only(monkeypatch) -> None:
     install_fake_modal(monkeypatch)
     monkeypatch.setenv("STAGE12_EXPECT_US_VERSION", "not-the-bundled-version")
+    # src/modal/v2_images.py checks them, next to the bundle it resolves.
+    sys.modules.pop("src.modal.v2_images", None)
     sys.modules.pop("src.modal.v2_app", None)
 
     with pytest.raises(ValueError, match="does not match"):

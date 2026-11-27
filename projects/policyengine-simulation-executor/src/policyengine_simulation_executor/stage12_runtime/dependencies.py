@@ -16,6 +16,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
 )
 
 from .database_retry import open_session_with_retry
+from .worker_lookup import deployed_worker
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -142,12 +143,16 @@ class ChildInvoker(Protocol):
 
 
 class ModalChildInvoker:
-    """``ChildInvoker`` backed by functions deployed to Modal."""
+    """``ChildInvoker`` backed by the workers deployed to Modal."""
 
     def spawn(self, request: ChildSpawnRequest) -> ChildCall:
-        """Look up ``application_name.function_name`` in ``environment``; spawn it."""
-        modal: Any = import_module("modal")
-        function = modal.Function.from_name(
+        """Look up ``function_name`` in ``application_name`` and spawn it.
+
+        A simulation worker is a method of a Modal class, and the name stored
+        in the context is the method's (``deployed_worker``).
+        """
+        function = deployed_worker(
+            import_module("modal"),
             request.application_name,
             request.function_name,
             environment_name=request.environment,

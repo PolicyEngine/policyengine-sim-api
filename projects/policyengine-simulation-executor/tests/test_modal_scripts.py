@@ -336,6 +336,8 @@ class TestModalImageSmoke:
             REPO_ROOT / "projects/policyengine-simulation-executor/src/modal/app.py",
             REPO_ROOT / "projects/policyengine-simulation-executor/src/modal/v2_app.py",
             REPO_ROOT
+            / "projects/policyengine-simulation-executor/src/modal/v2_images.py",
+            REPO_ROOT
             / "projects/policyengine-simulation-executor/src/modal/precompute_app.py",
             REPO_ROOT
             / "projects/policyengine-simulation-executor/src/modal"

@@ -373,7 +373,8 @@ naming the run reads: a row of API v1's `cliff_impacts`, one per
 calculation. The simulation service inserts it pending when a report's
 create or re-run asks for cliffs (`include_cliffs`, C1 · 39) and the run has
 none that hasn't failed, starts the country's simulation worker
-(`run_single_simulation_us` or `run_single_simulation_uk`) with the run's own
+(`SimulationWorkerUS.run_single_simulation_us` or
+`SimulationWorkerUK.run_single_simulation_uk`) with the run's own
 simulation input, built as a standalone run's, and a context naming the row
 (`Stage12InvocationContext.cliff_result_id`, left out of a context that names
 none, which older workers refuse), and records the call. The worker

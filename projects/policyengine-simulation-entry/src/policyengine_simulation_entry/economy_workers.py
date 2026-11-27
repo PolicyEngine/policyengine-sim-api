@@ -9,7 +9,9 @@ run is calculated by the simulation function alone, and so is a simulation
 run's cliff calculation, by the same function in its cliff mode. Each is called by name
 with ``spawn``, so a route waits only for Modal to accept the call, and is
 given the run IDs it claims and records, never a Stage 12 evaluation
-record.
+record. The simulation function is a method of a Modal class, whose
+containers restore from a memory snapshot with the models loaded, in apps
+deployed since the classes; older apps define it as a plain function.
 
 This is the economy path's own Modal access, apart from the Stage 12
 comparison path's.
@@ -24,6 +26,9 @@ import modal
 from policyengine_simulation_contract.stage12_manifest import (
     V2ManifestLoader,
     manifest_digest,
+)
+from policyengine_simulation_contract.stage12_simulation_workers import (
+    worker_class_name,
 )
 from policyengine_simulation_persistence import RunVersions
 
@@ -231,9 +236,8 @@ class ModalEconomyRunCaller:
 
         Raise RuntimeError when Modal returns no call ID.
         """
-        return await self._spawn(
+        return await self._spawn_simulation_worker(
             worker,
-            worker.simulation_callable,
             simulation_payload,
             context_payload,
             observability_context=observability_context,
@@ -252,10 +256,52 @@ class ModalEconomyRunCaller:
         The context names the cliff calculation, which the function claims
         and records. Raise RuntimeError when Modal returns no call ID.
         """
+        return await self._spawn_simulation_worker(
+            worker,
+            simulation_payload,
+            context_payload,
+            observability_context=observability_context,
+        )
+
+    async def _spawn_simulation_worker(
+        self,
+        worker: EconomyWorker,
+        payload: dict[str, Any],
+        context_payload: dict[str, Any],
+        *,
+        observability_context: dict[str, Any] | None,
+    ) -> str:
+        """Start the simulation worker's method on its class; return its call ID.
+
+        An app deployed before the workers were classes, which the manifest's
+        default can name after a move or a rollback, has no such class, so it
+        gets the plain function of the same name. Only the class lookup falls
+        back: once the class resolves, a failed spawn raises as it is.
+        """
+        class_name = worker_class_name(worker.simulation_callable)
+        if class_name is not None:
+            worker_class = modal.Cls.from_name(
+                worker.application_name,
+                class_name,
+                environment_name=self._environment,
+            )
+            try:
+                await worker_class.hydrate.aio()
+            except modal.exception.NotFoundError:
+                pass
+            else:
+                method = getattr(worker_class(), worker.simulation_callable)
+                return await self._spawn_call(
+                    method,
+                    worker.simulation_callable,
+                    payload,
+                    context_payload,
+                    observability_context=observability_context,
+                )
         return await self._spawn(
             worker,
             worker.simulation_callable,
-            simulation_payload,
+            payload,
             context_payload,
             observability_context=observability_context,
         )
@@ -274,6 +320,23 @@ class ModalEconomyRunCaller:
             function_name,
             environment_name=self._environment,
         )
+        return await self._spawn_call(
+            function,
+            function_name,
+            payload,
+            context_payload,
+            observability_context=observability_context,
+        )
+
+    @staticmethod
+    async def _spawn_call(
+        function: modal.Function,
+        function_name: str,
+        payload: dict[str, Any],
+        context_payload: dict[str, Any],
+        *,
+        observability_context: dict[str, Any] | None,
+    ) -> str:
         call = await function.spawn.aio(
             payload, context_payload, observability_context=observability_context
         )

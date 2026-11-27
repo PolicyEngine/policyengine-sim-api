@@ -527,30 +527,73 @@ def test_successful_coordination_records_every_stage_and_state():
         assert child.simulation_callable == "run_single_simulation_us"
 
 
-def test_modal_child_invoker_spawns_and_restores_deployed_functions(monkeypatch):
+class _ClassNotDeployedError(Exception):
+    """Stands in for ``modal.exception.NotFoundError``."""
+
+
+def _recording_modal(calls: list, *, class_deployed: bool = True) -> object:
+    """Stand in for ``modal``, recording each lookup, spawn and restore in ``calls``.
+
+    With ``class_deployed`` False, hydrating a class raises the not-found
+    error, as for an app rolled back to a commit from before the classes.
+    """
     from types import SimpleNamespace
 
+    def spawn(*spawn_args, **spawn_kwargs):
+        calls.append(("spawn", spawn_args, spawn_kwargs))
+        return "spawned-call"
+
+    def function_from_name(*args, **kwargs):
+        calls.append(("Function.from_name", args, kwargs))
+        return SimpleNamespace(spawn=spawn)
+
+    class WorkerClass:
+        def hydrate(self):
+            calls.append(("Cls.hydrate", (), {}))
+            if not class_deployed:
+                msg = "the app defines no such class"
+                raise _ClassNotDeployedError(msg)
+            return self
+
+        def __call__(self):
+            return SimpleNamespace(
+                run_single_simulation_us=SimpleNamespace(spawn=spawn)
+            )
+
+    def class_from_name(*args, **kwargs):
+        calls.append(("Cls.from_name", args, kwargs))
+        return WorkerClass()
+
+    def from_id(invocation_id):
+        calls.append(("FunctionCall.from_id", (invocation_id,), {}))
+        return "restored-call"
+
+    return SimpleNamespace(
+        Cls=SimpleNamespace(from_name=class_from_name),
+        Function=SimpleNamespace(from_name=function_from_name),
+        FunctionCall=SimpleNamespace(from_id=from_id),
+        exception=SimpleNamespace(NotFoundError=_ClassNotDeployedError),
+    )
+
+
+def _spawn_request(dependencies, function_name: str):
+    return dependencies.ChildSpawnRequest(
+        application_name="application",
+        function_name=function_name,
+        environment="staging",
+        simulation={"role": "baseline"},
+        context={"request_id": "request-1"},
+        observability_context={"traceparent": "trace"},
+    )
+
+
+def test_modal_child_invoker_spawns_a_worker_through_its_class_and_restores_calls(
+    monkeypatch,
+):
     from policyengine_simulation_executor.stage12_runtime import dependencies
 
     calls = []
-
-    def from_name(*args, **kwargs):
-        calls.append(("from_name", args, kwargs))
-
-        def spawn(*spawn_args, **spawn_kwargs):
-            calls.append(("spawn", spawn_args, spawn_kwargs))
-            return "spawned-call"
-
-        return SimpleNamespace(spawn=spawn)
-
-    def from_id(invocation_id):
-        calls.append(("from_id", (invocation_id,), {}))
-        return "restored-call"
-
-    fake_modal = SimpleNamespace(
-        Function=SimpleNamespace(from_name=from_name),
-        FunctionCall=SimpleNamespace(from_id=from_id),
-    )
+    fake_modal = _recording_modal(calls)
 
     def import_modal(module_name):
         assert module_name == "modal"
@@ -559,22 +602,48 @@ def test_modal_child_invoker_spawns_and_restores_deployed_functions(monkeypatch)
     monkeypatch.setattr(dependencies, "import_module", import_modal)
     invoker = dependencies.ModalChildInvoker()
 
-    spawned = invoker.spawn(
-        dependencies.ChildSpawnRequest(
-            application_name="application",
-            function_name="run_single_simulation_us",
-            environment="staging",
-            simulation={"role": "baseline"},
-            context={"request_id": "request-1"},
-            observability_context={"traceparent": "trace"},
-        )
-    )
+    spawned = invoker.spawn(_spawn_request(dependencies, "run_single_simulation_us"))
     restored = invoker.restore("call-1")
 
+    # The class's containers restore from a memory snapshot with the models
+    # loaded; the context still names the worker by its method.
     assert (spawned, restored) == ("spawned-call", "restored-call")
     assert calls == [
         (
-            "from_name",
+            "Cls.from_name",
+            ("application", "SimulationWorkerUS"),
+            {"environment_name": "staging"},
+        ),
+        ("Cls.hydrate", (), {}),
+        (
+            "spawn",
+            ({"role": "baseline"}, {"request_id": "request-1"}),
+            {"observability_context": {"traceparent": "trace"}},
+        ),
+        ("FunctionCall.from_id", ("call-1",), {}),
+    ]
+
+
+def test_modal_child_invoker_spawns_the_function_when_the_app_has_no_worker_class(
+    monkeypatch,
+):
+    from policyengine_simulation_executor.stage12_runtime import dependencies
+
+    calls = []
+    fake_modal = _recording_modal(calls, class_deployed=False)
+    monkeypatch.setattr(dependencies, "import_module", lambda _name: fake_modal)
+
+    spawned = dependencies.ModalChildInvoker().spawn(
+        _spawn_request(dependencies, "run_single_simulation_us")
+    )
+
+    # A coordinator call still running when its app is rolled back in place,
+    # to a commit from before the classes, finds only the plain function.
+    assert spawned == "spawned-call"
+    assert calls[1:] == [
+        ("Cls.hydrate", (), {}),
+        (
+            "Function.from_name",
             ("application", "run_single_simulation_us"),
             {"environment_name": "staging"},
         ),
@@ -583,8 +652,27 @@ def test_modal_child_invoker_spawns_and_restores_deployed_functions(monkeypatch)
             ({"role": "baseline"}, {"request_id": "request-1"}),
             {"observability_context": {"traceparent": "trace"}},
         ),
-        ("from_id", ("call-1",), {}),
     ]
+
+
+def test_modal_child_invoker_spawns_a_callable_without_a_class_as_a_function(
+    monkeypatch,
+):
+    from policyengine_simulation_executor.stage12_runtime import dependencies
+
+    calls = []
+    fake_modal = _recording_modal(calls)
+    monkeypatch.setattr(dependencies, "import_module", lambda _name: fake_modal)
+
+    dependencies.ModalChildInvoker().spawn(
+        _spawn_request(dependencies, "a_function_of_another_kind")
+    )
+
+    assert calls[0] == (
+        "Function.from_name",
+        ("application", "a_function_of_another_kind"),
+        {"environment_name": "staging"},
+    )
 
 
 def _shadow_run(store, artifacts, invoker, runtime=None):

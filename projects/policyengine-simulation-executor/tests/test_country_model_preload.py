@@ -42,6 +42,27 @@ def test_preload_imports_both_countries_models_then_fills_the_spm_cache(
     assert spm_checks == ["checked"]
 
 
+def test_a_uk_preload_imports_only_the_uk_models_and_checks_no_spm(recorded_preload):
+    imported_modules, spm_checks = recorded_preload
+
+    country_model_preload.preload_country_models(("uk",))
+
+    # The v2 UK worker's image holds only UK data, and SPM is a US measure.
+    assert imported_modules == ["policyengine_uk", "policyengine.tax_benefit_models.uk"]
+    assert spm_checks == []
+
+
+def test_a_us_preload_imports_only_the_us_models_then_fills_the_spm_cache(
+    recorded_preload,
+):
+    imported_modules, spm_checks = recorded_preload
+
+    country_model_preload.preload_country_models(("us",))
+
+    assert imported_modules == ["policyengine_us", "policyengine.tax_benefit_models.us"]
+    assert spm_checks == ["checked"]
+
+
 def test_a_country_that_fails_to_import_is_left_to_its_own_calls(monkeypatch, caplog):
     imported_modules: list[str] = []
     spm_checks: list[str] = []
