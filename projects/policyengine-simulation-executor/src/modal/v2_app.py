@@ -42,8 +42,6 @@ from policyengine_simulation_executor.stage12_runtime.report_run_access import (
 from policyengine_simulation_executor.stage12_timeouts import (
     COORDINATOR_TIMEOUT_SECONDS,
     HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS,
-    UK_SIMULATION_TIMEOUT_SECONDS,
-    US_SIMULATION_TIMEOUT_SECONDS,
 )
 from policyengine_simulation_observability.observability import (
     init_process_observability,
@@ -76,6 +74,12 @@ from src.modal.v2_images import (
     household_image,
     uk_worker_image,
     us_worker_image,
+)
+from src.modal.v2_snapshot_warm_up import warm_up_first_us_calculation
+from src.modal.v2_worker_resources import (
+    SEGMENT_WORKER_RESOURCES,
+    UK_SIMULATION_WORKER_RESOURCES,
+    US_SIMULATION_WORKER_RESOURCES,
 )
 
 import modal
@@ -187,34 +191,22 @@ def validate_worker_uk() -> dict:
 # code from before the classes: an entry service revision (the stable one
 # during a deploy, or one a rollback routes traffic back to), and a coordinator
 # or US worker call running while this app is redeployed in place. Both run the
-# same calculation.
+# same calculation. Their CPU, memory, time and container limits are in
+# src/modal/v2_worker_resources.py.
 _SEGMENT_WORKER_OPTIONS: dict[str, Any] = {
+    **SEGMENT_WORKER_RESOURCES,
     "image": us_worker_image,
-    "cpu": 8.0,
-    "memory": 32768,
-    "timeout": 3600,
-    "retries": 0,
-    # Every segment of every US simulation call that may run at once: a
-    # segment queued behind this limit counts against its caller's wait.
-    "max_containers": 1000,
     "secrets": worker_secrets,
 }
 _US_SIMULATION_WORKER_OPTIONS: dict[str, Any] = {
+    **US_SIMULATION_WORKER_RESOURCES,
     "image": us_worker_image,
-    "cpu": 8.0,
-    "memory": 32768,
-    "timeout": US_SIMULATION_TIMEOUT_SECONDS,
-    "retries": 0,
-    # Both simulations of every coordinator call that may run at once. The
-    # simulation runs and cliff calculations the simulation service starts
-    # directly share the same containers.
-    "max_containers": 50,
     "secrets": report_run_writer_secrets,
 }
 _UK_SIMULATION_WORKER_OPTIONS: dict[str, Any] = {
-    **_US_SIMULATION_WORKER_OPTIONS,
+    **UK_SIMULATION_WORKER_RESOURCES,
     "image": uk_worker_image,
-    "timeout": UK_SIMULATION_TIMEOUT_SECONDS,
+    "secrets": report_run_writer_secrets,
 }
 
 
@@ -386,9 +378,11 @@ class _V2CountryModelsLoadedBeforeSnapshot:
     Modal runs ``snap=True`` hooks in every container that isn't restored, and
     takes the memory snapshot from such a container when it starts it with
     snapshots enabled; every container restored from the snapshot starts with
-    the loaded models in memory. ``snap=False`` hooks run after each restore.
-    Observability is configured per call instead, after the restore, so each
-    restored container reports its own process identity.
+    the loaded models in memory. The US workers' hook also runs one warm-up
+    calculation in a container Modal snapshots (``v2_snapshot_warm_up``).
+    ``snap=False`` hooks run after each restore. Observability is configured
+    per call instead, after the restore, so each restored container reports
+    its own process identity.
     """
 
     # The image's own country: a failed import of one country's models can't
@@ -398,10 +392,11 @@ class _V2CountryModelsLoadedBeforeSnapshot:
 
     @modal.enter(snap=True)
     def load_country_models(self) -> None:
-        """Load the class's country models, and for the US the SPM capability."""
+        """Load the country models, and for the US the SPM capability and a warm-up."""
         with contextlib.suppress(Exception):
             _CONTAINER_CALLS.record_snapshot_hook()
         preload_country_models(self.snapshot_countries)
+        warm_up_first_us_calculation(self.snapshot_countries)
 
     @modal.enter(snap=False)
     def reseed_random_after_restore(self) -> None:

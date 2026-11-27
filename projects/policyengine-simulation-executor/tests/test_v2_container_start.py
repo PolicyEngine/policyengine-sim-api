@@ -94,8 +94,10 @@ def v2_app(monkeypatch):
     sys.modules.pop("src.modal.v2_images", None)
     sys.modules.pop("src.modal.v2_app", None)
     app = importlib.import_module("src.modal.v2_app")
-    # The real preload imports the country's models.
+    # The real preload imports the country's models, and the real warm-up
+    # calculates a region group (tests/test_v2_snapshot_warm_up.py).
     monkeypatch.setattr(app, "preload_country_models", lambda _countries: None)
+    monkeypatch.setattr(app, "warm_up_first_us_calculation", lambda _countries: None)
     monkeypatch.setattr(app.modal, "current_function_call_id", lambda: "fc-call")
     _replace_worker_jobs(monkeypatch, lambda: WORKER_RESULT)
     yield app
