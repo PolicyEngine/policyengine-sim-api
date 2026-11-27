@@ -132,15 +132,24 @@ def modal_functions(monkeypatch):
     return looked_up, function
 
 
-class FakeWorkerClass:
-    """A Modal class looked up by name, whose worker methods spawn ``method``.
+# Each worker class defines only its own country's method.
+WORKER_METHOD_BY_CLASS = {
+    "SimulationWorkerUS": "run_single_simulation_us",
+    "SimulationWorkerUK": "run_single_simulation_uk",
+}
 
-    With ``deployed`` False, hydrating it fails as it does for an app deployed
-    before the workers were classes.
+
+class FakeWorkerClass:
+    """A Modal class looked up by name, whose worker method spawns ``method``.
+
+    The instance has only the looked-up class's method, under its name
+    (``method_name``). With ``deployed`` False, hydrating it fails as it does
+    for an app deployed before the workers were classes.
     """
 
     def __init__(self, method: FakeFunction) -> None:
         self.method = method
+        self.method_name: str | None = None
         self.deployed = True
         self.hydrate = SimpleNamespace(aio=self._hydrate)
 
@@ -151,10 +160,8 @@ class FakeWorkerClass:
         return self
 
     def __call__(self) -> SimpleNamespace:
-        return SimpleNamespace(
-            run_single_simulation_us=self.method,
-            run_single_simulation_uk=self.method,
-        )
+        assert self.method_name is not None
+        return SimpleNamespace(**{self.method_name: self.method})
 
 
 @pytest.fixture
@@ -165,6 +172,7 @@ def modal_worker_classes(monkeypatch):
 
     def from_name(application: str, name: str, *, environment_name: str):
         looked_up.append((application, name, environment_name))
+        worker_class.method_name = WORKER_METHOD_BY_CLASS[name]
         return worker_class
 
     monkeypatch.setattr(economy_workers.modal.Cls, "from_name", staticmethod(from_name))

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import importlib
+import os
 import random
+import subprocess
 import sys
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 from fixtures.fake_modal import install_fake_modal
@@ -19,6 +22,7 @@ from policyengine_simulation_executor.stage12_timeouts import (
     US_SIMULATION_TIMEOUT_SECONDS,
 )
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKER_METHOD_NAMES = (
     "run_single_simulation_us",
     "run_single_simulation_uk",
@@ -145,6 +149,38 @@ def test_each_v2_worker_class_loads_only_its_own_countrys_models(
     # Each image holds one country's data. A UK container never imports the
     # US models, so a failed US import can't affect it, and the reverse.
     assert preloaded_countries == [("us",), ("uk",), ("us",)]
+
+
+def test_importing_the_v2_app_loads_neither_countrys_models() -> None:
+    # The snapshot hook loads one country's models only if the app's own
+    # import loaded none: .py imports both countries on import unless
+    # POLICYENGINE_SKIP_COUNTRY_IMPORTS is set, as the executor sets it.
+    probe = (
+        "import sys\n"
+        "import src.modal.v2_app\n"
+        "print(sorted(name for name in sys.modules if name in {\n"
+        "    'policyengine_us', 'policyengine_uk',\n"
+        "    'policyengine.tax_benefit_models.us',\n"
+        "    'policyengine.tax_benefit_models.uk',\n"
+        "}))\n"
+    )
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name != "POLICYENGINE_SKIP_COUNTRY_IMPORTS"
+    }
+
+    imported = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=300,
+    )
+
+    assert imported.stdout.strip().splitlines()[-1] == "[]"
 
 
 def test_the_v2_snapshot_hook_configures_no_observability(monkeypatch) -> None:

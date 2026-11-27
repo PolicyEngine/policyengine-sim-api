@@ -7,6 +7,9 @@ import sys
 
 import pytest
 from fixtures.fake_modal import install_fake_modal
+from policyengine_simulation_contract.stage12_simulation_workers import (
+    worker_class_name,
+)
 from policyengine_simulation_executor.stage12_runtime import (
     coordination as coordination_module,
 )
@@ -40,8 +43,11 @@ def _declared_modal_timeouts(monkeypatch):
     sys.modules.pop("src.modal.v2_images", None)
     sys.modules.pop("src.modal.v2_app", None)
     modal_app = importlib.import_module("src.modal.v2_app")
+    # The coordinator spawns the simulation workers' class methods; callers
+    # on older code spawn the plain functions.
     return {
-        name: options.get("timeout") for name, options in modal_app.app.function_calls
+        name: options.get("timeout")
+        for name, options in [*modal_app.app.function_calls, *modal_app.app.cls_calls]
     }
 
 
@@ -54,17 +60,19 @@ MINIMUM_FINISHING_SECONDS = 600
 def test_declared_modal_timeouts_fit_the_shared_wait_window(monkeypatch) -> None:
     declared_timeouts = _declared_modal_timeouts(monkeypatch)
     window_seconds = coordination_module.SIMULATION_WAIT_TIMEOUT_SECONDS
-    child_worker_timeouts = {
-        name: timeout
-        for name, timeout in declared_timeouts.items()
-        if name.startswith("run_single_simulation")
-    }
-
-    assert set(child_worker_timeouts) == {
+    worker_methods = (
         "run_single_simulation_us",
         "run_single_simulation_uk",
         "run_single_simulation_segment_us",
+    )
+    worker_classes = {worker_class_name(method) for method in worker_methods}
+    child_worker_timeouts = {
+        name: timeout
+        for name, timeout in declared_timeouts.items()
+        if name.startswith("run_single_simulation") or name in worker_classes
     }
+
+    assert set(child_worker_timeouts) == {*worker_methods, *worker_classes}
     # The window covers every worker's own Modal timeout.
     assert all(window_seconds >= timeout for timeout in child_worker_timeouts.values())
     assert (
