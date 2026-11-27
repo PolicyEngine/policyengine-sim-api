@@ -141,9 +141,10 @@ operations:
 | `stage12_child_input_planning` | Choosing one baseline or reform child's output plan and attaching it to the child input |
 
 `stage12_child_input_planning` runs once for each simulation and includes a
-`simulation_role` attribute. Where a child is given its simulation's stored
-plan (each child of a report run, and a comparison-path report's baseline),
-resolving that plan records its own `stage12_country_model_load`,
+`simulation_role` attribute. Where a coordinator resolves a simulation's
+stored plan (for each child of a report run, and for every comparison-path
+report's baseline, including one that then keeps the report's plan), that
+resolution records its own `stage12_country_model_load`,
 `stage12_output_configuration` and `stage12_output_variable_resolution`
 operations inside it. The other planning operations include the `country`
 attribute.
