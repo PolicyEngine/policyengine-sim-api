@@ -426,11 +426,21 @@ reads is read with them as zeros. A run that succeeded before this rule, under
 a report's plan, is reused when it holds what the new report reads from it,
 and refused (`reused_simulation_output_incompatible`) otherwise. The
 precomputed US baselines are planned the same way, so a report run's
-current-law baseline finds its precomputed files; a comparison-path call (a
+current-law baseline finds its precomputed files. A comparison-path call (a
 shadow comparison with a production job, or the operator-only
-`POST /internal/stage12/reports`) still plans its baseline with its report's
-plan, so its US national baseline no longer finds them and calculates all 20
-region groups.
+`POST /internal/stage12/reports`) gives its baseline the baseline's stored plan
+too whenever that plan holds what the report reads from the baseline
+(`side_read_plan`), so its current-law US national baseline finds them as
+well; it is aggregated as a report run's side is, with any response it doesn't
+store read as zeros. Its reform, and the baseline of a report reading columns
+the stored plan lacks, such as the cliff columns of `include_cliffs: true`,
+keep the report's plan. A US national baseline is split into region groups
+from its own plan, so a comparison report whose reform turns a labour-supply
+response on, and whose baseline's own policy turns none on, now splits its
+baseline into 20 segments and calculates its reform in one container. A
+current-law baseline's segments are then found in the precomputed files when
+the report's year and SPM selection are ones the precompute stores; any other
+such baseline calculates all 20 region groups.
 
 **Shared simulation runs.** Identical requests share simulation runs, so a
 report run may name a run another report run's worker is calculating (C1 · 24,
@@ -543,13 +553,18 @@ Planning never loads a dataset or executes a simulation. The former
 `variables=("*",)` internal marker is not an output expansion mechanism and is
 no longer used.
 
-The coordinator includes the exact same output plan in the baseline and reform
-child inputs. Each child adds the plan's additional variables before calling
+The comparison-path coordinator gives the reform child the report's output
+plan, and the baseline child either the same plan or, when it holds every
+column the report reads from the baseline, the baseline's stored plan (see
+"What a simulation run stores"); a report run's coordinator gives each child
+its stored plan. Each child adds its plan's additional variables before calling
 `Simulation.ensure()`, then verifies that every planned entity and column is
 present before writing its Parquet artifact. The artifact descriptor records a
-digest of the plan. After both calls complete, the coordinator checks both plan
-digests and independently validates both loaded Parquet schemas before it runs
-aggregate calculations. Extra columns are permitted; missing planned columns
+digest of the plan. After both calls complete, the coordinator checks each
+artifact's plan digest against the plan its child was given, and validates
+both loaded Parquet schemas against the report's plan, with any labour-supply
+response a side doesn't store read as zeros, before it runs aggregate
+calculations. Extra columns are permitted; missing planned columns
 fail the temporary Stage 12 report without affecting the production result.
 
 The plan distinguishes calculated variables from columns copied directly from
@@ -650,9 +665,10 @@ Stage 12.
 
 ## US segmentation and baseline cache
 
-Segmentation applies by default when both simulation inputs describe a US
-national society-wide calculation and the shared output plan does not require
-cliff analysis or labor-supply responses. `segmented=false` selects the
+Segmentation applies by default to each simulation that describes a US
+national society-wide calculation and whose own output plan does not require
+cliff analysis or labor-supply responses, so a report may split one side and
+calculate the other in one container. `segmented=false` selects the
 single-container calculation explicitly. UK calculations, subnational US
 calculations, a report's cliff analysis, and labor-supply-response
 calculations also use the single-container path. A simulation run's own cliff
@@ -661,9 +677,10 @@ is (`should_segment_cliff_calculation`), and its cliff gap and share are taken
 from the merged rows. `segmented=true` is accepted, but it does not override
 those numerical eligibility conditions. A US national simulation run
 started on its own (role `standalone`) is segmented by the same rule. It never
-uses the precomputed baseline files, which serve only a report run's
-current-law baseline, planned as its simulation run stores its output, so it
-calculates all 20 region groups.
+uses the precomputed baseline files, which serve only a report's
+current-law baseline planned as its simulation run stores its output (a
+report run's, or a comparison-path report's that reads no column the stored
+plan lacks), so it calculates all 20 region groups.
 
 The Stage 12 coordinator still persists only two logical simulation records:
 one baseline and one reform. Each eligible logical simulation call performs

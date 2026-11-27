@@ -57,7 +57,7 @@ from .failures import (
     Stage12FailureDetail,
     Stage12InputError,
 )
-from .output_planning import resolve_simulation_output_plan, side_read_plan
+from .output_planning import side_read_plan
 from .parent_claim import validate_dispatch_context
 from .report_run_access import report_run_store
 from .report_run_recording import (
@@ -421,10 +421,7 @@ class ReportRunCoordination(CoordinationCore):
         Identical requests share simulation runs, so a run's file holds what
         any report reads from that side; this report reads ``output_plan``.
         """
-        resolver = self.dependencies.stored_plan_resolver
-        if resolver is not None:
-            return resolver(simulation)
-        return resolve_simulation_output_plan(simulation, stage_scope=self.stage_scope)
+        return self.stored_output_plan(simulation)
 
     def _calculated_as_the_baseline(
         self, simulation: PlannedSimulationExecutionInput

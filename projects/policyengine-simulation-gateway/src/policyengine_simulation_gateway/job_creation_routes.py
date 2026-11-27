@@ -23,6 +23,7 @@ from policyengine_simulation_contract.gateway_models import (
 from policyengine_simulation_contract.hf_dataset import HuggingFaceDatasetReferenceError
 from policyengine_simulation_contract.job_progress import (
     JOB_PROGRESS_CAPABILITY_KEY,
+    JOB_SUBMITTED_AT_PARAM,
     supported_job_progress_capability,
 )
 from policyengine_simulation_contract.json_types import JsonObject
@@ -311,7 +312,9 @@ async def submit_simulation(
 
     # Spawn the job (returns immediately). The worker lookup's control-plane
     # RPCs and the spawn live under one span to time the real network cost.
+    # The worker records the job's queue time from the submission time.
     submitted_at = datetime.now(UTC)
+    payload[JOB_SUBMITTED_AT_PARAM] = submitted_at.isoformat()
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
         call = _spawn_annual_simulation(
             route.app_name,

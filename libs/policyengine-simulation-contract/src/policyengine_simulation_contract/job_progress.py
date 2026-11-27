@@ -13,6 +13,7 @@ record would be indistinguishable from a job that has not started.
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
@@ -29,10 +30,16 @@ from pydantic import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from datetime import datetime
 
 JOB_PROGRESS_CAPABILITY_KEY = "job_progress"
 JOB_PROGRESS_CAPABILITY_VERSION = 1
+
+# The gateway sends an annual job's submission time with the job's parameters
+# under this key, the same ISO 8601 value as the job metadata's
+# ``submitted_at``, so the worker can record the job's queue time. The worker
+# removes it before the calculation, and its log redaction leaves every key
+# that starts with an underscore out of the logged attributes.
+JOB_SUBMITTED_AT_PARAM = "_job_submitted_at"
 
 
 class JobStage(StrEnum):
@@ -154,6 +161,29 @@ def _parse_datetime(value: object) -> datetime | None:
         return _DATETIME.validate_python(value)
     except ValidationError:
         return None
+
+
+def job_queue_seconds(submitted_at: object, *, started_at: datetime) -> float | None:
+    """Return the seconds from a job's submission to its start, or None.
+
+    ``submitted_at`` is the value sent under ``JOB_SUBMITTED_AT_PARAM``: an
+    ISO 8601 string with a time zone. Anything else gives None, a number
+    included, so a value from another sender is never read as a Unix time.
+    ``started_at`` is the job record's start, which is its first attempt's.
+
+    The gateway and the worker read different machines' clocks, so a start
+    before the submission can only mean the clocks differ; it counts as 0.
+    Seconds are rounded to hundredths, like stage durations.
+    """
+    if not isinstance(submitted_at, str):
+        return None
+    try:
+        submitted = datetime.fromisoformat(submitted_at)
+    except ValueError:
+        return None
+    if submitted.utcoffset() is None:
+        return None
+    return round(max((started_at - submitted).total_seconds(), 0.0), 2)
 
 
 def stage_progress_floor(execution: JobExecution | None, stage: JobStage) -> int:

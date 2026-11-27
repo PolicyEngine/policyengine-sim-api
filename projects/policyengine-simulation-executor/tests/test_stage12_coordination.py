@@ -443,6 +443,8 @@ def test_default_output_plan_resolver_measures_its_own_stages(monkeypatch):
             invoker=ConcurrentInvoker(artifacts),
             aggregator=lambda **_: aggregate_payload(),
             runtime=runtime,
+            # The baseline's stored plan, so planning loads no country model.
+            stored_plan_resolver=lambda _simulation: shared_output_plan(),
         ),
     )
 
