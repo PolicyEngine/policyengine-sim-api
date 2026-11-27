@@ -17,6 +17,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from policyengine_simulation_contract.job_progress import (
+    JOB_SUBMITTED_AT_PARAM,
+    job_queue_seconds,
+)
 from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
     HF_RUNTIME_ENV_NAME,
@@ -431,6 +435,28 @@ def _record_stage_durations(
         )
 
 
+def _record_queue_seconds(
+    runtime: "ObservabilityRuntime",
+    progress: "JobProgressReporter",
+    submitted_at: object,
+) -> None:
+    """Attach the job's queue time to its operation telemetry.
+
+    It runs from the gateway's submission to the job record's start, which
+    is the first attempt's, so every attempt's record carries the same
+    value. Jobs spawned without a submission time record none: a
+    budget-window batch's years, and jobs an older gateway spawned.
+    """
+    # Telemetry is non-fatal.
+    with contextlib.suppress(Exception):
+        started_at = progress.started_at()
+        if started_at is None:
+            return
+        queue_seconds = job_queue_seconds(submitted_at, started_at=started_at)
+        if queue_seconds is not None:
+            runtime.set_context(job_queue_seconds=queue_seconds)
+
+
 def _run_simulation(
     params: dict,
     *,
@@ -446,6 +472,12 @@ def _run_simulation(
     """
     progress = _job_progress_reporter()
     progress.start()
+    # The submission time is for telemetry only. The calculation, and the
+    # segment children it copies its parameters to, never see it.
+    submitted_at = params.get(JOB_SUBMITTED_AT_PARAM)
+    params = {
+        key: value for key, value in params.items() if key != JOB_SUBMITTED_AT_PARAM
+    }
     runtime = _configure_modal_observability(service_role="simulation_worker")
 
     # We deliberately avoid sending full ``params`` or ``result`` blobs to
@@ -467,6 +499,7 @@ def _run_simulation(
             remote_context=propagated,
         ):
             _set_modal_call_attributes(runtime)
+            _record_queue_seconds(runtime, progress, submitted_at)
             from src.modal.segmented_national import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
                 dispatch_run_simulation,
             )

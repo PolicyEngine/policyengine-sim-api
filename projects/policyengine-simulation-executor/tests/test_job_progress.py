@@ -1081,8 +1081,8 @@ class TestModalRunSimulation:
     def test__a_job_without_a_submission_time_records_no_queue_time(
         self, modal_app, monkeypatch
     ):
-        # Jobs that budget-window batches, smoke checks and older gateways
-        # spawn carry no submission time.
+        # Jobs that budget-window batches and older gateways spawn carry no
+        # submission time.
         def dispatch(_params, *, app_name, runtime, progress):
             return {"ok": True}
 

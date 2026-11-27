@@ -87,7 +87,11 @@ statistics exist for each country and region type (#780, phase 2).
 
 The worker also adds `job_stage_seconds_<stage>` attributes to its
 `run_simulation` operation, so telemetry can split the baseline from the
-reform calculation.
+reform calculation, and `job_queue_seconds`, the time from the gateway's
+submission to the job's start. The gateway sends the submission time with
+the spawned job as the `_job_submitted_at` parameter, which the worker leaves
+out of its logged attributes and removes before the calculation; see
+"Annual job queue time" in `docs/engineering/skills/observability.md`.
 
 ## UK local-area breakdowns
 

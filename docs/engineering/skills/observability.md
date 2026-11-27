@@ -158,6 +158,35 @@ Modal can run the same call again after a preemption, under the same call
 id. A later attempt continues the stored stage record, so the durations add
 up over attempts, and `job_attempts` counts them.
 
+### Annual job queue time
+
+`run_simulation` also sets `job_queue_seconds` on its operation: the seconds
+from the gateway's submission of the job to the job's start in the worker.
+
+- **Submission time:** the gateway sends it with the spawned job under the
+  `_job_submitted_at` parameter (`JOB_SUBMITTED_AT_PARAM` in
+  `policyengine_simulation_contract.job_progress`), the same value it stores
+  as the job metadata's `submitted_at`. The leading underscore keeps it out of
+  the operation's logged attributes (`redact_params_for_logging`), and the
+  worker removes it before the calculation, so segment children never get it.
+- **Start time:** the stage record's `started_at`, which is the first
+  attempt's start and carries over to later attempts. Every attempt's record,
+  a preempted one's included, carries the same value, so the successful
+  attempt's record carries it too. It never counts the time between a
+  preemption and the next attempt.
+- **When it is set:** when the operation opens, so a failed or preempted call
+  carries it too.
+- **Clocks:** the two times come from the gateway's and the worker's
+  machines. A start before the submission can only mean those clocks differ,
+  and is recorded as 0. Values are rounded to hundredths of a second.
+- **Jobs without it:** the years that a budget-window batch spawns, whose
+  batch payload can't take the key (`run_budget_window_batch` validates it
+  with `extra="forbid"`). Records from worker apps deployed before this
+  attribute, and from calls an older gateway spawned, carry none either.
+- **A failed read:** a later attempt whose stage reporter couldn't read the
+  earlier attempt's record starts a new one, so its value includes the
+  earlier attempts' time.
+
 ### Preemptions
 
 Modal delivers a preemption to a running synchronous function, which every

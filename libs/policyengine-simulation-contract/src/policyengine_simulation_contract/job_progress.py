@@ -34,6 +34,13 @@ if TYPE_CHECKING:
 JOB_PROGRESS_CAPABILITY_KEY = "job_progress"
 JOB_PROGRESS_CAPABILITY_VERSION = 1
 
+# The gateway sends an annual job's submission time with the job's parameters
+# under this key, the same ISO 8601 value as the job metadata's
+# ``submitted_at``, so the worker can record the job's queue time. The worker
+# removes it before the calculation, and its log redaction leaves every key
+# that starts with an underscore out of the logged attributes.
+JOB_SUBMITTED_AT_PARAM = "_job_submitted_at"
+
 
 class JobStage(StrEnum):
     """Coarse stages of an annual economy job, in the order they run.
@@ -154,6 +161,24 @@ def _parse_datetime(value: object) -> datetime | None:
         return _DATETIME.validate_python(value)
     except ValidationError:
         return None
+
+
+def job_queue_seconds(submitted_at: object, *, started_at: datetime) -> float | None:
+    """Return the seconds from a job's submission to its start, or None.
+
+    ``submitted_at`` is the value sent under ``JOB_SUBMITTED_AT_PARAM``,
+    read as the gateway's job status reads the stored ``submitted_at``. It
+    gives None when it is missing or isn't a time with a time zone.
+    ``started_at`` is the job record's start, which is its first attempt's.
+
+    The gateway and the worker read different machines' clocks, so a start
+    before the submission can only mean the clocks differ; it counts as 0.
+    Seconds are rounded to hundredths, like stage durations.
+    """
+    submitted = _parse_datetime(submitted_at)
+    if submitted is None:
+        return None
+    return round(max((started_at - submitted).total_seconds(), 0.0), 2)
 
 
 def stage_progress_floor(execution: JobExecution | None, stage: JobStage) -> int:
