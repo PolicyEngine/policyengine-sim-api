@@ -1,0 +1,1 @@
+The v2 app's simulation workers' log records, spans and metrics now carry the policyengine.py version that served the call as `service.version`, in place of the observability package's fallback `0.1.0`. Their `service.name` values are unchanged.

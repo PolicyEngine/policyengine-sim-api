@@ -10,6 +10,7 @@ version as its service version, and its operation names the Modal app in
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 import sys
 from contextlib import contextmanager
 
@@ -119,9 +120,8 @@ def test_each_v2_worker_call_names_its_app_and_py_version(
     assert _call_worker(worker, method_name) == WORKER_RESULT
 
     [identity] = runtime_identities
-    assert identity["service_version"] == (
-        v2_app.RESOLVED_BUNDLE.bundle.policyengine_version
-    )
+    # The .py version installed in the worker's image, which serves the call.
+    assert identity["service_version"] == importlib.metadata.version("policyengine")
     # The service name stays the worker's, as existing queries expect.
     assert identity["service_name"] == WORKER_SERVICE_NAMES[method_name]
     [attributes] = runtime.operation_attributes
