@@ -172,20 +172,26 @@ from the gateway's submission of the job to the job's start in the worker.
 - **Start time:** the stage record's `started_at`, which is the first
   attempt's start and carries over to later attempts. Every attempt's record,
   a preempted one's included, carries the same value, so the successful
-  attempt's record carries it too. It never counts the time between a
-  preemption and the next attempt.
+  attempt's record carries it too, unless a later attempt finds no earlier
+  record (below). It never counts the time between a preemption and the next
+  attempt.
 - **When it is set:** when the operation opens, so a failed or preempted call
   carries it too.
 - **Clocks:** the two times come from the gateway's and the worker's
   machines. A start before the submission can only mean those clocks differ,
   and is recorded as 0. Values are rounded to hundredths of a second.
-- **Jobs without it:** the years that a budget-window batch spawns, whose
-  batch payload can't take the key (`run_budget_window_batch` validates it
-  with `extra="forbid"`). Records from worker apps deployed before this
-  attribute, and from calls an older gateway spawned, carry none either.
-- **A failed read:** a later attempt whose stage reporter couldn't read the
-  earlier attempt's record starts a new one, so its value includes the
-  earlier attempts' time.
+- **Jobs without it:** the years that a budget-window batch spawns. The
+  gateway doesn't put the key in the batch's payload, whose top-level keys
+  `run_budget_window_batch` validates with `extra="forbid"` in apps of every
+  age, and the batch adds none to its years' payloads. Records from worker
+  apps deployed before this attribute, and from calls an older gateway
+  spawned, carry none either.
+- **No earlier record:** a later attempt that finds no earlier attempt's
+  record starts a new one, so its value includes the earlier attempts' time.
+  That happens when reading the record fails, and when the earlier attempt's
+  writes failed or it was preempted before its first write.
+- **Only ISO 8601 times:** the value must be a string with a time zone, as
+  the gateway sends it. Anything else, a number included, records nothing.
 
 ### Preemptions
 

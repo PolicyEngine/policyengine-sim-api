@@ -435,6 +435,22 @@ def _record_stage_durations(
         )
 
 
+def _without_submission_time(params: dict) -> tuple[dict, object]:
+    """Return ``params`` without the gateway's submission time, and that time.
+
+    The submission time is for telemetry only. The calculation, and the
+    segment children it copies its parameters to, never see it. Parameters
+    that aren't a dict pass through unchanged, for the calculation to report.
+    """
+    if not isinstance(params, dict):
+        return params, None
+    submitted_at = params.get(JOB_SUBMITTED_AT_PARAM)
+    remaining = {
+        key: value for key, value in params.items() if key != JOB_SUBMITTED_AT_PARAM
+    }
+    return remaining, submitted_at
+
+
 def _record_queue_seconds(
     runtime: "ObservabilityRuntime",
     progress: "JobProgressReporter",
@@ -472,12 +488,7 @@ def _run_simulation(
     """
     progress = _job_progress_reporter()
     progress.start()
-    # The submission time is for telemetry only. The calculation, and the
-    # segment children it copies its parameters to, never see it.
-    submitted_at = params.get(JOB_SUBMITTED_AT_PARAM)
-    params = {
-        key: value for key, value in params.items() if key != JOB_SUBMITTED_AT_PARAM
-    }
+    params, submitted_at = _without_submission_time(params)
     runtime = _configure_modal_observability(service_role="simulation_worker")
 
     # We deliberately avoid sending full ``params`` or ``result`` blobs to

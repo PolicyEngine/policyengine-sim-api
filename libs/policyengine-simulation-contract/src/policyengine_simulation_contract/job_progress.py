@@ -13,6 +13,7 @@ record would be indistinguishable from a job that has not started.
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
@@ -29,7 +30,6 @@ from pydantic import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from datetime import datetime
 
 JOB_PROGRESS_CAPABILITY_KEY = "job_progress"
 JOB_PROGRESS_CAPABILITY_VERSION = 1
@@ -166,17 +166,22 @@ def _parse_datetime(value: object) -> datetime | None:
 def job_queue_seconds(submitted_at: object, *, started_at: datetime) -> float | None:
     """Return the seconds from a job's submission to its start, or None.
 
-    ``submitted_at`` is the value sent under ``JOB_SUBMITTED_AT_PARAM``,
-    read as the gateway's job status reads the stored ``submitted_at``. It
-    gives None when it is missing or isn't a time with a time zone.
+    ``submitted_at`` is the value sent under ``JOB_SUBMITTED_AT_PARAM``: an
+    ISO 8601 string with a time zone. Anything else gives None, a number
+    included, so a value from another sender is never read as a Unix time.
     ``started_at`` is the job record's start, which is its first attempt's.
 
     The gateway and the worker read different machines' clocks, so a start
     before the submission can only mean the clocks differ; it counts as 0.
     Seconds are rounded to hundredths, like stage durations.
     """
-    submitted = _parse_datetime(submitted_at)
-    if submitted is None:
+    if not isinstance(submitted_at, str):
+        return None
+    try:
+        submitted = datetime.fromisoformat(submitted_at)
+    except ValueError:
+        return None
+    if submitted.utcoffset() is None:
         return None
     return round(max((started_at - submitted).total_seconds(), 0.0), 2)
 
