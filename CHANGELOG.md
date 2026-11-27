@@ -10,6 +10,13 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.27.4] - 2026-11-27
+
+### Changed
+
+- The v2 app's US and UK simulation workers and its US segment worker are now methods of Modal classes, `SimulationWorkerUS`, `SimulationWorkerUK` and `SimulationSegmentWorkerUS`, whose containers restore from memory snapshots with their own country's models already loaded, and for the US the SPM capability too. The report coordinator, the US worker's segment fan-out and the simulation entrypoint start them through the classes; the entrypoint falls back to the plain functions on apps deployed before the classes, and the v2 app keeps those functions, without snapshots, for callers still running older code. Deploying the v2 app now refuses Modal clients older than 1.6.4, as deploying the run_simulation app already did.
+
+
 ## [0.27.3] - 2026-11-27
 
 ### Changed
