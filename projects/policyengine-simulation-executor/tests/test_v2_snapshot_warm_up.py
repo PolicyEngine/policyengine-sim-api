@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import socket
 import sys
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING
@@ -47,7 +48,6 @@ from policyengine_simulation_executor.stage12_runtime import output_planning
 from policyengine_simulation_executor.stage12_runtime.segment_contracts import (
     Stage12SegmentInput,
 )
-from src.modal import snapshot_warm_up
 from stage12_runtime_support import bundle_provenance, planned_simulation
 
 if TYPE_CHECKING:
@@ -61,6 +61,15 @@ PREBUILT_FOLDER = "prebuilt/us/populace_us_2024/all"
 PREBUILT_YEAR_FILENAME = "populace_us_2024_year_2026.h5"
 SNAPSHOT_TASK_ID = "ta-01SNAPSHOTTING"
 US_MODEL_MODULES = ("policyengine_us", "policyengine.tax_benefit_models.us")
+# The run_simulation app's own modules, which the v2 app must not need: that
+# app is to be removed while the v2 app stays.
+RUN_SIMULATION_APP_MODULES = (
+    "src.modal.app",
+    "src.modal.snapshot_warm_up",
+    "src.modal.segmented_national",
+    "src.modal.precompute_app",
+    "src.modal._image_setup",
+)
 CREDENTIALS_JSON = '{"type": "service_account", "project_id": "warm-up-test"}'
 # The plan the reform's stored plan resolves to here, unlike the template's.
 REFORM_OUTPUT_PLAN = Stage12OutputPlan(
@@ -215,9 +224,11 @@ def planning(monkeypatch):
 def prebuilt_image(tmp_path, monkeypatch):
     """Create the image's prebuilt folder, and answer a run's lookups as in the image.
 
-    The prebuilt-folder lookup answers as ``levels.prebuilt_dataset_folder``
-    does: the folder when it holds the year file, and None otherwise, which is
-    also its answer for a year file .py wouldn't reuse.
+    The region and dataset resolution and ``levels.prebuilt_dataset_folder``,
+    which the warm-up's check and the calculation both call, record what they
+    are asked. The folder lookup answers as the real one does: the folder
+    when it holds the year file, and None otherwise, which is also its answer
+    for a year file .py wouldn't reuse.
     """
     data_folder = tmp_path / "data"
     prebuilt_folder = data_folder / PREBUILT_FOLDER
@@ -237,10 +248,12 @@ def prebuilt_image(tmp_path, monkeypatch):
         named_dataset.identity, named_dataset.uri, is_default=True
     )
     image = SimpleNamespace(
+        data_folder=data_folder,
         prebuilt_folder=prebuilt_folder,
         group_region=group_region,
         default_dataset=default_dataset,
         regions_resolved=[],
+        dataset_selections=[],
         folder_lookups=[],
     )
 
@@ -248,8 +261,12 @@ def prebuilt_image(tmp_path, monkeypatch):
         image.regions_resolved.append((country, dict(params)))
         return group_region
 
-    def prebuilt_folder_lookup(country, region, selection, year):
-        image.folder_lookups.append((country, region, selection, year))
+    def resolve_dataset_selection(params, *, region_resolution):
+        image.dataset_selections.append((dict(params), region_resolution))
+        return default_dataset
+
+    def prebuilt_folder_lookup(run, data_folder):
+        image.folder_lookups.append((run, data_folder))
         if not (prebuilt_folder / PREBUILT_YEAR_FILENAME).is_file():
             return None
         return levels.PrebuiltFolder(folder=str(prebuilt_folder), dataset_source=None)
@@ -257,11 +274,9 @@ def prebuilt_image(tmp_path, monkeypatch):
     monkeypatch.setattr(simulation_runtime, "_country_module", lambda country: country)
     monkeypatch.setattr(simulation_runtime, "resolve_region", resolve_region)
     monkeypatch.setattr(
-        simulation_runtime,
-        "_resolve_dataset_selection",
-        lambda _params, *, region_resolution: default_dataset,
+        simulation_runtime, "_resolve_dataset_selection", resolve_dataset_selection
     )
-    monkeypatch.setattr(simulation_runtime, "_prebuilt_folder", prebuilt_folder_lookup)
+    monkeypatch.setattr(levels, "prebuilt_dataset_folder", prebuilt_folder_lookup)
     return image
 
 
@@ -425,8 +440,8 @@ def test_the_warm_up_calculates_one_reform_segment_of_the_first_precomputed_grou
     assert segment.simulation.role is SimulationRole.REFORM
     assert segment.simulation.year == first_year
     assert segment.simulation.policy == {
-        snapshot_warm_up.WARM_UP_REFORM_PARAMETER: {
-            f"{first_year}-01-01.2100-12-31": snapshot_warm_up.WARM_UP_REFORM_VALUE
+        warm_up_module.WARM_UP_REFORM_PARAMETER: {
+            f"{first_year}-01-01.2100-12-31": warm_up_module.WARM_UP_REFORM_VALUE
         }
     }
     # Planned from the precompute's own reform side for the group, then
@@ -443,14 +458,14 @@ def test_the_warm_up_calculates_one_reform_segment_of_the_first_precomputed_grou
     assert country == "us"
     assert params["region_group"] == list(first_group)
     assert params["time_period"] == str(first_year)
-    assert prebuilt_image.folder_lookups == [
-        (
-            "us",
-            prebuilt_image.group_region,
-            prebuilt_image.default_dataset,
-            first_year,
-        )
-    ]
+    [(run, data_folder)] = prebuilt_image.folder_lookups
+    assert (run.country, run.region, run.dataset, run.year) == (
+        "us",
+        prebuilt_image.group_region,
+        prebuilt_image.default_dataset,
+        first_year,
+    )
+    assert data_folder == str(prebuilt_image.data_folder)
     # No runtime, so no span or operation record.
     assert calculation.runtimes == [None]
 
@@ -509,15 +524,17 @@ def test_the_real_v2_calculation_reads_no_secret_and_writes_no_credentials(
         )
         raise _StoppedAfterDatasetLoadError
 
+    connection_attempts: list[object] = []
+
+    def refuse_connection(_socket, address):
+        connection_attempts.append(address)
+        msg = "nothing may connect before the snapshot"
+        raise OSError(msg)
+
     monkeypatch.setattr(v2_simulation, "_require_installed_bundle", lambda _input: None)
     monkeypatch.setattr(simulation_runtime, "_load_dataset", load_dataset)
-    monkeypatch.setattr(
-        levels,
-        "prebuilt_dataset_folder",
-        lambda _run, _data_folder: levels.PrebuiltFolder(
-            folder=str(prebuilt_image.prebuilt_folder), dataset_source=None
-        ),
-    )
+    monkeypatch.setattr(socket.socket, "connect", refuse_connection)
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse_connection)
     environment = EnvironmentReadRecorder(os.environ)
     monkeypatch.setattr(os, "environ", environment)
 
@@ -526,13 +543,22 @@ def test_the_real_v2_calculation_reads_no_secret_and_writes_no_credentials(
 
     # The real calculate_segment and calculate_simulation_frames ran up to
     # the dataset load, from the image's prebuilt folder, with no credential
-    # file and no Secret read.
+    # file, no Secret read and no connection.
     assert dataset_loads == [
         {"credentials_path": None, "data_folder": str(prebuilt_image.prebuilt_folder)}
     ]
     assert environment.names_read.isdisjoint(SECRET_ENVIRONMENT_NAMES)
     assert "GOOGLE_APPLICATION_CREDENTIALS" not in environment.environment
+    assert connection_attempts == []
     assert "Warm-up calculation failed" in caplog.text
+    # The warm-up's check asked exactly what the calculation then asked, so
+    # the folder it found is the one the calculation reads.
+    warm_up_region, calculation_region = prebuilt_image.regions_resolved
+    assert warm_up_region == calculation_region
+    warm_up_selection, calculation_selection = prebuilt_image.dataset_selections
+    assert warm_up_selection == calculation_selection
+    warm_up_lookup, calculation_lookup = prebuilt_image.folder_lookups
+    assert warm_up_lookup == calculation_lookup
 
 
 @pytest.mark.usefixtures("snapshotted_container", "credentials_in_environment")
@@ -703,3 +729,43 @@ def test_a_call_after_the_warm_up_finds_no_simulation_or_file_the_warm_up_added(
     # so it calculates from the image's files as it would without one.
     assert len(calculation.payloads) == 3
     assert after_warm_up == without_warm_up
+
+
+@pytest.mark.usefixtures("snapshotted_container")
+def test_the_v2_app_and_its_warm_up_need_no_module_of_the_run_simulation_app(
+    calculation, monkeypatch
+):
+    install_fake_modal(monkeypatch)
+    for run_simulation_module in RUN_SIMULATION_APP_MODULES:
+        # Importing a module set to None raises ImportError.
+        monkeypatch.setitem(sys.modules, run_simulation_module, None)
+    for module_name in (
+        "src.modal.v2_snapshot_warm_up",
+        "src.modal.v2_images",
+        "src.modal.v2_app",
+    ):
+        monkeypatch.delitem(sys.modules, module_name, raising=False)
+
+    app = importlib.import_module("src.modal.v2_app")
+    monkeypatch.setattr(app, "preload_country_models", lambda _countries: None)
+    app.SimulationSegmentWorkerUS().load_country_models()
+
+    assert len(calculation.payloads) == 1
+    for module_name in ("src.modal.v2_images", "src.modal.v2_app"):
+        sys.modules.pop(module_name, None)
+
+
+def test_the_warm_up_reform_changes_a_parameter_of_the_installed_us_model(
+    warm_up_module,
+):
+    # policyengine-us's own parameter tree, about 12 s to load; .py's US model
+    # would also read the data release manifest from Hugging Face.
+    from policyengine_us.system import system
+
+    period_start = f"{_first_precompute_year()}-01-01"
+    current_law_value = system.parameters.get_child(
+        warm_up_module.WARM_UP_REFORM_PARAMETER
+    )(period_start)
+
+    # A reform equal to current law would leave nothing to calculate.
+    assert current_law_value != warm_up_module.WARM_UP_REFORM_VALUE
