@@ -10,6 +10,14 @@ from types import SimpleNamespace
 import pytest
 from src.modal.stage12_cache_image import fetch_stage12_cache
 
+# What the deploying machine passes for the US cache (expected_cache_contents).
+EXPECTED_CONTENTS = {
+    "years": [2026, 2027, 2025],
+    "artifact_counts": {"dataset": 3, "baseline": 60},
+}
+# Where the national year files and the baselines computed on them land.
+NATIONAL_FOLDER = "prebuilt/us/populace_us_2024/all"
+
 
 class _Blob:
     def __init__(self, payload: bytes):
@@ -41,6 +49,7 @@ def _manifest() -> tuple[dict, dict[str, bytes]]:
                     "type": kind,
                     "path": path,
                     "filename": filename,
+                    "folder": NATIONAL_FOLDER,
                     "year": (2026, 2027, 2025)[index % 3],
                     "identity_digest": f"identity-{kind}-{index}",
                     "content_sha256": sha256(payload).hexdigest(),
@@ -86,9 +95,11 @@ def test_fetches_and_verifies_all_cache_files(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("STAGE12_BUNDLE_MANIFEST_SHA256", "b" * 64)
     monkeypatch.setenv("STAGE12_CACHE_MANIFEST_DIGEST", _digest(manifest))
 
-    fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+    fetch_stage12_cache(
+        "cache-bucket", manifest, EXPECTED_CONTENTS, client=_Client(payloads)
+    )
 
-    assert len(list(tmp_path.glob("*.h5"))) == 63
+    assert len(list((tmp_path / NATIONAL_FOLDER).glob("*.h5"))) == 63
     assert (tmp_path / ".stage12-cache-manifest.json").exists()
 
 
@@ -98,13 +109,17 @@ def test_rejects_foreign_or_corrupt_cache(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("STAGE12_BUNDLE_MANIFEST_SHA256", "different")
     monkeypatch.setenv("STAGE12_CACHE_MANIFEST_DIGEST", _digest(manifest))
     with pytest.raises(RuntimeError, match="another installed bundle"):
-        fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+        fetch_stage12_cache(
+            "cache-bucket", manifest, EXPECTED_CONTENTS, client=_Client(payloads)
+        )
 
     monkeypatch.setenv("STAGE12_BUNDLE_MANIFEST_SHA256", "b" * 64)
     corrupt_path = manifest["artifacts"][0]["path"]
     payloads[corrupt_path] = b"corrupt"
     with pytest.raises(RuntimeError, match=r"size differs|digest differs"):
-        fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+        fetch_stage12_cache(
+            "cache-bucket", manifest, EXPECTED_CONTENTS, client=_Client(payloads)
+        )
 
 
 def _use_deployment(monkeypatch, tmp_path, manifest: dict) -> None:
@@ -160,7 +175,9 @@ def test_rejects_a_manifest_before_downloading_anything(
     _use_deployment(monkeypatch, tmp_path, manifest)
 
     with pytest.raises(error, match=message):
-        fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+        fetch_stage12_cache(
+            "cache-bucket", manifest, EXPECTED_CONTENTS, client=_Client(payloads)
+        )
 
     assert list(tmp_path.iterdir()) == []
 
@@ -180,7 +197,10 @@ def test_rejects_a_deployment_without_a_bucket_or_manifest(
         RuntimeError, match=r"^Stage 12 cache deployment has no bucket or manifest$"
     ):
         fetch_stage12_cache(
-            bucket, manifest if has_manifest else None, client=_Client(payloads)
+            bucket,
+            manifest if has_manifest else None,
+            EXPECTED_CONTENTS,
+            client=_Client(payloads),
         )
 
 
@@ -194,7 +214,9 @@ def test_rejects_a_manifest_whose_digest_differs_from_the_deployment(
     with pytest.raises(
         RuntimeError, match=r"^Stage 12 cache manifest digest differs from deployment$"
     ):
-        fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+        fetch_stage12_cache(
+            "cache-bucket", manifest, EXPECTED_CONTENTS, client=_Client(payloads)
+        )
 
     assert list(tmp_path.iterdir()) == []
 
@@ -205,7 +227,9 @@ def test_rejects_an_artifact_entry_that_is_not_an_object(monkeypatch, tmp_path) 
     _use_deployment(monkeypatch, tmp_path, manifest)
 
     with pytest.raises(TypeError, match=r"^Stage 12 cache artifact entry is invalid$"):
-        fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+        fetch_stage12_cache(
+            "cache-bucket", manifest, EXPECTED_CONTENTS, client=_Client(payloads)
+        )
 
     assert not (tmp_path / ".stage12-cache-manifest.json").exists()
 
@@ -241,7 +265,9 @@ def test_rejects_invalid_artifact_metadata(monkeypatch, tmp_path, change) -> Non
     with pytest.raises(
         RuntimeError, match=r"^Stage 12 cache artifact metadata is invalid$"
     ):
-        fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+        fetch_stage12_cache(
+            "cache-bucket", manifest, EXPECTED_CONTENTS, client=_Client(payloads)
+        )
 
 
 def test_rejects_a_same_size_file_with_another_digest_and_leaves_no_partial(
@@ -253,9 +279,12 @@ def test_rejects_a_same_size_file_with_another_digest_and_leaves_no_partial(
     _use_deployment(monkeypatch, tmp_path, manifest)
 
     with pytest.raises(RuntimeError, match=r"^Stage 12 cache artifact digest differs$"):
-        fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+        fetch_stage12_cache(
+            "cache-bucket", manifest, EXPECTED_CONTENTS, client=_Client(payloads)
+        )
 
-    assert list(tmp_path.iterdir()) == []
+    # Only the empty folder the file would have landed in remains.
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
 
 
 @pytest.mark.parametrize(
@@ -297,7 +326,7 @@ def test_builds_its_storage_client_from_the_deployment_credentials(
     )
     monkeypatch.setattr(storage, "Client", build_client)
 
-    fetch_stage12_cache("cache-bucket", manifest)
+    fetch_stage12_cache("cache-bucket", manifest, EXPECTED_CONTENTS)
 
     if credentials_encoding == "unset":
         assert credential_infos == []
@@ -307,7 +336,7 @@ def test_builds_its_storage_client_from_the_deployment_credentials(
         assert client_arguments == [
             {"credentials": "service-account-credentials", "project": "cache-project"}
         ]
-    assert len(list(tmp_path.glob("*.h5"))) == 63
+    assert len(list((tmp_path / NATIONAL_FOLDER).glob("*.h5"))) == 63
 
 
 REGIONAL_DATASET = "populace_us_2024_acs_local"
@@ -320,7 +349,7 @@ def _state_artifact(year: int, state_code: str, **changes) -> tuple[dict, bytes]
         "type": "state_dataset",
         "path": f"state-datasets/us/{year}-{state_code}/{filename}",
         "filename": filename,
-        "folder": f"state-datasets/{REGIONAL_DATASET}/{state_code}",
+        "folder": f"prebuilt/us/{REGIONAL_DATASET}/{state_code}",
         "state_code": state_code,
         "year": year,
         "identity_digest": f"identity-state-{year}-{state_code}",
@@ -345,14 +374,16 @@ def test_places_each_state_file_in_its_state_folder(monkeypatch, tmp_path) -> No
     manifest, payloads = _manifest_with_state_datasets()
     _use_deployment(monkeypatch, tmp_path, manifest)
 
-    fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+    fetch_stage12_cache(
+        "cache-bucket", manifest, EXPECTED_CONTENTS, client=_Client(payloads)
+    )
 
-    state_folder = tmp_path / "state-datasets" / REGIONAL_DATASET
+    state_folder = tmp_path / "prebuilt" / "us" / REGIONAL_DATASET
     for year in (2026, 2027, 2025):
         for state_code in ("UT", "WY"):
             stored = state_folder / state_code / f"{REGIONAL_DATASET}_year_{year}.h5"
             assert stored.read_bytes() == f"state-{year}-{state_code}".encode()
-    assert len(list(tmp_path.glob("*.h5"))) == 63
+    assert len(list((tmp_path / NATIONAL_FOLDER).glob("*.h5"))) == 63
 
 
 def _drop_one_state_file(manifest: dict) -> None:
@@ -391,7 +422,9 @@ def test_rejects_inconsistent_state_datasets_before_downloading(
     _use_deployment(monkeypatch, tmp_path, manifest)
 
     with pytest.raises(RuntimeError, match=message):
-        fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+        fetch_stage12_cache(
+            "cache-bucket", manifest, EXPECTED_CONTENTS, client=_Client(payloads)
+        )
 
     assert list(tmp_path.iterdir()) == []
 
@@ -399,11 +432,14 @@ def test_rejects_inconsistent_state_datasets_before_downloading(
 @pytest.mark.parametrize(
     "folder",
     [
-        "/absolute/UT",
-        "state-datasets/../../escape",
-        "state-datasets/./UT",
-        "state-datasets//UT",
-        "state-datasets\\UT",
+        f"/prebuilt/us/{REGIONAL_DATASET}/UT",
+        "prebuilt/us/../../escape",
+        f"prebuilt/us/./{REGIONAL_DATASET}/UT",
+        f"prebuilt/us//{REGIONAL_DATASET}/UT",
+        f"prebuilt\\us\\{REGIONAL_DATASET}\\UT",
+        f"state-datasets/{REGIONAL_DATASET}/UT",
+        "prebuilt/us",
+        f"prebuilt/uk/{REGIONAL_DATASET}/UT",
         "",
         None,
     ],
@@ -418,7 +454,9 @@ def test_rejects_an_unsafe_state_folder_before_downloading(
     with pytest.raises(
         RuntimeError, match=r"^Stage 12 cache artifact metadata is invalid$"
     ):
-        fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+        fetch_stage12_cache(
+            "cache-bucket", manifest, EXPECTED_CONTENTS, client=_Client(payloads)
+        )
 
     assert list(tmp_path.iterdir()) == []
 
@@ -435,6 +473,8 @@ def test_rejects_two_entries_for_one_state_file_before_downloading(
     with pytest.raises(
         RuntimeError, match=r"^Stage 12 cache artifact metadata is invalid$"
     ):
-        fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+        fetch_stage12_cache(
+            "cache-bucket", manifest, EXPECTED_CONTENTS, client=_Client(payloads)
+        )
 
     assert list(tmp_path.iterdir()) == []

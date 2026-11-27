@@ -22,6 +22,7 @@ from .models import (
 )
 from .precompute_planning import (
     baseline_identity,
+    bundle_country,
     determinism_record,
     determinism_record_path,
     scoped_planned_simulation,
@@ -34,10 +35,23 @@ if TYPE_CHECKING:
     import pandas as pd
 
 
-def _ensure_dataset_file(bucket: str, year: int) -> None:
+def _baseline_folder(expected: BaselinePlanEntry) -> Path:
+    """Return the prebuilt folder of a baseline and the year file it is computed on."""
+    return Path(simulation_runtime.resolve_data_folder()) / expected.folder
 
-    identity = collect_dataset_identity(load_stage12_bundle(), country="us", year=year)
-    local_path = Path(simulation_runtime.resolve_data_folder()) / identity.filename
+
+def _ensure_year_file(bucket: str, expected: BaselinePlanEntry) -> None:
+    """Download the baseline's year file into its prebuilt folder unless it is there.
+
+    The worker's prebuilt-folder lookup then loads the year file from that
+    folder, and .py saves the computed baseline beside it.
+    """
+    identity = collect_dataset_identity(
+        load_stage12_bundle(),
+        country=bundle_country(expected.country),
+        year=expected.year,
+    )
+    local_path = _baseline_folder(expected) / identity.filename
     if not local_path.exists():
         Stage12CacheStore(bucket).download_file(identity.store_path, local_path)
 
@@ -52,15 +66,17 @@ def compute_baseline_impl(
     already holds other data.
     """
     simulation, identity = baseline_identity(
-        expected.year, tuple(expected.region_codes)
+        expected.year,
+        tuple(expected.region_codes),
+        country=bundle_country(expected.country),
     )
     if identity.store_path != expected.path:
         msg = "planned and runtime Stage 12 baseline identities differ"
         raise RuntimeError(msg)
-    _ensure_dataset_file(bucket, expected.year)
+    _ensure_year_file(bucket, expected)
     started = time.monotonic()
     stage12_simulation.calculate_simulation_frames(simulation)
-    local_path = Path(simulation_runtime.resolve_data_folder()) / identity.filename
+    local_path = _baseline_folder(expected) / identity.filename
     if not local_path.exists():
         msg = (
             f"Stage 12 baseline calculation produced no cache file {identity.filename}"
@@ -108,10 +124,13 @@ def verify_determinism_impl(
         raise RuntimeError(msg)
     store = Stage12CacheStore(bucket)
     group = tuple(expected.region_codes)
-    baseline = scoped_planned_simulation(expected.year, group)
-    reform = scoped_planned_simulation(expected.year, group, reform=True)
-    _ensure_dataset_file(bucket, expected.year)
-    local_path = Path(simulation_runtime.resolve_data_folder()) / expected.filename
+    country = bundle_country(expected.country)
+    baseline = scoped_planned_simulation(expected.year, group, country=country)
+    reform = scoped_planned_simulation(
+        expected.year, group, reform=True, country=country
+    )
+    _ensure_year_file(bucket, expected)
+    local_path = _baseline_folder(expected) / expected.filename
     if not local_path.exists():
         store.download_file(expected.path, local_path)
     cached_calculation = stage12_simulation.calculate_simulation_frames(baseline)

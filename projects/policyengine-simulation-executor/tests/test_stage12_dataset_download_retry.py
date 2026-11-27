@@ -140,7 +140,7 @@ def test_stage12_worker_retries_a_dataset_download_that_timed_out(
         DatasetSelection,
         RegionResolution,
     )
-    from policyengine_simulation_executor.stage12_cache import state_datasets
+    from policyengine_simulation_executor.stage12_cache import levels
     from policyengine_simulation_executor.stage12_runtime import simulation as worker
 
     waits: list[float] = []
@@ -179,7 +179,9 @@ def test_stage12_worker_retries_a_dataset_download_that_timed_out(
         lambda _params, *, region_resolution: selection,
     )
     monkeypatch.setattr(simulation_runtime, "_load_dataset", flaky_load_dataset)
-    monkeypatch.setattr(state_datasets, "baked_state_data_folder", lambda **_: None)
+    monkeypatch.setattr(
+        levels, "prebuilt_dataset_folder", lambda _run, _data_folder: None
+    )
     monkeypatch.setattr(
         worker, "detect_uk_run_dataset_metadata", lambda *_a, **_k: None
     )

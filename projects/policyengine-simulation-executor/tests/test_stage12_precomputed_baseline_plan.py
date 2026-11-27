@@ -25,8 +25,9 @@ from policyengine_simulation_executor.stage12_runtime.partition import US_REGION
 def test_a_precomputed_simulation_is_planned_as_its_simulation_run_stores_it(
     reform: bool,  # noqa: FBT001  # the parametrized side
 ) -> None:
+    first_year = precompute_planning.country_prebuilt("us").years[0]
     planned = precompute_planning.scoped_planned_simulation(
-        precompute_planning.PRECOMPUTE_YEARS[0], US_REGION_GROUPS[0], reform=reform
+        first_year, US_REGION_GROUPS[0], reform=reform
     )
     unplanned = SimulationExecutionInput.model_validate(
         planned.model_dump(mode="json", exclude={"output_plan"})

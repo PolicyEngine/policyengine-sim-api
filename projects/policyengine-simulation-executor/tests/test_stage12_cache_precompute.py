@@ -33,6 +33,10 @@ from policyengine_simulation_executor.stage12_runtime.simulation import (
 )
 from pydantic import ValidationError
 
+# The US handler settings' years, in submission order.
+PLANNED_YEARS = (2026, 2027, 2025)
+NATIONAL_FOLDER = "prebuilt/us/populace_us_2024/all"
+
 
 def _bundle() -> CacheBundleIdentity:
     return CacheBundleIdentity(
@@ -49,31 +53,35 @@ def _bundle() -> CacheBundleIdentity:
 def _plan(*, exists: bool = False, verified: bool | None = None) -> PrecomputePlan:
     datasets = tuple(
         DatasetPlanEntry(
+            country="us",
             year=year,
             digest=f"dataset-{year}",
             path=f"datasets/us/dataset-{year}/populace_year_{year}.h5",
             filename=f"populace_year_{year}.h5",
+            folder=NATIONAL_FOLDER,
             exists=exists,
         )
-        for year in precompute.PRECOMPUTE_YEARS
+        for year in PLANNED_YEARS
     )
     baselines = tuple(
         BaselinePlanEntry(
+            country="us",
             year=year,
             segment_index=index,
             region_codes=group,
             digest=f"baseline-{year}-{index}",
             path=f"baselines/us/baseline-{year}-{index}/stage12-bl1-{index}.h5",
             filename=f"stage12-bl1-{index}.h5",
+            folder=NATIONAL_FOLDER,
             simulation_id=f"stage12-bl1-{index}",
             output_plan_sha256="b" * 64,
             exists=exists,
         )
-        for year in precompute.PRECOMPUTE_YEARS
+        for year in PLANNED_YEARS
         for index, group in enumerate(US_REGION_GROUPS)
     )
     return PrecomputePlan(
-        years=precompute.PRECOMPUTE_YEARS,
+        years=PLANNED_YEARS,
         datasets=datasets,
         baselines=baselines,
         bundle=_bundle(),
@@ -89,6 +97,7 @@ REGIONAL_DATASET = "populace_us_2024_acs_local"
 def _state_entry(year: int, state_code: str, *, exists: bool) -> StateDatasetPlanEntry:
     digest = f"state-{year}-{state_code}"
     return StateDatasetPlanEntry(
+        country="us",
         year=year,
         state_code=state_code,
         region=f"state/{state_code.lower()}",
@@ -96,7 +105,7 @@ def _state_entry(year: int, state_code: str, *, exists: bool) -> StateDatasetPla
         digest=digest,
         path=f"state-datasets/us/{digest}/{REGIONAL_DATASET}_year_{year}.h5",
         filename=f"{REGIONAL_DATASET}_year_{year}.h5",
-        folder=f"state-datasets/{REGIONAL_DATASET}/{state_code}",
+        folder=f"prebuilt/us/{REGIONAL_DATASET}/{state_code}",
         exists=exists,
     )
 
@@ -106,7 +115,7 @@ def _plan_with_state_datasets(*, exists: bool = False) -> PrecomputePlan:
         update={
             "state_datasets": tuple(
                 _state_entry(year, state_code, exists=exists)
-                for year in precompute.PRECOMPUTE_YEARS
+                for year in PLANNED_YEARS
                 for state_code in ("UT", "WY")
             )
         }
@@ -233,167 +242,6 @@ def test_plan_with_state_datasets_round_trips_the_modal_boundary() -> None:
     plan = _plan_with_state_datasets()
 
     assert PrecomputePlan.model_validate(plan.model_dump()) == plan
-
-
-@pytest.fixture
-def stubbed_planning(monkeypatch):
-    """Stub everything plan_artifacts_impl reads except the state targets."""
-    client = _FakeClient()
-    _use_store(monkeypatch, client)
-    monkeypatch.setattr(precompute_planning, "load_stage12_bundle", lambda: "resolved")
-    monkeypatch.setattr(precompute_planning, "_bundle_identity", _bundle)
-    monkeypatch.setattr(
-        precompute_planning,
-        "collect_dataset_identity",
-        lambda _resolved, *, country, year: SimpleNamespace(
-            digest=f"dataset-{year}",
-            store_path=f"datasets/{country}/dataset-{year}/populace_year_{year}.h5",
-            filename=f"populace_year_{year}.h5",
-        ),
-    )
-    monkeypatch.setattr(precompute_planning, "US_REGION_GROUPS", (("state/ca",),))
-    monkeypatch.setattr(
-        precompute_planning,
-        "baseline_identity",
-        lambda year, _group: (
-            SimpleNamespace(output_plan=None),
-            SimpleNamespace(
-                digest=f"baseline-{year}",
-                store_path=f"baselines/us/baseline-{year}/stage12-bl1-{year}.h5",
-                filename=f"stage12-bl1-{year}.h5",
-                simulation_id=f"stage12-bl1-{year}",
-            ),
-        ),
-    )
-    monkeypatch.setattr(
-        precompute_planning, "stage12_output_plan_sha256", lambda _: "b" * 64
-    )
-
-    def fake_state_identity(resolved, *, country, year, dataset, **state_filter):
-        assert resolved == "resolved"
-        digest = (
-            f"state-{year}-{state_filter['state_code']}-"
-            f"{state_filter['state_fips']}-{state_filter['filter_variable']}"
-        )
-        return SimpleNamespace(
-            digest=digest,
-            store_path=f"state-datasets/{country}/{digest}/{dataset}_year_{year}.h5",
-            filename=f"{dataset}_year_{year}.h5",
-        )
-
-    monkeypatch.setattr(
-        precompute_planning, "collect_state_dataset_identity", fake_state_identity
-    )
-    targets = [
-        precompute.StateDatasetTarget(
-            region="state/ut",
-            state_code="UT",
-            state_fips=49,
-            filter_variable="state_fips",
-            dataset=REGIONAL_DATASET,
-        ),
-        precompute.StateDatasetTarget(
-            region="state/wy",
-            state_code="WY",
-            state_fips=56,
-            filter_variable="state_fips",
-            dataset=REGIONAL_DATASET,
-        ),
-    ]
-    monkeypatch.setattr(
-        precompute_planning, "state_dataset_targets", lambda: tuple(targets)
-    )
-    return SimpleNamespace(client=client, targets=targets)
-
-
-def test_plan_lists_every_state_dataset_year_major_with_presence(
-    stubbed_planning,
-) -> None:
-    stubbed_planning.client.objects[
-        f"state-datasets/us/state-2026-UT-49-state_fips/{REGIONAL_DATASET}_year_2026.h5"
-    ] = {"payload": b"h5", "metadata": {"sha256": "f" * 64, "size_bytes": "2"}}
-
-    plan = precompute.plan_artifacts_impl("cache-bucket")
-
-    assert [(entry.year, entry.state_code) for entry in plan.state_datasets] == [
-        (2026, "UT"),
-        (2026, "WY"),
-        (2027, "UT"),
-        (2027, "WY"),
-        (2025, "UT"),
-        (2025, "WY"),
-    ]
-    assert [entry.exists for entry in plan.state_datasets] == [
-        True,
-        False,
-        False,
-        False,
-        False,
-        False,
-    ]
-    first = plan.state_datasets[0]
-    assert first.region == "state/ut"
-    assert first.dataset == REGIONAL_DATASET
-    assert first.folder == f"state-datasets/{REGIONAL_DATASET}/UT"
-    assert first.filename == f"{REGIONAL_DATASET}_year_2026.h5"
-    assert len(plan.datasets) == 3
-
-
-def test_states_on_the_default_dataset_add_no_state_datasets(
-    stubbed_planning, monkeypatch
-) -> None:
-    monkeypatch.setattr(precompute_planning, "state_dataset_targets", tuple)
-
-    assert precompute.plan_artifacts_impl("cache-bucket").state_datasets == ()
-
-
-def test_state_targets_follow_how_a_request_for_the_state_resolves(
-    monkeypatch,
-) -> None:
-    from policyengine.core.scoping_strategy import RowFilterStrategy
-    from policyengine_simulation_executor.release_bundle import (
-        get_country_release_bundle,
-    )
-
-    bundle = get_country_release_bundle("us")
-
-    def region(state_code, fips, dataset_path):
-        return SimpleNamespace(
-            code=f"state/{state_code.lower()}",
-            dataset_path=dataset_path,
-            scoping_strategy=RowFilterStrategy(
-                variable_name="state_fips", variable_value=fips
-            ),
-            parent_code="us",
-            state_code=state_code,
-        )
-
-    regions = [
-        region("WY", 56, bundle.dataset_uris[REGIONAL_DATASET]),
-        region("UT", 49, bundle.dataset_uris[REGIONAL_DATASET]),
-        region("ID", 16, bundle.default_dataset_uri),
-    ]
-    by_code = {item.code: item for item in regions}
-    country_module = SimpleNamespace(
-        model=SimpleNamespace(
-            get_region=by_code.get,
-            region_registry=SimpleNamespace(
-                get_by_type=lambda kind: list(regions) if kind == "state" else []
-            ),
-        )
-    )
-    monkeypatch.setattr(
-        precompute_planning, "_country_module", lambda _country: country_module
-    )
-
-    targets = precompute.state_dataset_targets()
-
-    assert [(target.region, target.state_fips) for target in targets] == [
-        ("state/ut", 49),
-        ("state/wy", 56),
-    ]
-    assert {target.dataset for target in targets} == {REGIONAL_DATASET}
-    assert targets[0].scoping_strategy is by_code["state/ut"].scoping_strategy
 
 
 class _Call:
@@ -556,7 +404,7 @@ def test_precompute_builds_each_year_of_state_datasets_in_one_call() -> None:
             year,
             [entry.model_dump() for entry in plan.state_datasets if entry.year == year],
         )
-        for year in precompute.PRECOMPUTE_YEARS
+        for year in PLANNED_YEARS
     ]
 
 
@@ -587,7 +435,7 @@ def test_precompute_reports_each_builds_uploads_bytes_and_time() -> None:
         echo=lines.append,
     )
 
-    for year in precompute.PRECOMPUTE_YEARS:
+    for year in PLANNED_YEARS:
         assert (
             f"State datasets {year} {REGIONAL_DATASET}: 2 built, 1 uploaded "
             "(100 bytes) in 12.5 s"
@@ -599,7 +447,7 @@ def test_precompute_builds_each_year_and_dataset_in_its_own_call() -> None:
     events = []
     plan = _plan_with_state_datasets()
     other = _state_entry(2026, "ID", exists=False).model_copy(
-        update={"dataset": "populace_other", "folder": "state-datasets/other/ID"}
+        update={"dataset": "populace_other", "folder": "prebuilt/us/populace_other/ID"}
     )
     plan = plan.model_copy(update={"state_datasets": (*plan.state_datasets, other)})
     handles = _state_run_handles(events, plan)
@@ -753,7 +601,7 @@ def test_manifest_lists_state_datasets_after_the_others_in_plan_order() -> None:
     )
 
 
-def test_manifest_without_state_datasets_keeps_its_published_shape() -> None:
+def test_manifest_records_the_folder_of_every_year_file_and_baseline() -> None:
     from policyengine_simulation_executor.stage12_cache.models import CacheManifest
 
     store = SimpleNamespace(
@@ -763,8 +611,7 @@ def test_manifest_without_state_datasets_keeps_its_published_shape() -> None:
     )
     payload = precompute.build_manifest(_plan(exists=True), store).canonical_payload()
 
-    assert all(set(item) != {"folder"} for item in payload["artifacts"])
-    assert all("folder" not in item for item in payload["artifacts"])
+    assert {item["folder"] for item in payload["artifacts"]} == {NATIONAL_FOLDER}
     assert CacheManifest.model_validate(payload).canonical_payload() == payload
 
 
@@ -866,13 +713,16 @@ def test_determinism_check_records_only_a_pass_that_loaded_the_stored_file(
     _use_store(monkeypatch, client)
     plan = _plan(exists=True, verified=False)
     probe = plan.baselines[0]
-    (tmp_path / probe.filename).write_bytes(b"h5")
+    (tmp_path / probe.folder).mkdir(parents=True, exist_ok=True)
+    (tmp_path / probe.folder / probe.filename).write_bytes(b"h5")
     monkeypatch.setattr(simulation_runtime, "resolve_data_folder", lambda: tmp_path)
-    monkeypatch.setattr(precompute_baselines, "_ensure_dataset_file", lambda *_: None)
+    monkeypatch.setattr(precompute_baselines, "_ensure_year_file", lambda *_: None)
     monkeypatch.setattr(
         precompute_baselines,
         "scoped_planned_simulation",
-        lambda _year, _group, *, reform=False: "reform" if reform else "baseline",
+        lambda _year, _group, *, reform=False, country: (
+            "reform" if reform else "baseline"
+        ),
     )
     calculations = {
         "baseline": SimulationCalculation(
@@ -898,11 +748,13 @@ def test_determinism_check_records_only_a_pass_that_loaded_the_stored_file(
 
 def _use_determinism_calculations(monkeypatch, tmp_path, cached, fresh) -> None:
     monkeypatch.setattr(simulation_runtime, "resolve_data_folder", lambda: tmp_path)
-    monkeypatch.setattr(precompute_baselines, "_ensure_dataset_file", lambda *_: None)
+    monkeypatch.setattr(precompute_baselines, "_ensure_year_file", lambda *_: None)
     monkeypatch.setattr(
         precompute_baselines,
         "scoped_planned_simulation",
-        lambda _year, _group, *, reform=False: "reform" if reform else "baseline",
+        lambda _year, _group, *, reform=False, country: (
+            "reform" if reform else "baseline"
+        ),
     )
     calculations = {
         "baseline": SimulationCalculation(frames=cached, cache_outcome="hit"),
@@ -922,7 +774,8 @@ def test_determinism_check_reports_each_kind_of_frame_difference(
     _use_store(monkeypatch, client)
     plan = _plan(exists=True, verified=False)
     probe = plan.baselines[0]
-    (tmp_path / probe.filename).write_bytes(b"h5")
+    (tmp_path / probe.folder).mkdir(parents=True, exist_ok=True)
+    (tmp_path / probe.folder / probe.filename).write_bytes(b"h5")
     cached = {
         "person": pd.DataFrame({"person_id": [1], "age": [30], "income": [1.0]}),
         "tax_unit": pd.DataFrame({"tax_unit_id": [1]}),
@@ -976,14 +829,17 @@ def test_determinism_check_downloads_the_stored_baseline_only_when_missing(
     plan = _plan(exists=True, verified=False)
     probe = plan.baselines[0]
     if already_local:
-        (tmp_path / probe.filename).write_bytes(b"h5")
+        (tmp_path / probe.folder).mkdir(parents=True, exist_ok=True)
+        (tmp_path / probe.folder / probe.filename).write_bytes(b"h5")
     _use_determinism_calculations(monkeypatch, tmp_path, _frames(30), _frames(30))
 
     verdict = precompute.verify_determinism_impl("cache-bucket", plan, probe)
 
     assert verdict.equal is True
     expected_downloads = (
-        [] if already_local else [(probe.path, tmp_path / probe.filename)]
+        []
+        if already_local
+        else [(probe.path, tmp_path / probe.folder / probe.filename)]
     )
     assert downloads == expected_downloads
 
@@ -997,14 +853,14 @@ def test_installed_bundle_plans_a_regional_file_per_state_and_year(
 
     plan = precompute.plan_artifacts_impl("cache-bucket")
 
-    assert len(plan.state_datasets) == 51 * len(precompute.PRECOMPUTE_YEARS)
+    assert len(plan.state_datasets) == 51 * len(PLANNED_YEARS)
     assert {entry.dataset for entry in plan.state_datasets} == {REGIONAL_DATASET}
     utah = next(
         entry
         for entry in plan.state_datasets
         if entry.year == 2026 and entry.state_code == "UT"
     )
-    assert utah.folder == f"state-datasets/{REGIONAL_DATASET}/UT"
+    assert utah.folder == f"prebuilt/us/{REGIONAL_DATASET}/UT"
     assert utah.filename == f"{REGIONAL_DATASET}_year_2026.h5"
 
 
@@ -1070,6 +926,13 @@ class TestBuildStateDatasetsImpl:
         from fixtures import state_dataset_sources as sources
         from policyengine.core.scoping_strategy import RowFilterStrategy
         from policyengine.tax_benefit_models import us as us_module
+        from policyengine_simulation_executor.stage12_cache import levels_us
+        from policyengine_simulation_executor.stage12_cache.levels import (
+            DatasetLevel,
+            SubsetFilter,
+            YearFileTarget,
+            prebuilt_folder,
+        )
 
         client = _FakeClient()
         _use_store(monkeypatch, client)
@@ -1081,24 +944,31 @@ class TestBuildStateDatasetsImpl:
             sources=sources,
         )
 
-        def target(state_code, fips):
-            return precompute.StateDatasetTarget(
-                region=f"state/{state_code.lower()}",
-                state_code=state_code,
-                state_fips=fips,
-                filter_variable="state_fips",
+        def target(year, state_code, fips):
+            return YearFileTarget(
+                country="us",
+                level=DatasetLevel.STATE,
                 dataset=sources.REGIONAL_DATASET,
-                scoping_strategy=RowFilterStrategy(
-                    variable_name="state_fips", variable_value=fips
+                year=year,
+                subset=SubsetFilter(
+                    region=f"state/{state_code.lower()}",
+                    code=state_code,
+                    variable="state_fips",
+                    value=fips,
+                    scoping_strategy=RowFilterStrategy(
+                        variable_name="state_fips", variable_value=fips
+                    ),
                 ),
+                folder=prebuilt_folder("us", sources.REGIONAL_DATASET, state_code),
             )
 
-        state.targets = [
-            target("UT", sources.UTAH_FIPS),
-            target("WY", sources.WYOMING_FIPS),
-        ]
+        state.targets = [("UT", sources.UTAH_FIPS), ("WY", sources.WYOMING_FIPS)]
         monkeypatch.setattr(
-            precompute_datasets, "state_dataset_targets", lambda: tuple(state.targets)
+            levels_us.UsStateHandler,
+            "year_file_targets",
+            lambda _handler, year: [
+                target(year, state_code, fips) for state_code, fips in state.targets
+            ],
         )
         monkeypatch.setattr(
             precompute_datasets, "load_stage12_bundle", lambda: "resolved"
@@ -1138,7 +1008,7 @@ class TestBuildStateDatasetsImpl:
             for geoid in (4901, 4902, 4903, 4904, 5600)
         ]
         monkeypatch.setattr(
-            precompute_datasets,
+            simulation_runtime,
             "_country_module",
             lambda _country: SimpleNamespace(
                 ensure_datasets=fake_ensure_datasets,
@@ -1165,6 +1035,7 @@ class TestBuildStateDatasetsImpl:
             state_code=state_code,
         )
         return StateDatasetPlanEntry(
+            country="us",
             year=self.YEAR,
             state_code=state_code,
             region=f"state/{state_code.lower()}",
@@ -1172,7 +1043,7 @@ class TestBuildStateDatasetsImpl:
             digest=identity.digest,
             path=identity.store_path,
             filename=identity.filename,
-            folder=f"state-datasets/{dataset}/{state_code}",
+            folder=f"prebuilt/us/{dataset}/{state_code}",
             exists=False,
         )
 
@@ -1254,16 +1125,6 @@ class TestBuildStateDatasetsImpl:
         )
 
         assert [result.state_code for result in results] == ["UT", "WY"]
-
-    def test_refuses_a_target_without_a_row_filter(self, state_build):
-        from dataclasses import replace
-
-        state_build.targets[0] = replace(state_build.targets[0], scoping_strategy=None)
-
-        with pytest.raises(RuntimeError, match="no row filter"):
-            self._build(state_build, [self._entry(state_build, "UT")])
-        assert state_build.client.objects == {}
-        assert state_build.ensure_calls == []
 
     def test_reports_how_long_the_years_build_had_run(self, state_build):
         results = self._build(

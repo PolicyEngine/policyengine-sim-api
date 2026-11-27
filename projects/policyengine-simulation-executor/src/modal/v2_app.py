@@ -99,14 +99,24 @@ BUNDLE_VALUES = assertion_values(RESOLVED_BUNDLE.bundle)
 APP_NAME = v2_application_name(RESOLVED_BUNDLE.bundle.policyengine_version)
 
 
-def _deploy_time_cache_inputs() -> tuple[str, dict | None]:
-    """Resolve and validate the cache manifest on the deploying machine."""
+def _deploy_time_cache_inputs() -> tuple[str, dict | None, dict | None]:
+    """Resolve the cache manifest, and the contents it must hold, when deploying.
+
+    The contents (years and counts) come from the level handlers' settings,
+    without loading the US model; the image download step checks the
+    manifest against them.
+    """
     if not modal.is_local():
-        return "", None
+        return "", None, None
+    from policyengine_simulation_executor.stage12_cache.precompute_planning import (  # noqa: PLC0415  # needed on the deploying machine only
+        expected_cache_contents,
+    )
+
+    contents = expected_cache_contents("us")
     bucket = os.environ.get("STAGE12_CACHE_BUCKET", "")
     digest = os.environ.get("STAGE12_CACHE_MANIFEST_DIGEST")
     if not digest:
-        return bucket, None
+        return bucket, None, contents
     payload = Stage12CacheStore(bucket).read_manifest(digest)
     if payload is None:
         msg = "Stage 12 cache manifest is unavailable"
@@ -115,10 +125,12 @@ def _deploy_time_cache_inputs() -> tuple[str, dict | None]:
     if manifest.bundle.bundle_manifest_sha256 != RESOLVED_BUNDLE.bundle_manifest_sha256:
         msg = "Stage 12 cache manifest names another bundle"
         raise RuntimeError(msg)
-    return bucket, manifest.canonical_payload()
+    return bucket, manifest.canonical_payload(), contents
 
 
-STAGE12_CACHE_BUCKET, STAGE12_CACHE_MANIFEST = _deploy_time_cache_inputs()
+STAGE12_CACHE_BUCKET, STAGE12_CACHE_MANIFEST, STAGE12_CACHE_CONTENTS = (
+    _deploy_time_cache_inputs()
+)
 
 
 def _external_assertions(environment: dict[str, str]) -> dict[str, str]:
@@ -249,12 +261,12 @@ def build_v2_image(
     if include_us_cache:
         image = image.run_function(
             fetch_stage12_cache,
-            args=(STAGE12_CACHE_BUCKET, STAGE12_CACHE_MANIFEST),
+            args=(STAGE12_CACHE_BUCKET, STAGE12_CACHE_MANIFEST, STAGE12_CACHE_CONTENTS),
             secrets=[gcp_secret],
             cpu=2.0,
             memory=4096,
-            # The 63 national files and the state datasets (a file per state
-            # for each precomputed year), downloaded and hashed in turn.
+            # The national files and the state datasets (a file per state for
+            # each precomputed year), downloaded and hashed in turn.
             timeout=3600,
         )
     return _add_v2_sources(image)

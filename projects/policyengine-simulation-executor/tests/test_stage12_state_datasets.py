@@ -1,13 +1,13 @@
-"""Stage 12's per-state datasets: their cache identity and image folders.
+"""Stage 12's per-state datasets: their cache identity.
 
-Stage 12 keeps its own copy of the main path's per-state dataset machinery,
-keyed from the published Stage 12 bundle.
+The cache keys each state's year file from the published Stage 12 bundle.
+Where the file sits in the image, and when a run reads it, is the level
+handlers' (``stage12_cache.levels_us``), tested with them.
 """
 
 from __future__ import annotations
 
 import dataclasses
-from pathlib import Path
 
 import pytest
 from policyengine_simulation_contract.stage12_bundle import (
@@ -16,7 +16,6 @@ from policyengine_simulation_contract.stage12_bundle import (
     Stage12CountryBundle,
     Stage12Dataset,
 )
-from policyengine_simulation_executor.stage12_cache import state_datasets
 from policyengine_simulation_executor.stage12_cache.keys import (
     Stage12StateDatasetCacheIdentity,
     collect_dataset_identity,
@@ -148,91 +147,3 @@ def test_the_national_dataset_identity_is_unchanged():
     assert identity.dataset == "populace_us_2024"
     assert identity.source_sha256 == "a" * 64
     assert identity.payload["schema"] == "stage12-ds1"
-
-
-def test_state_folder_sits_under_the_stage12_data_folder():
-    assert state_datasets.state_dataset_relative_folder(REGIONAL_DATASET, "ut") == (
-        f"state-datasets/{REGIONAL_DATASET}/UT"
-    )
-    assert state_datasets.state_dataset_folder(
-        "/opt/policyengine/stage12-data", REGIONAL_DATASET, "UT"
-    ) == (f"/opt/policyengine/stage12-data/state-datasets/{REGIONAL_DATASET}/UT")
-
-
-def _regional_selection():
-    from policyengine_simulation_executor.release_bundle import (
-        get_country_release_bundle,
-    )
-    from policyengine_simulation_executor.simulation_runtime import DatasetSelection
-
-    bundle = get_country_release_bundle("us")
-    return DatasetSelection(
-        name=REGIONAL_DATASET,
-        uri=bundle.dataset_uris[REGIONAL_DATASET],
-        is_default=False,
-    )
-
-
-def _bake_utah(data_folder: Path, *, stamp: bool = True) -> Path:
-    from fixtures.state_dataset_sources import write_year_file
-
-    folder = Path(
-        state_datasets.state_dataset_folder(str(data_folder), REGIONAL_DATASET, "UT")
-    )
-    folder.mkdir(parents=True)
-    write_year_file(folder, year=2026, stamp=stamp)
-    return folder
-
-
-def _lookup(data_folder, selection, *, state_code="UT", year=2026, country="us"):
-    return state_datasets.baked_state_data_folder(
-        country=country,
-        selection=selection,
-        state_code=state_code,
-        year=year,
-        data_folder=str(data_folder),
-    )
-
-
-def test_a_state_reads_its_baked_folder(tmp_path):
-    folder = _bake_utah(tmp_path)
-
-    assert _lookup(tmp_path, _regional_selection()) == str(folder)
-
-
-def test_a_year_or_state_without_a_baked_file_reads_nothing_baked(tmp_path):
-    _bake_utah(tmp_path)
-
-    assert _lookup(tmp_path, _regional_selection(), year=2028) is None
-    assert _lookup(tmp_path, _regional_selection(), state_code="WY") is None
-
-
-def test_an_unstamped_file_reads_nothing_baked(tmp_path):
-    _bake_utah(tmp_path, stamp=False)
-
-    assert _lookup(tmp_path, _regional_selection()) is None
-
-
-def test_default_datasets_and_other_regions_read_nothing_baked(tmp_path):
-    from policyengine_simulation_executor.simulation_runtime import DatasetSelection
-
-    _bake_utah(tmp_path)
-    default = DatasetSelection(
-        name="populace_us_2024", uri="hf://default", is_default=True
-    )
-
-    assert _lookup(tmp_path, default) is None
-    assert _lookup(tmp_path, _regional_selection(), state_code=None) is None
-    assert _lookup(tmp_path, _regional_selection(), country="uk") is None
-
-
-def test_a_renamed_dotpy_reuse_check_falls_back_to_on_demand_loading(
-    monkeypatch, tmp_path
-):
-    """A .py upgrade moving the private SPM profile helper must not fail runs."""
-    from policyengine.tax_benefit_models.us import datasets as us_datasets
-
-    _bake_utah(tmp_path)
-    monkeypatch.delattr(us_datasets, "_expected_legacy_spm_profile")
-
-    assert _lookup(tmp_path, _regional_selection()) is None

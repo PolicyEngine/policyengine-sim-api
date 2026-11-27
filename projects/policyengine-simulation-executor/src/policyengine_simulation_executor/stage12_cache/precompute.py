@@ -25,13 +25,11 @@ from .precompute_baselines import compute_baseline_impl, verify_determinism_impl
 from .precompute_datasets import build_dataset_impl, build_state_datasets_impl
 from .precompute_planning import (
     DETERMINISM_SCHEMA,
-    PRECOMPUTE_YEARS,
-    StateDatasetTarget,
     determinism_record,
     determinism_record_path,
+    expected_cache_contents,
     plan_artifacts_impl,
     select_work,
-    state_dataset_targets,
 )
 from .store import Stage12CacheStore
 
@@ -43,21 +41,19 @@ if TYPE_CHECKING:
 __all__ = [
     "DETERMINISM_SCHEMA",
     "MANIFEST_DIGEST_PREFIX",
-    "PRECOMPUTE_YEARS",
     "CachePrecomputeFunctions",
-    "StateDatasetTarget",
     "build_dataset_impl",
     "build_manifest",
     "build_state_datasets_impl",
     "compute_baseline_impl",
     "determinism_record",
     "determinism_record_path",
+    "expected_cache_contents",
     "manifest_digest_line",
     "plan_artifacts_impl",
     "publish_manifest_impl",
     "run_precompute",
     "select_work",
-    "state_dataset_targets",
     "verify_determinism_impl",
 ]
 
@@ -72,8 +68,8 @@ def manifest_digest_line(digest: str) -> str:
 def build_manifest(plan: PrecomputePlan, store: Stage12CacheStore) -> CacheManifest:
     """List every planned file with the digest and size the bucket reports.
 
-    Datasets, then baselines, then state datasets, each in plan order, so a
-    plan without state datasets keeps the manifest it always had.
+    Datasets, then baselines, then state datasets, each in plan order. Each
+    entry records the prebuilt folder the worker image places it in.
     """
     artifacts: list[CacheManifestEntry] = []
     for entry in plan.datasets:
@@ -83,6 +79,7 @@ def build_manifest(plan: PrecomputePlan, store: Stage12CacheStore) -> CacheManif
                 type="dataset",
                 path=entry.path,
                 filename=entry.filename,
+                folder=entry.folder,
                 year=entry.year,
                 identity_digest=entry.digest,
                 content_sha256=stored.content_sha256,
@@ -96,6 +93,7 @@ def build_manifest(plan: PrecomputePlan, store: Stage12CacheStore) -> CacheManif
                 type="baseline",
                 path=entry.path,
                 filename=entry.filename,
+                folder=entry.folder,
                 year=entry.year,
                 identity_digest=entry.digest,
                 content_sha256=stored.content_sha256,

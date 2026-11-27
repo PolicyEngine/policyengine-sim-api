@@ -448,10 +448,15 @@ workers, its image and functions mount only the read-only
 `pe-uk-private-hf-read-token` Hugging Face secret, which supplies
 `HUGGING_FACE_TOKEN`, and
 `stage12-evaluation-gcp-credentials`; the US data it reads comes from the
-public `policyengine/populace-us` dataset repository. The US worker image
-downloads and verifies the manifest's files during image construction: the 63
-national files into the data folder, and each state dataset into
-`state-datasets/<dataset>/<state>/` under the year file's own name. The
+public `policyengine/populace-us` dataset repository. The plan comes from
+the level handlers in `stage12_cache/levels*.py` and the cache's own levels in
+`stage12_cache/cache_levels.py`. The US worker image downloads and verifies
+the manifest's files during image construction, each into the prebuilt folder
+its manifest entry names: the 63 national files into
+`prebuilt/us/<default dataset>/all/`, and each state dataset into
+`prebuilt/us/<dataset>/<state>/` under the year file's own name. The
+deploying machine passes the image build the years and file counts to expect
+(`expected_cache_contents`). The
 release validation checks the recorded manifest, hashes a baseline file, and
 requires a real calculation to load that file without recomputing it. Worker
 validation also calculates a US household under a nonempty CTC reform using
@@ -460,8 +465,9 @@ digest is then stored in the separate v2 version manifest.
 
 The cache is an optimization, not required state for a calculation: an absent
 file causes a normal calculation, and a file missing planned output columns is
-recalculated. Only empty-policy baseline region-group calculations against the
-bundle's default dataset are eligible to read it. Reform calculations never
+recalculated. Only empty-policy baseline calculations of a group of states against
+the bundle's default dataset, at a level `cache_levels.py` lists, are eligible
+to read it. Reform calculations never
 read a baseline file.
 
 ## Observability

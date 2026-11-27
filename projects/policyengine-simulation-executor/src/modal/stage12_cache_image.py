@@ -1,4 +1,12 @@
-"""Self-contained Stage 12 cache fetch used during Modal image construction."""
+"""Self-contained Stage 12 cache fetch used during Modal image construction.
+
+It runs as an image-build step before the package source is added to the
+image, so it imports only the standard library at module level and nothing
+from the package. The deploying machine passes it the manifest and the
+contents the cache must hold (``expected_cache_contents``: the years and the
+year-file and baseline counts), and each manifest entry names the prebuilt
+folder its file lands in.
+"""
 
 from __future__ import annotations
 
@@ -12,23 +20,40 @@ if TYPE_CHECKING:
     from google.cloud.storage import Client
 
 
+_PREBUILT_DIRECTORY = "prebuilt"
+# A prebuilt folder names at least the directory, the country and the dataset.
+_MINIMUM_FOLDER_PARTS = 3
+
+
 def fetch_stage12_cache(
-    bucket: str, manifest: dict | None, *, client: Client | None = None
+    bucket: str,
+    manifest: dict | None,
+    expected_contents: dict | None,
+    *,
+    client: Client | None = None,
 ) -> None:
-    """Download and verify every manifest-listed cache file into the image."""
-    artifacts, canonical = _validated_manifest(bucket, manifest)
+    """Download and verify every manifest-listed cache file into the image.
+
+    ``expected_contents`` holds the years and the ``dataset`` and ``baseline``
+    counts the manifest must list.
+    """
+    artifacts, canonical, country = _validated_manifest(
+        bucket, manifest, expected_contents
+    )
     if client is None:
         client = _storage_client()
     data_dir = Path(os.environ["POLICYENGINE_DATA_FOLDER"])
-    destinations = _artifact_destinations(artifacts, data_dir)
+    destinations = _artifact_destinations(artifacts, data_dir, country=country)
     data_dir.mkdir(parents=True, exist_ok=True)
     for artifact, destination in zip(artifacts, destinations, strict=True):
         _fetch_artifact(artifact, client=client, bucket=bucket, destination=destination)
     (data_dir / ".stage12-cache-manifest.json").write_bytes(canonical)
 
 
-def _validated_manifest(bucket: str, manifest: dict | None) -> tuple[list, bytes]:
-    """Return the manifest's artifacts and canonical bytes once it is verified.
+def _validated_manifest(
+    bucket: str, manifest: dict | None, expected_contents: dict | None
+) -> tuple[list, bytes, str]:
+    """Return the manifest's artifacts, canonical bytes and country once verified.
 
     The manifest must name the installed bundle, the expected years and
     artifact counts, and match the deployment's digest.
@@ -36,8 +61,9 @@ def _validated_manifest(bucket: str, manifest: dict | None) -> tuple[list, bytes
     if not bucket or not manifest:
         msg = "Stage 12 cache deployment has no bucket or manifest"
         raise RuntimeError(msg)
-    _require_installed_identity(manifest)
-    artifacts = _expected_artifacts(manifest)
+    years, counts = _expected_years_and_counts(expected_contents)
+    _require_installed_identity(manifest, years)
+    artifacts = _expected_artifacts(manifest, counts)
     canonical = json.dumps(
         manifest,
         sort_keys=True,
@@ -49,10 +75,33 @@ def _validated_manifest(bucket: str, manifest: dict | None) -> tuple[list, bytes
     if manifest_digest != os.getenv("STAGE12_CACHE_MANIFEST_DIGEST"):
         msg = "Stage 12 cache manifest digest differs from deployment"
         raise RuntimeError(msg)
-    return artifacts, canonical
+    return artifacts, canonical, str(manifest.get("country"))
 
 
-def _require_installed_identity(manifest: dict) -> None:
+def _expected_years_and_counts(
+    expected_contents: dict | None,
+) -> tuple[list, dict]:
+    """Return the years and artifact counts the deployment expects.
+
+    Raises ``RuntimeError`` when the deploying machine passed none, or ones
+    of another shape.
+    """
+    years = (expected_contents or {}).get("years")
+    counts = (expected_contents or {}).get("artifact_counts")
+    if (
+        not isinstance(years, list)
+        or not years
+        or not all(isinstance(year, int) for year in years)
+        or not isinstance(counts, dict)
+        or set(counts) != {"dataset", "baseline"}
+        or not all(isinstance(count, int) for count in counts.values())
+    ):
+        msg = "Stage 12 cache deployment has no expected contents"
+        raise RuntimeError(msg)
+    return years, counts
+
+
+def _require_installed_identity(manifest: dict, years: list) -> None:
     """Require the manifest's schema, installed bundle and precomputed years."""
     if manifest.get("schema") != "stage12-mf1":
         msg = "Stage 12 cache manifest schema is unsupported"
@@ -63,16 +112,17 @@ def _require_installed_identity(manifest: dict) -> None:
     ) != os.getenv("STAGE12_BUNDLE_MANIFEST_SHA256"):
         msg = "Stage 12 cache manifest names another installed bundle"
         raise RuntimeError(msg)
-    if manifest.get("years") != [2026, 2027, 2025]:
+    if manifest.get("years") != years:
         msg = "Stage 12 cache manifest has an unexpected year set"
         raise RuntimeError(msg)
 
 
-def _expected_artifacts(manifest: dict) -> list:
+def _expected_artifacts(manifest: dict, counts: dict) -> list:
     """Return the manifest's artifact list once its contents are as expected.
 
-    It must have 3 datasets and 60 baselines, no artifact of another kind, and
-    either no state datasets or the same states' files for every year.
+    It must have the expected numbers of datasets and baselines, no artifact
+    of another kind, and either no state datasets or the same states' files
+    for every year.
     """
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, list):
@@ -83,7 +133,7 @@ def _expected_artifacts(manifest: dict) -> list:
         kind: sum(item.get("type") == kind for item in entries)
         for kind in ("dataset", "baseline")
     }
-    if type_counts != {"dataset": 3, "baseline": 60}:
+    if type_counts != counts:
         msg = "Stage 12 cache manifest has an unexpected artifact count"
         raise RuntimeError(msg)
     if any(
@@ -104,20 +154,19 @@ def _expected_artifacts(manifest: dict) -> list:
     return artifacts
 
 
-def _relative_destination(artifact: dict) -> PurePosixPath | None:
+def _relative_destination(artifact: dict, *, country: str) -> PurePosixPath | None:
     """Return where a listed file lands, relative to the data folder, or None.
 
-    Dataset and baseline files land directly in the data folder; a state
-    dataset lands in its ``folder``, a relative path without ``.`` or ``..``
-    parts. None means the entry names an unsafe place.
+    Every file lands in its ``folder``: a relative path without ``.`` or
+    ``..`` parts under ``prebuilt/<country>/``, naming at least a dataset, so
+    prebuilt files never land beside the source datasets the bundle install
+    writes into the data folder. None means the entry names an unsafe place.
     """
     filename = artifact.get("filename")
     if not isinstance(filename, str) or PurePosixPath(filename).name != filename:
         return None
     if "\\" in filename or filename in {"", ".", ".."}:
         return None
-    if artifact.get("type") != "state_dataset":
-        return PurePosixPath(filename)
     folder = artifact.get("folder")
     if not isinstance(folder, str) or not folder or "\\" in folder:
         return None
@@ -126,12 +175,16 @@ def _relative_destination(artifact: dict) -> PurePosixPath | None:
         PurePosixPath(folder).is_absolute()
         or any(part in {".", ".."} for part in parts)
         or "/".join(parts) != folder
+        or len(parts) < _MINIMUM_FOLDER_PARTS
+        or parts[:2] != (_PREBUILT_DIRECTORY, country)
     ):
         return None
     return PurePosixPath(folder, filename)
 
 
-def _artifact_destinations(artifacts: list, data_dir: Path) -> list[Path]:
+def _artifact_destinations(
+    artifacts: list, data_dir: Path, *, country: str
+) -> list[Path]:
     """Check every listed file's metadata and return where each one lands.
 
     Runs before anything downloads, so a bad entry leaves no file behind.
@@ -142,7 +195,7 @@ def _artifact_destinations(artifacts: list, data_dir: Path) -> list[Path]:
         if not isinstance(artifact, dict):
             msg = "Stage 12 cache artifact entry is invalid"
             raise TypeError(msg)
-        relative = _relative_destination(artifact)
+        relative = _relative_destination(artifact, country=country)
         if (
             relative is None
             or relative in seen
