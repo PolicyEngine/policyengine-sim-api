@@ -11,6 +11,9 @@ from policyengine_simulation_contract.stage12_manifest import (
     LocalAreaReports,
     V2WorkerValidation,
 )
+from policyengine_simulation_contract.stage12_simulation_workers import (
+    worker_class_name,
+)
 from src.modal.utils import update_v2_version_manifest as publisher
 
 
@@ -58,6 +61,16 @@ def test_publisher_records_every_bundle_country_as_economy_capable() -> None:
         (country.country, True, f"run_single_simulation_{country.country}", None)
         for country in publisher.load_stage12_bundle().bundle.countries
     ]
+
+
+def test_each_published_simulation_callable_is_a_worker_class_method() -> None:
+    worker = publisher.build_worker(_validation().model_dump(mode="json"))
+
+    # The entry service and the coordinator spawn the named simulation
+    # callable through the class that defines it as a method.
+    for country in worker.countries:
+        assert country.single_simulation_callable is not None
+        assert worker_class_name(country.single_simulation_callable) is not None
 
 
 def _local_area_reports(worker) -> dict[str, LocalAreaReports | None]:

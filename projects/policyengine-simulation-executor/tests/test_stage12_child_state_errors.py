@@ -341,10 +341,12 @@ def test_a_segment_failure_is_reported_exactly_once(caplog) -> None:
                 ),
             )
 
-    class SegmentFunctionLookup:
+    class SegmentWorkerLookup:
         @staticmethod
-        def from_name(_app_name, _function_name):
-            return SegmentFunction()
+        def from_name(_app_name, _class_name):
+            return lambda: SimpleNamespace(
+                run_single_simulation_segment_us=SegmentFunction()
+            )
 
     def segmented_calculator(value, cancellation_requested):
         return Stage12SegmentRunner(
@@ -353,7 +355,7 @@ def test_a_segment_failure_is_reported_exactly_once(caplog) -> None:
             runtime=runtime,
             cancellation_requested=cancellation_requested,
             seams=SegmentRunnerSeams(
-                modal_module=SimpleNamespace(Function=SegmentFunctionLookup),
+                modal_module=SimpleNamespace(Cls=SegmentWorkerLookup),
                 groups=US_REGION_GROUPS,
                 sleep=lambda _seconds: None,
             ),

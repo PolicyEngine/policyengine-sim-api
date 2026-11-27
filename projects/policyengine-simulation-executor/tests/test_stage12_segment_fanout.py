@@ -111,6 +111,50 @@ def _results(simulation) -> list[dict]:
     ]
 
 
+def _segment_worker_lookup(
+    segment_function: object,
+    class_lookups: list[tuple[str, str]] | None = None,
+) -> SimpleNamespace:
+    """Stand in for ``modal``: its segment worker class spawns ``segment_function``.
+
+    Each lookup of a class by name is appended to ``class_lookups``.
+    """
+
+    class ClassLookup:
+        @staticmethod
+        def from_name(app_name, class_name):
+            if class_lookups is not None:
+                class_lookups.append((app_name, class_name))
+            return lambda: SimpleNamespace(
+                run_single_simulation_segment_us=segment_function
+            )
+
+    return SimpleNamespace(Cls=ClassLookup)
+
+
+def test_segments_are_started_through_the_segment_worker_class() -> None:
+    # The class's containers restore from a memory snapshot with the US
+    # models loaded.
+    simulation = planned_simulation(SimulationRole.BASELINE)
+    function = FakeFunction(_results(simulation), {})
+    class_lookups: list[tuple[str, str]] = []
+    runner = Stage12SegmentRunner(
+        simulation,
+        app_name="stage12-app",
+        runtime=cast("ObservabilityRuntime", FakeRuntime()),
+        seams=SegmentRunnerSeams(
+            modal_module=_segment_worker_lookup(function, class_lookups),
+            groups=US_REGION_GROUPS,
+            sleep=lambda _seconds: None,
+        ),
+    )
+
+    runner.run()
+
+    assert class_lookups == [("stage12-app", "SimulationSegmentWorkerUS")]
+    assert len(function.spawns) == len(US_REGION_GROUPS)
+
+
 def _runner(
     *,
     errors: dict[int, list[Exception]] | None = None,
@@ -119,13 +163,6 @@ def _runner(
     simulation = planned_simulation(SimulationRole.BASELINE)
     function = FakeFunction(_results(simulation), errors or {})
 
-    class FunctionLookup:
-        @staticmethod
-        def from_name(app_name, function_name):
-            assert app_name == "stage12-app"
-            assert function_name == "run_single_simulation_segment_us"
-            return function
-
     span_runtime = runtime if runtime is not None else FakeRuntime()
     sleeps: list[float] = []
     runner = Stage12SegmentRunner(
@@ -133,7 +170,7 @@ def _runner(
         app_name="stage12-app",
         runtime=cast("ObservabilityRuntime", span_runtime),
         seams=SegmentRunnerSeams(
-            modal_module=SimpleNamespace(Function=FunctionLookup),
+            modal_module=_segment_worker_lookup(function),
             groups=US_REGION_GROUPS,
             sleep=sleeps.append,
             poll_interval_seconds=0.5,
@@ -355,9 +392,10 @@ class FunctionRecordingSpawnKeywords(FakeFunction):
 @pytest.mark.parametrize(
     ("simulation_run_id", "expected_keyword"),
     [
-        (UUID("00000000-0000-4000-8000-00000000b001"), {
-            "simulation_run_id": "00000000-0000-4000-8000-00000000b001"
-        }),
+        (
+            UUID("00000000-0000-4000-8000-00000000b001"),
+            {"simulation_run_id": "00000000-0000-4000-8000-00000000b001"},
+        ),
         (None, {}),
     ],
     ids=["simulation-run", "comparison-path"],
@@ -369,18 +407,13 @@ def test_segments_are_started_naming_the_simulation_run_of_their_worker(
     simulation = planned_simulation(SimulationRole.BASELINE)
     function = FunctionRecordingSpawnKeywords(_results(simulation))
 
-    class FunctionLookup:
-        @staticmethod
-        def from_name(_app_name, _function_name):
-            return function
-
     runner = Stage12SegmentRunner(
         simulation,
         app_name="stage12-app",
         runtime=cast("ObservabilityRuntime", FakeRuntime()),
         simulation_run_id=simulation_run_id,
         seams=SegmentRunnerSeams(
-            modal_module=SimpleNamespace(Function=FunctionLookup),
+            modal_module=_segment_worker_lookup(function),
             groups=US_REGION_GROUPS,
             sleep=lambda _seconds: None,
         ),
