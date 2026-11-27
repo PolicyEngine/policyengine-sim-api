@@ -49,7 +49,9 @@ if TYPE_CHECKING:
 # Modal client that keeps stale Secret values on restore is refused here,
 # before the cache manifest is read.
 if modal.is_local():
-    require_secret_reloading_modal_client(modal.__version__)
+    require_secret_reloading_modal_client(
+        modal.__version__, app_path="src/modal/v2_app.py"
+    )
 
 STAGE12_DATA_DIR = "/opt/policyengine/stage12-data"
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."

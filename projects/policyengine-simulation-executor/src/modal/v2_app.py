@@ -380,8 +380,9 @@ class _V2CountryModelsLoadedBeforeSnapshot:
     """
 
     # The image's own country: a failed import of one country's models can't
-    # affect the other country's workers.
-    snapshot_countries: ClassVar[tuple[CountryId, ...]] = ()
+    # affect the other country's workers. Annotated with names Python can
+    # resolve when it runs, since Modal reads class annotations.
+    snapshot_countries: ClassVar[tuple[str, ...]] = ()
 
     @modal.enter(snap=True)
     def load_country_models(self) -> None:

@@ -14,11 +14,14 @@ from packaging.version import InvalidVersion, Version
 FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE = Version("1.6.4")
 
 
-def require_secret_reloading_modal_client(client_version: str) -> None:
+def require_secret_reloading_modal_client(
+    client_version: str, *, app_path: str
+) -> None:
     """Raise unless ``client_version`` is Modal 1.6.4 or newer.
 
     Versions compare as Python packaging defines them, so 1.6.4's development
-    builds and release candidates count as older than 1.6.4.
+    builds and release candidates count as older than 1.6.4. ``app_path`` is
+    the app's file, relative to the executor project, named in the message.
     """
     try:
         reloads_secrets = (
@@ -33,6 +36,6 @@ def require_secret_reloading_modal_client(client_version: str) -> None:
             "restored from this app's memory snapshots would keep the Secret values "
             "from when each snapshot was taken. Deploy and run from this project's "
             "locked environment, for example "
-            "`uv run --frozen modal deploy src/modal/app.py`."
+            f"`uv run --frozen modal deploy {app_path}`."
         )
         raise RuntimeError(msg)

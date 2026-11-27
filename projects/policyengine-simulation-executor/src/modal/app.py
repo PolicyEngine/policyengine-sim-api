@@ -59,7 +59,9 @@ if TYPE_CHECKING:
 
 
 if modal.is_local():
-    require_secret_reloading_modal_client(modal.__version__)
+    require_secret_reloading_modal_client(
+        modal.__version__, app_path="src/modal/app.py"
+    )
 
 
 def _version_from_env_or_local_bundle_package(env_var: str, package: str) -> str:
