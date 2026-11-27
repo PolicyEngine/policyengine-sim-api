@@ -459,9 +459,10 @@ def _record_queue_seconds(
     """Attach the job's queue time to its operation telemetry.
 
     It runs from the gateway's submission to the job record's start, which
-    is the first attempt's, so every attempt's record carries the same
-    value. Jobs spawned without a submission time record none: a
-    budget-window batch's years, and jobs an older gateway spawned.
+    is the first attempt's while each later attempt finds the earlier
+    attempt's record, so every attempt's record then carries the same value.
+    Jobs spawned without a submission time record none: a budget-window
+    batch's years, and jobs an older gateway spawned.
     """
     # Telemetry is non-fatal.
     with contextlib.suppress(Exception):

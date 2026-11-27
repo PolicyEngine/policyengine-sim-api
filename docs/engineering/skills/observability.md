@@ -84,7 +84,11 @@ call = function.spawn(payload, observability_context=context)
 ```
 
 Keep `payload` limited to calculation inputs and functional metadata. Do not
-add `_observability_context` to it.
+add `_observability_context` to it. Two underscore-prefixed telemetry values
+are the exceptions: API v1's `_telemetry` envelope, which
+`split_internal_payload` removes before the calculation, and the annual job's
+`_job_submitted_at` (see "Annual job queue time"), which the worker removes
+when the call starts.
 
 At the receiving function, validate the separate argument with
 `normalize_observability_context` and pass the result to
@@ -170,11 +174,15 @@ from the gateway's submission of the job to the job's start in the worker.
   the operation's logged attributes (`redact_params_for_logging`), and the
   worker removes it before the calculation, so segment children never get it.
 - **Start time:** the stage record's `started_at`, which is the first
-  attempt's start and carries over to later attempts. Every attempt's record,
-  a preempted one's included, carries the same value, so the successful
-  attempt's record carries it too, unless a later attempt finds no earlier
-  record (below). It never counts the time between a preemption and the next
-  attempt.
+  attempt's start and carries over to later attempts. While each later
+  attempt finds the earlier attempt's record, every attempt's record, a
+  preempted one's included, carries the same value, so the successful
+  attempt's record carries it too, and the value counts neither the earlier
+  attempts' running time nor the wait before a later attempt. When a later
+  attempt finds no earlier record, see "No earlier record" below.
+- **Counting jobs:** a preempted job writes one record per attempt, each with
+  the same value, so a median or percentile over jobs takes one record per
+  `function_call_id`, such as the one whose `outcome` is `success`.
 - **When it is set:** when the operation opens, so a failed or preempted call
   carries it too.
 - **Clocks:** the two times come from the gateway's and the worker's
