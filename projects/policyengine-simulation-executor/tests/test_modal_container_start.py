@@ -71,8 +71,10 @@ def modal_app(monkeypatch):
     monkeypatch.delenv("MODAL_ENABLE_SNAP_RESTORE", raising=False)
     sys.modules.pop("src.modal.app", None)
     app = importlib.import_module("src.modal.app")
-    # The real preload imports both countries' models.
+    # The real preload imports both countries' models, and the real warm-up
+    # calculates a region group (tests/test_snapshot_warm_up.py).
     monkeypatch.setattr(app, "preload_country_models", lambda: None)
+    monkeypatch.setattr(app, "warm_up_first_calculation", lambda: None)
     _replace_worker_jobs(monkeypatch, lambda _params, **_job_options: WORKER_RESULT)
     yield app
     sys.modules.pop("src.modal.app", None)
