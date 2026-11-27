@@ -2,8 +2,12 @@
 """Separately named v2 Modal application: report coordinator and country workers.
 
 A simulation worker's call calculates a simulation run, or, when its context
-names a cliff result, that run's cliff gap and share. Besides the Stage 12
-report coordinator and simulation workers, it defines a
+names a cliff result, that run's cliff gap and share. The simulation workers
+are methods of Modal classes (``SimulationWorkerUS``, ``SimulationWorkerUK``
+and ``SimulationSegmentWorkerUS``), whose containers restore from a memory
+snapshot with their country's models loaded; their callers find each class
+in ``policyengine_simulation_contract.stage12_simulation_workers``. Besides
+the Stage 12 report coordinator and simulation workers, it defines a
 household function for each country, ``calculate_household_us`` and
 ``calculate_household_uk``, in an image without datasets. A call calculates
 one household under one policy, and records it on the household job it
@@ -20,7 +24,8 @@ existing ``policyengine-simulation-py{version}`` applications.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+import random
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import UUID
 
 from policyengine_simulation_contract.household_execution import (
@@ -28,10 +33,6 @@ from policyengine_simulation_contract.household_execution import (
 )
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_executor import stage12_runtime
-from policyengine_simulation_executor.stage12_bundle import (
-    assert_expected_bundle_values,
-    assertion_values,
-)
 from policyengine_simulation_executor.stage12_runtime import report_run_access
 from policyengine_simulation_executor.stage12_runtime.report_run_access import (
     MODAL_WORKER_DATABASE_SECRET_NAME,
@@ -57,7 +58,9 @@ from policyengine_simulation_observability.stages import (
 from policyengine_simulation_observability.telemetry import (
     normalize_observability_context,
 )
+from src.modal.country_model_preload import preload_country_models
 from src.modal.v2_images import (
+    BUNDLE_VALUES,
     RESOLVED_BUNDLE,
     STAGE12_CACHE_BUCKET,
     STAGE12_CACHE_CONTENTS,
@@ -94,6 +97,7 @@ if TYPE_CHECKING:
 # src/modal/v2_images.py; this module keeps their names for the smoke apps and
 # other code that imports them from here.
 __all__ = [
+    "BUNDLE_VALUES",
     "RESOLVED_BUNDLE",
     "STAGE12_CACHE_BUCKET",
     "STAGE12_CACHE_CONTENTS",
@@ -109,29 +113,9 @@ __all__ = [
     "us_worker_image",
 ]
 
-BUNDLE_VALUES = assertion_values(RESOLVED_BUNDLE.bundle)
 APP_NAME = v2_application_name(RESOLVED_BUNDLE.bundle.policyengine_version)
 
 
-def _external_assertions(environment: dict[str, str]) -> dict[str, str]:
-    mapping = {
-        "STAGE12_EXPECT_POLICYENGINE_VERSION": "policyengine_version",
-        "STAGE12_EXPECT_US_VERSION": "countries.us.country_package_version",
-        "STAGE12_EXPECT_UK_VERSION": "countries.uk.country_package_version",
-        "STAGE12_EXPECT_US_DATASET": "countries.us.default_dataset",
-        "STAGE12_EXPECT_UK_DATASET": "countries.uk.default_dataset",
-    }
-    return {
-        assertion: environment[name]
-        for name, assertion in mapping.items()
-        if environment.get(name)
-    }
-
-
-assert_expected_bundle_values(
-    RESOLVED_BUNDLE.bundle,
-    _external_assertions(dict(os.environ)),
-)
 if os.environ.get("MODAL_APP_NAME") not in {None, "", APP_NAME}:
     msg = "MODAL_APP_NAME does not match the bundle-derived v2 name"
     raise RuntimeError(msg)
@@ -194,18 +178,44 @@ def validate_worker_uk() -> dict:
     return _validate("uk")
 
 
-@app.function(
-    image=us_worker_image,
-    cpu=8.0,
-    memory=32768,
-    timeout=3600,
-    retries=0,
+# Each simulation worker is a method of a Modal class whose containers restore
+# from a memory snapshot with the country's models loaded, and a plain function
+# of the same name and options, without a snapshot, for callers still running
+# code from before the classes: an entry service revision (the stable one
+# during a deploy, or one a rollback routes traffic back to), and a coordinator
+# or US worker call running while this app is redeployed in place. Both run the
+# same calculation.
+_SEGMENT_WORKER_OPTIONS: dict[str, Any] = {
+    "image": us_worker_image,
+    "cpu": 8.0,
+    "memory": 32768,
+    "timeout": 3600,
+    "retries": 0,
     # Every segment of every US simulation call that may run at once: a
     # segment queued behind this limit counts against its caller's wait.
-    max_containers=1000,
-    secrets=worker_secrets,
-)
-def run_single_simulation_segment_us(
+    "max_containers": 1000,
+    "secrets": worker_secrets,
+}
+_US_SIMULATION_WORKER_OPTIONS: dict[str, Any] = {
+    "image": us_worker_image,
+    "cpu": 8.0,
+    "memory": 32768,
+    "timeout": US_SIMULATION_TIMEOUT_SECONDS,
+    "retries": 0,
+    # Both simulations of every coordinator call that may run at once. The
+    # simulation runs and cliff calculations the simulation service starts
+    # directly share the same containers.
+    "max_containers": 50,
+    "secrets": report_run_writer_secrets,
+}
+_UK_SIMULATION_WORKER_OPTIONS: dict[str, Any] = {
+    **_US_SIMULATION_WORKER_OPTIONS,
+    "image": uk_worker_image,
+    "timeout": UK_SIMULATION_TIMEOUT_SECONDS,
+}
+
+
+def _run_single_simulation_segment_us(
     payload: dict,
     *,
     observability_context: dict | None = None,
@@ -246,19 +256,7 @@ def run_single_simulation_segment_us(
         runtime.shutdown()
 
 
-@app.function(
-    image=us_worker_image,
-    cpu=8.0,
-    memory=32768,
-    timeout=US_SIMULATION_TIMEOUT_SECONDS,
-    retries=0,
-    # Both simulations of every coordinator call that may run at once. The
-    # simulation runs and cliff calculations the simulation service starts
-    # directly share the same containers.
-    max_containers=50,
-    secrets=report_run_writer_secrets,
-)
-def run_single_simulation_us(
+def _run_single_simulation_us(
     payload: dict,
     context: dict,
     *,
@@ -323,19 +321,7 @@ def run_single_simulation_us(
         runtime.shutdown()
 
 
-@app.function(
-    image=uk_worker_image,
-    cpu=8.0,
-    memory=32768,
-    timeout=UK_SIMULATION_TIMEOUT_SECONDS,
-    retries=0,
-    # Both simulations of every coordinator call that may run at once. The
-    # simulation runs and cliff calculations the simulation service starts
-    # directly share the same containers.
-    max_containers=50,
-    secrets=report_run_writer_secrets,
-)
-def run_single_simulation_uk(
+def _run_single_simulation_uk(
     payload: dict,
     context: dict,
     *,
@@ -380,6 +366,146 @@ def run_single_simulation_uk(
             )
     finally:
         runtime.shutdown()
+
+
+class _V2CountryModelsLoadedBeforeSnapshot:
+    """Base of the v2 simulation workers: loads the models before the snapshot.
+
+    Modal runs ``snap=True`` hooks in every container that isn't restored, and
+    takes the memory snapshot from such a container when it starts it with
+    snapshots enabled; every container restored from the snapshot starts with
+    the loaded models in memory. ``snap=False`` hooks run after each restore.
+    Observability is configured per call instead, after the restore, so each
+    restored container reports its own process identity.
+    """
+
+    # The image's own country: a failed import of one country's models can't
+    # affect the other country's workers.
+    snapshot_countries: ClassVar[tuple[CountryId, ...]] = ()
+
+    @modal.enter(snap=True)
+    def load_country_models(self) -> None:
+        """Load the class's country models, and for the US the SPM capability."""
+        preload_country_models(self.snapshot_countries)
+
+    @modal.enter(snap=False)
+    def reseed_random_after_restore(self) -> None:
+        """Give each restored container its own random sequence.
+
+        The snapshot holds the state of Python's ``random`` module, and Python
+        reseeds it only after a fork, so every restored container would draw
+        the same numbers: OpenTelemetry's span IDs, for one, and the delays of
+        the database and dataset download retries.
+        """
+        random.seed()
+
+
+@app.cls(**_SEGMENT_WORKER_OPTIONS, enable_memory_snapshot=True)
+class SimulationSegmentWorkerUS(_V2CountryModelsLoadedBeforeSnapshot):
+    """Calculates the region-group segments of segmented US simulations.
+
+    A separate class from ``SimulationWorkerUS``, so the segments draw from
+    their own container pool: a US simulation waiting on its segments must
+    never share a bounded pool with them.
+    """
+
+    snapshot_countries = ("us",)
+
+    @modal.method()
+    def run_single_simulation_segment_us(
+        self,
+        payload: dict,
+        *,
+        observability_context: dict | None = None,
+        simulation_run_id: str | None = None,
+    ) -> dict:
+        """Calculate one segment (see ``_run_single_simulation_segment_us``)."""
+        return _run_single_simulation_segment_us(
+            payload,
+            observability_context=observability_context,
+            simulation_run_id=simulation_run_id,
+        )
+
+
+@app.cls(**_US_SIMULATION_WORKER_OPTIONS, enable_memory_snapshot=True)
+class SimulationWorkerUS(_V2CountryModelsLoadedBeforeSnapshot):
+    """Calculates US simulations, cliff calculations included."""
+
+    snapshot_countries = ("us",)
+
+    @modal.method()
+    def run_single_simulation_us(
+        self,
+        payload: dict,
+        context: dict,
+        *,
+        observability_context: dict | None = None,
+    ) -> dict:
+        """Calculate one US simulation (see ``_run_single_simulation_us``)."""
+        return _run_single_simulation_us(
+            payload, context, observability_context=observability_context
+        )
+
+
+@app.cls(**_UK_SIMULATION_WORKER_OPTIONS, enable_memory_snapshot=True)
+class SimulationWorkerUK(_V2CountryModelsLoadedBeforeSnapshot):
+    """Calculates UK simulations, cliff calculations included."""
+
+    snapshot_countries = ("uk",)
+
+    @modal.method()
+    def run_single_simulation_uk(
+        self,
+        payload: dict,
+        context: dict,
+        *,
+        observability_context: dict | None = None,
+    ) -> dict:
+        """Calculate one UK simulation (see ``_run_single_simulation_uk``)."""
+        return _run_single_simulation_uk(
+            payload, context, observability_context=observability_context
+        )
+
+
+@app.function(**_SEGMENT_WORKER_OPTIONS)
+def run_single_simulation_segment_us(
+    payload: dict,
+    *,
+    observability_context: dict | None = None,
+    simulation_run_id: str | None = None,
+) -> dict:
+    """``SimulationSegmentWorkerUS``'s method, for callers on older code."""
+    return _run_single_simulation_segment_us(
+        payload,
+        observability_context=observability_context,
+        simulation_run_id=simulation_run_id,
+    )
+
+
+@app.function(**_US_SIMULATION_WORKER_OPTIONS)
+def run_single_simulation_us(
+    payload: dict,
+    context: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
+    """``SimulationWorkerUS``'s method, for callers on older code."""
+    return _run_single_simulation_us(
+        payload, context, observability_context=observability_context
+    )
+
+
+@app.function(**_UK_SIMULATION_WORKER_OPTIONS)
+def run_single_simulation_uk(
+    payload: dict,
+    context: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
+    """``SimulationWorkerUK``'s method, for callers on older code."""
+    return _run_single_simulation_uk(
+        payload, context, observability_context=observability_context
+    )
 
 
 @app.function(

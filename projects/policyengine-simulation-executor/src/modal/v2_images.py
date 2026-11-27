@@ -5,8 +5,9 @@ Every v2 image starts from the same packages and the refreshed CA store
 certified data for their countries; the US worker image also holds the
 published US cache, read from the cache manifest the deploy names
 (``_deploy_time_cache_inputs``). The household image holds packages and
-source only. ``src/modal/v2_app.py`` attaches the images to its functions and
-re-exports every name here.
+source only. The bundle values the deploy expects (``STAGE12_EXPECT_*``) are
+checked here too, before any image is declared. ``src/modal/v2_app.py``
+attaches the images to its functions and re-exports every name here.
 """
 
 from __future__ import annotations
@@ -20,7 +21,11 @@ from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
     HF_RUNTIME_ENV_NAME,
 )
-from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+from policyengine_simulation_executor.stage12_bundle import (
+    assert_expected_bundle_values,
+    assertion_values,
+    load_stage12_bundle,
+)
 from policyengine_simulation_executor.stage12_cache.models import CacheManifest
 from policyengine_simulation_executor.stage12_cache.store import Stage12CacheStore
 from policyengine_simulation_observability.observability import (
@@ -28,6 +33,7 @@ from policyengine_simulation_observability.observability import (
 )
 from src.modal.bundle_data import bundle_data_install_command
 from src.modal.ca_certificates import GRPC_CA_BUNDLE_ENV, OPERATING_SYSTEM_CA_PACKAGE
+from src.modal.modal_client_version import require_secret_reloading_modal_client
 from src.modal.stage12_cache_image import fetch_stage12_cache
 from src.modal.static_runtime_files import add_static_runtime_files
 
@@ -39,9 +45,16 @@ if TYPE_CHECKING:
         Stage12CountryBundle,
     )
 
+# The v2 simulation workers restore from memory snapshots, so a deploy from a
+# Modal client that keeps stale Secret values on restore is refused here,
+# before the cache manifest is read.
+if modal.is_local():
+    require_secret_reloading_modal_client(modal.__version__)
+
 STAGE12_DATA_DIR = "/opt/policyengine/stage12-data"
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
 RESOLVED_BUNDLE = load_stage12_bundle()
+BUNDLE_VALUES = assertion_values(RESOLVED_BUNDLE.bundle)
 
 
 def _deploy_time_cache_inputs() -> tuple[str, dict | None, dict | None]:
@@ -75,6 +88,27 @@ def _deploy_time_cache_inputs() -> tuple[str, dict | None, dict | None]:
 
 STAGE12_CACHE_BUCKET, STAGE12_CACHE_MANIFEST, STAGE12_CACHE_CONTENTS = (
     _deploy_time_cache_inputs()
+)
+
+
+def _external_assertions(environment: dict[str, str]) -> dict[str, str]:
+    mapping = {
+        "STAGE12_EXPECT_POLICYENGINE_VERSION": "policyengine_version",
+        "STAGE12_EXPECT_US_VERSION": "countries.us.country_package_version",
+        "STAGE12_EXPECT_UK_VERSION": "countries.uk.country_package_version",
+        "STAGE12_EXPECT_US_DATASET": "countries.us.default_dataset",
+        "STAGE12_EXPECT_UK_DATASET": "countries.uk.default_dataset",
+    }
+    return {
+        assertion: environment[name]
+        for name, assertion in mapping.items()
+        if environment.get(name)
+    }
+
+
+assert_expected_bundle_values(
+    RESOLVED_BUNDLE.bundle,
+    _external_assertions(dict(os.environ)),
 )
 
 

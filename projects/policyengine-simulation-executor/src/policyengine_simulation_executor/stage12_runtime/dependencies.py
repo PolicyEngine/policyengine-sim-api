@@ -8,6 +8,9 @@ from functools import partial
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, Protocol
 
+from policyengine_simulation_contract.stage12_simulation_workers import (
+    worker_class_name,
+)
 from policyengine_stage12_persistence import Stage12PersistenceStore
 
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -142,16 +145,32 @@ class ChildInvoker(Protocol):
 
 
 class ModalChildInvoker:
-    """``ChildInvoker`` backed by functions deployed to Modal."""
+    """``ChildInvoker`` backed by the workers deployed to Modal."""
 
     def spawn(self, request: ChildSpawnRequest) -> ChildCall:
-        """Look up ``application_name.function_name`` in ``environment``; spawn it."""
+        """Look up ``function_name`` in ``application_name`` and spawn it.
+
+        A simulation worker is a method of a Modal class, whose containers
+        restore from a memory snapshot with the models loaded; the name
+        stored in the context is the method's. The coordinator spawns only in
+        its own application, which defines the class. Any other name is
+        looked up as a plain function.
+        """
         modal: Any = import_module("modal")
-        function = modal.Function.from_name(
-            request.application_name,
-            request.function_name,
-            environment_name=request.environment,
-        )
+        class_name = worker_class_name(request.function_name)
+        if class_name is None:
+            function = modal.Function.from_name(
+                request.application_name,
+                request.function_name,
+                environment_name=request.environment,
+            )
+        else:
+            worker = modal.Cls.from_name(
+                request.application_name,
+                class_name,
+                environment_name=request.environment,
+            )()
+            function = getattr(worker, request.function_name)
         return function.spawn(
             request.simulation,
             request.context,

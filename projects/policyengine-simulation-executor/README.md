@@ -391,7 +391,7 @@ or precompute modules described above.
 
 For an eligible US national report, the coordinator starts baseline and reform
 as separate logical simulations. Each logical simulation starts 20 calls to
-`run_single_simulation_segment_us`, then validates and concatenates their
+`SimulationSegmentWorkerUS.run_single_simulation_segment_us`, then validates and concatenates their
 dtype-preserving entity tables. This produces 40 region-group calculation
 invocations per report while retaining two simulation records and two private
 simulation artifacts. `segmented=false`, US subnational requests, UK requests,

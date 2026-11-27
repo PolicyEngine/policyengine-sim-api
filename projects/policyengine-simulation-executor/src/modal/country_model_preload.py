@@ -1,7 +1,8 @@
 """Load the country models before Modal takes the workers' memory snapshot.
 
-``SimulationWorker`` and ``SimulationSegmentWorker`` in ``src/modal/app.py``
-run :func:`preload_country_models` in their ``@modal.enter(snap=True)`` hook.
+``SimulationWorker`` and ``SimulationSegmentWorker`` in ``src/modal/app.py``,
+and the v2 workers in ``src/modal/v2_app.py``, run
+:func:`preload_country_models` in their ``@modal.enter(snap=True)`` hook.
 Modal runs that hook in every container that isn't restored, and takes the
 memory snapshot from such a container when it starts it with snapshots
 enabled. Every container restored from the snapshot starts with the hook's
@@ -9,7 +10,7 @@ results already in memory:
 
 - the country packages, whose import builds each country's tax-benefit
   system;
-- policyengine.py's model objects for both countries, whose import also reads
+- policyengine.py's model objects for each country, whose import also reads
   the data release manifest from Hugging Face over one HTTPS request that
   closes when it returns;
 - the certified SPM capability and its forecast, which the first US call
@@ -21,6 +22,7 @@ identity.
 """
 
 import logging
+from collections.abc import Iterable
 from importlib import import_module
 
 from policyengine_simulation_contract.spm import SPMInputError
@@ -33,8 +35,12 @@ COUNTRY_MODEL_MODULES = {
 }
 
 
-def preload_country_models() -> None:
-    """Import each country's models, then fill the SPM capability cache.
+def preload_country_models(countries: Iterable[str] = ("us", "uk")) -> None:
+    """Import each of ``countries``' models, then fill the SPM capability cache.
+
+    The run_simulation app's workers load both countries. Each of the v2
+    app's workers loads only its image's country, and only the US workers
+    fill the SPM cache, since SPM is a US measure.
 
     Nothing here may stop a container from starting: a failure leaves that
     work to the calls that need it, as before the preload. A country whose
@@ -44,7 +50,10 @@ def preload_country_models() -> None:
     SPM check caches only a successful result, so each call that needs SPM
     repeats a failed check.
     """
+    countries = tuple(countries)
     for country, module_names in COUNTRY_MODEL_MODULES.items():
+        if country not in countries:
+            continue
         for module_name in module_names:
             try:
                 import_module(module_name)
@@ -58,6 +67,8 @@ def preload_country_models() -> None:
                     exc_info=True,
                 )
                 break
+    if "us" not in countries:
+        return
     from policyengine_simulation_executor import spm
 
     try:
