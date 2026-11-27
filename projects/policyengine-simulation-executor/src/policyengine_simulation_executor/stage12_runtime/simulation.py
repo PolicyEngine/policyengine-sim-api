@@ -36,6 +36,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
     canonical_json_bytes,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+from policyengine_simulation_executor.stage12_cache import levels
 from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_area_dataset_metadata,
     detect_uk_run_dataset_metadata,
@@ -133,8 +134,12 @@ def build_stage12_simulation(
     identity = qualifying_cache_identity(
         execution,
         resolved=load_stage12_bundle(),
-        dataset_is_default=resolved.dataset_selection.is_default,
-        scoping_strategy=resolved.region.scoping_strategy,
+        run=levels.RunScope(
+            country=execution.geography.country,
+            year=execution.year,
+            region=resolved.region,
+            dataset=resolved.dataset_selection,
+        ),
         spm=selection,
     )
     spm_kwargs: dict[str, Any] = {"spm": selection} if selection is not None else {}
@@ -279,9 +284,6 @@ def calculate_simulation_frames(
         resolve_region,
         setup_gcp_credentials,
     )
-    from policyengine_simulation_executor.stage12_cache import (  # noqa: PLC0415  # resolved per call so tests can patch the baked-folder lookup
-        state_datasets,
-    )
 
     with (
         stage_span(Stage.CREDENTIAL_SETUP),
@@ -302,19 +304,23 @@ def calculate_simulation_frames(
             )
         _require_loaded_dataset_matches_provenance(simulation, dataset_selection)
         with stage_span(Stage.DATASET_LOAD):
+            # Read through the module, so tests can replace the lookup.
+            prebuilt = levels.prebuilt_dataset_folder(
+                levels.RunScope(
+                    country=country,
+                    year=simulation.year,
+                    region=region,
+                    dataset=dataset_selection,
+                ),
+                resolve_data_folder(),
+            )
             dataset = load_with_download_retry(
                 partial(
                     _load_dataset,
                     params,
                     selection=dataset_selection,
                     country_module=country_module,
-                    data_folder=state_datasets.baked_state_data_folder(
-                        country=country,
-                        selection=dataset_selection,
-                        state_code=region.state_code,
-                        year=simulation.year,
-                        data_folder=resolve_data_folder(),
-                    ),
+                    data_folder=None if prebuilt is None else prebuilt.folder,
                 ),
                 dataset_name=dataset_selection.name,
             )

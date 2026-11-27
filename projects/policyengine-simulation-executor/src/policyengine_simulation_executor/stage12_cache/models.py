@@ -26,23 +26,31 @@ class CacheBundleIdentity(StrictCacheModel):
 
 
 class DatasetPlanEntry(StrictCacheModel):
-    """One planned dataset year, its cache path and whether it is already stored."""
+    """One planned dataset year, its cache path and whether it is already stored.
 
+    ``folder`` is the handler's prebuilt folder for the year file, where the
+    worker image places it, relative to its data folder.
+    """
+
+    country: str
     year: int
     digest: str
     path: str
     filename: str
+    folder: str
     exists: bool
 
 
 class StateDatasetPlanEntry(StrictCacheModel):
     """One state's planned year file, filtered from a regional dataset.
 
-    ``folder`` is where the worker image places the file, relative to its
-    data folder; every state's file has the same ``filename``. ``exists``
-    records whether the bucket already holds it.
+    ``folder`` is the handler's prebuilt folder for the state, where the
+    worker image places the file, relative to its data folder; every state's
+    file has the same ``filename``. ``exists`` records whether the bucket
+    already holds it.
     """
 
+    country: str
     year: int
     state_code: str
     region: str
@@ -57,16 +65,19 @@ class StateDatasetPlanEntry(StrictCacheModel):
 class BaselinePlanEntry(StrictCacheModel):
     """One planned baseline for a year and region group.
 
-    ``filename`` is the name .py saves and loads; ``exists`` records whether
-    the bucket already holds the file.
+    ``filename`` is the name .py saves and loads, beside the year file it is
+    computed on, so ``folder`` is that year file's prebuilt folder.
+    ``exists`` records whether the bucket already holds the file.
     """
 
+    country: str
     year: int
     segment_index: Annotated[int, Field(ge=0, lt=20)]
     region_codes: Annotated[tuple[str, ...], Field(min_length=1)]
     digest: str
     path: str
     filename: str
+    folder: str
     simulation_id: str
     output_plan_sha256: str
     exists: bool
@@ -148,11 +159,15 @@ class DeterminismVerdict(StrictCacheModel):
 
 
 class ManifestArtifact(StrictCacheModel):
-    """One dataset or baseline file listed in the cache manifest."""
+    """One dataset or baseline file listed in the cache manifest.
+
+    The worker image places it in ``folder``, relative to its data folder.
+    """
 
     type: Literal["dataset", "baseline"]
     path: str
     filename: str
+    folder: str
     year: int
     identity_digest: str
     content_sha256: str

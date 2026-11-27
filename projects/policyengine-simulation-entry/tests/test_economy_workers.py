@@ -6,6 +6,7 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any
 
+import modal
 import pytest
 from economy_fixtures import economy_manifest, economy_worker_version
 from household_fixtures import (
@@ -131,6 +132,53 @@ def modal_functions(monkeypatch):
     return looked_up, function
 
 
+# Each worker class defines only its own country's method.
+WORKER_METHOD_BY_CLASS = {
+    "SimulationWorkerUS": "run_single_simulation_us",
+    "SimulationWorkerUK": "run_single_simulation_uk",
+}
+
+
+class FakeWorkerClass:
+    """A Modal class looked up by name, whose worker method spawns ``method``.
+
+    The instance has only the looked-up class's method, under its name
+    (``method_name``). With ``deployed`` False, hydrating it fails as it does
+    for an app deployed before the workers were classes.
+    """
+
+    def __init__(self, method: FakeFunction) -> None:
+        self.method = method
+        self.method_name: str | None = None
+        self.deployed = True
+        self.hydrate = SimpleNamespace(aio=self._hydrate)
+
+    async def _hydrate(self) -> FakeWorkerClass:
+        if not self.deployed:
+            msg = "the app defines no such class"
+            raise modal.exception.NotFoundError(msg)
+        return self
+
+    def __call__(self) -> SimpleNamespace:
+        assert self.method_name is not None
+        return SimpleNamespace(**{self.method_name: self.method})
+
+
+@pytest.fixture
+def modal_worker_classes(monkeypatch):
+    """Replace Modal's class lookup by name; return the lookups and the class."""
+    looked_up: list[tuple[str, str, str]] = []
+    worker_class = FakeWorkerClass(FakeFunction("fc-started-on-the-class"))
+
+    def from_name(application: str, name: str, *, environment_name: str):
+        looked_up.append((application, name, environment_name))
+        worker_class.method_name = WORKER_METHOD_BY_CLASS[name]
+        return worker_class
+
+    monkeypatch.setattr(economy_workers.modal.Cls, "from_name", staticmethod(from_name))
+    return looked_up, worker_class
+
+
 def test_a_report_run_starts_the_coordinator_with_its_report_and_context(
     modal_functions,
 ) -> None:
@@ -157,10 +205,11 @@ def test_a_report_run_starts_the_coordinator_with_its_report_and_context(
     ]
 
 
-def test_a_standalone_run_starts_the_countrys_simulation_function(
-    modal_functions,
+def test_a_standalone_run_starts_the_countrys_simulation_worker_class(
+    modal_functions, modal_worker_classes
 ) -> None:
-    looked_up, function = modal_functions
+    looked_up_functions, _function = modal_functions
+    looked_up_classes, worker_class = modal_worker_classes
     worker = default_economy_worker(economy_manifest(), "uk")
 
     call_id = asyncio.run(
@@ -172,9 +221,14 @@ def test_a_standalone_run_starts_the_countrys_simulation_function(
         )
     )
 
-    assert call_id == "fc-started"
-    assert looked_up == [(worker.application_name, "run_single_simulation_uk", "main")]
-    assert function.spawns == [
+    # The class's containers restore from a memory snapshot with the models
+    # loaded; the manifest names the worker by its method.
+    assert call_id == "fc-started-on-the-class"
+    assert looked_up_classes == [
+        (worker.application_name, "SimulationWorkerUK", "main")
+    ]
+    assert looked_up_functions == []
+    assert worker_class.method.spawns == [
         (
             ({"simulation": 1}, {"simulation_run_id": "run"}),
             {"observability_context": None},
@@ -182,11 +236,12 @@ def test_a_standalone_run_starts_the_countrys_simulation_function(
     ]
 
 
-def test_a_cliff_calculation_starts_the_countrys_simulation_function(
-    modal_functions,
+def test_a_cliff_calculation_starts_the_countrys_simulation_worker_class(
+    modal_functions, modal_worker_classes
 ) -> None:
     """C1 · 38's cliff mode: the context names the cliff result, not a run."""
-    looked_up, function = modal_functions
+    looked_up_functions, _function = modal_functions
+    looked_up_classes, worker_class = modal_worker_classes
     worker = default_economy_worker(economy_manifest(), "uk")
 
     call_id = asyncio.run(
@@ -198,14 +253,60 @@ def test_a_cliff_calculation_starts_the_countrys_simulation_function(
         )
     )
 
-    assert call_id == "fc-started"
-    assert looked_up == [(worker.application_name, "run_single_simulation_uk", "main")]
-    assert function.spawns == [
+    assert call_id == "fc-started-on-the-class"
+    assert looked_up_classes == [
+        (worker.application_name, "SimulationWorkerUK", "main")
+    ]
+    assert looked_up_functions == []
+    assert worker_class.method.spawns == [
         (
             ({"simulation": 1}, {"cliff_result_id": "cliffs"}),
             {"observability_context": {"observability_id": "observed"}},
         )
     ]
+
+
+@pytest.mark.parametrize("start", ["start_simulation_run", "start_cliff_calculation"])
+def test_an_app_without_the_worker_class_gets_the_simulation_function(
+    modal_functions, modal_worker_classes, start
+) -> None:
+    # An app deployed for an older .py version, which the manifest's default
+    # can name after a move or a rollback, defines the worker as a function.
+    looked_up_functions, function = modal_functions
+    _looked_up_classes, worker_class = modal_worker_classes
+    worker_class.deployed = False
+    worker = default_economy_worker(economy_manifest(), "us")
+
+    call_id = asyncio.run(
+        getattr(ModalEconomyRunCaller("main"), start)(
+            worker, {"simulation": 1}, {"run": "context"}, observability_context=None
+        )
+    )
+
+    assert call_id == "fc-started"
+    assert looked_up_functions == [
+        (worker.application_name, "run_single_simulation_us", "main")
+    ]
+    assert worker_class.method.spawns == []
+    assert function.spawns == [
+        (({"simulation": 1}, {"run": "context"}), {"observability_context": None})
+    ]
+
+
+@pytest.mark.parametrize("object_id", [None, ""])
+def test_a_class_call_modal_gives_no_id_is_an_error(
+    modal_worker_classes, object_id
+) -> None:
+    _looked_up, worker_class = modal_worker_classes
+    worker_class.method.object_id = object_id
+    worker = default_economy_worker(economy_manifest(), "us")
+
+    with pytest.raises(RuntimeError, match="no call ID"):
+        asyncio.run(
+            ModalEconomyRunCaller("staging").start_simulation_run(
+                worker, {}, {}, observability_context=None
+            )
+        )
 
 
 @pytest.mark.parametrize("object_id", [None, ""])

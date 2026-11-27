@@ -2,8 +2,12 @@
 """Separately named v2 Modal application: report coordinator and country workers.
 
 A simulation worker's call calculates a simulation run, or, when its context
-names a cliff result, that run's cliff gap and share. Besides the Stage 12
-report coordinator and simulation workers, it defines a
+names a cliff result, that run's cliff gap and share. The simulation workers
+are methods of Modal classes (``SimulationWorkerUS``, ``SimulationWorkerUK``
+and ``SimulationSegmentWorkerUS``), whose containers restore from a memory
+snapshot with their country's models loaded; their callers find each class
+in ``policyengine_simulation_contract.stage12_simulation_workers``. Besides
+the Stage 12 report coordinator and simulation workers, it defines a
 household function for each country, ``calculate_household_us`` and
 ``calculate_household_uk``, in an image without datasets. A call calculates
 one household under one policy, and records it on the household job it
@@ -19,10 +23,9 @@ existing ``policyengine-simulation-py{version}`` applications.
 
 from __future__ import annotations
 
-import json
 import os
-from pathlib import Path
-from typing import TYPE_CHECKING
+import random
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import UUID
 
 from policyengine_simulation_contract.household_execution import (
@@ -30,17 +33,6 @@ from policyengine_simulation_contract.household_execution import (
 )
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_executor import stage12_runtime
-from policyengine_simulation_executor.hf_access_validation import (
-    HF_MODAL_SECRET_NAME,
-    HF_RUNTIME_ENV_NAME,
-)
-from policyengine_simulation_executor.stage12_bundle import (
-    assert_expected_bundle_values,
-    assertion_values,
-    load_stage12_bundle,
-)
-from policyengine_simulation_executor.stage12_cache.models import CacheManifest
-from policyengine_simulation_executor.stage12_cache.store import Stage12CacheStore
 from policyengine_simulation_executor.stage12_runtime import report_run_access
 from policyengine_simulation_executor.stage12_runtime.report_run_access import (
     MODAL_WORKER_DATABASE_SECRET_NAME,
@@ -54,7 +46,6 @@ from policyengine_simulation_executor.stage12_timeouts import (
 )
 from policyengine_simulation_observability.observability import (
     init_process_observability,
-    modal_image_environment,
 )
 from policyengine_simulation_observability.stages import (
     STAGE12_CANONICAL_REPORT_STAGES,
@@ -67,10 +58,23 @@ from policyengine_simulation_observability.stages import (
 from policyengine_simulation_observability.telemetry import (
     normalize_observability_context,
 )
-from src.modal.bundle_data import bundle_data_install_command
-from src.modal.ca_certificates import GRPC_CA_BUNDLE_ENV, OPERATING_SYSTEM_CA_PACKAGE
-from src.modal.stage12_cache_image import fetch_stage12_cache
-from src.modal.static_runtime_files import add_static_runtime_files
+from src.modal.country_model_preload import preload_country_models
+from src.modal.v2_images import (
+    BUNDLE_VALUES,
+    RESOLVED_BUNDLE,
+    STAGE12_CACHE_BUCKET,
+    STAGE12_CACHE_CONTENTS,
+    STAGE12_CACHE_MANIFEST,
+    STAGE12_DATA_DIR,
+    build_household_image,
+    build_v2_image,
+    coordinator_image,
+    gcp_secret,
+    hf_secret,
+    household_image,
+    uk_worker_image,
+    us_worker_image,
+)
 
 import modal
 
@@ -81,10 +85,7 @@ if TYPE_CHECKING:
         HouseholdExecutionFailure,
         HouseholdExecutionResult,
     )
-    from policyengine_simulation_contract.stage12_bundle import (
-        CountryId,
-        Stage12CountryBundle,
-    )
+    from policyengine_simulation_contract.stage12_bundle import CountryId
     from policyengine_simulation_contract.stage12_execution import (
         PlannedSimulationExecutionInput,
     )
@@ -92,65 +93,35 @@ if TYPE_CHECKING:
         SimulationCalculation,
     )
 
-STAGE12_DATA_DIR = "/opt/policyengine/stage12-data"
-_UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
-RESOLVED_BUNDLE = load_stage12_bundle()
-BUNDLE_VALUES = assertion_values(RESOLVED_BUNDLE.bundle)
+# The images and the deploy-time values their build steps read live in
+# src/modal/v2_images.py; this module keeps their names for the smoke apps and
+# other code that imports them from here.
+__all__ = [
+    "BUNDLE_VALUES",
+    "RESOLVED_BUNDLE",
+    "STAGE12_CACHE_BUCKET",
+    "STAGE12_CACHE_CONTENTS",
+    "STAGE12_CACHE_MANIFEST",
+    "STAGE12_DATA_DIR",
+    "build_household_image",
+    "build_v2_image",
+    "coordinator_image",
+    "gcp_secret",
+    "hf_secret",
+    "household_image",
+    "uk_worker_image",
+    "us_worker_image",
+]
+
 APP_NAME = v2_application_name(RESOLVED_BUNDLE.bundle.policyengine_version)
 
 
-def _deploy_time_cache_inputs() -> tuple[str, dict | None]:
-    """Resolve and validate the cache manifest on the deploying machine."""
-    if not modal.is_local():
-        return "", None
-    bucket = os.environ.get("STAGE12_CACHE_BUCKET", "")
-    digest = os.environ.get("STAGE12_CACHE_MANIFEST_DIGEST")
-    if not digest:
-        return bucket, None
-    payload = Stage12CacheStore(bucket).read_manifest(digest)
-    if payload is None:
-        msg = "Stage 12 cache manifest is unavailable"
-        raise RuntimeError(msg)
-    manifest = CacheManifest.model_validate(payload)
-    if manifest.bundle.bundle_manifest_sha256 != RESOLVED_BUNDLE.bundle_manifest_sha256:
-        msg = "Stage 12 cache manifest names another bundle"
-        raise RuntimeError(msg)
-    return bucket, manifest.canonical_payload()
-
-
-STAGE12_CACHE_BUCKET, STAGE12_CACHE_MANIFEST = _deploy_time_cache_inputs()
-
-
-def _external_assertions(environment: dict[str, str]) -> dict[str, str]:
-    mapping = {
-        "STAGE12_EXPECT_POLICYENGINE_VERSION": "policyengine_version",
-        "STAGE12_EXPECT_US_VERSION": "countries.us.country_package_version",
-        "STAGE12_EXPECT_UK_VERSION": "countries.uk.country_package_version",
-        "STAGE12_EXPECT_US_DATASET": "countries.us.default_dataset",
-        "STAGE12_EXPECT_UK_DATASET": "countries.uk.default_dataset",
-    }
-    return {
-        assertion: environment[name]
-        for name, assertion in mapping.items()
-        if environment.get(name)
-    }
-
-
-assert_expected_bundle_values(
-    RESOLVED_BUNDLE.bundle,
-    _external_assertions(dict(os.environ)),
-)
 if os.environ.get("MODAL_APP_NAME") not in {None, "", APP_NAME}:
     msg = "MODAL_APP_NAME does not match the bundle-derived v2 name"
     raise RuntimeError(msg)
 
 
 app = modal.App(APP_NAME)
-gcp_secret = modal.Secret.from_name("stage12-evaluation-gcp-credentials")
-hf_secret = modal.Secret.from_name(
-    HF_MODAL_SECRET_NAME,
-    required_keys=[HF_RUNTIME_ENV_NAME],
-)
 comparison_runtime_secret = modal.Secret.from_name("stage12-evaluation-runtime")
 worker_secrets = [
     gcp_secret,
@@ -165,117 +136,6 @@ modal_worker_database_secret = modal.Secret.from_name(
     required_keys=[MODAL_WORKER_DATABASE_URL_ENV],
 )
 report_run_writer_secrets = [*worker_secrets, modal_worker_database_secret]
-
-
-def _country_bundle(country: CountryId) -> Stage12CountryBundle:
-    return next(
-        item for item in RESOLVED_BUNDLE.bundle.countries if item.country == country
-    )
-
-
-def _v2_package_image() -> modal.Image:
-    """Return the base of every v2 image: the CA store and the locked packages."""
-    return (
-        modal.Image.debian_slim(python_version="3.13")
-        # Upgrade Debian's CA store before anything is downloaded, and make
-        # grpcio verify servers against it (src/modal/ca_certificates.py).
-        .apt_install(OPERATING_SYSTEM_CA_PACKAGE)
-        .env(GRPC_CA_BUNDLE_ENV)
-        .uv_sync(
-            uv_project_dir=_UV_PROJECT_DIR,
-            frozen=True,
-            extra_options="--only-group modal-simulation-image",
-            # The repository's uv release, from .uv-version.
-            uv_version="0.13.6",
-        )
-    )
-
-
-def _add_v2_sources(image: modal.Image) -> modal.Image:
-    """Copy the source packages and static runtime files every v2 image runs."""
-    image = image.add_local_python_source(
-        "src.modal",
-        "policyengine_simulation_executor",
-        "policyengine_simulation_observability",
-        "policyengine_simulation_contract",
-        "policyengine_simulation_persistence",
-        "policyengine_stage12_persistence",
-        copy=True,
-    )
-    return add_static_runtime_files(image, uv_project_dir=_UV_PROJECT_DIR)
-
-
-def build_v2_image(
-    countries: tuple[CountryId, ...], *, include_us_cache: bool = False
-) -> modal.Image:
-    """Build a Stage 12 image with the bundle's certified data for ``countries``.
-
-    The bundle manifest digest and per-country bundle values are baked into
-    the image environment, which worker validation checks at run time. With
-    ``include_us_cache``, the image also holds the published US cache.
-    """
-    country_values = {
-        country: _country_bundle(country).model_dump(mode="json")
-        for country in countries
-    }
-    image = (
-        _v2_package_image()
-        .run_commands(
-            bundle_data_install_command(
-                RESOLVED_BUNDLE.bundle.policyengine_version,
-                countries=countries,
-                data_dir=STAGE12_DATA_DIR,
-            ),
-            secrets=[hf_secret],
-        )
-        .env(
-            {
-                **modal_image_environment(),
-                "POLICYENGINE_DATA_FOLDER": STAGE12_DATA_DIR,
-                "STAGE12_BUNDLE_MANIFEST_SHA256": (
-                    RESOLVED_BUNDLE.bundle_manifest_sha256
-                ),
-                "STAGE12_BUNDLE_VALUES": json.dumps(
-                    country_values,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-                "STAGE12_CACHE_MANIFEST_DIGEST": os.environ.get(
-                    "STAGE12_CACHE_MANIFEST_DIGEST", ""
-                ),
-            }
-        )
-    )
-    if include_us_cache:
-        image = image.run_function(
-            fetch_stage12_cache,
-            args=(STAGE12_CACHE_BUCKET, STAGE12_CACHE_MANIFEST),
-            secrets=[gcp_secret],
-            cpu=2.0,
-            memory=4096,
-            # The 63 national files and the state datasets (a file per state
-            # for each precomputed year), downloaded and hashed in turn.
-            timeout=3600,
-        )
-    return _add_v2_sources(image)
-
-
-def build_household_image() -> modal.Image:
-    """Build the household functions' image: packages and source only.
-
-    A household calculation reads no dataset, cache or bucket, so the image
-    downloads none and its build needs no secret. A function given a
-    household job records it in the database at run time, with the secret
-    attached to the function. The installed PolicyEngine.py package names the
-    bundle the functions calculate with.
-    """
-    return _add_v2_sources(_v2_package_image().env(modal_image_environment()))
-
-
-us_worker_image = build_v2_image(("us",), include_us_cache=True)
-uk_worker_image = build_v2_image(("uk",))
-coordinator_image = build_v2_image(("us", "uk"))
-household_image = build_household_image()
 
 
 def _validate(country: CountryId) -> dict:
@@ -318,18 +178,44 @@ def validate_worker_uk() -> dict:
     return _validate("uk")
 
 
-@app.function(
-    image=us_worker_image,
-    cpu=8.0,
-    memory=32768,
-    timeout=3600,
-    retries=0,
+# Each simulation worker is a method of a Modal class whose containers restore
+# from a memory snapshot with the country's models loaded, and a plain function
+# of the same name and options, without a snapshot, for callers still running
+# code from before the classes: an entry service revision (the stable one
+# during a deploy, or one a rollback routes traffic back to), and a coordinator
+# or US worker call running while this app is redeployed in place. Both run the
+# same calculation.
+_SEGMENT_WORKER_OPTIONS: dict[str, Any] = {
+    "image": us_worker_image,
+    "cpu": 8.0,
+    "memory": 32768,
+    "timeout": 3600,
+    "retries": 0,
     # Every segment of every US simulation call that may run at once: a
     # segment queued behind this limit counts against its caller's wait.
-    max_containers=1000,
-    secrets=worker_secrets,
-)
-def run_single_simulation_segment_us(
+    "max_containers": 1000,
+    "secrets": worker_secrets,
+}
+_US_SIMULATION_WORKER_OPTIONS: dict[str, Any] = {
+    "image": us_worker_image,
+    "cpu": 8.0,
+    "memory": 32768,
+    "timeout": US_SIMULATION_TIMEOUT_SECONDS,
+    "retries": 0,
+    # Both simulations of every coordinator call that may run at once. The
+    # simulation runs and cliff calculations the simulation service starts
+    # directly share the same containers.
+    "max_containers": 50,
+    "secrets": report_run_writer_secrets,
+}
+_UK_SIMULATION_WORKER_OPTIONS: dict[str, Any] = {
+    **_US_SIMULATION_WORKER_OPTIONS,
+    "image": uk_worker_image,
+    "timeout": UK_SIMULATION_TIMEOUT_SECONDS,
+}
+
+
+def _run_single_simulation_segment_us(
     payload: dict,
     *,
     observability_context: dict | None = None,
@@ -370,19 +256,7 @@ def run_single_simulation_segment_us(
         runtime.shutdown()
 
 
-@app.function(
-    image=us_worker_image,
-    cpu=8.0,
-    memory=32768,
-    timeout=US_SIMULATION_TIMEOUT_SECONDS,
-    retries=0,
-    # Both simulations of every coordinator call that may run at once. The
-    # simulation runs and cliff calculations the simulation service starts
-    # directly share the same containers.
-    max_containers=50,
-    secrets=report_run_writer_secrets,
-)
-def run_single_simulation_us(
+def _run_single_simulation_us(
     payload: dict,
     context: dict,
     *,
@@ -447,19 +321,7 @@ def run_single_simulation_us(
         runtime.shutdown()
 
 
-@app.function(
-    image=uk_worker_image,
-    cpu=8.0,
-    memory=32768,
-    timeout=UK_SIMULATION_TIMEOUT_SECONDS,
-    retries=0,
-    # Both simulations of every coordinator call that may run at once. The
-    # simulation runs and cliff calculations the simulation service starts
-    # directly share the same containers.
-    max_containers=50,
-    secrets=report_run_writer_secrets,
-)
-def run_single_simulation_uk(
+def _run_single_simulation_uk(
     payload: dict,
     context: dict,
     *,
@@ -504,6 +366,147 @@ def run_single_simulation_uk(
             )
     finally:
         runtime.shutdown()
+
+
+class _V2CountryModelsLoadedBeforeSnapshot:
+    """Base of the v2 simulation workers: loads the models before the snapshot.
+
+    Modal runs ``snap=True`` hooks in every container that isn't restored, and
+    takes the memory snapshot from such a container when it starts it with
+    snapshots enabled; every container restored from the snapshot starts with
+    the loaded models in memory. ``snap=False`` hooks run after each restore.
+    Observability is configured per call instead, after the restore, so each
+    restored container reports its own process identity.
+    """
+
+    # The image's own country: a failed import of one country's models can't
+    # affect the other country's workers. Annotated with names Python can
+    # resolve when it runs, since Modal reads class annotations.
+    snapshot_countries: ClassVar[tuple[str, ...]] = ()
+
+    @modal.enter(snap=True)
+    def load_country_models(self) -> None:
+        """Load the class's country models, and for the US the SPM capability."""
+        preload_country_models(self.snapshot_countries)
+
+    @modal.enter(snap=False)
+    def reseed_random_after_restore(self) -> None:
+        """Give each restored container its own random sequence.
+
+        The snapshot holds the state of Python's ``random`` module, and Python
+        reseeds it only after a fork, so every restored container would draw
+        the same numbers: OpenTelemetry's span IDs, for one, and the delays of
+        the database and dataset download retries.
+        """
+        random.seed()
+
+
+@app.cls(**_SEGMENT_WORKER_OPTIONS, enable_memory_snapshot=True)
+class SimulationSegmentWorkerUS(_V2CountryModelsLoadedBeforeSnapshot):
+    """Calculates the region-group segments of segmented US simulations.
+
+    A separate class from ``SimulationWorkerUS``, so the segments draw from
+    their own container pool: a US simulation waiting on its segments must
+    never share a bounded pool with them.
+    """
+
+    snapshot_countries = ("us",)
+
+    @modal.method()
+    def run_single_simulation_segment_us(
+        self,
+        payload: dict,
+        *,
+        observability_context: dict | None = None,
+        simulation_run_id: str | None = None,
+    ) -> dict:
+        """Calculate one segment (see ``_run_single_simulation_segment_us``)."""
+        return _run_single_simulation_segment_us(
+            payload,
+            observability_context=observability_context,
+            simulation_run_id=simulation_run_id,
+        )
+
+
+@app.cls(**_US_SIMULATION_WORKER_OPTIONS, enable_memory_snapshot=True)
+class SimulationWorkerUS(_V2CountryModelsLoadedBeforeSnapshot):
+    """Calculates US simulations, cliff calculations included."""
+
+    snapshot_countries = ("us",)
+
+    @modal.method()
+    def run_single_simulation_us(
+        self,
+        payload: dict,
+        context: dict,
+        *,
+        observability_context: dict | None = None,
+    ) -> dict:
+        """Calculate one US simulation (see ``_run_single_simulation_us``)."""
+        return _run_single_simulation_us(
+            payload, context, observability_context=observability_context
+        )
+
+
+@app.cls(**_UK_SIMULATION_WORKER_OPTIONS, enable_memory_snapshot=True)
+class SimulationWorkerUK(_V2CountryModelsLoadedBeforeSnapshot):
+    """Calculates UK simulations, cliff calculations included."""
+
+    snapshot_countries = ("uk",)
+
+    @modal.method()
+    def run_single_simulation_uk(
+        self,
+        payload: dict,
+        context: dict,
+        *,
+        observability_context: dict | None = None,
+    ) -> dict:
+        """Calculate one UK simulation (see ``_run_single_simulation_uk``)."""
+        return _run_single_simulation_uk(
+            payload, context, observability_context=observability_context
+        )
+
+
+@app.function(**_SEGMENT_WORKER_OPTIONS)
+def run_single_simulation_segment_us(
+    payload: dict,
+    *,
+    observability_context: dict | None = None,
+    simulation_run_id: str | None = None,
+) -> dict:
+    """``SimulationSegmentWorkerUS``'s method, for callers on older code."""
+    return _run_single_simulation_segment_us(
+        payload,
+        observability_context=observability_context,
+        simulation_run_id=simulation_run_id,
+    )
+
+
+@app.function(**_US_SIMULATION_WORKER_OPTIONS)
+def run_single_simulation_us(
+    payload: dict,
+    context: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
+    """``SimulationWorkerUS``'s method, for callers on older code."""
+    return _run_single_simulation_us(
+        payload, context, observability_context=observability_context
+    )
+
+
+@app.function(**_UK_SIMULATION_WORKER_OPTIONS)
+def run_single_simulation_uk(
+    payload: dict,
+    context: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
+    """``SimulationWorkerUK``'s method, for callers on older code."""
+    return _run_single_simulation_uk(
+        payload, context, observability_context=observability_context
+    )
 
 
 @app.function(

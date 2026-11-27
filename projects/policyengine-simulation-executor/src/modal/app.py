@@ -17,7 +17,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from packaging.version import InvalidVersion, Version
 from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
     HF_RUNTIME_ENV_NAME,
@@ -48,6 +47,7 @@ from src.modal.bundle_data import bundle_data_install_command
 from src.modal.ca_certificates import GRPC_CA_BUNDLE_ENV, OPERATING_SYSTEM_CA_PACKAGE
 from src.modal.country_model_preload import preload_country_models
 from src.modal.logging_redaction import redact_params_for_logging
+from src.modal.modal_client_version import require_secret_reloading_modal_client
 from src.modal.snapshot_warm_up import warm_up_first_calculation
 from src.modal.static_runtime_files import add_static_runtime_files
 
@@ -58,39 +58,10 @@ if TYPE_CHECKING:
     from policyengine_simulation_executor.job_progress import JobProgressReporter
 
 
-# Containers restored from a memory snapshot reload Secret values only from
-# Modal 1.6.4, and each app's containers run the Modal client that deployed it.
-# This project's uv.lock pins such a client; the check refuses a deploy or run
-# from an environment with an older one, such as a global Modal install.
-FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE = Version("1.6.4")
-
-
-def _require_secret_reloading_modal_client(client_version: str) -> None:
-    """Raise unless ``client_version`` is Modal 1.6.4 or newer.
-
-    Versions compare as Python packaging defines them, so 1.6.4's development
-    builds and release candidates count as older than 1.6.4.
-    """
-    try:
-        reloads_secrets = (
-            Version(client_version) >= FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE
-        )
-    except InvalidVersion:
-        reloads_secrets = False
-    if not reloads_secrets:
-        msg = (
-            f"Modal client {client_version} is not "
-            f"{FIRST_MODAL_CLIENT_RELOADING_SECRETS_ON_RESTORE} or newer: containers "
-            "restored from this app's memory snapshots would keep the Secret values "
-            "from when each snapshot was taken. Deploy and run from this project's "
-            "locked environment, for example "
-            "`uv run --frozen modal deploy src/modal/app.py`."
-        )
-        raise RuntimeError(msg)
-
-
 if modal.is_local():
-    _require_secret_reloading_modal_client(modal.__version__)
+    require_secret_reloading_modal_client(
+        modal.__version__, app_path="src/modal/app.py"
+    )
 
 
 def _version_from_env_or_local_bundle_package(env_var: str, package: str) -> str:

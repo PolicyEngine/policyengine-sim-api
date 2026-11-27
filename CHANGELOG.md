@@ -10,6 +10,20 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.27.4] - 2026-11-27
+
+### Changed
+
+- The v2 app's US and UK simulation workers and its US segment worker are now methods of Modal classes, `SimulationWorkerUS`, `SimulationWorkerUK` and `SimulationSegmentWorkerUS`, whose containers restore from memory snapshots with their own country's models already loaded, and for the US the SPM capability too. The report coordinator, the US worker's segment fan-out and the simulation entrypoint start them through the classes; the entrypoint falls back to the plain functions on apps deployed before the classes, and the v2 app keeps those functions, without snapshots, for callers still running older code. Deploying the v2 app now refuses Modal clients older than 1.6.4, as deploying the run_simulation app already did.
+
+
+## [0.27.3] - 2026-11-27
+
+### Changed
+
+- The v2 report app's cache now plans, builds and looks up its files through the same level handlers as the run_simulation app, with its own list of the levels it covers (US national and state year files, and the 20 state-group baselines). Its keys, store paths, files and fixed baseline IDs are unchanged. The files now sit under `prebuilt/us/<dataset>/<state or "all">/` in the US worker image, every manifest entry records its folder, so the manifest digest changes once, and the image build checks the years and file counts the deploying machine computes from the handler settings.
+
+
 ## [0.27.2] - 2026-11-27
 
 ### Changed

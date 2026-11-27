@@ -107,6 +107,7 @@ def test_state_dataset_wrapper_validates_entries_in_and_dumps_results_out(
 
     module = _load(monkeypatch)
     entry = StateDatasetPlanEntry(
+        country="us",
         year=2026,
         state_code="UT",
         region="state/ut",
@@ -114,7 +115,7 @@ def test_state_dataset_wrapper_validates_entries_in_and_dumps_results_out(
         digest="s1",
         path="state-datasets/us/s1/populace_us_2024_acs_local_year_2026.h5",
         filename="populace_us_2024_acs_local_year_2026.h5",
-        folder="state-datasets/populace_us_2024_acs_local/UT",
+        folder="prebuilt/us/populace_us_2024_acs_local/UT",
         exists=False,
     )
     result = StateDatasetBuildResult(

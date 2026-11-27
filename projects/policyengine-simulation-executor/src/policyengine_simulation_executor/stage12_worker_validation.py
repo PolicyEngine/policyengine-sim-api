@@ -18,12 +18,14 @@ from policyengine_simulation_executor.simulation_runtime import (
     resolve_data_folder,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
-from policyengine_simulation_executor.stage12_cache import (
-    precompute as cache_precompute,
+from policyengine_simulation_executor.stage12_cache.cache_levels import (
+    cache_year_file_levels,
 )
+from policyengine_simulation_executor.stage12_cache.levels import DatasetLevel
 from policyengine_simulation_executor.stage12_cache.models import CacheManifest
-from policyengine_simulation_executor.stage12_cache.precompute import PRECOMPUTE_YEARS
 from policyengine_simulation_executor.stage12_cache.precompute_planning import (
+    country_prebuilt,
+    expected_cache_contents,
     scoped_planned_simulation,
 )
 from policyengine_simulation_executor.stage12_runtime.dependencies import (
@@ -149,26 +151,30 @@ def _check_uk_local_authority_dataset(dataset_path: str) -> None:
     detect_uk_local_authority_metadata_from_hdf(dataset_path)
 
 
-# The installed cache holds one dataset per precomputed year and one baseline
-# per US region group per year; the deploy check probes the first year.
-STAGE12_CACHE_ARTIFACT_COUNT = len(PRECOMPUTE_YEARS) * (1 + len(US_REGION_GROUPS))
-STAGE12_CACHE_PROBE_YEAR = PRECOMPUTE_YEARS[0]
+# Only the US worker image holds the v2 cache.
+CACHE_COUNTRY = "us"
 
 
 def expected_state_dataset_count() -> int:
     """Return how many state dataset files the installed bundle's cache holds.
 
-    One per precomputed year for each US state region on a non-default
-    dataset; none when every state uses the default dataset.
+    One per precomputed year for each US state the state handler builds a
+    file for (each state region on a non-default dataset); none when every
+    state uses the default dataset or the cache bakes no state files.
     """
-    return len(PRECOMPUTE_YEARS) * len(cache_precompute.state_dataset_targets())
+    if DatasetLevel.STATE not in cache_year_file_levels(CACHE_COUNTRY):
+        return 0
+    prebuilt = country_prebuilt(CACHE_COUNTRY)
+    handler = prebuilt.handlers[DatasetLevel.STATE]
+    return sum(len(handler.year_file_targets(year)) for year in prebuilt.years)
 
 
 def _require_installed_artifacts(
     manifest: CacheManifest, data_folder: Path, *, state_dataset_count: int
 ) -> None:
     """Require the expected number of listed files and every state file on disk."""
-    if len(manifest.artifacts) != STAGE12_CACHE_ARTIFACT_COUNT + state_dataset_count:
+    counts = expected_cache_contents(CACHE_COUNTRY)["artifact_counts"]
+    if len(manifest.artifacts) != sum(counts.values()) + state_dataset_count:
         msg = "installed Stage 12 cache artifact count differs"
         raise RuntimeError(msg)
     for item in manifest.artifacts:
@@ -189,7 +195,8 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
         msg = "installed Stage 12 cache manifest digest differs"
         raise RuntimeError(msg)
     manifest = CacheManifest.model_validate_json(payload)
-    if manifest.years != PRECOMPUTE_YEARS:
+    years = tuple(expected_cache_contents(CACHE_COUNTRY)["years"])
+    if manifest.years != years:
         msg = "installed Stage 12 cache years differ"
         raise RuntimeError(msg)
     _require_installed_artifacts(
@@ -197,15 +204,17 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
         data_folder,
         state_dataset_count=expected_state_dataset_count(),
     )
+    # The deploy check probes the first year's first group baseline.
+    probe_year = years[0]
     probe = next(
         item
         for item in manifest.artifacts
-        if item.type == "baseline" and item.year == STAGE12_CACHE_PROBE_YEAR
+        if item.type == "baseline" and item.year == probe_year
     )
-    probe_path = data_folder / probe.filename
+    probe_path = data_folder / probe.folder / probe.filename
     _check_dataset_access(str(probe_path), probe.content_sha256)
     calculation = calculate_simulation_frames(
-        scoped_planned_simulation(STAGE12_CACHE_PROBE_YEAR, US_REGION_GROUPS[0])
+        scoped_planned_simulation(probe_year, US_REGION_GROUPS[0])
     )
     if calculation.cache_outcome != "hit":
         msg = "deployed Stage 12 cache probe did not load a cache hit"

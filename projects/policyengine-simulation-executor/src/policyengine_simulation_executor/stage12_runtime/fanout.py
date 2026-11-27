@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import modal
+from policyengine_simulation_contract.stage12_simulation_workers import (
+    SEGMENT_WORKER_METHOD,
+)
 from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,
     Stage,
@@ -19,6 +22,7 @@ from .failure_recording import FailureSite, report_failure
 from .failures import Stage12CancellationError, Stage12ExecutionError
 from .partition import stage12_region_groups_for_model
 from .segmentation import build_segment_inputs, merge_segment_results
+from .worker_lookup import deployed_worker
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -34,7 +38,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SEGMENT_FUNCTION_NAME = "run_single_simulation_segment_us"
 POLL_INTERVAL_INITIAL_SECONDS = 0.5
 POLL_INTERVAL_MAX_SECONDS = 8.0
 POLL_INTERVAL_BACKOFF_FACTOR = 2.0
@@ -51,7 +54,7 @@ def _next_backoff(current: float, *, maximum: float) -> float:
 class SegmentRunnerSeams:
     """What the segment runner looks up and how it waits; defaults are deployed.
 
-    ``modal_module`` looks up the segment function, ``groups`` replaces the
+    ``modal_module`` looks up the segment worker class, ``groups`` replaces the
     region groups read from the installed model, and polls start
     ``poll_interval_seconds`` apart and back off to
     ``poll_interval_max_seconds``, waiting with ``sleep``.
@@ -77,7 +80,10 @@ class Stage12SegmentRunner:
         simulation_run_id: UUID | None = None,
         seams: SegmentRunnerSeams | None = None,
     ) -> None:
-        """Look up the segment function deployed in ``app_name``.
+        """Look up the segment worker deployed in ``app_name``.
+
+        It is a method of a Modal class whose containers restore from a
+        memory snapshot with the US models loaded (``deployed_worker``).
 
         ``cancellation_requested`` is checked between polls. Each segment's
         call is passed ``simulation_run_id``, the detailed-save simulation run
@@ -96,9 +102,8 @@ class Stage12SegmentRunner:
             if seams.groups is not None
             else None
         )
-        self.child_function = seams.modal_module.Function.from_name(
-            app_name,
-            SEGMENT_FUNCTION_NAME,
+        self.child_function = deployed_worker(
+            seams.modal_module, app_name, SEGMENT_WORKER_METHOD
         )
 
     def _groups(self) -> list[list[str]]:
