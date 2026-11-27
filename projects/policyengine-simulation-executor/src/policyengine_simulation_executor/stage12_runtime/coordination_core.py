@@ -37,6 +37,7 @@ from .failure_causes import StageProgress, StageTracking, tracked_stage
 from .output_planning import (
     plan_simulation_input,
     resolve_report_output_plan,
+    resolve_simulation_output_plan,
     validate_output_frames,
     with_zero_labor_supply_responses,
 )
@@ -86,12 +87,12 @@ class CoordinatorDependencies:
 
     The defaults are the Stage 12 database store, the private artifact
     bucket, Modal child invocation, the standard aggregate builder and output
-    plan resolution, no telemetry runtime, the real clock and sleep, the
-    standard child wait window, and the report run store, the Cloud Storage
-    reader of reused output files, the stored output plan of each
-    simulation (``resolve_simulation_output_plan``) and Modal's state of a
-    call whose probe failed (``modal_call_state``), which only a call that
-    names a report run uses.
+    plan resolution, the stored output plan of each simulation
+    (``resolve_simulation_output_plan``), no telemetry runtime, the real
+    clock and sleep, the standard child wait window, and the report run
+    store, the Cloud Storage reader of reused output files and Modal's state
+    of a call whose probe failed (``modal_call_state``), which only a call
+    that names a report run uses.
     """
 
     store: ComparisonStore | None = None
@@ -174,7 +175,7 @@ class CoordinationCore:
         """Plan the report's outputs, then each simulation's child input.
 
         The child's plan is ``child_output_plan``'s: the report's own plan
-        unless a coordinator plans each simulation by itself.
+        unless a coordinator gives a simulation its stored plan.
         """
         with self.stage_scope(
             Stage.STAGE12_OUTPUT_PLANNING,
@@ -203,11 +204,23 @@ class CoordinationCore:
 
     def child_output_plan(
         self,
-        simulation: SimulationExecutionInput,  # noqa: ARG002  # a coordinator that plans each simulation by itself reads it
+        simulation: SimulationExecutionInput,  # noqa: ARG002  # a coordinator that gives a simulation its stored plan reads it
         output_plan: Stage12OutputPlan,
     ) -> Stage12OutputPlan:
         """Return the plan ``simulation``'s child calculates: the report's own."""
         return output_plan
+
+    def stored_output_plan(
+        self, simulation: SimulationExecutionInput
+    ) -> Stage12OutputPlan:
+        """Return the plan every run of ``simulation`` stores, whatever report names it.
+
+        It is ``resolve_simulation_output_plan``'s, or the seam's when set.
+        """
+        resolver = self.dependencies.stored_plan_resolver
+        if resolver is not None:
+            return resolver(simulation)
+        return resolve_simulation_output_plan(simulation, stage_scope=self.stage_scope)
 
     def spawn_child(
         self,

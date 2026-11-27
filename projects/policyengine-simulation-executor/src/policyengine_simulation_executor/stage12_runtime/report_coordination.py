@@ -2,9 +2,12 @@
 
 The comparison path's coordinator creates an evaluation child record for
 each simulation, starts or reattaches its worker, then aggregates both
-outputs, stores the aggregate and completes its evaluation record. A
-detailed-save report run is coordinated on the run tables instead
-(``report_run_coordination``).
+outputs, stores the aggregate and completes its evaluation record. Its
+baseline calculates the baseline's stored plan when that plan holds what the
+report reads from it, so a current-law US national baseline finds the
+precomputed baselines; otherwise, and for the reform, a child calculates the
+report's plan. A detailed-save report run is coordinated on the run tables
+instead (``report_run_coordination``).
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonSimulationRecord,
     PlannedSimulationExecutionInput,
     SimulationArtifactDescriptor,
+    SimulationExecutionInput,
     SimulationRole,
     Stage12OutputPlan,
 )
@@ -55,6 +59,7 @@ from .failure_recording import (
     report_failure,
 )
 from .failures import Stage12ExecutionError, Stage12FailureDetail
+from .output_planning import side_read_plan, stored_plan_holds
 from .simulation import descriptor_from_record
 
 if TYPE_CHECKING:
@@ -85,6 +90,28 @@ class ReportCoordination(CoordinationCore):
         # baseline and reform together through nonblocking result probes.
         wait_for_children(self, calls, descriptors)
         return self._aggregate_and_complete(parent, output_plan, descriptors)
+
+    def child_output_plan(
+        self,
+        simulation: SimulationExecutionInput,
+        output_plan: Stage12OutputPlan,
+    ) -> Stage12OutputPlan:
+        """Return the baseline's stored plan if it holds what the report reads from it.
+
+        The precompute stores each current-law US national baseline under
+        that plan, so the baseline's segments find the precomputed files. A
+        report reading columns the stored plan lacks, such as the cliff
+        columns, keeps ``output_plan``, the report's own, for its baseline,
+        and the reform always keeps it. The aggregation reads a side stored
+        under its own plan, with any labour-supply response it doesn't store
+        as zeros, as a report run's does.
+        """
+        if simulation.role is not SimulationRole.BASELINE:
+            return output_plan
+        stored_plan = self.stored_output_plan(simulation)
+        if stored_plan_holds(stored_plan, side_read_plan(output_plan, stored_plan)):
+            return stored_plan
+        return output_plan
 
     def child_descriptor(
         self, role: str, result: object

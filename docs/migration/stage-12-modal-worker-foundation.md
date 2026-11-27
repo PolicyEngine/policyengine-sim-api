@@ -425,11 +425,18 @@ reads is read with them as zeros. A run that succeeded before this rule, under
 a report's plan, is reused when it holds what the new report reads from it,
 and refused (`reused_simulation_output_incompatible`) otherwise. The
 precomputed US baselines are planned the same way, so a report run's
-current-law baseline finds its precomputed files; a comparison-path call (a
+current-law baseline finds its precomputed files. A comparison-path call (a
 shadow comparison with a production job, or the operator-only
-`POST /internal/stage12/reports`) still plans its baseline with its report's
-plan, so its US national baseline no longer finds them and calculates all 20
-region groups.
+`POST /internal/stage12/reports`) gives its baseline the baseline's stored plan
+too whenever that plan holds what the report reads from the baseline
+(`side_read_plan`), so its current-law US national baseline finds them as
+well; it is aggregated as a report run's side is, with any response it doesn't
+store read as zeros. Its reform, and the baseline of a report reading columns
+the stored plan lacks, such as the cliff columns of `include_cliffs: true`,
+keep the report's plan. A US national baseline is split into region groups
+from its own plan, so a comparison report whose reform turns a labour-supply
+response on now splits its current-law baseline into 20 segments, each found
+in the precomputed files, and calculates its reform in one container.
 
 **Shared simulation runs.** Identical requests share simulation runs, so a
 report run may name a run another report run's worker is calculating (C1 · 24,

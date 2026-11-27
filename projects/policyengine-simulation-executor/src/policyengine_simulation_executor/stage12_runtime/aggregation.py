@@ -109,7 +109,8 @@ def validate_aligned_outputs(
 
     Raises ``ValueError`` unless the roles, evaluation, bundle, output schema
     and row identities line up, and each artifact names the plan its own
-    simulation was given: one plan for both on the comparison path, each
+    simulation was given: on the comparison path the report's plan, or the
+    baseline's stored plan when it holds what the report reads, and each
     simulation's stored plan for a report run.
     """
     if baseline.role.value != "baseline" or reform.role.value != "reform":
