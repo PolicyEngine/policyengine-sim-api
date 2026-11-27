@@ -1078,6 +1078,51 @@ class TestModalRunSimulation:
         [(_, attributes)] = _queue_time_attributes(events)
         assert attributes == {"job_queue_seconds": 3.0}
 
+    def test__a_preempted_attempt_records_its_queue_time_too(
+        self, modal_app, monkeypatch
+    ):
+        def dispatch(_params, *, app_name, runtime, progress):
+            raise KeyboardInterrupt
+
+        events, _ = self._wire_reporter_started_at(
+            modal_app,
+            monkeypatch,
+            dispatch,
+            started_at=T0 + timedelta(seconds=4),
+        )
+
+        with pytest.raises(KeyboardInterrupt):
+            modal_app.SimulationWorker().run_simulation(
+                {"country": "us", JOB_SUBMITTED_AT_PARAM: T0.isoformat()}
+            )
+
+        [(index, attributes)] = _queue_time_attributes(events)
+        assert attributes == {"job_queue_seconds": 4.0}
+        assert index < events.index("operation_end")
+
+    def test__parameters_that_are_not_a_dict_still_reach_the_calculation(
+        self, modal_app, monkeypatch
+    ):
+        # Reading the submission time must not fail a call before its
+        # operation opens; the calculation reports malformed parameters.
+        dispatched_params = []
+
+        def dispatch(params, *, app_name, runtime, progress):
+            dispatched_params.append(params)
+            return {"ok": True}
+
+        events, _ = self._wire_reporter_started_at(
+            modal_app, monkeypatch, dispatch, started_at=T0
+        )
+        malformed_params = ["country", "us"]
+
+        assert modal_app.SimulationWorker().run_simulation(malformed_params) == {
+            "ok": True
+        }
+
+        assert dispatched_params == [malformed_params]
+        assert _queue_time_attributes(events) == []
+
     def test__a_job_without_a_submission_time_records_no_queue_time(
         self, modal_app, monkeypatch
     ):

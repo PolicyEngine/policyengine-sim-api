@@ -351,6 +351,13 @@ class TestJobQueueSeconds:
     def test__a_missing_or_unreadable_submission_time_gives_none(self, submitted_at):
         assert job_queue_seconds(submitted_at, started_at=STARTED) is None
 
+    @pytest.mark.parametrize(
+        "submitted_at", [0, 1760356800, "1760356800", 1760356800.0]
+    )
+    def test__a_number_is_not_read_as_a_unix_time(self, submitted_at):
+        # The gateway sends an ISO 8601 time; a number means another sender.
+        assert job_queue_seconds(submitted_at, started_at=STARTED) is None
+
 
 class TestJobProgressModels:
     def test__completed_segments_cannot_exceed_total(self):
