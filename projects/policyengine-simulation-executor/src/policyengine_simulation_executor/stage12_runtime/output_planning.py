@@ -285,6 +285,26 @@ def side_read_plan(
     )
 
 
+def stored_plan_holds(
+    stored_plan: Stage12OutputPlan, read_plan: Stage12OutputPlan
+) -> bool:
+    """Whether a side stored under ``stored_plan`` holds what ``read_plan`` names.
+
+    That is every entity of ``read_plan`` and every column it materializes
+    for that entity, such as what a report reads from a side
+    (``side_read_plan``).
+    """
+    stored_columns = {
+        entity.entity: set(entity.materialized_variables)
+        for entity in stored_plan.entities
+    }
+    return all(
+        entity.entity in stored_columns
+        and set(entity.materialized_variables) <= stored_columns[entity.entity]
+        for entity in read_plan.entities
+    )
+
+
 def with_zero_labor_supply_responses(
     frames: Mapping[str, pd.DataFrame],
     read_plan: Stage12OutputPlan,

@@ -82,6 +82,8 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
             invoker=invoker,
             aggregator=aggregate,
             output_plan_resolver=resolver,
+            # The baseline's stored plan, so planning loads no country model.
+            stored_plan_resolver=lambda _simulation: shared_output_plan(),
         ),
     )
 

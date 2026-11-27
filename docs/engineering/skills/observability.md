@@ -138,11 +138,16 @@ operations:
 | `stage12_country_model_load` | Loading the country model and its Python modules |
 | `stage12_output_configuration` | Creating planning simulations and configuring requested output groups |
 | `stage12_output_variable_resolution` | Resolving entity variables and constructing the output schema |
-| `stage12_child_input_planning` | Attaching the output plan to one baseline or reform child input |
+| `stage12_child_input_planning` | Choosing one baseline or reform child's output plan and attaching it to the child input |
 
 `stage12_child_input_planning` runs once for each simulation and includes a
-`simulation_role` attribute. The other planning operations include the
-`country` attribute.
+`simulation_role` attribute. Where a coordinator resolves a simulation's
+stored plan (for each child of a report run, and for every comparison-path
+report's baseline, including one that then keeps the report's plan), that
+resolution records its own `stage12_country_model_load`,
+`stage12_output_configuration` and `stage12_output_variable_resolution`
+operations inside it. The other planning operations include the `country`
+attribute.
 
 ### Annual job stage durations
 
