@@ -48,9 +48,11 @@ Modal takes one:
   ``src/modal/container_calls.py``).
 - **Nothing left for a request.** It removes the simulation it added to
   .py's in-process cache and the output file it saved in the prebuilt
-  folder (``_removing_what_the_calculation_leaves``), so a later call finds
-  the image's files as it would without the warm-up. What stays is what the
-  packages keep for the whole process.
+  folder, and the memory warnings .py's cache marked as given
+  (``_removing_what_the_calculation_leaves``), so a later call finds the
+  image's files as it would without the warm-up. It then collects garbage,
+  also after a failure. What stays is what the packages keep for the whole
+  process.
 - **Never fatal.** A failure or skip logs a warning, and the container
   starts as it would without the warm-up. The executor modules it uses are
   looked up when it runs, not when ``v2_app.py`` imports this module, so a
@@ -128,6 +130,12 @@ def warm_up_first_us_calculation(countries: Iterable[str]) -> None:
             "calculation does its one-time work itself",
             exc_info=True,
         )
+    finally:
+        # Free what the calculation allocated before Modal takes the snapshot.
+        # policyengine-core's simulation objects refer to each other, so only
+        # a collection frees them, and after a failure only once the handled
+        # exception, whose traceback holds the calculation's frames, is gone.
+        gc.collect()
 
 
 def warm_up_segment_input() -> Stage12SegmentInput:
@@ -274,18 +282,26 @@ def _prebuilt_folder_with_year_file(segment: Stage12SegmentInput) -> Path:
 
 @contextlib.contextmanager
 def _removing_what_the_calculation_leaves(output_folder: Path) -> Iterator[None]:
-    """Remove the simulations and output files a calculation adds, even if it fails.
+    """Remove what a calculation adds to .py's cache and the folder, even if it fails.
 
     .py's ``Simulation.ensure()`` caches the reform in the process under a new
     random ID and saves its output beside the year file it loaded, in
     ``output_folder``, as ``<storage ID>.h5``. Left there, both would go into
-    the snapshot, taking memory and disk in every restored container.
+    the snapshot, taking memory and disk in every restored container. Adding
+    to the cache also marks each memory threshold the process has passed
+    (8, 16 and 32 GB) as warned about, once per process; the marks the
+    calculation added are removed too, so a restored container's own calls
+    warn when they pass a threshold.
     """
+    from policyengine.core import (  # noqa: PLC0415  # resolved per call so tests can patch policyengine's cache module
+        cache as policyengine_cache,
+    )
     from policyengine.core.simulation import (  # noqa: PLC0415  # resolved per call so tests can patch policyengine's simulation cache
         _cache as simulation_cache,
     )
 
     cached_before = set(simulation_cache._cache)  # noqa: SLF001  # policyengine's LRUCache has no public listing or remove
+    warned_before = set(policyengine_cache._warned_thresholds)  # noqa: SLF001  # policyengine's cache has no public way to reset one warning
     outputs_before = set(output_folder.glob("*.h5"))
     try:
         yield
@@ -296,6 +312,6 @@ def _removing_what_the_calculation_leaves(output_folder: Path) -> Iterator[None]
             if storage_id not in cached_before
         ]:
             simulation_cache._cache.pop(storage_id, None)  # noqa: SLF001  # as above
+        policyengine_cache._warned_thresholds.intersection_update(warned_before)  # noqa: SLF001  # as above
         for output in set(output_folder.glob("*.h5")) - outputs_before:
             output.unlink(missing_ok=True)
-        gc.collect()
