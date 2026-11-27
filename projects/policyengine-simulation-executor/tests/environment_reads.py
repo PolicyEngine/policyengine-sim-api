@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from collections.abc import Iterator, MutableMapping
 
-# Modal Secrets the workers have: Google Cloud credentials and the Hugging
-# Face token, under every name the code reads them by.
+# Modal Secrets the workers have, under every name the code reads them by:
+# Google Cloud credentials and the Hugging Face token, and for the v2 workers
+# the runtime Secret (``stage12-evaluation-runtime``: database and buckets)
+# and the Modal worker role's database Secret.
 SECRET_ENVIRONMENT_NAMES = {
     "GOOGLE_APPLICATION_CREDENTIALS_JSON",
     "GCP_CREDENTIALS_JSON",
@@ -20,6 +22,11 @@ SECRET_ENVIRONMENT_NAMES = {
     "HUGGING_FACE_TOKEN",
     "HF_TOKEN",
     "HUGGINGFACE_HUB_TOKEN",
+    "STAGE12_DATABASE_URL",
+    "STAGE12_ARTIFACT_BUCKET",
+    "STAGE12_CACHE_BUCKET",
+    "V2_SIMULATION_OUTPUT_BUCKET",
+    "MODAL_WORKER_DATABASE_URL",
 }
 
 

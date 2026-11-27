@@ -22,9 +22,11 @@ The warm-up calculates one segment as a segmented national run's child
 receives it: the reform side of the first region group whose current-law
 baseline the v2 cache precomputes, for the first precompute year, under a
 small reform. A v2 segment calculates one simulation, so a reform segment
-always calculates, and never reads or computes a baseline, whatever the
-cache holds. It runs only where it is safe before a snapshot, and only where
-Modal takes one:
+always calculates, and never loads or computes the precomputed current-law
+baseline, whatever the cache holds. (Its own calculation still reads
+current-law values through its baseline branch, which is what builds the
+module-level parameter values a later call reuses.) It runs only where it is
+safe before a snapshot, and only where Modal takes one:
 
 - **Only in a US worker container Modal snapshots.** Modal runs the hook in
   every container that isn't restored, and takes a snapshot only where its
