@@ -376,18 +376,50 @@ def _report_columns(frames, report_plan):
     }
 
 
-def test_a_baseline_stored_under_its_own_plan_is_aggregated_as_under_the_report_plan():
-    # The reform turns responses on, so the report reads them and the copied
-    # inputs; the current-law baseline's stored plan holds the copied inputs
-    # and no response.
-    report_plan = _with_person_columns(
+def _labour_supply_report_plans() -> tuple[Stage12OutputPlan, Stage12OutputPlan]:
+    """Return the plans of a report whose reform turns responses on.
+
+    The report reads the responses and the copied inputs; the current-law
+    baseline's stored plan holds the copied inputs and no response.
+    """
+    return (
+        _with_person_columns(
+            shared_output_plan(),
+            US_RESPONSES + US_COPIED_INPUTS,
+            labour_supply_response_active=True,
+        ),
+        _with_person_columns(
+            shared_output_plan(), US_COPIED_INPUTS, labour_supply_response_active=False
+        ),
+    )
+
+
+def _no_response_report_plans() -> tuple[Stage12OutputPlan, Stage12OutputPlan]:
+    """Return the plans of a report turning no response on.
+
+    The baseline's stored plan holds the copied inputs, which neither side of
+    the report reads.
+    """
+    return (
         shared_output_plan(),
-        US_RESPONSES + US_COPIED_INPUTS,
-        labour_supply_response_active=True,
+        _with_person_columns(
+            shared_output_plan(), US_COPIED_INPUTS, labour_supply_response_active=False
+        ),
     )
-    baseline_stored_plan = _with_person_columns(
-        shared_output_plan(), US_COPIED_INPUTS, labour_supply_response_active=False
-    )
+
+
+@pytest.mark.parametrize(
+    "report_plans",
+    [_labour_supply_report_plans, _no_response_report_plans],
+    ids=["reform_turns_responses_on", "no_responses"],
+)
+def test_a_baseline_stored_under_its_own_plan_gives_the_same_report_columns(
+    report_plans,
+):
+    # The aggregation reads each side's columns by name, so a side whose
+    # report-plan columns hold the same values aggregates to the same result,
+    # whatever other columns its file holds.
+    report_plan, baseline_stored_plan = report_plans()
 
     stored_planned, stored_frames = _aggregated_frames(
         report_plan, baseline_stored_plan
