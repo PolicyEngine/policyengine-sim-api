@@ -44,6 +44,8 @@ class RecordingRuntime:
 
 def _load(monkeypatch):
     install_fake_modal(monkeypatch)
+    # The app builds its images in src/modal/v2_images.py.
+    sys.modules.pop("src.modal.v2_images", None)
     sys.modules.pop("src.modal.v2_app", None)
     return importlib.import_module("src.modal.v2_app")
 

@@ -37,6 +37,7 @@ class SteppedClock:
 
 def _declared_modal_timeouts(monkeypatch):
     install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.v2_images", None)
     sys.modules.pop("src.modal.v2_app", None)
     modal_app = importlib.import_module("src.modal.v2_app")
     return {

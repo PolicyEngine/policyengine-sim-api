@@ -16,6 +16,7 @@ from policyengine_simulation_contract.household_execution import (
 def v2_modules(monkeypatch):
     """Import the v2 application and its image smoke under the fake Modal."""
     install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.v2_images", None)
     sys.modules.pop("src.modal.v2_app", None)
     sys.modules.pop("src.modal.v2_image_smoke", None)
     v2_app = importlib.import_module("src.modal.v2_app")
