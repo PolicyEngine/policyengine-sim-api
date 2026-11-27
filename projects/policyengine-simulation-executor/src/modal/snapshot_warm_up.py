@@ -45,7 +45,8 @@ Modal takes one:
   ``country_model_preload`` says.)
 - **No telemetry.** It configures no observability and gives the
   calculation a runtime that records and sends nothing, so it writes no
-  operation record or span and no call number (``_ContainerCalls``).
+  operation record or span and no call number (``ContainerCalls`` in
+  ``src/modal/container_calls.py``).
 - **Nothing left for a request.** It removes the simulations it added to
   .py's in-process cache and the output files it saved in the prebuilt
   folder, so a later call loads its baseline from the image as it would

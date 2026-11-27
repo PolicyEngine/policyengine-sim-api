@@ -481,7 +481,13 @@ def test_stage12_functions_propagate_identifier_and_close_runtime(
     result = _invoke(monkeypatch, module, function_name, lambda *_, **__: {"ok": True})
 
     assert result == {"ok": True}
-    assert runtime.contexts == []
+    # A simulation worker's call sets only its container start and call number
+    # (tests/test_v2_container_start.py); the plain functions have no snapshot.
+    assert runtime.contexts == (
+        []
+        if function_name == "coordinate_report"
+        else [{"container_start": "no_snapshot", "container_call_number": 1}]
+    )
     assert runtime.operations[0]["remote_context"]["observability_id"] == (
         OBSERVABILITY_ID
     )

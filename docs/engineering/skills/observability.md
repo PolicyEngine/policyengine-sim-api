@@ -33,6 +33,14 @@ contains `household`, `reform`, `payload` or `person`, among others, so no key
 for these IDs names one. Do not use `job_id` for a v2 call: it names one
 annual Modal invocation of the v1 executor.
 
+A v2 simulation worker's call (the US and UK single-simulation workers and the
+US segment worker, as class methods or plain functions) also says which
+deployment served it, as the versioned app's workers do: its operation's
+`modal_app_name` names the v2 app, and its records' `service.version` is the
+bundle's policyengine.py version. Its `service.name` stays the worker's, such
+as `policyengine-stage12-us-worker`. The v2 coordinator's and household
+functions' records still carry the observability package's fallback version.
+
 `observability_id` is a canonical UUID string and has diagnostic meaning only.
 Do not use it for idempotency, authorization, database identity, routing, or
 business logic. Do not create one for health checks, version queries, invalid
@@ -235,17 +243,31 @@ its running segments.
 
 ### Container start and call number
 
-Each call of the versioned app's workers (the `SimulationWorker.run_simulation`
-and `SimulationSegmentWorker.run_simulation_segment` methods) and of
-`run_budget_window_batch` sets two attributes on its operation, so on its
-`operation.completed` log record and its span. Only the operation's span
-carries them, not its child spans such as `country_module_load`.
-`_set_modal_call_attributes` in `src/modal/app.py` sets them when the
-operation opens, so a call that fails or is preempted carries them too.
+Two attributes are set on the operation of each call of:
+
+- the versioned app's workers (the `SimulationWorker.run_simulation` and
+  `SimulationSegmentWorker.run_simulation_segment` methods) and
+  `run_budget_window_batch`, in `src/modal/app.py`;
+- the v2 app's simulation workers (the
+  `SimulationWorkerUS.run_single_simulation_us`,
+  `SimulationWorkerUK.run_single_simulation_uk` and
+  `SimulationSegmentWorkerUS.run_single_simulation_segment_us` methods, and
+  the plain functions of the same names kept for callers on older code), in
+  `src/modal/v2_app.py`. Their records come from the services
+  `policyengine-stage12-us-worker`, `policyengine-stage12-uk-worker` and
+  `policyengine-stage12-us-segment-worker`. The v2 coordinator and household
+  functions set neither attribute.
+
+The attributes reach the call's `operation.completed` log record and its span.
+Only the operation's span carries them, not its child spans such as
+`country_module_load`. Both apps use `ContainerCalls` in
+`src/modal/container_calls.py`, one per app module, since each Modal container
+serves one worker. Its `set_call_attributes` sets them when the operation
+opens, so a call that fails or is preempted carries them too.
 
 | Attribute | Values |
 |---|---|
-| `container_start` | `restored_from_snapshot`: the container was restored from a memory snapshot, so it started with the country models loaded. `took_snapshot`: Modal took the snapshot from this container, after the snapshot hook loaded the models in it. `no_snapshot`: the container neither took a snapshot nor was restored from one. That is every container of the plain `run_budget_window_batch` function, which has no snapshot hook, and a worker class container that Modal started without snapshots, whose hook loaded the models before its first call. |
+| `container_start` | `restored_from_snapshot`: the container was restored from a memory snapshot, so it started with the country models loaded. `took_snapshot`: Modal took the snapshot from this container, after the snapshot hook loaded the models in it. `no_snapshot`: the container neither took a snapshot nor was restored from one. That is every container of a plain function, which has no snapshot hook (`run_budget_window_batch`, and the v2 app's plain worker functions), and a worker class container that Modal started without snapshots, whose hook loaded the models before its first call. |
 | `container_call_number` | The call's place among the container's calls that opened their operation: 1 for the first, 2 for the second, and so on. A call counts even when reading or setting these attributes fails. |
 
 How a call tells them apart, in Modal 1.6.4:
@@ -271,8 +293,9 @@ How a call tells them apart, in Modal 1.6.4:
   call doesn't tell them apart: on 2026-11-25 its `snapshot_behavior` field
   was `UNSPECIFIED` for every production container, restored ones included.
 - **Checked on Modal:** on 2026-11-25, in a measurement on Modal `testing`
-  with Modal 1.6.4, every restored container reported a `MODAL_TASK_ID`
-  different from the one its snapshot hook had recorded.
+  with Modal 1.6.4, every restored container of the versioned app's worker
+  classes reported a `MODAL_TASK_ID` different from the one its snapshot hook
+  had recorded. The v2 workers' attribute hasn't been checked on Modal yet.
 - **Never reported:** the recorded ID names the snapshotting container, not
   the one serving the call.
 

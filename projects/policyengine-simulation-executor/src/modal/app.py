@@ -10,10 +10,8 @@ versioned apps.
 """
 
 import contextlib
-import itertools
 import os
 import random
-from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -49,6 +47,7 @@ from policyengine_simulation_observability.telemetry import (
 from src.modal._image_setup import check_country_models_build, fetch_artifacts
 from src.modal.bundle_data import bundle_data_install_command
 from src.modal.ca_certificates import GRPC_CA_BUNDLE_ENV, OPERATING_SYSTEM_CA_PACKAGE
+from src.modal.container_calls import ContainerCalls
 from src.modal.country_model_preload import preload_country_models
 from src.modal.logging_redaction import redact_params_for_logging
 from src.modal.modal_client_version import require_secret_reloading_modal_client
@@ -311,69 +310,9 @@ def _configure_modal_observability(
     )
 
 
-class ContainerStart(StrEnum):
-    """How the container serving a worker call started: its ``container_start``."""
-
-    RESTORED_FROM_SNAPSHOT = "restored_from_snapshot"
-    TOOK_SNAPSHOT = "took_snapshot"
-    NO_SNAPSHOT = "no_snapshot"
-
-
-class _ContainerCalls:
-    """Says how this container started, and numbers the worker calls it serves.
-
-    A Modal container serves one worker class or function, so this module's
-    state is the container's. The workers' snapshot hook records whether
-    Modal snapshots the container it runs in, and that container's
-    ``MODAL_TASK_ID``, before Modal takes the snapshot. A container restored
-    from the snapshot starts with that record in memory, but Modal 1.6.4 sets
-    its ``MODAL_TASK_ID`` to its own task ID, so the two IDs differ. The
-    recorded ID is only compared, never reported: it names the snapshotting
-    container, not the one serving the call.
-
-    The call counter is in the snapshot too, but no call runs before Modal
-    takes it, so every container's first call is number 1.
-    """
-
-    def __init__(self) -> None:
-        self._snapshot_taken_here = False
-        self._snapshot_task_id: str | None = None
-        self._call_numbers = itertools.count(1)
-
-    def record_snapshot_hook(self) -> None:
-        """Record, from the snapshot hook, whether Modal snapshots this container.
-
-        Modal 1.6.4 runs the hook in every container that isn't restored, and
-        takes a snapshot only when the Modal process that starts the container
-        has set ``MODAL_ENABLE_SNAP_RESTORE`` to ``1`` (``maybe_snapshot`` in
-        ``modal/_runtime/user_code_imports.py``). The flag is set last, so a
-        failure partway leaves the container reporting ``no_snapshot``.
-        """
-        self._snapshot_task_id = os.environ.get("MODAL_TASK_ID")
-        self._snapshot_taken_here = os.environ.get("MODAL_ENABLE_SNAP_RESTORE") == "1"
-
-    def container_start(self) -> ContainerStart:
-        """Compare this container's task ID with the snapshotting container's."""
-        if not self._snapshot_taken_here:
-            return ContainerStart.NO_SNAPSHOT
-        if os.environ.get("MODAL_TASK_ID") == self._snapshot_task_id:
-            return ContainerStart.TOOK_SNAPSHOT
-        return ContainerStart.RESTORED_FROM_SNAPSHOT
-
-    def next_call_attributes(self) -> dict[str, str | int]:
-        """Return the next call's two container attributes, numbering the call.
-
-        The call takes its number first, so it counts even if reading the
-        container start fails.
-        """
-        call_number = next(self._call_numbers)
-        return {
-            "container_start": self.container_start().value,
-            "container_call_number": call_number,
-        }
-
-
-_CONTAINER_CALLS = _ContainerCalls()
+# How this container started and how many worker calls it has served
+# (src/modal/container_calls.py): each Modal container serves one worker.
+_CONTAINER_CALLS = ContainerCalls()
 
 
 def _set_modal_call_attributes(runtime: "ObservabilityRuntime") -> None:
@@ -381,8 +320,7 @@ def _set_modal_call_attributes(runtime: "ObservabilityRuntime") -> None:
     # Each attribute set is attempted on its own, so one failure keeps the other.
     with contextlib.suppress(Exception):
         runtime.set_context(function_call_id=modal.current_function_call_id())
-    with contextlib.suppress(Exception):
-        runtime.set_context(**_CONTAINER_CALLS.next_call_attributes())
+    _CONTAINER_CALLS.set_call_attributes(runtime)
 
 
 def _job_progress_reporter() -> "JobProgressReporter":
@@ -598,7 +536,7 @@ class _CountryModelsLoadedBeforeSnapshot:
         """Load the models and SPM capability, then warm up, before the snapshot.
 
         First records whether Modal snapshots this container, and its task ID,
-        so each call can report how its container started (``_ContainerCalls``).
+        so each call can report how its container started (``ContainerCalls``).
         Telemetry is non-fatal: a failed record must never stop the preload.
         Then, in a container Modal snapshots, runs one warm-up calculation
         (``src/modal/snapshot_warm_up.py``), so restored containers start with
