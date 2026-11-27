@@ -10,6 +10,17 @@ request instead of editing this file: see
 
 <!-- towncrier release notes start -->
 
+## [0.28.0] - 2026-11-27
+
+### Added
+
+- Each annual job's `run_simulation` operation record now carries `job_queue_seconds`, the seconds from the gateway's submission of the job to its start in the worker. The gateway sends the submission time with the spawned job as the `_job_submitted_at` parameter; the worker leaves it out of its logged attributes and removes it before the calculation. Years that a budget-window batch spawns carry no queue time.
+
+### Fixed
+
+- Current-law US national baselines of comparison-path reports in the v2 report app (shadow comparisons with production jobs, and the operator-only `POST /internal/stage12/reports`) load their region-group segments from the precomputed baselines again, for the years and SPM selection the precompute stores. Since the precomputed baselines were planned as simulation runs store them, the comparison-path coordinator still gave its baseline the report's plan, so every segment computed a cache key the precompute never stores and calculated its baseline. It now gives the baseline the baseline's stored plan whenever that plan holds every column the report reads from it, as a report run's coordinator does; a report with `include_cliffs: true` and every reform keep the report's plan. A comparison report whose reform turns a labour-supply response on, and whose baseline's own policy turns none on, now splits its US national baseline into 20 region-group segments instead of calculating it in one container.
+
+
 ## [0.27.4] - 2026-11-27
 
 ### Changed
