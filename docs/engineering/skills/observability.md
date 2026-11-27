@@ -33,6 +33,14 @@ contains `household`, `reform`, `payload` or `person`, among others, so no key
 for these IDs names one. Do not use `job_id` for a v2 call: it names one
 annual Modal invocation of the v1 executor.
 
+A v2 simulation worker's call (the US and UK single-simulation workers and the
+US segment worker, as class methods or plain functions) also says which
+deployment served it, as the versioned app's workers do: its operation's
+`modal_app_name` names the v2 app, and its records' `service.version` is the
+bundle's policyengine.py version. Its `service.name` stays the worker's, such
+as `policyengine-stage12-us-worker`. The v2 coordinator's and household
+functions' records still carry the observability package's fallback version.
+
 `observability_id` is a canonical UUID string and has diagnostic meaning only.
 Do not use it for idempotency, authorization, database identity, routing, or
 business logic. Do not create one for health checks, version queries, invalid
