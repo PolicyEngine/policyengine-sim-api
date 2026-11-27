@@ -15,13 +15,13 @@ import importlib
 import logging
 import os
 import sys
-from collections.abc import Iterator, MutableMapping
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
 from conftest import NoOpObservabilityRuntime
+from environment_reads import SECRET_ENVIRONMENT_NAMES, EnvironmentReadRecorder
 from fixtures.fake_modal import install_fake_modal
 from policyengine_observability.runtime import ObservabilityRuntime
 from policyengine_simulation_executor import precompute_planning, simulation_runtime
@@ -53,17 +53,6 @@ LATER_REQUEST = {
     "_emit_microdata": True,
 }
 US_MODEL_MODULES = ("policyengine_us", "policyengine.tax_benefit_models.us")
-# Modal Secrets the workers have: Google Cloud credentials and the Hugging
-# Face token, under every name the code reads them by.
-SECRET_ENVIRONMENT_NAMES = {
-    "GOOGLE_APPLICATION_CREDENTIALS_JSON",
-    "GCP_CREDENTIALS_JSON",
-    "GOOGLE_CREDENTIALS",
-    "SERVICE_ACCOUNT_JSON",
-    "HUGGING_FACE_TOKEN",
-    "HF_TOKEN",
-    "HUGGINGFACE_HUB_TOKEN",
-}
 
 
 class _PolicyEngineLikeCalculation:
@@ -110,34 +99,6 @@ class _CallRuntime(NoOpObservabilityRuntime):
 
     def shutdown(self) -> None:
         return None
-
-
-class _EnvironmentReadRecorder(MutableMapping):
-    """Wraps ``os.environ`` and records the name of every variable read."""
-
-    def __init__(self, environment: MutableMapping) -> None:
-        self.environment = environment
-        self.names_read: set[str] = set()
-
-    def __getitem__(self, name: str) -> str:
-        self.names_read.add(name)
-        return self.environment[name]
-
-    def __setitem__(self, name: str, value: str) -> None:
-        self.environment[name] = value
-
-    def __delitem__(self, name: str) -> None:
-        del self.environment[name]
-
-    def __iter__(self) -> Iterator[str]:
-        # Listing the variables reads them all, as the credential setup's
-        # log of Google-related variables does.
-        for name in list(self.environment):
-            self.names_read.add(name)
-            yield name
-
-    def __len__(self) -> int:
-        return len(self.environment)
 
 
 @pytest.fixture
@@ -384,7 +345,7 @@ def test_the_warm_up_reads_no_secret_and_sets_up_no_credentials(
     # Records the warm-up's own reads, the real group target's included. The
     # calculation and the lookups that need the model are replaced here, so
     # what they read is checked by reading their code instead.
-    environment = _EnvironmentReadRecorder(os.environ)
+    environment = EnvironmentReadRecorder(os.environ)
     monkeypatch.setattr(os, "environ", environment)
 
     with caplog.at_level(logging.WARNING, logger=warm_up_module.__name__):

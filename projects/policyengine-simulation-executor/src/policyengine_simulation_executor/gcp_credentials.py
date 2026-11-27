@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import tempfile
+from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
 from policyengine_simulation_observability.stages import ANNUAL_IMPACT_STAGES, Stage
@@ -21,6 +22,11 @@ logger = logging.getLogger("policyengine_simulation_executor.simulation_runtime"
 
 # Credential-adjacent environment values are cut to this many characters.
 _ENV_VALUE_PREVIEW_CHARS = 50
+# True inside ``skip_gcp_credential_setup``: ``setup_gcp_credentials`` then
+# reads and writes nothing.
+_CREDENTIAL_SETUP_SKIPPED: ContextVar[bool] = ContextVar(
+    "gcp_credential_setup_skipped", default=False
+)
 
 
 def _normalize_credentials_blob(creds_json: str) -> str:
@@ -43,6 +49,23 @@ def _normalize_credentials_blob(creds_json: str) -> str:
 
 
 @contextlib.contextmanager
+def skip_gcp_credential_setup() -> Iterator[None]:
+    """Make ``setup_gcp_credentials`` read and write nothing inside this block.
+
+    The v2 workers' snapshot warm-up (``src/modal/v2_snapshot_warm_up.py``)
+    calculates from files in the image only, and nothing may read a Modal
+    Secret before Modal takes the snapshot: a value read then would be the
+    snapshot's in every restored container. The setup works as usual again
+    after the block, also when the block raises.
+    """
+    token = _CREDENTIAL_SETUP_SKIPPED.set(True)
+    try:
+        yield
+    finally:
+        _CREDENTIAL_SETUP_SKIPPED.reset(token)
+
+
+@contextlib.contextmanager
 def setup_gcp_credentials(
     runtime: ObservabilityRuntime | None = None,
 ) -> Iterator[None]:
@@ -54,8 +77,12 @@ def setup_gcp_credentials(
     on exit. This runs as a context manager to guarantee cleanup even if
     the caller raises mid-simulation; the previous fire-and-forget
     ``tempfile.mkstemp`` path leaked credential material on disk every
-    time a container served a request.
+    time a container served a request. Inside ``skip_gcp_credential_setup``
+    it reads no environment variable, writes no file and opens no span.
     """
+    if _CREDENTIAL_SETUP_SKIPPED.get():
+        yield
+        return
     previous = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     creds_file = None
     with contextlib.ExitStack() as credentials_file_stack:
